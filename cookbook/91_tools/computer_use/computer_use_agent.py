@@ -3,11 +3,12 @@ Computer Use Agent
 ==================
 An agent that looks at your screen and drives the mouse and keyboard with
 pyautogui. It takes a screenshot, decides what to do, acts, and takes another
-screenshot to check the result.
+screenshot to check the result. It can also search the web without opening a
+browser.
 
 Default task: minimize the current window, open Chrome, and go to agno.com.
 
-    pip install pyautogui
+    pip install pyautogui ddgs
     python cookbook/91_tools/computer_use/computer_use_agent.py
     python cookbook/91_tools/computer_use/computer_use_agent.py "Open Notepad and type hello"
 
@@ -26,6 +27,7 @@ from agno.media import Image
 from agno.models.openai import OpenAIResponses
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
+from agno.tools.websearch import WebSearchTools
 
 # Moving the mouse into a screen corner raises an exception and stops the run.
 pyautogui.FAILSAFE = True
@@ -209,20 +211,37 @@ class ScreenTools(Toolkit):
 # ---------------------------------------------------------------------------
 agent = Agent(
     name="Computer Use Agent",
-    model=OpenAIResponses(id="gpt-5.6-luna"),
-    tools=[ScreenTools()],
+    # No hidden thinking between steps: each action follows the screenshot directly.
+    model=OpenAIResponses(id="gpt-5.6-luna", reasoning_effort="none"),
+    tools=[ScreenTools(), WebSearchTools()],
+    description=(
+        "You are a hands-on computer operator. You sit at this machine for the user and "
+        "get things done on it the way a calm, experienced power user would: quickly, "
+        "carefully, and without fuss."
+    ),
     instructions=[
-        "You control this computer's screen, mouse, and keyboard.",
-        "Start by taking a screenshot. After every action, take another screenshot to confirm it worked before moving on.",
-        "Prefer keyboard shortcuts over clicking when they are reliable, such as Ctrl+L to focus a browser address bar.",
+        # How you work
+        "Treat the screen as the truth. Start every task with a screenshot, and never assume an action worked until a new screenshot shows it.",
+        "Work in small, deliberate steps: look, act once, then look again before the next action.",
+        "Before each action, say in a few words what you are doing, such as 'Opening Chrome.' Then call the tool. Keep it short; you may be speaking out loud.",
+        "Choose the fastest reliable route. Look things up with web search instead of browsing for them, and use keyboard shortcuts such as Ctrl+L or Alt+Tab before hunting for buttons.",
         "To open an app on Windows, press the Windows key, type the app name, wait a moment, then press Enter.",
-        "Wait after opening apps or pages so they can load.",
-        "Do only what the task asks. Never type passwords, buy anything, or close windows with unsaved work.",
-        "When the task is done, say what you did in one or two sentences.",
+        "Give apps and pages time to load. If the screen has not changed yet, wait and check again rather than repeating the action.",
+        # When things go wrong
+        "If something does not go as expected, say what you see, then try one sensible alternative. If you are still stuck, stop and tell the user what is blocking you.",
+        "Close or dismiss unexpected pop-ups and dialogs only when that is clearly safe; otherwise describe them and ask.",
+        "If the request is ambiguous, ask one short question instead of guessing.",
+        # Boundaries
+        "Do only what the task asks, and leave everything else as you found it.",
+        "Never type passwords, enter payment details, buy anything, send messages on the user's behalf, delete files, or close windows with unsaved work. Ask first if a task needs one of these.",
+        # Finishing
+        "When the task is done, confirm it from a final screenshot and say what you did in one or two sentences.",
     ],
     # Each action plus its check screenshot is two calls; this bounds a runaway loop.
     tool_call_limit=40,
     markdown=True,
+    # Log each model call and tool call so you can follow what the agent does.
+    debug_mode=True,
 )
 
 # ---------------------------------------------------------------------------

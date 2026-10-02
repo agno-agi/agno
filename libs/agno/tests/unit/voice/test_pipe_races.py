@@ -63,7 +63,7 @@ async def test_final_transcript_cannot_start_reply_while_speech_start_is_suspend
         await recognizer.transcripts.put(Transcript(2, "and what can you do?", True))
         await socket.next("reply_done")
         assert len(started_replies) == 1
-        assert pipe.agent.calls[0][0] == ["What are you and what can you do?"]
+        assert pipe.agent.calls[0][0] == "What are you and what can you do?"
     finally:
         release_interrupt.set()
         task.cancel()

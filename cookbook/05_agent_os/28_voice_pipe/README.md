@@ -91,6 +91,7 @@ environment variables and the same test client; switch the pipe ID in the client
 | `voice_knowledge.py` | Answer from the Agno docs with Agno Knowledge | `/voice/knowledge/pipe` | `http://localhost:3000/?pipe=knowledge` | "What is AgentOS?" |
 | `voice_reasoning.py` | Native model reasoning before each answer | `/voice/reasoning/pipe` | `http://localhost:3000/?pipe=reasoning` | "A bat and a ball cost one dollar ten..." |
 | `voice_computer_use.py` | The pyautogui computer use agent, by voice | `/voice/computer/pipe` | `http://localhost:3000/?pipe=computer` | "Open Chrome and go to agno dot com" |
+| `voice_providers.py` | Pick Deepgram, Soniox, or OpenAI STT and Cartesia, ElevenLabs, or OpenAI TTS | `/voice/providers/pipe` | `http://localhost:3000/?pipe=providers` | "Tell me about Agno" |
 
 From the repository root, using the existing Windows development environment:
 
@@ -125,7 +126,8 @@ than the other examples, growing with effort.
 
 `voice_computer_use.py` imports the agent from
 `cookbook/91_tools/computer_use/computer_use_agent.py` and needs `pip install
-pyautogui`. It really controls your mouse and keyboard: move the mouse into a
+pyautogui ddgs`. It listens with Soniox, so it also needs `SONIOX_API_KEY`. It
+really controls your mouse and keyboard: move the mouse into a
 screen corner to abort. Speaking while it works cancels the task, and the window it
 minimizes first is usually the client's browser window, which keeps the call
 running.
@@ -184,6 +186,35 @@ phrases and streams each resulting audio response; its speech endpoint does not
 accept a live text stream. Cartesia remains the default for incremental text input.
 The two TTS paths have different startup latency characteristics.
 
+## Speech providers
+
+| Kind | Class | Key | Notes |
+| --- | --- | --- | --- |
+| STT | `OpenAIRealtimeSTT` | `OPENAI_API_KEY` | `gpt-live-transcribe` over the Realtime API. |
+| STT | `DeepgramSTT` | `DEEPGRAM_API_KEY` | `nova-3`. `language` takes any supported language or regional code; `language="multi"` handles speakers who switch languages. `keyterms` boosts names. |
+| STT | `SonioxSTT` | `SONIOX_API_KEY` | `stt-rt-v5`. Recognizes every supported language, including switching mid-sentence; `language_hints` biases toward expected languages. `terms` and `context` add vocabulary. |
+| STT | `GeminiLiveSTT` | `GOOGLE_API_KEY` | `gemini-3.5-transcribe-live`. Detects the language when `languages` is unset; `vocabulary` adds terms. Renews its session before Google's ten-minute limit. |
+| TTS | `CartesiaTTS` | `CARTESIA_API_KEY` | `sonic-3.6`, incremental text input with word timestamps. |
+| TTS | `ElevenLabsTTS` | `ELEVEN_LABS_API_KEY` (optional `ELEVEN_LABS_VOICE_ID`) | `eleven_flash_v2_5`, one multi-stream context per reply with character timings. |
+| TTS | `OpenAITTS` | `OPENAI_API_KEY` | Buffers phrases; no live text stream. |
+| TTS | `GeminiTTS` | `GOOGLE_API_KEY` | `gemini-3.8-flash-lite-tts` by default, phrase by phrase over HTTP streaming; reads text verbatim with an optional delivery `style`. |
+
+Deepgram, Soniox, and ElevenLabs use the `websockets` package from the `voice`
+extra and need no provider SDK. `voice_providers.py` switches between them:
+
+```powershell
+$env:VOICE_STT_PROVIDER = "deepgram"   # openai | deepgram | soniox
+$env:VOICE_TTS_PROVIDER = "elevenlabs" # cartesia | elevenlabs | openai
+$env:VOICE_STT_LANGUAGE = "multi"      # Deepgram only; any supported code, default en
+.venvs/demo/Scripts/python.exe cookbook/05_agent_os/28_voice_pipe/voice_providers.py
+```
+
+The voice pipe streams audio to the recognizer only while you speak and commits
+each turn when its VAD hears silence. Deepgram and Soniox results are matched to
+turns by their audio timestamps, so a new turn that starts before the previous
+transcript arrives is not mixed into it. Soniox receives 16 kHz audio, which is
+the rate its documentation describes; Deepgram and ElevenLabs use 24 kHz PCM.
+
 ## How audio flows
 
 ```text
@@ -209,6 +240,12 @@ The displayed assistant transcript contains generated text and can extend beyond
 what played during an interrupted reply. Such replies are labeled in the UI.
 Clearing the display removes transcript rows from the page; it does not reset an
 active conversation. End and restart the conversation to open a fresh voice session.
+
+Conversation history is the agent's own: each turn is a normal run in the call's
+session, with history always on for voice and the agent's `num_history_runs`
+deciding how much is included. After an interruption, the next turn begins with a
+short note about what the user actually heard. See
+[INTEGRATION.md](INTEGRATION.md#conversation-history) for details.
 
 Audio delivery follows browser playback acknowledgments. By default, the server
 sends at most two seconds ahead, so fast speech generation cannot fill the browser

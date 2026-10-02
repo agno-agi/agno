@@ -133,9 +133,23 @@ The server sends at most `max_playback_buffer_seconds` (2 seconds by default) of
 audio beyond the last `played` count. If your client never acknowledges, the reply
 stalls and fails after `playback_timeout` (15 seconds by default).
 
-Acknowledgments also decide conversation history: when the user interrupts, the
-agent remembers only the text that was actually heard. Count samples that have
-played from your output clock, not samples you have received or scheduled.
+Acknowledgments also decide what the agent learns about interruptions. When the
+user interrupts, the next turn tells the agent which part of its reply was
+actually heard. Count samples that have played from your output clock, not
+samples you have received or scheduled.
+
+## Conversation history
+
+Voice turns are ordinary agent runs in the connection's session, so history comes
+from the agent's db and its `num_history_runs` / `num_history_messages` settings.
+VoicePipe turns history on for every voice run. An agent without a db gets an
+in-memory db when the first call connects, so context works within a process but
+is lost on restart. Give the agent a db to keep runs and see them in AgentOS.
+
+An interrupted run that was still generating is stored as `cancelled`, and Agno
+leaves cancelled runs out of history. The next turn's input therefore starts with
+a bracketed note that restates what the user said and what they heard of the
+reply. If the run had already finished, the note only says what was heard.
 
 ## Minimal client loop
 

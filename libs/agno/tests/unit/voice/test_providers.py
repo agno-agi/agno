@@ -9,7 +9,8 @@ import pytest
 
 from agno.voice.stt.openai import OpenAIRealtimeSTT, _OpenAIRealtimeSession
 from agno.voice.tts.cartesia import CartesiaTTS, _CartesiaSession
-from agno.voice.tts.openai import OpenAITTS, _OpenAISpeechSession, _phrases
+from agno.voice.tts._phrases import _phrases
+from agno.voice.tts.openai import OpenAITTS, _OpenAISpeechSession
 from agno.voice.vad.silero import SileroVAD, _SileroSession
 
 

@@ -77,7 +77,6 @@ dev = [
 ]
 
 # AgentOS server bundle
-os = ["fastapi", "python-multipart>=0.0.18", "uvicorn", "websockets", "sqlalchemy", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "agno[scheduler]"]
 voice = ["agno[os,openai]", "websockets>=13", "silero-vad>=6.2,<7", "onnxruntime>=1.20", "numpy>=1.26"]
 os = ["fastapi", "python-multipart>=0.0.18", "uvicorn", "websockets", "sqlalchemy[asyncio]", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "agno[scheduler]"]
 mcp = ["mcp>=2.1.0,<3.0.0", "fastmcp>=4.0.0,<5"]

@@ -2,6 +2,62 @@
 
 ## 2026-10-02
 
+### Gemini Live STT and Gemini TTS
+
+**Status:** PASS for offline checks; NOT RUN against Google
+
+**Description:** Added `GeminiLiveSTT` and `GeminiTTS`, built from Google's Live
+transcription guide, Live API reference, speech generation guide, and Interactions
+streaming guide, read from the pages' raw code samples. Gemini Live has no word
+timestamps, so final segments go to the oldest open turn and partial text to the
+newest. Moved the phrase loop shared with `OpenAITTS` into `tts/_phrases.py`. Fixed a
+shared-helper bug where a committed turn shorter than 50 ms completed before any
+transcript was finalized.
+
+**Result:** 114 voice tests passed, including 7 new Gemini tests and a regression
+test for the short-turn bug. No keys were read and no live requests were made.
+
+---
+
+### Deepgram, Soniox, and ElevenLabs providers
+
+**Status:** PASS for offline checks; NOT RUN against live providers
+
+**Description:** Added `DeepgramSTT`, `SonioxSTT`, and `ElevenLabsTTS` over raw
+WebSockets, built from each provider's current documentation. Recognition results
+are matched to turns by audio timestamp, and a committed turn completes once the
+provider has finalized its audio or after a fallback timeout. Ran 18 new tests
+against scripted sockets, the full voice suite, mypy on the voice package, and
+`voice_providers.py --check` for all nine STT/TTS combinations.
+
+**Result:** 105 voice tests passed and mypy reported no issues. No provider keys
+were read and no live requests were made, so recognition accuracy across
+languages and accents and real latency are not yet measured. Unconfirmed from the documentation
+and worth checking live: Deepgram accepting 24 kHz on nova-3 (Soniox is sent
+16 kHz instead), and ElevenLabs still sending audio after `close_context`.
+
+---
+
+### Agent-owned voice history
+
+**Status:** PASS for automated checks
+
+**Description:** Removed VoicePipe's private history list and `max_history_turns`.
+Each turn now sends only the new transcript with `add_history_to_context=True`, so
+the agent's db and history settings decide context and every run is stored once.
+Agents without a db receive an `InMemoryDb` at connect time. After an interruption,
+the next turn starts with a note of what the user heard, restating the user's words
+only when the cancelled run is excluded from history. Also removed a duplicate `os`
+extra in `libs/agno/pyproject.toml` left by the main-branch merge, which had broken
+ruff and pytest configuration parsing.
+
+**Result:** 87 Python voice tests and 8 Node client tests passed. New tests cover the
+in-memory db fallback and interruption notes for cancelled and completed runs. A
+probe with a real `Agent`, `InMemoryDb`, and an offline fake model confirmed that
+the second run receives the first run's messages. No live provider run was made.
+
+---
+
 ### voice_computer_use.py
 
 **Status:** NOT RUN

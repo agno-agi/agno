@@ -139,13 +139,15 @@ class Talker:
     output_schema = None
 
     def __init__(self):
+        # A real Agent always has a db attribute; a placeholder skips the in-memory fallback.
+        self.db = object()
         self.calls = []
         self.finish = asyncio.Event()
         self.finish.set()
         self.cancel_cleanup = None
 
-    async def arun(self, messages, **kwargs):
-        self.calls.append(([m.content for m in messages], kwargs))
+    async def arun(self, message, **kwargs):
+        self.calls.append((message, kwargs))
         try:
             yield SimpleNamespace(event="RunContent", content="Hello. ")
             await self.finish.wait()
@@ -187,14 +189,14 @@ async def test_live_transcript_and_audio_arrive_before_agent_finishes():
         packet = (await socket.next("audio"))["data"]
         assert struct.unpack("<II", packet[:8]) == (1, 0)
         assert not any(event["type"] == "reply_done" for event in socket.sent)
-        messages, args = pipe.agent.calls[0]
-        assert messages == ["What are you?"]
+        message, args = pipe.agent.calls[0]
+        assert message == "What are you?"
         assert args == {
             "stream": True,
             "stream_events": True,
             "session_id": "server-session",
             "user_id": "caller",
-            "add_history_to_context": False,
+            "add_history_to_context": True,
         }
         pipe.agent.finish.set()
         await socket.next("reply_done")
@@ -233,8 +235,12 @@ async def test_interrupt_flushes_before_cancel_cleanup_and_history_uses_playback
         await socket.next("speech_stopped")
         await recognizer.transcripts.put(Transcript(2, "Second", True))
         await socket.next("reply_done")
-        history = pipe.agent.calls[-1][0]
-        assert history == ["First", "Hello. [The user interrupted the reply.]", "Second"]
+        # The run was still going, so it is cancelled and left out of Agno history;
+        # the next turn restates it with only the audio that actually played.
+        assert pipe.agent.calls[-1][0] == (
+            "[Your previous reply was cut off. The user interrupted the reply. "
+            'The user had said: "First". Of that reply, they heard only: "Hello.".]\n\nSecond'
+        )
         socket.control(type="stop")
         await asyncio.wait_for(task, 3)
     finally:
@@ -260,7 +266,7 @@ async def test_out_of_order_finals_preserve_spoken_turn_order():
         assert not pipe.agent.calls
         await recognizer.transcripts.put(Transcript(1, "first half", True))
         await socket.next("reply_done")
-        assert pipe.agent.calls[0][0] == ["first half second half"]
+        assert pipe.agent.calls[0][0] == "first half second half"
         socket.control(type="stop")
         await asyncio.wait_for(task, 3)
     finally:
@@ -279,7 +285,9 @@ async def test_concurrent_callers_have_separate_sessions_and_context():
         await first.next("reply_done")
         await utterance(second, pipe.stt_model.sessions[1], "Bob")
         await second.next("reply_done")
-        assert [call[0] for call in pipe.agent.calls] == [["Alice"], ["Bob"]]
+        assert [call[0] for call in pipe.agent.calls] == ["Alice", "Bob"]
+        sessions = [call[1]["session_id"] for call in pipe.agent.calls]
+        assert sessions == [ready1["session_id"], ready2["session_id"]]
         first.control(type="stop")
         second.control(type="stop")
         await asyncio.wait_for(asyncio.gather(*tasks), 3)
@@ -374,7 +382,56 @@ async def test_response_timeout_cancels_both_streams_and_reports_failure():
         pipe.agent.finish.set()
         await utterance(socket, pipe.stt_model.sessions[0], "Try again", 2)
         await socket.next("reply_done")
-        assert "reply failed" in pipe.agent.calls[-1][0][1]
+        assert "The reply failed before playback completed." in pipe.agent.calls[-1][0]
+        assert pipe.agent.calls[-1][0].endswith("Try again")
+        socket.control(type="stop")
+        await asyncio.wait_for(task, 3)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_agent_without_db_gets_in_memory_history_store():
+    from agno.db.in_memory import InMemoryDb
+
+    pipe, socket = make_pipe(), Socket()
+    pipe.agent.db = None
+    task = asyncio.create_task(pipe._serve(socket))
+    try:
+        await socket.next("ready")
+        assert isinstance(pipe.agent.db, InMemoryDb)
+        socket.control(type="stop")
+        await asyncio.wait_for(task, 3)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_finished_run_interrupted_during_playback_only_reports_what_was_heard():
+    pipe, socket = make_pipe(), Socket()
+    task = asyncio.create_task(pipe._serve(socket))
+    try:
+        await socket.next("ready")
+        recognizer = pipe.stt_model.sessions[0]
+        await utterance(socket, recognizer, "First")
+        await socket.next("audio")
+        # Wait for the agent run to finish; only playback is still in progress.
+        while not any(event["type"] == "assistant_complete" for event in socket.sent):
+            await asyncio.sleep(0.01)
+        socket.control(type="played", reply_id=1, samples=240)
+        socket.audio(1)
+        await socket.next("stop_playback")
+        socket.audio(0)
+        await socket.next("speech_stopped")
+        await recognizer.transcripts.put(Transcript(2, "Second", True))
+        await socket.next("reply_done")
+        # A completed run stays in Agno history, so the user's words are not repeated.
+        assert pipe.agent.calls[-1][0] == (
+            "[Your previous reply was cut off. The user interrupted the reply. "
+            'Of that reply, they heard only: "Hello.".]\n\nSecond'
+        )
         socket.control(type="stop")
         await asyncio.wait_for(task, 3)
     finally:

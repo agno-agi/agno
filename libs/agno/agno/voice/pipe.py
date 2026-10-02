@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Deque, Dict, List, Optiona
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.models.message import Message
 from agno.voice.base import FRAME_SAMPLES, SAMPLE_RATE, STTModel, STTSession, TTSModel, TTSSession, VAD, VADSession
 
 if TYPE_CHECKING:
@@ -27,8 +26,11 @@ class VoicePipe:
     Register with ``AgentOS(live_sockets=[pipe])`` to serve it at the WebSocket
     route ``/voice/{id}/pipe``. Clients send PCM16, mono, 24 kHz audio in
     768-sample frames. Each connection owns its speech provider
-    sessions, VAD, conversation context, and server-generated agent session ID.
+    sessions, VAD, and server-generated agent session ID.
     The agent's model, instructions, and tools are reused without modification.
+    Conversation history comes from the agent's own session storage, so voice
+    turns are saved as normal runs; the agent's num_history_runs and
+    num_history_messages decide how much history each turn includes.
     """
 
     agent: Agent
@@ -36,7 +38,6 @@ class VoicePipe:
     stt_model: STTModel
     tts_model: TTSModel
     id: str = "voice"
-    max_history_turns: int = 10
     max_audio_frames: int = 64
     max_utterance_seconds: float = 60.0
     transcription_timeout: float = 15.0
@@ -50,8 +51,8 @@ class VoicePipe:
     def __post_init__(self) -> None:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", self.id):
             raise ValueError("VoicePipe id must be a URL-safe name of 1-64 characters.")
-        if self.max_history_turns < 1 or self.max_audio_frames < 1:
-            raise ValueError("VoicePipe history and audio queue limits must be positive.")
+        if self.max_audio_frames < 1:
+            raise ValueError("VoicePipe max_audio_frames must be positive.")
         if (
             min(self.max_utterance_seconds, self.transcription_timeout, self.connection_timeout, self.response_timeout)
             <= 0
@@ -68,6 +69,17 @@ class VoicePipe:
         self, websocket: "WebSocket", user_id: Optional[str] = None, session_id: Optional[str] = None
     ) -> None:
         # AgentOS accepts and authenticates the connection before entering here.
+        # Agno only keeps history through a db. Check at connect time, after
+        # AgentOS has had the chance to assign its own db to the agent.
+        if self.agent.db is None:
+            from agno.db.in_memory import InMemoryDb
+            from agno.utils.log import log_warning
+
+            log_warning(
+                f"Voice pipe '{self.id}': agent has no db, using an in-memory db. "
+                "Voice history and runs will not survive a restart."
+            )
+            self.agent.db = InMemoryDb()
         try:
             async with AsyncExitStack() as stack:
                 vad = await asyncio.wait_for(self.vad._create_session(), timeout=self.connection_timeout)
@@ -116,13 +128,17 @@ class _Turn:
 class _Reply:
     id: int
     stopped_at: float
-    assistant: Message
+    prompt: str
     started_at: float = field(default_factory=time.perf_counter)
     text: str = ""
+    heard: str = ""
     sent_samples: int = 0
     played_samples: int = 0
     marks: List[Tuple[int, str]] = field(default_factory=list)
     interrupted: bool = False
+    # The agent run was still going when interrupted, so Agno stores it as
+    # cancelled and leaves it out of later history.
+    run_cancelled: bool = False
     interruption_note: str = "The user interrupted the reply."
     playback_started: bool = False
     playback_progress: asyncio.Event = field(default_factory=asyncio.Event)
@@ -153,7 +169,8 @@ class _VoiceSession:
         self.turns: Dict[int, _Turn] = {}
         self.turn_id, self.reply_id = 0, 0
         self.speaking = False
-        self.history: List[Message] = []
+        # The last interrupted reply, described to the agent on the next turn.
+        self.interrupted_reply: Optional[_Reply] = None
         self.current: Optional[_Reply] = None
         self.replies: Dict[int, _Reply] = {}
         self.responses: Set[asyncio.Task] = set()
@@ -174,21 +191,29 @@ class _VoiceSession:
         )
 
     def _update_heard(self, reply: _Reply) -> None:
-        heard = " ".join(text for end, text in reply.marks if end <= reply.played_samples).strip()
-        if reply.interrupted:
-            heard = (heard + f" [{reply.interruption_note}]").strip()
-        reply.assistant.content = heard
+        reply.heard = " ".join(text for end, text in reply.marks if end <= reply.played_samples).strip()
+
+    def _interruption_context(self) -> str:
+        """Describe the last interrupted reply, built late so final playback ACKs count."""
+        reply, self.interrupted_reply = self.interrupted_reply, None
+        if reply is None:
+            return ""
+        # A cancelled run is left out of Agno history, so restate what the user said.
+        said = f' The user had said: "{reply.prompt}".' if reply.run_cancelled else ""
+        heard = f'they heard only: "{reply.heard}"' if reply.heard else "they heard none of it"
+        return f"[Your previous reply was cut off. {reply.interruption_note}{said} Of that reply, {heard}.]"
 
     async def _interrupt(self, note: str = "The user interrupted the reply.") -> None:
         reply = self.current
         if reply is None:
             return
-        reply.interrupted = reply.played_samples < reply.sent_samples or (
-            reply.task is not None and not reply.task.done()
-        )
+        reply.run_cancelled = reply.task is not None and not reply.task.done()
+        reply.interrupted = reply.played_samples < reply.sent_samples or reply.run_cancelled
         reply.interruption_note = note
         self.current = None
         self._update_heard(reply)
+        if reply.interrupted:
+            self.interrupted_reply = reply
         # Flushing the browser must not wait for a remote model's cancellation cleanup.
         if reply.task is not None and reply.task is not asyncio.current_task():
             reply.task.cancel()
@@ -298,19 +323,16 @@ class _VoiceSession:
         if not prompt:
             await self._send("listening")
             return
-        self.history = self.history[-self.pipe.max_history_turns * 2 :]
-        self.history.append(Message(role="user", content=prompt))
-        context = [Message(role=m.role, content=m.content) for m in self.history if m.content]
-        assistant = Message(role="assistant", content="")
-        self.history.append(assistant)
+        context = self._interruption_context()
+        message = f"{context}\n\n{prompt}" if context else prompt
         self.reply_id += 1
-        reply = _Reply(self.reply_id, stopped_at or time.perf_counter(), assistant)
+        reply = _Reply(self.reply_id, stopped_at or time.perf_counter(), prompt)
         self.current = reply
         self.replies[reply.id] = reply
         # Retain recent replies to accept the browser's final ACK after a flush.
         for old_id in list(self.replies)[:-4]:
             del self.replies[old_id]
-        reply.task = asyncio.create_task(self._respond(reply, context))
+        reply.task = asyncio.create_task(self._respond(reply, message))
         self.responses.add(reply.task)
         reply.task.add_done_callback(self._response_finished)
 
@@ -324,7 +346,7 @@ class _VoiceSession:
     async def _response_errors(self) -> None:
         raise await self.failures.get()
 
-    async def _respond(self, reply: _Reply, context: List[Message]) -> None:
+    async def _respond(self, reply: _Reply, message: str) -> None:
         if self.current is not reply or reply.interrupted:
             return
         tokens: asyncio.Queue = asyncio.Queue(maxsize=64)
@@ -333,7 +355,7 @@ class _VoiceSession:
             await self._reply_send(reply, "reply_started")
             await self._metric(reply, "transcript_final")
             tasks = [
-                asyncio.create_task(self._think(reply, context, tokens)),
+                asyncio.create_task(self._think(reply, message, tokens)),
                 asyncio.create_task(self._speak(reply, tokens)),
             ]
             await asyncio.wait_for(asyncio.gather(*tasks), timeout=self.pipe.response_timeout)
@@ -357,16 +379,16 @@ class _VoiceSession:
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _think(self, reply: _Reply, context: List[Message], tokens: asyncio.Queue) -> None:
+    async def _think(self, reply: _Reply, message: str, tokens: asyncio.Queue) -> None:
         started_at = time.perf_counter()
         stream = self.pipe.agent.arun(
-            context,
+            message,
             stream=True,
             stream_events=True,
             session_id=self.session_id,
             user_id=self.user_id,
-            # Voice history is based on playback, rather than unplayed generated text.
-            add_history_to_context=False,
+            # A voice call needs memory even when the agent's default leaves it off.
+            add_history_to_context=True,
         )
         try:
             async for event in stream:

@@ -7,7 +7,7 @@ decide on one action, act, then take another screenshot to check the result.
 ## Run
 
 ```bash
-pip install pyautogui
+pip install pyautogui ddgs
 export OPENAI_API_KEY="..."
 python cookbook/91_tools/computer_use/computer_use_agent.py
 ```

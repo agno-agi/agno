@@ -3,8 +3,9 @@
 Reuses the agent from cookbook/91_tools/computer_use/computer_use_agent.py and
 serves it at ws://localhost:7777/voice/computer/pipe. Talk to it with the test
 client in client/ (see README.md), opened at http://localhost:3000/?pipe=computer.
-Requires pyautogui, OPENAI_API_KEY, and CARTESIA_API_KEY, or set
-VOICE_TTS_PROVIDER=openai for an OpenAI-only setup.
+Listens with Soniox. Requires pyautogui, OPENAI_API_KEY, SONIOX_API_KEY, and
+CARTESIA_API_KEY, or set VOICE_TTS_PROVIDER=openai to speak with OpenAI instead
+of Cartesia.
 Use --check for a route check without provider calls.
 
 Try saying:
@@ -26,7 +27,7 @@ from pathlib import Path
 from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 from agno.voice import VoicePipe
-from agno.voice.stt.openai import OpenAIRealtimeSTT
+from agno.voice.stt.soniox import SonioxSTT
 from agno.voice.tts.cartesia import CartesiaTTS
 from agno.voice.tts.openai import OpenAITTS
 from agno.voice.vad.silero import SileroVAD
@@ -47,10 +48,11 @@ voice = VoicePipe(
     id="computer",
     agent=agent,
     vad=SileroVAD(min_silence_duration_ms=320),
-    stt_model=OpenAIRealtimeSTT(language="en"),
+    # Soniox takes language codes, not regional variants such as en-IN.
+    stt_model=SonioxSTT(language_hints=["en"]),
     tts_model=(
         CartesiaTTS(
-            voice=getenv("CARTESIA_VOICE_ID", "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4"),
+            voice="7ea5e9c2-b719-4dc3-b870-5ba5f14d31d8",
             language="en",
         )
         if tts_provider == "cartesia"
@@ -93,7 +95,7 @@ if __name__ == "__main__":
             )
         print("Computer use agent and voice route passed. No provider calls.")
     else:
-        required_keys = ["OPENAI_API_KEY"] + (
+        required_keys = ["OPENAI_API_KEY", "SONIOX_API_KEY"] + (
             ["CARTESIA_API_KEY"] if tts_provider == "cartesia" else []
         )
         missing = [name for name in required_keys if not getenv(name)]
