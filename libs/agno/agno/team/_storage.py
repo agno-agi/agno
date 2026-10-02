@@ -334,6 +334,11 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
     if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
         team_session = cast(TeamSession, _read_session(team, session_id=session_id, user_id=user_id))
 
+    if team_session is not None and team_session.team_data is None:
+        team_session.team_data = get_team_data(team)
+    if team_session is not None and team_session.session_data is None:
+        team_session.session_data = {}
+
     # Create new session if none found
     if team_session is None:
         log_debug(f"Creating new TeamSession: {session_id}")
@@ -407,6 +412,11 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
             team_session = cast(TeamSession, await _aread_session(team, session_id=session_id, user_id=user_id))
         else:
             team_session = cast(TeamSession, _read_session(team, session_id=session_id, user_id=user_id))
+
+    if team_session is not None and team_session.team_data is None:
+        team_session.team_data = get_team_data(team)
+    if team_session is not None and team_session.session_data is None:
+        team_session.session_data = {}
 
     # Create new session if none found
     if team_session is None:
