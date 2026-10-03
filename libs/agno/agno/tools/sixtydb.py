@@ -93,6 +93,19 @@ def _decode_wav(audio: bytes, offset: int) -> tuple[bytes, int]:
     size = int.from_bytes(audio[offset + 4 : offset + 8], "little") + 8
     if size < 12:
         raise _UnrecognizedWAVPrefix("60db returned invalid WAV size")
+    container_end = min(offset + size, len(audio))
+    chunk_offset = offset + 12
+    while chunk_offset + 8 <= container_end:
+        chunk_size = int.from_bytes(audio[chunk_offset + 4 : chunk_offset + 8], "little")
+        if (
+            audio[chunk_offset : chunk_offset + 4] == b"fmt "
+            and chunk_size >= 16
+            and chunk_offset + 24 <= container_end
+        ):
+            break
+        chunk_offset += 8 + chunk_size + (chunk_size % 2)
+    else:
+        raise _UnrecognizedWAVPrefix("60db audio has no WAV format descriptor")
     if size > len(audio) - offset:
         raise ValueError("60db returned truncated WAV audio")
     with wave.open(io.BytesIO(audio[offset : offset + size]), "rb") as wav:
