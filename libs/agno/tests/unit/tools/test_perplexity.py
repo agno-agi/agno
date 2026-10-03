@@ -140,6 +140,22 @@ def test_search_with_custom_max_results():
         assert call_kwargs[1]["json"]["max_results"] == 10
 
 
+def test_search_with_zero_max_results():
+    """Test search with explicit max_results=0 is not replaced by default."""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = {"results": []}
+
+    tools = PerplexitySearch(api_key="test_key", max_results=5)
+
+    with patch("agno.tools.perplexity.httpx.post", return_value=mock_response) as mock_post:
+        tools.search("test query", max_results=0)
+
+        call_kwargs = mock_post.call_args
+        assert call_kwargs[1]["json"]["max_results"] == 0
+
+
 def test_search_with_filters():
     """Test search includes configured filters in the request body."""
     mock_response = Mock()
@@ -280,6 +296,30 @@ async def test_asearch_success():
         call_kwargs = mock_client.post.call_args
         assert call_kwargs[1]["json"]["query"] == "AI agents"
         assert call_kwargs[1]["json"]["max_results"] == 5
+
+
+@pytest.mark.asyncio
+async def test_asearch_with_zero_max_results():
+    """Test async search with explicit max_results=0 is not replaced by default."""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = {"results": []}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    tools = PerplexitySearch(api_key="test_key", max_results=5)
+
+    with patch("agno.tools.perplexity.httpx.AsyncClient") as mock_async_client:
+        mock_async_client.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_async_client.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await tools.asearch("test query", max_results=0)
+
+        mock_client.post.assert_called_once()
+        call_kwargs = mock_client.post.call_args
+        assert call_kwargs[1]["json"]["max_results"] == 0
 
 
 @pytest.mark.asyncio
