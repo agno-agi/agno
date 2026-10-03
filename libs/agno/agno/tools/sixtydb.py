@@ -324,11 +324,10 @@ class SixtyDBTools(Toolkit):
                 audio = _record_audio(json.loads(body), formats)
             elif content_type in {"audio/wav", "audio/x-wav", "audio/pcm", "application/octet-stream"}:
                 audio = body
-                if audio.startswith((b"ID3", b"OggS", b"fLaC")):
-                    raise ValueError("60db returned compressed audio instead of PCM")
                 if content_type in {"audio/wav", "audio/x-wav"}:
                     formats[0] = "wav"
                 elif content_type == "audio/pcm":
+                    # Raw PCM has no magic number; preserve the declared sample bytes.
                     formats[0] = "pcm"
             else:
                 raise ValueError("Unsupported audio response")
