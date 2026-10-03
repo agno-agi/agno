@@ -128,7 +128,14 @@ def apply_sorting(
 def apply_pagination(
     query_args: Dict[str, Any], limit: Optional[int] = None, page: Optional[int] = None
 ) -> Dict[str, Any]:
-    """Apply pagination to MongoDB query."""
+    """Apply pagination to MongoDB query.
+
+    Raises ``ValueError`` when ``page`` is provided without ``limit``, or when ``page``
+    is below 1 — see ``agno.db.utils.validate_pagination``.
+    """
+    from agno.db.utils import validate_pagination
+
+    validate_pagination(limit, page)
     if limit is not None:
         query_args["limit"] = limit
         if page is not None:
