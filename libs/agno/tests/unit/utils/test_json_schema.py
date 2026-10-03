@@ -452,3 +452,46 @@ def test_get_json_schema_with_mixed_nested_structures():
     assert "contact_info" in dataclass_schema["properties"]
     assert "address" in pydantic_schema["properties"]["contact_info"]["properties"]
     assert "address" in dataclass_schema["properties"]["contact_info"]["properties"]
+
+
+def test_get_json_schema_dataclass_with_postponed_annotations():
+    """A dataclass whose field annotations are strings must still produce a schema.
+
+    Regression test: a dataclass declared in a module using
+    `from __future__ import annotations` exposes its field types as strings. The
+    unresolved string raised AttributeError, which dropped the whole parameter
+    from the generated schema.
+    """
+
+    @dataclass
+    class PostponedConfig:
+        name: str
+        count: int
+
+    # Emulate `from __future__ import annotations`: the annotations are strings.
+    PostponedConfig.__annotations__ = {"name": "str", "count": "int"}
+    for field_name, annotation in PostponedConfig.__annotations__.items():
+        PostponedConfig.__dataclass_fields__[field_name].type = annotation
+
+    schema = get_json_schema({"cfg": PostponedConfig})
+
+    assert "cfg" in schema["properties"]
+    properties = schema["properties"]["cfg"]["properties"]
+    assert properties["name"]["type"] == "string"
+    assert properties["count"]["type"] == "integer"
+
+
+def test_get_json_schema_dataclass_with_unresolvable_annotation():
+    """An annotation that cannot be resolved must not drop the parameter."""
+
+    @dataclass
+    class UnresolvableConfig:
+        known: str
+        unknown: "NotDefinedAnywhere"  # noqa: F821
+
+    schema = get_json_schema({"cfg": UnresolvableConfig})
+
+    assert "cfg" in schema["properties"]
+    properties = schema["properties"]["cfg"]["properties"]
+    assert properties["known"]["type"] == "string"
+    assert properties["unknown"]["type"] == "object"
