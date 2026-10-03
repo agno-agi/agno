@@ -3,6 +3,7 @@
 import json
 import os
 import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -482,3 +483,62 @@ def test_create_bar_chart_with_json_string(viz_tools):
         assert result_dict["status"] == "success"
         assert result_dict["chart_type"] == "bar_chart"
         assert result_dict["data_points"] == 3
+
+
+# -- path-safety: filename is a model-supplied tool argument -------------------
+
+# Every chart method takes the same model-controlled ``filename`` and must keep the
+# written file inside ``output_dir``. Parametrizing over all five guards against the
+# fix being applied to only some of the identical sinks. Each entry carries the method's
+# own data kwargs (signatures differ — scatter takes x_data/y_data).
+_CHART_CALLS = [
+    ("create_bar_chart", {"data": {"A": 1, "B": 2}}),
+    ("create_line_chart", {"data": {"A": 1, "B": 2}}),
+    ("create_pie_chart", {"data": {"A": 1, "B": 2}}),
+    ("create_scatter_plot", {"x_data": [1, 2, 3], "y_data": [4, 5, 6]}),
+    ("create_histogram", {"data": [1, 2, 3, 4, 5]}),
+]
+
+
+def _assert_contained(result_json: str, outside: Path, output_dir: str) -> None:
+    """The write never landed at ``outside``; anything written stayed under output_dir."""
+    result = json.loads(result_json)
+    assert not outside.exists(), f"wrote outside output_dir to {outside}"
+    if result.get("status") == "success":
+        written = Path(result["file_path"]).resolve()
+        assert written.is_relative_to(Path(output_dir).resolve()), f"escaped to {written}"
+
+
+@pytest.mark.parametrize("method_name,kwargs", _CHART_CALLS)
+def test_chart_traversal_filename_stays_inside_output_dir(viz_tools, temp_output_dir, tmp_path, method_name, kwargs):
+    """A ``../`` filename must not write outside output_dir (path components stripped)."""
+    outside = tmp_path / "escaped.png"
+    rel = os.path.relpath(str(outside), temp_output_dir)  # ../../.../escaped.png
+    assert ".." in rel
+
+    _assert_contained(getattr(viz_tools, method_name)(filename=rel, **kwargs), outside, temp_output_dir)
+
+
+@pytest.mark.parametrize("method_name,kwargs", _CHART_CALLS)
+def test_chart_absolute_filename_stays_inside_output_dir(viz_tools, temp_output_dir, tmp_path, method_name, kwargs):
+    """An absolute filename must not escape output_dir (os.path.join drops the base)."""
+    outside = tmp_path / "abs.png"
+
+    _assert_contained(getattr(viz_tools, method_name)(filename=str(outside), **kwargs), outside, temp_output_dir)
+
+
+@pytest.mark.parametrize("method_name,kwargs", _CHART_CALLS)
+def test_chart_rejects_unsafe_filename(viz_tools, method_name, kwargs):
+    """A structurally invalid filename (reserved device name) is refused, not written."""
+    result = json.loads(getattr(viz_tools, method_name)(filename="CON", **kwargs))
+
+    assert result["status"] == "error"
+
+
+@pytest.mark.parametrize("method_name,kwargs", _CHART_CALLS)
+def test_chart_accepts_plain_filename(viz_tools, temp_output_dir, method_name, kwargs):
+    """A plain filename still works and lands inside output_dir."""
+    result = json.loads(getattr(viz_tools, method_name)(filename="chart.png", **kwargs))
+
+    assert result["status"] == "success"
+    assert (Path(temp_output_dir) / "chart.png").exists()
