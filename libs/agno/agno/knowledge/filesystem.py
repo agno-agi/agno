@@ -93,7 +93,7 @@ class FileSystemKnowledge:
         import fnmatch
 
         results: List[Document] = []
-        limit = max_results or self.max_results
+        limit = max_results if max_results is not None else self.max_results
 
         for root, dirs, files in os_walk(self.base_path):
             # Filter out excluded directories
@@ -168,7 +168,7 @@ class FileSystemKnowledge:
     def _grep(self, query: str, max_results: Optional[int] = None) -> List[Document]:
         """Search for a pattern within file contents."""
         results: List[Document] = []
-        limit = max_results or self.max_results
+        limit = max_results if max_results is not None else self.max_results
 
         try:
             pattern = re_compile(query, IGNORECASE)
@@ -401,7 +401,8 @@ class FileSystemKnowledge:
         Returns:
             List of Document objects.
         """
-        return self._grep(query, max_results=max_results or 10)
+        limit = max_results if max_results is not None else 10
+        return self._grep(query, max_results=limit)
 
     async def aretrieve(
         self,
