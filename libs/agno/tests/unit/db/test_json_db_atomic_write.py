@@ -13,6 +13,15 @@ from agno.db.json import JsonDb
 from agno.session import AgentSession
 
 
+def create_symlink(link, target, target_is_directory=False):
+    try:
+        link.symlink_to(target, target_is_directory=target_is_directory)
+    except OSError as error:
+        if os.name == "nt" and (getattr(error, "winerror", None) == 1314 or error.errno == errno.EPERM):
+            pytest.skip("Windows symbolic-link creation privilege is unavailable")
+        raise
+
+
 def saved_table(tmp_path):
     db = JsonDb(db_path=str(tmp_path))
     db.upsert_session(AgentSession(session_id="saved", agent_id="agent", session_data={"session_name": "saved"}))
@@ -75,7 +84,7 @@ def test_session_save_keeps_existing_table_symlink(tmp_path):
     db, table, _ = saved_table(tmp_path)
     target = tmp_path / "saved-table.json"
     table.rename(target)
-    table.symlink_to(target.name)
+    create_symlink(table, target.name)
     db.upsert_session(AgentSession(session_id="new", agent_id="agent"))
 
     assert table.is_symlink()
@@ -120,7 +129,7 @@ def test_session_save_follows_database_directory_symlink(tmp_path):
     target = tmp_path / "tables"
     target.mkdir()
     linked_directory = tmp_path / "linked"
-    linked_directory.symlink_to(target, target_is_directory=True)
+    create_symlink(linked_directory, target, target_is_directory=True)
     db = JsonDb(db_path=str(linked_directory))
     db.upsert_session(AgentSession(session_id="saved", agent_id="agent"))
 
