@@ -1,5 +1,15 @@
 # Test Log
 
+### agent_guild_tools.py
+
+**Status:** PASS
+
+**Description:** Added a read-only-by-default Agent Guild example for capability-based trust checks, supply and demand discovery, and signed Agent Passport verification. The example also documents the explicit opt-in required for free registration and trial provisioning.
+
+**Result:** The cookbook module imports successfully without making a network request. The focused toolkit suite passes all 15 tests, covering sync and async endpoint contracts, authentication, 402 no-auto-spend behavior, passport path encoding and verification, opt-in registration, free-trial key reuse, and structured HTTP/network failures. Revalidated on 2026-09-08 after merging upstream main: all 15 focused tests, the full format/validation scripts, and a cookbook import with network/DNS blocked pass. The live model prompt was not run.
+
+---
+
 ### atomic_mail_tools.py (AtomicMailTools + workflow)
 
 **Status:** PASS
