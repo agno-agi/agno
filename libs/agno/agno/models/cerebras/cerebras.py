@@ -47,10 +47,23 @@ class Cerebras(Model):
     # Request parameters
     parallel_tool_calls: Optional[bool] = None
     max_completion_tokens: Optional[int] = None
+    max_tokens: Optional[int] = None
     repetition_penalty: Optional[float] = None
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     top_k: Optional[int] = None
+    stop: Optional[Union[str, List[str]]] = None
+    seed: Optional[int] = None
+    reasoning_effort: Optional[str] = None
+    logprobs: Optional[bool] = None
+    top_logprobs: Optional[int] = None
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
+    logit_bias: Optional[Dict[str, float]] = None
+    service_tier: Optional[str] = None
+    prompt_cache_key: Optional[str] = None
+    prediction: Optional[Dict[str, Any]] = None
+    user: Optional[str] = None
     strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
@@ -174,6 +187,7 @@ class Cerebras(Model):
     def get_request_params(
         self,
         tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
@@ -186,14 +200,26 @@ class Cerebras(Model):
         # Define base request parameters
         base_params = {
             "max_completion_tokens": self.max_completion_tokens,
+            "max_tokens": self.max_tokens,
             "repetition_penalty": self.repetition_penalty,
             "temperature": self.temperature,
             "top_p": self.top_p,
             "top_k": self.top_k,
+            "stop": self.stop,
+            "seed": self.seed,
+            "reasoning_effort": self.reasoning_effort,
+            "logprobs": self.logprobs,
+            "top_logprobs": self.top_logprobs,
+            "frequency_penalty": self.frequency_penalty,
+            "presence_penalty": self.presence_penalty,
+            "logit_bias": self.logit_bias,
+            "service_tier": self.service_tier,
+            "prompt_cache_key": self.prompt_cache_key,
+            "prediction": self.prediction,
+            "user": self.user,
             "extra_headers": self.extra_headers,
             "extra_query": self.extra_query,
             "extra_body": self.extra_body,
-            "request_params": self.request_params,
         }
 
         # Filter out None values
@@ -217,6 +243,8 @@ class Cerebras(Model):
                 request_params["parallel_tool_calls"] = False
             elif self.parallel_tool_calls is not None:
                 request_params["parallel_tool_calls"] = self.parallel_tool_calls
+            if tool_choice is not None:
+                request_params["tool_choice"] = tool_choice
 
         # Handle response format for structured outputs
         if response_format is not None:
@@ -270,7 +298,7 @@ class Cerebras(Model):
         provider_response = self.get_client().chat.completions.create(
             model=self.id,
             messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
-            **self.get_request_params(response_format=response_format, tools=tools),
+            **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
         )
         assistant_message.metrics.stop_timer()
 
@@ -305,7 +333,7 @@ class Cerebras(Model):
         provider_response = await self.get_async_client().chat.completions.create(
             model=self.id,
             messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
-            **self.get_request_params(response_format=response_format, tools=tools),
+            **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
         )
         assistant_message.metrics.stop_timer()
 
@@ -342,7 +370,7 @@ class Cerebras(Model):
             model=self.id,
             messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             stream=True,
-            **self.get_request_params(response_format=response_format, tools=tools),
+            **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
         ):
             yield self._parse_provider_response_delta(chunk)  # type: ignore
 
@@ -377,7 +405,7 @@ class Cerebras(Model):
             model=self.id,
             messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             stream=True,
-            **self.get_request_params(response_format=response_format, tools=tools),
+            **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
         )
 
         async for chunk in async_stream:  # type: ignore
