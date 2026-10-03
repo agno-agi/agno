@@ -245,3 +245,15 @@ def test_invalid_http_audio_metadata(headers):
     with endpoint(headers=headers) as (url, _):
         result = tool(url).text_to_speech(Agent(), "Hello")
     assert not result.audios
+
+
+def test_ndjson_wav_chunks_preserve_all_audio():
+    body = (
+        b"\n".join(json.dumps({"audioContent": base64.b64encode(wav_bytes()).decode()}).encode() for _ in range(2))
+        + b'\n{"type":"complete"}\n'
+    )
+    with endpoint(body, "application/x-ndjson") as (url, _):
+        result = tool(url).text_to_speech(Agent(), "Hello")
+    assert result.audios
+    with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
+        assert wav.readframes(wav.getnframes()) == PCM * 2

@@ -241,7 +241,11 @@ class SixtyDBTools(Toolkit):
                 },
             )
             if content_type in {"application/x-ndjson", "application/ndjson", "text/plain"}:
-                audio = b"".join(_record_audio(json.loads(line)) for line in body.splitlines() if line.strip())
+                audio = b"".join(
+                    _pcm(chunk)
+                    for line in body.splitlines()
+                    if line.strip() and (chunk := _record_audio(json.loads(line)))
+                )
             elif content_type == "application/json":
                 audio = _record_audio(json.loads(body))
             elif content_type in {"audio/wav", "audio/x-wav", "audio/pcm", "application/octet-stream"}:
