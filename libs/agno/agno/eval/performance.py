@@ -278,13 +278,14 @@ class PerformanceEval:
         # Start tracing memory
         tracemalloc.start()
 
-        self.func()
+        try:
+            self.func()
 
-        # Get peak memory usage
-        current, peak = tracemalloc.get_traced_memory()
-
-        # Stop tracing memory
-        tracemalloc.stop()
+            # Get peak memory usage
+            current, peak = tracemalloc.get_traced_memory()
+        finally:
+            # Release process-wide tracing even when the measured function fails.
+            tracemalloc.stop()
 
         self._set_log_level()  # Set log level incase function changed it
 
@@ -334,13 +335,14 @@ class PerformanceEval:
         # Start tracing memory
         tracemalloc.start()
 
-        await self.func()
+        try:
+            await self.func()
 
-        # Get peak memory usage
-        current, peak = tracemalloc.get_traced_memory()
-
-        # Stop tracing memory
-        tracemalloc.stop()
+            # Get peak memory usage
+            current, peak = tracemalloc.get_traced_memory()
+        finally:
+            # Cancellation must release tracing just like other failures.
+            tracemalloc.stop()
         self._set_log_level()  # Set log level incase function changed it
 
         # Convert to MiB and subtract baseline
@@ -418,14 +420,15 @@ class PerformanceEval:
         # Start tracing memory
         tracemalloc.start()
 
-        self.func()
+        try:
+            self.func()
 
-        # Get peak memory usage
-        current, peak = tracemalloc.get_traced_memory()
-        # Take snapshot before stopping
-        current_snapshot = tracemalloc.take_snapshot()
-        # Stop tracing memory
-        tracemalloc.stop()
+            # Get peak memory usage
+            current, peak = tracemalloc.get_traced_memory()
+            # Take snapshot before stopping
+            current_snapshot = tracemalloc.take_snapshot()
+        finally:
+            tracemalloc.stop()
 
         self._set_log_level()  # Set log level incase function changed it
 
@@ -462,14 +465,15 @@ class PerformanceEval:
         # Start tracing memory
         tracemalloc.start()
 
-        await self.func()
+        try:
+            await self.func()
 
-        # Get peak memory usage
-        current, peak = tracemalloc.get_traced_memory()
-        # Take snapshot before stopping
-        current_snapshot = tracemalloc.take_snapshot()
-        # Stop tracing memory
-        tracemalloc.stop()
+            # Get peak memory usage
+            current, peak = tracemalloc.get_traced_memory()
+            # Take snapshot before stopping
+            current_snapshot = tracemalloc.take_snapshot()
+        finally:
+            tracemalloc.stop()
 
         self._set_log_level()  # Set log level incase function changed it
 
