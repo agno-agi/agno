@@ -294,3 +294,18 @@ def test_ndjson_mixed_audio_records(chunks, expected):
     assert result.audios
     with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
         assert wav.readframes(wav.getnframes()) == expected
+
+
+@pytest.mark.parametrize("content_type", ["application/x-ndjson", "application/json"])
+@pytest.mark.parametrize("encoding,signature", [("wav", b"NOPE"), ("pcm", b"WAVE")])
+def test_ndjson_declared_format_controls_decoding(encoding, signature, content_type):
+    payload = b"RIFF\x08\x00\x00\x00" + signature + b"abcd"
+    body = json.dumps({"encoding": encoding, "audioContent": base64.b64encode(payload).decode()}).encode()
+    with endpoint(body, content_type) as (url, _):
+        result = tool(url).text_to_speech(Agent(), "Hello")
+    if encoding == "wav":
+        assert not result.audios
+    else:
+        assert result.audios
+        with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
+            assert wav.readframes(wav.getnframes()) == payload
