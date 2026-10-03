@@ -31,6 +31,9 @@ class TestPlivoTools:
             "list_messages",
             "list_calls",
             "lookup_number",
+            "send_verification",
+            "validate_verification",
+            "send_whatsapp",
         }
 
     def test_disabled_flag_unregisters_tool(self):
@@ -195,3 +198,92 @@ class TestPlivoTools:
 
         assert "E.164" in result["error"]
         tool.client.lookup.get.assert_not_called()
+
+    def test_send_verification_success(self):
+        """send_verification starts a Verify session and returns the session_uuid"""
+        tool = PlivoTools(auth_id="id", auth_token="token")
+        tool.client.verify_session.create.return_value = Mock(session_uuid="sess-1")
+
+        result = tool.send_verification(to="+14155551234")
+
+        tool.client.verify_session.create.assert_called_once_with(recipient="+14155551234", channel="sms")
+        assert "sess-1" in result
+
+    def test_send_verification_rejects_bad_channel(self):
+        """send_verification rejects a channel other than sms/voice and never calls the API"""
+        tool = PlivoTools(auth_id="id", auth_token="token")
+
+        result = tool.send_verification(to="+14155551234", channel="carrier-pigeon")
+
+        assert "channel" in result
+        tool.client.verify_session.create.assert_not_called()
+
+    def test_validate_verification_success(self):
+        """validate_verification reports verified only on Plivo's success message"""
+        tool = PlivoTools(auth_id="id", auth_token="token")
+        tool.client.verify_session.validate.return_value = Mock(message="session validated successfully")
+
+        result = tool.validate_verification(session_uuid="sess-1", otp="123456")
+
+        tool.client.verify_session.validate.assert_called_once_with("sess-1", otp="123456")
+        assert result.startswith("verified")
+
+    def test_validate_verification_wrong_code_not_verified(self):
+        """A non-success message is reported as not verified so a false accept never happens"""
+        tool = PlivoTools(auth_id="id", auth_token="token")
+        tool.client.verify_session.validate.return_value = Mock(message="incorrect otp")
+
+        result = tool.validate_verification(session_uuid="sess-1", otp="000000")
+
+        assert result.startswith("not verified")
+
+    def test_send_whatsapp_freeform_success(self):
+        """send_whatsapp sends freeform text with type_ whatsapp and returns the UUID"""
+        tool = PlivoTools(auth_id="id", auth_token="token")
+        tool.client.messages.create.return_value = Mock(message_uuid=["wa-1"])
+
+        result = tool.send_whatsapp(to="+14155551234", from_="+14155550000", body="hello")
+
+        tool.client.messages.create.assert_called_once_with(
+            src="+14155550000", dst="+14155551234", type_="whatsapp", text="hello"
+        )
+        assert "wa-1" in result
+
+    def test_send_whatsapp_template_success(self):
+        """send_whatsapp builds a Template object and sends it with type_ whatsapp"""
+        from plivo.utils.template import Template
+
+        tool = PlivoTools(auth_id="id", auth_token="token")
+        tool.client.messages.create.return_value = Mock(message_uuid=["wa-2"])
+        template = {
+            "name": "sample_purchase_feedback",
+            "language": "en_US",
+            "components": [{"type": "body", "parameters": [{"type": "text", "text": "Alex"}]}],
+        }
+
+        result = tool.send_whatsapp(to="+14155551234", from_="+14155550000", template=template)
+
+        _, kwargs = tool.client.messages.create.call_args
+        assert kwargs["type_"] == "whatsapp"
+        built = kwargs["template"]
+        assert isinstance(built, Template)
+        assert built.components[0].parameters[0].text == "Alex"
+        assert "wa-2" in result
+
+    def test_send_whatsapp_requires_body_or_template(self):
+        """send_whatsapp rejects a call with neither body nor template"""
+        tool = PlivoTools(auth_id="id", auth_token="token")
+
+        result = tool.send_whatsapp(to="+14155551234", from_="+14155550000")
+
+        assert "body or template" in result
+        tool.client.messages.create.assert_not_called()
+
+    def test_send_whatsapp_invalid_template_returns_error(self):
+        """A malformed template returns an error string instead of raising"""
+        tool = PlivoTools(auth_id="id", auth_token="token")
+
+        result = tool.send_whatsapp(to="+14155551234", from_="+14155550000", template={"name": "welcome"})
+
+        assert "invalid WhatsApp template" in result
+        tool.client.messages.create.assert_not_called()
