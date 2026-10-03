@@ -1512,6 +1512,8 @@ def _get_delegate_task_function(
 
         delegate_func = Function.from_callable(delegate_function, name="delegate_task_to_member")
 
+    delegate_func.requires_confirmation = True
+
     if team.respond_directly:
         delegate_func.stop_after_tool_call = True
         delegate_func.show_result = True
