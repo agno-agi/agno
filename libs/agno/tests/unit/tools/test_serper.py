@@ -9,8 +9,9 @@ from agno.tools.serper import SerperTools
 
 @pytest.fixture(autouse=True)
 def clear_env(monkeypatch):
-    """Ensure SERPER_API_KEY is unset unless explicitly needed."""
+    """Ensure SERPER_API_KEY and SERPER_API_BASE are unset unless explicitly needed."""
     monkeypatch.delenv("SERPER_API_KEY", raising=False)
+    monkeypatch.delenv("SERPER_API_BASE", raising=False)
 
 
 @pytest.fixture
@@ -362,3 +363,53 @@ def test_http_error_handling(api_tools):
         result_json = json.loads(result)
         assert "error" in result_json
         assert "404 Not Found" in result_json["error"]
+
+
+def test_base_url_defaults_to_serper():
+    """Without configuration the toolkit keeps pointing at Serper."""
+    tools = SerperTools(api_key="test_key")
+    assert tools.base_url == "https://google.serper.dev"
+
+
+def test_base_url_from_argument():
+    """An explicit base_url wins."""
+    tools = SerperTools(api_key="test_key", base_url="https://serpens.p.rapidapi.com")
+    assert tools.base_url == "https://serpens.p.rapidapi.com"
+
+
+def test_base_url_from_env(monkeypatch):
+    """SERPER_API_BASE configures the toolkit without touching the call site."""
+    monkeypatch.setenv("SERPER_API_BASE", "https://proxy.internal")
+    tools = SerperTools(api_key="test_key")
+    assert tools.base_url == "https://proxy.internal"
+
+
+def test_base_url_argument_beats_env(monkeypatch):
+    """The argument is the more specific setting, so it takes precedence."""
+    monkeypatch.setenv("SERPER_API_BASE", "https://proxy.internal")
+    tools = SerperTools(api_key="test_key", base_url="https://explicit.example")
+    assert tools.base_url == "https://explicit.example"
+
+
+def test_base_url_trailing_slash_stripped():
+    """A trailing slash would otherwise produce a double slash in the path."""
+    tools = SerperTools(api_key="test_key", base_url="https://proxy.internal/")
+    assert tools.base_url == "https://proxy.internal"
+
+
+def test_search_uses_custom_base_url(mock_search_response):
+    """The configured base URL is what the request actually goes to."""
+    tools = SerperTools(api_key="test_key", base_url="https://proxy.internal", num_results=5)
+    with patch("requests.request", return_value=mock_search_response) as mock_req:
+        tools.search_web("pytest testing")
+
+        assert mock_req.call_args[0][1] == "https://proxy.internal/search"
+
+
+def test_search_news_uses_custom_base_url(mock_news_response):
+    """Every endpoint built from the base URL moves with it, not just search."""
+    tools = SerperTools(api_key="test_key", base_url="https://proxy.internal", num_results=5)
+    with patch("requests.request", return_value=mock_news_response) as mock_req:
+        tools.search_news("pytest testing")
+
+        assert mock_req.call_args[0][1] == "https://proxy.internal/news"
