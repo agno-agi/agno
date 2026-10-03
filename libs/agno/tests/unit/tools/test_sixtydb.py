@@ -395,3 +395,12 @@ def test_binary_content_type_controls_decoding(content_type):
     else:
         assert not result.audios
         assert result.content.startswith("Error:")
+
+
+@pytest.mark.parametrize("content_type", ["audio/pcm", "application/octet-stream"])
+@pytest.mark.parametrize("payload", [b"ID3\x00\x00\x00\x00\x00", b"OggS\x00\x00\x00\x00", b"fLaC\x00\x00\x00\x00"])
+def test_even_length_compressed_binary_audio_is_rejected(content_type, payload):
+    with endpoint(payload, content_type) as (url, _):
+        result = tool(url).text_to_speech(Agent(), "Hello")
+    assert not result.audios
+    assert result.content.startswith("Error:")
