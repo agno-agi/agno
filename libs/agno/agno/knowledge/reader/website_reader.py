@@ -239,7 +239,8 @@ class WebsiteReader(Reader):
                         continue
 
                     href_str = str(link["href"])
-                    full_url = urljoin(current_url, href_str)
+                    # Relative links belong to the final page after any redirects.
+                    full_url = urljoin(str(response.url), href_str)
 
                     if not isinstance(full_url, str):
                         continue
@@ -354,7 +355,8 @@ class WebsiteReader(Reader):
                             continue
 
                         href_str = str(link["href"])
-                        full_url = urljoin(current_url, href_str)
+                        # Relative links belong to the final page after any redirects.
+                        full_url = urljoin(str(response.url), href_str)
 
                         if not isinstance(full_url, str):
                             continue
