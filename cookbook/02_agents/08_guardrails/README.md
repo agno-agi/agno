@@ -83,12 +83,13 @@ themselves. Do not remove the hook or expose an alternative ungated fetch tool.
 Run the offline tests with no API or model credentials:
 
 ```bash
-uv pip install pytest
+uv pip install pytest pytest-asyncio
 python -m pytest -q -o log_cli=false libs/agno/tests/unit/cookbook/test_ismalicious_guard.py
 ```
 
-The tests include the real Agno `Agent.run` and `OpenAIChat` call chain with
-synthetic HTTP transports. They verify refusal before the fetch, refusal before
+The tests include the real Agno `Agent.run` call chain with both `OpenAIResponses`
+(used by this cookbook) and `OpenAIChat`. Both use synthetic HTTP transports.
+They verify refusal before the fetch, refusal before
 the next model request, original allow text, warning policy and HTTP failure
 handling. They do not measure live detector accuracy or test an authenticated
 production account.

@@ -49,3 +49,29 @@
 **Result:** Completed successfully in 4s.
 
 ---
+
+## IsMalicious offline regression, 2026-10-03
+
+### ismalicious_guard.py
+
+**Status:** PASS (offline)
+
+**Description:** Ran `libs/agno/tests/unit/cookbook/test_ismalicious_guard.py`
+with Agno from this checkout, Python 3.12.8 and synthetic HTTP transports.
+External TCP sockets were disabled; only internal Unix sockets were permitted.
+
+**Result:** 64 tests passed, including ten native `Agent.run` call-chain cases
+across `OpenAIChat` and `OpenAIResponses`. URL/content block and warn decisions
+prevent the next model request; allow preserves the exact text. No live API,
+model credentials or detector-accuracy claim.
+
+### ismalicious_untrusted_content.py
+
+**Status:** NOT RUN (live demonstration)
+
+**Description:** The demo now uses `OpenAIResponses` with `gpt-5.6-luna` per
+the cookbook conventions. Its provider's native tool boundary is covered by
+the offline regression above. The standalone demonstration requires the
+operator's model and IsMalicious credentials and was not invoked.
+
+---

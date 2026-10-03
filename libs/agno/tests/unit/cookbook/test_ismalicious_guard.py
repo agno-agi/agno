@@ -10,7 +10,7 @@ import pytest
 
 from agno.agent import Agent
 from agno.exceptions import StopAgentRun
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIChat, OpenAIResponses
 
 REPO = Path(__file__).resolve().parents[5]
 SPEC = importlib.util.spec_from_file_location(
@@ -233,11 +233,12 @@ async def test_async_continuation_is_refused_without_fetch():
     assert fetches == []
 
 
+@pytest.mark.parametrize("model_class", [OpenAIChat, OpenAIResponses], ids=["chat", "responses"])
 @pytest.mark.parametrize(
     "url_verdict,content_verdict",
     [("block", "allow"), ("warn", "allow"), ("allow", "block"), ("allow", "warn"), ("allow", "allow")],
 )
-def test_native_agno_next_model_boundary(url_verdict, content_verdict, capsys, caplog):
+def test_native_agno_next_model_boundary(model_class, url_verdict, content_verdict, capsys, caplog):
     network = []
     model_inputs = []
     external_text = CONTENT if content_verdict == "allow" else INJECTION
@@ -254,6 +255,42 @@ def test_native_agno_next_model_boundary(url_verdict, content_verdict, capsys, c
 
     def model_handler(request):
         model_inputs.append(json.loads(request.content))
+        if model_class is OpenAIResponses:
+            output = (
+                [
+                    {
+                        "id": "fc_synthetic",
+                        "type": "function_call",
+                        "call_id": "synthetic-call",
+                        "name": "fetch_public_page",
+                        "arguments": json.dumps({"url": URL}),
+                        "status": "completed",
+                    }
+                ]
+                if len(model_inputs) == 1
+                else [
+                    {
+                        "id": "msg_synthetic",
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [{"type": "output_text", "text": "Synthetic summary.", "annotations": []}],
+                    }
+                ]
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "id": f"resp_synthetic_{len(model_inputs)}",
+                    "object": "response",
+                    "created_at": 1,
+                    "model": "synthetic-model",
+                    "status": "completed",
+                    "error": None,
+                    "output": output,
+                    "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+                },
+            )
         if len(model_inputs) == 1:
             message = {
                 "role": "assistant",
@@ -285,7 +322,7 @@ def test_native_agno_next_model_boundary(url_verdict, content_verdict, capsys, c
     guard, client = guard_with_handler(api_handler)
     with client, httpx.Client(transport=httpx.MockTransport(model_handler)) as model_client:
         agent = Agent(
-            model=OpenAIChat(
+            model=model_class(
                 id="synthetic-model",
                 api_key="synthetic-model-key",
                 base_url="https://model.test/v1",
@@ -305,8 +342,13 @@ def test_native_agno_next_model_boundary(url_verdict, content_verdict, capsys, c
     )
     assert "UNTRUSTED_SENTINEL" not in json.dumps(model_inputs)
     if allowed:
-        assert model_inputs[-1]["messages"][-1]["role"] == "tool"
-        assert model_inputs[-1]["messages"][-1]["content"] == CONTENT
+        if model_class is OpenAIResponses:
+            tool_results = [item for item in model_inputs[-1]["input"] if item.get("type") == "function_call_output"]
+            assert len(tool_results) == 1
+            assert tool_results[0]["output"] == CONTENT
+        else:
+            assert model_inputs[-1]["messages"][-1]["role"] == "tool"
+            assert model_inputs[-1]["messages"][-1]["content"] == CONTENT
         assert response.content == "Synthetic summary."
     else:
         assert "UNTRUSTED_SENTINEL" not in str(response.content)
