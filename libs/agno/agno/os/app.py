@@ -343,7 +343,7 @@ class AgentOS:
             workflows: List of workflows to include in the OS
             knowledge: List of knowledge bases to include in the OS
             interfaces: List of interfaces to include in the OS
-            live_sockets: Voice pipes to serve over the WebSocket route /voice/{id}/pipe, listed at GET /voice.
+            live_sockets: Voice pipes to serve over the WebSocket route /voice/{id}/ws, listed at GET /voice.
             a2a_interface: Whether to expose the OS agents and teams in an A2A server
             config: Configuration file path or AgentOSConfig instance
             settings: API settings for the OS

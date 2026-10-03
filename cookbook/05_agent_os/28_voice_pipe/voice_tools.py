@@ -1,6 +1,6 @@
 """Talk to an Agno agent that can calculate and search the web.
 
-Run this file to serve the voice pipe at ws://localhost:7777/voice/tools/pipe.
+Run this file to serve the voice pipe at ws://localhost:7777/voice/tools/ws.
 Talk to it with the test client in client/ (see README.md), opened at
 http://localhost:3000/?pipe=tools. Set OPENAI_API_KEY
 and CARTESIA_API_KEY, or set VOICE_TTS_PROVIDER=openai for an OpenAI-only setup.
@@ -104,9 +104,7 @@ if __name__ == "__main__":
         assert "37.5" in calculator.multiply(12.5, 3)
         assert "undefined" in calculator.divide(1, 0)
         with TestClient(app):
-            assert (
-                app.url_path_for("voice_pipe", pipe_id=voice.id) == "/voice/tools/pipe"
-            )
+            assert app.url_path_for("voice_pipe", pipe_id=voice.id) == "/voice/tools/ws"
         print(
             "Calculator, web search registration, and voice routes passed. No provider calls."
         )
@@ -119,6 +117,6 @@ if __name__ == "__main__":
             parser.error(
                 "Set these environment variables before starting: " + ", ".join(missing)
             )
-        print("Voice pipe: ws://localhost:7777/voice/tools/pipe")
+        print("Voice pipe: ws://localhost:7777/voice/tools/ws")
         print("Test client: http://localhost:3000/?pipe=tools")
         agent_os.serve(app=app, host="localhost", port=7777)

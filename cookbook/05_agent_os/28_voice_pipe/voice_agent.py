@@ -1,7 +1,7 @@
 """Give an existing Agno agent a streaming voice interface through AgentOS.
 
 Set OPENAI_API_KEY and CARTESIA_API_KEY, then run this file. AgentOS serves the
-voice pipe at ws://localhost:7777/voice/assistant/pipe. Talk to it with the test
+voice pipe at ws://localhost:7777/voice/assistant/ws. Talk to it with the test
 client in client/ (see README.md), opened at http://localhost:3000/?pipe=assistant.
 Use --check to validate routes without opening speech-provider connections or
 downloading a VAD model.
@@ -90,7 +90,7 @@ if __name__ == "__main__":
         with TestClient(app):
             assert (
                 app.url_path_for("voice_pipe", pipe_id=voice.id)
-                == "/voice/assistant/pipe"
+                == "/voice/assistant/ws"
             )
         print("Voice routes are registered. No provider connections were opened.")
     else:
@@ -102,6 +102,6 @@ if __name__ == "__main__":
             parser.error(
                 "Set these environment variables before starting: " + ", ".join(missing)
             )
-        print("Voice pipe: ws://localhost:7777/voice/assistant/pipe")
+        print("Voice pipe: ws://localhost:7777/voice/assistant/ws")
         print("Test client: http://localhost:3000/?pipe=assistant")
         agent_os.serve(app=app, host="localhost", port=7777)

@@ -47,7 +47,7 @@
 - [x] Conversation history comes from the agent's session storage: history is on
       for voice runs, agents without a db get an in-memory db, and the turn after an
       interruption describes what was heard.
-- [x] AgentOS adds only the canonical WebSocket route `/voice/{id}/pipe` per live
+- [x] AgentOS adds only the canonical WebSocket route `/voice/{id}/ws` per live
       socket; the browser client lives in the cookbook, and INTEGRATION.md documents
       the protocol for custom clients.
 - [x] `GET /voice` lists each pipe with its agent ID, name, and WebSocket path,

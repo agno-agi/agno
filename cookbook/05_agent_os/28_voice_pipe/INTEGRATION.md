@@ -3,7 +3,7 @@
 AgentOS exposes each `VoicePipe` in `live_sockets` at a single WebSocket route:
 
 ```text
-/voice/{id}/pipe
+/voice/{id}/ws
 ```
 
 It also lists the registered pipes at `GET /voice`. AgentOS does not serve a voice
@@ -23,7 +23,7 @@ agent_os = AgentOS(
 )
 ```
 
-Clients then connect to `wss://<your-agentos-host>/voice/support/pipe`.
+Clients then connect to `wss://<your-agentos-host>/voice/support/ws`.
 
 ## Discovery
 
@@ -31,7 +31,7 @@ Clients then connect to `wss://<your-agentos-host>/voice/support/pipe`.
 
 ```json
 [
-  {"id": "support", "agent_id": "support-agent", "agent_name": "Support", "path": "/voice/support/pipe"}
+  {"id": "support", "agent_id": "support-agent", "agent_name": "Support", "path": "/voice/support/ws"}
 ]
 ```
 

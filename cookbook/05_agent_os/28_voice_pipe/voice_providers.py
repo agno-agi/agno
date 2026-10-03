@@ -1,6 +1,6 @@
 """Choose the speech-to-text and text-to-speech providers for a voice agent.
 
-AgentOS serves the voice pipe at ws://localhost:7777/voice/providers/pipe. Talk to
+AgentOS serves the voice pipe at ws://localhost:7777/voice/providers/ws. Talk to
 it with the test client in client/ (see README.md), opened at
 http://localhost:3000/?pipe=providers.
 
@@ -118,7 +118,7 @@ if __name__ == "__main__":
         with TestClient(app):
             assert (
                 app.url_path_for("voice_pipe", pipe_id=voice.id)
-                == "/voice/providers/pipe"
+                == "/voice/providers/ws"
             )
         print(
             f"Speech to text: {type(stt_model).__name__}. "
@@ -131,6 +131,6 @@ if __name__ == "__main__":
             parser.error(
                 "Set these environment variables before starting: " + ", ".join(missing)
             )
-        print("Voice pipe: ws://localhost:7777/voice/providers/pipe")
+        print("Voice pipe: ws://localhost:7777/voice/providers/ws")
         print("Test client: http://localhost:3000/?pipe=providers")
         agent_os.serve(app=app, host="localhost", port=7777)

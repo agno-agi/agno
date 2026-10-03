@@ -1,6 +1,6 @@
 """Talk to an Agno agent that answers questions from the Agno documentation.
 
-Run this file to serve the voice pipe at ws://localhost:7777/voice/knowledge/pipe.
+Run this file to serve the voice pipe at ws://localhost:7777/voice/knowledge/ws.
 Talk to it with the test client in client/ (see README.md), opened at
 http://localhost:3000/?pipe=knowledge.
 Requires lancedb, OPENAI_API_KEY, and CARTESIA_API_KEY. The first run embeds
@@ -100,7 +100,7 @@ if __name__ == "__main__":
         with TestClient(app):
             assert (
                 app.url_path_for("voice_pipe", pipe_id=voice.id)
-                == "/voice/knowledge/pipe"
+                == "/voice/knowledge/ws"
             )
         print("Knowledge configuration and voice route checked. No API calls made.")
     else:
@@ -116,6 +116,6 @@ if __name__ == "__main__":
             url="https://docs.agno.com/llms.txt",
             skip_if_exists=True,
         )
-        print("Voice pipe: ws://localhost:7777/voice/knowledge/pipe")
+        print("Voice pipe: ws://localhost:7777/voice/knowledge/ws")
         print("Test client: http://localhost:3000/?pipe=knowledge")
         agent_os.serve(app=app, host="localhost", port=7777)

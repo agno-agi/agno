@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from agno.voice.base import Transcript
-from agno.voice.pipe import _VoiceSession
+from agno.voice._responder import _Responder
 from tests.unit.voice.test_pipe import Socket, make_pipe
 
 
@@ -15,9 +15,9 @@ async def test_final_transcript_cannot_start_reply_while_speech_start_is_suspend
     pipe, socket = make_pipe(), Socket()
     interrupt_entered, release_interrupt, final_processed = asyncio.Event(), asyncio.Event(), asyncio.Event()
     delay_interrupt = False
-    original_interrupt = _VoiceSession._interrupt
-    original_maybe_respond = _VoiceSession._maybe_respond
-    original_respond = _VoiceSession._respond
+    original_interrupt = _Responder._interrupt
+    original_maybe_respond = _Responder._maybe_respond
+    original_respond = _Responder._respond
     started_replies = []
 
     async def delayed_interrupt(session):
@@ -35,9 +35,9 @@ async def test_final_transcript_cannot_start_reply_while_speech_start_is_suspend
         started_replies.append(reply.id)
         await original_respond(session, reply, context)
 
-    monkeypatch.setattr(_VoiceSession, "_interrupt", delayed_interrupt)
-    monkeypatch.setattr(_VoiceSession, "_maybe_respond", observe_final)
-    monkeypatch.setattr(_VoiceSession, "_respond", observe_reply)
+    monkeypatch.setattr(_Responder, "_interrupt", delayed_interrupt)
+    monkeypatch.setattr(_Responder, "_maybe_respond", observe_final)
+    monkeypatch.setattr(_Responder, "_respond", observe_reply)
 
     task = asyncio.create_task(pipe._serve(socket))
     try:

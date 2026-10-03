@@ -1,5 +1,21 @@
 # VoicePipe test log
 
+## 2026-10-03
+
+### Voice WebSocket route renamed to /voice/{id}/ws
+
+**Status:** PASS for automated checks
+
+**Description:** Renamed each live socket's canonical route from `/voice/{id}/pipe`
+to `/voice/{id}/ws` in the router, `GET /voice` paths, the browser client, docs, and
+cookbook checks, and split the voice router into `router.py`, `auth.py`, and
+`schema.py`. Earlier entries below describe the `/pipe` route as it was then.
+
+**Result:** 117 router and voice tests, 8 client tests, all six cookbook `--check`
+runs, and all 18 `14_voice` examples pass on `/ws`; a test confirms `/pipe` is gone.
+
+---
+
 ## 2026-10-02
 
 ### Gemini Live STT and Gemini TTS

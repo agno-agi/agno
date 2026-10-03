@@ -1,7 +1,7 @@
 """Talk to the computer use agent: ask out loud and it drives your screen.
 
 Reuses the agent from cookbook/91_tools/computer_use/computer_use_agent.py and
-serves it at ws://localhost:7777/voice/computer/pipe. Talk to it with the test
+serves it at ws://localhost:7777/voice/computer/ws. Talk to it with the test
 client in client/ (see README.md), opened at http://localhost:3000/?pipe=computer.
 Listens with Soniox. Requires pyautogui, OPENAI_API_KEY, SONIOX_API_KEY, and
 CARTESIA_API_KEY, or set VOICE_TTS_PROVIDER=openai to speak with OpenAI instead
@@ -90,8 +90,7 @@ if __name__ == "__main__":
         )
         with TestClient(app):
             assert (
-                app.url_path_for("voice_pipe", pipe_id=voice.id)
-                == "/voice/computer/pipe"
+                app.url_path_for("voice_pipe", pipe_id=voice.id) == "/voice/computer/ws"
             )
         print("Computer use agent and voice route passed. No provider calls.")
     else:
@@ -103,6 +102,6 @@ if __name__ == "__main__":
             parser.error(
                 "Set these environment variables before starting: " + ", ".join(missing)
             )
-        print("Voice pipe: ws://localhost:7777/voice/computer/pipe")
+        print("Voice pipe: ws://localhost:7777/voice/computer/ws")
         print("Test client: http://localhost:3000/?pipe=computer")
         agent_os.serve(app=app, host="localhost", port=7777)

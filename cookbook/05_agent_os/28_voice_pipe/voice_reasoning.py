@@ -1,6 +1,6 @@
 """Talk to an Agno agent backed by a model that reasons natively before it answers.
 
-Run this file to serve the voice pipe at ws://localhost:7777/voice/reasoning/pipe.
+Run this file to serve the voice pipe at ws://localhost:7777/voice/reasoning/ws.
 Talk to it with the test client in client/ (see README.md), opened at
 http://localhost:3000/?pipe=reasoning. Set OPENAI_API_KEY and CARTESIA_API_KEY,
 or set VOICE_TTS_PROVIDER=openai for an OpenAI-only setup.
@@ -100,7 +100,7 @@ if __name__ == "__main__":
         with TestClient(app):
             assert (
                 app.url_path_for("voice_pipe", pipe_id=voice.id)
-                == "/voice/reasoning/pipe"
+                == "/voice/reasoning/ws"
             )
         print("Reasoning agent and voice route passed. No provider calls.")
     else:
@@ -112,6 +112,6 @@ if __name__ == "__main__":
             parser.error(
                 "Set these environment variables before starting: " + ", ".join(missing)
             )
-        print("Voice pipe: ws://localhost:7777/voice/reasoning/pipe")
+        print("Voice pipe: ws://localhost:7777/voice/reasoning/ws")
         print("Test client: http://localhost:3000/?pipe=reasoning")
         agent_os.serve(app=app, host="localhost", port=7777)

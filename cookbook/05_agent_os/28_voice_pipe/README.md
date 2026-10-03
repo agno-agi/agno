@@ -7,7 +7,7 @@ streaming transcription, streaming agent output, speech synthesis, and interrupt
 It does not depend on Pipecat or LiveKit.
 
 AgentOS stays a backend: each live socket adds exactly one route, the WebSocket
-`/voice/{id}/pipe`. It serves no voice page. `client/` is a standalone test client
+`/voice/{id}/ws`. It serves no voice page. `client/` is a standalone test client
 that works with every example here, and [INTEGRATION.md](INTEGRATION.md) documents
 the protocol for building the voice client into your own product.
 
@@ -37,7 +37,7 @@ $env:CARTESIA_API_KEY = "..."
 .venvs/demo/Scripts/python.exe cookbook/05_agent_os/28_voice_pipe/voice_agent.py
 ```
 
-AgentOS now serves the voice pipe at `ws://localhost:7777/voice/assistant/pipe`.
+AgentOS now serves the voice pipe at `ws://localhost:7777/voice/assistant/ws`.
 
 ## Test client
 
@@ -86,12 +86,12 @@ environment variables and the same test client; switch the pipe ID in the client
 
 | File | Feature | Voice pipe | Client URL | Try saying |
 | --- | --- | --- | --- | --- |
-| `voice_agent.py` | Basic conversation | `/voice/assistant/pipe` | `http://localhost:3000/?pipe=assistant` | "What can you do?" |
-| `voice_tools.py` | Agno calculator and web search toolkits | `/voice/tools/pipe` | `http://localhost:3000/?pipe=tools` | "What is twelve point five times three?" |
-| `voice_knowledge.py` | Answer from the Agno docs with Agno Knowledge | `/voice/knowledge/pipe` | `http://localhost:3000/?pipe=knowledge` | "What is AgentOS?" |
-| `voice_reasoning.py` | Native model reasoning before each answer | `/voice/reasoning/pipe` | `http://localhost:3000/?pipe=reasoning` | "A bat and a ball cost one dollar ten..." |
-| `voice_computer_use.py` | The pyautogui computer use agent, by voice | `/voice/computer/pipe` | `http://localhost:3000/?pipe=computer` | "Open Chrome and go to agno dot com" |
-| `voice_providers.py` | Pick Deepgram, Soniox, or OpenAI STT and Cartesia, ElevenLabs, or OpenAI TTS | `/voice/providers/pipe` | `http://localhost:3000/?pipe=providers` | "Tell me about Agno" |
+| `voice_agent.py` | Basic conversation | `/voice/assistant/ws` | `http://localhost:3000/?pipe=assistant` | "What can you do?" |
+| `voice_tools.py` | Agno calculator and web search toolkits | `/voice/tools/ws` | `http://localhost:3000/?pipe=tools` | "What is twelve point five times three?" |
+| `voice_knowledge.py` | Answer from the Agno docs with Agno Knowledge | `/voice/knowledge/ws` | `http://localhost:3000/?pipe=knowledge` | "What is AgentOS?" |
+| `voice_reasoning.py` | Native model reasoning before each answer | `/voice/reasoning/ws` | `http://localhost:3000/?pipe=reasoning` | "A bat and a ball cost one dollar ten..." |
+| `voice_computer_use.py` | The pyautogui computer use agent, by voice | `/voice/computer/ws` | `http://localhost:3000/?pipe=computer` | "Open Chrome and go to agno dot com" |
+| `voice_providers.py` | Pick Deepgram, Soniox, or OpenAI STT and Cartesia, ElevenLabs, or OpenAI TTS | `/voice/providers/ws` | `http://localhost:3000/?pipe=providers` | "Tell me about Agno" |
 
 From the repository root, using the existing Windows development environment:
 
@@ -153,7 +153,7 @@ voice = VoicePipe(
     tts_model=CartesiaTTS(voice="db6b0ed5-d5d3-463d-ae85-518a07d3c2b4"),
 )
 agent_os = AgentOS(agents=[agent], live_sockets=[voice])
-app = agent_os.get_app()  # Adds the WebSocket route /voice/assistant/pipe.
+app = agent_os.get_app()  # Adds the WebSocket route /voice/assistant/ws.
 ```
 
 `GET /voice` lists the registered pipes and their agents. See
@@ -218,7 +218,7 @@ the rate its documentation describes; Deepgram and ElevenLabs use 24 kHz PCM.
 ## How audio flows
 
 ```text
-Browser AudioWorklet ── PCM16, 24 kHz ──► /voice/{id}/pipe
+Browser AudioWorklet ── PCM16, 24 kHz ──► /voice/{id}/ws
                                             ├─► Silero VAD (16 kHz internally)
                                             └─► Streaming STT
                                                      │ partial/final transcript

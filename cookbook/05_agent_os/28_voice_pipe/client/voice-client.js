@@ -17,13 +17,13 @@ const query = new URLSearchParams(location.search || "");
 if (query.get("server")) ui.server.value = query.get("server");
 if (query.get("pipe")) ui.pipe.value = query.get("pipe");
 
-// Every AgentOS live socket is served at /voice/{id}/pipe.
+// Every AgentOS live socket is served at /voice/{id}/ws.
 function pipeUrl() {
   const id = (ui.pipe.value || "").trim();
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id)) throw new Error("Enter a voice pipe ID, such as assistant.");
   let url;
   try {
-    url = new URL(`voice/${id}/pipe`, (ui.server.value || "").trim().replace(/\/*$/, "/"));
+    url = new URL(`voice/${id}/ws`, (ui.server.value || "").trim().replace(/\/*$/, "/"));
   } catch {
     throw new Error("Enter the AgentOS URL, such as http://localhost:7777.");
   }
