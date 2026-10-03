@@ -6,6 +6,11 @@ Tested on 2026-07-24 against Agno source commit
 The OpenUI addition was tested on 2026-08-18 against Agno source commit
 `32e5fb9c2203fa98de19ca72750133a57a075899`.
 
+The 2026-09-04 note at the end of this file supersedes the scope of every LIVE
+result below: the AG-UI request path itself changed after they were recorded.
+Read each section as the result it was, not as a current one. That note carries
+its own live results for the two files the change touches.
+
 Each checked-in server was first booted on its default port 7777. The sweep
 asserted `GET /health`, `GET /config`, every mounted AG-UI status route, and a
 clean shutdown. Capability-specific POST tests then used
@@ -206,3 +211,76 @@ TypeScript compilation, and the Vite production build passed.
 - Repository-wide Ruff, agnoctl mypy, and cookbook pattern checks passed. The
   core Agno mypy step reported 27 existing errors in six files outside this
   integration's diff.
+
+## Update 2026-09-04: conversation history
+
+Changed here: `basic.py` gained `add_history_to_context=True` so the example
+continues its conversation instead of answering each turn from scratch;
+`stateless.py` is new and serves an agent with no database at all; and the README
+gained a section on where history comes from in each case. The AG-UI request path
+itself changed too, in turn selection, in what tool traffic is forwarded, and in
+how a database-less entity is run, so the LIVE results in the sections above
+predate the code they describe.
+
+### basic.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Booted on port 7777, asserted `/status`, then posted a two-turn
+AG-UI conversation on one `threadId` against `gpt-5.5`: "my name is Ada", then
+"what is my name?".
+
+**Result:** Status returned available. Turn one answered "Nice to meet you,
+Ada!"; turn two answered "Your name is Ada.", so history came from the stored
+session. One session row with two runs afterwards.
+
+**Observed, not diagnosed:** the first attempt ran against a `tmp/agui_basic.db`
+left behind by an earlier session, and turn two answered "I don't know your
+name." That database held one session row and one run row, and turn one's run
+was never stored. Deleting the file and repeating gave the passing result above.
+Whether a database file from an older run can silently swallow the first run of a
+new one is a storage question, outside this change and unexamined here.
+
+### stateless.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Same two-turn conversation on the `/stateless` prefix against
+`gpt-5.6-luna`, with no database anywhere in the example.
+
+**Result:** Status returned available. Turn one answered "Nice to meet you,
+Ada!"; turn two answered "Your name is Ada.", from the transcript the client
+resent rather than from any session.
+
+### Provider-shape checks, in process against `gpt-5.6-luna`
+
+The unit tests use a recording model, which accepts any message shape, so these
+six ran against the real API to confirm the forwarded shapes are ones a provider
+takes. All passed:
+
+- Two turns with no database: answered "Your name is Ada."
+- Two turns with a database: the same, as a control on the untouched path.
+- A complete tool block forwarded as history: answered from the tool's result.
+- A transcript whose tool traffic is all dropped by the pairing rules
+  (unanswered call, reused id, empty result): accepted, no error event.
+- A caption-less image in history, which the interface forwards with empty text:
+  accepted, and the model described the image.
+- A transcript ending on an assistant reply: accepted.
+
+These cover OpenAI's Responses API only. Anthropic and Gemini are argued from
+their formatters in this repo, not exercised here.
+
+### Also verified
+
+- `libs/agno/tests/unit/os/interfaces/test_agui_history.py`,
+  `test_agui_router.py` and `test_agui_history_invariants.py`, which drive the
+  AG-UI request path for an Agent, a Team and a remote entity, with and without
+  a database, asserting the exact messages that reach the model, plus the
+  ordering, pairing and partitioning properties across twenty-six transcript
+  shapes.
+- Ruff format and check on the edited and added files, and Python compilation of
+  every standalone file in the folder including `openui/server.py`.
