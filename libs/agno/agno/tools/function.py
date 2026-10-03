@@ -2,7 +2,7 @@ import types
 import weakref
 from collections import OrderedDict
 from dataclasses import dataclass
-from functools import lru_cache, partial, wraps
+from functools import cached_property, lru_cache, partial, wraps
 from importlib.metadata import version
 from threading import RLock
 from typing import (
@@ -766,57 +766,82 @@ class _CallableLifetimeCache:
     method, its owner) gives those tools repeated-run hits without making this
     module a second owner. The resulting owner -> cache -> callable cycle is
     collectable when the owner is.
+
+    Build each cache on first use: media-only inspection of a validation
+    wrapper should not allocate caches for schema derivation and wrapping.
     """
 
     def __init__(self, entrypoint: Callable):
+        self._entrypoint = entrypoint
+
+    @cached_property
+    def entrypoint_schema(self) -> Callable[[bool, bool, Optional[Tuple[str, ...]]], _EntrypointSchema]:
         @lru_cache(maxsize=_LIFETIME_INTROSPECTION_CACHE_SIZE)
         def entrypoint_schema(
             strict: bool,
             requires_user_input: bool,
             user_input_fields: Optional[Tuple[str, ...]],
         ) -> _EntrypointSchema:
-            record = _derive_entrypoint_schema(entrypoint, strict, requires_user_input, user_input_fields)
+            record = _derive_entrypoint_schema(self._entrypoint, strict, requires_user_input, user_input_fields)
             if record.error is not None:
                 raise _DerivationFailed(record)
             return record
 
+        return entrypoint_schema
+
+    @cached_property
+    def wrapped_entrypoint(self) -> Callable[[], Callable]:
         @lru_cache(maxsize=1)
         def wrapped_entrypoint() -> Callable:
-            return Function._wrap_callable_uncached(entrypoint)
+            return Function._wrap_callable_uncached(self._entrypoint)
 
+        return wrapped_entrypoint
+
+    @cached_property
+    def framework_params(self) -> Callable[[], frozenset]:
         @lru_cache(maxsize=1)
         def framework_params() -> frozenset:
-            params, failed = _compute_framework_params(entrypoint)
+            params, failed = _compute_framework_params(self._entrypoint)
             if failed:
                 raise _DerivationFailed(params)
             return frozenset(params)
 
+        return framework_params
+
+    @cached_property
+    def from_callable_template(self) -> Callable[[type, Optional[str], bool], "Function"]:
         @lru_cache(maxsize=_LIFETIME_INTROSPECTION_CACHE_SIZE)
         def from_callable_template(cls: type, name: Optional[str], strict: bool) -> "Function":
-            template, error = cls._build_from_callable(entrypoint, name=name, strict=strict)  # type: ignore[attr-defined]
+            template, error = cls._build_from_callable(self._entrypoint, name=name, strict=strict)  # type: ignore[attr-defined]
             if error is not None:
                 raise _DerivationFailed(template)
             return template
 
+        return from_callable_template
+
+    @cached_property
+    def entrypoint_accepts_media(self) -> Callable[[], bool]:
         @lru_cache(maxsize=1)
         def entrypoint_accepts_media() -> bool:
             from inspect import signature
 
-            parameters = signature(entrypoint).parameters
+            parameters = signature(self._entrypoint).parameters
             return any(name in parameters for name in MEDIA_INJECTED_PARAMS)
 
-        self.entrypoint_schema = entrypoint_schema
-        self.wrapped_entrypoint = wrapped_entrypoint
-        self.framework_params = framework_params
-        self.from_callable_template = from_callable_template
-        self.entrypoint_accepts_media = entrypoint_accepts_media
+        return entrypoint_accepts_media
 
     def clear(self) -> None:
-        self.entrypoint_schema.cache_clear()
-        self.wrapped_entrypoint.cache_clear()
-        self.framework_params.cache_clear()
-        self.from_callable_template.cache_clear()
-        self.entrypoint_accepts_media.cache_clear()
+        # Do not materialize unused cached properties just to clear them.
+        for name in (
+            "entrypoint_schema",
+            "wrapped_entrypoint",
+            "framework_params",
+            "from_callable_template",
+            "entrypoint_accepts_media",
+        ):
+            cached = self.__dict__.get(name)
+            if cached is not None:
+                cached.cache_clear()
 
 
 class _CallableLifetimeCacheStore:
