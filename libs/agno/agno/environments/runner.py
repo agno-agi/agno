@@ -573,12 +573,14 @@ def _read_only_learning_machine(machine: Any, source_db: Any) -> Any:
     from agno.learn.config import (
         DecisionLogConfig,
         EntityMemoryConfig,
+        FeedbackConfig,
         LearnedKnowledgeConfig,
         SessionContextConfig,
         UserMemoryConfig,
         UserProfileConfig,
     )
 
+    # Keep in step with LearningMachine._STORE_CONFIG_CLASSES: a missing slot is never severed.
     store_config_types = {
         "user_profile": UserProfileConfig,
         "user_memory": UserMemoryConfig,
@@ -586,6 +588,7 @@ def _read_only_learning_machine(machine: Any, source_db: Any) -> Any:
         "entity_memory": EntityMemoryConfig,
         "learned_knowledge": LearnedKnowledgeConfig,
         "decision_log": DecisionLogConfig,
+        "feedback": FeedbackConfig,
     }
 
     machine_copy = copy.copy(machine)

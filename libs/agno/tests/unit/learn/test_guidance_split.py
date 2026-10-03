@@ -11,12 +11,14 @@ from agno.learn import LearningMachine
 from agno.learn.config import (
     DecisionLogConfig,
     EntityMemoryConfig,
+    FeedbackConfig,
     LearningMode,
     UserMemoryConfig,
     UserProfileConfig,
 )
 from agno.learn.stores.decision_log import DecisionLogStore
 from agno.learn.stores.entity_memory import EntityMemoryStore
+from agno.learn.stores.feedback import FeedbackStore
 from agno.learn.stores.session_context import SessionContextStore
 from agno.learn.stores.user_memory import UserMemoryStore
 from agno.learn.stores.user_profile import UserProfileStore
@@ -95,6 +97,10 @@ class TestStoreSplit:
                 DecisionLogStore(config=DecisionLogConfig(db=db, mode=LearningMode.AGENTIC)),  # type: ignore[arg-type]
                 "log_decision",
             ),
+            (
+                FeedbackStore(config=FeedbackConfig(db=db, mode=LearningMode.AGENTIC)),  # type: ignore[arg-type]
+                "record_feedback",
+            ),
         ]
         for store, tool_name in cases:
             guidance = store.instructions()
@@ -108,6 +114,8 @@ class TestStoreSplit:
         assert profile.instructions() == ""
         session = SessionContextStore()
         assert session.instructions() == ""
+        feedback = FeedbackStore(config=FeedbackConfig(db=db, mode=LearningMode.ALWAYS))  # type: ignore[arg-type]
+        assert feedback.instructions() == ""
 
     def test_machine_instructions_aggregates_enabled_stores(self) -> None:
         db = RecordingLearningDb()
