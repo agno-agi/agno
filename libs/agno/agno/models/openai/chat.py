@@ -382,11 +382,14 @@ class OpenAIChat(Model):
         self, messages: List[Message], compress_tool_results: bool = False
     ) -> List[Dict[str, Any]]:
         """Format all messages, remapping foreign tool call IDs to call_ prefix first."""
-        from agno.utils.message import normalize_tool_messages, reformat_tool_call_ids
+        from agno.utils.message import normalize_tool_messages, reencode_tool_call_arguments, reformat_tool_call_ids
 
         # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
         messages = normalize_tool_messages(messages)
         normalized = reformat_tool_call_ids(messages, provider="openai_chat")
+        # Repair Python-literal arguments before formatting: strict providers reject
+        # non-JSON tool_calls arguments for the whole request
+        normalized = reencode_tool_call_arguments(normalized)
         return [self._format_message(m, compress_tool_results) for m in normalized]
 
     def invoke(

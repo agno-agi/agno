@@ -1,3 +1,5 @@
+import ast
+import json
 from copy import deepcopy
 from typing import Dict, List, Optional, Sequence, Union
 
@@ -298,6 +300,73 @@ def reformat_tool_call_ids(messages: List[Message], provider: str) -> List[Messa
         else:
             result.append(msg)
     return result
+
+
+def reencode_tool_call_arguments(messages: List[Message]) -> List[Message]:
+    """
+    Re-encode tool call arguments that are valid Python literals but not valid JSON.
+
+    Some models (e.g. Qwen served behind OpenAI-compatible gateways) occasionally
+    emit tool call arguments using Python literal syntax (single quotes) instead
+    of JSON. ``get_function_call`` already tolerates this via its
+    ``ast.literal_eval`` fallback and executes the tool, but the raw string is
+    replayed verbatim in the next request, which strict OpenAI-compatible
+    providers reject with a 400 for the entire run.
+
+    Arguments that are already valid JSON are left untouched, and so are
+    arguments that cannot be parsed at all (e.g. truncated by max_tokens) —
+    substituting a placeholder there would mask the truncation.
+
+    Args:
+        messages: List of messages to process (returns a new list, does not modify in-place).
+    """
+    needs_reencode = False
+    for msg in messages:
+        if msg.role == "assistant" and msg.tool_calls:
+            for tc in msg.tool_calls:
+                function = tc.get("function")
+                arguments = function.get("arguments") if isinstance(function, dict) else None
+                if isinstance(arguments, str) and _reencode_arguments(arguments) is not None:
+                    needs_reencode = True
+                    break
+        if needs_reencode:
+            break
+
+    if not needs_reencode:
+        return messages
+
+    result: List[Message] = []
+    for msg in messages:
+        if msg.role == "assistant" and msg.tool_calls:
+            msg_copy = msg.model_copy(deep=True)
+            if msg_copy.tool_calls:
+                for tc in msg_copy.tool_calls:
+                    function = tc.get("function")
+                    if not isinstance(function, dict):
+                        continue
+                    arguments = function.get("arguments")
+                    if not isinstance(arguments, str):
+                        continue
+                    reencoded = _reencode_arguments(arguments)
+                    if reencoded is not None:
+                        function["arguments"] = reencoded
+            result.append(msg_copy)
+        else:
+            result.append(msg)
+    return result
+
+
+def _reencode_arguments(arguments: str) -> Optional[str]:
+    """Return the JSON form of a Python-literal arguments string, or None if it should stay untouched."""
+    try:
+        json.loads(arguments)
+        return None  # already valid JSON
+    except ValueError:
+        pass
+    try:
+        return json.dumps(ast.literal_eval(arguments), ensure_ascii=False)
+    except (ValueError, SyntaxError, TypeError):
+        return None  # not recoverable (e.g. truncated); leave untouched
 
 
 def get_text_from_message(message: Union[List, Dict, str, Message, BaseModel]) -> str:
