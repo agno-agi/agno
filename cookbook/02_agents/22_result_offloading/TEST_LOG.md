@@ -22,6 +22,21 @@ Tested 2026-08-20 against `gpt-5.5` (OpenAIResponses), SQLite, with the worktree
 
 ---
 
+Tested 2026-08-26 with the branch's Python and the local `libs/agno` source.
+
+### 02_result_store.py (JSON pointer)
+
+**Status:** PASS
+
+**Description:** The direct `ResultStore` example stores a small JSON result and
+reads `/items/1` with `json_pointer` alongside the existing text paging and
+regex search paths.
+
+**Result:** The projection returned the expected `A-2` / `held` object, and the
+final cleanup removed both stored results. No warnings, no traceback.
+
+---
+
 Tested 2026-08-21 against `gpt-5.5` (OpenAIResponses), SQLite and PostgreSQL (pgvector container on 5532), with the branch's Python.
 
 ### 03_where_results_live.py

@@ -18,12 +18,20 @@ until the session is deleted, and deleting a session removes both the index
 rows and the stored bytes.
 """
 
+import json
+
 from agno.db.sqlite import SqliteDb
 from agno.offload import ResultStore
 
 REPORT = "\n".join(
     f"{i:04d}: measurement {i * 3 % 17} at station {'NSEW'[i % 4]}"
     for i in range(1, 2001)
+)
+JSON_REPORT = json.dumps(
+    {
+        "summary": {"rows": 3},
+        "items": [{"id": "A-1", "status": "ready"}, {"id": "A-2", "status": "held"}],
+    }
 )
 
 # ---------------------------------------------------------------------------
@@ -54,6 +62,19 @@ if __name__ == "__main__":
     print("\nfirst five lines:")
     print(page.text)
     print("next_start_line:", page.next_start_line, "| truncated:", page.truncated)
+
+    # A JSON result can be projected before the same page cap is applied.
+    json_ref = store.offload(
+        session_id="demo-session",
+        run_id="run-1",
+        tool_call_id="call-json",
+        tool_name="fetch_json_report",
+        tool_args={},
+        output=JSON_REPORT,
+    )
+    json_page = store.read(json_ref.result_id, json_pointer="/items/1")
+    print("\nJSON pointer /items/1:")
+    print(json_page.text)
 
     # Search is capped at 20 matches, each line clipped.
     matches = store.search(ref.result_id, r"station N$")

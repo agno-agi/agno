@@ -6,6 +6,7 @@ off it at call time so a store built later in the run is still picked up.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Dict, Optional
 
@@ -16,7 +17,9 @@ OFFLOAD_INSTRUCTION = (
     "Large tool results are stored as files and shown to you as a short preview with a "
     "result id. The preview is not the whole result. Use search_result to locate what you "
     "need and read_result to read that range; do not answer from the preview when the "
-    "preview was truncated."
+    "preview was truncated. For JSON results, read_result also accepts an RFC 6901 "
+    "json_pointer such as '/items/0' to read one nested value. Repeat the same pointer "
+    "when following a paginated response."
 )
 
 
@@ -45,30 +48,46 @@ def get_read_result_function(owner: Any, run_context: RunContext, async_mode: bo
     def _resolve(result_id: str, row: Optional[Dict[str, Any]]) -> Optional[str]:
         return _access_error(result_id, row, run_context)
 
-    def _render(result_id: str, page: Any) -> str:
-        header = f"Result {result_id}, lines {page.start_line}-{page.end_line} of {page.line_count}."
+    def _render(result_id: str, page: Any, json_pointer: Optional[str] = None) -> str:
+        pointer_note = ""
+        if json_pointer is not None:
+            pointer_note = f", JSON pointer {json.dumps(json_pointer, ensure_ascii=False)}"
+        header = f"Result {result_id}{pointer_note}, lines {page.start_line}-{page.end_line} of {page.line_count}."
+        continuation_pointer = ""
+        if json_pointer is not None:
+            continuation_pointer = f" and json_pointer={json.dumps(json_pointer, ensure_ascii=False)}"
         if page.next_start_line is not None:
             if page.next_start_char:
                 header += (
                     f" More follows: line {page.next_start_line} continues; read from line "
-                    f"{page.next_start_line} with start_char={page.next_start_char}."
+                    f"{page.next_start_line} with start_char={page.next_start_char}{continuation_pointer}."
                 )
             else:
-                header += f" More follows: read from line {page.next_start_line}."
+                header += f" More follows: read from line {page.next_start_line}{continuation_pointer}."
         return f"{header}\n{page.text}"
 
-    def read_result(result_id: str, start_line: int = 1, end_line: Optional[int] = None, start_char: int = 0) -> str:
+    def read_result(
+        result_id: str,
+        start_line: int = 1,
+        end_line: Optional[int] = None,
+        start_char: int = 0,
+        json_pointer: Optional[str] = None,
+    ) -> str:
         """Read a stored tool result. Lines are 1-indexed and inclusive.
 
         Output is capped at 400 lines or 16000 characters, whichever comes first;
         the reply names where to continue when there is more. A line longer than
         one page is read in pieces: continue with the start_char the reply names.
+        For JSON results, ``json_pointer`` is an optional RFC 6901 pointer to
+        project before paging (``""`` selects the document root). Repeat the
+        pointer on continuation calls.
 
         Args:
             result_id: The id from the result envelope, e.g. "res_a91c4f20b3".
             start_line: First line to read (1-indexed, default 1).
             end_line: Last line to read (inclusive). Defaults to the end.
             start_char: Character offset into start_line to begin at (0-indexed, default 0).
+            json_pointer: Optional RFC 6901 pointer, e.g. "/data/items/0".
 
         Returns:
             str: The requested lines, or an error message starting with "Error".
@@ -80,24 +99,40 @@ def get_read_result_function(owner: Any, run_context: RunContext, async_mode: bo
             error = _resolve(result_id, store.get_row(result_id))
             if error is not None:
                 return error
-            return _render(result_id, store.read(result_id, start_line, end_line, start_char))
+            if json_pointer is None:
+                page = store.read(result_id, start_line, end_line, start_char)
+            else:
+                page = store.read(result_id, start_line, end_line, start_char, json_pointer=json_pointer)
+            return _render(
+                result_id,
+                page,
+                json_pointer,
+            )
         except Exception as e:
             return f"Error reading result: {e}"
 
     async def aread_result(
-        result_id: str, start_line: int = 1, end_line: Optional[int] = None, start_char: int = 0
+        result_id: str,
+        start_line: int = 1,
+        end_line: Optional[int] = None,
+        start_char: int = 0,
+        json_pointer: Optional[str] = None,
     ) -> str:
         """Read a stored tool result. Lines are 1-indexed and inclusive.
 
         Output is capped at 400 lines or 16000 characters, whichever comes first;
         the reply names where to continue when there is more. A line longer than
         one page is read in pieces: continue with the start_char the reply names.
+        For JSON results, ``json_pointer`` is an optional RFC 6901 pointer to
+        project before paging (``""`` selects the document root). Repeat the
+        pointer on continuation calls.
 
         Args:
             result_id: The id from the result envelope, e.g. "res_a91c4f20b3".
             start_line: First line to read (1-indexed, default 1).
             end_line: Last line to read (inclusive). Defaults to the end.
             start_char: Character offset into start_line to begin at (0-indexed, default 0).
+            json_pointer: Optional RFC 6901 pointer, e.g. "/data/items/0".
 
         Returns:
             str: The requested lines, or an error message starting with "Error".
@@ -109,7 +144,15 @@ def get_read_result_function(owner: Any, run_context: RunContext, async_mode: bo
             error = _resolve(result_id, await store.aget_row(result_id))
             if error is not None:
                 return error
-            return _render(result_id, await store.aread(result_id, start_line, end_line, start_char))
+            if json_pointer is None:
+                page = await store.aread(result_id, start_line, end_line, start_char)
+            else:
+                page = await store.aread(result_id, start_line, end_line, start_char, json_pointer=json_pointer)
+            return _render(
+                result_id,
+                page,
+                json_pointer,
+            )
         except Exception as e:
             return f"Error reading result: {e}"
 
