@@ -52,11 +52,14 @@ def _record_audio(record: Any, formats: Optional[dict[int, str]] = None, offset:
     if not isinstance(result, dict):
         raise TypeError("60db returned an invalid audio result")
     _validate_metadata(result)
+    declared_format = None
     if formats is not None:
         for metadata in (record, result, record.get("audio_config", {}), result.get("audio_config", {})):
             for key in ("encoding", "audio_encoding", "output_format"):
-                if key in metadata:
-                    formats[offset] = "wav" if str(metadata[key]).lower() == "wav" else "pcm"
+                if key in metadata and declared_format != "wav":
+                    declared_format = "wav" if str(metadata[key]).lower() == "wav" else "pcm"
+        if declared_format is not None:
+            formats[offset] = declared_format
     value = result.get("audioContent", result.get("audio_base64"))
     if value is None:
         return b""
@@ -73,8 +76,32 @@ def _record_audio(record: Any, formats: Optional[dict[int, str]] = None, offset:
             key in inner for key in ("audioContent", "audio_base64", "result", "backendResponse")
         ):
             raise ValueError("60db audio envelope contains no audio")
-        return _record_audio(inner, formats, offset)
+        audio = _record_audio(inner, formats, offset)
+        if formats is not None and declared_format == "wav":
+            formats[offset] = "wav"
+        return audio
     return audio
+
+
+def _decode_wav(audio: bytes, offset: int) -> tuple[bytes, int]:
+    if len(audio) - offset < 12 or audio[offset : offset + 4] != b"RIFF" or audio[offset + 8 : offset + 12] != b"WAVE":
+        raise ValueError("60db returned invalid WAV framing")
+    size = int.from_bytes(audio[offset + 4 : offset + 8], "little") + 8
+    if size < 12 or size > len(audio) - offset:
+        raise ValueError("60db returned truncated WAV audio")
+    with wave.open(io.BytesIO(audio[offset : offset + size]), "rb") as wav:
+        if (wav.getnchannels(), wav.getsampwidth(), wav.getframerate(), wav.getcomptype()) != (
+            1,
+            2,
+            SAMPLE_RATE,
+            "NONE",
+        ):
+            raise ValueError("60db WAV must be mono PCM16 at 24000 Hz")
+        frames = wav.getnframes()
+        pcm = wav.readframes(frames)
+        if len(pcm) != frames * 2:
+            raise ValueError("60db returned truncated WAV audio")
+        return pcm, size
 
 
 def _pcm(audio: bytes, record_ends: Optional[list[int]] = None, formats: Optional[dict[int, str]] = None) -> bytes:  # noqa: FA100
@@ -82,46 +109,35 @@ def _pcm(audio: bytes, record_ends: Optional[list[int]] = None, formats: Optiona
     offset = 0
     boundaries = iter(record_ends or [len(audio)])
     end = next(boundaries)
+    pcm_declared = False
     while offset < len(audio):
         while end <= offset:
             end = next(boundaries, len(audio))
         declared_format = formats.get(offset) if formats is not None else None
-        pcm_declared = declared_format == "pcm"
+        if declared_format is not None:
+            pcm_declared = declared_format == "pcm"
         if declared_format == "wav" or (
-            not pcm_declared
+            declared_format != "pcm"
             and audio[offset : offset + 4] == b"RIFF"
             and (record_ends is None or audio[offset + 8 : offset + 12] == b"WAVE")
         ):
-            if (
-                len(audio) - offset < 12
-                or audio[offset : offset + 4] != b"RIFF"
-                or audio[offset + 8 : offset + 12] != b"WAVE"
-            ):
-                raise ValueError("60db returned invalid WAV framing")
-            size = int.from_bytes(audio[offset + 4 : offset + 8], "little") + 8
-            if size < 12 or size > len(audio) - offset:
-                raise ValueError("60db returned truncated WAV audio")
-            with wave.open(io.BytesIO(audio[offset : offset + size]), "rb") as wav:
-                if (wav.getnchannels(), wav.getsampwidth(), wav.getframerate(), wav.getcomptype()) != (
-                    1,
-                    2,
-                    SAMPLE_RATE,
-                    "NONE",
-                ):
-                    raise ValueError("60db WAV must be mono PCM16 at 24000 Hz")
-                frames = wav.getnframes()
-                pcm = wav.readframes(frames)
-                if len(pcm) != frames * 2:
-                    raise ValueError("60db returned truncated WAV audio")
+            try:
+                pcm, size = _decode_wav(audio, offset)
+            except (ValueError, wave.Error, EOFError):
+                # An unlabeled PCM continuation may contain WAV-shaped sample bytes.
+                if not pcm_declared or declared_format is not None:
+                    raise
+            else:
                 decoded.extend(pcm)
-            offset += size
-        else:
-            if record_ends is None and offset:
-                raise ValueError("60db returned invalid WAV framing")
-            if not pcm_declared and audio[offset : offset + 4].startswith((b"ID3", b"OggS", b"fLaC")):
-                raise ValueError("60db returned compressed audio instead of PCM")
-            decoded.extend(audio[offset:end])
-            offset = end
+                offset += size
+                pcm_declared = False
+                continue
+        if record_ends is None and offset:
+            raise ValueError("60db returned invalid WAV framing")
+        if not pcm_declared and audio[offset : offset + 4].startswith((b"ID3", b"OggS", b"fLaC")):
+            raise ValueError("60db returned compressed audio instead of PCM")
+        decoded.extend(audio[offset:end])
+        offset = end
     if not decoded or len(decoded) % 2:
         raise ValueError("60db returned empty or incomplete PCM16 audio")
     return bytes(decoded)

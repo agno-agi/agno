@@ -323,3 +323,34 @@ def test_labeled_pcm_followed_by_unlabeled_wav():
     assert result.audios
     with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
         assert wav.readframes(wav.getnframes()) == PCM * 2
+
+
+@pytest.mark.parametrize("tail", [b"ID3\x00", b"RIFF\x00\x00\x00\x00WAVE"])
+def test_unlabeled_pcm_continuation_preserves_signature_samples(tail):
+    body = b"\n".join(
+        [
+            json.dumps({"encoding": "pcm", "audioContent": base64.b64encode(PCM).decode()}).encode(),
+            json.dumps({"audioContent": base64.b64encode(tail).decode()}).encode(),
+        ]
+    )
+    with endpoint(body, "application/x-ndjson") as (url, _):
+        result = tool(url).text_to_speech(Agent(), "Hello")
+    assert result.audios
+    with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
+        assert wav.readframes(wav.getnframes()) == PCM + tail
+
+
+@pytest.mark.parametrize("content_type", ["application/json", "application/x-ndjson"])
+@pytest.mark.parametrize("nested", [False, True])
+def test_wav_container_precedes_linear16_sample_encoding(content_type, nested):
+    audio = base64.b64encode(wav_bytes()).decode()
+    if nested:
+        audio = base64.b64encode(json.dumps({"audio_encoding": "LINEAR16", "audioContent": audio}).encode()).decode()
+    body = json.dumps(
+        {"output_format": "wav", "audio_config": {"audio_encoding": "LINEAR16"}, "audioContent": audio}
+    ).encode()
+    with endpoint(body, content_type) as (url, _):
+        result = tool(url).text_to_speech(Agent(), "Hello")
+    assert result.audios
+    with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
+        assert wav.readframes(wav.getnframes()) == PCM
