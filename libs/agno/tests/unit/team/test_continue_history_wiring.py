@@ -62,6 +62,7 @@ def _make_team() -> MagicMock:
     team.retries = 0  # `team.retries + 1` in the async retry loop
     team.events_to_skip = []  # iterated by handle_event
     team.store_events = False
+    team.fail_on_output_parse_error = False
     return team
 
 

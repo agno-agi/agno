@@ -323,6 +323,8 @@ class Agent:
     # If True, the response from the Model is converted into the output_schema
     # Otherwise, the response is returned as a JSON string
     parse_response: bool = True
+    # Fail the run if requested Pydantic parsing fails; ignored when parse_response is False.
+    fail_on_output_parse_error: bool = False
     # Use model enforced structured_outputs if supported (e.g. OpenAIChat)
     structured_outputs: Optional[bool] = None
     # Instead of providing the model with the Pydantic output schema, add a JSON description of the output schema to the system message instead.
@@ -485,6 +487,7 @@ class Agent:
         input_schema: Optional[Type[BaseModel]] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         parse_response: bool = True,
+        fail_on_output_parse_error: bool = False,
         output_model: Optional[Union[Model, str]] = None,
         output_model_prompt: Optional[str] = None,
         structured_outputs: Optional[bool] = None,
@@ -657,6 +660,7 @@ class Agent:
         self.input_schema = input_schema
         self.output_schema = output_schema
         self.parse_response = parse_response
+        self.fail_on_output_parse_error = fail_on_output_parse_error
         self.output_model = output_model  # type: ignore[assignment]
         self.output_model_prompt = output_model_prompt
 

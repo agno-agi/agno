@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
 from agno.agent._tools import result_store_kwargs
-from agno.exceptions import RunCancelledException
+from agno.exceptions import OutputParseError, RunCancelledException
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
@@ -469,6 +469,9 @@ def parse_response_with_parser_model_stream(
             messages_for_parser_model = get_messages_for_parser_model_stream(
                 agent, run_response, parser_response_format, run_context=run_context
             )
+            if agent.fail_on_output_parse_error and agent.parse_response and isinstance(output_schema, type):
+                run_response.content = None
+                run_response.content_type = "str"
             for model_response_event in agent.parser_model.response_stream(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
@@ -537,6 +540,9 @@ async def aparse_response_with_parser_model_stream(
             messages_for_parser_model = get_messages_for_parser_model_stream(
                 agent, run_response, parser_response_format, run_context=run_context
             )
+            if agent.fail_on_output_parse_error and agent.parse_response and isinstance(output_schema, type):
+                run_response.content = None
+                run_response.content_type = "str"
             model_response_stream = agent.parser_model.aresponse_stream(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
@@ -610,6 +616,7 @@ def generate_response_with_output_model_stream(
     run_response: RunOutput,
     run_messages: RunMessages,
     stream_events: bool = False,
+    run_context: Optional[RunContext] = None,
 ) -> Iterator[RunOutputEvent]:
     """Parse the model response using the output model."""
     from agno.agent._messages import get_messages_for_output_model
@@ -631,6 +638,14 @@ def generate_response_with_output_model_stream(
 
     messages_for_output_model = get_messages_for_output_model(agent, run_messages.messages)
 
+    if (
+        agent.fail_on_output_parse_error
+        and agent.parse_response
+        and run_context
+        and isinstance(run_context.output_schema, type)
+    ):
+        run_response.content = None
+        run_response.content_type = "str"
     model_response = ModelResponse(content="")
 
     for model_response_event in agent.output_model.response_stream(
@@ -691,6 +706,7 @@ async def agenerate_response_with_output_model_stream(
     run_response: RunOutput,
     run_messages: RunMessages,
     stream_events: bool = False,
+    run_context: Optional[RunContext] = None,
 ) -> AsyncIterator[RunOutputEvent]:
     """Parse the model response using the output model."""
     from agno.agent._messages import get_messages_for_output_model
@@ -712,6 +728,14 @@ async def agenerate_response_with_output_model_stream(
 
     messages_for_output_model = get_messages_for_output_model(agent, run_messages.messages)
 
+    if (
+        agent.fail_on_output_parse_error
+        and agent.parse_response
+        and run_context
+        and isinstance(run_context.output_schema, type)
+    ):
+        run_response.content = None
+        run_response.content_type = "str"
     model_response = ModelResponse(content="")
 
     model_response_stream = agent.output_model.aresponse_stream(
@@ -901,10 +925,15 @@ def get_response_format(
 
 
 def convert_response_to_structured_format(
-    agent: Agent, run_response: Union[RunOutput, ModelResponse], run_context: Optional[RunContext] = None
+    agent: Agent,
+    run_response: Union[RunOutput, ModelResponse],
+    run_context: Optional[RunContext] = None,
+    *,
+    raise_on_error: Optional[bool] = None,
 ):
     # Get output_schema from run_context
     output_schema = run_context.output_schema if run_context else None
+    fail_on_error = agent.fail_on_output_parse_error if raise_on_error is None else raise_on_error
 
     # Convert the response to the structured format if needed
     if output_schema is not None:
@@ -922,7 +951,9 @@ def convert_response_to_structured_format(
         elif not isinstance(run_response.content, output_schema):
             if isinstance(run_response.content, str) and agent.parse_response:
                 try:
-                    structured_output = parse_response_model_str(run_response.content, output_schema)
+                    structured_output = parse_response_model_str(
+                        run_response.content, output_schema, raise_on_error=fail_on_error
+                    )
 
                     # Update RunOutput
                     if structured_output is not None:
@@ -932,8 +963,17 @@ def convert_response_to_structured_format(
                     else:
                         log_warning("Failed to convert response to output_schema")
                 except Exception as e:
+                    if fail_on_error:
+                        if isinstance(run_response, RunOutput):
+                            run_response.content_type = "str"
+                        raise OutputParseError(f"Failed to parse response as {output_schema.__name__}: {e}") from e
                     log_warning(f"Failed to convert response to output model: {str(e)}")
             else:
+                if agent.parse_response and fail_on_error:
+                    raise OutputParseError(
+                        f"Failed to parse response as {output_schema.__name__}: "
+                        f"expected a string or {output_schema.__name__}, got {type(run_response.content).__name__}"
+                    )
                 log_warning("Something went wrong. Run response content is not a string")
 
 
@@ -1047,6 +1087,10 @@ def handle_model_response_stream(
     # Get output_schema from run_context
     output_schema = run_context.output_schema if run_context else None
     should_parse_structured_output = output_schema is not None and agent.parse_response and agent.parser_model is None
+
+    if should_parse_structured_output and agent.fail_on_output_parse_error and isinstance(output_schema, type):
+        run_response.content = None
+        run_response.content_type = "str"
 
     stream_model_response = True
     if should_parse_structured_output:
@@ -1208,6 +1252,10 @@ async def ahandle_model_response_stream(
     # Get output_schema from run_context
     output_schema = run_context.output_schema if run_context else None
     should_parse_structured_output = output_schema is not None and agent.parse_response and agent.parser_model is None
+
+    if should_parse_structured_output and agent.fail_on_output_parse_error and isinstance(output_schema, type):
+        run_response.content = None
+        run_response.content_type = "str"
 
     stream_model_response = True
     if should_parse_structured_output:
@@ -1394,15 +1442,38 @@ def handle_model_response_chunk(
         if model_response_event.event == ModelResponseEvent.assistant_response.value:
             content_type = "str"
 
+            if (
+                parse_structured_output
+                and agent.fail_on_output_parse_error
+                and agent.parse_response
+                and run_context
+                and isinstance(run_context.output_schema, type)
+                and model_response_event.content is None
+            ):
+                # An empty final reply must not reuse the content from a paused run.
+                run_response.content = None
+                model_response.content = None
+                run_response.content_type = "str"
+
             # Process content and thinking
             if model_response_event.content is not None:
                 if parse_structured_output:
                     model_response.content = model_response_event.content
-                    convert_response_to_structured_format(agent, model_response, run_context=run_context)
+                    # A tool call may still pause this run; enforce strict parsing at finalization.
+                    convert_response_to_structured_format(
+                        agent, model_response, run_context=run_context, raise_on_error=False
+                    )
 
                     # Get output_schema from run_context
                     output_schema = run_context.output_schema if run_context else None
                     content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
+                    if (
+                        agent.fail_on_output_parse_error
+                        and agent.parse_response
+                        and isinstance(output_schema, type)
+                        and not isinstance(model_response.content, output_schema)
+                    ):
+                        content_type = "str"
                     run_response.content = model_response.content
                     run_response.content_type = content_type
                 else:

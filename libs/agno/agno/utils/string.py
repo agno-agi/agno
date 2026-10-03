@@ -192,8 +192,12 @@ def _parse_individual_json(content: str, output_schema: Type[BaseModel]) -> Opti
         return None
 
 
-def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Optional[BaseModel]:
+def parse_response_model_str(
+    content: str, output_schema: Type[BaseModel], *, raise_on_error: bool = False
+) -> Optional[BaseModel]:
+    """Try the supported JSON recovery steps, optionally raising on total failure."""
     structured_output = None
+    parse_error: Optional[Exception] = None
 
     # Extract thinking content first to prevent <think> tags from corrupting JSON
     from agno.utils.reasoning import extract_thinking_content
@@ -207,7 +211,8 @@ def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Op
     # First attempt: try parsing raw content directly (preserves valid JSON with code blocks in strings)
     try:
         structured_output = output_schema.model_validate_json(content)
-    except (ValidationError, json.JSONDecodeError):
+    except (ValidationError, json.JSONDecodeError) as error:
+        parse_error = error
         try:
             data = json.loads(content)
             structured_output = output_schema.model_validate(data)
@@ -246,6 +251,8 @@ def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Op
                 if structured_output is None:
                     logger.warning("All parsing attempts failed.")
 
+    if structured_output is None and raise_on_error and parse_error is not None:
+        raise parse_error
     return structured_output
 
 

@@ -31,6 +31,7 @@ from agno.agent._tools import result_store_kwargs
 from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
+    OutputParseError,
     RunCancelledException,
     RunNotContinuableError,
     RunNotFoundError,
@@ -550,7 +551,7 @@ def _run_tasks(
         flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
         run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
-        if run_response.content is None:
+        if run_response.content is None and not isinstance(e, OutputParseError):
             run_response.content = str(e)
         log_error(f"Error in Team task run: {str(e)}")
         _cleanup_and_store(team, run_response=run_response, session=session)
@@ -1058,7 +1059,7 @@ def _run_tasks_stream(
         flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
         run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
-        if run_response.content is None:
+        if run_response.content is None and not isinstance(e, OutputParseError):
             run_response.content = str(e)
         log_error(f"Error in Team task run (stream): {str(e)}")
         _cleanup_and_store(team, run_response=run_response, session=session)
@@ -1412,7 +1413,7 @@ def _run(
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
-                if run_response.content is None:
+                if run_response.content is None and not isinstance(e, OutputParseError):
                     run_response.content = str(e)
 
                 log_error(f"Error in Team run: {str(e)}")
@@ -1472,6 +1473,7 @@ def _run_stream(
     from agno.team._managers import _start_learning_future, _start_memory_future
     from agno.team._messages import _get_run_messages
     from agno.team._response import (
+        _convert_response_to_structured_format,
         _handle_model_response_stream,
         generate_response_with_output_model_stream,
         handle_reasoning_stream,
@@ -1701,6 +1703,14 @@ def _run_stream(
                     run_context=run_context,
                 )
 
+                # Validate the final structured output before completion events and post-hooks.
+                if (
+                    team.fail_on_output_parse_error
+                    and team.parse_response
+                    and isinstance(run_context.output_schema, type)
+                ):
+                    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+
                 # Yield RunContentCompletedEvent
                 if stream_events:
                     yield handle_event(  # type: ignore
@@ -1874,7 +1884,7 @@ def _run_stream(
                 flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
-                if run_response.content is None:
+                if run_response.content is None and not isinstance(e, OutputParseError):
                     run_response.content = str(e)
 
                 log_error(f"Error in Team run: {str(e)}")
@@ -2463,7 +2473,7 @@ async def _arun_tasks(
         flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
         run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
-        if run_response.content is None:
+        if run_response.content is None and not isinstance(e, OutputParseError):
             run_response.content = str(e)
         log_error(f"Error in Team task run: {str(e)}")
         if team_session is not None:
@@ -3012,7 +3022,7 @@ async def _arun_tasks_stream(
         flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
         run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
-        if run_response.content is None:
+        if run_response.content is None and not isinstance(e, OutputParseError):
             run_response.content = str(e)
         log_error(f"Error in Team task run (async stream): {str(e)}")
         if team_session is not None:
@@ -3414,7 +3424,7 @@ async def _arun(
                 run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
 
-                if run_response.content is None:
+                if run_response.content is None and not isinstance(e, OutputParseError):
                     run_response.content = str(e)
 
                 log_error(f"Error in Team run: {str(e)}")
@@ -3794,6 +3804,7 @@ async def _arun_stream(
     from agno.team._messages import _aget_run_messages
     from agno.team._response import (
         _ahandle_model_response_stream,
+        _convert_response_to_structured_format,
         agenerate_response_with_output_model_stream,
         ahandle_reasoning_stream,
         aparse_response_with_parser_model_stream,
@@ -4043,6 +4054,14 @@ async def _arun_stream(
                 ):
                     yield event
 
+                # Validate the final structured output before completion events and post-hooks.
+                if (
+                    team.fail_on_output_parse_error
+                    and team.parse_response
+                    and isinstance(run_context.output_schema, type)
+                ):
+                    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+
                 # Yield RunContentCompletedEvent
                 if stream_events:
                     yield handle_event(  # type: ignore
@@ -4237,7 +4256,7 @@ async def _arun_stream(
                 flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
-                if run_response.content is None:
+                if run_response.content is None and not isinstance(e, OutputParseError):
                     run_response.content = str(e)
 
                 log_error(f"Error in Team run: {str(e)}")
@@ -7629,6 +7648,8 @@ def continue_run_dispatch(
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
+    if team.fail_on_output_parse_error and run_context.output_schema is None:
+        run_context.output_schema = opts.output_schema
     if user_id is not None and run_context.user_id is None:
         run_context.user_id = user_id
     if dependencies is not None:
@@ -8486,7 +8507,7 @@ def _continue_run(
                 flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
-                if run_response.content is None:
+                if run_response.content is None and not isinstance(e, OutputParseError):
                     run_response.content = str(e)
                 log_error(f"Error in Team continue_run: {str(e)}")
                 _cleanup_and_store(team, run_response=run_response, session=session)
@@ -8516,6 +8537,7 @@ def _continue_run_stream(
     from agno.team._hooks import _execute_post_hooks
     from agno.team._init import _disconnect_connectable_tools
     from agno.team._response import (
+        _convert_response_to_structured_format,
         _handle_model_response_stream,
         generate_response_with_output_model_stream,
         parse_response_with_parser_model_stream,
@@ -8621,6 +8643,14 @@ def _continue_run_stream(
                     stream_events=stream_events,
                     run_context=run_context,
                 )
+
+                # Validate the final structured output before completion events and post-hooks.
+                if (
+                    team.fail_on_output_parse_error
+                    and team.parse_response
+                    and isinstance(run_context.output_schema, type)
+                ):
+                    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
                 # Content completed event
                 if stream_events:
@@ -8768,7 +8798,7 @@ def _continue_run_stream(
                 flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
-                if run_response.content is None:
+                if run_response.content is None and not isinstance(e, OutputParseError):
                     run_response.content = str(e)
                 log_error(f"Error in Team continue_run stream: {str(e)}")
                 _cleanup_and_store(team, run_response=run_response, session=session)
@@ -9363,6 +9393,8 @@ def acontinue_run_dispatch(  # type: ignore
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
+    if team.fail_on_output_parse_error and run_context.output_schema is None:
+        run_context.output_schema = opts.output_schema
     if user_id is not None and run_context.user_id is None:
         run_context.user_id = user_id
     if dependencies is not None:
@@ -9920,7 +9952,7 @@ async def _acontinue_run(
                 flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
-                if run_response.content is None:
+                if run_response.content is None and not isinstance(e, OutputParseError):
                     run_response.content = str(e)
                 log_error(f"Error in Team acontinue_run: {str(e)}")
                 if team_session is not None:
@@ -9962,6 +9994,7 @@ async def _acontinue_run_stream(
     from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
     from agno.team._response import (
         _ahandle_model_response_stream,
+        _convert_response_to_structured_format,
         agenerate_response_with_output_model_stream,
         aparse_response_with_parser_model_stream,
     )
@@ -10460,6 +10493,14 @@ async def _acontinue_run_stream(
                     ):
                         yield event
 
+                # Validate the final structured output before completion events and post-hooks.
+                if (
+                    team.fail_on_output_parse_error
+                    and team.parse_response
+                    and isinstance(run_context.output_schema, type)
+                ):
+                    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+
                 # Content completed
                 if stream_events:
                     yield handle_event(
@@ -10636,7 +10677,7 @@ async def _acontinue_run_stream(
                 flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
-                if run_response.content is None:
+                if run_response.content is None and not isinstance(e, OutputParseError):
                     run_response.content = str(e)
                 log_error(f"Error in Team acontinue_run stream: {str(e)}")
                 if team_session is not None:

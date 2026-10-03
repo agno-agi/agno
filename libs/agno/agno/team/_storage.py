@@ -727,6 +727,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["use_json_mode"] = team.use_json_mode
     if not team.parse_response:  # default is True
         config["parse_response"] = team.parse_response
+    if team.fail_on_output_parse_error:
+        config["fail_on_output_parse_error"] = team.fail_on_output_parse_error
 
     # --- Memory settings ---
     # Stored as a registry reference by id, like knowledge: the manager holds
@@ -1369,6 +1371,7 @@ def from_dict(
             output_model_prompt=config.get("output_model_prompt"),
             use_json_mode=config.get("use_json_mode", False),
             parse_response=config.get("parse_response", True),
+            fail_on_output_parse_error=config.get("fail_on_output_parse_error", False),
             # --- Memory settings ---
             memory_manager=config.get("memory_manager"),
             enable_agentic_memory=config.get("enable_agentic_memory", False),

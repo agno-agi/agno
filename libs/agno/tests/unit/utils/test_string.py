@@ -2,7 +2,7 @@ import json
 from typing import List, Optional
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from agno.utils.string import (
     _extract_json_objects,
@@ -31,6 +31,27 @@ def test_extract_json_objects_with_brace_in_string_value():
     assert result is not None
     assert result.name == "a } braced value"
     assert result.value == "123"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '```json\n{"name": "example", "value": "123"}\n```',
+        'Result: {"name": "example", "value": "123"}',
+        '{"name": "example"}{"value": "123"}',
+    ],
+)
+def test_parse_response_strict_mode_preserves_json_recovery(content):
+    result = parse_response_model_str(content, MockModel, raise_on_error=True)
+    assert result == MockModel(name="example", value="123")
+
+
+@pytest.mark.parametrize("content", ["", "plain text", '{"name":', "{}"])
+def test_parse_response_strict_mode_preserves_validation_error(content):
+    with pytest.raises(ValidationError) as error:
+        parse_response_model_str(content, MockModel, raise_on_error=True)
+    assert error.value.errors()
+    assert parse_response_model_str(content, MockModel) is None
 
 
 def test_url_safe_string_spaces():
