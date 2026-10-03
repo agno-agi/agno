@@ -144,7 +144,7 @@ class JudgeScorer:
         return self._to_score(response.content)
 
     def digest(self) -> str:
-        """sha256 hex over criteria, mode, threshold and the judge model's identity.
+        """sha256 hex over criteria, mode, the numeric-mode threshold, and the judge model's identity.
 
         The judge is part of the scoring rule: swapping it -- by id, provider,
         base_url, sampling params, or a model-level prompt, not just id -- is an
@@ -155,7 +155,11 @@ class JudgeScorer:
         payload = {
             "criteria": self.criteria,
             "mode": self.mode,
-            "threshold": self.threshold,
+            # Binary mode never reads threshold (`_to_score` consults it only on the
+            # numeric branch), so folding it in makes two judges that grade every run
+            # identically produce different env_fingerprints -- a baseline refused for
+            # a difference that does not exist.
+            "threshold": self.threshold if self.mode == "numeric" else None,
             "model": model_identity_payload(self.model),
             "model_prompt": model_prompt_payload(self.model),
         }
