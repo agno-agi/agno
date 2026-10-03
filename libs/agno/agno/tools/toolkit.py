@@ -178,7 +178,8 @@ class Toolkit:
         self.show_result_tools: list[str] = show_result_tools or []
 
         self._check_tools_filters(
-            available_tools=[self._get_tool_name(tool) for tool in self.tools],
+            available_tools=[self._get_tool_name(tool) for tool in self.tools]
+            + [tool_name for _, tool_name in self._async_tools],
             include_tools=include_tools,
             exclude_tools=exclude_tools,
         )
@@ -340,7 +341,7 @@ class Toolkit:
         import inspect
 
         tool_name = name or function.name
-        if self.include_tools is not None and len(self.include_tools) > 0 and tool_name not in self.include_tools:
+        if self.include_tools is not None and tool_name not in self.include_tools:
             return
         if self.exclude_tools is not None and len(self.exclude_tools) > 0 and tool_name in self.exclude_tools:
             return
