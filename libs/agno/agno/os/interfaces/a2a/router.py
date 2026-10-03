@@ -54,6 +54,16 @@ def _resolve_a2a_user_id(request: Request, request_body: dict) -> Optional[str]:
     return resolve_run_user_id(request, client_uid)
 
 
+async def _dispatch_a2a_jsonrpc_method(request: Request, handlers: dict):
+    """Dispatch card-level A2A JSON-RPC requests to Agno's method routes."""
+    request_body = await request.json()
+    method = request_body.get("method")
+    handler = handlers.get(method)
+    if handler is None:
+        raise HTTPException(status_code=400, detail=f"Unsupported A2A method: {method}")
+    return await handler()
+
+
 def attach_routes(
     router: APIRouter,
     agents: Optional[List[Union[Agent, RemoteAgent, AgentProtocol]]] = None,
@@ -85,7 +95,7 @@ def attach_routes(
             name=agent.name or "",
             version="1.0.0",
             description=agent_description,
-            url=f"{base_url}/a2a/agents/{agent.id}/v1/message:stream",
+            url=f"{base_url}/a2a/agents/{agent.id}",
             default_input_modes=["text"],
             default_output_modes=["text"],
             capabilities=AgentCapabilities(streaming=True, push_notifications=False, state_transition_history=False),
@@ -398,6 +408,24 @@ def attach_routes(
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
 
+    @router.post(
+        "/agents/{id}",
+        operation_id="agent_a2a_jsonrpc",
+        name="agent_a2a_jsonrpc",
+        description="A2A JSON-RPC transport endpoint for all agent methods advertised in the AgentCard.",
+        response_model_exclude_none=True,
+    )
+    async def a2a_agent_jsonrpc(request: Request, id: str):
+        return await _dispatch_a2a_jsonrpc_method(
+            request,
+            {
+                "message/send": lambda: a2a_run_agent(request, id),
+                "message/stream": lambda: a2a_stream_agent(request, id),
+                "tasks/get": lambda: a2a_get_agent_task(request, id),
+                "tasks/cancel": lambda: a2a_cancel_agent_task(request, id),
+            },
+        )
+
     # ============= TEAMS =============
     @router.get("/teams/{id}/.well-known/agent-card.json")
     async def get_team_card(request: Request, id: str):
@@ -418,7 +446,7 @@ def attach_routes(
             name=team.name or "",
             version="1.0.0",
             description=team.description or "",
-            url=f"{base_url}/a2a/teams/{team.id}/v1/message:stream",
+            url=f"{base_url}/a2a/teams/{team.id}",
             default_input_modes=["text"],
             default_output_modes=["text"],
             capabilities=AgentCapabilities(streaming=True, push_notifications=False, state_transition_history=False),
@@ -725,6 +753,24 @@ def attach_routes(
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
 
+    @router.post(
+        "/teams/{id}",
+        operation_id="team_a2a_jsonrpc",
+        name="team_a2a_jsonrpc",
+        description="A2A JSON-RPC transport endpoint for all team methods advertised in the AgentCard.",
+        response_model_exclude_none=True,
+    )
+    async def a2a_team_jsonrpc(request: Request, id: str):
+        return await _dispatch_a2a_jsonrpc_method(
+            request,
+            {
+                "message/send": lambda: a2a_run_team(request, id),
+                "message/stream": lambda: a2a_stream_team(request, id),
+                "tasks/get": lambda: a2a_get_team_task(request, id),
+                "tasks/cancel": lambda: a2a_cancel_team_task(request, id),
+            },
+        )
+
     # ============= WORKFLOWS =============
     @router.get("/workflows/{id}/.well-known/agent-card.json")
     async def get_workflow_card(request: Request, id: str):
@@ -745,7 +791,7 @@ def attach_routes(
             name=workflow.name or "",
             version="1.0.0",
             description=workflow.description or "",
-            url=f"{base_url}/a2a/workflows/{workflow.id}/v1/message:stream",
+            url=f"{base_url}/a2a/workflows/{workflow.id}",
             default_input_modes=["text"],
             default_output_modes=["text"],
             capabilities=AgentCapabilities(streaming=False, push_notifications=False, state_transition_history=False),
@@ -935,5 +981,21 @@ def attach_routes(
 
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
+
+    @router.post(
+        "/workflows/{id}",
+        operation_id="workflow_a2a_jsonrpc",
+        name="workflow_a2a_jsonrpc",
+        description="A2A JSON-RPC transport endpoint for all workflow methods advertised in the AgentCard.",
+        response_model_exclude_none=True,
+    )
+    async def a2a_workflow_jsonrpc(request: Request, id: str):
+        return await _dispatch_a2a_jsonrpc_method(
+            request,
+            {
+                "message/send": lambda: a2a_run_workflow(request, id),
+                "message/stream": lambda: a2a_stream_workflow(request, id),
+            },
+        )
 
     return router
