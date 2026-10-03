@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.mongo.utils import (
+    session_write_allowed,
     apply_pagination,
     apply_sorting,
     bulk_upsert_metrics,
@@ -1108,15 +1109,28 @@ class MongoDb(BaseDb):
             # forward; only cleanup_legacy_runs_field() reclaims them. Dropping them here
             # would lose history for sessions not yet migrated to the runs collection.
             legacy_runs_by_id: Dict[str, Any] = {}
+            # Owner of each stored row, read from the same pass. `upsert_session()`
+            # refuses to update a session owned by a different user_id; ReplaceOne
+            # swaps the whole document, so without the same check a batch carrying
+            # another user's session_id would reassign the row and overwrite its
+            # data. Refused sessions are dropped from the batch and stay out of the
+            # returned list, matching the SQL adapters and the single-row path.
+            stored_owner_by_id: Dict[str, Any] = {}
             if sessions_by_id:
                 for doc in collection.find(
-                    {"session_id": {"$in": list(sessions_by_id.keys())}}, {"session_id": 1, "runs": 1}
+                    {"session_id": {"$in": list(sessions_by_id.keys())}},
+                    {"session_id": 1, "runs": 1, "user_id": 1},
                 ):
                     if doc.get("runs") is not None:
                         legacy_runs_by_id[doc["session_id"]] = doc["runs"]
+                    stored_owner_by_id[doc["session_id"]] = doc.get("user_id")
 
+            refused_ids: set = set()
             for session in sessions:
                 if session is None:
+                    continue
+                if not session_write_allowed(stored_owner_by_id, session.session_id, getattr(session, "user_id", None)):
+                    refused_ids.add(session.session_id)
                     continue
 
                 session_dict = session.to_dict(include_runs=False)
@@ -1179,7 +1193,11 @@ class MongoDb(BaseDb):
                 collection.bulk_write(operations)
 
                 # Fetch the results
-                session_ids = [session.session_id for session in sessions if session and session.session_id]
+                session_ids = [
+                    session.session_id
+                    for session in sessions
+                    if session and session.session_id and session.session_id not in refused_ids
+                ]
                 cursor = collection.find({"session_id": {"$in": session_ids}})
 
                 for doc in cursor:
