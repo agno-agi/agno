@@ -178,6 +178,16 @@ class TestUpsertRun:
         row = next(r for r in rows if r["run_id"] == "rNEW")
         assert row.get("run_index") == 7
 
+    def test_explicit_other_user_cannot_insert_or_replace_run(self, db_with_two_sessions):
+        injected = _make_run("rNEW", "s1", "injected")
+        replacement = _make_run("r1", "s1", "replaced")
+
+        db_with_two_sessions.upsert_run(run=injected, session_id="s1", user_id="bob")
+        db_with_two_sessions.upsert_run(run=replacement, session_id="s1", user_id="bob")
+
+        assert db_with_two_sessions.get_run("rNEW") is None
+        assert db_with_two_sessions.get_run("r1").content == "hello"
+
     def test_unknown_session_is_a_noop(self, db_with_two_sessions):
         new_run = _make_run("rGHOST", "nonexistent-session", "orphan")
         db_with_two_sessions.upsert_run(run=new_run, session_id="nonexistent-session")
