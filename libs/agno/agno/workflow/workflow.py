@@ -1589,12 +1589,13 @@ class Workflow:
         self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> Optional[WorkflowRunOutput]:
         """Get a RunOutput from the database."""
-        if self._workflow_session is not None:
-            run_response = self._workflow_session.get_run(run_id=run_id)
+        cached_session = self._get_cached_session(session_id, user_id=user_id)
+        if cached_session is not None:
+            run_response = cached_session.get_run(run_id=run_id)
             if run_response is not None:
                 return run_response
             else:
-                log_warning(f"RunOutput {run_id} not found in AgentSession {self._workflow_session.session_id}")
+                log_warning(f"RunOutput {run_id} not found in WorkflowSession {cached_session.session_id}")
                 return None
         else:
             workflow_session = await self.aget_session(session_id=session_id, user_id=user_id)  # type: ignore
@@ -1610,12 +1611,13 @@ class Workflow:
         self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> Optional[WorkflowRunOutput]:
         """Get a RunOutput from the database."""
-        if self._workflow_session is not None:
-            run_response = self._workflow_session.get_run(run_id=run_id)
+        cached_session = self._get_cached_session(session_id, user_id=user_id)
+        if cached_session is not None:
+            run_response = cached_session.get_run(run_id=run_id)
             if run_response is not None:
                 return run_response
             else:
-                log_warning(f"RunOutput {run_id} not found in AgentSession {self._workflow_session.session_id}")
+                log_warning(f"RunOutput {run_id} not found in WorkflowSession {cached_session.session_id}")
                 return None
         else:
             workflow_session = self.get_session(session_id=session_id, user_id=user_id)
@@ -1629,12 +1631,9 @@ class Workflow:
 
     async def aget_last_run_output(self, session_id: Optional[str] = None) -> Optional[WorkflowRunOutput]:
         """Get the last run response from the database."""
-        if (
-            self._workflow_session is not None
-            and self._workflow_session.runs is not None
-            and len(self._workflow_session.runs) > 0
-        ):
-            run_response = self._workflow_session.runs[-1]
+        cached_session = self._get_cached_session(session_id)
+        if cached_session is not None and cached_session.runs is not None and len(cached_session.runs) > 0:
+            run_response = cached_session.runs[-1]
             if run_response is not None:
                 return run_response
         else:
@@ -1649,12 +1648,9 @@ class Workflow:
 
     def get_last_run_output(self, session_id: Optional[str] = None) -> Optional[WorkflowRunOutput]:
         """Get the last run response from the database."""
-        if (
-            self._workflow_session is not None
-            and self._workflow_session.runs is not None
-            and len(self._workflow_session.runs) > 0
-        ):
-            run_response = self._workflow_session.runs[-1]
+        cached_session = self._get_cached_session(session_id)
+        if cached_session is not None and cached_session.runs is not None and len(cached_session.runs) > 0:
+            run_response = cached_session.runs[-1]
             if run_response is not None:
                 return run_response
         else:
@@ -1667,7 +1663,9 @@ class Workflow:
                 log_warning(f"No run responses found in WorkflowSession {session_id}")
                 return None
 
-    def _get_cached_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
+    def _get_cached_session(
+        self, session_id: Optional[str], user_id: Optional[str] = None
+    ) -> Optional[WorkflowSession]:
         """Return the cached session if it matches session_id/user_id and the current db."""
         cached = getattr(self, "_workflow_session", None)
         if cached is None:
@@ -1678,7 +1676,7 @@ class Workflow:
             self._workflow_session = None
             self._cached_session_db = None
             return None
-        if cached.session_id != session_id:
+        if session_id is not None and cached.session_id != session_id:
             return None
         if user_id is not None and cached.user_id != user_id:
             return None
