@@ -1,0 +1,28 @@
+import os
+
+import pytest
+
+
+def pytest_collection_modifyitems(config, items):
+    if os.getenv("TOGETHER_API_KEY"):
+        return
+    skip = pytest.mark.skip(reason="TOGETHER_API_KEY not set")
+    for item in items:
+        if "togetherlink" in str(item.fspath):
+            item.add_marker(skip)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Skip tests that hit gateway rate limits (429) instead of failing."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "call" and report.failed:
+        if call.excinfo is not None:
+            error_msg = str(call.excinfo.value)
+            full_repr = str(report.longrepr) if report.longrepr else ""
+            sections_text = " ".join(content for _, content in report.sections)
+            combined = (error_msg + full_repr + sections_text).lower()
+            if any(p in combined for p in ["429", "rate limit", "rate_limit", "quota"]):
+                report.outcome = "skipped"
+                report.longrepr = ("", -1, "Skipped: TogetherLink rate limit (429)")
