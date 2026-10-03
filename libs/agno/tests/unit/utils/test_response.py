@@ -1,8 +1,10 @@
+from itertools import permutations
+
 import pytest
 
 from agno.models.response import ToolExecution
-from agno.run.agent import RunPausedEvent
-from agno.utils.response import create_paused_run_output_panel, format_tool_calls
+from agno.run.agent import RunOutput, RunPausedEvent
+from agno.utils.response import create_paused_run_output_panel, format_tool_calls, get_paused_content
 
 
 def _paused_panel_text(tool_call: ToolExecution) -> str:
@@ -60,3 +62,61 @@ def test_paused_panel_matches_format_tool_calls_arg_rendering():
 
     assert format_tool_calls([tool_call]) == ["shell(cmd=echo a,, n=0)"]
     assert "• shell(cmd=echo a,, n=0)\n" in _paused_panel_text(tool_call)
+
+
+@pytest.mark.parametrize(
+    "fields,expected",
+    [
+        (("requires_confirmation", "requires_user_input"), "confirmation or user input"),
+        (("requires_confirmation", "external_execution_required"), "confirmation or external execution"),
+        (("requires_user_input", "external_execution_required"), "user input or external execution"),
+        (
+            ("requires_confirmation", "requires_user_input", "external_execution_required"),
+            "confirmation, user input, or external execution",
+        ),
+    ],
+)
+def test_paused_content_includes_all_tool_requirements_regardless_of_order(fields, expected):
+    for ordered_fields in permutations(fields):
+        tools = [ToolExecution(**{field: True}) for field in ordered_fields]
+
+        assert get_paused_content(RunOutput(tools=tools)) == f"I have tools to execute, but I need {expected}."
+
+
+@pytest.mark.parametrize(
+    "field,expected",
+    [
+        ("requires_confirmation", "I have tools to execute, but I need confirmation."),
+        ("requires_user_input", "I have tools to execute, but I need user input."),
+        ("external_execution_required", "I have tools to execute, but it needs external execution."),
+    ],
+)
+def test_paused_content_preserves_single_requirement_messages(field, expected):
+    assert get_paused_content(RunOutput(tools=[ToolExecution(**{field: True})])) == expected
+
+
+@pytest.mark.parametrize(
+    "tools",
+    [
+        None,
+        [],
+        [ToolExecution()],
+        [ToolExecution(requires_confirmation=True, confirmed=True)],
+        [ToolExecution(external_execution_required=True, external_execution_silent=True)],
+    ],
+)
+def test_paused_content_without_visible_pending_requirements_is_empty(tools):
+    assert get_paused_content(RunOutput(tools=tools)) == ""
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_paused_content_ignores_silent_and_confirmed_tools(reverse):
+    tools = [
+        ToolExecution(requires_user_input=True),
+        ToolExecution(requires_confirmation=True, confirmed=True),
+        ToolExecution(external_execution_required=True, external_execution_silent=True),
+    ]
+    if reverse:
+        tools.reverse()
+
+    assert get_paused_content(RunOutput(tools=tools)) == "I have tools to execute, but I need user input."
