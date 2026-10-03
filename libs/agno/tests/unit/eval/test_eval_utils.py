@@ -55,29 +55,46 @@ def test_async_log_eval_write_failure_is_swallowed_and_warned(monkeypatch):
     assert any("Could not log eval run" in message for message in warnings)
 
 
-def test_async_log_eval_in_memory_sqlite_stays_on_loop_and_persists():
-    # In-memory sqlite is thread-affine (one private database per thread): the
-    # write must run on the loop thread so it lands in the caller's database.
+def test_async_log_eval_in_memory_sqlite_runs_off_loop_and_persists(monkeypatch):
+    # SqliteDb configures in-memory databases with a cross-thread StaticPool, so
+    # the write can leave the event loop without landing in a private database.
     from agno.db.sqlite import SqliteDb
 
     db = SqliteDb(db_url="sqlite:///:memory:")
+    write_threads = []
+    create_eval_run = db.create_eval_run
+
+    def record_thread(record):
+        write_threads.append(threading.current_thread())
+        return create_eval_run(record)
+
+    monkeypatch.setattr(db, "create_eval_run", record_thread)
 
     asyncio.run(async_log_eval(db=db, run_id="run-1", run_data={}, eval_type=EvalType.AGENT_AS_JUDGE, eval_input={}))
 
+    assert write_threads[0] is not threading.main_thread()
     runs = db.get_eval_runs()
     assert [run.run_id for run in runs] == ["run-1"]
 
 
-def test_async_log_eval_uri_form_in_memory_sqlite_stays_on_loop_and_persists():
-    # URI-form in-memory sqlite gets the same thread-affine SingletonThreadPool as
-    # ":memory:" but a different url.database - the pool class, not the URL
-    # spelling, must decide the routing.
+def test_async_log_eval_uri_form_in_memory_sqlite_runs_off_loop_and_persists(monkeypatch):
+    # URI-form in-memory databases use the same cross-thread StaticPool despite
+    # having a different url.database spelling.
     from agno.db.sqlite import SqliteDb
 
     db = SqliteDb(db_url="sqlite:///file:eval_mem?mode=memory&uri=true")
+    write_threads = []
+    create_eval_run = db.create_eval_run
+
+    def record_thread(record):
+        write_threads.append(threading.current_thread())
+        return create_eval_run(record)
+
+    monkeypatch.setattr(db, "create_eval_run", record_thread)
 
     asyncio.run(async_log_eval(db=db, run_id="run-1", run_data={}, eval_type=EvalType.AGENT_AS_JUDGE, eval_input={}))
 
+    assert write_threads[0] is not threading.main_thread()
     runs = db.get_eval_runs()
     assert [run.run_id for run in runs] == ["run-1"]
 
