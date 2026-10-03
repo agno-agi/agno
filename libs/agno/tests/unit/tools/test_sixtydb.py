@@ -309,3 +309,17 @@ def test_ndjson_declared_format_controls_decoding(encoding, signature, content_t
         assert result.audios
         with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
             assert wav.readframes(wav.getnframes()) == payload
+
+
+def test_labeled_pcm_followed_by_unlabeled_wav():
+    body = b"\n".join(
+        [
+            json.dumps({"encoding": "pcm", "audioContent": base64.b64encode(PCM).decode()}).encode(),
+            json.dumps({"audioContent": base64.b64encode(wav_bytes()).decode()}).encode(),
+        ]
+    )
+    with endpoint(body, "application/x-ndjson") as (url, _):
+        result = tool(url).text_to_speech(Agent(), "Hello")
+    assert result.audios
+    with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
+        assert wav.readframes(wav.getnframes()) == PCM * 2

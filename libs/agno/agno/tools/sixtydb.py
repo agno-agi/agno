@@ -82,13 +82,11 @@ def _pcm(audio: bytes, record_ends: Optional[list[int]] = None, formats: Optiona
     offset = 0
     boundaries = iter(record_ends or [len(audio)])
     end = next(boundaries)
-    pcm_declared = False
     while offset < len(audio):
         while end <= offset:
             end = next(boundaries, len(audio))
         declared_format = formats.get(offset) if formats is not None else None
-        if declared_format is not None:
-            pcm_declared = declared_format == "pcm"
+        pcm_declared = declared_format == "pcm"
         if declared_format == "wav" or (
             not pcm_declared
             and audio[offset : offset + 4] == b"RIFF"
