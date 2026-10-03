@@ -55,6 +55,32 @@ def test_restart_measures_a_fresh_interval():
     assert timer.elapsed == 8.0
 
 
+def test_restart_reports_live_elapsed_and_clears_previous_end_time():
+    timer = Timer()
+
+    with patch("agno.utils.timer.perf_counter", side_effect=[100.0, 103.0, 200.0, 202.5]):
+        timer.start()
+        timer.stop()
+        assert timer.start() == 200.0
+
+        assert timer.to_dict() == {"start_time": "200.0", "end_time": None, "elapsed": 2.5}
+
+
+def test_reentering_context_manager_reports_a_fresh_running_interval():
+    timer = Timer()
+
+    with patch("agno.utils.timer.perf_counter", side_effect=[10.0, 13.0, 20.0, 22.0, 25.0]):
+        with timer:
+            pass
+
+        with timer as restarted:
+            assert restarted is timer
+            assert timer.elapsed == 2.0
+            assert timer.end_time is None
+
+    assert timer.elapsed == 5.0
+
+
 def test_stop_twice_extends_to_the_last_stop():
     """Duration is wall-clock lifetime: a timer stopped more than once (e.g. a run paused
     then continued) reports the time to the last stop, including the gap between them."""
