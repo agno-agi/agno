@@ -66,18 +66,24 @@ def inline_pydantic_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
 
         if "$ref" in s:
             ref = s["$ref"]
-            if not ref.startswith("#/$defs/"):
-                return {"type": "object"}
             def_name = ref.split("/")[-1]
-            if def_name in active_refs:
-                return {
+            definition = definitions.get(def_name) if ref.startswith("#/$defs/") else None
+            if definition is None:
+                result: Dict[str, Any] = {"type": "object"}
+            elif def_name in active_refs:
+                result = {
                     "type": "object",
                     "description": f"A nested {def_name} object of this same shape.",
                 }
-            definition = definitions.get(def_name)
-            if definition is None:
-                return {"type": "object"}
-            return process_schema(definition, active_refs | {def_name})
+            else:
+                result = process_schema(definition, active_refs | {def_name})
+            # Pydantic puts field-specific annotations next to the reference.
+            # Preserve them without changing the shared definition or combining
+            # validation keywords, which require more than a shallow merge.
+            for key in ("title", "description", "default", "examples"):
+                if key in s:
+                    result[key] = s[key]
+            return result
 
         result = dict(s)
         for key in ("items", "additionalProperties", "propertyNames"):
