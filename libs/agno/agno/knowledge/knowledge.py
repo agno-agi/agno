@@ -1143,6 +1143,8 @@ class Knowledge(RemoteKnowledge):
             if filters:
                 raise ValueError("Page knowledge does not support filters")
             page_limit = max_results if max_results is not None else self.max_results
+            if page_limit == 0:
+                return []
             page_documents = self._page_documents(self.search_pages(query, limit=self._page_search_limit(page_limit)))
             return self._rerank_documents(query, page_documents, page_limit)
         from agno.vectordb import VectorDb
@@ -1163,7 +1165,9 @@ class Knowledge(RemoteKnowledge):
 
             search_filters = self._inject_instance_scope_filter(filters)
 
-            _max_results = max_results or self.max_results
+            _max_results = max_results if max_results is not None else self.max_results
+            if _max_results == 0:
+                return []
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             with self._vector_db_reranker_suspended():
                 documents = self.vector_db.search(
@@ -1197,6 +1201,8 @@ class Knowledge(RemoteKnowledge):
             if filters:
                 raise ValueError("Page knowledge does not support filters")
             page_limit = max_results if max_results is not None else self.max_results
+            if page_limit == 0:
+                return []
             page_documents = self._page_documents(
                 await self.asearch_pages(query, limit=self._page_search_limit(page_limit))
             )
@@ -1218,7 +1224,9 @@ class Knowledge(RemoteKnowledge):
 
             search_filters = self._inject_instance_scope_filter(filters)
 
-            _max_results = max_results or self.max_results
+            _max_results = max_results if max_results is not None else self.max_results
+            if _max_results == 0:
+                return []
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             search_limit = self._search_limit(_max_results)
             with self._vector_db_reranker_suspended():
