@@ -47,6 +47,63 @@ Final section content.
 # --- Tests for split_on_headings parameter ---
 
 
+@pytest.mark.parametrize("split_on_headings", [True, 1, 2])
+@pytest.mark.parametrize(
+    ("opening", "closing"),
+    [("```python", "```"), ("~~~python", "~~~"), ("````markdown", "`````"), ("   ~~~", "  ~~~~  ")],
+)
+def test_headings_inside_fenced_code_do_not_split_sections(split_on_headings, opening, closing):
+    code = f"{opening}\n# A code comment\nprint('example')\n## Not a section\n{closing}"
+    content = f"# Example\n\n{code}\n\nAfter the code.\n\n# Next\n\nExplanation."
+    document = Document(id="guide", content=content, meta_data={"source": "guide.md"})
+    chunks = MarkdownChunking(split_on_headings=split_on_headings).chunk(document)
+
+    assert len(chunks) == 2
+    assert code in chunks[0].content
+    assert chunks[1].content.startswith("# Next")
+    for number, chunk in enumerate(chunks, 1):
+        assert chunk.id == f"guide_{number}"
+        assert chunk.meta_data == {"source": "guide.md", "chunk": number, "chunk_size": len(chunk.content)}
+
+
+@pytest.mark.parametrize("false_closer", ["```", "~~~~", "```` trailing text", "    ````"])
+def test_fenced_code_requires_a_matching_closing_fence(false_closer):
+    code = f"````markdown\n# Inside\n{false_closer}\n# Still inside\n````"
+    chunks = MarkdownChunking(split_on_headings=True).chunk(Document(content=f"# Example\n\n{code}\n\n# Next\nText"))
+
+    assert len(chunks) == 2
+    assert code in chunks[0].content
+    assert chunks[1].content.startswith("# Next")
+
+
+@pytest.mark.parametrize("opening", ["```", "~~~"])
+def test_unclosed_fence_keeps_headings_in_the_same_section(opening):
+    content = f"# Example\n\n{opening}\n# Inside\n## Still code"
+    chunks = MarkdownChunking(split_on_headings=True).chunk(Document(content=content))
+
+    assert len(chunks) == 1
+    assert f"{opening}\n# Inside\n## Still code" in chunks[0].content
+
+
+def test_fenced_code_before_first_heading_is_preserved():
+    code = "```python\n# A comment\nprint('example')\n```"
+    chunks = MarkdownChunking(split_on_headings=True).chunk(Document(content=f"{code}\n\n# Heading\nText"))
+
+    assert len(chunks) == 2
+    assert chunks[0].content == code
+    assert chunks[1].content.startswith("# Heading")
+
+
+@pytest.mark.parametrize("not_a_fence", ["``", "    ```", "```not`an`info-string"])
+def test_invalid_opening_fence_does_not_hide_headings(not_a_fence):
+    chunks = MarkdownChunking(split_on_headings=True).chunk(
+        Document(content=f"# First\n\n{not_a_fence}\n# Second\nText")
+    )
+
+    assert len(chunks) == 2
+    assert chunks[1].content.startswith("# Second")
+
+
 def test_split_on_headings_false_uses_size_based_chunking():
     """With split_on_headings=False, should use default size-based chunking."""
     chunker = MarkdownChunking(chunk_size=5000, split_on_headings=False)
