@@ -2771,7 +2771,7 @@ class FunctionCall(BaseModel):
         with the same treatment of cached_result and raw_results.
         """
         from functools import reduce
-        from inspect import isasyncgenfunction, isawaitable, iscoroutinefunction
+        from inspect import isawaitable, iscoroutinefunction
 
         async def execute_entrypoint_async(name, func, args):
             """Execute the entrypoint function asynchronously."""
@@ -2783,21 +2783,8 @@ class FunctionCall(BaseModel):
 
             slot = _start_entrypoint_call(raw_results) if raw_results is not None else -1
             result = self.function.entrypoint(**arguments)  # type: ignore
-            if iscoroutinefunction(self.function.entrypoint) and not isasyncgenfunction(self.function.entrypoint):
+            if isawaitable(result):
                 result = await result
-            if raw_results is not None:
-                _record_entrypoint_result(raw_results, slot, result)
-            return result
-
-        def execute_entrypoint(name, func, args):
-            """Execute the entrypoint function synchronously."""
-            if cached_result is not None and not self._moved_its_key(cache_key, entrypoint_args):
-                return _detached(cached_result)
-            arguments = entrypoint_args.copy()
-            if self.arguments is not None:
-                arguments.update(self.arguments)
-            slot = _start_entrypoint_call(raw_results) if raw_results is not None else -1
-            result = self.function.entrypoint(**arguments)  # type: ignore
             if raw_results is not None:
                 _record_entrypoint_result(raw_results, slot, result)
             return result
@@ -2838,16 +2825,21 @@ class FunctionCall(BaseModel):
         # Build the chain from inside out - reverse the hooks to start from the innermost
         hooks = list(reversed(self.function.tool_hooks))
 
-        # Handle async and sync entrypoints
-        if iscoroutinefunction(self.function.entrypoint):
-            chain = reduce(create_hook_wrapper, hooks, execute_entrypoint_async)
-        else:
-            chain = reduce(create_hook_wrapper, hooks, execute_entrypoint)
+        # Resolve awaitable results before returning them to hooks or the cache,
+        # including results produced by synchronous wrappers.
+        chain = reduce(create_hook_wrapper, hooks, execute_entrypoint_async)
         return chain
 
     async def aexecute(self) -> FunctionExecutionResult:
         """Runs the function call asynchronously."""
-        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator, isgeneratorfunction
+        from inspect import (
+            isasyncgen,
+            isasyncgenfunction,
+            isawaitable,
+            iscoroutinefunction,
+            isgenerator,
+            isgeneratorfunction,
+        )
 
         if self.function.entrypoint is None:
             return FunctionExecutionResult(status="failure", error="Entrypoint is not set")
@@ -2912,15 +2904,9 @@ class FunctionCall(BaseModel):
                 else:
                     result = self.function.entrypoint(**entrypoint_args, **self.arguments)
 
-                # Handle both sync and async entrypoints
-                if isasyncgenfunction(self.function.entrypoint):
-                    self.result = result  # Store async generator directly
-                elif iscoroutinefunction(self.function.entrypoint):
-                    self.result = await result  # Await coroutine result
-                elif isgeneratorfunction(self.function.entrypoint):
-                    self.result = result  # Store sync generator directly
-                else:
-                    self.result = result  # Sync function, result is already computed
+                # A synchronous wrapper can return an awaitable too. Generators
+                # are not awaitable and remain lazy for the caller to consume.
+                self.result = await result if isawaitable(result) else result
 
             # Only cache if not a generator, and never re-save a result that
             # was just served from cache
