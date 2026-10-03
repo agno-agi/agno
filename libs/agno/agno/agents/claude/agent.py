@@ -3,6 +3,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 from uuid import uuid4
 
 from agno.agents.base import BaseExternalAgent
+from agno.metrics import ModelMetrics, RunMetrics
 from agno.models.response import ToolExecution
 from agno.run.agent import (
     RunContentEvent,
@@ -118,6 +119,34 @@ class ClaudeAgent(BaseExternalAgent):
         opts.update(self.options_kwargs)
         return sdk.ClaudeAgentOptions(**opts)
 
+    def _metrics_from_result(self, message: Any) -> Optional[RunMetrics]:
+        """Build RunMetrics from a ResultMessage's usage and cost fields."""
+        usage = getattr(message, "usage", None) or {}
+        cost = getattr(message, "total_cost_usd", None)
+        if not usage and cost is None:
+            return None
+        input_tokens = int(usage.get("input_tokens") or 0)
+        output_tokens = int(usage.get("output_tokens") or 0)
+        model_metrics = ModelMetrics(
+            id=self.model or "claude",
+            provider="anthropic",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=input_tokens + output_tokens,
+            cache_read_tokens=int(usage.get("cache_read_input_tokens") or 0),
+            cache_write_tokens=int(usage.get("cache_creation_input_tokens") or 0),
+            cost=float(cost) if cost is not None else None,
+        )
+        return RunMetrics(
+            input_tokens=model_metrics.input_tokens,
+            output_tokens=model_metrics.output_tokens,
+            total_tokens=model_metrics.total_tokens,
+            cache_read_tokens=model_metrics.cache_read_tokens,
+            cache_write_tokens=model_metrics.cache_write_tokens,
+            cost=model_metrics.cost,
+            details={"model": [model_metrics]},
+        )
+
     @staticmethod
     def _check_result_message(sdk: Any, message: Any) -> None:
         """Raise if the SDK reported an error result so the base class can surface it."""
@@ -141,6 +170,7 @@ class ClaudeAgent(BaseExternalAgent):
 
         options = self._build_options(**kwargs)
         agno_session_id = kwargs.get("session_id")
+        adapter_state = kwargs.get("adapter_state")
         assistant_text = ""
         final_result = ""
 
@@ -164,6 +194,10 @@ class ClaudeAgent(BaseExternalAgent):
                     self._sdk_session_ids[agno_session_id] = message.session_id
                 if hasattr(message, "result") and message.result:
                     final_result = str(message.result)
+                if adapter_state is not None:
+                    metrics = self._metrics_from_result(message)
+                    if metrics is not None:
+                        adapter_state["metrics"] = metrics
 
         # Prefer ResultMessage.result, fall back to accumulated assistant text
         return final_result or assistant_text
@@ -183,6 +217,7 @@ class ClaudeAgent(BaseExternalAgent):
 
         run_id = kwargs.get("run_id", str(uuid4()))
         agno_session_id = kwargs.get("session_id")
+        adapter_state = kwargs.get("adapter_state")
         options = self._build_options(streaming=True, **kwargs)
 
         # Track whether we got any StreamEvents (token-level streaming)
@@ -281,3 +316,7 @@ class ClaudeAgent(BaseExternalAgent):
                 self._check_result_message(sdk, message)
                 if hasattr(message, "session_id") and message.session_id and agno_session_id:
                     self._sdk_session_ids[agno_session_id] = message.session_id
+                if adapter_state is not None:
+                    metrics = self._metrics_from_result(message)
+                    if metrics is not None:
+                        adapter_state["metrics"] = metrics
