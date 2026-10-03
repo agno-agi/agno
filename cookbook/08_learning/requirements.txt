@@ -280,7 +280,7 @@ pydantic-settings==2.12.0
     #   mcp
 pygments==2.19.2
     # via rich
-pyjwt==2.10.1
+pyjwt==2.14.0
     # via mcp
 pypika==0.48.9
     # via chromadb

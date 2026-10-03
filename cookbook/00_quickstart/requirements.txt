@@ -236,7 +236,7 @@ pydantic-settings==2.14.2
     #   chromadb
 pygments==2.20.0
     # via rich
-pyjwt==2.13.0
+pyjwt==2.14.0
     # via agno
 pypika==0.51.1
     # via chromadb
