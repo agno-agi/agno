@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
+import sys
 from typing import Any, Dict, List, Literal, Optional, Union
 
+import pytest
 from pydantic import BaseModel
 
 from agno.utils.json_schema import (
@@ -333,6 +335,12 @@ def test_get_json_schema_optional_literal():
     schema = get_json_schema({"op": Optional[Literal["a", "b"]]})
     # get_json_schema unwraps Optional before calling get_json_schema_for_arg
     assert schema["properties"]["op"] == {"type": "string", "enum": ["a", "b"]}
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="PEP 604 union syntax requires Python 3.10+")
+def test_get_json_schema_pep604_optional():
+    schema = get_json_schema({"count": int | None})
+    assert schema["properties"]["count"]["type"] == "integer"
 
 
 # Test cases for nested structures

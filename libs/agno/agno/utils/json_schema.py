@@ -212,7 +212,11 @@ def get_json_schema(
             # Check if type is Optional (Union with NoneType)
             type_origin = get_origin(type_hint)
             type_args = get_args(type_hint)
-            is_optional = type_origin is Union and len(type_args) == 2 and any(arg is type(None) for arg in type_args)
+            is_optional = (
+                is_origin_union_type(type_origin)
+                and len(type_args) == 2
+                and any(arg is type(None) for arg in type_args)
+            )
 
             # Get the actual type if it's Optional
             if is_optional:
