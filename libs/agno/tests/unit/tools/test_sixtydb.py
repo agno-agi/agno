@@ -257,3 +257,22 @@ def test_ndjson_wav_chunks_preserve_all_audio():
     assert result.audios
     with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
         assert wav.readframes(wav.getnframes()) == PCM * 2
+
+
+@pytest.mark.parametrize("split", [False, True])
+@pytest.mark.parametrize("pcm", [PCM, b"RIFF" + PCM], ids=["ordinary", "riff_samples"])
+def test_ndjson_split_wav_preserves_audio(pcm, split):
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(24000)
+        wav.writeframes(pcm)
+    wav_payload = buffer.getvalue()
+    chunks = [wav_payload[:13], wav_payload[13:45], wav_payload[45:]] if split else [wav_payload]
+    body = b"\n".join(json.dumps({"audioContent": base64.b64encode(chunk).decode()}).encode() for chunk in chunks)
+    with endpoint(body, "application/x-ndjson") as (url, _):
+        result = tool(url).text_to_speech(Agent(), "Hello")
+    assert result.audios
+    with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
+        assert wav.readframes(wav.getnframes()) == pcm

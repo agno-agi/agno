@@ -74,18 +74,29 @@ def _record_audio(record: Any) -> bytes:
 
 def _pcm(audio: bytes) -> bytes:
     if audio.startswith(b"RIFF"):
-        with wave.open(io.BytesIO(audio), "rb") as wav:
-            if (wav.getnchannels(), wav.getsampwidth(), wav.getframerate(), wav.getcomptype()) != (
-                1,
-                2,
-                SAMPLE_RATE,
-                "NONE",
-            ):
-                raise ValueError("60db WAV must be mono PCM16 at 24000 Hz")
-            frames = wav.getnframes()
-            audio = wav.readframes(frames)
-            if len(audio) != frames * 2:
+        decoded = bytearray()
+        offset = 0
+        while offset < len(audio):
+            if audio[offset : offset + 4] != b"RIFF" or len(audio) - offset < 12:
+                raise ValueError("60db returned invalid WAV framing")
+            size = int.from_bytes(audio[offset + 4 : offset + 8], "little") + 8
+            if size < 12 or size > len(audio) - offset:
                 raise ValueError("60db returned truncated WAV audio")
+            with wave.open(io.BytesIO(audio[offset : offset + size]), "rb") as wav:
+                if (wav.getnchannels(), wav.getsampwidth(), wav.getframerate(), wav.getcomptype()) != (
+                    1,
+                    2,
+                    SAMPLE_RATE,
+                    "NONE",
+                ):
+                    raise ValueError("60db WAV must be mono PCM16 at 24000 Hz")
+                frames = wav.getnframes()
+                pcm = wav.readframes(frames)
+                if len(pcm) != frames * 2:
+                    raise ValueError("60db returned truncated WAV audio")
+                decoded.extend(pcm)
+            offset += size
+        audio = bytes(decoded)
     elif audio.startswith((b"ID3", b"OggS", b"fLaC")):
         raise ValueError("60db returned compressed audio instead of PCM")
     if not audio or len(audio) % 2:
@@ -241,11 +252,7 @@ class SixtyDBTools(Toolkit):
                 },
             )
             if content_type in {"application/x-ndjson", "application/ndjson", "text/plain"}:
-                audio = b"".join(
-                    _pcm(chunk)
-                    for line in body.splitlines()
-                    if line.strip() and (chunk := _record_audio(json.loads(line)))
-                )
+                audio = b"".join(_record_audio(json.loads(line)) for line in body.splitlines() if line.strip())
             elif content_type == "application/json":
                 audio = _record_audio(json.loads(body))
             elif content_type in {"audio/wav", "audio/x-wav", "audio/pcm", "application/octet-stream"}:
