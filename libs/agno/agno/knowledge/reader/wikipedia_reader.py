@@ -90,6 +90,6 @@ class WikipediaReader(Reader):
                 content=summary,
             )
             if self.chunk:
-                return self.chunk_document(document)
+                return await self.achunk_document(document)
             return [document]
         return []
