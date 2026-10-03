@@ -204,7 +204,7 @@ def get_entrypoint_for_tool(
             images = []
             audios = []
 
-            for content_item in result.content:
+            for content_item in result.content or []:
                 if isinstance(content_item, TextContent):
                     text_content = content_item.text
 
