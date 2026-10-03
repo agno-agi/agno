@@ -162,13 +162,13 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
                 and "anyOf" in field_schema
                 and any(schema.get("type") == "null" for schema in field_schema["anyOf"])
             ):
-                non_null_type = next(
-                    (schema["type"] for schema in field_schema["anyOf"] if schema.get("type") not in (None, "null")),
+                non_null_schema = next(
+                    (schema for schema in field_schema["anyOf"] if schema.get("type") not in (None, "null")),
                     None,
                 )
-                if non_null_type is not None:
-                    field_schema["type"] = non_null_type
+                if non_null_schema is not None:
                     field_schema.pop("anyOf")
+                    field_schema.update(non_null_schema)
             else:
                 required.append(field_name)
 
