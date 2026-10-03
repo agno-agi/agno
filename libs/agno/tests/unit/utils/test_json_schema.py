@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 from pydantic import BaseModel
 
@@ -141,6 +141,30 @@ def test_get_json_schema_for_arg_bare_dict():
     list_dict_lower = get_json_schema_for_arg(list[dict])
     assert list_dict_lower["type"] == "array"
     assert list_dict_lower["items"].get("additionalProperties") is True
+
+
+def test_get_json_schema_for_arg_heterogeneous_tuple():
+    """Heterogeneous tuples advertise each slot via prefixItems (issue #10555)."""
+    schema = get_json_schema_for_arg(Tuple[int, str])
+    assert schema == {
+        "type": "array",
+        "prefixItems": [{"type": "integer"}, {"type": "string"}],
+        "minItems": 2,
+        "maxItems": 2,
+    }
+
+    three_slots = get_json_schema_for_arg(Tuple[str, int, bool])
+    assert len(three_slots["prefixItems"]) == 3
+    assert three_slots["prefixItems"][0] == {"type": "string"}
+    assert three_slots["prefixItems"][2] == {"type": "boolean"}
+
+    # Homogeneous rest tuples keep uniform items
+    rest = get_json_schema_for_arg(Tuple[int, ...])
+    assert rest == {"type": "array", "items": {"type": "integer"}}
+
+    # list/set are unchanged
+    lst = get_json_schema_for_arg(List[int])
+    assert lst == {"type": "array", "items": {"type": "integer"}}
 
 
 def test_get_json_schema_bare_dict_in_function():
