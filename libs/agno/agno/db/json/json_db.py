@@ -1,5 +1,6 @@
 import json
 import os
+import stat
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -122,7 +123,7 @@ class JsonDb(BaseDb):
             raise e
 
     def _write_json_file(self, filename: str, data: List[Dict[str, Any]]) -> None:
-        """Write data to a JSON file.
+        """Write data to a JSON file, publishing regular tables after serialization succeeds.
 
         Args:
             filename (str): The name of the JSON file to write.
@@ -131,18 +132,36 @@ class JsonDb(BaseDb):
         Raises:
             Exception: If an error occurs while writing to the JSON file.
         """
-        file_path = self.db_path / f"{filename}.json"
+        file_path = (self.db_path / f"{filename}.json").resolve()
 
         # Create directory if it doesn't exist
         self.db_path.mkdir(parents=True, exist_ok=True)
 
+        temporary_path: Optional[Path] = None
         try:
-            with open(file_path, "w", encoding="utf-8") as f:
+            existing_mode = file_path.stat().st_mode if file_path.exists() else None
+            if existing_mode is not None and not stat.S_ISREG(existing_mode):
+                with open(file_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2, default=str)
+                return
+            if existing_mode is not None:
+                descriptor = os.open(file_path, os.O_WRONLY)
+                os.close(descriptor)
+
+            staging_path = file_path.with_name(f".agno-json-{uuid4().hex}.tmp")
+            with open(staging_path, "x", encoding="utf-8") as f:
+                temporary_path = staging_path
+                if existing_mode is not None:
+                    os.chmod(temporary_path, stat.S_IMODE(existing_mode))
                 json.dump(data, f, indent=2, default=str)
+            os.replace(temporary_path, file_path)
 
         except Exception as e:
             log_error(f"Error writing to the {file_path} JSON file: {str(e)}")
             raise e
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
 
     def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
         """Get the schema version stamped for the given table.
