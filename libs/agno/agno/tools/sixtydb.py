@@ -72,12 +72,16 @@ def _record_audio(record: Any) -> bytes:
     return audio
 
 
-def _pcm(audio: bytes) -> bytes:
-    if audio.startswith(b"RIFF"):
-        decoded = bytearray()
-        offset = 0
-        while offset < len(audio):
-            if audio[offset : offset + 4] != b"RIFF" or len(audio) - offset < 12:
+def _pcm(audio: bytes, record_ends: Optional[list[int]] = None) -> bytes:  # noqa: FA100
+    decoded = bytearray()
+    offset = 0
+    boundaries = iter(record_ends or [len(audio)])
+    end = next(boundaries)
+    while offset < len(audio):
+        while end <= offset:
+            end = next(boundaries, len(audio))
+        if audio[offset : offset + 4] == b"RIFF":
+            if len(audio) - offset < 12:
                 raise ValueError("60db returned invalid WAV framing")
             size = int.from_bytes(audio[offset + 4 : offset + 8], "little") + 8
             if size < 12 or size > len(audio) - offset:
@@ -96,12 +100,16 @@ def _pcm(audio: bytes) -> bytes:
                     raise ValueError("60db returned truncated WAV audio")
                 decoded.extend(pcm)
             offset += size
-        audio = bytes(decoded)
-    elif audio.startswith((b"ID3", b"OggS", b"fLaC")):
-        raise ValueError("60db returned compressed audio instead of PCM")
-    if not audio or len(audio) % 2:
+        else:
+            if record_ends is None and offset:
+                raise ValueError("60db returned invalid WAV framing")
+            if audio[offset : offset + 4].startswith((b"ID3", b"OggS", b"fLaC")):
+                raise ValueError("60db returned compressed audio instead of PCM")
+            decoded.extend(audio[offset:end])
+            offset = end
+    if not decoded or len(decoded) % 2:
         raise ValueError("60db returned empty or incomplete PCM16 audio")
-    return audio
+    return bytes(decoded)
 
 
 class SixtyDBTools(Toolkit):
@@ -252,14 +260,21 @@ class SixtyDBTools(Toolkit):
                 },
             )
             if content_type in {"application/x-ndjson", "application/ndjson", "text/plain"}:
-                audio = b"".join(_record_audio(json.loads(line)) for line in body.splitlines() if line.strip())
+                audio_records = [_record_audio(json.loads(line)) for line in body.splitlines() if line.strip()]
+                ends = []
+                total = 0
+                for record in audio_records:
+                    total += len(record)
+                    if record:
+                        ends.append(total)
+                audio = _pcm(b"".join(audio_records), ends)
             elif content_type == "application/json":
                 audio = _record_audio(json.loads(body))
             elif content_type in {"audio/wav", "audio/x-wav", "audio/pcm", "application/octet-stream"}:
                 audio = body
             else:
                 raise ValueError("Unsupported audio response")
-            pcm = _pcm(audio)
+            pcm = audio if content_type in {"application/x-ndjson", "application/ndjson", "text/plain"} else _pcm(audio)
             buffer = io.BytesIO()
             with wave.open(buffer, "wb") as wav:
                 wav.setnchannels(1)
