@@ -37,3 +37,13 @@
 **Result:** Requires optional dependencies/services (for example `ollama`, Qdrant, and LangChain extras).
 
 ---
+
+### siliconflow.py
+
+**Status:** PASS
+
+**Description:** Exercises Siliconflow text embedding and reranking through the live API without a vector database.
+
+**Result:** Returned four 1024-dimensional embeddings in one batch and reranked three documents to the requested top two. The Eiffel Tower document ranked first with the highest relevance score.
+
+---
