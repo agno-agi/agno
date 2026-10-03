@@ -12,14 +12,14 @@ class Nebius(OpenAILike):
     A class for interacting with Nebius Token Factory models.
 
     Attributes:
-        id (str): The model id. Defaults to "Qwen/Qwen3-235B-A22B"".
+        id (str): The model id. Defaults to "openai/gpt-oss-120b".
         name (str): The model name. Defaults to "Nebius".
         provider (str): The provider name. Defaults to "Nebius".
         api_key (Optional[str]): The API key.
         base_url (str): The base URL. Defaults to "https://api.tokenfactory.nebius.com/v1".
     """
 
-    id: str = "openai/gpt-oss-20b"  # Default model for chat
+    id: str = "openai/gpt-oss-120b"  # Default model for chat
     name: str = "Nebius"
     provider: str = "Nebius"
 
