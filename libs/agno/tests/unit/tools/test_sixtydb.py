@@ -354,3 +354,26 @@ def test_wav_container_precedes_linear16_sample_encoding(content_type, nested):
     assert result.audios
     with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
         assert wav.readframes(wav.getnframes()) == PCM
+
+
+@pytest.mark.parametrize("invalid_kind", ["rate", "container", "frames"])
+def test_incompatible_unlabeled_wav_after_pcm_is_rejected(invalid_kind):
+    wav = io.BytesIO()
+    with wave.open(wav, "wb") as output:
+        output.setparams((1, 2, 16000 if invalid_kind == "rate" else 24000, 0, "NONE", "not compressed"))
+        output.writeframes(PCM)
+    payload = wav.getvalue()
+    if invalid_kind in {"container", "frames"}:
+        payload = payload[:-2]
+    if invalid_kind == "frames":
+        payload = payload[:4] + (len(payload) - 8).to_bytes(4, "little") + payload[8:]
+    body = b"\n".join(
+        [
+            json.dumps({"encoding": "pcm", "audioContent": base64.b64encode(PCM).decode()}).encode(),
+            json.dumps({"audioContent": base64.b64encode(payload).decode()}).encode(),
+        ]
+    )
+    with endpoint(body, "application/x-ndjson") as (url, _):
+        result = tool(url).text_to_speech(Agent(), "Hello")
+    assert not result.audios
+    assert result.content.startswith("Error:")
