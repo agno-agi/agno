@@ -167,6 +167,10 @@ class MMRReranker(Reranker):
         limit = self._prepare(documents, limit)
         if limit is None:
             return documents
+        if limit <= 0:
+            # Selection seeds itself with the closest match before the loop tests the
+            # limit, so a caller that keeps nothing has to be answered here.
+            return []
 
         embedder = self._resolve_embedder(documents)
         return self._select(embedder.get_embedding(query), documents, limit)
@@ -175,6 +179,9 @@ class MMRReranker(Reranker):
         selection = self._prepare(documents, limit)
         if selection is None:
             return documents
+        if selection <= 0:
+            # See rerank(): a non-positive limit keeps nothing.
+            return []
 
         embedder = self._resolve_embedder(documents)
         query_embedding = await embedder.async_get_embedding(query)

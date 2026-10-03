@@ -293,3 +293,21 @@ def test_mmr_scores_survive_the_search_api_schema():
     assert any(doc.reranking_score < 0 for doc in results)
     for document in results:
         schemas.VectorSearchResult.from_document(document)
+
+
+def test_rerank_with_zero_limit_returns_no_documents():
+    """A caller that keeps nothing must not be handed the closest match.
+
+    Regression test: selection was seeded with the closest document before the loop
+    checked the limit, so limit=0 still returned one document.
+    """
+    assert MMRReranker().rerank("q", _documents(), limit=0) == []
+
+
+def test_rerank_with_negative_limit_returns_no_documents():
+    assert MMRReranker().rerank("q", _documents(), limit=-1) == []
+
+
+@pytest.mark.asyncio
+async def test_arerank_with_zero_limit_returns_no_documents():
+    assert await MMRReranker().arerank("q", _documents(), limit=0) == []
