@@ -87,7 +87,7 @@ def inline_pydantic_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
             result["properties"] = {
                 name: process_schema(prop, active_refs) for name, prop in result["properties"].items()
             }
-        for key in ("anyOf", "allOf", "oneOf"):
+        for key in ("anyOf", "allOf", "oneOf", "prefixItems"):
             if key in result:
                 result[key] = [process_schema(sub, active_refs) for sub in result[key]]
         result.pop("$defs", None)

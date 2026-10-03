@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 from pydantic import BaseModel
 
@@ -9,6 +9,54 @@ from agno.utils.json_schema import (
     get_json_type_for_py_type,
     is_origin_union_type,
 )
+
+
+def test_fixed_tuple_model_refs_are_inlined():
+    class Item(BaseModel):
+        label: str
+
+    class Pair(BaseModel):
+        values: Tuple[Item, Item]
+
+    schema = get_json_schema_for_arg(Pair)
+    values = schema["properties"]["values"]
+    assert values["minItems"] == values["maxItems"] == 2
+    assert "$defs" not in schema
+    for item in values["prefixItems"]:
+        assert "$ref" not in item
+        assert item["properties"]["label"]["type"] == "string"
+
+
+def test_nested_mixed_tuple_model_refs_are_inlined():
+    class Item(BaseModel):
+        label: str
+
+    class Envelope(BaseModel):
+        values: List[Tuple[int, Tuple[Item, str]]]
+
+    schema = get_json_schema_for_arg(Envelope)
+    outer = schema["properties"]["values"]["items"]["prefixItems"]
+    assert outer[0]["type"] == "integer"
+    inner = outer[1]["prefixItems"]
+    assert inner[0]["properties"]["label"]["type"] == "string"
+    assert "$ref" not in inner[0]
+    assert inner[1]["type"] == "string"
+
+
+def test_recursive_tuple_refs_use_existing_cycle_guard():
+    import json
+
+    class Node(BaseModel):
+        children: Optional[Tuple["Node", "Node"]] = None
+
+    schema = get_json_schema_for_arg(Node)
+    children = schema["properties"]["children"]["anyOf"][0]
+    assert children["minItems"] == children["maxItems"] == 2
+    assert children["prefixItems"] == [
+        {"type": "object", "description": "A nested Node object of this same shape."},
+        {"type": "object", "description": "A nested Node object of this same shape."},
+    ]
+    assert '"$ref"' not in json.dumps(schema)
 
 
 # Test models and dataclasses
