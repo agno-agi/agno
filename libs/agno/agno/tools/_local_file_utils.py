@@ -13,6 +13,37 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 # a path component matching it is never excluded, whichever pattern it also matches.
 EXEMPT_PREFIX = "!"
 
+
+def extract_snippet(content: str, query: str, context_chars: int = 200) -> str:
+    """Extract original text around the first match under ``str.lower``."""
+    lower_content = content.lower()
+    lower_query = query.lower()
+    idx = lower_content.find(lower_query)
+    if idx == -1:
+        return ""
+    match_start, match_end = idx, idx + len(lower_query)
+    if lower_query and len(lower_content) != len(content):
+        # Lowercasing U+0130 expands it into two code points. Map the match
+        # back without changing the search's existing Unicode semantics.
+        offset = 0
+        for original_index, char in enumerate(content):
+            next_offset = offset + len(char.lower())
+            if offset <= idx < next_offset:
+                match_start = original_index
+            if next_offset >= idx + len(lower_query):
+                match_end = original_index + 1
+                break
+            offset = next_offset
+    start = max(0, match_start - context_chars)
+    end = min(len(content), match_end + context_chars)
+    snippet = content[start:end]
+    if start > 0:
+        snippet = "..." + snippet
+    if end < len(content):
+        snippet += "..."
+    return snippet
+
+
 DEFAULT_EXCLUDE_PATTERNS = [
     # Agent and local scratch state
     ".context",
