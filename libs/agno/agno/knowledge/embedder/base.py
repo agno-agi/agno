@@ -1,8 +1,18 @@
+import base64
+import struct
 from dataclasses import dataclass
-from typing import Any, Dict, List, NoReturn, Optional, Tuple
+from typing import Any, Dict, List, NoReturn, Optional, Tuple, Union
 
 from agno.exceptions import EmbeddingError
 from agno.utils.log import log_warning
+
+
+def decode_embedding(embedding: Union[List[float], str]) -> List[float]:
+    """Decode a base64 float32 vector while preserving float-array responses."""
+    if isinstance(embedding, str):
+        data = base64.b64decode(embedding, validate=True)
+        return list(struct.unpack(f"<{len(data) // 4}f", data))
+    return embedding
 
 
 def raise_embedding_error(error: Exception, model_id: Optional[str] = None, provider: Optional[str] = None) -> NoReturn:
