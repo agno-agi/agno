@@ -1,6 +1,6 @@
 import io
 import sys
-from datetime import datetime
+from datetime import datetime, time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -853,6 +853,48 @@ def test_excel_reader_xls_date_cells_converted_to_iso(tmp_path: Path):
     # Dates should be converted to ISO format (not raw serial numbers)
     assert "2024-01-20" in lines[1]
     assert "2024-12-25" in lines[2]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("datemode", [0, 1], ids=["1900", "1904"])
+@pytest.mark.parametrize("use_stream", [False, True], ids=["path", "stream"])
+async def test_excel_reader_xls_time_cells(tmp_path: Path, use_async: bool, datemode: int, use_stream: bool):
+    """Time-only cells stay readable without changing numeric or full datetime cells."""
+    xlwt = pytest.importorskip("xlwt")
+    pytest.importorskip("xlrd")
+
+    workbook = xlwt.Workbook()
+    workbook.dates_1904 = bool(datemode)
+    sheet = workbook.add_sheet("Times")
+    time_format = xlwt.easyxf(num_format_str="HH:MM:SS")
+    datetime_format = xlwt.easyxf(num_format_str="YYYY-MM-DD HH:MM:SS")
+    sheet.write(0, 0, time(0, 0), time_format)
+    sheet.write(1, 0, time(12, 0), time_format)
+    sheet.write(2, 0, time(14, 30, 45), time_format)
+    sheet.write(3, 0, 0.5)
+    sheet.write(4, 0, datetime(2024, 1, 20, 14, 30, 45), datetime_format)
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    if use_stream:
+        buffer.seek(0)
+        file = buffer
+    else:
+        file = tmp_path / "times.xls"
+        file.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=False)
+    documents = await reader.async_read(file, name="times.xls") if use_async else reader.read(file, name="times.xls")
+
+    assert len(documents) == 1
+    assert documents[0].content.splitlines() == [
+        "00:00:00",
+        "12:00:00",
+        "14:30:45",
+        "0.5",
+        "2024-01-20T14:30:45",
+    ]
 
 
 def test_excel_reader_xls_corrupted_file_returns_empty_list(tmp_path: Path):
