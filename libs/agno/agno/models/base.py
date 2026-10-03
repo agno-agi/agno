@@ -466,6 +466,8 @@ class Model(ABC):
 
         def _cache_default(obj: Any) -> Any:
             if isinstance(obj, type):
+                if issubclass(obj, BaseModel):
+                    return obj.model_json_schema()
                 return obj.__name__
             if hasattr(obj, "model_dump"):
                 return obj.model_dump()
