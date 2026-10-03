@@ -1443,25 +1443,29 @@ class OpenAIResponses(Model):
 
         # 2. Add citations
         elif stream_event.type == "response.output_text.annotation.added":
-            if model_response.citations is None:
-                model_response.citations = Citations(raw=[stream_event.annotation])
-            else:
-                model_response.citations.raw.append(stream_event.annotation)  # type: ignore
+            # Annotations arrive one per event; accumulate them on the assistant message
+            # so the streamed citations match the non-streaming parse.
+            if assistant_message.citations is None:
+                assistant_message.citations = Citations(raw=[])
+            citations = assistant_message.citations
+            citations.raw.append(stream_event.annotation)  # type: ignore
 
             if isinstance(stream_event.annotation, dict):
                 if stream_event.annotation.get("type") == "url_citation":
-                    if model_response.citations.urls is None:
-                        model_response.citations.urls = []
-                    model_response.citations.urls.append(
+                    if citations.urls is None:
+                        citations.urls = []
+                    citations.urls.append(
                         UrlCitation(url=stream_event.annotation.get("url"), title=stream_event.annotation.get("title"))
                     )
             else:
                 if stream_event.annotation.type == "url_citation":  # type: ignore
-                    if model_response.citations.urls is None:
-                        model_response.citations.urls = []
-                    model_response.citations.urls.append(
+                    if citations.urls is None:
+                        citations.urls = []
+                    citations.urls.append(
                         UrlCitation(url=stream_event.annotation.url, title=stream_event.annotation.title)  # type: ignore
                     )
+
+            model_response.citations = citations
 
         # 3. Add content
         elif stream_event.type == "response.output_text.delta":
