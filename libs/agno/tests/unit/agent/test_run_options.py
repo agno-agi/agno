@@ -396,6 +396,34 @@ class TestKnowledgeFilterMerge:
         opts = resolve_run_options(agent, knowledge_filters=run_filters)
         assert len(opts.knowledge_filters) == 2
 
+    def test_agent_dict_and_run_list_merge_converts_dict_to_filter_exprs(self):
+        from agno.filters import EQ
+
+        agent = _make_agent(knowledge_filters={"type": "recipe", "cuisine": "italian"})
+        opts = resolve_run_options(agent, knowledge_filters=[EQ("difficulty", "easy")])
+
+        resolved = opts.knowledge_filters
+        assert isinstance(resolved, list)
+        assert [(f.key, f.value) for f in resolved] == [
+            ("type", "recipe"),
+            ("cuisine", "italian"),
+            ("difficulty", "easy"),
+        ]
+
+    def test_agent_list_and_run_dict_merge_converts_dict_to_filter_exprs(self):
+        from agno.filters import EQ
+
+        agent = _make_agent(knowledge_filters=[EQ("type", "recipe")])
+        opts = resolve_run_options(agent, knowledge_filters={"cuisine": "italian", "difficulty": "easy"})
+
+        resolved = opts.knowledge_filters
+        assert isinstance(resolved, list)
+        assert [(f.key, f.value) for f in resolved] == [
+            ("type", "recipe"),
+            ("cuisine", "italian"),
+            ("difficulty", "easy"),
+        ]
+
 
 class TestAgentNotMutated:
     def test_resolve_does_not_mutate_agent(self):
