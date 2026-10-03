@@ -1,8 +1,47 @@
+import csv
 import json
 
 import pytest
 
 from agno.tools.csv_toolkit import CsvTools
+
+
+@pytest.fixture
+def csv_with_oversized_second_row(tmp_path):
+    csv_path = tmp_path / "people.csv"
+    oversized_field = "x" * (csv.field_size_limit() + 1)
+    csv_path.write_text(f"name\nAlice\n{oversized_field}\n", encoding="utf-8")
+    return csv_path
+
+
+@pytest.mark.parametrize(
+    ("constructor_limit", "requested_limit", "expected_row_count"),
+    [
+        (None, 1, 1),
+        (1, None, 1),
+        (2, 1, 1),
+        (None, 0, 0),
+        (1, 0, 0),
+        (0, None, 0),
+    ],
+)
+def test_read_csv_file_does_not_parse_rows_beyond_limit(
+    csv_with_oversized_second_row, constructor_limit, requested_limit, expected_row_count
+):
+    tools = CsvTools(csvs=[csv_with_oversized_second_row], row_limit=constructor_limit, enable_query_csv_file=False)
+
+    rows = json.loads(tools.read_csv_file("people", row_limit=requested_limit))
+
+    assert rows == [{"name": "Alice"}][:expected_row_count]
+
+
+@pytest.mark.parametrize("row_limit", [None, 2])
+def test_read_csv_file_reports_parse_errors_within_limit(csv_with_oversized_second_row, row_limit):
+    tools = CsvTools(csvs=[csv_with_oversized_second_row], enable_query_csv_file=False)
+
+    result = tools.read_csv_file("people", row_limit=row_limit)
+
+    assert result.startswith("Error reading csv: field larger than field limit")
 
 
 @pytest.mark.parametrize(
