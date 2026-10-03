@@ -1882,13 +1882,16 @@ def get_workflow_router(
                         # with zero events.
                         if existing.get("status") in ("queued", "running"):
                             return StreamingResponse(
-                                queued_run_tail_streamer(existing["id"]), media_type="text/event-stream"
+                                queued_run_tail_streamer(existing["id"]),
+                                media_type="text/event-stream",
+                                headers={"X-Accel-Buffering": "no"},
                             )
                         return StreamingResponse(
                             _resume_stream_generator(
                                 workflow, existing["id"], None, existing.get("session_id"), user_id
                             ),
                             media_type="text/event-stream",
+                            headers={"X-Accel-Buffering": "no"},
                         )
                     with contextlib.suppress(Exception):
                         # Fail-open: the queue row is already committed - a Redis blip
@@ -1897,7 +1900,11 @@ def get_workflow_router(
                     await aprepare_accepted_or_abort(
                         queue_worker, workflow, "workflow", queued_run_id, queued_session_id, user_id, message
                     )
-                    return StreamingResponse(queued_run_tail_streamer(queued_run_id), media_type="text/event-stream")
+                    return StreamingResponse(
+                        queued_run_tail_streamer(queued_run_id),
+                        media_type="text/event-stream",
+                        headers={"X-Accel-Buffering": "no"},
+                    )
                 if queue_worker is not None:
                     log_warning(
                         "Streaming background workflow run bypasses the durable queue "
@@ -1918,6 +1925,7 @@ def get_workflow_router(
                         **kwargs,
                     ),
                     media_type="text/event-stream",
+                    headers={"X-Accel-Buffering": "no"},
                 )
 
             # background=True, stream=False: return 202 immediately with run
@@ -2059,6 +2067,7 @@ def get_workflow_router(
                         **kwargs,
                     ),
                     media_type="text/event-stream",
+                    headers={"X-Accel-Buffering": "no"},
                 )
             else:
                 # Pass auth_token for remote workflows
@@ -2319,6 +2328,7 @@ def get_workflow_router(
                         return StreamingResponse(
                             queued_run_tail_streamer(run_id, from_index=continue_outcome.get("tail_from")),
                             media_type="text/event-stream",
+                            headers={"X-Accel-Buffering": "no"},
                         )
                     return JSONResponse(
                         status_code=202,
@@ -2368,6 +2378,7 @@ def get_workflow_router(
                     queue_worker=getattr(request.app.state, "queue_worker", None),
                 ),
                 media_type="text/event-stream",
+                headers={"X-Accel-Buffering": "no"},
             )
         else:
             run_response = None
@@ -2645,6 +2656,7 @@ def get_workflow_router(
         return StreamingResponse(
             _resume_stream_generator(workflow, run_id, last_event_index, session_id, user_id=scoped_user_id),
             media_type="text/event-stream",
+            headers={"X-Accel-Buffering": "no"},
         )
 
     @router.get(
