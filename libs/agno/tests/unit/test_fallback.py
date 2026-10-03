@@ -493,29 +493,29 @@ class TestAsyncCallModelStreamWithFallback:
 
 class TestClassifyError:
     def test_classify_error_rate_limit(self):
-        """Model.classify_error with 429 returns ModelRateLimitError."""
+        """ModelProviderError.classify with 429 returns ModelRateLimitError."""
         error = ModelProviderError("rate limited", status_code=429)
-        classified = Model.classify_error(error)
+        classified = ModelProviderError.classify(error)
         assert isinstance(classified, ModelRateLimitError)
 
     def test_classify_error_context_window(self):
-        """Model.classify_error with context_length_exceeded message returns ContextWindowExceededError."""
+        """ModelProviderError.classify with context_length_exceeded message returns ContextWindowExceededError."""
         error = ModelProviderError("context_length_exceeded", status_code=400)
-        classified = Model.classify_error(error)
+        classified = ModelProviderError.classify(error)
         assert isinstance(classified, ContextWindowExceededError)
 
     def test_classify_error_already_classified(self):
         """Already-classified errors are returned as-is."""
         rl_error = ModelRateLimitError("rate limited")
-        assert Model.classify_error(rl_error) is rl_error
+        assert ModelProviderError.classify(rl_error) is rl_error
 
         cw_error = ContextWindowExceededError("too long")
-        assert Model.classify_error(cw_error) is cw_error
+        assert ModelProviderError.classify(cw_error) is cw_error
 
     def test_classify_error_generic(self):
         """Unclassifiable errors are returned as-is."""
         error = ModelProviderError("unknown error", status_code=500)
-        classified = Model.classify_error(error)
+        classified = ModelProviderError.classify(error)
         assert classified is error
         assert type(classified) is ModelProviderError
 

@@ -16,7 +16,7 @@ pdf_path = Path(__file__).parent.joinpath("ThaiRecipes.pdf")
 
 # Pass the local PDF file path directly; the client will inline small files or upload large files automatically
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     markdown=True,
     add_history_to_context=True,
 )

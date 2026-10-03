@@ -91,7 +91,9 @@ class LocalFileSystemTools(Toolkit):
             # Create directory if it doesn't exist
             file_path.parent.mkdir(parents=True, exist_ok=True)
 
-            file_path.write_text(content)
+            # Explicit UTF-8: the default locale encoding mangles or rejects valid
+            # non-ASCII text on non-UTF-8 hosts (cp1252/GBK/ASCII).
+            file_path.write_text(content, encoding="utf-8")
 
             return f"Successfully wrote file to: {file_path}"
 
@@ -119,7 +121,9 @@ class LocalFileSystemTools(Toolkit):
             if not file_path.exists():
                 return f"File not found: {file_path}"
 
-            return file_path.read_text()
+            # Explicit UTF-8, matching write_file: the locale encoding can differ
+            # from the encoding the file was written with on another host.
+            return file_path.read_text(encoding="utf-8")
 
         except Exception as e:
             error_msg = f"Failed to read file: {str(e)}"

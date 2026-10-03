@@ -2,6 +2,7 @@ import os
 from typing import Any, Callable, Dict, List, Optional
 
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.reader.utils.urls import is_sitemap_url
 
 
 class ReaderFactory:
@@ -30,7 +31,7 @@ class ReaderFactory:
         },
         "docx": {
             "name": "DocxReader",
-            "description": "Extracts text content from Microsoft Word documents (.docx and .doc formats)",
+            "description": "Extracts text content from Microsoft Word documents (.docx format)",
         },
         "pptx": {
             "name": "PptxReader",
@@ -79,6 +80,10 @@ class ReaderFactory:
         "llms_txt": {
             "name": "LLMsTxtReader",
             "description": "Reads llms.txt files, discovers linked documentation URLs, and fetches their content",
+        },
+        "sitemap": {
+            "name": "SitemapReader",
+            "description": "Discovers a website's sitemap and loads one document per page with its source URL",
         },
         "docling": {
             "name": "DoclingReader",
@@ -141,7 +146,7 @@ class ReaderFactory:
 
         config: Dict[str, Any] = {
             "name": "Docx Reader",
-            "description": "Extracts text content from Microsoft Word documents (.docx and .doc formats)",
+            "description": "Extracts text content from Microsoft Word documents (.docx format)",
         }
         config.update(kwargs)
         return DocxReader(**config)
@@ -296,6 +301,18 @@ class ReaderFactory:
         return LLMsTxtReader(**config)
 
     @classmethod
+    def _get_sitemap_reader(cls, **kwargs) -> Reader:
+        """Get Sitemap reader instance."""
+        from agno.knowledge.reader.sitemap_reader import SitemapReader
+
+        config: Dict[str, Any] = {
+            "name": "Sitemap Reader",
+            "description": "Discovers a website's sitemap and loads one document per page with its source URL",
+        }
+        config.update(kwargs)
+        return SitemapReader(**config)
+
+    @classmethod
     def _get_docling_reader(cls, **kwargs) -> Reader:
         """Get Docling reader instance."""
         from agno.knowledge.reader.docling_reader import DoclingReader
@@ -351,6 +368,7 @@ class ReaderFactory:
             "wikipedia": ("agno.knowledge.reader.wikipedia_reader", "WikipediaReader"),
             "web_search": ("agno.knowledge.reader.web_search_reader", "WebSearchReader"),
             "llms_txt": ("agno.knowledge.reader.llms_txt_reader", "LLMsTxtReader"),
+            "sitemap": ("agno.knowledge.reader.sitemap_reader", "SitemapReader"),
             "docling": ("agno.knowledge.reader.docling_reader", "DoclingReader"),
         }
 
@@ -363,6 +381,20 @@ class ReaderFactory:
 
         module = importlib.import_module(module_path)
         return getattr(module, class_name)
+
+    @classmethod
+    def get_missing_read_time_packages(cls, reader_key: str, content_type: Optional[str] = None) -> List[str]:
+        """Declared read-time packages a reader needs that are not importable.
+
+        Returns an empty list for a reader whose class cannot be imported at all: its module
+        scope already reports what is missing, and this table only covers what that import
+        cannot see.
+        """
+        try:
+            reader_class = cls.get_reader_class(reader_key)
+        except Exception:
+            return []
+        return reader_class.get_missing_read_time_packages(content_type)  # type: ignore[attr-defined]
 
     @classmethod
     def create_reader(cls, reader_key: str, **kwargs) -> Reader:
@@ -418,6 +450,10 @@ class ReaderFactory:
         # Check for YouTube URLs
         if any(domain in url_lower for domain in ["youtube.com", "youtu.be"]):
             return cls.create_reader("youtube")
+
+        # A sitemap URL gets the per-page sitemap reader
+        if is_sitemap_url(url):
+            return cls.create_reader("sitemap")
 
         # Default to website reader
         return cls.create_reader("website")

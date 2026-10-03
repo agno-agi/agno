@@ -25,7 +25,7 @@ agent = Agent(
         top_p=None,
         append_trailing_user_message=True,
     ),
-    reasoning=True,
+    reasoning_model=LiteLLM(id="anthropic/claude-opus-4-7", top_p=None),
     markdown=True,
 )
 
@@ -37,7 +37,7 @@ agent_custom = Agent(
         append_trailing_user_message=True,
         trailing_user_message_content="continue",
     ),
-    reasoning=True,
+    reasoning_model=LiteLLM(id="anthropic/claude-opus-4-7", top_p=None),
     markdown=True,
 )
 

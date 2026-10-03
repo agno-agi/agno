@@ -8,6 +8,7 @@ from agno.agent import Agent
 from agno.knowledge import Knowledge
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.routers.memory.schemas import UserMemorySchema
+from agno.os.schema import FileSystemAgent
 
 
 def test_user_memory_schema():
@@ -192,6 +193,40 @@ def test_team_run_schema_lineage_defaults_to_none_when_absent():
     assert schema.last_checkpoint_at_message_index is None
 
 
+def test_filesystem_agent_access_defaults_to_full():
+    agent = FileSystemAgent(id="analyst")
+
+    assert agent.access == "full"
+    assert agent.model_dump() == {"id": "analyst"}
+    assert FileSystemAgent(id="analyst", access="full").model_dump() == {"id": "analyst"}
+    assert FileSystemAgent(id="analyst", access="read_only").model_dump() == {
+        "id": "analyst",
+        "access": "read_only",
+    }
+    schema = FileSystemAgent.model_json_schema(mode="serialization")
+    assert schema["properties"]["access"]["default"] == "full"
+    assert schema["properties"]["access"]["enum"] == ["full", "read_only"]
+    assert schema["required"] == ["id"]
+
+
+@pytest.mark.parametrize(
+    "schema_name, id_field",
+    [("RunSchema", "agent_id"), ("TeamRunSchema", "team_id"), ("WorkflowRunSchema", "workflow_id")],
+)
+def test_run_schemas_expose_the_cancellation_stage(schema_name, id_field):
+    """The stage is what a UI reads to hide never-started cancelled runs; it
+    must survive every run schema, and default to None when absent."""
+    import agno.os.schema as schema_module
+
+    schema_cls = getattr(schema_module, schema_name)
+    with_stage = schema_cls.from_dict(
+        {"run_id": "r1", id_field: "x", "status": "CANCELLED", "cancellation_stage": "PENDING"}
+    )
+    assert with_stage.cancellation_stage == "PENDING"
+    without = schema_cls.from_dict({"run_id": "r2", id_field: "x", "status": "CANCELLED"})
+    assert without.cancellation_stage is None
+
+
 def test_team_session_detail_chat_history_includes_member_messages():
     """GET /sessions/{session_id} must return the complete chat history for team
     sessions, including member-agent messages — matching what GET /sessions/{id}/runs
@@ -297,3 +332,59 @@ def test_team_session_detail_chat_history_uses_member_first_persistence_order():
     # The SDK helper is for model context and must keep excluding member messages
     sdk_contents = [message.content for message in session.get_chat_history()]
     assert "It is sunny in Tokyo." not in sdk_contents
+
+
+@pytest.mark.parametrize("member_first", [False, True])
+def test_team_session_detail_preserves_nested_and_shared_runs(member_first):
+    from agno.models.message import Message
+    from agno.os.schema import TeamSessionDetailSchema
+    from agno.run.agent import RunOutput, RunStatus
+    from agno.run.team import TeamRunOutput
+    from agno.session.team import TeamSession
+
+    leader = TeamRunOutput(
+        run_id="leader",
+        team_id="team",
+        status=RunStatus.completed,
+        messages=[Message(role="user", content="request"), Message(role="assistant", content="leader")],
+    )
+    nested = TeamRunOutput(
+        run_id="nested",
+        team_id="subteam",
+        parent_run_id="leader",
+        status=RunStatus.completed,
+        messages=[Message(role="assistant", content="nested")],
+    )
+    member = RunOutput(
+        run_id="member",
+        agent_id="agent",
+        parent_run_id="nested",
+        status=RunStatus.error,
+        messages=[
+            Message(role="system", content="system"),
+            Message(role="tool", content="tool"),
+            Message(role="assistant", content="old", from_history=True),
+            Message(role="assistant", content="member partial output"),
+        ],
+    )
+    shared = RunOutput(
+        run_id="shared",
+        agent_id="shared-agent",
+        status=RunStatus.completed,
+        messages=[Message(role="assistant", content="shared")],
+    )
+    session = TeamSession(session_id="session", team_id="team")
+    runs = [member, nested, leader, shared] if member_first else [leader, nested, member, shared]
+    for run in runs:
+        session.upsert_run(run)
+    session.upsert_run(member)
+    expected = (
+        ["member partial output", "nested", "request", "leader", "shared"]
+        if member_first
+        else ["request", "leader", "nested", "member partial output", "shared"]
+    )
+
+    detail = TeamSessionDetailSchema.from_session(session)
+
+    assert [message["content"] for message in detail.chat_history or []] == expected
+    assert [message.content for message in session.get_chat_history()] == ["request", "leader", "shared"]

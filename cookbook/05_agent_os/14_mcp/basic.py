@@ -52,7 +52,7 @@ agent_os = AgentOS(
     description="AgentOS exposed through the built-in MCP operator tools.",
     db=db,
     agents=[operations_agent],
-    mcp_server=True,
+    mcp=True,
 )
 app = agent_os.get_app()
 

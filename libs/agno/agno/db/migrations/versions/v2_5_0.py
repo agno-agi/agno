@@ -5,6 +5,10 @@ Changes:
 - Drop the redundant uq_session_id UNIQUE constraint
 """
 
+# PEP 604 unions below are evaluated lazily under this import: without it,
+# `str | None` annotations break at import time on Python 3.9
+from __future__ import annotations
+
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.migrations.utils import quote_db_identifier
 from agno.utils.log import log_error, log_info, log_warning

@@ -11,6 +11,9 @@ Required Setup:
    - GOOGLE_CLIENT_SECRET
    - GOOGLE_PROJECT_ID
 4. First run opens a browser for consent; token is cached in token.json
+5. On headless servers pass auth=AuthConfig(interactive=False) (or set
+   GOOGLE_OAUTH_NONINTERACTIVE=1): expired credentials then raise a clear error
+   instead of blocking on a browser that never opens
 
 **Option B — Service Account (headless, for servers):**
 1. Create a service account in Google Cloud Console
@@ -46,7 +49,7 @@ from typing import Any, List, Optional, Tuple, Union, cast
 from agno.exceptions import PathSecurityError
 from agno.tools.google.auth import google_authenticate
 from agno.tools.google.base import GoogleToolkit
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error
 from agno.utils.path_safety import safe_join_filename
 
 try:
@@ -196,6 +199,23 @@ def _extract_xlsx_text(content_bytes: bytes) -> str:
     return "\n".join(lines)
 
 
+def _pptx_shape_lines(shapes: Any) -> List[str]:
+    from pptx.shapes.group import GroupShape  # type: ignore[import-not-found]
+
+    lines: List[str] = []
+    for shape in shapes:
+        # A group has no text frame of its own; its text boxes sit in .shapes
+        if isinstance(shape, GroupShape):
+            lines.extend(_pptx_shape_lines(shape.shapes))
+        elif shape.has_text_frame:
+            for paragraph in shape.text_frame.paragraphs:
+                # paragraph.text keeps a line break as "\v"; joining run.text drops it
+                text = paragraph.text.replace("\v", "\n")
+                if text.strip():
+                    lines.append(text)
+    return lines
+
+
 def _extract_pptx_text(content_bytes: bytes) -> str:
     from pptx import Presentation  # type: ignore[import-not-found]
 
@@ -204,12 +224,7 @@ def _extract_pptx_text(content_bytes: bytes) -> str:
     lines = []
     for i, slide in enumerate(prs.slides, 1):
         lines.append(f"=== Slide {i} ===")
-        for shape in slide.shapes:
-            if shape.has_text_frame:
-                for paragraph in shape.text_frame.paragraphs:
-                    text = "".join(run.text for run in paragraph.runs)
-                    if text.strip():
-                        lines.append(text)
+        lines.extend(_pptx_shape_lines(slide.shapes))
     return "\n".join(lines)
 
 
@@ -265,9 +280,6 @@ class GoogleDriveTools(GoogleToolkit):
         scopes: Optional[List[str]] = None,
         credentials_path: Optional[str] = None,
         token_path: Optional[str] = None,
-        # Deprecated aliases (use credentials_path, oauth_port instead)
-        creds_path: Optional[str] = None,
-        auth_port: Optional[int] = None,
         # Service account auth — alternative to OAuth for server/bot deployments
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
@@ -299,15 +311,6 @@ class GoogleDriveTools(GoogleToolkit):
         add_instructions: bool = True,
         **kwargs,
     ):
-        # Handle deprecated aliases
-        if creds_path is not None:
-            log_warning("creds_path is deprecated, use credentials_path instead")
-            if credentials_path is None:
-                credentials_path = creds_path
-        if auth_port is not None:
-            log_warning("auth_port is deprecated, use oauth_port instead")
-            if oauth_port is None:
-                oauth_port = auth_port
         if oauth_port is None:
             oauth_port = 5050
 

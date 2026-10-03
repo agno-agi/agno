@@ -1,7 +1,7 @@
 import asyncio
 import io
 from pathlib import Path
-from typing import IO, Any, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import IO, Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 from agno.knowledge.chunking.row import RowChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
@@ -47,6 +47,16 @@ class ExcelReader(Reader):
     def get_supported_content_types(cls) -> List[ContentType]:
         """Get the list of supported content types."""
         return [ContentType.XLSX, ContentType.XLS]
+
+    @classmethod
+    def get_read_time_requirements(cls) -> Dict[ContentType, List[str]]:
+        """The engines _read_xlsx and _read_xls import when they run.
+
+        Both imports are deferred so that one missing engine does not take the other format
+        down with it, which means importing this class proves nothing about either. Declaring
+        them here is what keeps the reader from being advertised for a format it cannot read.
+        """
+        return {ContentType.XLSX: ["openpyxl"], ContentType.XLS: ["xlrd"]}
 
     def _should_include_sheet(
         self,

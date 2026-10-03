@@ -187,7 +187,7 @@ def test_upsert(mock_clickhouse):
         mock_clickhouse.upsert(documents=docs, content_hash="test_hash")
 
         # Check that insert was called
-        mock_insert.assert_called_once_with(documents=docs, filters=None, content_hash="test_hash")
+        mock_insert.assert_called_once_with(documents=docs, filters=None, content_hash="test_hash", user_id=None)
         # Check that query was called to check for existing content_hash
         mock_clickhouse.client.query.assert_called_once()
 
@@ -392,7 +392,7 @@ async def test_async_upsert(mock_clickhouse):
         await mock_clickhouse.async_upsert(documents=docs, content_hash="test_hash")
 
         # Check that async_insert was called
-        mock_async_insert.assert_called_once_with(documents=docs, filters=None, content_hash="test_hash")
+        mock_async_insert.assert_called_once_with(documents=docs, filters=None, content_hash="test_hash", user_id=None)
         # Check that query was called to finalize the upsert
         mock_clickhouse.async_client.query.assert_called_once()
 

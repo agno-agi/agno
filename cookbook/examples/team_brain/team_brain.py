@@ -23,7 +23,7 @@ from agno.db.schemas.service_accounts import ServiceAccount
 from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
 from agno.models.openai import OpenAIResponses
-from agno.os import AgentOS, MCPServerConfig
+from agno.os import AgentOS, MCPConfig
 from agno.os.service_accounts import DEFAULT_SERVICE_ACCOUNT_SCOPES, generate_token
 from agno.os.settings import AgnoAPISettings
 
@@ -108,7 +108,7 @@ agent_os = AgentOS(
     # Tokens are only verified when the OS has authentication on; the security key turns it on.
     settings=AgnoAPISettings(os_security_key="team-brain-admin-key"),
     # user_id is dropped from the schema the client sees and filled from the caller's token.
-    mcp_server=MCPServerConfig(tools=[remember, recall], enable_builtin_tools=False),
+    mcp=MCPConfig(tools=[remember, recall], default_tools=False),
 )
 app = agent_os.get_app()
 

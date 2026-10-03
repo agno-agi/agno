@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler, field_validator, model_serializer
 
 from agno.agent import Agent
 from agno.agent.factory import AgentFactory
@@ -23,6 +23,7 @@ from agno.os.config import (
 )
 from agno.os.scopes import split_scope
 from agno.os.utils import extract_input_media, get_run_input, get_session_name, to_utc_datetime
+from agno.run.base import CancellationStage
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.factory import TeamFactory
 from agno.team.remote import RemoteTeam
@@ -32,54 +33,85 @@ from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
 
-class BadRequestResponse(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Bad request", "error_code": "BAD_REQUEST"}})
+class ErrorResponse(BaseModel):
+    """Body of a non-validation error (4xx/5xx that carry a string ``detail``).
 
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
+    Mirrors what ``agno.os.app._error_body`` actually emits: ``detail`` is always present;
+    ``error_id``/``error_type`` appear only when the error carries an identity
+    (``AgnoError``/``AgnoHTTPException`` subclasses), and a plain ``HTTPException`` (or the
+    auth middleware) yields ``detail`` alone. There is deliberately no ``error_code`` field:
+    no handler has ever emitted one, so documenting it advertised a key clients never receive.
+    """
 
-
-class NotFoundResponse(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Not found", "error_code": "NOT_FOUND"}})
-
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
-
-
-class UnauthorizedResponse(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Unauthorized access", "error_code": "UNAUTHORIZED"}}
+    detail: str = Field(..., description="Human-readable error message")
+    error_id: Optional[str] = Field(
+        None, description="Stable identifier for the specific error, present only when the error carries one"
+    )
+    error_type: Optional[str] = Field(
+        None, description="Category of the error, present only when the error carries one"
     )
 
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
+
+class BadRequestResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Bad request"}})
 
 
-class UnauthenticatedResponse(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Unauthenticated access", "error_code": "UNAUTHENTICATED"}}
-    )
+class NotFoundResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Not found"}})
 
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
+
+class UnauthorizedResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Unauthorized access"}})
+
+
+class UnauthenticatedResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Unauthenticated access"}})
+
+
+class InternalServerErrorResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Internal server error"}})
+
+
+class ValidationErrorDetail(BaseModel):
+    """One field-level error inside a 422 body, matching FastAPI's default shape."""
+
+    loc: List[Union[str, int]] = Field(..., description="Path to the offending field, e.g. ['body', 'endpoint']")
+    msg: str = Field(..., description="Human-readable error message")
+    type: str = Field(..., description="Error type identifier, e.g. 'value_error' or 'missing'")
 
 
 class ValidationErrorResponse(BaseModel):
+    """422 body. Two runtime shapes share this status code, and the same endpoint can
+    return either, so ``detail`` is typed as their union:
+
+    - FastAPI's request-validation handler emits a **list** of field-level errors (built-in
+      coercion errors and custom-validator ``ValueError``s alike).
+    - A route that raises ``HTTPException(status_code=422, detail="...")`` for a semantic
+      check (e.g. an invalid cron expression) emits a **string** through the HTTPException
+      handler.
+    """
+
     model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Validation error", "error_code": "VALIDATION_ERROR"}}
+        json_schema_extra={
+            "example": {
+                "detail": [
+                    {
+                        "type": "value_error",
+                        "loc": ["body", "endpoint"],
+                        "msg": "Value error, Endpoint must be a path, not a full URL",
+                    }
+                ]
+            }
+        }
     )
 
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
-
-
-class InternalServerErrorResponse(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Internal server error", "error_code": "INTERNAL_SERVER_ERROR"}}
+    detail: Union[str, List[ValidationErrorDetail]] = Field(
+        ...,
+        description=(
+            "A single message for an explicitly raised 422, or a list of field-level errors "
+            "for a request-validation failure"
+        ),
     )
-
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
 
 
 class ScopeItem(BaseModel):
@@ -156,6 +188,72 @@ def _extract_model(entity: Any) -> Optional[Model]:
     if model_id is None and provider is None:
         return None
     return Model(id=model_id, provider=provider)
+
+
+class FileSystemSummary(BaseModel):
+    backend_type: str = Field(..., description="Filesystem backend type")
+    db_id: Optional[str] = Field(None, description="Database identifier for a database-backed filesystem")
+    db_schema: Optional[str] = Field(None, description="Database schema containing filesystem rows")
+    table_name: Optional[str] = Field(None, description="Database table containing filesystem rows")
+    namespace: str = Field(
+        ...,
+        description="Canonical namespace resolved for the caller; placeholders remain when identity is unavailable",
+    )
+    user_isolation: bool = Field(..., description="Whether the namespace is partitioned by user identity")
+    max_file_bytes: int = Field(..., description="Maximum UTF-8 bytes per file")
+    max_namespace_bytes: int = Field(..., description="Maximum bytes across the namespace")
+
+
+class FileSystemAgent(BaseModel):
+    id: str = Field(..., description="ID of an agent using this filesystem namespace")
+    access: Literal["full", "read_only"] = Field(
+        default="full",
+        description="Agent access to this namespace. Omitted for full access; tool-specific restrictions still apply.",
+    )
+
+    @model_serializer(mode="wrap")
+    def _serialize_access(self, handler: SerializerFunctionWrapHandler):  # type: ignore[no-untyped-def]
+        # Leave the return type unspecified so OpenAPI retains this model's fields.
+        data = handler(self)
+        if self.access == "full":
+            data.pop("access", None)
+        return data
+
+
+class FileSystemNamespace(FileSystemSummary):
+    agents: List[FileSystemAgent] = Field(..., description="Agents using this filesystem namespace and their access")
+
+
+class FileSystemConfig(BaseModel):
+    namespaces: List[FileSystemNamespace] = Field(
+        default_factory=list,
+        description="Filesystem namespaces with their backend details, limits, and linked agents",
+    )
+
+
+def _extract_filesystem(filesystem: Any, agent: Any, user_id: Optional[str] = None) -> FileSystemSummary:
+    """Describe one of the agent's filesystems, with its namespace resolved for the caller."""
+    # Partitioned by the run's user, or isolated by a namespace naming the user.
+    user_isolation = bool(filesystem.user_scoped) or "user_id" in filesystem._placeholders
+    filesystem = filesystem.resolve(user_id=user_id, agent_id=agent.id)
+    backend = filesystem.backend
+    backend_db = getattr(backend, "db", None)
+    if backend_db is not None or hasattr(backend, "db_engine"):
+        backend_type = "db"
+    elif hasattr(backend, "root"):
+        backend_type = "local"
+    else:
+        backend_type = type(backend).__name__
+    return FileSystemSummary(
+        backend_type=backend_type,
+        db_id=getattr(backend_db, "id", None),
+        db_schema=getattr(backend, "db_schema", None),
+        table_name=getattr(backend, "table_name", None),
+        namespace=filesystem.namespace,
+        user_isolation=user_isolation,
+        max_file_bytes=filesystem.max_file_bytes,
+        max_namespace_bytes=filesystem.max_namespace_bytes,
+    )
 
 
 class AgentSummaryResponse(BaseModel):
@@ -287,6 +385,7 @@ class InfoResponse(BaseModel):
 
     os_id: str = Field(..., description="Unique identifier for the OS instance")
     name: Optional[str] = Field(None, description="Name of the OS instance")
+    os_version: str = Field(..., description="Version of this AgentOS instance")
     agno_version: str = Field(..., description="Version of the agno framework")
     agent_count: int = Field(0, description="Number of agents registered in the OS")
     team_count: int = Field(0, description="Number of teams registered in the OS")
@@ -299,6 +398,16 @@ class InfoResponse(BaseModel):
             "when enabled, is described separately under `mcp.oauth`."
         ),
     )
+    user_isolation: bool = Field(
+        False,
+        description=(
+            "Whether per-user data isolation is switched on for this OS instance. Read it together "
+            "with `auth_mode`: under `jwt` the token names the user, so a client sends nothing extra. "
+            "Under `none` or `security_key` the OS cannot tell who a request is for, so a client that "
+            "wants each user to see only their own data sends that user's id as `user_id` on every "
+            "request, reads included, not only on runs."
+        ),
+    )
 
 
 class ConfigResponse(BaseModel):
@@ -307,7 +416,10 @@ class ConfigResponse(BaseModel):
     os_id: str = Field(..., description="Unique identifier for the OS instance")
     name: Optional[str] = Field(None, description="Name of the OS instance")
     description: Optional[str] = Field(None, description="Description of the OS instance")
-    available_models: Optional[List[str]] = Field(None, description="List of available models")
+    available_models: List[Model] = Field(
+        default_factory=list,
+        description="Unique models (id + provider) in use by agents and teams in this OS",
+    )
     os_database: Optional[str] = Field(None, description="ID of the database used for the OS instance")
     databases: List[str] = Field(..., description="List of database IDs used by the components of the OS instance")
     chat: Optional[ChatConfig] = Field(None, description="Chat configuration")
@@ -320,6 +432,7 @@ class ConfigResponse(BaseModel):
     metrics: Optional[MetricsConfig] = Field(None, description="Metrics configuration")
     memory: Optional[MemoryConfig] = Field(None, description="Memory configuration")
     learning: Optional[LearningConfig] = Field(None, description="Learning configuration")
+    filesystem: Optional[FileSystemConfig] = Field(None, description="Filesystem configuration")
     knowledge: Optional[KnowledgeConfig] = Field(None, description="Knowledge configuration")
     evals: Optional[EvalsConfig] = Field(None, description="Evaluations configuration")
     traces: Optional[TracesConfig] = Field(None, description="Traces configuration")
@@ -474,7 +587,7 @@ class TeamSessionDetailSchema(BaseModel):
     team_data: Optional[dict] = Field(None, description="Team-specific data")
     metadata: Optional[dict] = Field(None, description="Additional metadata")
     chat_history: Optional[List[dict]] = Field(
-        None, description="Complete chat history, including member-agent messages"
+        None, description="Chat history including member messages, in stored run order"
     )
     created_at: Optional[datetime] = Field(None, description="Session creation timestamp")
     updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
@@ -499,17 +612,11 @@ class TeamSessionDetailSchema(BaseModel):
             else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
             metadata=session.metadata,
-            # Include member-agent messages so the REST payload matches the runs endpoint.
-            # Messages follow stored run order: on the default checkpoint path member runs
-            # are upserted before the parent team run, so member messages may appear before
-            # the leader's preceding turn. Conversational reordering is intentionally not
-            # done here — this endpoint mirrors GET /sessions/{id}/runs storage order.
+            # Stored run order can put delegated member messages before their parent turn.
             chat_history=[
                 message.to_dict()
                 for message in session.get_messages(
-                    skip_roles=["system", "tool"],
-                    skip_member_messages=False,
-                    skip_statuses=[],
+                    skip_roles=["system", "tool"], skip_member_messages=False, skip_statuses=[]
                 )
             ],
             created_at=to_utc_datetime(created_at),
@@ -553,12 +660,22 @@ class WorkflowSessionDetailSchema(BaseModel):
         )
 
 
+# One text for the three run schemas, built from the enum so it cannot drift
+# from the members a client may receive
+CANCELLATION_STAGE_DESCRIPTION = (
+    "For CANCELLED runs, where the run was when it was cancelled: "
+    + ", ".join(member.value for member in CancellationStage)
+    + ". Absent means unknown."
+)
+
+
 class RunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the run")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     agent_id: Optional[str] = Field(None, description="Agent ID that executed this run")
     user_id: Optional[str] = Field(None, description="User ID associated with the run")
     status: Optional[str] = Field(None, description="Run status (PENDING, RUNNING, COMPLETED, ERROR, etc.)")
+    cancellation_stage: Optional[str] = Field(None, description=CANCELLATION_STAGE_DESCRIPTION)
     run_input: Optional[str] = Field(None, description="Input provided to the run")
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the run")
     run_response_format: Optional[str] = Field(None, description="Format of the response (text/json)")
@@ -612,6 +729,7 @@ class RunSchema(BaseModel):
             agent_id=run_dict.get("agent_id", ""),
             user_id=run_dict.get("user_id", ""),
             status=run_dict.get("status"),
+            cancellation_stage=run_dict.get("cancellation_stage"),
             run_input=run_input,
             content=run_dict.get("content", ""),
             run_response_format=run_response_format,
@@ -646,6 +764,7 @@ class TeamRunSchema(BaseModel):
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     team_id: Optional[str] = Field(None, description="Team ID that executed this run")
     status: Optional[str] = Field(None, description="Run status (PENDING, RUNNING, COMPLETED, ERROR, etc.)")
+    cancellation_stage: Optional[str] = Field(None, description=CANCELLATION_STAGE_DESCRIPTION)
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the team run")
     reasoning_content: Optional[str] = Field(None, description="Reasoning content if reasoning was enabled")
     reasoning_steps: Optional[List[dict]] = Field(None, description="List of reasoning steps")
@@ -697,6 +816,7 @@ class TeamRunSchema(BaseModel):
             parent_run_id=run_dict.get("parent_run_id", ""),
             team_id=run_dict.get("team_id", ""),
             status=run_dict.get("status"),
+            cancellation_stage=run_dict.get("cancellation_stage"),
             run_input=run_input,
             content=run_dict.get("content", ""),
             run_response_format=run_response_format,
@@ -735,6 +855,7 @@ class WorkflowRunSchema(BaseModel):
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the workflow")
     content_type: Optional[str] = Field(None, description="Type of content returned")
     status: Optional[str] = Field(None, description="Status of the workflow run")
+    cancellation_stage: Optional[str] = Field(None, description=CANCELLATION_STAGE_DESCRIPTION)
     step_results: Optional[list[dict]] = Field(None, description="Results from each workflow step")
     step_executor_runs: Optional[list[dict]] = Field(None, description="Executor runs for each step")
     step_requirements: Optional[list[dict]] = Field(
@@ -770,6 +891,7 @@ class WorkflowRunSchema(BaseModel):
             content=run_response.get("content", ""),
             content_type=run_response.get("content_type", ""),
             status=run_response.get("status", ""),
+            cancellation_stage=run_response.get("cancellation_stage"),
             metrics=run_response.get("metrics", {}),
             step_results=run_response.get("step_results", []),
             step_executor_runs=run_response.get("step_executor_runs", []),
@@ -800,7 +922,7 @@ class SortOrder(str, Enum):
 
 
 class PaginationInfo(BaseModel):
-    page: int = Field(0, description="Current page number (0-indexed)", ge=0)
+    page: int = Field(0, description="Current page number (1-indexed)", ge=0)
     limit: int = Field(20, description="Number of items per page", ge=1)
     total_pages: int = Field(0, description="Total number of pages", ge=0)
     total_count: int = Field(0, description="Total count of items", ge=0)
@@ -818,6 +940,30 @@ class ComponentType(str, Enum):
     AGENT = "agent"
     TEAM = "team"
     WORKFLOW = "workflow"
+
+
+class ComponentGuard(BaseModel):
+    """Optional compare-and-set guard for component writes.
+
+    When present, each non-None field is checked against the stored state and
+    the write is rejected with 409 on mismatch. None fields skip that half of
+    the check; omitting the guard keeps the write last-writer-wins.
+    """
+
+    latest_version: Optional[int] = Field(None, description="Expected latest config version")
+    current_version: Optional[int] = Field(
+        None, description="Expected current (published) version; 0 expects the component to have none yet"
+    )
+
+    @field_validator("latest_version", "current_version", mode="before")
+    @classmethod
+    def _reject_boolean_versions(cls, value: Any) -> Any:
+        # Lax coercion would read JSON false as 0, and 0 now means "no live
+        # version": a boolean is not a version number, so it is refused rather
+        # than silently satisfying (or failing) the guard.
+        if isinstance(value, bool):
+            raise ValueError("version guards must be integers, not booleans")
+        return value
 
 
 class ComponentCreate(BaseModel):
@@ -840,11 +986,14 @@ class ComponentResponse(BaseModel):
     component_id: str
     component_type: ComponentType
     name: Optional[str] = None
+    user_id: Optional[str] = None
     description: Optional[str] = None
     current_version: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
     created_at: int
     updated_at: Optional[int] = None
+    # Set only on archived (soft-deleted) rows, so a mixed list can label them.
+    deleted_at: Optional[int] = None
 
 
 class ConfigCreate(BaseModel):
@@ -855,6 +1004,7 @@ class ConfigCreate(BaseModel):
     notes: Optional[str] = Field(None, description="Optional notes")
     links: Optional[List[Dict[str, Any]]] = Field(None, description="Optional links to child components")
     set_current: bool = Field(True, description="Set as current version")
+    guard: Optional[ComponentGuard] = Field(None, description="Optional compare-and-set guard")
 
 
 class ComponentConfigResponse(BaseModel):
@@ -874,6 +1024,7 @@ class ComponentUpdate(BaseModel):
     component_type: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     current_version: Optional[int] = None
+    guard: Optional[ComponentGuard] = None
 
 
 class ConfigUpdate(BaseModel):
@@ -882,6 +1033,24 @@ class ConfigUpdate(BaseModel):
     stage: Optional[str] = None
     notes: Optional[str] = None
     links: Optional[List[Dict[str, Any]]] = None
+    guard: Optional[ComponentGuard] = None
+
+
+class SetCurrentRequest(BaseModel):
+    """Body for set-current. Optional: an empty POST keeps working."""
+
+    guard: Optional[ComponentGuard] = Field(None, description="Optional compare-and-set guard")
+
+
+class ComponentDeleteRequest(BaseModel):
+    """Body for delete. Optional: a bodyless DELETE keeps working.
+
+    Delete also accepts the guard as an ``expected_current_version`` query
+    param; this shape exists so the guard reads the same as on every other
+    guarded component route instead of being silently ignored here.
+    """
+
+    guard: Optional[ComponentGuard] = Field(None, description="Optional compare-and-set guard")
 
 
 class RegistryResourceType(str, Enum):
@@ -895,9 +1064,11 @@ class RegistryResourceType(str, Enum):
     FUNCTION = "function"
     AGENT = "agent"
     TEAM = "team"
+    WORKFLOW = "workflow"
     KNOWLEDGE = "knowledge"
     MEMORY_MANAGER = "memory_manager"
     SESSION_SUMMARY_MANAGER = "session_summary_manager"
+    LEARNING = "learning"
 
 
 class CallableMetadata(BaseModel):

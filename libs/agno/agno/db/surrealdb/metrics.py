@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from textwrap import dedent
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -8,6 +8,7 @@ from agno.db.base import SessionType
 from agno.db.surrealdb import utils
 from agno.db.surrealdb.models import desurrealize_session, surrealize_dates
 from agno.db.surrealdb.queries import WhereClause
+from agno.db.utils import metrics_starting_date_from_days
 from agno.utils.log import log_error
 
 
@@ -53,6 +54,20 @@ def get_all_sessions_for_metrics_calculation(
     return [desurrealize_session(x) for x in results]
 
 
+def _stored_day(value: Any) -> Optional[date]:
+    """The day a stored metrics row covers, as a plain date.
+
+    SurrealDB hands back a tz-aware datetime for the date column, but the shared decision
+    compares days, so anything that is not already one is normalised here rather than trusted.
+    """
+    # datetime is a subclass of date, so it has to be narrowed first or a stamp passes through whole
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return None
+
+
 def get_metrics_calculation_starting_date(
     client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection], table: str, get_sessions: Callable
 ) -> Optional[date]:
@@ -68,22 +83,44 @@ def get_metrics_calculation_starting_date(
     Returns:
         Optional[date]: The starting date for which metrics calculation is needed.
     """
-    query = dedent(f"""
-        SELECT * FROM ONLY {table}
-        ORDER BY date DESC
-        LIMIT 1
-    """)
-    result = utils.query_one(client, query, {}, dict)
-    if result:
-        # 1. Return the date of the first day without a complete metrics record
-        result_date = result["date"]
-        assert isinstance(result_date, datetime)
-        result_date = result_date.date()
+    # 1. resume at the earliest incomplete day after the latest completed one, otherwise the
+    # day after that one: the date column is a datetime stamped at midnight, so the strict
+    # comparison below excludes the completed day itself
+    completed_record = utils.query_one(
+        client,
+        dedent(f"""
+            SELECT * FROM ONLY {table}
+            WHERE completed = true
+            ORDER BY date DESC
+            LIMIT 1
+        """),
+        {},
+        dict,
+    )
+    stored_completed_day = completed_record["date"] if completed_record else None
 
-        if result.get("completed"):
-            return result_date + timedelta(days=1)
-        else:
-            return result_date
+    incomplete_where = (
+        "WHERE completed = false" if stored_completed_day is None else "WHERE completed = false AND date > $last"
+    )
+    incomplete_vars: Dict[str, Any] = {} if stored_completed_day is None else {"last": stored_completed_day}
+    incomplete_record = utils.query_one(
+        client,
+        dedent(f"""
+            SELECT * FROM ONLY {table}
+            {incomplete_where}
+            ORDER BY date ASC
+            LIMIT 1
+        """),
+        incomplete_vars,
+        dict,
+    )
+
+    latest_completed = _stored_day(stored_completed_day)
+    earliest_incomplete = _stored_day(incomplete_record["date"]) if incomplete_record else None
+
+    starting_date = metrics_starting_date_from_days(latest_completed, earliest_incomplete)
+    if starting_date is not None:
+        return starting_date
 
     # 2. No metrics records. Return the date of the first recorded session
     first_session, _ = get_sessions(
@@ -118,6 +155,30 @@ def get_metrics_calculation_starting_date(
         raise ValueError(f"Unexpected type for created_at: {type(first_session_date)}")
 
 
+def desurrealize_metric(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a stored metric record in the plain shape every other adapter returns.
+
+    SurrealDB hands back a RecordID and its own datetimes, which the response model rejects,
+    so both the read and the recalculation pass their rows through here.
+    """
+    row = dict(record)
+
+    if hasattr(row.get("id"), "id"):
+        row["id"] = row["id"].id
+    elif isinstance(row.get("id"), RecordID):
+        row["id"] = str(row["id"].id)
+
+    for field in ("created_at", "updated_at", "date"):
+        if isinstance(row.get(field), datetime):
+            row[field] = int(row[field].timestamp())
+
+    # Unowned rows are stored with an empty-string user_id
+    if row.get("user_id") == "":
+        row["user_id"] = None
+
+    return row
+
+
 def bulk_upsert_metrics(
     client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection],
     table: str,
@@ -137,26 +198,27 @@ def bulk_upsert_metrics(
 
     metrics_records = [surrealize_dates(x) for x in metrics_records]
 
-    try:
-        results = []
-        from agno.utils.log import log_debug
+    results = []
+    from agno.utils.log import log_debug
 
-        for metric in metrics_records:
-            log_debug(f"Upserting metric: {metric}")  # Add this
+    for metric in metrics_records:
+        log_debug(f"Upserting metric: {metric}")
+        # Per-record: a mid-run failure must not discard the records that already landed
+        try:
             result = utils.query_one(
                 client,
                 "UPSERT $record CONTENT $content",
                 {"record": RecordID(table, metric["id"]), "content": metric},
                 dict,
             )
-            if result:
-                results.append(result)
-        return results
+        except Exception as e:
+            log_error(f"Error upserting metrics record: {str(e)}")
+            continue
 
-    except Exception as e:
-        log_error(f"Error upserting metrics: {str(e)}")
+        if result:
+            results.append(result)
 
-    return []
+    return results
 
 
 def fetch_all_sessions_data(
@@ -209,81 +271,103 @@ def fetch_all_sessions_data(
     return all_sessions_data
 
 
-def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
-    """Calculate metrics for the given single date.
+def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
+    """Calculate metrics for the given single date, bucketed per user_id.
 
     Args:
         date_to_process (date): The date to calculate metrics for.
         sessions_data (dict): The sessions data to calculate metrics for.
 
     Returns:
-        dict: The calculated metrics.
+        List[dict]: One metrics record per user. Sessions with no user_id bucket under "".
     """
-    metrics = {
-        "users_count": 0,
-        "agent_sessions_count": 0,
-        "team_sessions_count": 0,
-        "workflow_sessions_count": 0,
-        "agent_runs_count": 0,
-        "team_runs_count": 0,
-        "workflow_runs_count": 0,
-    }
-    token_metrics = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "audio_total_tokens": 0,
-        "audio_input_tokens": 0,
-        "audio_output_tokens": 0,
-        "cache_read_tokens": 0,
-        "cache_write_tokens": 0,
-        "reasoning_tokens": 0,
-    }
-    model_counts: Dict[str, int] = {}
+
+    def _empty_metric_record() -> Dict[str, Any]:
+        return {
+            "users_count": 0,
+            "agent_sessions_count": 0,
+            "team_sessions_count": 0,
+            "workflow_sessions_count": 0,
+            "agent_runs_count": 0,
+            "team_runs_count": 0,
+            "workflow_runs_count": 0,
+            "token_metrics": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "audio_total_tokens": 0,
+                "audio_input_tokens": 0,
+                "audio_output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "reasoning_tokens": 0,
+            },
+            "model_counts": {},
+        }
 
     session_types = [
         ("agent", "agent_sessions_count", "agent_runs_count"),
         ("team", "team_sessions_count", "team_runs_count"),
         ("workflow", "workflow_sessions_count", "workflow_runs_count"),
     ]
-    all_user_ids = set()
+
+    per_user: Dict[str, Dict[str, Any]] = {}
 
     for session_type, sessions_count_key, runs_count_key in session_types:
         sessions = sessions_data.get(session_type, [])
-        metrics[sessions_count_key] = len(sessions)
 
         for session in sessions:
-            if session.get("user_id"):
-                all_user_ids.add(session["user_id"])
-            metrics[runs_count_key] += len(session.get("runs", []))
-            if runs := session.get("runs", []):
-                for run in runs:
-                    if model_id := run.get("model"):
-                        model_provider = run.get("model_provider", "")
-                        model_counts[f"{model_id}:{model_provider}"] = (
-                            model_counts.get(f"{model_id}:{model_provider}", 0) + 1
-                        )
+            bucket_key = session.get("user_id") or ""
+            bucket = per_user.setdefault(bucket_key, _empty_metric_record())
+            bucket[sessions_count_key] += 1
 
-            session_metrics = session.get("session_data", {}).get("session_metrics", {})
-            for field in token_metrics:
-                token_metrics[field] += session_metrics.get(field, 0)
+            runs = session.get("runs", []) or []
+            bucket[runs_count_key] += len(runs)
+            for run in runs:
+                if model_id := run.get("model"):
+                    model_provider = run.get("model_provider", "")
+                    key = f"{model_id}:{model_provider}"
+                    bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
 
-    model_metrics = []
-    for model, count in model_counts.items():
-        model_id, model_provider = model.split(":")
-        model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
+            session_metrics = (session.get("session_data") or {}).get("session_metrics", {}) or {}
+            for field in bucket["token_metrics"]:
+                bucket["token_metrics"][field] += session_metrics.get(field, 0)
 
-    metrics["users_count"] = len(all_user_ids)
     current_time = datetime.now(timezone.utc)
+    completed = date_to_process < current_time.date()
+    # Stamp the day being aggregated, not today, so backfilled days stay in get_metrics range queries
+    date_at_midnight = datetime.combine(date_to_process, datetime.min.time(), tzinfo=timezone.utc)
 
-    return {
-        "id": date_to_process.isoformat(),  # Changed: Use date as ID (e.g., "2025-10-16")
-        "date": current_time.replace(hour=0, minute=0, second=0, microsecond=0),  # Date at midnight UTC
-        "completed": date_to_process < datetime.now(timezone.utc).date(),
-        "token_metrics": token_metrics,
-        "model_metrics": model_metrics,
-        "created_at": current_time,
-        "updated_at": current_time,
-        "aggregation_period": "daily",
-        **metrics,
-    }
+    records: List[dict] = []
+    for user_id, bucket in per_user.items():
+        model_metrics = []
+        for model, count in bucket["model_counts"].items():
+            model_id, model_provider = model.rsplit(":", 1)
+            model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
+
+        users_count = 0 if user_id == "" else 1
+        # Deterministic per-(date, user) ID, so re-calculating the same window upserts the same record
+        record_id = f"{date_to_process.isoformat()}|{user_id}"
+
+        records.append(
+            {
+                "id": record_id,
+                "date": date_at_midnight,
+                "completed": completed,
+                "token_metrics": bucket["token_metrics"],
+                "model_metrics": model_metrics,
+                "created_at": current_time,
+                "updated_at": current_time,
+                "aggregation_period": "daily",
+                "user_id": user_id,
+                "users_count": users_count,
+                "agent_sessions_count": bucket["agent_sessions_count"],
+                "team_sessions_count": bucket["team_sessions_count"],
+                "workflow_sessions_count": bucket["workflow_sessions_count"],
+                "agent_runs_count": bucket["agent_runs_count"],
+                "team_runs_count": bucket["team_runs_count"],
+                "workflow_runs_count": bucket["workflow_runs_count"],
+            }
+        )
+
+    return records

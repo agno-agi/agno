@@ -28,14 +28,6 @@ uv pip install -U agno
 
 ### 4. Run basic Agent
 
-- Streaming on
-
 ```shell
-python cookbook/92_models/vercel/basic_stream.py
-```
-
-- Streaming off
-
-```shell
-python cookbook/92_models/vercel/basic.py
+python cookbook/90_models/vercel/basic.py
 ```

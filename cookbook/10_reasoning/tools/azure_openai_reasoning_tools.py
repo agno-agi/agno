@@ -16,7 +16,7 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 def run_example() -> None:
     reasoning_agent = Agent(
-        model=AzureOpenAI(id="gpt-4o-mini"),
+        model=AzureOpenAI(id="gpt-5.6-luna"),
         tools=[
             WebSearchTools(),
             ReasoningTools(

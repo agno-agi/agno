@@ -20,7 +20,6 @@ def run_example() -> None:
             id="claude-sonnet-4-5",
             thinking={"type": "enabled", "budget_tokens": 1024},
         ),
-        reasoning=True,
         instructions="Think step by step about the problem.",
     )
 

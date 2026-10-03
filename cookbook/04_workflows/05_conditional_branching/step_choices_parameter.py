@@ -19,19 +19,19 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 researcher = Agent(
     name="researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are a researcher.",
 )
 
 writer = Agent(
     name="writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are a writer.",
 )
 
 reviewer = Agent(
     name="reviewer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are a reviewer.",
 )
 

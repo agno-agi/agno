@@ -25,7 +25,7 @@ db = PostgresDb(db_url=db_url, session_table="team_metrics_sessions")
 # ---------------------------------------------------------------------------
 assistant = Agent(
     name="Assistant",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Helpful assistant that answers questions.",
 )
 
@@ -34,7 +34,7 @@ assistant = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="Research Team",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     members=[assistant],
     db=db,
     session_id="team_session_metrics_demo",

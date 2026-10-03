@@ -49,9 +49,12 @@ async def continue_paused_run(
 ) -> AnyRunOutput:
     """Resume a paused run on any local component with the client's resolved requirements.
 
-    Remote components are rejected: their ``acontinue_run`` cannot carry resolved
-    requirements (the REST surface 400s the same case), so failing clearly beats the
-    opaque downstream TypeError that forwarding them would raise.
+    Remote components are rejected: resolved HITL requirements cannot be forwarded to a
+    downstream OS over this service (remote HITL forwarding is deferred), so failing
+    clearly beats the opaque downstream error that a forward would raise. This is a
+    deliberate restriction of the MCP/A2A path, not REST parity -- the REST agent/team
+    continue routes do forward a bare resume to a remote proxy; matching that here is
+    future work.
 
     ``stream=False`` is pinned: run-option resolution is call-site > component.stream >
     False, so a component configured with ``stream=True`` would otherwise return an
@@ -61,23 +64,56 @@ async def continue_paused_run(
         raise RemoteContinuationUnsupported(
             "Continuing paused runs on remote components is not supported over this interface."
         )
+    # Inline-door admission gate: a paused/queued/running durable ticket OWNS
+    # this run's continuation, and that holds for EVERY public interface -
+    # this service backs the MCP continue_run tool, which must not execute a
+    # ticketed run inline while an HTTP durable continue CASes the ticket
+    # (the cross-door double-execution race). 409/503 HTTPException raises.
+    from agno.os.job_queue import araise_if_ticket_owns_continue, get_active_queue_worker
+
+    component_type = (
+        "workflow" if isinstance(component, Workflow) else ("team" if isinstance(component, Team) else "agent")
+    )
+    await araise_if_ticket_owns_continue(
+        get_active_queue_worker(), run_id, component_type=component_type, component_id=getattr(component, "id", None)
+    )
     if isinstance(component, Workflow):
-        return await component.acontinue_run(
+        result: AnyRunOutput = await component.acontinue_run(
             run_id=run_id,
             session_id=session_id,
             step_requirements=parse_step_requirements(requirements),
             stream=False,
         )
-    return await component.acontinue_run(  # type: ignore[misc, no-any-return]
-        run_id=run_id,
-        session_id=session_id,
-        user_id=user_id,
-        requirements=parse_run_requirements(requirements),
-        stream=False,
+    else:
+        result = await component.acontinue_run(  # type: ignore[misc]
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            requirements=parse_run_requirements(requirements),
+            stream=False,
+        )
+    # Status-only stream sync (parity with the REST non-stream continue
+    # door): a formerly-queued/streamed run's stream view must stop saying
+    # PAUSED once the continue settles - otherwise every later /resume
+    # replays the stale paused snapshot, and on Redis the pausing replica's
+    # TTL refresher keeps those keys alive indefinitely. only_if_tracked
+    # leaves never-streamed runs alone; a re-paused continue re-parks the
+    # stream as PAUSED.
+    from agno.os.utils import acomplete_continue_stream
+
+    await acomplete_continue_stream(
+        component,
+        run_id,
+        session_id,
+        only_if_tracked=True,
+        final_status=getattr(result, "status", None),
     )
+    return result
 
 
-async def cancel_component_run(component: Union[Agent, Team, Workflow], run_id: str) -> None:
+async def cancel_component_run(
+    component: Union[Agent, Team, Workflow], run_id: str, auth_token: Optional[str] = None
+) -> None:
     """Request cancellation of ``run_id`` on the component that owns it.
 
     Local agent/team/workflow cancellation all delegate to one process-global
@@ -89,6 +125,25 @@ async def cancel_component_run(component: Union[Agent, Team, Workflow], run_id: 
     over HTTP and return False when the call fails; that must surface, not read as
     success.
     """
-    cancelled = await component.acancel_run(run_id=run_id)
-    if cancelled is False and isinstance(component, BaseRemote):
-        raise Exception(f"Cancellation of run {run_id} could not be delivered to the remote component.")
+    if isinstance(component, BaseRemote):
+        # A remote component's run lives on the downstream OS -- nothing of it can be
+        # in the local queue, so the local tombstone below must not fire: keyed on
+        # run_id alone, it would tombstone an unrelated LOCAL run whose id the caller
+        # passed. The downstream OS tombstones its own queue. The caller's token is
+        # forwarded (as the run path does) so a protected downstream accepts the call.
+        cancelled = await component.acancel_run(run_id=run_id, auth_token=auth_token)
+        if cancelled is False:
+            raise Exception(f"Cancellation of run {run_id} could not be delivered to the remote component.")
+        return
+    # Tombstone a still-queued durable ticket first (parity with the REST
+    # cancel routes): intent alone does not stop a job no task is executing
+    # yet - without this, a worker claims the waiting ticket, starts the leg,
+    # and the leg only dies at its first cancellation checkpoint, burning an
+    # attempt and stamping a spurious execution start on the run row.
+    # acancel_queued is a no-op for unticketed or already-executing runs.
+    from agno.os.job_queue import get_active_queue_worker
+
+    queue_worker = get_active_queue_worker()
+    if queue_worker is not None:
+        await queue_worker.acancel_queued(run_id)
+    await component.acancel_run(run_id=run_id)

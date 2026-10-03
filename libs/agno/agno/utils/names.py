@@ -2,7 +2,8 @@
 
 Generates IDs in the format ``adjective-name-hexsuffix``, where the
 adjective and name are chosen deterministically from a UUID4, and the
-hex suffix is derived from the same UUID to guarantee uniqueness.
+hex suffix is derived from the same UUID as a compact collision-resistant
+identifier.
 """
 
 from uuid import uuid4
@@ -153,10 +154,13 @@ def generate_human_readable_id() -> str:
 
     The adjective and name are selected deterministically from the UUID's
     integer value, and an 8-character hex suffix derived from the same UUID
-    ensures collision resistance equivalent to UUID4.
+    gives the returned ID roughly 44 bits of distinguishing entropy. This is
+    substantially smaller than UUID4's random space, so the ID is not
+    collision-resistant to the same degree as a full UUID4.
 
     Returns:
-        str: A human-readable, unique identifier.
+        str: A compact human-readable identifier; it is not guaranteed
+            globally unique.
     """
     uid = uuid4()
     uid_int = uid.int

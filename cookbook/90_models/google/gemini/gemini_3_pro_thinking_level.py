@@ -12,7 +12,7 @@ from agno.models.google import Gemini
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=Gemini(id="gemini-3-pro-preview", thinking_level="low"),
+    model=Gemini(id="gemini-3.1-pro-preview", thinking_level="low"),
     markdown=True,
 )
 

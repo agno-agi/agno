@@ -38,7 +38,7 @@ async def run_agent(message: str) -> None:
         f"npx -y @modelcontextprotocol/server-filesystem {file_path}"
     ) as mcp_tools:
         agent = Agent(
-            model=OpenAIChat(id="gpt-4o"),
+            model=OpenAIChat(id="gpt-5.6-luna"),
             tools=[mcp_tools],
             instructions=dedent("""\
                 You are a filesystem assistant. Help users explore files and directories.

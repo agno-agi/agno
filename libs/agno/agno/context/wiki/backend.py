@@ -205,6 +205,22 @@ class FileSystemBackend(WikiBackend):
         return Status(ok=True, detail=str(self.path))
 
 
+# Private env var carrying the PAT into git subprocesses. Consumed only
+# by _GIT_CREDENTIAL_HELPER below; git itself never reads it.
+_GIT_TOKEN_ENV_VAR = "AGNO_GIT_TOKEN"
+
+# Inline credential helper: answers the `get` action with the
+# x-access-token identity, reading the PAT from the environment so it
+# stays off argv and out of every config file. A helper MUST emit both
+# username and password — the bare remote URL carries no username, and
+# GIT_TERMINAL_PROMPT=0 turns a missing field into an immediate failure.
+# Runs under `sh` (present on the Git for Windows stack too); exits 0
+# for the store/erase actions.
+_GIT_CREDENTIAL_HELPER = (
+    '!f() { if [ "$1" = get ]; then printf \'username=x-access-token\\npassword=%s\\n\' "$AGNO_GIT_TOKEN"; fi; }; f'
+)
+
+
 class GitBackend(WikiBackend):
     """Wiki backend backed by a git remote.
 
@@ -214,11 +230,25 @@ class GitBackend(WikiBackend):
     one-liner, rebases onto the remote, and pushes.
 
     PAT auth is the only auth supported today: pass ``github_token`` (or
-    let the caller pull it from the environment). The token is
-    embedded in ``self._authenticated_url`` once at construction; never
-    log it directly. The backend's ``Scrubber`` is wired into every
+    let the caller pull it from the environment). The token is injected
+    into each remote-facing git call through an ephemeral credential
+    helper carried in the subprocess environment (``_git_env``): it is
+    never placed on the command line and never written to
+    ``.git/config`` — ``origin`` stays the bare ``repo_url``, and
+    ``setup`` rewrites token-bearing remotes left behind by older
+    versions. The backend's ``Scrubber`` is wired into every
     ``git_ops.run`` call so token leakage from git's own stderr is
     blocked at the source.
+
+    Requires git >= 2.31: credential injection rides on the
+    ``GIT_CONFIG_COUNT``/``GIT_CONFIG_KEY_n``/``GIT_CONFIG_VALUE_n``
+    environment entries, which older git ignores — remote operations
+    then fail with ``GitError`` ("could not read Username ... terminal
+    prompts disabled").
+
+    ``file://`` remotes are accepted for local mirrors and tests. Git
+    does not consult credential helpers for local transports, so the
+    token is unused there.
     """
 
     def __init__(
@@ -243,10 +273,17 @@ class GitBackend(WikiBackend):
         self.author_name: str = author_name
         self.author_email: str = author_email
 
-        self._authenticated_url: str = build_authenticated_url(repo_url, github_token)
         self._scrubber: Scrubber = Scrubber()
         self._scrubber.add(github_token)
-        self._scrubber.add(self._authenticated_url)
+        # The x-access-token URL form exists only for scrubbing: git can
+        # echo a credential-bearing URL in stderr, and clones made by
+        # older versions may still carry one in `.git/config`. Auth
+        # itself is env-injected per call (see _git_env). file://
+        # remotes (local mirrors, tests) have no https form — skip.
+        self._authenticated_url: str | None = None
+        if not repo_url.startswith("file://"):
+            self._authenticated_url = build_authenticated_url(repo_url, github_token)
+            self._scrubber.add(self._authenticated_url)
 
         resolved = Path(local_path).expanduser().resolve() if local_path else _default_clone_path(repo_url)
         super().__init__(path=resolved)
@@ -293,6 +330,7 @@ class GitBackend(WikiBackend):
             ["pull", "--rebase", "origin", self.branch],
             cwd=self.path,
             scrubber=self._scrubber,
+            env=self._git_env(),
         )
 
     async def commit_after_write(self, *, model=None) -> CommitSummary | None:  # noqa: ANN001
@@ -317,6 +355,7 @@ class GitBackend(WikiBackend):
                     ["push", "origin", self.branch],
                     cwd=self.path,
                     scrubber=self._scrubber,
+                    env=self._git_env(),
                 )
             except GitError as exc:
                 log_debug(f"GitBackend: idle push skipped: {exc}")
@@ -350,6 +389,7 @@ class GitBackend(WikiBackend):
                 ["pull", "--rebase", "origin", self.branch],
                 cwd=self.path,
                 scrubber=self._scrubber,
+                env=self._git_env(),
             )
         except GitError as exc:
             log_error(f"GitBackend rebase failed: {exc.stderr}")
@@ -368,6 +408,7 @@ class GitBackend(WikiBackend):
             ["push", "origin", self.branch],
             cwd=self.path,
             scrubber=self._scrubber,
+            env=self._git_env(),
         )
         return CommitSummary(sha=sha, message=message, files_changed=files_changed)
 
@@ -389,26 +430,67 @@ class GitBackend(WikiBackend):
     # Internals
     # -----------------------------------------------------------------
 
+    def _git_env(self) -> dict[str, str]:
+        """Environment for remote-facing git calls: ephemeral credential injection.
+
+        ``GIT_CONFIG_{COUNT,KEY_n,VALUE_n}`` feed git one-shot config
+        entries that exist only for that subprocess:
+
+        - entry 0 resets ``credential.helper`` so system/global helpers
+          (e.g. osxkeychain) cannot answer with a different identity;
+        - entry 1 installs the inline helper that emits the
+          ``x-access-token`` username plus the PAT from the private env var;
+        - entry 2 sets ``credential.useHttpPath`` so lookups are scoped
+          to the full repo path;
+        - entries 3-4 pin ``repo_url`` to itself via an identity
+          ``url.<repo_url>.insteadOf`` / ``pushInsteadOf``. Git applies the
+          longest-matching rewrite, so this full-URL identity rule outranks
+          any caller ``url.<prefix>.insteadOf`` (e.g. the common
+          ``url."git@github.com:".insteadOf = https://github.com/``) whose
+          prefix would otherwise reroute the operation to a different
+          transport/identity and skip the injected credential helper.
+
+        Masks any caller-set ``GIT_CONFIG_*`` entries for these calls.
+        """
+        env = os.environ.copy()
+        env["GIT_CONFIG_COUNT"] = "5"
+        env["GIT_CONFIG_KEY_0"] = "credential.helper"
+        env["GIT_CONFIG_VALUE_0"] = ""
+        env["GIT_CONFIG_KEY_1"] = "credential.helper"
+        env["GIT_CONFIG_VALUE_1"] = _GIT_CREDENTIAL_HELPER
+        env["GIT_CONFIG_KEY_2"] = "credential.useHttpPath"
+        env["GIT_CONFIG_VALUE_2"] = "true"
+        env["GIT_CONFIG_KEY_3"] = f"url.{self.repo_url}.insteadOf"
+        env["GIT_CONFIG_VALUE_3"] = self.repo_url
+        env["GIT_CONFIG_KEY_4"] = f"url.{self.repo_url}.pushInsteadOf"
+        env["GIT_CONFIG_VALUE_4"] = self.repo_url
+        env[_GIT_TOKEN_ENV_VAR] = self.github_token
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        return env
+
     async def _clone(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # Clone the bare URL; the PAT rides in through the ephemeral
+        # credential helper in the environment, so it never appears on
+        # argv (ps-visible) and never lands in `.git/config`.
         await git_run(
             [
                 "clone",
                 "--branch",
                 self.branch,
                 "--single-branch",
-                self._authenticated_url,
+                self.repo_url,
                 str(self.path),
             ],
             cwd=self.path.parent,
             scrubber=self._scrubber,
+            env=self._git_env(),
         )
-        # `git clone` with an authenticated URL persists the credential
-        # in `.git/config`. Rewrite the remote to the bare URL so the
-        # token isn't sitting on disk; we re-inject it on each
-        # push/pull via the `origin` URL we set below.
+        # Normalise origin to the bare URL in case pre-existing state
+        # (template checkout, interrupted earlier run) left a
+        # credential-bearing remote behind.
         await git_run(
-            ["remote", "set-url", "origin", self._authenticated_url],
+            ["remote", "set-url", "origin", self.repo_url],
             cwd=self.path,
             scrubber=self._scrubber,
         )
@@ -419,9 +501,12 @@ class GitBackend(WikiBackend):
         Returns True if the path was wiped (so the caller should re-clone),
         False if the clone passed validation and was kept in place.
         """
+        # Read the raw configured URL, not `remote get-url` (which applies any
+        # caller url.<base>.insteadOf rewrite): validation must compare what is
+        # actually stored in .git/config against repo_url.
         existing_remote = (
             await git_run(
-                ["remote", "get-url", "origin"],
+                ["config", "--get", "remote.origin.url"],
                 cwd=self.path,
                 scrubber=self._scrubber,
                 check=False,
@@ -455,9 +540,10 @@ class GitBackend(WikiBackend):
             await self._wipe_path()
             return True
 
-        # Refresh credentials in case the PAT was rotated.
+        # Normalise origin to the bare URL. Migrates clones created by
+        # older versions that persisted the token-bearing URL on disk.
         await git_run(
-            ["remote", "set-url", "origin", self._authenticated_url],
+            ["remote", "set-url", "origin", self.repo_url],
             cwd=self.path,
             scrubber=self._scrubber,
         )

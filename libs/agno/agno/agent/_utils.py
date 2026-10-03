@@ -122,9 +122,9 @@ SHARED_BY_REFERENCE_FIELDS = (
     "parser_model",
     "output_model",
     "session_summary_manager",
-    "culture_manager",
     "compression_manager",
     "learning",
+    "filesystem",
     "skills",
 )
 
@@ -201,7 +201,7 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
                 try:
                     # Share MCP tools (they maintain server connections)
                     is_mcp_tool = hasattr(type(tool), "__mro__") and any(
-                        c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                        c.__name__ == "MCPTools" for c in type(tool).__mro__
                     )
                     if is_mcp_tool:
                         copied_tools.append(tool)
@@ -219,6 +219,10 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
             # If entire tools processing fails, log and return original list
             log_warning(f"Failed to process tools for deep copy: {str(e)}")
             return field_value
+
+    if field_name == "filesystem" and isinstance(field_value, list):
+        # Keep durable stores shared, but let the copy change its own attachment list.
+        return list(field_value)
 
     # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
     if field_name in SHARED_BY_REFERENCE_FIELDS:

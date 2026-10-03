@@ -23,16 +23,8 @@ uv pip install -U openai agno
 
 ### 4. Run basic Agent
 
-- Streaming on
-
 ```shell
-python cookbook/92_models/sambanova/basic_stream.py
-```
-
-- Streaming off
-
-```shell
-python cookbook/92_models/sambanova/basic.py
+python cookbook/90_models/sambanova/basic.py
 ```
 ## Disclaimer:
 

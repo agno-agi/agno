@@ -15,7 +15,7 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 agent = Agent(
     name="ResearchAgent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are a helpful research assistant. Be concise.",
 )
 

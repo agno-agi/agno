@@ -2,7 +2,7 @@
 Basic Reasoning
 =============================
 
-Basic Reasoning.
+Demonstrates basic reasoning with an explicit reasoning model.
 """
 
 from agno.agent import Agent
@@ -13,10 +13,8 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 reasoning_agent = Agent(
     name="Reasoning Agent",
-    model=OpenAIResponses(id="gpt-5.2"),
-    reasoning=True,
-    reasoning_min_steps=2,
-    reasoning_max_steps=6,
+    model=OpenAIResponses(id="gpt-5.6"),
+    reasoning_model=OpenAIResponses(id="o3-mini"),
 )
 
 # ---------------------------------------------------------------------------

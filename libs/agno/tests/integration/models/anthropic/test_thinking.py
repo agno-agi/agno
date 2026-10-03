@@ -12,6 +12,29 @@ from agno.run.agent import RunOutput
 from agno.tools.yfinance import YFinanceTools
 
 
+def _thinking_persisted_in_runs(storage_dir: str, session_table: str = "agno_sessions") -> bool:
+    """Check the v3 runs table for any message carrying reasoning_content.
+
+    Under v3, runs live in a separate table (default: agno_runs.json), not
+    inline on the session record. When ``session_table`` is customized, the
+    runs table name derives from it as ``f"{session_table}_runs"`` (see
+    ``BaseDb.__init__``), so callers must pass the same ``session_table`` the
+    agent was configured with.
+    """
+    runs_filename = f"{session_table}_runs.json" if session_table != "agno_sessions" else "agno_runs.json"
+    runs_path = os.path.join(storage_dir, runs_filename)
+    if not os.path.exists(runs_path):
+        return False
+    with open(runs_path, "r") as f:
+        rows = json.load(f)
+    for row in rows:
+        run = row.get("run_data") or {}
+        for message in run.get("messages") or []:
+            if message.get("role") == "assistant" and message.get("reasoning_content"):
+                return True
+    return False
+
+
 def _get_thinking_agent(**kwargs):
     """Create an agent with thinking enabled using consistent settings."""
     default_config = {
@@ -172,27 +195,9 @@ async def test_thinking_with_storage():
         assert response.reasoning_content is not None
         assert len(response.reasoning_content) > 0
 
-        # Read the storage files to verify thinking was persisted
-        session_files = [f for f in os.listdir(storage_dir) if f.endswith(".json")]
-
-        thinking_persisted = False
-        for session_file in session_files:
-            if session_file == "test_session.json":
-                with open(os.path.join(storage_dir, session_file), "r") as f:
-                    session_data = json.load(f)
-
-                # Check messages in this session
-                if session_data and session_data[0] and session_data[0]["runs"]:
-                    for run in session_data[0]["runs"]:
-                        for message in run["messages"]:
-                            if message.get("role") == "assistant" and message.get("reasoning_content"):
-                                thinking_persisted = True
-                                break
-                        if thinking_persisted:
-                            break
-                break
-
-        assert thinking_persisted, "Thinking content should be persisted in storage"
+        assert _thinking_persisted_in_runs(storage_dir, session_table="test_session"), (
+            "Thinking content should be persisted in storage"
+        )
 
 
 @pytest.mark.asyncio
@@ -216,27 +221,9 @@ async def test_thinking_with_streaming_storage():
         assert final_response is not None
         assert hasattr(final_response, "reasoning_content") and final_response.reasoning_content is not None  # type: ignore
 
-        # Verify storage contains the thinking content
-        session_files = [f for f in os.listdir(storage_dir) if f.endswith(".json")]
-
-        thinking_persisted = False
-        for session_file in session_files:
-            if session_file == "test_session_stream.json":
-                with open(os.path.join(storage_dir, session_file), "r") as f:
-                    session_data = json.load(f)
-
-                # Check messages in this session
-                if session_data and session_data[0] and session_data[0]["runs"]:
-                    for run in session_data[0]["runs"]:
-                        for message in run["messages"]:
-                            if message.get("role") == "assistant" and message.get("reasoning_content"):
-                                thinking_persisted = True
-                                break
-                        if thinking_persisted:
-                            break
-                break
-
-        assert thinking_persisted, "Thinking content from streaming should be stored"
+        assert _thinking_persisted_in_runs(storage_dir, session_table="test_session_stream"), (
+            "Thinking content from streaming should be stored"
+        )
 
 
 # ============================================================================
@@ -346,27 +333,9 @@ async def test_interleaved_thinking_with_storage():
         assert response.reasoning_content is not None
         assert len(response.reasoning_content) > 0
 
-        # Read the storage files to verify thinking was persisted
-        session_files = [f for f in os.listdir(storage_dir) if f.endswith(".json")]
-
-        thinking_persisted = False
-        for session_file in session_files:
-            if session_file == "test_session_interleaved.json":
-                with open(os.path.join(storage_dir, session_file), "r") as f:
-                    session_data = json.load(f)
-
-                # Check messages in this session
-                if session_data and session_data[0] and session_data[0]["runs"]:
-                    for run in session_data[0]["runs"]:
-                        for message in run["messages"]:
-                            if message.get("role") == "assistant" and message.get("reasoning_content"):
-                                thinking_persisted = True
-                                break
-                        if thinking_persisted:
-                            break
-                break
-
-        assert thinking_persisted, "Interleaved thinking content should be persisted in storage"
+        assert _thinking_persisted_in_runs(storage_dir, session_table="test_session_interleaved"), (
+            "Interleaved thinking content should be persisted in storage"
+        )
 
 
 @pytest.mark.asyncio
@@ -394,27 +363,9 @@ async def test_interleaved_thinking_streaming_with_storage():
         assert final_response is not None
         assert hasattr(final_response, "reasoning_content") and final_response.reasoning_content is not None  # type: ignore
 
-        # Verify storage contains the thinking content
-        session_files = [f for f in os.listdir(storage_dir) if f.endswith(".json")]
-
-        thinking_persisted = False
-        for session_file in session_files:
-            if session_file == "test_session_interleaved_stream.json":
-                with open(os.path.join(storage_dir, session_file), "r") as f:
-                    session_data = json.load(f)
-
-                # Check messages in this session
-                if session_data and session_data[0] and session_data[0]["runs"]:
-                    for run in session_data[0]["runs"]:
-                        for message in run["messages"]:
-                            if message.get("role") == "assistant" and message.get("reasoning_content"):
-                                thinking_persisted = True
-                                break
-                        if thinking_persisted:
-                            break
-                break
-
-        assert thinking_persisted, "Interleaved thinking content from streaming should be stored"
+        assert _thinking_persisted_in_runs(storage_dir, session_table="test_session_interleaved_stream"), (
+            "Interleaved thinking content from streaming should be stored"
+        )
 
 
 def test_interleaved_thinking_vs_regular_thinking():

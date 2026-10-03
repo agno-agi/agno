@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from agno.agent.factory import AgentFactory
 
 from agno.agent import Agent
+from agno.agent._init import has_filesystem
 from agno.models.message import Message
 from agno.os.schema import ModelResponse
 from agno.os.utils import (
@@ -24,6 +25,7 @@ class AgentResponse(BaseModel):
     id: Optional[str] = None
     name: Optional[str] = None
     db_id: Optional[str] = None
+    filesystem: bool = False
     description: Optional[str] = None
     role: Optional[str] = None
     is_factory: bool = False
@@ -100,10 +102,6 @@ class AgentResponse(BaseModel):
             # Memory defaults
             "enable_agentic_memory": False,
             "update_memory_on_run": False,
-            # Reasoning defaults
-            "reasoning": False,
-            "reasoning_min_steps": 1,
-            "reasoning_max_steps": 10,
             # Default tools defaults
             "read_chat_history": False,
             "search_knowledge": True,
@@ -207,7 +205,6 @@ class AgentResponse(BaseModel):
             memory_info = {
                 "enable_agentic_memory": agent.enable_agentic_memory,
                 "update_memory_on_run": agent.update_memory_on_run,
-                "enable_user_memories": agent.enable_user_memories,  # Soon to be deprecated. Use update_memory_on_run
                 "metadata": agent.metadata,
                 "memory_table": agent.db.memory_table_name if agent.db and agent.update_memory_on_run else None,
             }
@@ -220,10 +217,8 @@ class AgentResponse(BaseModel):
                 ).model_dump()
 
         reasoning_info: Dict[str, Any] = {
-            "reasoning": agent.reasoning,
+            "reasoning": agent.reasoning_model is not None,
             "reasoning_agent_id": agent.reasoning_agent.id if agent.reasoning_agent else None,
-            "reasoning_min_steps": agent.reasoning_min_steps,
-            "reasoning_max_steps": agent.reasoning_max_steps,
         }
 
         if agent.reasoning_model:
@@ -311,6 +306,7 @@ class AgentResponse(BaseModel):
             id=agent.id,
             name=agent.name,
             db_id=agent.db.id if agent.db else None,
+            filesystem=has_filesystem(agent),
             description=agent.description,
             role=agent.role,
             model=ModelResponse(**_agent_model_data) if _agent_model_data else None,

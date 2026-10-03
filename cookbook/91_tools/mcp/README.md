@@ -40,15 +40,34 @@ This example shows how to create an agent that uses MCP and Gemini 2.5 Pro to se
 
 This example connects to the hosted DeepWiki MCP server (public, no API key) to answer questions about GitHub repositories. It shows how a tool's `structuredContent` is preserved on `ToolResult.metadata["structured_content"]` and read back through a tool hook.
 
+10. emem Agent (`emem.py`)
+
+This example connects to the hosted emem MCP server (public, no API key) for shared, signed memory of the physical world. It shows an agent answering a plain-language question about a place by calling emem's MCP tools directly.
+
+11. Peer Cash Agent (`peer_cash.py`)
+
+This example connects to the published Peer Cash MCP server to discover fiat payout rails, read market-rate estimates, prepare unsigned Base USDC cash-outs, and track their order state. Wallet custody stays outside the agent: the server never accepts private keys, signs transactions, or broadcasts them.
+
+
+12. Protocol Mode (`protocol_mode.py`)
+
+This example shows how to choose which MCP protocol era `MCPTools` negotiates. The default `"legacy"` keeps the session-based era, where the connection is long-lived and `is_alive()` pings it. `"auto"` negotiates the newest era both sides support; the 2026-07-28 era is sessionless, so requests are self-contained and there is no connection to keep alive. Keep `"legacy"` for a server that gates access on initialize, holds per-session state, or elicits input mid-tool.
+
+13. Magic Hour Agent (`magic_hour.py`)
+
+This example connects to Magic Hour's hosted MCP server to create images and videos. It shows bearer authentication, long-running render handling, reuse of project IDs after timeouts, and exact output URL retrieval.
 
 ## Getting Started
 
 ### Prerequisites
 
-Install the required dependencies:
+Install Python 3.11 or newer. The Peer Cash example also requires Node.js 22 or
+newer with `npx` available on your `PATH`.
+
+Install the required Python dependencies:
 
 ```bash
-uv pip install agno mcp openai
+uv pip install "agno[mcp]" openai
 ```
 
 Export your API keys:
@@ -57,7 +76,7 @@ Export your API keys:
 export OPENAI_API_KEY="your_openai_api_key"
 ```
 
-> For the GitHub example, create a Github PAT following [these steps](https://github.com/modelcontextprotocol/servers/tree/main/src/github#setup).
+> For the GitHub example, create a Github PAT following [these steps](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/github#setup).
 
 ### Run the Examples
 
@@ -66,6 +85,9 @@ python filesystem.py
 python github.py
 python bgpt.py
 python structured_content.py
+python emem.py
+python peer_cash.py
+python magic_hour.py
 ```
 
 ## How It Works
@@ -89,4 +111,4 @@ You can modify these examples to:
 ## More Information
 
 - Read more about [MCP](https://modelcontextprotocol.io/introduction)
-- Read about [Agno's MCP integration](https://docs.agno.com/tools/mcp)
+- Read about [Agno's MCP integration](https://docs.agno.com/tools/mcp/overview)

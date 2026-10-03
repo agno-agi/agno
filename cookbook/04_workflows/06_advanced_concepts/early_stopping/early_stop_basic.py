@@ -76,26 +76,26 @@ security_workflow = Workflow(
 # ---------------------------------------------------------------------------
 content_creator = Agent(
     name="Content Creator",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     instructions="Create engaging content on the given topic. Research and write comprehensive articles.",
 )
 
 fact_checker = Agent(
     name="Fact Checker",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Verify facts and check accuracy of content. Flag any misinformation.",
 )
 
 editor = Agent(
     name="Editor",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Edit and polish content for publication. Ensure clarity and flow.",
 )
 
 publisher = Agent(
     name="Publisher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Prepare content for publication and handle final formatting.",
 )
 

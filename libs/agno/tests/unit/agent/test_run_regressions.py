@@ -6,6 +6,7 @@ import pytest
 from agno.agent import _init, _messages, _response, _run, _session, _storage, _tools
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
+from agno.exceptions import RunNotFoundError
 from agno.run import RunContext
 from agno.run.agent import RunErrorEvent, RunOutput
 from agno.run.base import RunStatus
@@ -149,17 +150,17 @@ async def test_acontinue_run_dispatch_handles_none_session_runs(monkeypatch: pyt
     monkeypatch.setattr(_init, "disconnect_connectable_tools", lambda agent: None)
     monkeypatch.setattr(_init, "disconnect_mcp_tools", fake_disconnect_mcp_tools)
 
-    response = await _run.acontinue_run_dispatch(
-        agent=agent,
-        run_id="missing-run",
-        requirements=[],
-        session_id="session-1",
-        stream=False,
-    )
-
-    assert response.status == RunStatus.error
-    assert isinstance(response.content, str)
-    assert "No runs found for run ID missing-run" in response.content
+    # An unresolvable run_id must RAISE, not return a terminal error run. The old
+    # behaviour fell through to the generic handler, which stamped an ERROR row over
+    # the target run (owner, status and content) or fabricated a junk row.
+    with pytest.raises(RunNotFoundError, match="No runs found for run ID missing-run"):
+        await _run.acontinue_run_dispatch(
+            agent=agent,
+            run_id="missing-run",
+            requirements=[],
+            session_id="session-1",
+            stream=False,
+        )
 
 
 @pytest.mark.asyncio
@@ -188,21 +189,21 @@ async def test_acontinue_run_stream_yields_error_event_without_attribute_error(
         session_state={},
     )
 
+    # The streaming path raises for the same reason: persisting a terminal ERROR
+    # run for a run_id that was never found corrupts the target row. The HTTP layer
+    # turns this into a RunError SSE event, so the wire contract is unchanged.
     events = []
-    async for event in _run._acontinue_run_stream(
-        agent=agent,
-        session_id="session-1",
-        run_context=run_context,
-        run_id=run_id,
-        requirements=[],
-    ):
-        events.append(event)
+    with pytest.raises(RunNotFoundError, match="No runs found for run ID missing-stream-run"):
+        async for event in _run._acontinue_run_stream(
+            agent=agent,
+            session_id="session-1",
+            run_context=run_context,
+            run_id=run_id,
+            requirements=[],
+        ):
+            events.append(event)
 
-    assert len(events) == 1
-    assert isinstance(events[0], RunErrorEvent)
-    assert events[0].run_id == run_id
-    assert events[0].content is not None
-    assert "No runs found for run ID missing-stream-run" in events[0].content
+    assert events == []
 
 
 @pytest.mark.asyncio
@@ -658,7 +659,6 @@ async def test_acontinue_run_dispatch_respects_run_context_precedence(monkeypatc
         session_id: str,
         run_context: RunContext,
         run_response: Optional[RunOutput] = None,
-        updated_tools=None,
         requirements=None,
         run_id: Optional[str] = None,
         user_id: Optional[str] = None,
@@ -1036,80 +1036,6 @@ async def test_ahandle_agent_run_paused_stream_persists_session_state(monkeypatc
     assert run_response.session_state == {"cart": ["item-1"]}
 
 
-def test_continue_run_dispatch_syncs_requirements_with_updated_tools(monkeypatch: pytest.MonkeyPatch):
-    """When continue_run_dispatch is called with updated_tools (deprecated path),
-    run_response.requirements must reference the same ToolExecution objects as
-    run_response.tools.  Otherwise the model loop's is_resolved() check on stale
-    requirement objects causes it to break prematurely after the first tool call,
-    preventing subsequent model requests.  (Fixes #7497)
-    """
-    from agno.models.response import ToolExecution
-    from agno.run.requirement import RunRequirement
-
-    agent = Agent(name="test-agent")
-    _patch_sync_dispatch_dependencies(agent, monkeypatch)
-    monkeypatch.setattr(agent, "initialize_agent", lambda debug_mode=None: None)
-
-    # Simulate a paused run loaded from the session store.
-    old_tool = ToolExecution(
-        tool_call_id="tc-1",
-        tool_name="collect_info",
-        requires_user_input=True,
-    )
-    old_requirement = RunRequirement(tool_execution=old_tool)
-    paused_run = RunOutput(
-        run_id="run-1",
-        session_id="session-1",
-        status=RunStatus.paused,
-        tools=[old_tool],
-        requirements=[old_requirement],
-        messages=[],
-    )
-
-    # The frontend sends back updated_tools with user input filled in.
-    new_tool = ToolExecution(
-        tool_call_id="tc-1",
-        tool_name="collect_info",
-        requires_user_input=True,
-        result="user provided value",
-    )
-
-    # Provide the paused run in the session so continue_run_dispatch can find it.
-    monkeypatch.setattr(
-        _storage,
-        "read_or_create_session",
-        lambda agent, session_id=None, user_id=None: AgentSession(
-            session_id=session_id, user_id=user_id, runs=[paused_run]
-        ),
-    )
-
-    # Intercept _continue_run so we can inspect run_response before model is called.
-    captured: dict = {}
-
-    def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
-        captured["run_response"] = run_response
-        run_response.status = RunStatus.completed
-        return run_response
-
-    monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
-    monkeypatch.setattr(_response, "get_response_format", lambda agent, run_context=None: None)
-    monkeypatch.setattr(_tools, "determine_tools_for_model", lambda *a, **kw: [])
-
-    _run.continue_run_dispatch(
-        agent=agent,
-        run_id="run-1",
-        updated_tools=[new_tool],
-        session_id="session-1",
-        stream=False,
-    )
-
-    rr = captured["run_response"]
-    # The requirement's tool_execution must be the NEW object, not the stale one.
-    assert rr.requirements[0].tool_execution is new_tool, (
-        "Requirement should reference the updated ToolExecution object, not the stale one from the session."
-    )
-
-
 def test_continue_run_dispatch_skips_response_format_when_parser_model_set(monkeypatch: pytest.MonkeyPatch):
     """Regression for #8101: continue_run_dispatch must pass response_format=None
     when agent.parser_model is set, mirroring run_dispatch's guard."""
@@ -1189,3 +1115,45 @@ async def test_acontinue_run_dispatch_skips_response_format_when_parser_model_se
     )
 
     assert captured["response_format"] is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_of_hitl_continue_while_waiting_for_a_slot_is_paused():
+    """A background continuation cancelled before it acquires its concurrency
+    slot resumes a run that already paused for HITL: the persisted stage is
+    PAUSED, never "never started". Twin of the team test."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from agno.agent._run import _acontinue_run_background_stream
+    from agno.exceptions import RunCancelledException
+    from agno.run import RunStatus
+    from agno.run.base import CancellationStage
+
+    agent = MagicMock()
+    agent.db = None  # helper falls back to the session-save path
+    run_context = MagicMock()
+    session_run = MagicMock()
+    session_run.status = RunStatus.paused
+    session_run.cancellation_stage = None
+    agent_session = MagicMock()
+    agent_session.get_run.return_value = session_run
+    stream = MagicMock()
+    for name in ("register_run", "set_run_status", "complete_run", "add_event", "reopen_run", "begin_attempt"):
+        setattr(stream, name, AsyncMock())
+
+    with (
+        patch("agno.agent._run.background_run_slot") as mock_slot,
+        patch("agno.agent._storage.aread_or_create_session", new_callable=AsyncMock, return_value=agent_session),
+        patch("agno.agent._storage.update_metadata"),
+        patch("agno.agent._session.asave_session", new_callable=AsyncMock),
+        patch("agno.agent._session.asave_run", new_callable=AsyncMock),
+        patch("agno.os.event_streams.get_event_stream", return_value=stream),
+        patch("agno.agent._run.acleanup_run", new_callable=AsyncMock),
+    ):
+        mock_slot.return_value.__aenter__ = AsyncMock(side_effect=RunCancelledException("r-1"))
+        mock_slot.return_value.__aexit__ = AsyncMock()
+        async for _ in _acontinue_run_background_stream(agent, run_context=run_context, session_id="s-1", run_id="r-1"):
+            pass
+
+    assert session_run.status == RunStatus.cancelled
+    assert session_run.cancellation_stage is CancellationStage.paused

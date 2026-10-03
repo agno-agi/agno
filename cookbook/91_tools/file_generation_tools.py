@@ -10,7 +10,7 @@ Set save_files=True to also persist files to disk.
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.tools.file_generation import FileGenerationTools
+from agno.tools.file import FileGenerationTools
 
 # ---------------------------------------------------------------------------
 # Create Agent

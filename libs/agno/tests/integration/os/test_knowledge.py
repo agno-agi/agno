@@ -43,6 +43,7 @@ def mock_knowledge():
     knowledge.apatch_content = AsyncMock()
     knowledge.get_content = Mock()
     knowledge.get_content_by_id = Mock()
+    knowledge.aget_content_by_id = AsyncMock()
     knowledge.remove_content_by_id = Mock()
     knowledge.aremove_content_by_id = AsyncMock()
     knowledge.remove_all_content = Mock()
@@ -164,9 +165,12 @@ def test_upload_content_invalid_json(test_app):
         assert "id" in data
 
 
-def test_edit_content_success(test_app, mock_knowledge):
+def test_edit_content_success(test_app, mock_knowledge, mock_content_row):
     """Test successful content editing."""
-    content_id = str(uuid4())
+    content_id = mock_content_row.id
+
+    # Route pre-checks ownership via aget_content_by_id
+    mock_knowledge.aget_content_by_id.return_value = mock_content_row
 
     # Mock the return value of patch_content
     mock_content_dict = {
@@ -199,10 +203,12 @@ def test_edit_content_success(test_app, mock_knowledge):
     mock_knowledge.patch_content.assert_called_once()
 
 
-def test_edit_content_with_invalid_reader(test_app, mock_knowledge):
+def test_edit_content_with_invalid_reader(test_app, mock_knowledge, mock_content_row):
     """Test content editing with invalid reader_id."""
-    content_id = str(uuid4())
+    content_id = mock_content_row.id
     mock_knowledge.readers = {"valid_reader": Mock()}
+    # Route pre-checks ownership before validating the reader_id
+    mock_knowledge.aget_content_by_id.return_value = mock_content_row
 
     response = test_app.patch(
         f"/knowledge/content/{content_id}", data={"name": "Updated Content", "reader_id": "invalid_reader"}
@@ -229,24 +235,26 @@ def test_get_content_list(test_app, mock_knowledge, mock_content_row):
     assert data["meta"]["limit"] == 10
 
 
-def test_get_content_by_id(test_app, mock_knowledge, mock_content_row):
+def test_get_content_by_id(test_app, mock_knowledge, mock_content):
     """Test getting content by ID."""
-    mock_knowledge.contents_db.get_knowledge_content.return_value = mock_content_row
+    # Route reads Content via aget_content_by_id, not the raw KnowledgeRow
+    mock_knowledge.aget_content_by_id.return_value = mock_content
 
-    response = test_app.get(f"/knowledge/content/{mock_content_row.id}")
+    response = test_app.get(f"/knowledge/content/{mock_content.id}")
 
     assert response.status_code == 200
     data = response.json()
-    assert data["id"] == mock_content_row.id
-    assert data["name"] == mock_content_row.name
-    assert data["description"] == mock_content_row.description
-    assert data["status"] == mock_content_row.status
+    assert data["id"] == mock_content.id
+    assert data["name"] == mock_content.name
+    assert data["description"] == mock_content.description
+    assert data["status"] == mock_content.status
 
 
 def test_get_content_by_id_not_found(test_app, mock_knowledge):
     """Test getting content by ID when not found."""
     content_id = str(uuid4())
     mock_knowledge.contents_db.get_knowledge_content.return_value = None
+    mock_knowledge.aget_content_by_id.return_value = None
 
     # Mock the Content constructor to handle None case
     with patch("agno.knowledge.content.Content") as mock_content_class:
@@ -263,6 +271,8 @@ def test_get_content_by_id_not_found(test_app, mock_knowledge):
 def test_delete_content_by_id(test_app, mock_knowledge, mock_content_row):
     """Test deleting content by ID."""
     mock_knowledge.contents_db.get_knowledge_content.return_value = mock_content_row
+    # Route pre-checks ownership before deleting
+    mock_knowledge.aget_content_by_id.return_value = mock_content_row
 
     response = test_app.delete(f"/knowledge/content/{mock_content_row.id}")
 
@@ -270,8 +280,46 @@ def test_delete_content_by_id(test_app, mock_knowledge, mock_content_row):
     data = response.json()
     assert data["id"] == mock_content_row.id
 
-    # Verify knowledge.remove_content_by_id was called
-    mock_knowledge.aremove_content_by_id.assert_called_once_with(content_id=mock_content_row.id)
+    # Verify knowledge.aremove_content_by_id was called, unscoped since the test app has no auth wired
+    mock_knowledge.aremove_content_by_id.assert_called_once_with(content_id=mock_content_row.id, user_id=None)
+
+
+def test_edit_shared_content_is_forbidden(test_app, mock_knowledge, mock_content_row):
+    """Test that a scoped caller cannot modify shared content."""
+    mock_content_row.user_id = None
+    mock_knowledge.aget_content_by_id.return_value = mock_content_row
+
+    with patch("agno.os.routers.knowledge.knowledge.get_scoped_user_id", return_value="alice"):
+        response = test_app.patch(f"/knowledge/content/{mock_content_row.id}", data={"name": "Renamed"})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Cannot modify shared content"
+    mock_knowledge.patch_content.assert_not_called()
+
+
+def test_delete_shared_content_is_forbidden(test_app, mock_knowledge, mock_content_row):
+    """Test that a scoped caller cannot delete shared content."""
+    mock_content_row.user_id = None
+    mock_knowledge.aget_content_by_id.return_value = mock_content_row
+
+    with patch("agno.os.routers.knowledge.knowledge.get_scoped_user_id", return_value="alice"):
+        response = test_app.delete(f"/knowledge/content/{mock_content_row.id}")
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Cannot delete shared content"
+    mock_knowledge.aremove_content_by_id.assert_not_called()
+
+
+def test_delete_own_content_is_allowed_when_scoped(test_app, mock_knowledge, mock_content_row):
+    """Test that a scoped caller can delete their own content."""
+    mock_content_row.user_id = "alice"
+    mock_knowledge.aget_content_by_id.return_value = mock_content_row
+
+    with patch("agno.os.routers.knowledge.knowledge.get_scoped_user_id", return_value="alice"):
+        response = test_app.delete(f"/knowledge/content/{mock_content_row.id}")
+
+    assert response.status_code == 200
+    mock_knowledge.aremove_content_by_id.assert_called_once_with(content_id=mock_content_row.id, user_id="alice")
 
 
 def test_delete_all_content(test_app, mock_knowledge):
@@ -444,7 +492,7 @@ def test_search_knowledge_basic(test_app, mock_knowledge):
 
     # Verify knowledge.asearch was called correctly
     mock_knowledge.asearch.assert_called_once_with(
-        query="Jordan Mitchell skills", max_results=None, filters=None, search_type=None
+        query="Jordan Mitchell skills", max_results=None, filters=None, search_type=None, user_id=None
     )
 
 
@@ -468,7 +516,7 @@ def test_search_knowledge_with_search_type(test_app, mock_knowledge):
 
     # Verify knowledge.asearch was called with search_type
     mock_knowledge.asearch.assert_called_once_with(
-        query="test query", max_results=None, filters=None, search_type="vector"
+        query="test query", max_results=None, filters=None, search_type="vector", user_id=None
     )
 
 
@@ -493,7 +541,9 @@ def test_search_knowledge_with_db_id(test_app, mock_knowledge):
     assert data["meta"]["total_count"] == 1
 
     # Note: db_id affects which knowledge instance is selected, not the search call itself
-    mock_knowledge.asearch.assert_called_once_with(query="test", max_results=None, filters=None, search_type=None)
+    mock_knowledge.asearch.assert_called_once_with(
+        query="test", max_results=None, filters=None, search_type=None, user_id=None
+    )
 
 
 def test_search_knowledge_no_results(test_app, mock_knowledge):
@@ -575,7 +625,7 @@ def test_search_knowledge_with_all_parameters(test_app, mock_knowledge):
     assert doc["size"] == 100
 
     mock_knowledge.asearch.assert_called_once_with(
-        query="full test", max_results=None, filters=None, search_type="hybrid"
+        query="full test", max_results=None, filters=None, search_type="hybrid", user_id=None
     )
 
 
@@ -717,3 +767,329 @@ def test_upload_with_special_characters(test_app):
         assert response.status_code == 202
         data = response.json()
         assert "id" in data
+
+
+def _availability_staging(reader_key, unavailable_entries):
+    """The real reader sweep with one key moved from available to unavailable."""
+    from agno.knowledge.utils import get_readers_availability
+
+    available, _ = get_readers_availability()
+    kept = [info for info in available if info["id"] != reader_key]
+
+    def staged(knowledge_instance=None):
+        return kept, unavailable_entries
+
+    return staged
+
+
+def test_get_config_reports_unavailable_readers(test_app, mock_knowledge):
+    """A reader this install cannot use is named in the payload, not dropped into DEBUG."""
+    mock_knowledge.get_readers.return_value = {}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    unavailable = [
+        {
+            "id": "pdf",
+            "name": "PdfReader",
+            "description": "Processes PDF documents",
+            "missing_packages": ["pypdf"],
+            "reason": "Reader 'pdf' has missing dependencies: `pypdf` not installed.",
+        }
+    ]
+    with patch(
+        "agno.os.routers.knowledge.knowledge.get_readers_availability",
+        side_effect=_availability_staging("pdf", unavailable),
+    ):
+        response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    assert response.json()["unavailable_readers"]["pdf"]["missing_packages"] == ["pypdf"]
+    assert "pypdf" in response.json()["unavailable_readers"]["pdf"]["reason"]
+    assert "pdf" not in (response.json()["readers"] or {})
+
+
+def test_get_config_omits_unavailable_readers_when_all_are_available(test_app, mock_knowledge):
+    mock_knowledge.get_readers.return_value = {}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    with (
+        patch(
+            "agno.os.routers.knowledge.knowledge.get_readers_availability", side_effect=_availability_staging(None, [])
+        ),
+        patch("agno.os.routers.knowledge.knowledge.get_unavailable_chunkers_info", return_value=[]),
+    ):
+        response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    assert response.json()["unavailable_readers"] in (None, {})
+
+
+def test_get_config_reports_unavailable_chunkers(test_app, mock_knowledge):
+    mock_knowledge.get_readers.return_value = {}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    with patch(
+        "agno.os.routers.knowledge.knowledge.get_unavailable_chunkers_info",
+        return_value=[
+            {
+                "id": "SemanticChunker",
+                "name": "SemanticChunker",
+                "description": None,
+                "missing_packages": ["numpy"],
+                "reason": "Chunker 'SemanticChunker' has missing dependencies: `numpy` not installed.",
+            }
+        ],
+    ):
+        response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    assert response.json()["unavailable_chunkers"]["SemanticChunker"]["missing_packages"] == ["numpy"]
+
+
+def test_get_config_never_offers_a_reader_a_chunker_it_cannot_build(test_app, mock_knowledge):
+    """The same response cannot both drop a chunker and list it under a reader."""
+    from agno.knowledge.chunking.strategy import ChunkingStrategyType
+    from agno.knowledge.reader.base import Reader
+    from agno.knowledge.utils import get_all_chunkers_info
+
+    class OddContentTypeReader(Reader):
+        """Reaches the route's second reader loop: its content types are not the enum."""
+
+        @classmethod
+        def get_supported_chunking_strategies(cls):
+            return [ChunkingStrategyType.FIXED_SIZE_CHUNKER, ChunkingStrategyType.SEMANTIC_CHUNKER]
+
+        @classmethod
+        def get_supported_content_types(cls):
+            return [".mine"]
+
+    mock_knowledge.get_readers.return_value = {"my_text": OddContentTypeReader()}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    # Force one chunker to be unavailable, so the filter has something to do wherever the
+    # suite runs -- with every chunking dependency installed the assertion is free.
+    all_chunkers = get_all_chunkers_info()
+    dropped = next(c for c in all_chunkers if c["key"] == "SemanticChunker")
+    kept = [c for c in all_chunkers if c["key"] != dropped["key"]]
+
+    with patch("agno.os.routers.knowledge.knowledge.get_all_chunkers_info", return_value=kept):
+        response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert dropped["key"] not in (data["chunkers"] or {})
+
+    available_chunkers = set(data["chunkers"] or {})
+    offered_anywhere = set()
+    for reader in (data["readers"] or {}).values():
+        offered_anywhere |= set(reader["chunkers"] or [])
+    assert dropped["key"] not in offered_anywhere
+    assert offered_anywhere <= available_chunkers
+    assert offered_anywhere, "expected readers to still offer the chunkers that do resolve"
+    assert dropped["key"] not in data["readers"]["my_text"]["chunkers"]
+    assert data["readers"]["my_text"]["chunkers"], "the custom reader keeps the chunkers that resolve"
+
+
+def test_get_config_does_not_republish_a_cached_reader_it_cannot_run(test_app, mock_knowledge):
+    """A reader cached on the Knowledge takes precedence, so the route filters it too."""
+    import importlib.util
+
+    from agno.knowledge.reader.excel_reader import ExcelReader
+
+    mock_knowledge.get_readers.return_value = {"my_spreadsheets": ExcelReader()}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    real_find_spec = importlib.util.find_spec
+
+    def fake_find_spec(name, package=None):
+        if name in ("openpyxl", "xlrd"):
+            return None
+        return real_find_spec(name, package)
+
+    with patch("agno.knowledge.reader.base.find_spec", side_effect=fake_find_spec):
+        response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "my_spreadsheets" not in (data["readers"] or {})
+    assert "excel" not in (data["readers"] or {})
+    # ...and it says why, rather than simply not being there.
+    assert data["unavailable_readers"]["my_spreadsheets"]["missing_packages"] == ["openpyxl", "xlrd"]
+
+
+def test_get_config_publishes_a_cached_reader_it_can_run(test_app, mock_knowledge):
+    """Guards the skip against swallowing a reader that works."""
+    from agno.knowledge.reader.excel_reader import ExcelReader
+
+    mock_knowledge.get_readers.return_value = {"my_spreadsheets": ExcelReader(name="My Spreadsheets")}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["readers"]["my_spreadsheets"]["name"] == "My Spreadsheets"
+    assert data["readers"]["my_spreadsheets"]["content_types"] == [".xlsx", ".xls"]
+    assert "my_spreadsheets" not in (data["unavailable_readers"] or {})
+
+
+def test_get_config_names_a_custom_reader_that_carries_no_name(test_app, mock_knowledge):
+    """Reader.__init__ assigns name and description, so the attribute is there and often None."""
+    from agno.knowledge.reader.text_reader import TextReader
+
+    mock_knowledge.get_readers.return_value = {"unnamed": TextReader()}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    assert response.json()["readers"]["unnamed"]["name"] == "TextReader"
+    assert response.json()["readers"]["unnamed"]["description"] == "Custom TextReader"
+
+
+def test_get_config_never_calls_the_same_reader_usable_and_missing(test_app, mock_knowledge):
+    """A working custom reader under a factory id answers for that id."""
+    from agno.knowledge.reader.text_reader import TextReader
+
+    mock_knowledge.get_readers.return_value = {"wikipedia": TextReader(name="My Wikipedia")}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    data = response.json()
+    published = set(data["readers"] or {})
+    unavailable = set(data["unavailable_readers"] or {})
+    assert not (published & unavailable)
+
+
+def test_a_reader_the_sweep_cannot_introspect_is_published_once(test_app, mock_knowledge):
+    """The sweep cannot describe it, the route publishes it anyway, so it is listed once."""
+    from agno.knowledge.reader.base import Reader
+
+    class NoClassmethodsReader(Reader):
+        pass  # get_supported_* raise NotImplementedError on the base
+
+    mock_knowledge.get_readers.return_value = {"homegrown": NoClassmethodsReader(name="Homegrown")}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "homegrown" in (data["readers"] or {})
+    assert "homegrown" not in (data["unavailable_readers"] or {})
+
+
+def test_an_unusable_custom_reader_is_reported_over_http(test_app, mock_knowledge):
+    """It is gone from the palette, and the payload says what it needs."""
+    from typing import Dict, List
+
+    from agno.knowledge.reader.base import Reader
+    from agno.knowledge.types import ContentType
+
+    class NeedsAMissingPackage(Reader):
+        @classmethod
+        def get_supported_chunking_strategies(cls):
+            return []
+
+        @classmethod
+        def get_supported_content_types(cls):
+            return [ContentType.TXT]
+
+        @classmethod
+        def get_read_time_requirements(cls) -> Dict[ContentType, List[str]]:
+            return {ContentType.TXT: ["definitely_not_installed_xyz"]}
+
+    mock_knowledge.get_readers.return_value = {"needs_pkg": NeedsAMissingPackage()}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "needs_pkg" not in (data["readers"] or {})
+    assert data["unavailable_readers"]["needs_pkg"]["missing_packages"] == ["definitely_not_installed_xyz"]
+
+
+def test_get_config_survives_a_reader_that_does_not_return_enums(test_app, mock_knowledge):
+    """One non-conforming custom reader must not take the whole response down."""
+    from agno.knowledge.reader.base import Reader
+
+    class StringyReader(Reader):
+        @classmethod
+        def get_supported_chunking_strategies(cls):
+            return []
+
+        @classmethod
+        def get_supported_content_types(cls):
+            return [".mine"]
+
+    mock_knowledge.get_readers.return_value = {"stringy": StringyReader()}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    assert "text" in (response.json()["readers"] or {})
+
+
+def test_get_config_publishes_partial_reader_availability(test_app, mock_knowledge):
+    """A reader that loses one content type says so over HTTP, rather than losing it quietly."""
+    mock_knowledge.get_readers.return_value = {}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    import importlib.util
+
+    real_find_spec = importlib.util.find_spec
+
+    def fake_find_spec(name, package=None):
+        if name == "xlrd":
+            return None
+        if name == "openpyxl":
+            return object()
+        return real_find_spec(name, package)
+
+    with patch("agno.knowledge.reader.base.find_spec", side_effect=fake_find_spec):
+        response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["readers"]["excel"]["content_types"] == [".xlsx"]
+    assert data["readers"]["excel"]["unavailable_content_types"] == {".xls": ["xlrd"]}
+    assert "excel" not in data["readersForType"].get(".xls", [])
+
+
+def test_get_config_sweeps_the_readers_once(test_app, mock_knowledge):
+    """The sweep imports 18 reader modules; the route must not pay for it three times."""
+    import agno.knowledge.utils as knowledge_utils
+    from agno.knowledge.reader.reader_factory import ReaderFactory
+
+    mock_knowledge.get_readers.return_value = {}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    real_get_reader_info = knowledge_utils.get_reader_info
+    calls = []
+
+    def counting(key):
+        calls.append(key)
+        return real_get_reader_info(key)
+
+    with patch.object(knowledge_utils, "get_reader_info", side_effect=counting):
+        response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    assert len(calls) == len(ReaderFactory.get_all_reader_keys())
