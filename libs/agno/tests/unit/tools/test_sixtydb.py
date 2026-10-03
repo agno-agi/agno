@@ -358,7 +358,7 @@ def test_wav_container_precedes_linear16_sample_encoding(content_type, nested):
         assert wav.readframes(wav.getnframes()) == PCM
 
 
-@pytest.mark.parametrize("invalid_kind", ["rate", "container", "frames"])
+@pytest.mark.parametrize("invalid_kind", ["rate", "container", "frames", "descriptor"])
 def test_incompatible_unlabeled_wav_after_pcm_is_rejected(invalid_kind):
     wav = io.BytesIO()
     with wave.open(wav, "wb") as output:
@@ -367,6 +367,8 @@ def test_incompatible_unlabeled_wav_after_pcm_is_rejected(invalid_kind):
     payload = wav.getvalue()
     if invalid_kind in {"container", "frames"}:
         payload = payload[:-2]
+    if invalid_kind == "descriptor":
+        payload = payload[:20]
     if invalid_kind == "frames":
         payload = payload[:4] + (len(payload) - 8).to_bytes(4, "little") + payload[8:]
     body = b"\n".join(
@@ -379,3 +381,17 @@ def test_incompatible_unlabeled_wav_after_pcm_is_rejected(invalid_kind):
         result = tool(url).text_to_speech(Agent(), "Hello")
     assert not result.audios
     assert result.content.startswith("Error:")
+
+
+@pytest.mark.parametrize("content_type", ["audio/pcm", "audio/wav", "audio/x-wav"])
+def test_binary_content_type_controls_decoding(content_type):
+    payload = b"RIFF\x04\x00\x00\x00WAVE" if content_type == "audio/pcm" else PCM
+    with endpoint(payload, content_type) as (url, _):
+        result = tool(url).text_to_speech(Agent(), "Hello")
+    if content_type == "audio/pcm":
+        assert result.audios
+        with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
+            assert wav.readframes(wav.getnframes()) == payload
+    else:
+        assert not result.audios
+        assert result.content.startswith("Error:")

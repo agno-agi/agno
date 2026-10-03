@@ -97,11 +97,9 @@ def _decode_wav(audio: bytes, offset: int) -> tuple[bytes, int]:
     chunk_offset = offset + 12
     while chunk_offset + 8 <= container_end:
         chunk_size = int.from_bytes(audio[chunk_offset + 4 : chunk_offset + 8], "little")
-        if (
-            audio[chunk_offset : chunk_offset + 4] == b"fmt "
-            and chunk_size >= 16
-            and chunk_offset + 24 <= container_end
-        ):
+        if audio[chunk_offset : chunk_offset + 4] == b"fmt ":
+            if chunk_size < 16 or chunk_offset + 8 + chunk_size > container_end:
+                raise ValueError("60db returned an invalid WAV format descriptor")
             break
         chunk_offset += 8 + chunk_size + (chunk_size % 2)
     else:
@@ -326,6 +324,10 @@ class SixtyDBTools(Toolkit):
                 audio = _record_audio(json.loads(body), formats)
             elif content_type in {"audio/wav", "audio/x-wav", "audio/pcm", "application/octet-stream"}:
                 audio = body
+                if content_type in {"audio/wav", "audio/x-wav"}:
+                    formats[0] = "wav"
+                elif content_type == "audio/pcm":
+                    formats[0] = "pcm"
             else:
                 raise ValueError("Unsupported audio response")
             pcm = (
