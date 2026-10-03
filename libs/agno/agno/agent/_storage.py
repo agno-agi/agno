@@ -44,7 +44,6 @@ from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.string import generate_id_from_name
 
-
 # MemoryManager.__init__ (agno/memory/manager.py) auto-generates
 # ``memory_manager_<8 hex>`` when no id is passed. Such an id is minted fresh
 # every process, so a config carrying it can never resolve against a registry
@@ -1136,6 +1135,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["output_model_prompt"] = agent.output_model_prompt
     if not agent.parse_response:
         config["parse_response"] = agent.parse_response
+    if agent.fail_on_output_parse_error:
+        config["fail_on_output_parse_error"] = agent.fail_on_output_parse_error
     if agent.structured_outputs is not None:
         config["structured_outputs"] = agent.structured_outputs
     if agent.use_json_mode:
@@ -1501,6 +1502,7 @@ def from_dict(
         # output_model=config.get("output_model"),  # TODO
         output_model_prompt=config.get("output_model_prompt"),
         parse_response=config.get("parse_response", True),
+        fail_on_output_parse_error=config.get("fail_on_output_parse_error", False),
         structured_outputs=config.get("structured_outputs"),
         use_json_mode=config.get("use_json_mode", False),
         save_response_to_file=config.get("save_response_to_file"),

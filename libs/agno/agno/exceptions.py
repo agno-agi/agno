@@ -116,6 +116,19 @@ class AgnoError(Exception):
         return str(self.message)
 
 
+class OutputParseError(AgnoError):
+    """Raised internally when requested Pydantic output parsing fails.
+
+    Run handlers expose this as an error result or a streaming error event.
+    This is separate from provider failures and does not trigger model fallback.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.type = "output_parse_error"
+        self.error_id = "output_parse_error"
+
+
 class ModelAuthenticationError(AgnoError):
     """Raised when model authentication fails."""
 

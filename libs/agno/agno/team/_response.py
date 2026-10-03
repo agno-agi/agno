@@ -20,7 +20,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent._tools import result_store_kwargs
-from agno.exceptions import RunCancelledException
+from agno.exceptions import OutputParseError, RunCancelledException
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
@@ -1378,15 +1378,38 @@ def _handle_model_response_chunk(
         if model_response_event.event == ModelResponseEvent.assistant_response.value:
             content_type = "str"
 
+            if (
+                parse_structured_output
+                and team.fail_on_output_parse_error
+                and team.parse_response
+                and run_context
+                and isinstance(run_context.output_schema, type)
+                and model_response_event.content is None
+            ):
+                # An empty final reply must not reuse the content from a paused run.
+                run_response.content = None
+                full_model_response.content = None
+                run_response.content_type = "str"
+
             should_yield = False
             # Process content
             if model_response_event.content is not None:
                 if parse_structured_output:
                     full_model_response.content = model_response_event.content
-                    _convert_response_to_structured_format(team, full_model_response, run_context=run_context)
+                    # A member may still pause this run; enforce strict parsing at finalization.
+                    _convert_response_to_structured_format(
+                        team, full_model_response, run_context=run_context, raise_on_error=False
+                    )
                     # Get output_schema from run_context
                     output_schema = run_context.output_schema if run_context else None
                     content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
+                    if (
+                        team.fail_on_output_parse_error
+                        and team.parse_response
+                        and isinstance(output_schema, type)
+                        and not isinstance(full_model_response.content, output_schema)
+                    ):
+                        content_type = "str"
                     run_response.content_type = content_type
                 elif team._member_response_model is not None:
                     full_model_response.content = model_response_event.content
@@ -1669,10 +1692,15 @@ def _handle_model_response_chunk(
 
 
 def _convert_response_to_structured_format(
-    team: "Team", run_response: Union[TeamRunOutput, RunOutput, ModelResponse], run_context: Optional[RunContext] = None
+    team: "Team",
+    run_response: Union[TeamRunOutput, RunOutput, ModelResponse],
+    run_context: Optional[RunContext] = None,
+    *,
+    raise_on_error: Optional[bool] = None,
 ):
     # Get output_schema from run_context
     output_schema = run_context.output_schema if run_context else None
+    fail_on_error = team.fail_on_output_parse_error if raise_on_error is None else raise_on_error
 
     # Convert the response to the structured format if needed
     if output_schema is not None:
@@ -1694,7 +1722,9 @@ def _convert_response_to_structured_format(
         elif not isinstance(run_response.content, output_schema):
             if isinstance(run_response.content, str) and team.parse_response:
                 try:
-                    parsed_response_content = parse_response_model_str(run_response.content, output_schema)
+                    parsed_response_content = parse_response_model_str(
+                        run_response.content, output_schema, raise_on_error=fail_on_error
+                    )
 
                     # Update TeamRunOutput
                     if parsed_response_content is not None:
@@ -1704,8 +1734,17 @@ def _convert_response_to_structured_format(
                     else:
                         log_warning("Failed to convert response to output_schema")
                 except Exception as e:
+                    if fail_on_error:
+                        if hasattr(run_response, "content_type"):
+                            run_response.content_type = "str"
+                        raise OutputParseError(f"Failed to parse response as {output_schema.__name__}: {e}") from e
                     log_warning(f"Failed to convert response to output model: {str(e)}")
             else:
+                if team.parse_response and fail_on_error:
+                    raise OutputParseError(
+                        f"Failed to parse response as {output_schema.__name__}: "
+                        f"expected a string or {output_schema.__name__}, got {type(run_response.content).__name__}"
+                    )
                 log_warning("Something went wrong. Team run response content is not a string")
     elif team._member_response_model is not None:
         # Handle dict schema from member

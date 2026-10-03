@@ -828,6 +828,7 @@ class TestContinueRunApprovalResolution:
         from agno.team._run import continue_run_dispatch
 
         team = MagicMock()
+        team.fail_on_output_parse_error = False
         team.session_id = None
         team.add_history_to_context = False
         team.parser_model = None
