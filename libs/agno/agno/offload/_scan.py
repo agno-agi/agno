@@ -25,10 +25,12 @@ def main() -> None:
     request = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     compiled = re.compile(request["pattern"])
     limit = int(request["limit"])
+    start_line = int(request["start_line"])
     positions: List[List[int]] = []
     more = False
-    for index, line in enumerate(request["content"].split("\n")):
-        found = compiled.search(line)
+    lines = request["content"].split("\n")
+    for index in range(start_line - 1, len(lines)):
+        found = compiled.search(lines[index])
         if found is None:
             continue
         if len(positions) >= limit:
