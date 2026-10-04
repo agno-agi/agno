@@ -22,7 +22,7 @@ from agno.utils.media import save_base64_data
 
 agent = Agent(
     model=OpenAIChat(id="gpt-5.6-luna"),
-    tools=[OpenAITools(image_model="gpt-image-1")],
+    tools=[OpenAITools(image_model="gpt-image-2")],
     markdown=True,
 )
 
