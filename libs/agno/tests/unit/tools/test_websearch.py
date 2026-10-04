@@ -678,3 +678,141 @@ def test_search_news_empty_results(mock_ddgs):
 
     parsed = json.loads(result)
     assert parsed == []
+
+
+# ============================================================================
+# ZERO AND NEGATIVE RESULTS TESTS
+# ============================================================================
+
+
+def test_web_search_with_fixed_max_results_zero(mock_ddgs):
+    """Test that fixed_max_results=0 is honored and skips network call."""
+    mock_instance, _ = mock_ddgs
+    tools = WebSearchTools(fixed_max_results=0)
+    result = tools.web_search("test")
+
+    assert json.loads(result) == []
+    mock_instance.text.assert_not_called()
+
+
+def test_web_search_with_requested_max_results_zero(mock_ddgs):
+    """Test that max_results=0 is honored and skips network call."""
+    mock_instance, _ = mock_ddgs
+    tools = WebSearchTools()
+    result = tools.web_search("test", max_results=0)
+
+    assert json.loads(result) == []
+    mock_instance.text.assert_not_called()
+
+
+def test_web_search_with_negative_max_results(mock_ddgs):
+    """Test that negative max_results is treated defensively and returns empty list."""
+    mock_instance, _ = mock_ddgs
+    tools = WebSearchTools(fixed_max_results=-3)
+    result = tools.web_search("test")
+
+    assert json.loads(result) == []
+    mock_instance.text.assert_not_called()
+
+
+def test_search_news_with_fixed_max_results_zero(mock_ddgs):
+    """Test that search_news honors fixed_max_results=0 and skips network call."""
+    mock_instance, _ = mock_ddgs
+    tools = WebSearchTools(fixed_max_results=0)
+    result = tools.search_news("test")
+
+    assert json.loads(result) == []
+    mock_instance.news.assert_not_called()
+
+
+def test_search_news_with_requested_max_results_zero(mock_ddgs):
+    """Test that search_news honors max_results=0 and skips network call."""
+    mock_instance, _ = mock_ddgs
+    tools = WebSearchTools()
+    result = tools.search_news("test", max_results=0)
+
+    assert json.loads(result) == []
+    mock_instance.news.assert_not_called()
+
+
+# ============================================================================
+# SEARCH NEWS MODIFIER TESTS
+# ============================================================================
+
+
+def test_search_news_with_modifier(mock_ddgs):
+    """Test that modifier is prepended to query in search_news."""
+    mock_instance, _ = mock_ddgs
+    mock_instance.news.return_value = []
+
+    tools = WebSearchTools(modifier="site:news.ycombinator.com")
+    tools.search_news("AI")
+
+    mock_instance.news.assert_called_once_with(
+        query="site:news.ycombinator.com AI",
+        max_results=5,
+        backend="auto",
+    )
+
+
+# ============================================================================
+# EXCEPTION HANDLING TESTS
+# ============================================================================
+
+
+def test_web_search_ratelimit_error(mock_ddgs):
+    """Test that RatelimitException in web_search returns structured error JSON."""
+    from ddgs.exceptions import RatelimitException
+
+    mock_instance, _ = mock_ddgs
+    mock_instance.text.side_effect = RatelimitException("Ratelimit reached")
+
+    tools = WebSearchTools()
+    result = tools.web_search("test query")
+    parsed = json.loads(result)
+
+    assert parsed["error"] == "RatelimitException"
+    assert "Ratelimit reached" in parsed["message"]
+    assert parsed["query"] == "test query"
+    assert parsed["results"] == []
+
+
+def test_search_news_timeout_error(mock_ddgs):
+    """Test that TimeoutException in search_news returns structured error JSON."""
+    from ddgs.exceptions import TimeoutException
+
+    mock_instance, _ = mock_ddgs
+    mock_instance.news.side_effect = TimeoutException("Connection timed out")
+
+    tools = WebSearchTools()
+    result = tools.search_news("breaking news")
+    parsed = json.loads(result)
+
+    assert parsed["error"] == "TimeoutException"
+    assert "Connection timed out" in parsed["message"]
+    assert parsed["query"] == "breaking news"
+    assert parsed["results"] == []
+
+
+def test_web_search_unexpected_exception(mock_ddgs):
+    """Test that generic Exception in web_search returns structured error JSON."""
+    mock_instance, _ = mock_ddgs
+    mock_instance.text.side_effect = RuntimeError("Unexpected connection reset")
+
+    tools = WebSearchTools()
+    result = tools.web_search("test query")
+    parsed = json.loads(result)
+
+    assert parsed["error"] == "RuntimeError"
+    assert "Unexpected connection reset" in parsed["message"]
+    assert parsed["results"] == []
+
+
+def test_web_search_does_not_swallow_keyboard_interrupt(mock_ddgs):
+    """Test that BaseException such as KeyboardInterrupt is not caught."""
+    mock_instance, _ = mock_ddgs
+    mock_instance.text.side_effect = KeyboardInterrupt()
+
+    tools = WebSearchTools()
+    with pytest.raises(KeyboardInterrupt):
+        tools.web_search("test query")
