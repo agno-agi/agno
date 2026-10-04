@@ -1,4 +1,7 @@
+import pytest
+
 from agno.knowledge.chunking.page import PageMarkdownChunking, _split_long, clean_heading, page_intro
+from agno.knowledge.document.base import Document
 
 PAGE = """# Agents
 
@@ -39,6 +42,30 @@ def test_chunks_open_with_context_line_then_breadcrumb():
     assert "```python\nfrom agno.agent import Agent\n\nagent = Agent()" in chunks[1]
     assert "### Options" in chunks[1]
     assert chunks[2].startswith("Agents: Intro line.\n\nAgents › Memory")
+
+
+@pytest.mark.parametrize(
+    ("heading", "title"),
+    [
+        ("C#", "C#"),
+        ("F#", "F#"),
+        ("C##", "C##"),
+        ("C# ###", "C#"),
+        ("F#\t##", "F#"),
+        ("Languages ###", "Languages"),
+        ("C# [#c-sharp]", "C#"),
+    ],
+)
+def test_literal_heading_hashes_survive_in_chunk_context_and_breadcrumbs(heading: str, title: str):
+    document = Document(content=f"# {heading}\n\nLanguage guide.\n\n## Using {heading}\n\nDetails.")
+
+    chunks = PageMarkdownChunking().chunk(document)
+
+    assert len(chunks) == 2
+    assert [chunk.meta_data["breadcrumb"] for chunk in chunks] == [title, f"{title} › Using {title}"]
+    assert all(chunk.content.startswith(f"{title}: Language guide.\n\n") for chunk in chunks)
+    assert f"# {heading}" in chunks[0].content
+    assert f"## Using {heading}" in chunks[1].content
 
 
 def test_page_intro_is_the_first_prose_paragraph():
