@@ -8,6 +8,18 @@ on:
       - synchronize
 
 jobs:
+  test-pr-triage:
+    name: Test PR Triage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node .github/tests/pr-triage.mjs
+
   lint-pr:
     name: Lint PR Title and Body
     runs-on: ubuntu-latest
