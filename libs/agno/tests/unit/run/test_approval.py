@@ -28,6 +28,7 @@ from agno.run.approval import (
 @dataclass
 class FakeToolExecution:
     tool_name: Optional[str] = None
+    tool_call_id: Optional[str] = None
     tool_args: Optional[Dict[str, Any]] = None
     approval_type: Optional[str] = None
     approval_id: Optional[str] = None
@@ -598,3 +599,155 @@ class TestAsyncCheckAndApplyApprovalResolution:
         await acheck_and_apply_approval_resolution(db=db, run_id="r1", run_response=rr)
         assert rr.metadata is not None
         assert rr.metadata["approval"] == approval
+
+
+# =============================================================================
+# Multiple pauses in one run: each approval-required call gets its own record
+# =============================================================================
+
+
+@dataclass
+class FakeCallRequirement:
+    tool_execution: Optional[FakeToolExecution] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        te = self.tool_execution
+        return {"tool_execution": {"tool_call_id": te.tool_call_id, "tool_args": te.tool_args} if te else None}
+
+
+def _second_pause_run_response():
+    """A run at its second pause: call_1 was approved and executed under appr-1,
+    call_2 was just raised. tools and requirements accumulate across pauses."""
+    first = FakeToolExecution(
+        tool_name="pay_invoice",
+        tool_call_id="call_1",
+        tool_args={"invoice": "INV-1"},
+        approval_type="required",
+        approval_id="appr-1",
+        requires_confirmation=True,
+        confirmed=True,
+        result="PAID",
+    )
+    second = FakeToolExecution(
+        tool_name="pay_invoice",
+        tool_call_id="call_2",
+        tool_args={"invoice": "INV-2"},
+        approval_type="required",
+        requires_confirmation=True,
+    )
+    rr = FakeRunResponse(
+        tools=[first, second],
+        requirements=[FakeCallRequirement(tool_execution=first), FakeCallRequirement(tool_execution=second)],
+    )
+    return rr, first, second
+
+
+def _record_for(*tool_call_ids: str, status: str = "approved", record_id: str = "appr-1") -> Dict[str, Any]:
+    return {
+        "id": record_id,
+        "status": status,
+        "resolution_data": None,
+        "requirements": [{"tool_execution": {"tool_call_id": tcid}} for tcid in tool_call_ids],
+    }
+
+
+class TestCreateApprovalOnLaterPause:
+    def test_later_pause_creates_record_for_new_call_only(self):
+        db = MagicMock()
+        rr, first, second = _second_pause_run_response()
+        result = create_approval_from_pause(db=db, run_response=rr, agent_id="a1")
+
+        db.create_approval.assert_called_once()
+        data = db.create_approval.call_args[0][0]
+        assert result == data["id"] != "appr-1"
+        assert second.approval_id == result
+        assert first.approval_id == "appr-1"
+        assert data["tool_args"] == {"invoice": "INV-2"}
+        assert [r["tool_execution"]["tool_call_id"] for r in data["requirements"]] == ["call_2"]
+        assert data["context"]["tool_names"] == ["pay_invoice"]
+
+    def test_repeated_hook_on_same_pause_creates_no_duplicate(self):
+        db = MagicMock()
+        rr, _, second = _second_pause_run_response()
+        first_id = create_approval_from_pause(db=db, run_response=rr)
+        again = create_approval_from_pause(db=db, run_response=rr)
+        assert again == first_id == second.approval_id
+        db.create_approval.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_later_pause_creates_record_for_new_call_only_async(self):
+        db = MagicMock()
+        db.create_approval = AsyncMock()
+        rr, first, second = _second_pause_run_response()
+        result = await acreate_approval_from_pause(db=db, run_response=rr, agent_id="a1")
+
+        db.create_approval.assert_awaited_once()
+        data = db.create_approval.call_args[0][0]
+        assert result == data["id"] != "appr-1"
+        assert second.approval_id == result
+        assert first.approval_id == "appr-1"
+        assert data["tool_args"] == {"invoice": "INV-2"}
+        assert [r["tool_execution"]["tool_call_id"] for r in data["requirements"]] == ["call_2"]
+
+    @pytest.mark.asyncio
+    async def test_repeated_hook_on_same_pause_creates_no_duplicate_async(self):
+        db = MagicMock()
+        db.create_approval = AsyncMock()
+        rr, _, second = _second_pause_run_response()
+        first_id = await acreate_approval_from_pause(db=db, run_response=rr)
+        again = await acreate_approval_from_pause(db=db, run_response=rr)
+        assert again == first_id == second.approval_id
+        db.create_approval.assert_awaited_once()
+
+
+class TestRunLevelFallbackNeverCrossesToolCalls:
+    def _unstamped_second_call(self):
+        rr, first, second = _second_pause_run_response()
+        db = MagicMock()
+        db.get_approval.side_effect = lambda aid: _record_for("call_1") if aid == "appr-1" else None
+        db.get_approvals.return_value = ([_record_for("call_1")], 1)
+        return db, rr, second
+
+    def test_record_for_another_call_does_not_resolve_unstamped_call(self):
+        db, rr, second = self._unstamped_second_call()
+        with pytest.raises(RuntimeError, match="No approval record found"):
+            check_and_apply_approval_resolution(db=db, run_id="run-123", run_response=rr)
+        assert second.confirmed is None
+
+    @pytest.mark.asyncio
+    async def test_record_for_another_call_does_not_resolve_unstamped_call_async(self):
+        db, rr, second = self._unstamped_second_call()
+        db.get_approvals = AsyncMock(return_value=([_record_for("call_1")], 1))
+        with pytest.raises(RuntimeError, match="No approval record found"):
+            await acheck_and_apply_approval_resolution(db=db, run_id="run-123", run_response=rr)
+        assert second.confirmed is None
+
+    def test_record_naming_the_call_still_resolves_it(self):
+        db = MagicMock()
+        db.get_approvals.return_value = ([_record_for("call_2")], 1)
+        t = FakeToolExecution(tool_call_id="call_2", approval_type="required", requires_confirmation=True)
+        check_and_apply_approval_resolution(db=db, run_id="r1", run_response=FakeRunResponse(tools=[t]))
+        assert t.confirmed is True
+
+    def test_stamped_record_gone_does_not_borrow_another_calls_record(self):
+        db = MagicMock()
+        db.get_approval.return_value = None
+        db.get_approvals.return_value = ([_record_for("call_1")], 1)
+        t = FakeToolExecution(
+            tool_call_id="call_2", approval_type="required", approval_id="appr-gone", requires_confirmation=True
+        )
+        with pytest.raises(RuntimeError, match="No approval record found"):
+            check_and_apply_approval_resolution(db=db, run_id="r1", run_response=FakeRunResponse(tools=[t]))
+        assert t.confirmed is None
+
+    @pytest.mark.asyncio
+    async def test_stamped_record_gone_does_not_borrow_another_calls_record_async(self):
+        db = MagicMock()
+        db.get_approval = AsyncMock(return_value=None)
+        db.get_approvals = AsyncMock(return_value=([_record_for("call_1")], 1))
+        t = FakeToolExecution(
+            tool_call_id="call_2", approval_type="required", approval_id="appr-gone", requires_confirmation=True
+        )
+        with pytest.raises(RuntimeError, match="No approval record found"):
+            await acheck_and_apply_approval_resolution(db=db, run_id="r1", run_response=FakeRunResponse(tools=[t]))
+        assert t.confirmed is None
