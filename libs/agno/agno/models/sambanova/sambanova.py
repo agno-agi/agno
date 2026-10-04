@@ -19,7 +19,7 @@ class Sambanova(OpenAILike):
         base_url (str): The base url to which the requests are sent. Defaults to "https://api.sambanova.ai/v1".
     """
 
-    id: str = "Meta-Llama-3.1-8B-Instruct"
+    id: str = "Meta-Llama-3.3-70B-Instruct"
     name: str = "Sambanova"
     provider: str = "Sambanova"
 
