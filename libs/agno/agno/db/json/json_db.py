@@ -1,10 +1,29 @@
 import json
 import os
+import shutil
+import tempfile
 import time
+from contextlib import suppress
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
+
+
+def _fsync_dir(dir_path: Path) -> None:
+    """Best-effort fsync of directory metadata for crash safety on POSIX systems."""
+    try:
+        flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY"):
+            flags |= os.O_DIRECTORY
+        fd = os.open(str(dir_path), flags)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+
 
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
@@ -113,8 +132,7 @@ class JsonDb(BaseDb):
 
         except FileNotFoundError:
             if create_table_if_not_found:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    json.dump([], f)
+                self._write_json_file(filename, [])
             return []
 
         except json.JSONDecodeError as e:
@@ -122,7 +140,10 @@ class JsonDb(BaseDb):
             raise e
 
     def _write_json_file(self, filename: str, data: List[Dict[str, Any]]) -> None:
-        """Write data to a JSON file.
+        """Write data to a JSON file atomically.
+
+        Writes to a temporary file in the same directory first, then replaces the
+        target file atomically to prevent data corruption or truncation on write failures.
 
         Args:
             filename (str): The name of the JSON file to write.
@@ -136,11 +157,39 @@ class JsonDb(BaseDb):
         # Create directory if it doesn't exist
         self.db_path.mkdir(parents=True, exist_ok=True)
 
+        temp_file_path: Optional[Path] = None
         try:
-            with open(file_path, "w", encoding="utf-8") as f:
+            # 1. Write to a unique temporary file in the same directory (ensures same filesystem for atomic os.replace)
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self.db_path,
+                prefix=f".{filename}_",
+                suffix=".tmp",
+                delete=False,
+            ) as f:
+                temp_file_path = Path(f.name)
                 json.dump(data, f, indent=2, default=str)
+                f.flush()
+                with suppress(OSError):
+                    os.fsync(f.fileno())
+
+            # 2. Preserve existing file permissions if destination exists (POSIX)
+            if file_path.exists():
+                with suppress(OSError):
+                    shutil.copymode(file_path, temp_file_path)
+
+            # 3. Atomic replacement (executed after temp file is closed for Windows compatibility)
+            os.replace(temp_file_path, file_path)
+            temp_file_path = None
+
+            # 4. Best-effort directory metadata sync for crash safety
+            _fsync_dir(self.db_path)
 
         except Exception as e:
+            if temp_file_path is not None and temp_file_path.exists():
+                with suppress(OSError):
+                    temp_file_path.unlink()
             log_error(f"Error writing to the {file_path} JSON file: {str(e)}")
             raise e
 
