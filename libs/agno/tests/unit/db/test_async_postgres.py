@@ -103,3 +103,40 @@ async def test_get_schedules_table_none_raises_under_flag(async_postgres_db, mon
     assert await async_postgres_db.get_schedules() == ([], 0)
     with pytest.raises(RuntimeError, match="schedules table unavailable"):
         await async_postgres_db.get_schedules(raise_on_error=True)
+
+
+def _session_raising(error: Exception) -> Mock:
+    """An async session factory whose execute() fails the way a live backend does."""
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    session.begin = Mock(return_value=session)
+    session.execute = AsyncMock(side_effect=error)
+    return Mock(return_value=session)
+
+
+@pytest.mark.asyncio
+async def test_delete_run_raises_on_a_backend_failure(async_postgres_db):
+    """False means the run was not found. A dropped connection must not say that."""
+    async_postgres_db._get_table = AsyncMock(return_value=Mock())
+    async_postgres_db.async_session_factory = _session_raising(OSError("server closed the connection"))
+
+    with pytest.raises(OSError, match="server closed"):
+        await async_postgres_db.delete_run("run-1")
+
+
+@pytest.mark.asyncio
+async def test_delete_run_still_returns_false_when_there_is_no_such_run(async_postgres_db):
+    """The meaning of False, pinned so it is not lost to the fix above."""
+    async_postgres_db._get_table = AsyncMock(return_value=None)
+
+    assert await async_postgres_db.delete_run("run-1") is False
+
+
+@pytest.mark.asyncio
+async def test_delete_runs_raises_on_a_backend_failure(async_postgres_db):
+    async_postgres_db._get_table = AsyncMock(return_value=Mock())
+    async_postgres_db.async_session_factory = _session_raising(OSError("server closed the connection"))
+
+    with pytest.raises(OSError, match="server closed"):
+        await async_postgres_db.delete_runs(["run-1", "run-2"])

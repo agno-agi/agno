@@ -39,6 +39,7 @@ jobs:
           libs/agno/tests/unit/os/test_public_stream_bounds.py
           libs/agno/tests/unit/os/test_public_json_bounds.py
           libs/agno/tests/integration/os/test_public_authorization.py
+          libs/agno/tests/integration/os/test_mcp_protocol_versions.py
           libs/agno/tests/unit/test_py39_compat.py
 
   style-check-agno:

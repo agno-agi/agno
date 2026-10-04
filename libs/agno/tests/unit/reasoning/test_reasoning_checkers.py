@@ -247,6 +247,43 @@ def test_openai_like_with_deepseek_r1():
     assert is_openai_reasoning_model(model) is True
 
 
+@pytest.mark.parametrize(
+    "model_id",
+    ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v3.1-terminus", "deepseek-v3.2-exp", "deepseek-reasoner"],
+)
+def test_openai_like_with_deepseek_thinking_ids(model_id):
+    """DeepSeek thinking-mode IDs served over OpenAI-compatible endpoints are native reasoning models (#10277)."""
+    from agno.models.openai.like import OpenAILike
+
+    model = OpenAILike(
+        id=model_id,
+        name="DeepSeek",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_dashscope_with_deepseek_v4():
+    """Test DashScope (an OpenAILike subclass) with a DeepSeek V4 reasoning_model ID returns True."""
+    from agno.models.dashscope.dashscope import DashScope
+
+    model = DashScope(
+        id="deepseek-v4-pro",
+        name="DashScope",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_like_with_deepseek_chat_stays_false():
+    """Test OpenAILike model with the non-reasoning deepseek-chat ID stays False."""
+    from agno.models.openai.like import OpenAILike
+
+    model = OpenAILike(
+        id="deepseek-chat",
+        name="DeepSeek",
+    )
+    assert is_openai_reasoning_model(model) is False
+
+
 def test_openai_chat_without_reasoning_id():
     """Test OpenAIChat model without reasoning model ID returns False."""
     model = MockModel(

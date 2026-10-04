@@ -44,17 +44,22 @@ from agno.fs.db import DbFileSystem
 from agno.fs.errors import QuotaExceededError
 from agno.knowledge.chunking.page import PageMarkdownChunking
 from agno.knowledge.document import Document
-from agno.knowledge.page._source import PageSource, SourcePage, page_path, page_prefix
+from agno.knowledge.page._source import PageSource, SourcePage, page_path, page_prefix, source_url
 from agno.knowledge.page.types import (
     GrepMatch,
     GrepResult,
     Page,
     PageChanged,
     PageError,
+    PageMoved,
     PageList,
     PageNotFound,
     PageRead,
     PageSearchConfig,
+    PageSourceBinding,
+    PageSourceBusy,
+    PageSourceMigration,
+    PageSyncProgress,
     SearchHit,
     SearchResult,
     SearchUnavailable,
@@ -63,7 +68,7 @@ from agno.knowledge.page.types import (
     encoded_size,
 )
 from agno.utils.bounded import BoundedWorkers, WorkBudget
-from agno.utils.log import log_warning
+from agno.utils.log import log_info, log_warning
 from agno.vectordb.pgvector import PgVector
 from agno.vectordb.pgvector.index import HNSW
 
@@ -75,6 +80,19 @@ MAX_SEARCH_JSON_BYTES = 32_000
 # release connections back to the eight-connection pool while children wait.
 _PARALLEL_SEARCHES = BoundedSemaphore(2)
 _QUERY_WORKERS = ThreadPoolExecutor(max_workers=6, thread_name_prefix="knowledge-query")
+
+
+def _failure(exc: BaseException) -> str:
+    """One bounded log line naming an error and its causes, e.g. a fetch's connection reset."""
+    parts: List[str] = []
+    current: Optional[BaseException] = exc
+    while current is not None and len(parts) < 4:
+        message = str(current).strip()
+        part = f"{type(current).__name__}: {message}" if message else type(current).__name__
+        if not parts or parts[-1] != part:
+            parts.append(part)
+        current = current.__cause__
+    return " <- ".join(parts)[:300]
 
 
 def _digest(value: str) -> str:
@@ -384,6 +402,59 @@ class PageCoordinator:
                 conn.execute(text("SET TRANSACTION SNAPSHOT " + str(quoted)))
             self._settings(conn, budget or WorkBudget(2))
             yield conn
+
+    def _source_binding(self, conn: Any, *, lock: bool = False) -> PageSourceBinding:
+        statement = select(self.binding).where(self.binding.c.namespace == self.namespace)
+        row = conn.execute(statement.with_for_update() if lock else statement).mappings().one_or_none()
+        if row is None:
+            raise ValueError("page namespace is not initialized")
+        if row["catalog"] != self.catalog.fullname or row["vectors"] != self.vector.table.fullname:
+            raise ValueError("filesystem namespace is bound to another knowledge catalog or vector table")
+        return PageSourceBinding(
+            namespace=self.namespace,
+            filesystem=self.backend.table.fullname,
+            catalog=row["catalog"],
+            vectors=row["vectors"],
+            source=row["source"],
+            revision=row["revision"],
+        )
+
+    def inspect_source(self, *, budget: WorkBudget) -> PageSourceBinding:
+        with self._snapshot(budget) as conn:
+            return self._source_binding(conn)
+
+    def migrate_source(
+        self, *, expected_source: str, target_source: str, dry_run: bool = True, budget: WorkBudget
+    ) -> PageSourceMigration:
+        from urllib.parse import urlsplit
+
+        from agno.db.postgres._bounded import primary_connection
+
+        expected, target = source_url(expected_source), source_url(target_source)
+        if urlsplit(expected).path != urlsplit(target).path:
+            raise ValueError("source relocation must preserve the discovery path")
+        if type(dry_run) is not bool:
+            raise ValueError("dry_run must be a boolean")
+        self._ready()
+        with primary_connection(budget), self.engine.begin() as conn:
+            self._settings(conn, budget)
+            if not conn.execute(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": self.lock_key}).scalar_one():
+                raise PageSourceBusy()
+            before = self._source_binding(conn, lock=True)
+            if before.source not in (expected, target):
+                raise ValueError("page source does not match the expected source or relocation target")
+            changed = not dry_run and before.source != target
+            if changed:
+                conn.execute(
+                    update(self.binding)
+                    .where(self.binding.c.namespace == self.namespace, self.binding.c.source == before.source)
+                    .values(source=target, revision=self.binding.c.revision + 1)
+                )
+            after = self._source_binding(conn)
+            budget.remaining()
+            return PageSourceMigration(
+                before=before, after=after, target_source=target, dry_run=dry_run, changed=changed
+            )
 
     def _predicate(self):
         return and_(
@@ -1339,15 +1410,47 @@ class PageCoordinator:
         index_version: str = "1",
         reindex: bool = False,
         validate_discovery: Optional[Callable[[int, int], None]] = None,
+        on_progress: Optional[Callable[[PageSyncProgress], None]] = None,
         budget: Optional[WorkBudget] = None,
     ) -> SyncReport:
+        if on_progress is not None and not callable(on_progress):
+            raise ValueError("on_progress must be a synchronous callable")
+
+        def progress(stage, *, path=None):
+            nonlocal on_progress
+            if on_progress is None:
+                return
+            try:
+                outcome = on_progress(
+                    PageSyncProgress(
+                        stage=stage,
+                        discovered=discovered,
+                        processed=processed,
+                        updated=updated,
+                        deleted=deleted,
+                        failed=failed,
+                        unknown=unknown,
+                        path=path,
+                    )
+                )
+                if inspect.isawaitable(outcome):
+                    if inspect.iscoroutine(outcome):
+                        outcome.close()
+                    raise ValueError("on_progress must be synchronous")
+            except Exception:
+                log_warning("Page sync progress observer failed; further updates are disabled")
+                on_progress = None
+
         if validate_discovery is not None and not callable(validate_discovery):
             raise ValueError("validate_discovery must be a synchronous callable")
         self._ready()
         budget = budget or WorkBudget(3900)
         source = PageSource(url, public_url, budget)
-        updated = deleted = failed = unknown = 0
+        updated = deleted = failed = unknown = processed = discovered = 0
+        progress("waiting")
         errors = []
+        failed_paths: list[str] = []
+        skipped_paths: list[str] = []
         acquired = False
         with self.engine.connect() as conn:
             lock_deadline = time.monotonic() + min(1200, budget.remaining())
@@ -1373,6 +1476,8 @@ class PageCoordinator:
                         raise ValueError("filesystem namespace is bound to another documentation source")
                     self._source_attempt(conn, source, "processing")
                 pages = source.discover()
+                discovered = len(pages)
+                progress("discovered")
                 if validate_discovery is not None:
                     with conn.begin():
                         self._settings(conn, budget)
@@ -1394,6 +1499,7 @@ class PageCoordinator:
                 ) as prepared_pages:
                     for page, content, prepared, fetch_error in prepared_pages:
                         budget.remaining()
+                        processed += 1
                         try:
                             if fetch_error is not None:
                                 raise fetch_error
@@ -1410,8 +1516,15 @@ class PageCoordinator:
                                     source_url=source.url,
                                 )
                             )
+                        except PageMoved as moved:
+                            # An alias of another page or an off-site link: not a page of this
+                            # source, so it is skipped rather than failed and never stored.
+                            skipped_paths.append(page.path)
+                            log_info(
+                                f"Page skipped: {page.path} redirects to {moved.target} (not a page of this source)"
+                            )
                         except Exception as exc:
-                            log_warning(f"Page sync failed ({type(exc).__name__})")
+                            log_warning(f"Page sync failed for {page.path} ({_failure(exc)})")
                             if conn.invalidated or conn.closed or self._pending_publication is not None:
                                 # Do not reconnect a connection that owned the namespace lock.
                                 conn.invalidate()
@@ -1423,18 +1536,23 @@ class PageCoordinator:
                                     errors.append("commit_outcome_unknown")
                                 break
                             failed += 1
+                            failed_paths.append(page.path)
                             errors.append("page_sync_failed")
                             with conn.begin():
                                 self._settings(conn, budget)
                                 self._attempt(conn, page, "failed")
+                        progress("publishing", path=page.path)
                 if source.complete and not errors and not failed and not unknown:
+                    progress("pruning")
                     with conn.begin():
                         paths = [
                             row.metadata["_agno"]["page"]["path"]
                             for row in self._rows(conn, limit=20_001, include_content=False)
                         ]
+                    skipped = set(skipped_paths)
                     for path in paths:
-                        if path in pages:
+                        # Skipped aliases are pruned too: an older sync may have stored them.
+                        if path in pages and path not in skipped:
                             continue
                         pending_delete = False
                         try:
@@ -1450,7 +1568,8 @@ class PageCoordinator:
                                 )
                                 pending_delete = True
                             deleted += 1
-                        except Exception:
+                            progress("pruning", path=path)
+                        except Exception as exc:
                             if conn.invalidated or conn.closed or pending_delete:
                                 conn.invalidate()
                                 if self._publication_outcome(path, deleted=True):
@@ -1461,6 +1580,8 @@ class PageCoordinator:
                                     errors.append("commit_outcome_unknown")
                             else:
                                 failed += 1
+                                failed_paths.append(path)
+                                log_warning(f"Page delete failed for {path} ({_failure(exc)})")
                                 errors.append("page_delete_failed")
                             break
                 if not source.complete:
@@ -1473,6 +1594,9 @@ class PageCoordinator:
                     failed=failed,
                     unknown=unknown,
                     errors=tuple(errors[:20]),
+                    failed_paths=tuple(failed_paths[:20]),
+                    skipped=len(skipped_paths),
+                    skipped_paths=tuple(skipped_paths[:20]),
                 )
                 if not conn.invalidated and not conn.closed:
                     with conn.begin():
