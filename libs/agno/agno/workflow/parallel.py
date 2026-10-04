@@ -286,7 +286,7 @@ class Parallel:
 
         for i, output in enumerate(step_outputs):
             step_name = output.step_name or f"Step {i + 1}"
-            content = output.content or ""
+            content = output.content
 
             # Add status indicator
             if output.success is False:
@@ -295,7 +295,7 @@ class Parallel:
                 status_icon = "✅ SUCCESS:"
 
             aggregated += f"### {status_icon} {step_name}\n"
-            if content and str(content).strip():
+            if content is not None and str(content).strip():
                 aggregated += f"{content}\n\n"
             else:
                 aggregated += "*(No content)*\n\n"

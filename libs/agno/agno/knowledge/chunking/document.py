@@ -11,6 +11,9 @@ class DocumentChunking(ChunkingStrategy):
         # chunk_size must be positive, otherwise splitting oversized text could never advance
         if chunk_size < 1:
             raise ValueError(f"Invalid parameters: chunk size ({chunk_size}) must be a positive integer.")
+        # overlap must be less than chunk size
+        if overlap >= chunk_size:
+            raise ValueError(f"Invalid parameters: overlap ({overlap}) must be less than chunk size ({chunk_size}).")
 
         self.chunk_size = chunk_size
         self.overlap = overlap
