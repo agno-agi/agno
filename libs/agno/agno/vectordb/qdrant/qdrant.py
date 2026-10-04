@@ -76,7 +76,7 @@ class Qdrant(VectorDb):
             timeout (Optional[float]): Request timeout (REST: default 5s, gRPC: unlimited).
             host (Optional[str]): Qdrant host (default: "localhost" if not specified).
             path (Optional[str]): Path for local persistence (QdrantLocal).
-            reranker (Optional[Reranker]): Optional reranker for result refinement.
+            reranker (Optional[Reranker]): Optional reranker for result refinement. Deprecated: pass the reranker to Knowledge instead.
             search_type (SearchType): Whether to use vector, keyword or hybrid search.
             dense_vector_name (str): Dense vector name.
             sparse_vector_name (str): Sparse vector name.

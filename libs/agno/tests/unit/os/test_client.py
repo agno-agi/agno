@@ -813,5 +813,64 @@ async def test_run_workflow_stream_returns_typed_events():
         assert isinstance(events[1], RunCompletedEvent)
 
 
+@pytest.mark.asyncio
+async def test_run_workflow_stream_parses_step_progress_with_its_step_identity():
+    """A function step's progress arrives typed, not skipped as an unknown event."""
+    import json
+
+    from agno.run.workflow import StepProgressEvent, WorkflowCompletedEvent
+
+    client = AgentOSClient(base_url="http://localhost:7777")
+    progress = {
+        "event": "StepProgress",
+        "created_at": 1234567890,
+        "workflow_id": "sync-docs",
+        "run_id": "run-123",
+        "session_id": "session-123",
+        "step_id": "step-123",
+        "step_name": "reconcile",
+        "step_index": 0,
+        "attempt": 2,
+        "content": "Processed 1 of 2 pages (1 updated, 0 failed)",
+        "data": {"stage": "publishing", "discovered": 2, "processed": 1, "updated": 1, "failed": 0},
+    }
+    mock_lines = [
+        "data: " + json.dumps(progress),
+        'data: {"event": "WorkflowCompleted", "run_id": "run-123", "created_at": 1234567890}',
+    ]
+
+    async def async_generator():
+        for line in mock_lines:
+            yield line
+
+    with patch.object(client, "_astream_post_form_data") as mock_stream:
+        mock_stream.return_value = async_generator()
+        events = [event async for event in client.run_workflow_stream("sync-docs", '{"reason": "test"}')]
+
+    assert [type(event) for event in events] == [StepProgressEvent, WorkflowCompletedEvent]
+    event = events[0]
+    assert event.content == progress["content"] and event.data == progress["data"]
+    assert (event.run_id, event.session_id) == ("run-123", "session-123")
+    assert (event.step_name, event.step_index, event.step_id, event.attempt) == ("reconcile", 0, "step-123", 2)
+
+
+@pytest.mark.asyncio
+async def test_run_workflow_stream_forwards_request_headers():
+    client = AgentOSClient(base_url="http://localhost:7777")
+    headers = {"Authorization": "Bearer test-token"}
+
+    async def async_generator():
+        return
+        yield
+
+    with patch.object(client, "_astream_post_form_data") as mock_stream:
+        mock_stream.return_value = async_generator()
+        assert [event async for event in client.run_workflow_stream("sync-docs", "go", headers=headers)] == []
+
+    mock_stream.assert_called_once_with(
+        "/workflows/sync-docs/runs", {"message": "go", "stream": "true"}, headers=headers
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -83,6 +83,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "xai": ("agno.models.xai", "xAI", "xAI", "xai"),
     "xai-responses": ("agno.models.xai", "xAIResponses", "xAIResponses", "xai"),
     "xiaomi": ("agno.models.xiaomi", "MiMo", "MiMo", "xiaomi mimo"),
+    "yapi": ("agno.models.yapi", "YAPI", "YAPI", "yapi"),
 }
 
 # key -> (module, class_name): the construction registry consumed by `_get_model_class`, the
