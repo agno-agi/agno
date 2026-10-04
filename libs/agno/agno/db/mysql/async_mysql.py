@@ -2,6 +2,7 @@ import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import cast as typing_cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -2094,7 +2095,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                     runs_result = await sess.execute(runs_stmt)
                     runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
                     for session_id, model, model_provider in runs_result.fetchall():
-                        runs_by_session.setdefault(session_id, []).append(
+                        runs_by_session.setdefault(typing_cast(str, session_id), []).append(
                             {"model": model, "model_provider": model_provider}
                         )
 
