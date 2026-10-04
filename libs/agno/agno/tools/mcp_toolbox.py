@@ -86,7 +86,6 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
                     url=self.toolbox_url,
                     client_headers=self.headers,
                 )
-                self._core_client_initialized = True
 
                 if self.toolsets is not None:
                     # Load multiple toolsets
@@ -98,8 +97,26 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
                     tool = await self.load_tool(tool_name=self.tool_name)
                     # Replace functions dict with just this single tool
                     self.functions = {tool.name: tool}
+                # Latched only after filtering succeeds: connect() early-returns
+                # on this flag, so latching before a failed filter would let a
+                # reconnect skip filtering and serve the unfiltered superset the
+                # base connect just registered.
+                self._core_client_initialized = True
         except Exception as e:
+            await self._close_core_client()
             raise RuntimeError(f"Failed to connect to ToolboxClient: {e}") from e
+
+    async def _close_core_client(self):
+        """Close and forget the core client so a reconnect rebuilds and
+        re-filters; a client or flag surviving teardown would make the next
+        connect() skip filtering."""
+        if hasattr(self, "_MCPToolbox__core_client"):
+            try:
+                await self.__core_client.close()
+            except Exception:
+                pass
+            del self.__core_client
+        self._core_client_initialized = False
 
     async def load_tool(
         self,
@@ -199,8 +216,7 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
 
     async def close(self):
         """Close the underlying asynchronous client."""
-        if self._core_client_initialized and hasattr(self, "_MCPToolbox__core_client"):
-            await self.__core_client.close()
+        await self._close_core_client()
         await super().close()
 
     async def load_toolset_safe(self, toolset_name: str) -> List[str]:
@@ -226,6 +242,5 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Clean up the toolbox client."""
         # Close ToolboxClient first, then MCP client
-        if self._core_client_initialized and hasattr(self, "_MCPToolbox__core_client"):
-            await self.__core_client.close()
+        await self._close_core_client()
         await super().__aexit__(exc_type, exc_val, exc_tb)

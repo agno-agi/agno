@@ -5,7 +5,21 @@ import contextvars
 import inspect
 from copy import copy, deepcopy
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Dict,
+    Generator,
+    Iterator,
+    List,
+    Optional,
+    Union,
+    cast,
+)
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -13,7 +27,7 @@ from typing_extensions import TypeGuard
 
 from agno.agent import Agent
 from agno.db.base import BaseDb
-from agno.exceptions import RunCancelledException
+from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, Image, Video
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.metrics import RunMetrics
@@ -30,8 +44,11 @@ from agno.run.agent import (
     RunContentEvent,
     RunOutput,
 )
+from agno.run.agent import (
+    RunErrorEvent as AgentRunErrorEvent,
+)
 from agno.run.base import BaseRunOutputEvent, RunStatus
-from agno.run.cancel import aregister_member_run, register_member_run
+from agno.run.cancel import araise_if_cancelled, aregister_member_run, raise_if_cancelled, register_member_run
 from agno.run.team import (
     RunCancelledEvent as TeamRunCancelledEvent,
 )
@@ -42,10 +59,14 @@ from agno.run.team import (
     RunContentEvent as TeamRunContentEvent,
 )
 from agno.run.team import (
+    RunErrorEvent as TeamRunErrorEvent,
+)
+from agno.run.team import (
     TeamRunOutput,
 )
 from agno.run.workflow import (
     StepCompletedEvent,
+    StepProgressEvent,
     StepStartedEvent,
     WorkflowRunOutput,
     WorkflowRunOutputEvent,
@@ -63,6 +84,7 @@ from agno.workflow.types import (
     OnReject,
     StepInput,
     StepOutput,
+    StepProgress,
     StepRequirement,
     StepType,
     UserInputField,
@@ -79,6 +101,15 @@ _EXECUTOR_TERMINAL_EVENT_TYPES = (
     TeamRunCompletedEvent,
 )
 
+# Error events emitted by an Agent/Team when the run fails mid-stream (e.g. the
+# leader model raises after delegating). In that case the executor never yields a
+# (Team)RunOutput, so the Step must propagate this error instead of silently
+# producing empty content. See issue #7185.
+_EXECUTOR_ERROR_EVENT_TYPES = (
+    AgentRunErrorEvent,
+    TeamRunErrorEvent,
+)
+
 # Maximum nesting depth for nested workflow execution to prevent circular references or stack overflow.
 _MAX_NESTED_WORKFLOW_DEPTH = 10
 # Use ContextVar instead of threading.local so depth is isolated per coroutine/task,
@@ -89,6 +120,7 @@ StepExecutor = Callable[
     [StepInput],
     Union[
         StepOutput,
+        StepProgress,
         Iterator[StepOutput],
         Iterator[Any],
         Awaitable[StepOutput],
@@ -1024,6 +1056,37 @@ class Step:
         else:
             return await func(step_input, **kwargs)
 
+    def _function_events(
+        self, iterator: Generator[Any, None, None], workflow_run_response: Optional["WorkflowRunOutput"]
+    ) -> Iterator[Any]:
+        """Iterate a function executor's generator, stopping at the workflow's cancellation.
+
+        The run is checked between items, so a cancelled workflow stops the function at its
+        next yield instead of draining it, and the generator is closed so its cleanup runs
+        before the workflow reports the cancellation.
+        """
+        run_id = workflow_run_response.run_id if workflow_run_response else None
+        try:
+            for item in iterator:
+                yield item
+                if run_id:
+                    raise_if_cancelled(run_id)
+        finally:
+            iterator.close()
+
+    async def _afunction_events(
+        self, iterator: AsyncGenerator[Any, None], workflow_run_response: Optional["WorkflowRunOutput"]
+    ) -> AsyncIterator[Any]:
+        """Async twin of _function_events."""
+        run_id = workflow_run_response.run_id if workflow_run_response else None
+        try:
+            async for item in iterator:
+                yield item
+                if run_id:
+                    await araise_if_cancelled(run_id)
+        finally:
+            await iterator.aclose()
+
     def execute(
         self,
         step_input: StepInput,
@@ -1042,7 +1105,7 @@ class Step:
         add_session_state_to_context: Optional[bool] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
-        log_debug(f"Executing step: {self.name}")
+        log_debug(f"Executing step: {self.name}", log_level=2)
 
         # Shallow-copy run_context so options resolved here don't leak into the next step
         run_context = copy(run_context) if run_context is not None else None
@@ -1074,12 +1137,15 @@ class Step:
                         content = ""
                         final_response = None
                         try:
-                            for chunk in self._call_custom_function(
+                            iterator = self._call_custom_function(
                                 self.active_executor,
                                 step_input,
                                 run_context,
-                            ):  # type: ignore
-                                if isinstance(chunk, (BaseRunOutputEvent)):
+                            )
+                            for chunk in self._function_events(iterator, workflow_run_response):  # type: ignore
+                                if isinstance(chunk, StepProgress):
+                                    continue
+                                elif isinstance(chunk, (BaseRunOutputEvent)):
                                     if (
                                         isinstance(chunk, (RunContentEvent, TeamRunContentEvent))
                                         and chunk.content is not None
@@ -1270,10 +1336,13 @@ class Step:
                 # retrying or skipping it would complete a run that did no work.
                 raise
             except Exception as e:
+                # Do not replay a nested workflow after a guardrail rejection,
+                # but still honor the step's explicit skip_on_failure policy.
+                stop_retrying = self._executor_type == "workflow" and isinstance(e, (InputCheckError, OutputCheckError))
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
-                if attempt == self.max_retries:
+                if stop_retrying or attempt == self.max_retries:
                     if self.skip_on_failure:
                         log_debug(f"Step {self.name} failed but continuing due to skip_on_failure=True")
                         # Create empty StepOutput for skipped step
@@ -1399,16 +1468,16 @@ class Step:
         # Execute with retries and streaming
         for attempt in range(self.max_retries + 1):
             try:
-                log_debug(f"Step {self.name} streaming attempt {attempt + 1}/{self.max_retries + 1}")
+                log_debug(f"Step {self.name} streaming attempt {attempt + 1}/{self.max_retries + 1}", log_level=2)
                 final_response = None
 
                 self._rehydrate_step_input_media(step_input, self._resolve_media_storage(workflow_media_storage))
                 if self._executor_type == "function":
-                    log_debug(f"Executing function executor for step: {self.name}")
+                    log_debug(f"Executing function executor for step: {self.name}", log_level=2)
                     if _is_async_callable(self.active_executor) or _is_async_generator_function(self.active_executor):
                         raise ValueError("Cannot use async function with synchronous execution")
                     if _is_generator_function(self.active_executor):
-                        log_debug("Function returned iterable, streaming events")
+                        log_debug("Function returned iterable, streaming events", log_level=2)
                         content = ""
                         try:
                             iterator = self._call_custom_function(
@@ -1416,8 +1485,23 @@ class Step:
                                 step_input,
                                 run_context,
                             )
-                            for event in iterator:  # type: ignore
-                                if isinstance(event, (BaseRunOutputEvent)):
+                            for event in self._function_events(iterator, workflow_run_response):  # type: ignore
+                                if isinstance(event, StepProgress):
+                                    if stream_events and workflow_run_response:
+                                        yield StepProgressEvent(
+                                            run_id=workflow_run_response.run_id,
+                                            workflow_id=workflow_run_response.workflow_id,
+                                            workflow_name=workflow_run_response.workflow_name,
+                                            session_id=workflow_run_response.session_id,
+                                            step_name=self.name,
+                                            step_id=self.step_id,
+                                            parent_step_id=parent_step_id,
+                                            step_index=step_index,
+                                            attempt=attempt + 1,
+                                            content=event.content,
+                                            data=event.data,
+                                        )
+                                elif isinstance(event, (BaseRunOutputEvent)):
                                     if (
                                         isinstance(event, (RunContentEvent, TeamRunContentEvent))
                                         and event.content is not None
@@ -1469,7 +1553,7 @@ class Step:
                             final_response = StepOutput(content=result.content)
                         else:
                             final_response = StepOutput(content=str(result))
-                        log_debug("Function returned non-iterable, created StepOutput")
+                        log_debug("Function returned non-iterable, created StepOutput", log_level=2)
                 else:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
@@ -1557,10 +1641,13 @@ class Step:
                         )
 
                         active_executor_run_response = None
+                        executor_error_event = None
                         for event in response_stream:
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
                                 active_executor_run_response = event
                                 continue
+                            if isinstance(event, _EXECUTOR_ERROR_EVENT_TYPES):
+                                executor_error_event = event
                             # Only yield executor events if stream_executor_events is True
                             if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                 enriched_event = self._enrich_event_with_context(
@@ -1571,6 +1658,12 @@ class Step:
                         # Update workflow session state
                         if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
+
+                        # The executor failed mid-stream and never produced a run output
+                        # (e.g. the team leader raised after delegating). Propagate the
+                        # underlying error instead of silently emitting empty content.
+                        if active_executor_run_response is None and executor_error_event is not None:
+                            raise RuntimeError(self._executor_error_message(executor_error_event))
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
@@ -1625,7 +1718,7 @@ class Step:
                 # If we didn't get a final response, create one
                 if final_response is None:
                     final_response = StepOutput(content="")
-                    log_debug("Created empty StepOutput as fallback")
+                    log_debug("Created empty StepOutput as fallback", log_level=2)
 
                 # Switch back to workflow logger after execution
                 use_workflow_logger()
@@ -1657,10 +1750,13 @@ class Step:
                 # retrying or skipping it would complete a run that did no work.
                 raise
             except Exception as e:
+                # Do not replay a nested workflow after a guardrail rejection,
+                # but still honor the step's explicit skip_on_failure policy.
+                stop_retrying = self._executor_type == "workflow" and isinstance(e, (InputCheckError, OutputCheckError))
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
-                if attempt == self.max_retries:
+                if stop_retrying or attempt == self.max_retries:
                     if self.skip_on_failure:
                         log_debug(f"Step {self.name} failed but continuing due to skip_on_failure=True")
                         # Create empty StepOutput for skipped step
@@ -1692,8 +1788,8 @@ class Step:
         add_session_state_to_context: Optional[bool] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
-        logger.info(f"Executing async step (non-streaming): {self.name}")
-        log_debug(f"Executor type: {self._executor_type}")
+        log_debug(f"Executing async step (non-streaming): {self.name}", log_level=2)
+        log_debug(f"Executor type: {self._executor_type}", log_level=2)
 
         # Shallow-copy run_context so options resolved here don't leak into the next step
         run_context = copy(run_context) if run_context is not None else None
@@ -1730,8 +1826,10 @@ class Step:
                                     step_input,
                                     run_context,
                                 )
-                                for chunk in iterator:  # type: ignore
-                                    if isinstance(chunk, (BaseRunOutputEvent)):
+                                for chunk in self._function_events(iterator, workflow_run_response):  # type: ignore
+                                    if isinstance(chunk, StepProgress):
+                                        continue
+                                    elif isinstance(chunk, (BaseRunOutputEvent)):
                                         if (
                                             isinstance(chunk, (RunContentEvent, TeamRunContentEvent))
                                             and chunk.content is not None
@@ -1757,8 +1855,10 @@ class Step:
                                         step_input,
                                         run_context,
                                     )
-                                    async for chunk in iterator:  # type: ignore
-                                        if isinstance(chunk, (BaseRunOutputEvent)):
+                                    async for chunk in self._afunction_events(iterator, workflow_run_response):  # type: ignore
+                                        if isinstance(chunk, StepProgress):
+                                            continue
+                                        elif isinstance(chunk, (BaseRunOutputEvent)):
                                             if (
                                                 isinstance(chunk, (RunContentEvent, TeamRunContentEvent))
                                                 and chunk.content is not None
@@ -1957,10 +2057,13 @@ class Step:
                 # retrying or skipping it would complete a run that did no work.
                 raise
             except Exception as e:
+                # Do not replay a nested workflow after a guardrail rejection,
+                # but still honor the step's explicit skip_on_failure policy.
+                stop_retrying = self._executor_type == "workflow" and isinstance(e, (InputCheckError, OutputCheckError))
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
-                if attempt == self.max_retries:
+                if stop_retrying or attempt == self.max_retries:
                     if self.skip_on_failure:
                         log_debug(f"Step {self.name} failed but continuing due to skip_on_failure=True")
                         # Create empty StepOutput for skipped step
@@ -2027,12 +2130,12 @@ class Step:
         # Execute with retries and streaming
         for attempt in range(self.max_retries + 1):
             try:
-                log_debug(f"Async step {self.name} streaming attempt {attempt + 1}/{self.max_retries + 1}")
+                log_debug(f"Async step {self.name} streaming attempt {attempt + 1}/{self.max_retries + 1}", log_level=2)
                 final_response = None
 
                 await self._arehydrate_step_input_media(step_input, self._resolve_media_storage(workflow_media_storage))
                 if self._executor_type == "function":
-                    log_debug(f"Executing async function executor for step: {self.name}")
+                    log_debug(f"Executing async function executor for step: {self.name}", log_level=2)
 
                     # Check if the function is an async generator
                     if _is_async_generator_function(self.active_executor):
@@ -2043,8 +2146,23 @@ class Step:
                             step_input,
                             run_context,
                         )
-                        async for event in iterator:  # type: ignore
-                            if isinstance(event, (BaseRunOutputEvent)):
+                        async for event in self._afunction_events(iterator, workflow_run_response):  # type: ignore
+                            if isinstance(event, StepProgress):
+                                if stream_events and workflow_run_response:
+                                    yield StepProgressEvent(
+                                        run_id=workflow_run_response.run_id,
+                                        workflow_id=workflow_run_response.workflow_id,
+                                        workflow_name=workflow_run_response.workflow_name,
+                                        session_id=workflow_run_response.session_id,
+                                        step_name=self.name,
+                                        step_id=self.step_id,
+                                        parent_step_id=parent_step_id,
+                                        step_index=step_index,
+                                        attempt=attempt + 1,
+                                        content=event.content,
+                                        data=event.data,
+                                    )
+                            elif isinstance(event, (BaseRunOutputEvent)):
                                 if (
                                     isinstance(event, (RunContentEvent, TeamRunContentEvent))
                                     and event.content is not None
@@ -2092,8 +2210,23 @@ class Step:
                             step_input,
                             run_context,
                         )
-                        for event in iterator:  # type: ignore
-                            if isinstance(event, (BaseRunOutputEvent)):
+                        for event in self._function_events(iterator, workflow_run_response):  # type: ignore
+                            if isinstance(event, StepProgress):
+                                if stream_events and workflow_run_response:
+                                    yield StepProgressEvent(
+                                        run_id=workflow_run_response.run_id,
+                                        workflow_id=workflow_run_response.workflow_id,
+                                        workflow_name=workflow_run_response.workflow_name,
+                                        session_id=workflow_run_response.session_id,
+                                        step_name=self.name,
+                                        step_id=self.step_id,
+                                        parent_step_id=parent_step_id,
+                                        step_index=step_index,
+                                        attempt=attempt + 1,
+                                        content=event.content,
+                                        data=event.data,
+                                    )
+                            elif isinstance(event, (BaseRunOutputEvent)):
                                 if (
                                     isinstance(event, (RunContentEvent, TeamRunContentEvent))
                                     and event.content is not None
@@ -2235,10 +2368,13 @@ class Step:
                         )
 
                         active_executor_run_response = None
+                        executor_error_event = None
                         async for event in response_stream:
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
                                 active_executor_run_response = event
                                 break
+                            if isinstance(event, _EXECUTOR_ERROR_EVENT_TYPES):
+                                executor_error_event = event
                             # Only yield executor events if stream_executor_events is True
                             if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                 enriched_event = self._enrich_event_with_context(
@@ -2249,6 +2385,12 @@ class Step:
                         # Update workflow session state
                         if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
+
+                        # The executor failed mid-stream and never produced a run output
+                        # (e.g. the team leader raised after delegating). Propagate the
+                        # underlying error instead of silently emitting empty content.
+                        if active_executor_run_response is None and executor_error_event is not None:
+                            raise RuntimeError(self._executor_error_message(executor_error_event))
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
@@ -2335,10 +2477,13 @@ class Step:
                 # retrying or skipping it would complete a run that did no work.
                 raise
             except Exception as e:
+                # Do not replay a nested workflow after a guardrail rejection,
+                # but still honor the step's explicit skip_on_failure policy.
+                stop_retrying = self._executor_type == "workflow" and isinstance(e, (InputCheckError, OutputCheckError))
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
-                if attempt == self.max_retries:
+                if stop_retrying or attempt == self.max_retries:
                     if self.skip_on_failure:
                         log_debug(f"Step {self.name} failed but continuing due to skip_on_failure=True")
                         # Create empty StepOutput for skipped step
@@ -2346,6 +2491,7 @@ class Step:
                             content=f"Step {self.name} failed but skipped", success=False, error=str(e)
                         )
                         yield step_output
+                        return
                     else:
                         raise e
 
@@ -2428,6 +2574,19 @@ class Step:
 
         return []
 
+    def _executor_error_message(
+        self,
+        error_event: Union[AgentRunErrorEvent, TeamRunErrorEvent],
+    ) -> str:
+        """Build an error message from an executor's terminal error event.
+
+        Used when the Agent/Team fails mid-stream and never yields a run output, so
+        the Step can propagate the underlying error rather than silently emitting
+        empty content. See issue #7185.
+        """
+        error = error_event.content or error_event.error_type or "unknown error"
+        return f"Step '{self.name}' executor ({self._executor_type}) failed: {error}"
+
     def _store_executor_response(
         self,
         workflow_run_response: "WorkflowRunOutput",
@@ -2468,7 +2627,9 @@ class Step:
                         if isinstance(member_response, RunOutput):
                             workflow_run_response.step_executor_runs.append(member_response)
 
-    def _get_deepest_content_from_step_output(self, step_output: "StepOutput") -> Optional[str]:
+    def _get_deepest_content_from_step_output(
+        self, step_output: "StepOutput"
+    ) -> Optional[Union[str, Dict[str, Any], List[Any], BaseModel]]:
         """
         Extract the deepest content from a step output, handling nested structures like Steps, Router, Loop, etc.
 
@@ -2484,16 +2645,16 @@ class Step:
                 aggregated_parts = []
                 for i, inner_step in enumerate(step_output.steps):
                     inner_content = self._get_deepest_content_from_step_output(inner_step)
-                    if inner_content:
+                    if inner_content is not None and str(inner_content).strip():
                         step_name = inner_step.step_name or f"Step {i + 1}"
                         aggregated_parts.append(f"=== {step_name} ===\n{inner_content}")
-                return "\n\n".join(aggregated_parts) if aggregated_parts else step_output.content  # type: ignore
+                return "\n\n".join(aggregated_parts) if aggregated_parts else step_output.content
 
             # For other nested step types, recursively get content from the last nested step
             return self._get_deepest_content_from_step_output(step_output.steps[-1])
 
         # For regular steps, return their content
-        return step_output.content  # type: ignore
+        return step_output.content
 
     def _prepare_message(
         self,

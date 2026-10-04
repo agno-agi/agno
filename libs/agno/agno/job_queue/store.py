@@ -8,6 +8,11 @@ settle_swept_job, get_job, count_queued_jobs) against process memory.
 This is the contract-test fixture and the single-process dev fallback - it is
 NOT durable (a restart loses the queue) and is never a substitute for the
 DB-backed store in production. One instance per process.
+
+Persistent stores may provide an optional ``ensure_jobs_table()`` hook (sync or
+async, matching their other methods). Workers call it before polling when
+auto-provisioning is enabled; failures are reported and lazy enqueue remains
+available. Third-party stores without the hook keep read-only startup priming.
 """
 
 import asyncio

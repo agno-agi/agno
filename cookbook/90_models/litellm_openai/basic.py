@@ -12,7 +12,7 @@ from agno.models.litellm import LiteLLMOpenAI
 # Create Agent
 # ---------------------------------------------------------------------------
 
-agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True)
+agent = Agent(model=LiteLLMOpenAI(id="gpt-5.6-luna"), markdown=True)
 
 # Get the response in a variable
 # run: RunOutput = agent.run("Share a 2 sentence horror story")

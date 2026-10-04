@@ -45,7 +45,7 @@ def book_flight(origin: str, destination: str) -> str:
 
 travel_agent = Agent(
     name="TravelAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[book_flight],
     instructions=(
         "You are a travel agent. Use the book_flight tool to book flights. "

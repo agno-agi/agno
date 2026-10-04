@@ -16,8 +16,7 @@ The event stream is pluggable (same pattern as run cancellation management).
 The default is in-memory (single process). For multi-container deployments,
 configure Redis Streams so clients can resume from ANY replica:
 
-    from agno.os import AgentOS
-    from agno.job_queue.config import QueueConfig
+    from agno.os import AgentOS, QueueConfig
 
     agent_os = AgentOS(
         agents=[agent],

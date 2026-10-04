@@ -31,7 +31,7 @@ def main():
 
     agent = Agent(
         name="Privacy-Protected Agent",
-        model=OpenAIResponses(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.6-luna"),
         pre_hooks=[log_request, PIIDetectionGuardrail()],
         instructions="You are a helpful assistant that protects user privacy.",
     )

@@ -28,16 +28,8 @@ uv pip install -U openai ddgs duckdb yfinance agno
 
 ### 4. Run basic Agent
 
-- Streaming on
-
 ```shell
-python cookbook/92_models/azure/openai/basic_stream.py
-```
-
-- Streaming off
-
-```shell
-python cookbook/92_models/azure/openai/basic.py
+python cookbook/90_models/azure/openai/basic.py
 ```
 
 ### 5. Run Agent with Tools
@@ -45,23 +37,37 @@ python cookbook/92_models/azure/openai/basic.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/92_models/azure/openai/tool_use.py
+python cookbook/90_models/azure/openai/tool_use.py
 ```
 
 ### 6. Run Agent that returns structured output
 
 ```shell
-python cookbook/92_models/azure/openai/structured_output.py
+python cookbook/90_models/azure/openai/structured_output.py
 ```
 
 ### 7. Run Agent that uses storage
 
 ```shell
-python cookbook/92_models/azure/openai/storage.py
+python cookbook/90_models/azure/openai/db.py
 ```
 
 ### 8. Run Agent that uses knowledge
 
 ```shell
-python cookbook/92_models/azure/openai/knowledge.py
+python cookbook/90_models/azure/openai/knowledge.py
+```
+
+### 9. Run Agent using the Responses API
+
+The Responses API example uses `AzureOpenAIResponses` and reads these environment variables:
+
+```shell
+export AZURE_OPENAI_API_KEY=***
+export AZURE_OPENAI_ENDPOINT="https://<your-resource-name>.openai.azure.com"  # resource root, no path
+export OPENAI_API_VERSION="2025-04-01-preview"  # Optional, this is the default
+```
+
+```shell
+python cookbook/90_models/azure/openai/responses.py
 ```

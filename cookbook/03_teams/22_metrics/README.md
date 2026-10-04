@@ -16,4 +16,4 @@ Examples for team-level metrics: run metrics, streaming metrics, session metrics
 - Some examples require PostgreSQL (`./cookbook/scripts/run_pgvector.sh`).
 
 ## Run
-- `.venvs/demo/bin/python cookbook/03_teams/metrics/<file>.py`
+- `.venvs/demo/bin/python cookbook/03_teams/22_metrics/<file>.py`

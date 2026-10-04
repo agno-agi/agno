@@ -28,7 +28,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_warning, logger
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, embed_before_replace, is_rate_limit_error, raise_embedding_failures
 from agno.vectordb.search import SearchType
 
 # Pinecone caps ``top_k`` at 10 000 and returns no cursor, so filtered reads page by
@@ -95,6 +95,7 @@ class PineconeDb(VectorDb):
         use_hybrid_search: bool = False,
         hybrid_alpha: float = 0.5,
         reranker: Optional[Reranker] = None,
+        return_vectors: bool = False,
         **kwargs,
     ):
         # Validate required parameters
@@ -149,6 +150,9 @@ class PineconeDb(VectorDb):
             log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = _embedder
         self.reranker: Optional[Reranker] = reranker
+        # Pinecone omits vectors unless asked. Fetching them enlarges every response, so
+        # this stays off until a reranker that scores on embeddings needs them.
+        self.return_vectors: bool = return_vectors
 
     @property
     def client(self) -> Pinecone:
@@ -254,6 +258,9 @@ class PineconeDb(VectorDb):
         filters: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
     ) -> None:
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
         self._upsert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
@@ -389,12 +396,8 @@ class PineconeDb(VectorDb):
                         logger.exception(f"Error assigning batch embedding to document '{doc.name}'")
 
             except Exception as e:
-                # Check if this is a rate limit error - don't fall back as it would make things worse
-                error_str = str(e).lower()
-                is_rate_limit = any(
-                    phrase in error_str
-                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                )
+                # A throttle must not fall back to per-item calls, which would throttle harder.
+                is_rate_limit = is_rate_limit_error(e)
 
                 if is_rate_limit:
                     logger.exception("Rate limit detected during batch embedding.")
@@ -403,11 +406,13 @@ class PineconeDb(VectorDb):
                     log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    raise_embedding_failures(results)
         else:
             # Use individual embedding
             embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-            await asyncio.gather(*embed_tasks, return_exceptions=True)
+            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+            raise_embedding_failures(results)
 
         for doc in documents:
             doc.meta_data["text"] = doc.content
@@ -496,6 +501,12 @@ class PineconeDb(VectorDb):
         hdense = [v * alpha for v in dense]
         return hdense, hsparse
 
+    def _include_values(self, include_values: Optional[bool]) -> bool:
+        """An explicit argument wins; otherwise follow the instance setting."""
+        if include_values is not None:
+            return include_values
+        return self.return_vectors
+
     def search(
         self,
         query: str,
@@ -512,7 +523,8 @@ class PineconeDb(VectorDb):
             limit (int, optional): The maximum number of results to return. Defaults to 5.
             filters (Optional[Dict[str, Union[str, float, int, bool, List, dict]]], optional): The filter for the search. Defaults to None.
             namespace (Optional[str], optional): The namespace to search in. Defaults to None.
-            include_values (Optional[bool], optional): Whether to include values in the search results. Defaults to None.
+            include_values (Optional[bool], optional): Whether to include vectors in the results.
+                Defaults to None, which follows the return_vectors setting on the instance.
             include_metadata (Optional[bool], optional): Whether to include metadata in the search results. Defaults to None.
             user_id (Optional[str], optional): Scope results to this user plus shared chunks.
                 Defaults to None, which applies no scope.
@@ -542,7 +554,7 @@ class PineconeDb(VectorDb):
                 top_k=limit,
                 namespace=namespace or self.namespace,
                 filter=filters,
-                include_values=include_values,
+                include_values=self._include_values(include_values),
                 include_metadata=True,
             )
         else:
@@ -551,7 +563,7 @@ class PineconeDb(VectorDb):
                 top_k=limit,
                 namespace=namespace or self.namespace,
                 filter=filters,
-                include_values=include_values,
+                include_values=self._include_values(include_values),
                 include_metadata=True,
             )
 
@@ -559,6 +571,7 @@ class PineconeDb(VectorDb):
             Document(
                 content=(result.metadata.get("text", "") if result.metadata is not None else ""),
                 id=result.id,
+                embedder=self.embedder,
                 embedding=result.values,
                 meta_data=result.metadata,
             )

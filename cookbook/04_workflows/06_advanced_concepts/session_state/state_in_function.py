@@ -24,21 +24,21 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 hackernews_agent = Agent(
     name="Hackernews Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[HackerNewsTools()],
     instructions="Extract key insights and content from Hackernews posts",
 )
 
 web_agent = Agent(
     name="Web Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     instructions="Search the web for the latest news and trends",
 )
 
 content_planner = Agent(
     name="Content Planner",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "Plan a content schedule over 4 weeks for the provided topic and research content",
         "Ensure that I have posts for 3 posts per week",
@@ -47,7 +47,7 @@ content_planner = Agent(
 
 streaming_content_planner = Agent(
     name="Content Planner",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "Plan a content schedule over 4 weeks for the provided topic and research content",
         "Ensure that I have posts for 3 posts per week",
@@ -60,7 +60,7 @@ streaming_content_planner = Agent(
 # ---------------------------------------------------------------------------
 research_team = Team(
     name="Research Team",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     members=[hackernews_agent, web_agent],
     instructions="Analyze content and create comprehensive social media strategy",
 )

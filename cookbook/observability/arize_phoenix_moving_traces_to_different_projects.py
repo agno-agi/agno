@@ -47,7 +47,7 @@ class SearchResult(BaseModel):
 # Agent 1 - Stock Price Agent
 stock_agent = Agent(
     name="Stock Price Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[YFinanceTools()],
     db=InMemoryDb(),
     instructions="You are a stock price agent. Answer questions in the style of a stock analyst.",
@@ -58,7 +58,7 @@ stock_agent = Agent(
 # Agent 2 - Search Agent
 search_agent = Agent(
     name="Search Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     db=InMemoryDb(),
     instructions="You are a search agent. Find and summarize information from the web.",

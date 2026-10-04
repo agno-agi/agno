@@ -76,7 +76,9 @@ class MarkdownReader(Reader):
                 log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")
                 file_name = name or getattr(file, "name", "file").split(".")[0]
                 file.seek(0)
-                file_contents = file.read().decode(self.encoding or "utf-8")
+                file_contents = file.read()
+                if isinstance(file_contents, bytes):
+                    file_contents = file_contents.decode(self.encoding or "utf-8")
 
             documents = [Document(name=file_name, id=str(uuid.uuid4()), content=file_contents)]
             if self.chunk:
@@ -110,7 +112,9 @@ class MarkdownReader(Reader):
                 log_debug(f"Reading uploaded file asynchronously: {getattr(file, 'name', 'BytesIO')}")
                 file_name = name or getattr(file, "name", "file").split(".")[0]
                 file.seek(0)
-                file_contents = file.read().decode(self.encoding or "utf-8")
+                file_contents = file.read()
+                if isinstance(file_contents, bytes):
+                    file_contents = file_contents.decode(self.encoding or "utf-8")
 
             document = Document(
                 name=file_name,

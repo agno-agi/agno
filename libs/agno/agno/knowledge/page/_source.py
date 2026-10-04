@@ -1,0 +1,306 @@
+"""Bounded discovery and same-origin fetching for documentation page syncs."""
+
+from __future__ import annotations
+
+import ipaddress
+import random
+import re
+import time
+from collections import deque
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from typing import Dict, Optional
+from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit
+
+import httpx
+
+from agno.fs._paths import normalize_path
+from agno.knowledge.page.types import PageMoved, PageNotMarkdown, SyncFailed
+from agno.knowledge.reader.llms_txt_reader import LLMsTxtReader
+from agno.utils.bounded import WorkBudget
+
+
+def page_path(path: str) -> str:
+    if not isinstance(path, str) or not path.startswith("/") or "//" in path or "\\" in path:
+        raise ValueError("invalid_page_path")
+    if re.search(r"%(?![0-9a-fA-F]{2})|%(?:2f|5c|25)", path, re.I):
+        raise ValueError("invalid_page_encoding")
+    path = unquote(path, errors="strict")
+    if "?" in path or "#" in path:
+        raise ValueError("invalid_page_path")
+    path = "/index.md" if path == "/" else path if path.endswith(".md") else path + ".md"
+    return "/" + normalize_path(path[1:])
+
+
+def page_prefix(prefix: str) -> str:
+    if prefix == "/":
+        return prefix
+    trailing = prefix.endswith("/")
+    canonical = page_path(prefix.rstrip("/"))
+    if not prefix.endswith(".md"):
+        canonical = canonical[:-3]
+    return canonical + ("/" if trailing else "")
+
+
+def source_url(url: str) -> str:
+    if not isinstance(url, str) or len(url.encode("utf-8")) > 2048 or any(ord(c) < 33 for c in url):
+        raise ValueError("invalid_source_url")
+    parts = urlsplit(url)
+    if (
+        parts.scheme != "https"
+        or not parts.hostname
+        or parts.username
+        or parts.password
+        or parts.query
+        or parts.fragment
+    ):
+        raise ValueError("invalid_source_url")
+    if parts.port not in (None, 443):
+        raise ValueError("invalid_source_port")
+    page_path(parts.path or "/")
+    return urlunsplit(("https", parts.netloc.lower(), parts.path or "/", "", ""))
+
+
+# Files an index may link to that can never be a documentation page: API specs,
+# data, media and archives. Discovery skips them wherever they point, so a link to
+# an OpenAPI spec neither fails as a page nor marks discovery incomplete. Not .js
+# or .css: pages can be named like "/guides/node.js".
+NON_PAGE_FILE = re.compile(
+    r"\.(?:json|ya?ml|xml|csv|tsv|pdf|png|jpe?g|gif|svg|webp|ico|mp3|mp4|webm|wav|zip|gz|tgz|tar|woff2?|ttf)$",
+    re.I,
+)
+
+
+def is_non_page_file(url: str) -> bool:
+    """True when a link names a file that cannot be a documentation page."""
+    return isinstance(url, str) and NON_PAGE_FILE.search(urlsplit(url).path) is not None
+
+
+@dataclass(frozen=True)
+class SourcePage:
+    path: str
+    url: str
+    title: str
+    citation_url: str
+
+
+def _retry_after_seconds(value: Optional[str]) -> Optional[float]:
+    """Seconds requested by a Retry-After header (delta-seconds or HTTP date), if valid."""
+    if not value:
+        return None
+    value = value.strip()
+    if value.isdigit():
+        return float(value)
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if when.tzinfo is None:
+        return None
+    return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+
+
+class PageSource:
+    max_pages = 20_000
+    max_indexes = 100
+    max_depth = 3
+    max_index_bytes = 8 * 1024 * 1024
+    max_page_bytes = 4 * 1024 * 1024
+    # Transient failures (connection resets, timeouts, 429/5xx) arrive in bursts during
+    # a full sync, so retries back off for several seconds, within each fetch's deadline.
+    fetch_attempts = 5
+    retry_base_seconds = 0.5
+    retry_max_seconds = 4.0
+    retry_after_max_seconds = 10.0
+    # A stalled connection (seen as a TLS handshake that hangs, then resets) must not
+    # consume the whole fetch deadline: each attempt gets its own bound so a retry on
+    # a fresh connection still fits. Healthy page fetches take well under a second.
+    connect_timeout_seconds = 5.0
+    attempt_timeout_seconds = 10.0
+
+    def __init__(self, url: str, public_url: Optional[str], budget: WorkBudget):
+        self.url = source_url(url)
+        self.base = self.url.rsplit("/", 1)[0]
+        self.public = source_url(public_url or self.base).rstrip("/")
+        self.origin = urlsplit(self.url).netloc
+        self.budget = budget
+        self.complete = True
+        self.reader = LLMsTxtReader(skip_optional=False)
+
+    def fetch(self, url: str, max_bytes: int) -> str:
+        """Pin validated DNS answers to the connection while retaining TLS hostname checks."""
+        url = source_url(url)
+        deadline = time.monotonic() + min(30, self.budget.remaining())
+        for attempt in range(self.fetch_attempts):
+            current = url
+            try:
+                for redirect in range(4):
+                    self.budget.remaining()
+                    parts = urlsplit(current)
+                    if parts.netloc != self.origin:
+                        raise SyncFailed()
+                    from dns.resolver import NoAnswer, Resolver
+
+                    resolver = Resolver()
+                    addresses: list[str] = []
+                    assert parts.hostname is not None
+                    for family in ("A", "AAAA"):
+                        try:
+                            answers = resolver.resolve(parts.hostname, family, lifetime=min(3, self.budget.remaining()))
+                            addresses.extend(str(answer) for answer in answers)
+                        except NoAnswer:
+                            continue
+                    if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
+                        raise SyncFailed()
+                    address = addresses[0]
+                    authority = "[" + address + "]" if ":" in address else address
+                    pinned = urlunsplit(("https", authority, parts.path, "", ""))
+                    remaining = min(deadline - time.monotonic(), self.budget.remaining())
+                    if remaining <= 0:
+                        raise TimeoutError()
+                    attempt_timeout = min(remaining, self.attempt_timeout_seconds)
+                    timeout = httpx.Timeout(attempt_timeout, connect=min(self.connect_timeout_seconds, attempt_timeout))
+                    with httpx.Client(timeout=timeout, trust_env=False, follow_redirects=False) as client:
+                        with client.stream(
+                            "GET",
+                            pinned,
+                            headers={"Host": self.origin},
+                            extensions={"sni_hostname": parts.hostname},
+                        ) as response:
+                            if response.is_redirect:
+                                location = urljoin(current, response.headers["location"])
+                                if url.endswith(".md"):
+                                    # A listed Markdown page that now redirects to another host, to a
+                                    # section of another page, or to a non-Markdown URL (which serves
+                                    # HTML) is an alias, not a page of this source. A move to another
+                                    # Markdown URL on the same host is followed.
+                                    target = urlsplit(location)
+                                    if target.netloc.lower() != self.origin or not target.path.endswith(".md"):
+                                        raise PageMoved(location)
+                                    location = urlunsplit(target._replace(fragment=""))
+                                if redirect == 3:
+                                    raise SyncFailed()
+                                current = source_url(location)
+                                continue
+                            response.raise_for_status()
+                            content_type = response.headers.get("content-type", "").lower()
+                            if url.endswith(".md") and content_type.startswith("text/html"):
+                                raise PageNotMarkdown()
+                            body = bytearray()
+                            for chunk in response.iter_bytes():
+                                self.budget.remaining()
+                                if time.monotonic() > deadline or len(body) + len(chunk) > max_bytes:
+                                    raise SyncFailed()
+                                body.extend(chunk)
+                            return body.decode("utf-8", errors="strict")
+                raise SyncFailed()
+            except (
+                httpx.TimeoutException,
+                httpx.NetworkError,
+                httpx.RemoteProtocolError,
+                httpx.HTTPStatusError,
+            ) as exc:
+                status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+                if status is not None and status != 429 and status < 500:
+                    raise SyncFailed() from exc
+                if attempt == self.fetch_attempts - 1:
+                    raise SyncFailed() from exc
+                delay = self._retry_delay(attempt, exc)
+                # Never sleep past the fetch deadline; fail now with the transport cause.
+                if time.monotonic() + delay >= deadline:
+                    raise SyncFailed() from exc
+                if self.budget.cancelled.wait(min(delay, self.budget.remaining())):
+                    self.budget.remaining()
+        raise SyncFailed()
+
+    def _retry_delay(self, attempt: int, exc: Exception) -> float:
+        """Exponential backoff with jitter; a server's bounded Retry-After takes precedence."""
+        if isinstance(exc, httpx.HTTPStatusError):
+            after = _retry_after_seconds(exc.response.headers.get("retry-after"))
+            if after is not None:
+                return min(after, self.retry_after_max_seconds)
+        backoff = min(self.retry_base_seconds * 2**attempt, self.retry_max_seconds)
+        # Jitter keeps concurrent page fetches from retrying in lockstep.
+        return backoff * random.uniform(0.5, 1.0)
+
+    def discover(self) -> Dict[str, SourcePage]:
+        pages: Dict[str, SourcePage] = {}
+        visited: set[str] = set()
+        collisions: set[str] = set()
+
+        def visit(index: str, depth: int) -> None:
+            if index in visited:
+                return
+            if depth > self.max_depth or len(visited) >= self.max_indexes:
+                self.complete = False
+                return
+            visited.add(index)
+            try:
+                content = self.fetch(index, self.max_index_bytes)
+            except Exception:
+                self.complete = False
+                return
+            # The reader's parser accepts sectioned indexes. A leading section also
+            # exposes flat indexes without dropping their links as overview text.
+            _, entries = self.reader.parse_llms_txt("## Pages\n" + content, index)
+            if not entries:
+                self.complete = False
+            for entry in entries:
+                if is_non_page_file(entry.url):
+                    continue
+                try:
+                    target = source_url(entry.url)
+                    if urlsplit(target).netloc != self.origin or not target.startswith(self.base + "/"):
+                        raise ValueError("invalid_source_destination")
+                    relative = target[len(self.base) :]
+                    if relative.endswith("/llms.txt") or relative.startswith("/_llms/"):
+                        queue.append((target, depth + 1))
+                        continue
+                    # Fumadocs links can identify the rendered page through an
+                    # llms.mdx route while its resolved Markdown is served at .md.
+                    if relative.startswith("/llms.mdx/"):
+                        relative = relative[len("/llms.mdx") :]
+                        base_path = urlsplit(self.base).path.rstrip("/")
+                        if base_path and (relative == base_path or relative.startswith(base_path + "/")):
+                            relative = relative[len(base_path) :] or "/"
+                        target = self.base + relative
+                    if relative.startswith("/_snippets/") or relative.endswith("/llms-full.txt"):
+                        continue
+                    path = page_path(relative)
+                    if len(entry.title) > 512:
+                        raise ValueError("title_too_long")
+                    citation = self.public + ("/" if path == "/index.md" else quote(path[:-3], safe="/"))
+                    source_url(citation)
+                    fetch_url = (
+                        self.base + "/index.md"
+                        if relative == "/"
+                        else target
+                        if target.endswith(".md")
+                        else target + ".md"
+                    )
+                    page = SourcePage(path, fetch_url, entry.title, citation)
+                    if path in collisions:
+                        raise ValueError("page_path_collision")
+                    if path in pages and pages[path].url == page.url:
+                        continue
+                    if path in pages:
+                        collisions.add(path)
+                        del pages[path]
+                        raise ValueError("page_path_collision")
+                    if len(pages) >= self.max_pages and path not in pages:
+                        self.complete = False
+                        continue
+                    pages[path] = page
+                except Exception:
+                    self.complete = False
+
+        # Breadth-first, so each nested index is reached at its shallowest depth: a root
+        # that lists every sub-index directly stays within max_depth however deep the
+        # sub-indexes link to each other.
+        queue: deque[tuple[str, int]] = deque([(self.url, 0)])
+        while queue:
+            visit(*queue.popleft())
+        if not pages:
+            raise SyncFailed()
+        return pages

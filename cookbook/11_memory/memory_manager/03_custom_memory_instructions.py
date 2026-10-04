@@ -23,7 +23,7 @@ memory_db = PostgresDb(db_url=db_url)
 # Create Memory Managers
 # ---------------------------------------------------------------------------
 memory = MemoryManager(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     memory_capture_instructions="""\
                     Memories should only include details about the user's academic interests.
                     Only include which subjects they are interested in.

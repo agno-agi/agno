@@ -55,4 +55,23 @@ def mock_embedder():
     mock_usage: Dict[str, Any] = {"prompt_tokens": 10, "total_tokens": 10}
     mock.get_embedding_and_usage.return_value = (mock_embedding, mock_usage)
 
+    # The async variants must be awaitable: a plain MagicMock raises TypeError on await,
+    # which the embedding paths now surface instead of swallowing.
+    mock.enable_batch = False
+
+    async def _async_get_embedding(text: str) -> List[float]:
+        return mock_embedding
+
+    async def _async_get_embedding_and_usage(text: str) -> Tuple[List[float], Dict[str, Any]]:
+        return mock_embedding, mock_usage
+
+    async def _async_get_embeddings_batch_and_usage(
+        texts: List[str],
+    ) -> Tuple[List[List[float]], List[Dict[str, Any]]]:
+        return [mock_embedding for _ in texts], [mock_usage for _ in texts]
+
+    mock.async_get_embedding = _async_get_embedding
+    mock.async_get_embedding_and_usage = _async_get_embedding_and_usage
+    mock.async_get_embeddings_batch_and_usage = _async_get_embeddings_batch_and_usage
+
     return mock

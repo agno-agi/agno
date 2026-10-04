@@ -239,7 +239,11 @@ class TestCrashRecovery:
         await worker.start()
         try:
             await wait_for_status(store, "r1", "failed")
-            assert run_row.status == RunStatus.error
+            # The sweeper stamps a copy and upserts it into the session (the
+            # loaded run object is shared with other readers, so it is never
+            # written through); the session's entry carries the flip.
+            assert session.runs[0].status == RunStatus.error
+            assert run_row.status == RunStatus.running
             assert saved, "run-row error must be persisted"
         finally:
             await worker.stop()
@@ -297,7 +301,7 @@ class TestCrashRecovery:
             db_down = False
             store._jobs["r1"]["locked_at"] -= 1000
             job = await wait_for_status(store, "r1", "failed")
-            assert run_row.status == RunStatus.error, "the retried persist must land before the terminal write"
+            assert session.runs[0].status == RunStatus.error, "the retried persist must land before the terminal write"
             assert "worker lost" in job["error"].lower()
         finally:
             await worker.stop()
@@ -339,14 +343,14 @@ class TestCrashRecovery:
             await asyncio.sleep(0.2)  # several sweep ticks
             job = await store.get_job("r1")
             assert job["status"] == "running", "component-missing must not terminalize the ticket"
-            assert run_row.status == RunStatus.running
+            assert session.runs[0].status == RunStatus.running
 
             components["agent-1"] = agent  # redeploy restores it
             # The sweeper holds a fresh lock from its failed attempt; the job
             # becomes re-sweepable once that lock goes stale (retry backoff)
             store._jobs["r1"]["locked_at"] -= 1000
             job = await wait_for_status(store, "r1", "failed")
-            assert run_row.status == RunStatus.error
+            assert session.runs[0].status == RunStatus.error
         finally:
             await worker.stop()
 
@@ -802,7 +806,7 @@ class TestSweepOwnership:
         store.sweep_exhausted_jobs = racing_sweep  # type: ignore[method-assign]
         row_writes: list = []
 
-        async def spy_persist(job, error, status="error"):
+        async def spy_persist(job, error, status="error", **kwargs):
             row_writes.append((job["id"], status, error))
             return True
 
@@ -829,7 +833,7 @@ class TestSweepOwnership:
 
         run_state = {"status": "running"}
 
-        async def spy_persist(job, error, status="error"):
+        async def spy_persist(job, error, status="error", **kwargs):
             from agno.run.status_persist import RunPersistOutcome
 
             if boundary == "after_row":
@@ -949,7 +953,7 @@ class TestCancelReorder:
         await store.enqueue_job(make_job("r1"))
         order: list = []
 
-        async def spy_persist(job, error, status="error"):
+        async def spy_persist(job, error, status="error", **kwargs):
             order.append("row")
             return True
 
@@ -975,7 +979,7 @@ class TestCancelReorder:
         worker = make_worker(store, agent, make_config())
         await store.enqueue_job(make_job("r1"))
 
-        async def failing_persist(job, error, status="error"):
+        async def failing_persist(job, error, status="error", **kwargs):
             return False
 
         worker._persist_run_error = failing_persist  # type: ignore[method-assign]
@@ -994,7 +998,7 @@ class TestCancelReorder:
         claimed = await store.claim_job("w1")
         assert await store.complete_job("p1", "w1", claimed["attempt"], "paused")
 
-        async def failing_persist(job, error, status="error"):
+        async def failing_persist(job, error, status="error", **kwargs):
             return False
 
         worker._persist_run_error = failing_persist  # type: ignore[method-assign]
@@ -2383,3 +2387,193 @@ class TestTerminalRowClaim:
             f"an unreadable row must leave the claim stale for the sweep, got {job['status']!r} - "
             "never a manufactured terminal status"
         )
+
+
+class TestCancellationStage:
+    """A cancelled run row says WHERE it was cancelled, not just that it was.
+    The stage rides the fenced status patch as an extra field, and the
+    unfenced fallback sets it on the run object, so both persistence paths
+    agree. The human reason stays on content."""
+
+    @staticmethod
+    def _queued_job(job_id: str, status: str = "queued") -> dict:
+        job = make_job(job_id)
+        job["status"] = status
+        return job
+
+    @pytest.mark.asyncio
+    async def test_cancel_of_a_queued_ticket_stamps_pending(self, monkeypatch):
+        from agno.run.base import CancellationStage
+        from agno.run.status_persist import RunPersistOutcome
+
+        captured: list = []
+
+        async def fake_persist(component, component_type, **kwargs):
+            captured.append(kwargs["fields"])
+            return RunPersistOutcome.UPDATED
+
+        monkeypatch.setattr("agno.run.status_persist.apersist_run_status", fake_persist)
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(self._queued_job("cq-before"))
+        assert await worker.acancel_queued("cq-before") is True
+        assert captured == [{"status": "CANCELLED", "cancellation_stage": CancellationStage.pending.value}]
+
+    @pytest.mark.asyncio
+    async def test_cancel_of_a_paused_ticket_stamps_paused(self, monkeypatch):
+        """A paused run has partially executed and holds continuable state; a
+        UI must not hide it the way it hides a never-started run."""
+        from agno.run.base import CancellationStage
+        from agno.run.status_persist import RunPersistOutcome
+
+        captured: list = []
+
+        async def fake_persist(component, component_type, **kwargs):
+            captured.append(kwargs["fields"])
+            return RunPersistOutcome.UPDATED
+
+        monkeypatch.setattr("agno.run.status_persist.apersist_run_status", fake_persist)
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(self._queued_job("cq-paused"))
+        claimed = await store.claim_job("w1")
+        assert await store.complete_job("cq-paused", "w1", claimed["attempt"], "paused")
+        assert await worker.acancel_queued("cq-paused") is True
+        assert captured == [{"status": "CANCELLED", "cancellation_stage": CancellationStage.paused.value}]
+
+    @pytest.mark.asyncio
+    async def test_cancel_of_a_continued_ticket_stamps_paused(self, monkeypatch):
+        """continue_job flips a paused ticket back to queued with its
+        continuation payload; the run behind it is still a paused one with
+        tool-call history, so a cancel before a worker claims it is PAUSED."""
+        from agno.run.base import CancellationStage
+        from agno.run.status_persist import RunPersistOutcome
+
+        captured: list = []
+
+        async def fake_persist(component, component_type, **kwargs):
+            captured.append(kwargs["fields"])
+            return RunPersistOutcome.UPDATED
+
+        monkeypatch.setattr("agno.run.status_persist.apersist_run_status", fake_persist)
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(self._queued_job("cq-cont"))
+        claimed = await store.claim_job("w1")
+        assert await store.complete_job("cq-cont", "w1", claimed["attempt"], "paused")
+        continued = await store.continue_job("cq-cont", {"step_requirements": []})
+        assert continued["outcome"] == "queued", continued
+        assert await worker.acancel_queued("cq-cont") is True
+        assert captured == [{"status": "CANCELLED", "cancellation_stage": CancellationStage.paused.value}]
+
+    @pytest.mark.asyncio
+    async def test_cancel_of_a_ticket_awaiting_retry_stamps_executing(self, monkeypatch):
+        """A failed attempt with retry budget left sits queued for its backoff;
+        an attempt already executed, so the run is not one that never started."""
+        from agno.run.base import CancellationStage
+        from agno.run.status_persist import RunPersistOutcome
+
+        captured: list = []
+
+        async def fake_persist(component, component_type, **kwargs):
+            captured.append(kwargs["fields"])
+            return RunPersistOutcome.UPDATED
+
+        monkeypatch.setattr("agno.run.status_persist.apersist_run_status", fake_persist)
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("cq-retry", max_attempts=2))
+        claimed = await store.claim_job("w1")
+        assert await store.retry_or_fail_job("cq-retry", "w1", claimed["attempt"], "boom", 30) == "queued"
+        assert await worker.acancel_queued("cq-retry") is True
+        assert captured == [{"status": "CANCELLED", "cancellation_stage": CancellationStage.executing.value}]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "payload, expected",
+        [({"input": "hello", "kwargs": {}}, "PENDING"), ({"continue": {"step_requirements": []}}, "PAUSED")],
+        ids=["fresh-leg", "continuation-leg"],
+    )
+    async def test_slot_wait_cancel_stamps_by_leg_kind(self, monkeypatch, payload, expected):
+        """A claimed job cancelled before it acquires its concurrency slot: a
+        fresh leg never started, a continuation leg resumes a paused run."""
+        from agno.exceptions import RunCancelledException
+        from agno.run.status_persist import RunPersistOutcome
+
+        captured: list = []
+
+        async def fake_persist(component, component_type, **kwargs):
+            captured.append(kwargs["fields"])
+            return RunPersistOutcome.UPDATED
+
+        class CancelledSlot:
+            def __init__(self, run_id=None):
+                pass
+
+            async def __aenter__(self):
+                raise RunCancelledException("cancelled while queued")
+
+            async def __aexit__(self, *exc):
+                return False
+
+        monkeypatch.setattr("agno.run.status_persist.apersist_run_status", fake_persist)
+        monkeypatch.setattr("agno.run.concurrency.background_run_slot", CancelledSlot)
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        job = make_job("cq-slot")
+        job["payload"] = payload
+        await store.enqueue_job(job)
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+        assert (await store.get_job("cq-slot"))["status"] == "cancelled"
+        # The claim-time attempt stamp lands first; the cancel is the last patch
+        assert captured[-1] == {"status": "CANCELLED", "cancellation_stage": expected}
+
+    @pytest.mark.asyncio
+    async def test_unfenced_fallback_sets_the_stage_on_the_run_object(self, monkeypatch):
+        """Adapters without the atomic primitive take the read-modify-write
+        fallback; it must land the same stage the fenced patch would."""
+        from agno.run.agent import RunOutput
+        from agno.run.base import CancellationStage, RunStatus
+        from agno.run.status_persist import RunPersistOutcome
+        from agno.session import AgentSession
+
+        async def unsupported(component, component_type, **kwargs):
+            return RunPersistOutcome.MISSING
+
+        saved: list = []
+        pending = RunOutput(run_id="cq-fb", agent_id="agent-1", session_id="s1", status=RunStatus.pending)
+
+        async def fake_read(component, session_id=None, user_id=None):
+            return AgentSession(session_id="s1", runs=[pending])
+
+        async def fake_save_run(component, run=None, session_id=None, user_id=None, run_index=None):
+            saved.append(run)
+
+        monkeypatch.setattr("agno.run.status_persist.apersist_run_status", unsupported)
+        monkeypatch.setattr("agno.agent._storage.aread_or_create_session", fake_read)
+        monkeypatch.setattr("agno.agent._session.asave_run", fake_save_run)
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(self._queued_job("cq-fb"))
+        assert await worker.acancel_queued("cq-fb") is True
+        assert saved and saved[0].status == RunStatus.cancelled
+        assert saved[0].cancellation_stage is CancellationStage.pending
+        assert saved[0].content == "cancelled before execution", "the human reason still lands on content"
+
+    @pytest.mark.asyncio
+    async def test_error_persist_carries_no_stage(self, monkeypatch):
+        """The stage is a property of CANCELLED runs only."""
+        from agno.run.status_persist import RunPersistOutcome
+
+        captured: list = []
+
+        async def fake_persist(component, component_type, **kwargs):
+            captured.append(kwargs["fields"])
+            return RunPersistOutcome.UPDATED
+
+        monkeypatch.setattr("agno.run.status_persist.apersist_run_status", fake_persist)
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        assert await worker._persist_run_error(make_job("e1"), "boom") is True
+        assert captured == [{"status": "ERROR"}]

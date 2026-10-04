@@ -31,7 +31,7 @@ user_3_session_1_id = "user_3_session_1"
 # Create Agent
 # ---------------------------------------------------------------------------
 chat_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=db,
     update_memory_on_run=True,
 )

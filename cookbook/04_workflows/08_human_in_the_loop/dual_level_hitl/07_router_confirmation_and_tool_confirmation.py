@@ -58,7 +58,7 @@ def scale_service(service: str, replicas: int) -> str:
 
 restart_agent = Agent(
     name="RestartAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[restart_service],
     instructions="You restart services. Always use restart_service. Call it exactly once.",
     db=db,
@@ -67,7 +67,7 @@ restart_agent = Agent(
 
 scale_agent = Agent(
     name="ScaleAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[scale_service],
     instructions="You scale services. Always use scale_service. Call it exactly once.",
     db=db,

@@ -39,7 +39,7 @@ def run_example() -> None:
     )
 
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         tools=[knowledge_tools],
         markdown=True,
     )

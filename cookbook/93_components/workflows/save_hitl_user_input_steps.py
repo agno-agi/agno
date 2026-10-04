@@ -27,7 +27,7 @@ db = PostgresDb(db_url=db_url)
 content_agent = Agent(
     id="hitl-input-content-gen",
     name="Content Generator",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "Generate content based on the topic and user preferences provided.",
         "Respect the tone, length, and format specified by the user.",

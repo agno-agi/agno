@@ -25,7 +25,7 @@ if not CEL_AVAILABLE:
 # ---------------------------------------------------------------------------
 classifier = Agent(
     name="Classifier",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=(
         "Classify the request into exactly one category. "
         "Respond with only one word: BILLING, TECHNICAL, or GENERAL."
@@ -35,21 +35,21 @@ classifier = Agent(
 
 billing_agent = Agent(
     name="Billing Support",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You handle billing inquiries. Help with invoices, payments, and subscriptions.",
     markdown=True,
 )
 
 technical_agent = Agent(
     name="Technical Support",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You handle technical issues. Help with debugging and configuration.",
     markdown=True,
 )
 
 general_agent = Agent(
     name="General Support",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You handle general inquiries.",
     markdown=True,
 )

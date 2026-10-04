@@ -15,7 +15,7 @@ import asyncio
 
 agent = Agent(
     model=Requesty(
-        id="openai/gpt-4o",
+        id="openai/gpt-5.6-luna",
     ),
     markdown=True,
 )

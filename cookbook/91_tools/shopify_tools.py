@@ -32,7 +32,7 @@ from agno.tools.shopify import ShopifyTools
 
 sales_agent = Agent(
     name="Sales Analyst",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[ShopifyTools()],
     instructions=[
         "You are a sales analyst for an e-commerce store using Shopify.",

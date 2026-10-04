@@ -15,7 +15,7 @@ from rich.pretty import pprint
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
 )
 
 # ---------------------------------------------------------------------------

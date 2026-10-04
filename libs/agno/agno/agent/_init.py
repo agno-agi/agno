@@ -8,15 +8,18 @@ from typing import (
     Any,
     Callable,
     Dict,
+    List,
     Literal,
     Optional,
     Sequence,
+    Tuple,
     Union,
     cast,
 )
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
+    from agno.fs import FileSystem
 
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb
@@ -231,6 +234,112 @@ def set_result_store(agent: Agent) -> None:
     agent._result_store_setting = agent.offload_tool_results
 
 
+def set_filesystem(agent: Agent) -> None:
+    """Resolve the filesystem shorthand or attach an explicitly provided instance."""
+    if (
+        agent.filesystem is None
+        or agent.filesystem is False
+        or (isinstance(agent.filesystem, list) and not agent.filesystem)
+    ):
+        agent._filesystem = None
+        return
+    if agent._filesystem is not None:
+        return
+
+    from agno.fs import FileSystem
+    from agno.fs.toolkit import FileSystemTools
+
+    stores: List[Any] = list(agent.filesystem) if isinstance(agent.filesystem, list) else [agent.filesystem]
+    if any(isinstance(store, FileSystemTools) for store in stores):
+        # Access is configured on the FileSystem itself; a toolkit here is the old spelling.
+        raise TypeError(
+            "filesystem takes FileSystem instances, not toolkits. Set the tool options on the "
+            "FileSystem instead, e.g. FileSystem(db, namespace=..., read_only=True)."
+        )
+
+    if _manual_filesystem_tools(agent):
+        # Every FileSystemTools registers the same tool names, and the resolver keeps
+        # only the first registration per name, so a second toolkit would be dropped.
+        raise ValueError(
+            "filesystem manages its own FileSystemTools. Remove the manually configured "
+            "FileSystemTools or disable the filesystem setting."
+        )
+
+    if isinstance(agent.filesystem, list):
+        if any(not isinstance(store, FileSystem) for store in agent.filesystem):
+            raise TypeError("filesystem lists must contain only FileSystem instances")
+        agent._filesystem = agent.filesystem[0]
+    elif isinstance(agent.filesystem, FileSystem):
+        agent._filesystem = agent.filesystem
+    elif agent.filesystem is True:
+        if agent.db is None:
+            raise ValueError("filesystem=True requires a database on the agent or AgentOS")
+        if isinstance(agent.db, AsyncBaseDb):
+            raise ValueError("filesystem=True currently requires a synchronous database")
+        if not agent.id:
+            raise ValueError("filesystem=True requires the agent to have a stable id")
+        # One namespace per agent; each run acts in its user's partition of it.
+        agent._filesystem = FileSystem(agent.db, namespace="{agent_id}").resolve(agent_id=agent.id)
+        log_debug(f"Filesystem enabled: files are stored in namespace {agent._filesystem.namespace!r}")
+    else:
+        raise TypeError("filesystem must be a bool, a FileSystem, or a list of FileSystem instances")
+
+
+def apply_filesystem_user_isolation(agent: Agent, enabled: bool) -> None:
+    """Set ``user_scoped`` from the AgentOS ``user_isolation`` setting on stores that left it unset.
+
+    Isolation on the OS then partitions every agent filesystem by the run's user;
+    off, the stores stay shared. A store that chose ``user_scoped`` itself keeps
+    its choice. The stores are resolved to apply it, and a store that cannot be
+    built is reported here and left for the run to fail on.
+    """
+    try:
+        filesystems = get_filesystems(agent)
+    except Exception as e:
+        log_warning(f"Agent {agent.id or agent.name!r}: filesystem could not be resolved ({e})")
+        return
+    for filesystem, _ in filesystems:
+        if filesystem.user_scoped is None:
+            filesystem.user_scoped = bool(enabled)
+
+
+def _manual_filesystem_tools(agent: Agent) -> List[Any]:
+    """FileSystemTools the developer attached through ``tools=[...]``."""
+    if not isinstance(agent.tools, list):
+        return []
+
+    from agno.fs.toolkit import FileSystemTools
+
+    return [tool for tool in agent.tools if isinstance(tool, FileSystemTools)]
+
+
+def has_filesystem(agent: Agent) -> bool:
+    """Whether the agent holds any filesystem, through the setting or its tools. Never builds one."""
+    return bool(agent.filesystem) or bool(_manual_filesystem_tools(agent))
+
+
+def get_filesystems(agent: Agent) -> List[Tuple["FileSystem", bool]]:
+    """Every filesystem this agent holds, as ``(filesystem, read_only)`` pairs.
+
+    Covers the ``filesystem`` setting and any FileSystemTools attached through
+    ``tools=[...]``, so an agent that only reads another agent's namespace is
+    still discoverable. The setting comes first. Namespace templates are left
+    unresolved for the caller to bind. ``read_only`` follows the tools the agent
+    actually gets: a store narrowed to read tools by ``include_tools`` or
+    ``exclude_tools`` counts as read-only too.
+    """
+    filesystems: List[Tuple["FileSystem", bool]] = []
+    managed = agent.filesystem_instance
+    if isinstance(agent.filesystem, list):
+        for store in agent.filesystem:
+            filesystems.append((store, not store.tools().can_write))
+    elif managed is not None:
+        filesystems.append((managed, not managed.tools().can_write))
+    for toolkit in _manual_filesystem_tools(agent):
+        filesystems.append((toolkit.fs, not toolkit.can_write))
+    return filesystems
+
+
 def _initialize_session_state(
     session_state: Dict[str, Any],
     user_id: Optional[str] = None,
@@ -290,6 +399,8 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
     set_id(agent)
     set_telemetry(agent)
     set_checkpoint(agent)
+    if agent.filesystem or agent._filesystem is not None:
+        set_filesystem(agent)
     if agent.update_memory_on_run or agent.enable_agentic_memory or agent.memory_manager is not None:
         set_memory_manager(agent)
     if agent.enable_session_summaries or agent.session_summary_manager is not None:
@@ -302,15 +413,17 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
     if agent.learning is not None and agent.learning is not False:
         set_learning_machine(agent)
 
-    log_debug(f"Agent ID: {agent.id}", center=True)
+    log_debug(f"Agent initialized: {agent.id}")
 
     if agent._formatter is None:
         agent._formatter = SafeFormatter()
 
 
 def add_tool(agent: Agent, tool: Union[Toolkit, Callable, Function, Dict]) -> None:
+    from agno.tools.component import raise_if_component_tool
     from agno.utils.callables import is_callable_factory
 
+    raise_if_component_tool(tool, "Agent", "To let this agent delegate to another agent, use a Team.")
     if is_callable_factory(agent.tools, excluded_types=(Toolkit, Function)):
         raise RuntimeError(
             "Cannot add_tool() when tools is a callable factory. Use set_tools() to replace the factory."
@@ -321,13 +434,17 @@ def add_tool(agent: Agent, tool: Union[Toolkit, Callable, Function, Dict]) -> No
 
 
 def set_tools(agent: Agent, tools: Union[Sequence[Union[Toolkit, Callable, Function, Dict]], Callable]) -> None:
+    from agno.tools.component import raise_if_component_tool
     from agno.utils.callables import is_callable_factory
 
     if is_callable_factory(tools, excluded_types=(Toolkit, Function)):
         agent.tools = tools  # type: ignore[assignment]
         agent._callable_tools_cache.clear()
     else:
-        agent.tools = list(tools) if tools else []  # type: ignore[arg-type]
+        concrete_tools = list(tools) if tools else []  # type: ignore[arg-type]
+        for tool in concrete_tools:
+            raise_if_component_tool(tool, "Agent", "To let this agent delegate to another agent, use a Team.")
+        agent.tools = concrete_tools
 
 
 async def connect_mcp_tools(agent: Agent) -> None:

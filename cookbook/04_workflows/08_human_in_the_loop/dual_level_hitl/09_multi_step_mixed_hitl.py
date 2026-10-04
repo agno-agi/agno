@@ -66,7 +66,7 @@ def create_plan(project: str, tasks: str) -> str:
 
 planner_agent = Agent(
     name="PlannerAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[create_plan],
     instructions=(
         "You create project plans. Use the create_plan tool EXACTLY ONCE. "
@@ -92,7 +92,7 @@ def finalize_plan(plan: str) -> str:
 
 reviewer_agent = Agent(
     name="ReviewerAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[finalize_plan],
     instructions=(
         "You review and finalize project plans. Use the finalize_plan tool EXACTLY ONCE "

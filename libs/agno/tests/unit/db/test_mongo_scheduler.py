@@ -107,6 +107,34 @@ def test_mongo_get_schedules_returns_paginated_items_and_total(monkeypatch: pyte
     collection.count_documents.assert_called_once_with({"enabled": True})
 
 
+def test_mongo_get_schedules_default_swallows_error(monkeypatch: pytest.MonkeyPatch):
+    db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
+    collection = Mock()
+    collection.count_documents.side_effect = RuntimeError("forced failure")
+    monkeypatch.setattr(db, "_get_collection", lambda table_type: collection)
+
+    assert db.get_schedules() == ([], 0)
+
+
+def test_mongo_get_schedules_raise_on_error_reraises(monkeypatch: pytest.MonkeyPatch):
+    db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
+    collection = Mock()
+    collection.count_documents.side_effect = RuntimeError("forced failure")
+    monkeypatch.setattr(db, "_get_collection", lambda table_type: collection)
+
+    with pytest.raises(RuntimeError, match="forced failure"):
+        db.get_schedules(raise_on_error=True)
+
+
+def test_mongo_get_schedules_collection_none_raises_under_flag(monkeypatch: pytest.MonkeyPatch):
+    db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
+    monkeypatch.setattr(db, "_get_collection", lambda table_type: None)
+
+    assert db.get_schedules() == ([], 0)
+    with pytest.raises(RuntimeError, match="schedules table unavailable"):
+        db.get_schedules(raise_on_error=True)
+
+
 def test_mongo_create_schedule_inserts_and_returns_data(monkeypatch: pytest.MonkeyPatch):
     db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
     collection = Mock()
@@ -399,6 +427,37 @@ async def test_async_mongo_get_schedules_returns_paginated_items_and_total(monke
         {"id": "sched-1", "name": "Nightly"},
         {"id": "sched-2", "name": "Hourly"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_async_mongo_get_schedules_default_swallows_error(monkeypatch: pytest.MonkeyPatch):
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    collection = MagicMock()
+    collection.count_documents = AsyncMock(side_effect=RuntimeError("forced failure"))
+    monkeypatch.setattr(db, "_get_collection", AsyncMock(return_value=collection))
+
+    assert await db.get_schedules() == ([], 0)
+
+
+@pytest.mark.asyncio
+async def test_async_mongo_get_schedules_raise_on_error_reraises(monkeypatch: pytest.MonkeyPatch):
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    collection = MagicMock()
+    collection.count_documents = AsyncMock(side_effect=RuntimeError("forced failure"))
+    monkeypatch.setattr(db, "_get_collection", AsyncMock(return_value=collection))
+
+    with pytest.raises(RuntimeError, match="forced failure"):
+        await db.get_schedules(raise_on_error=True)
+
+
+@pytest.mark.asyncio
+async def test_async_mongo_get_schedules_collection_none_raises_under_flag(monkeypatch: pytest.MonkeyPatch):
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    monkeypatch.setattr(db, "_get_collection", AsyncMock(return_value=None))
+
+    assert await db.get_schedules() == ([], 0)
+    with pytest.raises(RuntimeError, match="schedules table unavailable"):
+        await db.get_schedules(raise_on_error=True)
 
 
 @pytest.mark.asyncio

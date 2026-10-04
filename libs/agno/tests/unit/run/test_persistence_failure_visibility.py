@@ -14,6 +14,7 @@ from agno.models.base import Model
 from agno.models.message import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.base import RunStatus
+from agno.run.cancel import cleanup_run, get_active_runs
 from agno.run.workflow import WorkflowCompletedEvent
 from agno.team import Team
 from agno.workflow import Workflow
@@ -218,3 +219,33 @@ async def test_legacy_async_adapter_without_run_store_remains_supported(kind: st
         assert result.status == RunStatus.completed
     finally:
         await db.close()
+
+
+@pytest.mark.parametrize("is_async", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_workflow_persistence_failure_releases_run_tracking(is_async: bool, stream: bool, tmp_path: Any) -> None:
+    run_id = f"failed-write-{is_async}-{stream}"
+    workflow = _component("workflow", SqliteDb(db_file=str(tmp_path / "cleanup.db")))
+    kwargs = {
+        "run_id": run_id,
+        "session_id": "session",
+        "metadata": {"amount": Decimal("12.34")},
+        "stream": stream,
+    }
+
+    try:
+        with pytest.raises(StatementError, match="Decimal"):
+            if is_async:
+                if stream:
+                    async for _ in workflow.arun("hello", **kwargs):
+                        pass
+                else:
+                    await workflow.arun("hello", **kwargs)
+            elif stream:
+                list(workflow.run("hello", **kwargs))
+            else:
+                workflow.run("hello", **kwargs)
+
+        assert run_id not in get_active_runs(), "a failed durable write left a finished workflow registered as active"
+    finally:
+        cleanup_run(run_id)

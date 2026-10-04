@@ -18,13 +18,13 @@ from rich.pretty import pprint
 # Setup
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Answer factual questions concisely.",
 )
 
 evaluation = AccuracyEval(
     name="Capital Cities",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     agent=agent,
     input="What is the capital of Japan?",
     expected_output="Tokyo",

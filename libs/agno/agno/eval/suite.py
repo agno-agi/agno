@@ -811,8 +811,16 @@ async def acli(
     judge_model: Optional[Model] = None,
     default_timeout: int = 120,
     argv: Optional[Sequence[str]] = None,
+    mcp_tools: Optional[Sequence[Any]] = None,
 ) -> int:
-    """Async variant of cli() for callers already inside an event loop."""
+    """Async variant of cli() for callers already inside an event loop.
+
+    mcp_tools: MCP toolkits (e.g. the case components' registry tools) to
+    connect in this loop before the cases run and close again afterwards --
+    what the AgentOS lifespan does for a server, for an eval process. Connect
+    failures are logged per tool and the cases still run; a tool that never
+    connected is not closed.
+    """
     import argparse
 
     from rich.console import Console
@@ -865,6 +873,91 @@ async def acli(
                 return 1
         return 0
 
+    # Connected here, after the --list and no-match early returns, so only an
+    # actual run pays for (and has to tear down) live MCP sessions.
+    connected_mcp_tools: List[Any] = []
+
+    def _genuinely_cancelled() -> bool:
+        # Detectable on Python 3.11+; below that a genuine cancel during this
+        # bookkeeping is absorbed like a connect failure.
+        cancelling = getattr(asyncio.current_task(), "cancelling", None)
+        return cancelling is not None and cancelling() > 0
+
+    async def _drop_partial_mcp_state(tool: Any) -> None:
+        # A failed connect can leave partially-entered transport contexts that
+        # poison a later reconnect; connect()'s own cleanup does not always
+        # run (a CancelledError bypasses it, and initialize() failures return
+        # with the dead session still attached).
+        safe_cleanup = getattr(tool, "_safe_cleanup", None)
+        if safe_cleanup is None:
+            return
+        try:
+            maybe = safe_cleanup()
+            if isawaitable(maybe):
+                await maybe
+        except BaseException:
+            pass
+
+    async def _close_connected_mcp_tools() -> None:
+        cancelled: Optional[BaseException] = None
+        for tool in connected_mcp_tools:
+            try:
+                await tool.close()
+            except asyncio.CancelledError as exc:
+                # Keep releasing the remaining tools, then let the host's
+                # cancel land instead of reporting a normal exit.
+                if _genuinely_cancelled():
+                    cancelled = exc
+            except BaseException:
+                pass
+            if cancelled is None and _genuinely_cancelled():
+                # The real MCPTools.close() swallows everything it is handed,
+                # a delivered cancel included -- the task-level counter is the
+                # only trace left of it.
+                cancelled = asyncio.CancelledError()
+        if cancelled is not None:
+            raise cancelled
+
+    try:
+        for tool in mcp_tools or []:
+            if getattr(tool, "initialized", False):
+                # Connected by someone else (a server lifespan, the caller
+                # itself); not ours to manage -- connect() would no-op and
+                # closing it afterwards would tear down a session we never
+                # opened.
+                continue
+            try:
+                await tool.connect()
+            except BaseException as exc:
+                # BaseException: the mcp client surfaces an unreachable server
+                # as CancelledError out of its cancel scopes, bypassing
+                # connect()'s own fail-soft handler. Unlike a private loop,
+                # this coroutine runs on the caller's loop where cancellation
+                # can also be genuine -- re-raise that so the host's cancel
+                # still lands.
+                if isinstance(exc, asyncio.CancelledError) and _genuinely_cancelled():
+                    await _drop_partial_mcp_state(tool)
+                    raise
+                await _drop_partial_mcp_state(tool)
+                console.print(f"[yellow]warning:[/yellow] failed to connect MCP tool: {escape(repr(exc))}")
+            else:
+                if getattr(tool, "initialized", True):
+                    connected_mcp_tools.append(tool)
+                else:
+                    # connect() is fail-soft and can return without a usable
+                    # session (initialize() failures leave the toolkit
+                    # uninitialized); close() would no-op on it, so it is not
+                    # connected for our purposes.
+                    await _drop_partial_mcp_state(tool)
+                    tool_name = getattr(tool, "name", type(tool).__name__)
+                    console.print(
+                        f"[yellow]warning:[/yellow] failed to connect MCP tool: "
+                        f"{escape(str(tool_name))} did not yield a usable session"
+                    )
+    except BaseException:
+        await _close_connected_mcp_tools()
+        raise
+
     renderer = _CliRenderer(console=console, total=len(selected), verbose=args.verbose)
     try:
         suite = await arun_cases(
@@ -879,6 +972,7 @@ async def acli(
     finally:
         # Restore the terminal (stop the spinner) even on error or Ctrl-C.
         renderer.close()
+        await _close_connected_mcp_tools()
 
     _print_summary(console, suite)
 
@@ -895,6 +989,7 @@ def cli(
     judge_model: Optional[Model] = None,
     default_timeout: int = 120,
     argv: Optional[Sequence[str]] = None,
+    mcp_tools: Optional[Sequence[Any]] = None,
 ) -> int:
     """Run an argparse CLI over the given cases and return the exit code.
 
@@ -902,6 +997,16 @@ def cli(
     --json-output write), 2 no cases matched the selector. Built purely on the
     public runner API - call it from a template's __main__.py with
     `sys.exit(cli(CASES, db=my_db))`. Inside an already-running event loop, use
-    `await acli(...)` instead.
+    `await acli(...)` instead. mcp_tools are connected in the run's loop before
+    the cases and closed afterwards (see acli).
     """
-    return asyncio.run(acli(cases, db=db, judge_model=judge_model, default_timeout=default_timeout, argv=argv))
+    return asyncio.run(
+        acli(
+            cases,
+            db=db,
+            judge_model=judge_model,
+            default_timeout=default_timeout,
+            argv=argv,
+            mcp_tools=mcp_tools,
+        )
+    )

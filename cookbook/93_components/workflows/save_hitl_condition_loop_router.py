@@ -35,28 +35,28 @@ db = PostgresDb(db_url=db_url)
 analysis_agent = Agent(
     id="hitl-analyst",
     name="Analyst",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Perform detailed data analysis.",
 )
 
 summary_agent = Agent(
     id="hitl-summarizer",
     name="Summarizer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Provide a quick summary of the data.",
 )
 
 research_agent = Agent(
     id="hitl-researcher",
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Research the given topic thoroughly.",
 )
 
 writer_agent = Agent(
     id="hitl-writer",
     name="Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Write a report from the findings.",
 )
 

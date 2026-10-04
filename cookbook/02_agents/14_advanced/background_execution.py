@@ -10,7 +10,7 @@ Requirements:
 - OPENAI_API_KEY set
 
 Usage:
-    .venvs/demo/bin/python cookbook/02_agents/other/background_execution.py
+    .venvs/demo/bin/python cookbook/02_agents/14_advanced/background_execution.py
 """
 
 import asyncio

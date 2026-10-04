@@ -8,7 +8,7 @@ Requirements:
     pip install langgraph langchain-openai langchain-community
 
 Usage:
-    python cookbook/frameworks/langgraph/langgraph_tools_agentos.py
+    python cookbook/frameworks/langgraph/langgraph_session_agentos.py
 
 Then call the API:
     # Streaming
@@ -78,4 +78,4 @@ agent_os = AgentOS(agents=[agent])
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="langgraph_tools_agentos:app", reload=True)
+    agent_os.serve(app="langgraph_session_agentos:app", reload=True)

@@ -34,7 +34,7 @@ def test_load_from_topics_continues_after_skip(knowledge, mock_reader):
     skip_pattern = [True, False, False]
     skip_index = [0]
 
-    def mock_should_skip(content_hash, skip_if_exists, user_id=None):
+    def mock_should_skip(content_hash, skip_if_exists, user_id=None, prior_status=None):
         result = skip_pattern[skip_index[0] % len(skip_pattern)]
         skip_index[0] += 1
         return result
@@ -60,7 +60,7 @@ async def test_aload_from_topics_continues_after_skip(knowledge):
     skip_pattern = [True, False, False]
     skip_index = [0]
 
-    def mock_should_skip(content_hash, skip_if_exists, user_id=None):
+    def mock_should_skip(content_hash, skip_if_exists, user_id=None, prior_status=None):
         result = skip_pattern[skip_index[0] % len(skip_pattern)]
         skip_index[0] += 1
         return result
@@ -92,7 +92,7 @@ def test_load_from_topics_multiple_skips(knowledge):
     skip_pattern = [True, True, False, True, False]
     skip_index = [0]
 
-    def mock_should_skip(content_hash, skip_if_exists, user_id=None):
+    def mock_should_skip(content_hash, skip_if_exists, user_id=None, prior_status=None):
         result = skip_pattern[skip_index[0] % len(skip_pattern)]
         skip_index[0] += 1
         return result

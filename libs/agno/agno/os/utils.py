@@ -1055,6 +1055,8 @@ DOCUMENT_MIME_TYPES = {
     "application/vnd.ms-powerpoint",  # .ppt
     "application/vnd.ms-excel",  # .xls
     "application/vnd.ms-outlook",  # .msg
+    "application/zip",  # .zip
+    "message/rfc822",  # .eml
     "text/javascript",
     "application/x-python",
     "text/x-python",
@@ -1065,6 +1067,17 @@ DOCUMENT_MIME_TYPES = {
     "text/csv",
     "text/xml",
     "text/rtf",
+}
+
+# Other registered names for types already listed above (Windows browsers send
+# `application/x-zip-compressed` for `.zip`). Normalize at the upload boundary so a file
+# is not rejected for arriving under its alternate spelling.
+_DOCUMENT_MIME_TYPE_ALIASES = {
+    "application/x-zip": "application/zip",
+    "application/x-zip-compressed": "application/zip",
+    "application/xml": "text/xml",
+    "application/rtf": "text/rtf",
+    "application/javascript": "text/javascript",
 }
 
 # Fallback mapping from file extension to media category. Used when the browser sends a
@@ -1082,6 +1095,8 @@ EXTENSION_CATEGORY: Dict[str, str] = {
     "xlsx": "document",
     "xls": "document",
     "msg": "document",
+    "zip": "document",
+    "eml": "document",
     "py": "document",
     "txt": "document",
     "html": "document",
@@ -1127,6 +1142,13 @@ EXTENSION_CATEGORY: Dict[str, str] = {
 _AMBIGUOUS_CONTENT_TYPES = {None, "", "application/octet-stream"}
 
 
+def _normalize_document_mime_type(content_type: Optional[str]) -> Optional[str]:
+    """Map an alternate MIME spelling onto the type listed in DOCUMENT_MIME_TYPES."""
+    if content_type is None:
+        return None
+    return _DOCUMENT_MIME_TYPE_ALIASES.get(content_type, content_type)
+
+
 def classify_upload_file(file: UploadFile) -> Optional[str]:
     """Classify an uploaded file into one of: image, audio, video, document.
 
@@ -1134,7 +1156,7 @@ def classify_upload_file(file: UploadFile) -> Optional[str]:
     to be useful (common for `.md` and `.pptx` uploaded from browsers), falls back to the
     filename extension. Returns None if the file type is not supported.
     """
-    content_type = file.content_type
+    content_type = _normalize_document_mime_type(file.content_type)
     if content_type in IMAGE_MIME_TYPES:
         return "image"
     if content_type in AUDIO_MIME_TYPES:
@@ -1186,6 +1208,8 @@ _DOCUMENT_EXTENSION_MIME: Dict[str, str] = {
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "xls": "application/vnd.ms-excel",
     "msg": "application/vnd.ms-outlook",
+    "zip": "application/zip",
+    "eml": "message/rfc822",
     "py": "text/x-python",
     "txt": "text/plain",
     "html": "text/html",
@@ -1206,12 +1230,13 @@ def _resolve_document_mime_type(file: UploadFile) -> Optional[str]:
     documents with ambiguous content types (e.g. `.md` sent as octet-stream) still get a
     mime_type accepted by `FileMedia`.
     """
-    if file.content_type and file.content_type in DOCUMENT_MIME_TYPES:
-        return file.content_type
+    content_type = _normalize_document_mime_type(file.content_type)
+    if content_type and content_type in DOCUMENT_MIME_TYPES:
+        return content_type
     if file.filename and "." in file.filename:
         extension = file.filename.rsplit(".", 1)[-1].lower()
         return _DOCUMENT_EXTENSION_MIME.get(extension)
-    return file.content_type
+    return content_type
 
 
 def process_document(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Optional[FileMedia]:
@@ -1237,8 +1262,9 @@ def extract_format(file: UploadFile) -> Optional[str]:
         return file.filename.split(".")[-1].lower()
 
     # Fallback to the file content_type
-    if file.content_type:
-        return file.content_type.strip().split("/")[-1]
+    content_type = _normalize_document_mime_type(file.content_type)
+    if content_type:
+        return content_type.strip().split("/")[-1]
 
     return None
 
@@ -1304,25 +1330,72 @@ def draft_preview_identity(request: Any) -> tuple:
     """(actor, privileged) for the draft-preview gate.
 
     ``privileged`` is True only for a caller allowed to preview anyone's
-    draft: the admin scope, or no authentication at all (no request, or no
-    auth middleware ran). A plain authenticated caller keeps its raw
-    identity even when ``user_isolation`` is off - that flag widens reads,
-    never the right to run another owner's draft.
+    draft: an admin, or no authentication at all (no request, or no auth
+    middleware ran). A plain authenticated caller keeps its raw identity
+    even when ``user_isolation`` is off - that flag widens reads, never the
+    right to run another owner's draft.
+
+    "Admin" is decided the way every other gate decides it: the token's admin
+    scope counts only when the caller's scopes are their authority
+    (:func:`~agno.os.middleware.user_scope.caller_is_admin`), and under managed
+    roles an admin ROLE counts (the store's ``can_manage``, as on the ``/authz``
+    gate). Under a managed-roles or ReBAC plane a JWT's ``scopes`` claim is inert
+    everywhere else, so reading it raw here let any validly-signed token carrying
+    ``agent_os:admin`` preview every owner's drafts while being denied every
+    other admin action. Prefer :func:`adraft_preview_identity` on an async path:
+    the store may be bound to an async database, which its sync read refuses (a
+    managed-role admin then reads as a plain caller here).
     """
     if request is None:
         return None, True
-    from agno.os.middleware.user_scope import _has_admin_scope
+    from agno.os.middleware.user_scope import caller_is_admin
 
     user_id = getattr(request.state, "user_id", None)
     scopes = getattr(request.state, "scopes", None)
-    admin_scope_raw = getattr(request.state, "admin_scope", None)
-    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
     if scopes is None and user_id is None:
         # No auth middleware ran: authorization is off.
         return None, True
-    if _has_admin_scope(list(scopes or []), admin_scope=admin_scope):
+    if caller_is_admin(request):
         return None, True
+    role_store = _deciding_role_store(request)
+    if role_store is not None:
+        try:
+            if role_store.can_manage(user_id, getattr(request.state, "claims", None) or {}):
+                return None, True
+        except Exception:
+            pass  # an async-bound store refuses a sync read; a read failure is never a privilege
     return (user_id if isinstance(user_id, str) else None), False
+
+
+async def adraft_preview_identity(request: Any) -> tuple:
+    """Async twin of :func:`draft_preview_identity`: the managed-admin check awaits the store, so
+    it works against an async database."""
+    if request is None:
+        return None, True
+    from agno.os.middleware.user_scope import caller_is_admin
+
+    user_id = getattr(request.state, "user_id", None)
+    scopes = getattr(request.state, "scopes", None)
+    if scopes is None and user_id is None:
+        return None, True
+    if caller_is_admin(request):
+        return None, True
+    role_store = _deciding_role_store(request)
+    if role_store is not None:
+        try:
+            if await role_store.acan_manage(user_id, getattr(request.state, "claims", None) or {}):
+                return None, True
+        except Exception:
+            pass
+    return (user_id if isinstance(user_id, str) else None), False
+
+
+def _deciding_role_store(request: Any) -> Any:
+    """The Authorization object on the app, only when its managed-role engine is the plane that
+    decides (``roles_decide``); under an authorization_provider= override roles never took part."""
+    state = getattr(getattr(request, "app", None), "state", None)
+    role_store = getattr(state, "role_store", None) if state is not None else None
+    return role_store if role_store is not None and getattr(role_store, "roles_decide", False) else None
 
 
 def may_read_draft_configs(
@@ -1955,6 +2028,11 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
                     user_id_claim=kwargs.get("user_id_claim", "sub"),
                     session_id_claim=kwargs.get("session_id_claim", "session_id"),
                     audience_claim=kwargs.get("audience_claim", "aud"),
+                    # Thread the issuer pin so the WebSocket validator enforces it too --
+                    # otherwise a token from an untrusted issuer that REST rejects would be
+                    # accepted on the WS handshake (the pin held only on the HTTP path).
+                    issuer=kwargs.get("issuer"),
+                    issuer_claim=kwargs.get("issuer_claim", "iss"),
                 )
             except Exception as e:
                 log_warning(f"Could not lazily construct JWTValidator for WebSocket auth: {e}")
@@ -2286,6 +2364,9 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
     registry.add_schema(getattr(agent, "input_schema", None))
     registry.add_schema(getattr(agent, "output_schema", None))
     registry.add_db(getattr(agent, "db", None))
+    for filesystem, _read_only in getattr(agent, "filesystems", []):
+        filesystem_backend = getattr(filesystem, "backend", None)
+        registry.add_db(getattr(filesystem_backend, "db", None))
     _collect_components_from_knowledge(getattr(agent, "knowledge", None), registry)
     # A named LearningMachine on a code-defined component is a registry
     # resource: its stored config references it by name, so the registry the
@@ -2778,7 +2859,7 @@ async def resolve_agent(
 
         scoped_user_id = get_scoped_user_id(request)
     # An explicit draft version is a control-plane preview: owner/admin only.
-    preview_actor, preview_privileged = draft_preview_identity(request)
+    preview_actor, preview_privileged = await adraft_preview_identity(request)
     if not allow_draft_preview(db, agent_id, version, preview_actor, privileged=preview_privileged):
         # Byte-identical to the route's plain not-found: the denial must not
         # read differently from the component being absent.
@@ -2833,6 +2914,11 @@ async def resolve_agent(
 
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
+    if isinstance(agent, Agent) and request is not None and (agent.filesystem or agent.tools):
+        # An agent rebuilt from the database gets the OS isolation policy like a configured one.
+        from agno.agent import _init as agent_init
+
+        agent_init.apply_filesystem_user_isolation(agent, bool(getattr(request.state, "user_isolation_enabled", False)))
     return agent
 
 
@@ -2857,7 +2943,7 @@ async def resolve_team(
 
         scoped_user_id = get_scoped_user_id(request)
     # An explicit draft version is a control-plane preview: owner/admin only.
-    preview_actor, preview_privileged = draft_preview_identity(request)
+    preview_actor, preview_privileged = await adraft_preview_identity(request)
     if not allow_draft_preview(db, team_id, version, preview_actor, privileged=preview_privileged):
         # Byte-identical to the route's plain not-found: the denial must not
         # read differently from the component being absent.
@@ -2936,7 +3022,7 @@ async def resolve_workflow(
 
         scoped_user_id = get_scoped_user_id(request)
     # An explicit draft version is a control-plane preview: owner/admin only.
-    preview_actor, preview_privileged = draft_preview_identity(request)
+    preview_actor, preview_privileged = await adraft_preview_identity(request)
     if not allow_draft_preview(db, workflow_id, version, preview_actor, privileged=preview_privileged):
         # Byte-identical to the route's plain not-found: the denial must not
         # read differently from the component being absent.

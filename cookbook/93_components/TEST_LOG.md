@@ -27,7 +27,7 @@ Test results for `cookbook/93_components/` examples.
 
 **Description:** Builds a team (two agents with distinct models, one with a custom tool and a db) and a workflow, hands them to AgentOS without an explicit registry, and prints the auto-populated registry. Runs offline (no model calls).
 
-**Result:** Discovered `OpenAI:gpt-5.4` (collected once though shared by two agents), `OpenAI:gpt-5.4-mini`, the `get_weather` tool, and the `auto-registry-db` database. No registry was passed.
+**Result:** Discovered `OpenAI:gpt-5.4` (collected once though shared by two agents), `OpenAI:gpt-5.6-luna`, the `get_weather` tool, and the `auto-registry-db` database. No registry was passed.
 
 ---
 
