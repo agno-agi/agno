@@ -34,14 +34,16 @@ except ImportError as exc:
 
 
 # Note: Expand this list as new models become supported by the Google Content Generation API.
-ALLOWED_MODELS = ["gemini-2.5-flash-image"]
+# gemini-2.5-flash-image was shut down on the Gemini API on October 2, 2026; Google names gemini-3.1-flash-image
+# as its replacement (https://ai.google.dev/gemini-api/docs/deprecations).
+ALLOWED_MODELS = ["gemini-3.1-flash-image"]
 ALLOWED_RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
 
 
 class NanoBananaTools(Toolkit):
     def __init__(
         self,
-        model: str = "gemini-2.5-flash-image",
+        model: str = "gemini-3.1-flash-image",
         aspect_ratio: str = "1:1",
         api_key: Optional[str] = None,
         enable_create_image: bool = True,
