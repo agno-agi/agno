@@ -8,6 +8,28 @@ import pytest
 from agno.tools.file import FileTools
 
 
+@pytest.mark.parametrize(("start", "end"), [(-1, 1), (0, -1), (3, 1), (4, 4), (1, 8)])
+def test_replace_file_chunk_rejects_invalid_ranges_without_writing(tmp_path, start, end):
+    file_path = tmp_path / "sample.txt"
+    original = b"a\nb\nc\nd"
+    file_path.write_bytes(original)
+    tools = FileTools(base_dir=tmp_path)
+
+    result = tools.replace_file_chunk("sample.txt", start, end, "replacement")
+
+    assert result.startswith("Error patching file:")
+    assert file_path.read_bytes() == original
+
+
+def test_replace_file_chunk_replaces_inclusive_valid_range(tmp_path):
+    file_path = tmp_path / "sample.txt"
+    file_path.write_text("a\nb\nc\nd", encoding="utf-8")
+    tools = FileTools(base_dir=tmp_path)
+
+    assert tools.replace_file_chunk("sample.txt", 1, 2, "replacement") == "sample.txt"
+    assert file_path.read_text(encoding="utf-8") == "a\nreplacement\nd"
+
+
 def test_save_and_read_file():
     """Test saving and reading a file."""
     with tempfile.TemporaryDirectory() as tmp_dir:
