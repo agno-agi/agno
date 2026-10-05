@@ -173,7 +173,10 @@ def _parse_individual_json(content: str, output_schema: Type[BaseModel]) -> Opti
                     field_value = candidate_obj[field_name]
                     # If field is a list, extend it; otherwise, use the latest value
                     if isinstance(field_value, list):
-                        if field_name not in merged_data:
+                        # An earlier fragment may have provided a non-list value for this field
+                        # (an LLM often emits a draft scalar before the real list). Extending
+                        # that value would raise, so start a fresh accumulator instead.
+                        if not isinstance(merged_data.get(field_name), list):
                             merged_data[field_name] = []
                         merged_data[field_name].extend(field_value)
                     else:

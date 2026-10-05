@@ -56,6 +56,7 @@ surface.
 | [23_skills](./23_skills/) | Serve local skills through an Agent and execute checked-in skill scripts through the AgentOS run API. |
 | [24_showcase](./24_showcase/) | Run the secure, traced capstone with RAG, web and finance research, a Team, and a real evaluation. |
 | [25_agentos_tools](./25_agentos_tools/) | Answer platform ops questions (usage, latency, tool statistics) with an agent using AgentOSTools. |
+| [26_authorization](./26_authorization/) | Replace the built-in scope check with managed roles, a user directory, an IdP, ReBAC, or your own provider. |
 | [26_teams](./26_teams/) | Serve Microsoft Teams bots over the Bot Framework webhook, with validated activities, session reset, and proactive alerts. |
 
 ## Canonical ports
@@ -103,6 +104,7 @@ surface.
 | `23_skills` | `OPENAI_API_KEY` | Local sample-skill files with executable Python scripts |
 | `24_showcase` | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OS_SECURITY_KEY` | `./cookbook/scripts/run_pgvector.sh`, internet access, and tracing |
 | `25_agentos_tools` | `OPENAI_API_KEY` | Local SQLite with tracing enabled |
+| `26_authorization` | None for the local examples | Throwaway SQLite; `agno[os]`, and `agno[fga]` only to swap in a real OpenFGA |
 | `26_teams` | Microsoft app id, password, and optional tenant values; provider keys used by each served entity | `agno[microsoft-teams]`, an Azure Bot registration, and a public HTTPS callback; construction smoke is valid without a live bot registration |
 
 Run cookbook files with `.venvs/demo/bin/python`. Development checks use

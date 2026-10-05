@@ -14,7 +14,8 @@ from agno.os.config import MCP_SERVER_CARD_PATH, MCPConfig
 def validate_mcp_routes(app: Any, config: MCPConfig, mcp_app: Any) -> None:
     """Reject transport paths that would hide an existing REST route."""
     # Revalidate routing settings if a caller mutated/copied the configuration.
-    MCPConfig(path=config.path, path_aliases=config.path_aliases, root_host=config.root_host)
+    # This temporary config only validates paths; it does not publish any tools.
+    MCPConfig(default_tools=True, path=config.path, path_aliases=config.path_aliases, root_host=config.root_host)
     for route in app.routes:
         if isinstance(route, Mount) and route.app is mcp_app:
             continue

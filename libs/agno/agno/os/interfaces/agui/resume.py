@@ -126,6 +126,27 @@ def _find_paused_run(
     return None
 
 
+async def find_resume_target_run_id(
+    entity: Any,
+    session_id: str,
+    tool_messages: List[AGUIToolMessage],
+) -> Optional[str]:
+    """The id of the paused run these tool results would resume, or None when there is none.
+
+    Read-only lookup for the route's admission gates, which must decide BEFORE the response
+    stream opens (a refusal inside the stream is an event, not a 403). Deliberately tolerant:
+    a remote entity, a missing db, an unknown session or no matching paused run all answer
+    None, and :func:`resume_paused_run` then raises its own precise error inside the stream
+    exactly as before."""
+    if not isinstance(entity, (Agent, Team)) or not entity.db:
+        return None
+    session = await entity.aget_session(session_id=session_id)
+    if not isinstance(session, (AgentSession, TeamSession)):
+        return None
+    paused_run = _find_paused_run(session, tool_messages, is_team=isinstance(entity, Team))
+    return paused_run.run_id if paused_run else None
+
+
 async def resume_paused_run(
     entity: Union[Agent, Team],
     session_id: str,
