@@ -189,8 +189,6 @@ async def download_attachments_async(parsed: ActivityContent, config: TeamsConfi
         # attachment CDN as application/octet-stream, which the model rejects.
         declared = (att.get("contentType") or "").lower()
         images.append(Image(content=content, mime_type=declared or mime or "image/png"))
-    if images:
-        run_kwargs["images"] = images
 
     files: List[File] = []
     for att in parsed.file_attachments:
@@ -207,10 +205,20 @@ async def download_attachments_async(parsed: ActivityContent, config: TeamsConfi
         # back to guessing from the filename and the provider rejects the run,
         # costing the user their message text as well as the attachment.
         resolved_mime = mime or guess_type(name or "")[0]
+        # An image uploaded from the paperclip arrives here rather than above:
+        # Teams marks it as a file attachment, and only a pasted image carries an
+        # image/* contentType. File's allowlist holds no image types at all, so
+        # measuring one against it would drop the photo as unreadable.
+        if (resolved_mime or "").startswith("image/"):
+            images.append(Image(content=content, mime_type=resolved_mime))
+            continue
         if resolved_mime not in File.valid_mime_types():
             skipped.append(name or "file")
             continue
         files.append(File(content=content, mime_type=resolved_mime, filename=name))
+
+    if images:
+        run_kwargs["images"] = images
     if files:
         run_kwargs["files"] = files
 
