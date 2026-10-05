@@ -38,6 +38,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "google": ("agno.models.google", "Gemini", "Gemini", "google"),
     "google-interactions": ("agno.models.google", "GeminiInteractions", "GeminiInteractions", "google"),
     "groq": ("agno.models.groq", "Groq", "Groq", "groq"),
+    "heabsy": ("agno.models.heabsy", "Heabsy", "Heabsy", "heabsy"),
     "huggingface": ("agno.models.huggingface", "HuggingFace", "HuggingFace", "huggingface"),
     "ibm": ("agno.models.ibm", "WatsonX", "WatsonX", "ibm"),
     "inception": ("agno.models.inception", "Inception", "Inception", "inceptionlabs"),
