@@ -9,7 +9,7 @@ from uuid import uuid4
 from agno.compaction._cut import choose_boundary, is_offload_envelope
 from agno.compaction._tokens import estimate_tokens
 from agno.compaction._view import build_view
-from agno.compaction.archive import CompactionArchive, render_messages
+from agno.compaction.archive import CompactionArchive, render_message, render_messages
 from agno.compaction.prompts import (
     ARCHIVE_AWARE_PROMPT,
     ARCHIVE_LOOKUP_INSTRUCTION,
@@ -26,8 +26,9 @@ if TYPE_CHECKING:
 
 
 # Summarizing an enormous transcript in one call is unreliable and can itself
-# overflow. Trim what the summarizer reads, oldest first, to this budget.
-DEFAULT_SUMMARIZE_CHAR_BUDGET = 100_000
+# overflow. Trim what the summarizer reads, oldest first, to this budget - about
+# 100k tokens, so a fold at the default compact_at_tokens fits in one call.
+DEFAULT_SUMMARIZE_CHAR_BUDGET = 400_000
 
 # The default kept tail, and a sentinel standing in for "nobody set this". Comparing against
 # the value alone cannot tell uncompacted_runs=5 written by hand from the default, so an explicit
@@ -338,11 +339,16 @@ class Compaction:
     # -- summarizing ----------------------------------------------------
 
     def _trim_for_summary(self, messages: List[Message]) -> List[Message]:
-        """Drop the oldest messages that do not fit the summarizer's budget."""
+        """Drop the oldest messages that do not fit the summarizer's budget.
+
+        Each message is measured as it is rendered for the summarizer, so a large tool result
+        counts at its clipped size - the text actually sent - rather than spending budget on
+        characters the summarizer never receives.
+        """
         kept: List[Message] = []
         budget = DEFAULT_SUMMARIZE_CHAR_BUDGET
         for message in reversed(messages):
-            size = len(message.get_content_string())
+            size = len(render_message(message)) + 2  # + the block separator
             if budget - size < 0 and kept:
                 break
             budget -= size

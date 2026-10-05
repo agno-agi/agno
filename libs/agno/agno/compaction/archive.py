@@ -24,6 +24,25 @@ from agno.utils.log import log_debug, log_warning
 MAX_ARCHIVED_TOOL_RESULT_CHARS = 20_000
 
 
+def render_message(message: Message) -> str:
+    """Render one message as a markdown block. Tool results are clipped to MAX_ARCHIVED_TOOL_RESULT_CHARS."""
+    heading = message.role
+    if message.tool_name:
+        heading = f"{message.role} ({message.tool_name})"
+    parts: List[str] = [f"## {heading}"]
+
+    content = message.get_content_string()
+    if content:
+        parts.append(_clip(content, MAX_ARCHIVED_TOOL_RESULT_CHARS) if message.role == "tool" else content)
+
+    for tool_call in message.tool_calls or []:
+        function = tool_call.get("function") if isinstance(tool_call, dict) else None
+        if isinstance(function, dict):
+            parts.append(f"**calls** `{function.get('name')}`: {function.get('arguments')}")
+
+    return "\n\n".join(parts)
+
+
 def render_messages(messages: List[Message]) -> str:
     """Render messages as readable markdown.
 
@@ -31,24 +50,7 @@ def render_messages(messages: List[Message]) -> str:
     name the tool: a search for a tool name or a phrase from an old answer should land on the turn
     that produced it.
     """
-    blocks: List[str] = []
-    for message in messages:
-        heading = message.role
-        if message.tool_name:
-            heading = f"{message.role} ({message.tool_name})"
-        parts: List[str] = [f"## {heading}"]
-
-        content = message.get_content_string()
-        if content:
-            parts.append(_clip(content, MAX_ARCHIVED_TOOL_RESULT_CHARS) if message.role == "tool" else content)
-
-        for tool_call in message.tool_calls or []:
-            function = tool_call.get("function") if isinstance(tool_call, dict) else None
-            if isinstance(function, dict):
-                parts.append(f"**calls** `{function.get('name')}`: {function.get('arguments')}")
-
-        blocks.append("\n\n".join(parts))
-    return "\n\n".join(blocks)
+    return "\n\n".join(render_message(message) for message in messages)
 
 
 def _clip(text: str, limit: int) -> str:
@@ -161,4 +163,4 @@ class CompactionArchive:
             return []
 
 
-__all__ = ["CompactionArchive", "render_messages", "MAX_ARCHIVED_TOOL_RESULT_CHARS"]
+__all__ = ["CompactionArchive", "render_message", "render_messages", "MAX_ARCHIVED_TOOL_RESULT_CHARS"]

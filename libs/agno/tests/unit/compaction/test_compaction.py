@@ -1680,14 +1680,17 @@ def test_oversized_transcripts_are_trimmed_oldest_first():
     """One summarization call cannot swallow an unbounded transcript."""
     from agno.compaction.manager import DEFAULT_SUMMARIZE_CHAR_BUDGET
 
-    messages = [Message(role="user", content="x" * 40_000) for _ in range(6)]
+    messages = [Message(role="user", content="x" * 40_000) for _ in range(12)]
 
-    trimmed = Compaction()._trim_for_summary(messages)
+    compaction = Compaction()
+    trimmed = compaction._trim_for_summary(messages)
+    transcript = compaction._summary_messages(messages, previous=None)[-1].content
 
     assert len(trimmed) < len(messages)
     # The newest survive; the oldest are dropped.
     assert trimmed[-1] is messages[-1]
-    assert sum(len(m.get_content_string()) for m in trimmed) <= DEFAULT_SUMMARIZE_CHAR_BUDGET + 40_000
+    # The budget bounds what the summarizer reads, which is each message clipped for it.
+    assert len(transcript) <= DEFAULT_SUMMARIZE_CHAR_BUDGET
 
 
 def test_a_single_oversized_message_still_gets_summarized():
@@ -1890,6 +1893,62 @@ def test_render_includes_roles_and_tool_names():
     assert "## user" in rendered
     assert "## tool (search)" in rendered
     assert "question 0" in rendered
+
+
+def _span_with(large):
+    """A span being folded: a fact early on, then one very large message."""
+    return [
+        Message(role="user", content="My budget is 4000 dollars and I fly on April 3."),
+        Message(role="assistant", content="Noted: 4000 dollars, flying April 3."),
+        Message(role="user", content="Search the fare database for flights."),
+        Message(
+            role="assistant",
+            content=None,
+            tool_calls=[{"id": "c1", "type": "function", "function": {"name": "search", "arguments": "{}"}}],
+        ),
+        large,
+        Message(role="assistant", content="Cheapest fare is 640 dollars."),
+    ]
+
+
+def test_a_large_tool_result_does_not_crowd_the_rest_out_of_the_summary():
+    """Every folded message leaves the context, so every one must reach the summarizer. A tool
+    result is sent clipped, so it must be charged at its clipped size: charged raw, one result
+    larger than the whole budget used to leave the summarizer seeing 1 of 6 messages."""
+    from agno.compaction.manager import DEFAULT_SUMMARIZE_CHAR_BUDGET
+
+    huge = Message(role="tool", tool_call_id="c1", tool_name="search", content="fare row " * 60_000)
+    assert len(huge.content) > DEFAULT_SUMMARIZE_CHAR_BUDGET
+    messages = _span_with(huge)
+    compaction = Compaction()
+
+    transcript = compaction._summary_messages(messages, previous=None)[-1].content
+
+    assert len(compaction._trim_for_summary(messages)) == len(messages)
+    assert "4000 dollars" in transcript
+    assert len(transcript) < 30_000
+
+
+def test_a_long_pasted_message_reaches_the_summarizer_in_full():
+    """User and assistant messages are not clipped: within the budget, a long document is read whole."""
+    pasted = Message(role="user", content="clause " * 21_000)
+    messages = _span_with(pasted)
+    compaction = Compaction()
+
+    transcript = compaction._summary_messages(messages, previous=None)[-1].content
+
+    assert len(compaction._trim_for_summary(messages)) == len(messages)
+    assert pasted.content.strip() in transcript
+    assert "4000 dollars" in transcript
+
+
+def test_the_archive_keeps_long_messages_in_full():
+    """Only the summarizer's view clips every message; the archive is the lossless record."""
+    from agno.compaction.archive import render_messages
+
+    pasted = Message(role="user", content="clause " * 21_000)
+
+    assert len(render_messages([pasted])) > 140_000
 
 
 def test_render_clips_huge_tool_results():
