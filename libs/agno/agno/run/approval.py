@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from uuid import uuid4
 
 from agno.run.base import RunStatus
@@ -66,7 +66,7 @@ def _unstamped_approval_tools(tools: Optional[List[Any]], requirements: Optional
     and executed) must not stand in for a tool raised by a later pause.
     """
     result: List[Any] = []
-    seen_ids: set = set()
+    seen_ids: Set[str] = set()
     candidates = list(tools or []) + [getattr(r, "tool_execution", None) for r in requirements or []]
     for t in candidates:
         if t is None or getattr(t, "approval_type", None) != "required" or getattr(t, "approval_id", None) is not None:
@@ -81,10 +81,31 @@ def _unstamped_approval_tools(tools: Optional[List[Any]], requirements: Optional
 
 
 def _is_pending_tool(tool_execution: Any, pending_tools: List[Any]) -> bool:
+    """Whether the tool execution is one of pending_tools, by identity or by tool_call_id.
+
+    After a DB reload, run_response.tools and the requirements hold distinct
+    copies of the same tool call, so identity alone misses the requirement's copy.
+    """
     tcid = getattr(tool_execution, "tool_call_id", None)
     return any(
         p is tool_execution or (tcid is not None and getattr(p, "tool_call_id", None) == tcid) for p in pending_tools
     )
+
+
+def _belongs_to_current_pause(req: Any, pending_tools: List[Any]) -> bool:
+    """Whether a requirement belongs in the record created for the current pause.
+
+    That is the pending approval tools, plus HITL tools without approval paused
+    in the same turn (still unresolved). Requirements resolved at earlier pauses
+    of the run are left out.
+    """
+    te = getattr(req, "tool_execution", None)
+    if te is None:
+        return False
+    if _is_pending_tool(te, pending_tools):
+        return True
+    is_resolved = getattr(req, "is_resolved", None)
+    return getattr(te, "approval_type", None) is None and callable(is_resolved) and not is_resolved()
 
 
 def _build_approval_dict(
@@ -102,8 +123,10 @@ def _build_approval_dict(
 ) -> Dict[str, Any]:
     """Build the approval record dict from run response and context.
 
-    When pending_tools is given, the record names only those tools, so a record
-    created at a later pause never describes a tool resolved at an earlier one.
+    When pending_tools is given, the record covers only the current pause: the
+    pending approval tools and any unresolved HITL tools paused alongside them,
+    so a record created at a later pause never describes a tool resolved at an
+    earlier one.
     """
     # Determine source type
     source_type = "agent"
@@ -120,8 +143,7 @@ def _build_approval_dict(
     if hasattr(run_response, "requirements") and run_response.requirements:
         requirements_data = []
         for req in run_response.requirements:
-            te = getattr(req, "tool_execution", None)
-            if pending_tools is not None and (te is None or not _is_pending_tool(te, pending_tools)):
+            if pending_tools is not None and not _belongs_to_current_pause(req, pending_tools):
                 continue
             if hasattr(req, "to_dict"):
                 requirements_data.append(req.to_dict())
@@ -705,6 +727,18 @@ def _sync_requirements_after_approval(run_response: Any, approval_status: str, o
                 req.confirmation = False
 
 
+def _record_for_this_continue(pairs: List[tuple]) -> Dict[str, Any]:
+    """The record a post-hook should see: the one for the first call this continue will run.
+
+    pairs also holds calls approved and executed at earlier pauses of the run; their
+    records are older, so pairs[0] would describe a call that already ran.
+    """
+    for tool, record in pairs:
+        if getattr(tool, "result", None) is None:
+            return record
+    return pairs[-1][1]
+
+
 def _attach_resolved_approval(run_response: Any, approval: Dict[str, Any]) -> None:
     """Expose the resolved approval record to post-hooks via run_response.metadata["approval"]."""
     if run_response.metadata is None:
@@ -745,7 +779,7 @@ def check_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any)
         _apply_approval_to_tools([tool], record.get("status", "pending"), record.get("resolution_data"))
         _sync_requirements_after_approval(run_response, record.get("status", "pending"), only_tool=tool)
 
-    _attach_resolved_approval(run_response, pairs[0][1])
+    _attach_resolved_approval(run_response, _record_for_this_continue(pairs))
 
 
 async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any) -> None:
@@ -774,7 +808,7 @@ async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_respons
         _apply_approval_to_tools([tool], record.get("status", "pending"), record.get("resolution_data"))
         _sync_requirements_after_approval(run_response, record.get("status", "pending"), only_tool=tool)
 
-    _attach_resolved_approval(run_response, pairs[0][1])
+    _attach_resolved_approval(run_response, _record_for_this_continue(pairs))
 
 
 async def acreate_audit_approval(

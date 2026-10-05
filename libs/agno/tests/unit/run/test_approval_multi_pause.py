@@ -387,3 +387,31 @@ def test_team_merge_keeps_executed_call():
     merged = _merge_tools_preserving_approval([executed, open_call], {"call_1": stale, "call_2": decided})
     assert merged[0] is executed
     assert merged[1] is decided
+
+
+# ---------------------------------------------------------------------------
+# Post-hooks see the record of the call the continue runs
+# ---------------------------------------------------------------------------
+SEEN_BY_HOOK: List[Optional[str]] = []
+
+
+def _record_seen_by_post_hook(run_output) -> None:
+    approval_record = (run_output.metadata or {}).get("approval") or {}
+    SEEN_BY_HOOK.append((approval_record.get("tool_args") or {}).get("invoice"))
+
+
+@pytest.mark.parametrize("build", BUILDERS)
+def test_post_hook_sees_the_record_for_the_call_being_run(db, build):
+    SEEN_BY_HOOK.clear()
+    entity: Union[Agent, Team] = build(db)
+    entity.post_hooks = [_record_seen_by_post_hook]
+    run = entity.run("Pay INV-1 and INV-2.")
+    for _ in range(2):
+        _approve_pending(db, run.run_id)
+        run = entity.continue_run(run_id=run.run_id, session_id=run.session_id)
+        # The hook ran with the continued run's output, which carries the record attached by the gate.
+        assert ((run.metadata or {}).get("approval") or {}).get("tool_args") == {"invoice": PAID[-1]}
+
+    assert not run.is_paused
+    assert PAID == ["INV-1", "INV-2"]
+    assert SEEN_BY_HOOK[-1] == "INV-2"

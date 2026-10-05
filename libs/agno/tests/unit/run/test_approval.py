@@ -836,3 +836,37 @@ class TestGateReviewRegressions:
         db.get_approvals.return_value = ([_record_for("call_2", record_id="appr-reissued")], 1)
         check_and_apply_approval_resolution(db=db, run_id="team-run", run_response=rr)
         assert te.confirmed is True
+
+
+@dataclass
+class FakeResolvableRequirement(FakeCallRequirement):
+    resolved: bool = False
+
+    def is_resolved(self) -> bool:
+        return self.resolved
+
+
+class TestRecordCoversCurrentPause:
+    def test_plain_hitl_tool_paused_alongside_is_listed(self):
+        earlier_plain = FakeToolExecution(tool_name="notify", tool_call_id="call_0", requires_confirmation=True)
+        gated = FakeToolExecution(
+            tool_name="pay_invoice", tool_call_id="call_1", approval_type="required", requires_confirmation=True
+        )
+        plain = FakeToolExecution(tool_name="notify", tool_call_id="call_2", requires_confirmation=True)
+        rr = FakeRunResponse(
+            tools=[earlier_plain, gated, plain],
+            requirements=[
+                FakeResolvableRequirement(tool_execution=earlier_plain, resolved=True),
+                FakeResolvableRequirement(tool_execution=gated),
+                FakeResolvableRequirement(tool_execution=plain),
+            ],
+        )
+        db = MagicMock()
+        approval_id = create_approval_from_pause(db=db, run_response=rr)
+
+        data = db.create_approval.call_args[0][0]
+        assert [r["tool_execution"]["tool_call_id"] for r in data["requirements"]] == ["call_1", "call_2"]
+        assert data["tool_name"] == "pay_invoice"
+        assert data["context"]["tool_names"] == ["pay_invoice"]
+        assert gated.approval_id == approval_id
+        assert plain.approval_id is None
