@@ -97,8 +97,9 @@ class Compaction:
     # -- archive --------------------------------------------------------
     # Store folded messages so they stay recoverable.
     archive: bool = True
-    # Let the agent search the archive for detail the summary dropped.
-    searchable: bool = True
+    # Let the agent search the archive for detail the summary dropped. Unset, it is on whenever
+    # there is an archive to search.
+    searchable: Optional[bool] = None
 
     # Also fold and retry when the provider rejects a request as too long. compaction=True turns it on.
     on_context_overflow: bool = False
@@ -110,6 +111,15 @@ class Compaction:
     def __post_init__(self) -> None:
         if self.id is None:
             self.id = f"compaction_{uuid4().hex[:8]}"
+        # Search reads the archived transcript, so unset it follows the archive. Asking for search
+        # while turning the archive off is a contradiction - raise rather than drop it silently.
+        if self.searchable is None:
+            self.searchable = self.archive
+        elif self.searchable and not self.archive:
+            raise ValueError(
+                "searchable=True needs archive=True: the search tool reads the archived transcript, "
+                "which archive=False does not store. Turn archive on, or leave searchable unset."
+            )
         # Asking for overflow recovery is asking to fold when the provider says so. A default
         # threshold would pre-empt that on any model with a window above it - which is every
         # large model - leaving the flag dead code. An explicit threshold still wins: naming

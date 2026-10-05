@@ -1932,6 +1932,33 @@ def test_archive_degrades_when_db_cannot_store_records(caplog):
     assert Compaction().archive_for("s", None) is None
 
 
+def test_search_follows_the_archive_by_default():
+    """Search reads the archived transcript, so unset it is on exactly when there is one. Turning the
+    archive off is not a request about search, so it says nothing and raises nothing."""
+    assert Compaction().searchable is True
+    assert Compaction(archive=False).searchable is False
+
+
+def test_asking_for_search_without_an_archive_is_rejected():
+    """Two settings the user chose contradict each other; dropping one silently would leave them
+    wondering where the search tool went."""
+    with pytest.raises(ValueError, match="searchable=True needs archive=True"):
+        Compaction(archive=False, searchable=True)
+
+
+def test_search_can_still_be_turned_off():
+    assert Compaction(searchable=False).searchable is False
+    assert Compaction(archive=False, searchable=False).searchable is False
+
+
+def test_a_resolved_search_setting_survives_revalidation():
+    """Overflow recovery derives variants with dataclasses.replace(), which re-runs __post_init__."""
+    from dataclasses import replace
+
+    assert replace(Compaction(archive=False), min_fold_ratio=0).searchable is False
+    assert replace(Compaction(), min_fold_ratio=0).searchable is True
+
+
 def test_a_fold_without_an_archive_still_persists():
     """archive=False turns off storing the folded transcript, not storing the fold. Without the
     record the fold vanished after its own run: the next run sent the full history again, and the
