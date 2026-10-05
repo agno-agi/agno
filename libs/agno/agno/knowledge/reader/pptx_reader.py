@@ -12,13 +12,14 @@ from agno.utils.log import log_debug, log_error
 
 try:
     from pptx import Presentation  # type: ignore
+    from pptx.shapes.graphfrm import GraphicFrame  # type: ignore
     from pptx.shapes.group import GroupShape  # type: ignore
 except ImportError:
     raise ImportError("The `python-pptx` package is not installed. Please install it via `pip install python-pptx`.")
 
 
 def _shape_texts(shapes: Any) -> List[str]:
-    """Collect the text of every shape, descending into groups.
+    """Collect shape and table text, descending into groups.
 
     A group holds its children in `.shapes` and has no `.text` of its own, so a
     flat pass over `slide.shapes` drops every text box inside it. The group is
@@ -29,6 +30,12 @@ def _shape_texts(shapes: Any) -> List[str]:
     for shape in shapes:
         if isinstance(shape, GroupShape):
             texts.extend(_shape_texts(shape.shapes))
+            continue
+        if isinstance(shape, GraphicFrame) and shape.has_table:
+            for row in shape.table.rows:
+                row_text = "\t".join("" if cell.is_spanned else cell.text.strip() for cell in row.cells).strip()
+                if row_text:
+                    texts.append(row_text)
             continue
         text = getattr(shape, "text", "")
         if text and text.strip():
