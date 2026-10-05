@@ -870,3 +870,64 @@ class TestRecordCoversCurrentPause:
         assert data["context"]["tool_names"] == ["pay_invoice"]
         assert gated.approval_id == approval_id
         assert plain.approval_id is None
+
+
+class TestAuditToolBeforeRequiredTool:
+    def _run_response(self):
+        audit = FakeToolExecution(
+            tool_name="log_action",
+            tool_call_id="call_1",
+            approval_type="audit",
+            requires_confirmation=True,
+            confirmed=True,
+            result="logged",
+        )
+        gated = FakeToolExecution(
+            tool_name="pay_invoice",
+            tool_call_id="call_2",
+            tool_args={"invoice": "INV-1"},
+            approval_type="required",
+            requires_confirmation=True,
+        )
+        rr = FakeRunResponse(
+            tools=[audit, gated],
+            requirements=[FakeCallRequirement(tool_execution=audit), FakeCallRequirement(tool_execution=gated)],
+        )
+        return rr, audit, gated
+
+    def test_has_approval_requirement_sees_required_tool_after_audit_tool(self):
+        rr, _, _ = self._run_response()
+        assert _has_approval_requirement(rr.tools, rr.requirements) is True
+
+    def test_required_tool_after_audit_tool_gets_a_record(self):
+        db = MagicMock()
+        rr, audit, gated = self._run_response()
+        approval_id = create_approval_from_pause(db=db, run_response=rr)
+
+        db.create_approval.assert_called_once()
+        data = db.create_approval.call_args[0][0]
+        assert data["tool_name"] == "pay_invoice"
+        assert data["tool_args"] == {"invoice": "INV-1"}
+        assert gated.approval_id == approval_id
+        assert audit.approval_id is None
+
+    @pytest.mark.asyncio
+    async def test_required_tool_after_audit_tool_gets_a_record_async(self):
+        db = MagicMock()
+        db.create_approval = AsyncMock()
+        rr, audit, gated = self._run_response()
+        approval_id = await acreate_approval_from_pause(db=db, run_response=rr)
+
+        db.create_approval.assert_awaited_once()
+        assert db.create_approval.call_args[0][0]["tool_name"] == "pay_invoice"
+        assert gated.approval_id == approval_id
+        assert audit.approval_id is None
+
+    def test_audit_tool_paused_in_same_turn_is_not_stamped(self):
+        db = MagicMock()
+        audit = FakeToolExecution(tool_name="log_action", approval_type="audit", requires_confirmation=True)
+        gated = FakeToolExecution(tool_name="pay_invoice", approval_type="required", requires_confirmation=True)
+        approval_id = create_approval_from_pause(db=db, run_response=FakeRunResponse(tools=[gated, audit]))
+        assert approval_id is not None
+        assert gated.approval_id == approval_id
+        assert audit.approval_id is None

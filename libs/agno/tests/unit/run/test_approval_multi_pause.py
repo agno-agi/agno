@@ -415,3 +415,58 @@ def test_post_hook_sees_the_record_for_the_call_being_run(db, build):
     assert not run.is_paused
     assert PAID == ["INV-1", "INV-2"]
     assert SEEN_BY_HOOK[-1] == "INV-2"
+
+
+# ---------------------------------------------------------------------------
+# An audit call earlier in the run must not hide a later approval-required call
+# ---------------------------------------------------------------------------
+def _audit_first_script() -> List[tuple]:
+    return [
+        ("tool", "log_action", {"note": "start"}, "call_1"),
+        ("tool", "pay_invoice", {"invoice": "INV-1"}, "call_2"),
+        ("content", "Done."),
+    ]
+
+
+def _build_agent_audit_first(db: SqliteDb) -> Agent:
+    return Agent(
+        id="payer", model=_ScriptedModel(_audit_first_script()), tools=[log_action, pay_invoice], db=db, telemetry=False
+    )
+
+
+def _build_team_audit_first(db: SqliteDb) -> Team:
+    helper = Agent(id="helper", model=_ScriptedModel([("content", "ok")]), telemetry=False)
+    return Team(
+        id="payer-team",
+        model=_ScriptedModel(_audit_first_script()),
+        members=[helper],
+        tools=[log_action, pay_invoice],
+        db=db,
+        telemetry=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "build",
+    [pytest.param(_build_agent_audit_first, id="agent"), pytest.param(_build_team_audit_first, id="team_level_tool")],
+)
+def test_approval_call_after_audit_call_gets_its_own_record(db, build):
+    LOGGED.clear()
+    entity: Union[Agent, Team] = build(db)
+    run = entity.run("Log, then pay INV-1.")
+    decisions = [r for r in run.requirements if not r.is_resolved()]
+    for req in decisions:
+        req.confirm()
+    run = entity.continue_run(run_id=run.run_id, session_id=run.session_id, requirements=decisions)
+    assert run.is_paused
+    assert LOGGED == ["start"]
+    assert PAID == []
+
+    (record,) = _required_records(db, run.run_id)
+    assert record["status"] == "pending"
+    assert _named_calls(record) == ["call_2"]
+
+    assert _approve_pending(db, run.run_id) == 1
+    run = entity.continue_run(run_id=run.run_id, session_id=run.session_id)
+    assert not run.is_paused
+    assert PAID == ["INV-1"]

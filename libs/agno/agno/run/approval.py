@@ -34,27 +34,33 @@ def _get_first_approval_tool(tools: Optional[List[Any]], requirements: Optional[
 
 
 def _has_approval_requirement(tools: Optional[List[Any]], requirements: Optional[List[Any]] = None) -> bool:
-    """Check if any paused tool execution has approval_type set.
+    """Check if any tool execution has approval_type='required'.
 
     Checks both run_response.tools (agent-level) and run_response.requirements
     (team-level, where member tools are propagated via requirements).
     """
-    tool = _get_first_approval_tool(tools, requirements)
-    return tool is not None and getattr(tool, "approval_type", None) == "required"
+    candidates = list(tools or []) + [getattr(r, "tool_execution", None) for r in requirements or []]
+    # Any required tool counts, not just the first approval tool: an audit tool
+    # called earlier in the run must not hide a later required one.
+    return any(getattr(t, "approval_type", None) == "required" for t in candidates if t is not None)
 
 
 def _stamp_approval_id_on_tools(
     tools: Optional[List[Any]], requirements: Optional[List[Any]], approval_id: str
 ) -> None:
-    """Stamp approval_id on every tool that has approval_type set."""
+    """Stamp approval_id on every required tool that has none yet.
+
+    Audit tools are left alone: they never resolve through a required record, and
+    a shared id would let a lookup by approval_id pick the audit tool instead.
+    """
     if tools:
         for tool in tools:
-            if getattr(tool, "approval_type", None) is not None and getattr(tool, "approval_id", None) is None:
+            if getattr(tool, "approval_type", None) == "required" and getattr(tool, "approval_id", None) is None:
                 tool.approval_id = approval_id
     if requirements:
         for req in requirements:
             te = getattr(req, "tool_execution", None)
-            if te and getattr(te, "approval_type", None) is not None and getattr(te, "approval_id", None) is None:
+            if te and getattr(te, "approval_type", None) == "required" and getattr(te, "approval_id", None) is None:
                 te.approval_id = approval_id
 
 
