@@ -348,25 +348,11 @@ async def acompact_session(agent: "Agent", session_id: Optional[str] = None, use
     return await acompact_now(agent, session, _history_for_compaction(agent, session))
 
 
-def _recompact_after_overflow(
-    agent: "Agent",
-    session: AgentSession,
-    run_messages: Any,
-    run_response: Optional[RunOutput] = None,
-    tools: Optional[List[Any]] = None,
-) -> bool:
-    """Fold harder after the provider rejected a request as too long. True if the payload shrank.
+def _plan_overflow_fold(agent: "Agent", run_messages: Any) -> Optional[Tuple[Any, Any, List[Message]]]:
+    """Where to cut after a context-window rejection: the Compaction, the variant that folds, and
+    the message list the model call holds. None when there is nothing to do or no safe cut.
 
-    Nobody can know a model's context window ahead of time - no provider exposes it, and the
-    same model id has different limits across deployments - so a threshold set in advance is
-    always a guess. The rejection is the one authoritative signal that the guess was wrong, and
-    this is the only path that can act on it.
-
-    Folds against the messages actually sent, so it reaches spans the run-start pass could not:
-    the current turn's input, and anything a tool loop appended since. The pair-safe boundary
-    still applies - an unsendable payload is no improvement on a too-long one - but the fold
-    ratio does not: the request has already failed, so a fold that merely helps beats the run
-    dying.
+    Shared by the sync and async recovery, which differ only in how the summarizer is called.
     """
     from dataclasses import replace
 
@@ -375,11 +361,11 @@ def _recompact_after_overflow(
 
     compaction = getattr(agent, "compaction", None)
     if compaction is None or not getattr(compaction, "on_context_overflow", False):
-        return False
+        return None
 
     messages = getattr(run_messages, "messages", None)
     if not messages:
-        return False
+        return None
 
     lead = leading_system_count(messages)
     # Keep the configured tail when it works. Only when folding in front of it reclaims too
@@ -418,20 +404,21 @@ def _recompact_after_overflow(
             "cut left to make - the most recent turn alone is too large to send. Shorten what "
             "it produces, or use a model with a larger context window."
         )
-        return False
+        return None
+    return compaction, folder, messages
 
-    before = estimate_tokens(messages, tools)
-    # min_fold_ratio is the run-start question - is this fold worth paying for. Here the request
-    # has already been rejected, so any fold that shrinks it is worth making.
-    record = replace(folder, min_fold_ratio=0, stats=compaction.stats).compact(
-        messages,
-        session_id=session.session_id,
-        db=agent.db,
-        user_id=session.user_id,
-        previous=_stored_compaction(agent, session),
-        run_id=run_response.run_id if run_response is not None else None,
-        tokens_before=before,
-    )
+
+def _finish_overflow_fold(
+    compaction: Any,
+    messages: List[Message],
+    record: Any,
+    before: int,
+    tools: Optional[List[Any]],
+    run_response: Optional[RunOutput],
+) -> bool:
+    """Apply a fold made after a rejection to the list the model call holds. True if it shrank."""
+    from agno.compaction._tokens import estimate_tokens
+
     if record is None:
         return False
 
@@ -457,6 +444,80 @@ def _recompact_after_overflow(
         f"messages ({before} -> {after} tokens) and retrying once."
     )
     return True
+
+
+def _overflow_fold_kwargs(
+    agent: "Agent", session: AgentSession, run_response: Optional[RunOutput], before: int
+) -> Dict[str, Any]:
+    return dict(
+        session_id=session.session_id,
+        db=agent.db,
+        user_id=session.user_id,
+        previous=_stored_compaction(agent, session),
+        run_id=run_response.run_id if run_response is not None else None,
+        tokens_before=before,
+    )
+
+
+def _recompact_after_overflow(
+    agent: "Agent",
+    session: AgentSession,
+    run_messages: Any,
+    run_response: Optional[RunOutput] = None,
+    tools: Optional[List[Any]] = None,
+) -> bool:
+    """Fold harder after the provider rejected a request as too long. True if the payload shrank.
+
+    Nobody can know a model's context window ahead of time - no provider exposes it, and the
+    same model id has different limits across deployments - so a threshold set in advance is
+    always a guess. The rejection is the one authoritative signal that the guess was wrong, and
+    this is the only path that can act on it.
+
+    Folds against the messages actually sent, so it reaches spans the run-start pass could not:
+    the current turn's input, and anything a tool loop appended since. The pair-safe boundary
+    still applies - an unsendable payload is no improvement on a too-long one - but the fold
+    ratio does not: the request has already failed, so a fold that merely helps beats the run
+    dying.
+    """
+    from dataclasses import replace
+
+    from agno.compaction._tokens import estimate_tokens
+
+    plan = _plan_overflow_fold(agent, run_messages)
+    if plan is None:
+        return False
+    compaction, folder, messages = plan
+    before = estimate_tokens(messages, tools)
+    # min_fold_ratio is the run-start question - is this fold worth paying for. Here the request
+    # has already been rejected, so any fold that shrinks it is worth making.
+    record = replace(folder, min_fold_ratio=0, stats=compaction.stats).compact(
+        messages, **_overflow_fold_kwargs(agent, session, run_response, before)
+    )
+    return _finish_overflow_fold(compaction, messages, record, before, tools, run_response)
+
+
+async def _arecompact_after_overflow(
+    agent: "Agent",
+    session: AgentSession,
+    run_messages: Any,
+    run_response: Optional[RunOutput] = None,
+    tools: Optional[List[Any]] = None,
+) -> bool:
+    """Async variant of :func:`_recompact_after_overflow`. The summarizer is awaited, so a recovery
+    on the async path does not block the event loop for the length of a model call."""
+    from dataclasses import replace
+
+    from agno.compaction._tokens import estimate_tokens
+
+    plan = _plan_overflow_fold(agent, run_messages)
+    if plan is None:
+        return False
+    compaction, folder, messages = plan
+    before = estimate_tokens(messages, tools)
+    record = await replace(folder, min_fold_ratio=0, stats=compaction.stats).acompact(
+        messages, **_overflow_fold_kwargs(agent, session, run_response, before)
+    )
+    return _finish_overflow_fold(compaction, messages, record, before, tools, run_response)
 
 
 def apply_compaction(

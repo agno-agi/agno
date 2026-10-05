@@ -1108,6 +1108,93 @@ def test_overflow_recovery_works_with_a_token_tail():
     assert estimate_tokens(run_messages.messages) < before
 
 
+@pytest.mark.parametrize("stream", [False, True])
+def test_async_overflow_recovery_does_not_block_the_event_loop(stream):
+    """On the async path the summarizer must be awaited. Run synchronously it held the event loop
+    for the whole model call, so every other request on the server waited on this one."""
+    import asyncio
+    import time
+
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+    from agno.exceptions import ContextWindowExceededError
+    from agno.models.response import ModelResponse
+
+    used = []
+
+    class _SlowSummarizer:
+        id = "stub"
+
+        def response(self, messages, **kwargs):
+            used.append("sync")
+            time.sleep(0.3)
+            return ModelResponse(content="SUMMARY")
+
+        async def aresponse(self, messages, **kwargs):
+            used.append("async")
+            await asyncio.sleep(0.3)
+            return ModelResponse(content="SUMMARY")
+
+    model = _RecordingModel.build()
+    calls = {"n": 0}
+    reject_on = 6
+
+    original_ainvoke, original_stream = model.ainvoke, model.ainvoke_stream
+
+    async def ainvoke(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == reject_on:
+            raise ContextWindowExceededError("prompt is too long")
+        return await original_ainvoke(*args, **kwargs)
+
+    async def ainvoke_stream(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == reject_on:
+            raise ContextWindowExceededError("prompt is too long")
+        async for chunk in original_stream(*args, **kwargs):
+            yield chunk
+
+    model.ainvoke, model.ainvoke_stream = ainvoke, ainvoke_stream
+    agent = Agent(
+        model=model,
+        db=InMemoryDb(),
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(
+            compact_at_tokens=None, on_context_overflow=True, uncompacted_runs=1, model=_SlowSummarizer()
+        ),
+    )
+
+    async def scenario():
+        for i in range(5):
+            await agent.arun(f"question number {i}")
+        gaps, stop = [], asyncio.Event()
+
+        async def heartbeat():
+            last = time.perf_counter()
+            while not stop.is_set():
+                await asyncio.sleep(0.01)
+                now = time.perf_counter()
+                gaps.append(now - last)
+                last = now
+
+        beat = asyncio.create_task(heartbeat())
+        await asyncio.sleep(0.03)
+        if stream:
+            async for _ in agent.arun("question number 5", stream=True):
+                pass
+        else:
+            await agent.arun("question number 5")
+        stop.set()
+        await beat
+        return max(gaps)
+
+    longest_stall = asyncio.run(scenario())
+
+    assert used == ["async"]
+    assert longest_stall < 0.15
+
+
 def test_overflow_retry_sends_the_compacted_payload():
     """The retry has to reach the provider, not just the helper's own variable.
 

@@ -839,3 +839,64 @@ class TestFailingOverflowRecovery:
         with patch.object(primary, "aresponse_stream", side_effect=astream):
             with pytest.raises(ContextWindowExceededError):
                 asyncio.run(consume_async_stream())
+
+
+class TestAsyncOverflowHook:
+    """The async wrappers await a hook that returns an awaitable, so recovery - a summarizer call -
+    never blocks the event loop. A sync hook keeps working."""
+
+    def test_an_async_hook_is_awaited_and_the_call_retried(self):
+        import asyncio
+
+        primary = _make_model("primary")
+        recovered = []
+
+        async def hook():
+            await asyncio.sleep(0)
+            recovered.append(True)
+            return True
+
+        responses = [ContextWindowExceededError("too long"), ModelResponse(content="ok")]
+
+        async def aresponse(**kwargs):
+            outcome = responses.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        with patch.object(primary, "aresponse", side_effect=aresponse):
+            result = asyncio.run(acall_model_with_fallback(primary, None, on_context_overflow=hook, messages=[]))
+
+        assert result.content == "ok"
+        assert recovered == [True]
+
+    def test_a_sync_hook_still_works_on_the_async_path(self):
+        import asyncio
+
+        primary = _make_model("primary")
+        responses = [ContextWindowExceededError("too long"), ModelResponse(content="ok")]
+
+        async def aresponse(**kwargs):
+            outcome = responses.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        with patch.object(primary, "aresponse", side_effect=aresponse):
+            result = asyncio.run(
+                acall_model_with_fallback(primary, None, on_context_overflow=lambda: True, messages=[])
+            )
+
+        assert result.content == "ok"
+
+    def test_a_failing_async_hook_does_not_mask_the_providers_error(self):
+        import asyncio
+
+        primary = _make_model("primary")
+
+        async def broken():
+            raise ValueError("bad config")
+
+        with patch.object(primary, "aresponse", side_effect=ContextWindowExceededError("too long")):
+            with pytest.raises(ContextWindowExceededError):
+                asyncio.run(acall_model_with_fallback(primary, None, on_context_overflow=broken, messages=[]))

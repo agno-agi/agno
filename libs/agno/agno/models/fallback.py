@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable, Iterator, List, Optional, Union
+from inspect import isawaitable
+from typing import Any, AsyncIterator, Awaitable, Callable, Iterator, List, Optional, Union
 
 from agno.exceptions import ContextWindowExceededError, ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
@@ -82,6 +83,23 @@ def _recovered_from_overflow(on_context_overflow: Callable[[], bool]) -> bool:
     """
     try:
         return bool(on_context_overflow())
+    except Exception as e:  # noqa: BLE001 - recovery must never mask the provider's error
+        log_warning(f"Could not shrink the request after a context-window error: {e}")
+        return False
+
+
+async def _arecovered_from_overflow(on_context_overflow: Callable[[], Union[bool, Awaitable[bool]]]) -> bool:
+    """Async variant of :func:`_recovered_from_overflow`.
+
+    Awaits a hook that returns an awaitable. Recovery calls the summarizer model, and run
+    synchronously on the async path that call would block the event loop - every other request
+    on the server waiting for it. A plain sync hook still works.
+    """
+    try:
+        result = on_context_overflow()
+        if isawaitable(result):
+            result = await result
+        return bool(result)
     except Exception as e:  # noqa: BLE001 - recovery must never mask the provider's error
         log_warning(f"Could not shrink the request after a context-window error: {e}")
         return False
@@ -225,7 +243,7 @@ def call_model_with_fallback(
 async def acall_model_with_fallback(
     model: Model,
     fallback_config: Optional[FallbackConfig],
-    on_context_overflow: Optional[Callable[[], bool]] = None,
+    on_context_overflow: Optional[Callable[[], Union[bool, Awaitable[bool]]]] = None,
     **kwargs: Any,
 ) -> ModelResponse:
     """Async variant of call_model_with_fallback."""
@@ -235,7 +253,7 @@ async def acall_model_with_fallback(
         if (
             on_context_overflow is not None
             and _is_context_overflow(primary_error)
-            and _recovered_from_overflow(on_context_overflow)
+            and await _arecovered_from_overflow(on_context_overflow)
         ):
             try:
                 return await model.aresponse(**kwargs)
@@ -304,7 +322,7 @@ def call_model_stream_with_fallback(
 async def acall_model_stream_with_fallback(
     model: Model,
     fallback_config: Optional[FallbackConfig],
-    on_context_overflow: Optional[Callable[[], bool]] = None,
+    on_context_overflow: Optional[Callable[[], Union[bool, Awaitable[bool]]]] = None,
     **kwargs: Any,
 ) -> AsyncIterator[StreamEvent]:
     """Async variant of call_model_stream_with_fallback."""
@@ -315,7 +333,7 @@ async def acall_model_stream_with_fallback(
         if (
             on_context_overflow is not None
             and _is_context_overflow(primary_error)
-            and _recovered_from_overflow(on_context_overflow)
+            and await _arecovered_from_overflow(on_context_overflow)
         ):
             try:
                 async for event in model.aresponse_stream(**kwargs):
