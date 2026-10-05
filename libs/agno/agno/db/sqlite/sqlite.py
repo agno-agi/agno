@@ -1310,6 +1310,7 @@ class SqliteDb(BaseDb):
             if table is None:
                 return False
             runs_table = self._get_table(table_type="runs")
+            compactions_table = self._get_table(table_type="compactions")
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
@@ -1323,6 +1324,11 @@ class SqliteDb(BaseDb):
                 # Also delete the runs belonging to the session
                 if runs_table is not None:
                     sess.execute(runs_table.delete().where(runs_table.c.session_id == session_id))
+                # And its compaction records. They hold the folded transcript verbatim, and are
+                # found by session id - left behind, a session recreated under the same id would
+                # inherit the old fold and offer the agent a search over the deleted conversation.
+                if compactions_table is not None:
+                    sess.execute(compactions_table.delete().where(compactions_table.c.session_id == session_id))
 
                 log_debug(f"Successfully deleted session with session_id: {session_id}")
 
@@ -1352,6 +1358,7 @@ class SqliteDb(BaseDb):
             if table is None:
                 return
             runs_table = self._get_table(table_type="runs")
+            compactions_table = self._get_table(table_type="compactions")
 
             with self.Session() as sess, sess.begin():
                 # The ids a user_id-scoped delete is allowed to touch. The
@@ -1377,6 +1384,13 @@ class SqliteDb(BaseDb):
                     if user_id is not None:
                         runs_delete_stmt = runs_delete_stmt.where(runs_table.c.user_id == user_id)
                     sess.execute(runs_delete_stmt)
+
+                # And their compaction records. They hold the folded transcript verbatim, and are
+                # found by session id - left behind, a session recreated under the same id would
+                # inherit the old fold and offer the agent a search over the deleted conversation.
+                # Scoped like the tool-result cascade: only sessions this delete was allowed to remove.
+                if compactions_table is not None:
+                    sess.execute(compactions_table.delete().where(compactions_table.c.session_id.in_(cascade_ids)))
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")
 

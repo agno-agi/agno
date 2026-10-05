@@ -793,6 +793,70 @@ def test_the_summary_budget_reaches_custom_instructions():
     assert default.count("750 tokens") == 1
 
 
+# --- session deletion -------------------------------------------------------------
+
+
+def _folded_session(db, session_id: str, user_id: str):
+    """An agent whose session has one stored fold."""
+    from agno.agent import Agent
+
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=db,
+        session_id=session_id,
+        user_id=user_id,
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, model=_StubModel()),
+    )
+    for i in range(4):
+        agent.run(f"question number {i}")
+    assert agent.compact(session_id=session_id, user_id=user_id).compacted
+    return agent
+
+
+def test_compaction_records_store_the_session_user():
+    db = _db()
+    _folded_session(db, "s1", "alice")
+
+    assert [row["user_id"] for row in db.get_compactions_for_session("s1")] == ["alice"]
+
+
+def test_deleting_a_session_deletes_its_compaction_records():
+    """The records hold the folded transcript verbatim; a deleted conversation must not survive in them."""
+    db = _db()
+    agent = _folded_session(db, "s1", "alice")
+
+    agent.delete_session(session_id="s1", user_id="alice")
+
+    assert db.get_compactions_for_session("s1") == []
+
+
+def test_a_session_recreated_under_the_same_id_inherits_nothing():
+    """Records are found by session id. Left behind, they gave the new session the old fold and a
+    search tool over the deleted conversation."""
+    from agno.agent._messages import _stored_compaction
+    from agno.session import AgentSession
+
+    db = _db()
+    agent = _folded_session(db, "s1", "alice")
+    agent.delete_session(session_id="s1", user_id="alice")
+
+    fresh = AgentSession(session_id="s1", user_id="alice", runs=[])
+    assert _stored_compaction(agent, fresh) is None
+    assert agent.compaction.tools_for("s1", db) is None
+
+
+def test_a_user_scoped_bulk_delete_leaves_other_users_records_alone():
+    db = _db()
+    _folded_session(db, "alice-session", "alice")
+    _folded_session(db, "bob-session", "bob")
+
+    db.delete_sessions(["alice-session", "bob-session"], user_id="alice")
+
+    assert db.get_compactions_for_session("alice-session") == []
+    assert len(db.get_compactions_for_session("bob-session")) == 1
+
+
 def test_uncompacted_runs_and_uncompacted_tokens_are_mutually_exclusive():
     """Two settings claiming the same tail is a configuration nobody can reason about.
 

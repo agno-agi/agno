@@ -657,6 +657,7 @@ class Compaction:
         tokens_before: Optional[int] = None,
         run_id: Optional[str] = None,
         context_prefix: Optional[List[Message]] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[CompactionRecord]:
         """Archive and summarize the head of ``messages``.
 
@@ -672,7 +673,7 @@ class Compaction:
 
         already = self._resolved_boundary(messages, previous)
         to_compact = messages[already:boundary]
-        archive = self.archive_for(session_id, db)
+        archive = self.archive_for(session_id, db, user_id)
 
         summary = self._summarize(
             to_compact,
@@ -708,6 +709,7 @@ class Compaction:
         tokens_before: Optional[int] = None,
         run_id: Optional[str] = None,
         context_prefix: Optional[List[Message]] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[CompactionRecord]:
         # See the sync path: only the span the previous compaction did not
         # already cover is new.
@@ -717,7 +719,7 @@ class Compaction:
 
         already = self._resolved_boundary(messages, previous)
         to_compact = messages[already:boundary]
-        archive = self.archive_for(session_id, db)
+        archive = self.archive_for(session_id, db, user_id)
 
         summary = await self._asummarize(
             to_compact,
