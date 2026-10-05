@@ -216,8 +216,11 @@ class FileTools(Toolkit):
                 return "Error reading file"
             contents = file_path.read_text(encoding=encoding)
             lines = contents.split(self.line_separator)
-            if end_line >= len(lines):
-                return f"Error patching file: end_line must be less than {len(lines)}"
+            # A trailing separator terminates the last line rather than adding a line.
+            # Keep its empty split element for reconstruction so the terminator survives.
+            line_count = len(lines) - 1 if not contents or contents.endswith(self.line_separator) else len(lines)
+            if end_line >= line_count:
+                return f"Error patching file: end_line must be less than {line_count}"
             start = lines[0:start_line]
             end = lines[end_line + 1 :]
             return self.save_file(

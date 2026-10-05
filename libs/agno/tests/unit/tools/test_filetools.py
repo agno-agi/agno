@@ -30,6 +30,55 @@ def test_replace_file_chunk_replaces_inclusive_valid_range(tmp_path):
     assert file_path.read_text(encoding="utf-8") == "a\nreplacement\nd"
 
 
+@pytest.mark.parametrize(
+    ("original", "separator", "line_count"),
+    [
+        ("a\nb\nc\n", "\n", 3),
+        ("", "\n", 0),
+        ("\n", "\n", 1),
+        ("a\n\n", "\n", 2),
+        ("a||b||", "||", 2),
+        ("||", "||", 1),
+        ("a\nb\nc", "\n", 3),
+        ("你好\n世界\n", "\n", 2),
+    ],
+)
+def test_replace_file_chunk_rejects_ranges_past_real_lines(tmp_path, original, separator, line_count):
+    file_path = tmp_path / "sample.txt"
+    original_bytes = original.encode("utf-8")
+    file_path.write_bytes(original_bytes)
+    tools = FileTools(base_dir=tmp_path, line_separator=separator)
+
+    result = tools.replace_file_chunk("sample.txt", 0, line_count, "replacement")
+
+    assert result == f"Error patching file: end_line must be less than {line_count}"
+    assert file_path.read_bytes() == original_bytes
+
+
+@pytest.mark.parametrize(
+    ("original", "separator", "start", "end", "expected"),
+    [
+        ("a\nb\nc\n", "\n", 1, 2, "a\nreplacement\n"),
+        ("a\nb\nc\n", "\n", 0, 2, "replacement\n"),
+        ("\n", "\n", 0, 0, "replacement\n"),
+        ("a\n\n", "\n", 1, 1, "a\nreplacement\n"),
+        ("a\n\n\n", "\n", 0, 0, "replacement\n\n\n"),
+        ("a||b||", "||", 1, 1, "a||replacement||"),
+        ("a||b||||", "||", 1, 1, "a||replacement||||"),
+        ("a\nb\nc", "\n", 1, 2, "a\nreplacement"),
+        ("你好\n世界\n", "\n", 1, 1, "你好\nreplacement\n"),
+        ("a\nb||c||", "||", 1, 1, "a\nb||replacement||"),
+    ],
+)
+def test_replace_file_chunk_preserves_real_line_boundaries(tmp_path, original, separator, start, end, expected):
+    file_path = tmp_path / "sample.txt"
+    file_path.write_bytes(original.encode("utf-8"))
+    tools = FileTools(base_dir=tmp_path, line_separator=separator)
+
+    assert tools.replace_file_chunk("sample.txt", start, end, "replacement") == "sample.txt"
+    assert file_path.read_bytes() == expected.encode("utf-8")
+
+
 def test_save_and_read_file():
     """Test saving and reading a file."""
     with tempfile.TemporaryDirectory() as tmp_dir:
