@@ -541,20 +541,20 @@ async def test_download_attachments_unsupported_mime_is_skipped():
         image_attachments=[],
         file_attachments=[
             {"contentUrl": "https://ex/report", "name": "report.bin"},
-            {"contentUrl": "https://ex/archive", "name": "archive.zip"},
+            {"contentUrl": "https://ex/clip", "name": "clip.mp4"},
         ],
     )
     cfg = _make_config()
 
     async def fake_download(url, config, use_bot_token=True):
         # no content-type header at all, then a type outside the allowlist
-        return (b"binbytes", None) if url.endswith("report") else (b"zipbytes", "application/zip")
+        return (b"binbytes", None) if url.endswith("report") else (b"mp4bytes", "video/mp4")
 
     with patch("agno.os.interfaces.teams.helpers._download_attachment", side_effect=fake_download):
         run_kwargs, skipped = await download_attachments_async(parsed, cfg)
 
     assert "files" not in run_kwargs
-    assert skipped == ["report.bin", "archive.zip"]
+    assert skipped == ["report.bin", "clip.mp4"]
 
 
 @pytest.mark.asyncio
