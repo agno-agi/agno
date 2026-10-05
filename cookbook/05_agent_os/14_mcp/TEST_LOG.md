@@ -406,10 +406,11 @@ error. Omitting the required `message` was refused with HTTP 400
 `tool_not_found`. The server logs a traceback for each of those two deliberate
 failures; that is the tool erroring as intended, not the endpoint failing.
 
-Re-run LIVE on 2026-10-01, after an abandoned call began stopping the work. With
-`tool_run_timeout_seconds=5`, a 1500-word essay run returned HTTP 408 at 5037 ms, the
-model's own HTTP request recorded `aborted` rather than `completed` -- generation stopped
-instead of finishing unobserved -- and the run was persisted as `CANCELLED`. Aborting the
-request mid-run, which is what a Stop button does, stopped it the same way.
+Re-run LIVE on 2026-10-05, after a timed-out call began stopping the work. With
+`tool_run_timeout_seconds=5`, a 1500-word essay returned HTTP 408 at 5011 ms, the model's
+own HTTP request recorded `aborted` rather than `completed` -- generation stopped instead
+of finishing unobserved -- and the run was persisted as `CANCELLED`. The custom
+`research` tool, which drives an agent internally, timed out the same way at 5013 ms:
+the budget governs every published tool, not just the built-in ones.
 
 ---

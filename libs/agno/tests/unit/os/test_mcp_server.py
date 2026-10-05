@@ -2300,68 +2300,6 @@ async def test_tool_run_api_only_serves_tools_this_server_publishes():
     assert response.status_code == 404
 
 
-async def test_tool_run_api_stops_the_tool_when_the_caller_disconnects():
-    """A Stop button (or a closed tab) must stop the work, not just the waiting.
-
-    HTTP has no cancel message -- the dropped connection is the signal, delivered as an
-    ``http.disconnect`` ASGI event. Only a real socket produces one, so this runs a real
-    server rather than the in-process transport (which unwinds the task by itself and
-    would pass even with the handler ignoring the disconnect entirely).
-    """
-    import socket
-    import threading
-
-    import uvicorn
-
-    started = threading.Event()
-    finished = threading.Event()
-
-    async def _slow() -> str:
-        """Finishes in 3s unless the disconnect cancels it first."""
-        started.set()
-        await asyncio.sleep(3)
-        finished.set()
-        return "done"
-
-    # The timeout is far longer than the tool, so only the disconnect can stop it.
-    os = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[_slow], tool_run_timeout_seconds=30))
-    app = os.get_app()
-
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="critical"))
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    try:
-        for _ in range(100):
-            await asyncio.sleep(0.1)
-            if server.started:
-                break
-        assert server.started, "test server never came up"
-
-        # Send the request on a raw socket, then close it mid-run.
-        body = b'{"arguments": {}}'
-        request = (
-            b"POST /mcp/server/tools/_slow/run HTTP/1.1\r\n"
-            b"Host: localhost\r\nContent-Type: application/json\r\n"
-            b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
-        )
-        conn = socket.create_connection(("127.0.0.1", port))
-        conn.sendall(request)
-        await asyncio.to_thread(started.wait, 10)
-        assert started.is_set(), "the tool never started"
-        conn.close()  # the Stop button
-
-        # Outlast the tool: if the disconnect was ignored it completes here.
-        await asyncio.sleep(6)
-        assert not finished.is_set(), "the tool kept running after the caller disconnected"
-    finally:
-        server.should_exit = True
-        thread.join(timeout=10)
-
-
 async def test_tool_run_api_times_out_a_tool_that_does_not_finish():
     async def _sleep() -> str:
         """Sleeps past the timeout."""

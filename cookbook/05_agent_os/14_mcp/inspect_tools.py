@@ -42,13 +42,23 @@ support_agent = Agent(
     markdown=True,
 )
 
+
+async def research(topic: str) -> str:
+    """Research a topic in depth."""
+    response = await support_agent.arun(
+        f"Write a detailed 1500 word essay about {topic}."
+    )
+    return response.content or ""
+
+
 agent_os = AgentOS(
     id="mcp-inspect-os",
     description="AgentOS with the MCP tool run API enabled.",
     db=db,
     agents=[support_agent],
-    # The default budget is 120; a few seconds keeps the timeout lesson quick.
-    mcp=MCPConfig(default_tools=True, tool_run_timeout_seconds=5),
+    # A custom tool is published alongside the built-ins, and is governed by the
+    # same budget. The default is 120s; a few seconds keeps the lesson quick.
+    mcp=MCPConfig(tools=[research], default_tools=True, tool_run_timeout_seconds=5),
 )
 app = agent_os.get_app()
 
@@ -151,27 +161,19 @@ async def inspect() -> None:
             f"  the run is recorded as cancelled, not left running: {runs.status_code == 200}"
         )
 
-        # 8. A caller that hangs up stops the tool the same way.
-        print("\nCaller disconnects:")
-        call = asyncio.create_task(
-            client.post(
-                "/mcp/server/tools/run_agent/run",
-                json={
-                    "arguments": {
-                        "agent_id": "support-agent",
-                        "message": "Write a detailed 1500 word essay about rivers.",
-                    }
-                },
-            )
+        # 8. The budget is not special-cased for the built-in tools: a custom
+        #    tool gets the same treatment, because every published tool runs
+        #    through one call. `research` drives a real agent internally, and
+        #    the cancellation reaches its model call too.
+        response = await client.post(
+            "/mcp/server/tools/research/run", json={"arguments": {"topic": "the ocean"}}
         )
-        await asyncio.sleep(1)
-        call.cancel()
-        try:
-            await call
-        except asyncio.CancelledError:
-            print(
-                "  aborted the request; the agent stops rather than finishing unobserved"
-            )
+        body = response.json()
+        print("\nTimed out custom tool:")
+        print(
+            f"  HTTP {response.status_code}: {body['error']} after {body['durationMs']} ms"
+        )
+        print(f"  {body['content'][0]['text'][:70]}")
 
 
 # ---------------------------------------------------------------------------

@@ -2272,8 +2272,6 @@ def _register_tool_run_api(
     from fastmcp.exceptions import ValidationError as ToolValidationError
     from fastmcp.utilities.versions import VersionSpec
     from mcp.shared.exceptions import MCPError
-
-    from agno.utils.log import log_debug
     from starlette.requests import Request
     from starlette.responses import JSONResponse, Response
 
@@ -2286,51 +2284,34 @@ def _register_tool_run_api(
             headers={"Cache-Control": "no-store", "Vary": "Origin, Authorization"},
         )
 
-    class _CallerGone(Exception):
-        """The caller hung up before the tool finished."""
-
-    async def _call_watching_the_caller(request: Request, coro: Any) -> Any:
-        """Run ``coro``, abandoning it if the time runs out or the caller disconnects.
+    async def _call_within_the_budget(coro: Any) -> Any:
+        """Run ``coro``, cancelling it if it outlives the timeout.
 
         ``asyncio.wait_for`` only stops WAITING -- the tool keeps running, so a timed-out
-        ``run_agent`` goes on driving the model and spending tokens for an answer nobody
-        will read. The same is true when the caller hangs up (a Stop button, a closed tab):
-        HTTP has no cancel message, the dropped connection IS the signal, and ignoring it
-        leaves the work orphaned.
+        ``run_agent`` went on driving the model and spending tokens for an answer nobody
+        would read. Racing the work against a timer and cancelling the loser stops it for
+        real: the cancellation propagates through ``agent.arun`` into the model's own HTTP
+        request, so generation ends rather than finishing unobserved.
 
-        So the three outcomes race and the first one wins. Cancelling the task propagates
-        all the way down -- through ``agent.arun`` into the model's own HTTP request -- so
-        generation actually stops rather than finishing unobserved.
-
-        The disconnect is awaited as an event rather than polled: ``call_tool`` is a single
-        long await with no loop to check inside.
+        A tool that blocks rather than awaits (``time.sleep``, a synchronous driver) cannot
+        be interrupted this way -- the cancellation only lands at an ``await``. The caller
+        still gets its 408.
         """
         work = asyncio.ensure_future(coro)
-
-        async def _hung_up() -> None:
-            while True:
-                message = await request.receive()
-                if message.get("type") == "http.disconnect":
-                    return
-
-        watcher = asyncio.ensure_future(_hung_up())
         timer = asyncio.ensure_future(asyncio.sleep(timeout_seconds))
         try:
-            done, _ = await asyncio.wait({work, watcher, timer}, return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait({work, timer}, return_when=asyncio.FIRST_COMPLETED)
             if work in done:
                 return work.result()
             # Nobody is waiting for this result any more; stop producing it.
             work.cancel()
             with suppress(asyncio.CancelledError, Exception):
                 await work
-            if watcher in done:
-                raise _CallerGone()
             raise asyncio.TimeoutError()
         finally:
-            for task in (watcher, timer):
-                task.cancel()
-                with suppress(asyncio.CancelledError, Exception):
-                    await task
+            timer.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await timer
 
     def _failed(
         error: str,
@@ -2430,13 +2411,7 @@ def _register_tool_run_api(
 
         started = time.perf_counter()
         try:
-            result = await _call_watching_the_caller(request, mcp.call_tool(tool_name, arguments, version=version))
-        except _CallerGone:
-            # The tool has been cancelled; there is no one left to tell. Starlette still
-            # wants a response object for a request it is finishing, and 499 is the
-            # conventional "client closed request" code -- it is never delivered.
-            log_debug(f"MCP tool run {tool_name!r} cancelled: the caller disconnected")
-            return _json({"isError": True, "error": "client_disconnected"}, status_code=499)
+            result = await _call_within_the_budget(mcp.call_tool(tool_name, arguments, version=version))
         except asyncio.TimeoutError:
             return _failed(
                 "timeout",
