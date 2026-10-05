@@ -31,6 +31,8 @@ def test_trace_reads_respect_zero_limits_and_default_page(db_class, monkeypatch)
     for query in (db.get_traces, db.get_trace_stats):
         rows, total = query(limit=1, page=None)
         assert (len(rows), total) == (1, 3)
+        rows, total = query(limit=1, page=0)
+        assert (len(rows), total) == (1, 3)
         rows, total = query(limit=0)
         assert (rows, total) == ([], 3)
     assert db.get_spans(limit=0) == []
