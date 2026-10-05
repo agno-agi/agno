@@ -48,13 +48,13 @@ def order_limit_start(
     limit: Optional[int] = None,
     page: Optional[int] = None,
 ) -> str:
-    if sort_order is not None:
-        if "desc" in sort_order.lower():
-            sort_order = "DESC"
-        else:
-            sort_order = "ASC"
+    # An omitted sort_order means descending, as it does in every other backend.
+    if sort_order is not None and "desc" not in sort_order.lower():
+        sort_order = "ASC"
+    else:
+        sort_order = "DESC"
 
-    order_clause = f"ORDER BY {sort_by} {sort_order or ''}" if sort_by is not None else ""
+    order_clause = f"ORDER BY {sort_by} {sort_order}" if sort_by is not None else ""
 
     if limit is not None:
         limit_clause = f"LIMIT {limit}"
