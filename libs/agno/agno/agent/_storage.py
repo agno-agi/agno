@@ -1175,6 +1175,10 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # TODO: implement compression manager serialization
     # if agent.compression_manager is not None:
     #     config["compression_manager"] = agent.compression_manager.to_dict()
+    # TODO: implement compaction serialization - until then an agent saved with compaction
+    # (True or a Compaction) loads back with it off.
+    # if agent.compaction is not None:
+    #     config["compaction"] = agent.compaction if isinstance(agent.compaction, bool) else agent.compaction.to_dict()
 
     # --- Callable factory settings ---
     if not agent.cache_callables:
@@ -1390,6 +1394,12 @@ def from_dict(
     # if "compression_manager" in config and isinstance(config["compression_manager"], dict):
     #     from agno.compression.manager import CompressionManager
     #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
+
+    # --- Handle Compaction reconstruction ---
+    # TODO: implement compaction deserialization
+    # if "compaction" in config and isinstance(config["compaction"], dict):
+    #     from agno.compaction import Compaction
+    #     config["compaction"] = Compaction.from_dict(config["compaction"])
 
     # --- Handle Learning reconstruction ---
     # A named machine is stored as a reference and resolved from the registry;
