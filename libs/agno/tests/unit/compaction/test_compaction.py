@@ -1932,8 +1932,63 @@ def test_archive_degrades_when_db_cannot_store_records(caplog):
     assert Compaction().archive_for("s", None) is None
 
 
-def test_archive_off_returns_no_store():
-    assert Compaction(archive=False).archive_for("s", _db()) is None
+def test_a_fold_without_an_archive_still_persists():
+    """archive=False turns off storing the folded transcript, not storing the fold. Without the
+    record the fold vanished after its own run: the next run sent the full history again, and the
+    next threshold crossing summarized from scratch."""
+    from agno.agent import Agent
+
+    db = _db()
+    model = _RecordingModel.build()
+    agent = Agent(
+        model=model,
+        db=db,
+        session_id="s",
+        add_history_to_context=True,
+        num_history_runs=20,
+        compaction=Compaction(
+            compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, archive=False, model=_StubModel()
+        ),
+    )
+    for i in range(5):
+        agent.run(f"question number {i}")
+    record = agent.compact(session_id="s").record
+
+    agent.run("question number 5")
+    sent = [m for m in model.requests[-1] if m.role != "system"]
+
+    assert str(sent[0].content).startswith("Summary of earlier conversation")
+    assert [m.content for m in sent if str(m.content).startswith("question")] == [
+        "question number 4",
+        "question number 5",
+    ]
+    row = db.get_compactions_for_session("s")[0]
+    assert row["summary"] and row["archived_messages"] is None
+    assert record.archived is False
+
+
+def test_without_an_archive_there_is_nothing_to_search_or_point_to():
+    """No transcript is stored, so no search tool is offered and the summarizer is not asked to
+    name what it left out for a lookup the agent cannot make."""
+    from agno.compaction.prompts import ARCHIVE_AWARE_PROMPT
+
+    seen = {}
+
+    class _Summarizer:
+        id = "stub"
+
+        def response(self, messages, **kwargs):
+            from agno.models.response import ModelResponse
+
+            seen["system"] = messages[0].content
+            return ModelResponse(content="SUMMARY")
+
+    db = _db()
+    compaction = Compaction(uncompacted_runs=1, min_fold_ratio=0, archive=False, model=_Summarizer())
+    assert compaction.compact(_transcript(4), session_id="s", db=db) is not None
+
+    assert ARCHIVE_AWARE_PROMPT.strip() not in seen["system"]
+    assert compaction.tools_for("s", db) is None
 
 
 def test_render_includes_roles_and_tool_names():

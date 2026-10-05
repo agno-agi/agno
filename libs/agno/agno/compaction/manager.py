@@ -433,8 +433,12 @@ class Compaction:
     def archive_for(
         self, session_id: str, db: Optional[Any] = None, user_id: Optional[str] = None
     ) -> Optional[CompactionArchive]:
-        """The archive for one session, or None when it is off or unavailable."""
-        if not self.archive or db is None:
+        """The record store for one session, or None without a database.
+
+        Fold records are kept whatever ``archive`` says - they are what makes a fold outlast the
+        run that made it. ``archive`` decides only whether the folded transcript goes in with them.
+        """
+        if db is None:
             return None
         return CompactionArchive(db, session_id, user_id)
 
@@ -679,7 +683,7 @@ class Compaction:
             to_compact,
             previous.summary if previous else None,
             run_metrics,
-            archived=archive is not None,
+            archived=self.archive and archive is not None,
         )
         if not summary:
             return None
@@ -694,7 +698,9 @@ class Compaction:
         self._log_tail_limit(messages, already)
         self._warn_if_still_over(record)
         if archive is not None:
-            record.archived = archive.write(record, to_compact)
+            # The record is stored either way; the transcript only when archiving is on.
+            stored = archive.write(record, to_compact if self.archive else [])
+            record.archived = stored and self.archive
         self.stats.record(record)
         return record
 
@@ -725,7 +731,7 @@ class Compaction:
             to_compact,
             previous.summary if previous else None,
             run_metrics,
-            archived=archive is not None,
+            archived=self.archive and archive is not None,
         )
         if not summary:
             return None
@@ -740,7 +746,9 @@ class Compaction:
         self._log_tail_limit(messages, already)
         self._warn_if_still_over(record)
         if archive is not None:
-            record.archived = archive.write(record, to_compact)
+            # The record is stored either way; the transcript only when archiving is on.
+            stored = archive.write(record, to_compact if self.archive else [])
+            record.archived = stored and self.archive
         self.stats.record(record)
         return record
 
