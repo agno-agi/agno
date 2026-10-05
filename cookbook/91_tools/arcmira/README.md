@@ -25,6 +25,8 @@ result = tools.search_transcripts(
 print(result)
 ```
 
+For an async application, call `await tools.asearch_transcripts("open source AI")`. Agno automatically selects this async implementation during async agent runs, under the same `search_transcripts` tool name.
+
 The result limit is developer-controlled, from 1 to 20. Dates define a UTC window with an inclusive start and exclusive end. `channel_ids` accepts comma-separated YouTube channel IDs, not names.
 
 Research requests use your account's search allowance. Plan restrictions, rate limits and usage errors propagate without automatic retries or a fallback to a different transcript source. This tool does not retrieve full Premium transcripts or create transcription jobs. See the [search reference](https://arcmira.com/docs/search) and [account tiers](https://arcmira.com/pricing) for access details.
