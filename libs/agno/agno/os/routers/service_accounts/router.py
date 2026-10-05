@@ -141,6 +141,56 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
                 status_code=401,
                 detail=("JWT authentication is required to mint a service account."),
             )
+        from agno.os.auth import caller_scopes_are_authoritative
+
+        if not caller_scopes_are_authoritative(request):
+            # Under a managed-roles / ReBAC / custom plane the token's `scopes` claim is
+            # NOT the caller's authority (the provider ignores it), yet a minted PAT is
+            # always enforced by scope-math and bypasses that plane. Measuring the subset
+            # rule against the claim would let a limited caller (e.g. one holding only a
+            # `service_accounts:write` role, with an ignored `agent_os:admin` in the token)
+            # mint a more powerful, durable credential. So measure the caller's REAL
+            # authority through the provider (their roles/relationships): each requested
+            # scope must be one the provider would grant this caller, decided exactly as
+            # the resource gate would. Minting a PAT for scopes the caller genuinely holds
+            # under the plane (the supported service-account flow) still works.
+            from agno.os.auth import resolve_authorization_provider
+            from agno.os.authz._scope_policy import scope_to_resource_action
+            from agno.os.authz.provider import AuthorizationContext
+
+            provider = resolve_authorization_provider(request)
+            principal_id = getattr(request.state, "user_id", None)
+            caller_claims = getattr(request.state, "claims", None) or {}
+
+            def _caller_holds_via_provider(scope: str) -> bool:
+                try:
+                    resource, action = scope_to_resource_action(scope)
+                except ValueError:
+                    return False  # unmappable scope -> not held (fail closed)
+                if resource == "*":
+                    resource_type, resource_id = "*", "*"  # agent_os:admin
+                else:
+                    resource_type, _, resource_id = resource.partition("/")
+                return provider.check(
+                    AuthorizationContext(
+                        principal_id=principal_id,
+                        scopes=list(caller_scopes or []),
+                        claims=caller_claims,
+                        resource_type=resource_type,
+                        resource_id=resource_id,
+                        action=action,
+                        admin_scope=admin_scope,
+                    )
+                )
+
+            scopes_not_held = [scope for scope in scopes if not _caller_holds_via_provider(scope)]
+            if scopes_not_held:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Cannot grant scope(s) you do not hold: {', '.join(scopes_not_held)}",
+                )
+            return
+
         effective_admin_scope = admin_scope or AgentOSScope.ADMIN.value
         if effective_admin_scope in caller_scopes:
             return
