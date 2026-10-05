@@ -1,7 +1,9 @@
 """
 Unit tests for paused member run persistence in team routing helpers.
 
-Regression test for: https://github.com/agno-agi/agno/issues/8925
+Regression tests for:
+- https://github.com/agno-agi/agno/issues/8925
+- https://github.com/agno-agi/agno/issues/9402
 
 When a member pauses during team.continue_run() routing, its RunOutput must be
 persisted to session.runs so subsequent continue_run calls can find it after
@@ -565,6 +567,118 @@ def test_nested_member_pause_survives_fresh_process_continue(tmp_path):
 
     team_runs = [r for r in _reload_runs(db_file, session_id) if isinstance(r, TeamRunOutput)]
     assert all(r.member_responses == [] for r in team_runs)
+
+
+def test_nested_member_pause_is_not_embedded_in_top_level_team_run(tmp_path):
+    """Persist a paused nested subtree on its direct member row only.
+
+    v3 persists member runs separately. The top-level team row must not also
+    carry the same paused member tree, otherwise each nested pause is stored
+    once per ancestor and can push run payloads toward database item limits.
+    """
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "nested_storage_shape.db")
+    session_id = "s-nested-storage-shape"
+
+    outer = _build_three_level_team(SqliteDb(db_file=db_file), resuming=False)
+    run = outer.run("Email a@example.com", session_id=session_id)
+    assert run.is_paused
+
+    stored_runs = _reload_runs(db_file, session_id)
+    root_run = next(r for r in stored_runs if r.parent_run_id is None)
+    child_run = next(r for r in stored_runs if r.parent_run_id == root_run.run_id)
+
+    assert root_run.member_responses == []
+    assert len(child_run.member_responses) == 1
+    assert len(child_run.member_responses[0].member_responses) == 1
+
+
+def test_paused_subteam_scrub_does_not_bypass_other_member_responses():
+    from agno.team._session import _scrub_member_responses_keeping_paused
+
+    paused_agent = Agent(id="paused-agent", name="Paused Agent")
+    nested_member = Agent(id="nested-member", name="Nested Member")
+    nested_team = Team(id="nested-team", name="Nested Team", members=[nested_member], telemetry=False)
+    root_team = Team(id="root-team", name="Root Team", members=[paused_agent, nested_team], telemetry=False)
+
+    root_run = TeamRunOutput(
+        run_id="root-run",
+        team_id="root-team",
+        member_responses=[
+            RunOutput(run_id="paused-agent-run", agent_id="paused-agent", status=RunStatus.paused),
+            TeamRunOutput(
+                run_id="nested-run",
+                team_id="nested-team",
+                parent_run_id="root-run",
+                status=RunStatus.paused,
+                member_responses=[
+                    RunOutput(run_id="nested-member-run", agent_id="nested-member", status=RunStatus.paused)
+                ],
+            ),
+            RunOutput(run_id="completed-agent-run", agent_id="paused-agent", status=RunStatus.completed),
+        ],
+    )
+
+    storage_view = _scrub_member_responses_keeping_paused(root_team, root_run, persisted_member_run_ids={"nested-run"})
+
+    assert [response.run_id for response in storage_view.member_responses] == ["paused-agent-run"]
+
+
+def test_failed_member_row_write_keeps_nested_fallback(tmp_path, monkeypatch):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "nested-write-failure.db")
+    session_id = "s-nested-write-failure"
+
+    db = SqliteDb(db_file=db_file)
+    original_upsert_run = db.upsert_run
+
+    def fail_nested_member_row(*args, **kwargs):
+        run = kwargs.get("run")
+        if getattr(run, "parent_run_id", None) is not None:
+            raise RuntimeError("simulated member row write failure")
+        return original_upsert_run(*args, **kwargs)
+
+    monkeypatch.setattr(db, "upsert_run", fail_nested_member_row)
+
+    outer = _build_three_level_team(db, resuming=False)
+    run = outer.run("Email a@example.com", session_id=session_id)
+    assert run.is_paused
+
+    stored_runs = _reload_runs(db_file, session_id)
+    assert len(stored_runs) == 1
+    root_run = stored_runs[0]
+    assert root_run.parent_run_id is None
+    assert len(root_run.member_responses) == 1
+    assert len(root_run.member_responses[0].member_responses) == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_member_row_write_keeps_nested_fallback_async(tmp_path, monkeypatch):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "nested-write-failure-async.db")
+    session_id = "s-nested-write-failure-async"
+
+    db = SqliteDb(db_file=db_file)
+    original_upsert_run = db.upsert_run
+
+    def fail_nested_member_row(*args, **kwargs):
+        run = kwargs.get("run")
+        if getattr(run, "parent_run_id", None) is not None:
+            raise RuntimeError("simulated member row write failure")
+        return original_upsert_run(*args, **kwargs)
+
+    monkeypatch.setattr(db, "upsert_run", fail_nested_member_row)
+
+    outer = _build_three_level_team(db, resuming=False)
+    run = await outer.arun("Email a@example.com", session_id=session_id)
+    assert run.is_paused
+
+    stored_runs = _reload_runs(db_file, session_id)
+    assert len(stored_runs) == 1
+    root_run = stored_runs[0]
+    assert root_run.parent_run_id is None
+    assert len(root_run.member_responses) == 1
+    assert len(root_run.member_responses[0].member_responses) == 1
 
 
 @pytest.mark.asyncio
