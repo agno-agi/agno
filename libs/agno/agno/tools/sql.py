@@ -120,6 +120,7 @@ class SQLTools(Toolkit):
         Args:
             query (str): The query to run.
             limit (int, optional): The number of rows to return. Defaults to 10. Use `None` to show all results.
+                Non-positive values return no rows.
         Returns:
             str: Result of the SQL query.
         Notes:
@@ -137,7 +138,7 @@ class SQLTools(Toolkit):
 
         Args:
             sql (str): The sql query to run.
-            limit (int, optional): The number of rows to return. Defaults to None.
+            limit (int, optional): The number of rows to return. Defaults to None. Non-positive values return no rows.
 
         Returns:
             List[dict]: The result of the query.
@@ -154,10 +155,12 @@ class SQLTools(Toolkit):
                 return []
 
             try:
-                if limit:
+                if limit is None:
+                    rows = result.fetchall()
+                elif limit > 0:
                     rows = result.fetchmany(limit)
                 else:
-                    rows = result.fetchall()
+                    rows = []
                 return [row._asdict() for row in rows]
             except Exception:
                 logger.exception("Error while executing SQL")

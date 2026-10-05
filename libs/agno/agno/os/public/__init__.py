@@ -107,8 +107,8 @@ class PublicSurface:
             enabled_tags = _enabled_builtin_tags(config, has_exposures=bool(exposures))
             if enabled_tags & {"core", "lifecycle"}:
                 raise ValueError(
-                    "Public MCP cannot expose continue_run or cancel_run. Exposing agents, teams or workflows "
-                    "as MCP tools enables them automatically; set lifecycle_tools=False or "
+                    "Public MCP cannot expose continue_run or cancel_run. The lifecycle tools were explicitly "
+                    "enabled for exposed components; set lifecycle_tools=False or "
                     'exclude_tags={"lifecycle"} in MCPConfig to disable them.'
                 )
         if self._limiter is None:
