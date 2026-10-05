@@ -296,7 +296,7 @@ def test_format_messages_nests_tool_result_media_in_function_response():
     assert function_response.response == {"result": "Document prepared"}
     assert function_response.parts is not None
     assert [part.inline_data.mime_type for part in function_response.parts if part.inline_data] == [
-        "image/jpeg",
+        "image/png",
         "application/pdf",
     ]
 

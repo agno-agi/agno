@@ -12,6 +12,15 @@ if TYPE_CHECKING:
 
 from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
+from agno.db.schemas.authz import (
+    AUTHZ_AUDIT,
+    AUTHZ_DECISIONS,
+    AUTHZ_GROUPING,
+    AUTHZ_POLICY,
+    AUTHZ_ROLES,
+    AUTHZ_TABLE_NAME_ATTRS,
+    AUTHZ_USERS,
+)
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -19,6 +28,7 @@ from agno.db.schemas.service_accounts import (
     resolve_service_account_sort_column,
     validate_service_account_update,
 )
+from agno.db.sql import authz as authz_sql
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
     abulk_upsert_metrics,
@@ -41,7 +51,7 @@ from agno.db.utils import (
     json_serializer,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
-    serialize_session_json_fields,
+    owner_key,
     table_schema_mismatch_error,
     validate_pagination,
 )
@@ -547,6 +557,13 @@ class AsyncSqliteDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.service_accounts_table
+
+        elif table_type in AUTHZ_TABLE_NAME_ATTRS:
+            return await self._get_or_create_table(
+                table_name=getattr(self, AUTHZ_TABLE_NAME_ATTRS[table_type]),
+                table_type=table_type,
+                create_table_if_not_found=create_table_if_not_found,
+            )
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -1295,7 +1312,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             session_id (str): ID of the session to read.
             session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
             runs_limit (Optional[int]): If set, attach only the most recent ``runs_limit``
                 runs instead of the full history. For a fully-migrated session this is an
                 indexed ``ORDER BY run_index DESC LIMIT`` query; for a session that still
@@ -1417,7 +1434,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             page (Optional[int]): The page number to return. Defaults to None.
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
 
         Returns:
             List[Session]:
@@ -1561,7 +1578,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
         Args:
             session (Session): The session data to upsert.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Optional[Session]:
@@ -1576,37 +1593,38 @@ class AsyncSqliteDb(AsyncBaseDb):
             if table is None:
                 return None
 
-            serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
+            # The JSON columns take the dicts as-is; the engine's json_serializer encodes them
+            session_dict = session.to_dict(include_runs=False)
 
             if isinstance(session, AgentSession):
                 values = dict(
                     session_type=SessionType.AGENT.value,
-                    agent_id=serialized_session.get("agent_id"),
-                    user_id=serialized_session.get("user_id"),
-                    agent_data=serialized_session.get("agent_data"),
-                    session_data=serialized_session.get("session_data"),
-                    summary=serialized_session.get("summary"),
-                    metadata=serialized_session.get("metadata"),
+                    agent_id=session_dict.get("agent_id"),
+                    user_id=session_dict.get("user_id"),
+                    agent_data=session_dict.get("agent_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    metadata=session_dict.get("metadata"),
                 )
             elif isinstance(session, TeamSession):
                 values = dict(
                     session_type=SessionType.TEAM.value,
-                    team_id=serialized_session.get("team_id"),
-                    user_id=serialized_session.get("user_id"),
-                    team_data=serialized_session.get("team_data"),
-                    session_data=serialized_session.get("session_data"),
-                    summary=serialized_session.get("summary"),
-                    metadata=serialized_session.get("metadata"),
+                    team_id=session_dict.get("team_id"),
+                    user_id=session_dict.get("user_id"),
+                    team_data=session_dict.get("team_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    metadata=session_dict.get("metadata"),
                 )
             else:
                 values = dict(
                     session_type=SessionType.WORKFLOW.value,
-                    workflow_id=serialized_session.get("workflow_id"),
-                    user_id=serialized_session.get("user_id"),
-                    workflow_data=serialized_session.get("workflow_data"),
-                    session_data=serialized_session.get("session_data"),
-                    summary=serialized_session.get("summary"),
-                    metadata=serialized_session.get("metadata"),
+                    workflow_id=session_dict.get("workflow_id"),
+                    user_id=session_dict.get("user_id"),
+                    workflow_data=session_dict.get("workflow_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    metadata=session_dict.get("metadata"),
                 )
 
             update_values = {k: v for k, v in values.items() if k != "session_type"}
@@ -1617,15 +1635,15 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = sqlite.insert(table).values(
-                    session_id=serialized_session.get("session_id"),
-                    created_at=serialized_session.get("created_at") or int(time.time()),
-                    updated_at=serialized_session.get("created_at") or int(time.time()),
+                    session_id=session_dict.get("session_id"),
+                    created_at=session_dict.get("created_at") or int(time.time()),
+                    updated_at=session_dict.get("created_at") or int(time.time()),
                     **values,
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["session_id"],
                     set_=dict(updated_at=int(time.time()), **update_values),
-                    where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
+                    where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                 )
                 stmt = stmt.returning(*table.columns)  # type: ignore
                 result = await sess.execute(stmt)
@@ -1695,10 +1713,14 @@ class AsyncSqliteDb(AsyncBaseDb):
                 elif isinstance(session, WorkflowSession):
                     workflow_sessions.append(session)
 
-            sessions_by_id: Dict[str, Session] = {s.session_id: s for s in sessions}
+            sessions_by_id_and_user: Dict[Tuple[str, Optional[str]], Session] = {
+                (s.session_id, owner_key(s.user_id)): s for s in sessions
+            }
 
             def _attach_runs(session_dict: Dict[str, Any]) -> Dict[str, Any]:
-                original_session = sessions_by_id.get(session_dict.get("session_id"))  # type: ignore[arg-type]
+                original_session = sessions_by_id_and_user.get(
+                    (session_dict.get("session_id"), owner_key(session_dict.get("user_id")))  # type: ignore[arg-type]
+                )
                 session_dict["runs"] = [
                     run if isinstance(run, dict) else run.to_dict()
                     for run in (original_session.runs if original_session else None) or []
@@ -1712,20 +1734,20 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if agent_sessions:
                     agent_data = []
                     for session in agent_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
+                        session_dict = session.to_dict(include_runs=False)
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         agent_data.append(
                             {
-                                "session_id": serialized_session.get("session_id"),
+                                "session_id": session_dict.get("session_id"),
                                 "session_type": SessionType.AGENT.value,
-                                "agent_id": serialized_session.get("agent_id"),
-                                "user_id": serialized_session.get("user_id"),
-                                "agent_data": serialized_session.get("agent_data"),
-                                "session_data": serialized_session.get("session_data"),
-                                "metadata": serialized_session.get("metadata"),
-                                "summary": serialized_session.get("summary"),
-                                "created_at": serialized_session.get("created_at"),
+                                "agent_id": session_dict.get("agent_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "agent_data": session_dict.get("agent_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "metadata": session_dict.get("metadata"),
+                                "summary": session_dict.get("summary"),
+                                "created_at": session_dict.get("created_at"),
                                 "updated_at": updated_at,
                             }
                         )
@@ -1743,6 +1765,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
+                            where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                         )
                         await sess.execute(stmt, agent_data)
 
@@ -1752,6 +1775,12 @@ class AsyncSqliteDb(AsyncBaseDb):
                         result = (await sess.execute(select_stmt)).fetchall()
 
                         for row in result:
+                            submitted = sessions_by_id_and_user.get(
+                                (row._mapping["session_id"], owner_key(row._mapping["user_id"]))
+                            )
+                            if submitted is None:
+                                # The conflict update was refused: the row belongs to another user
+                                continue
                             session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_agent_session = AgentSession.from_dict(session_dict)
@@ -1765,21 +1794,21 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if team_sessions:
                     team_data = []
                     for session in team_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
+                        session_dict = session.to_dict(include_runs=False)
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         team_data.append(
                             {
-                                "session_id": serialized_session.get("session_id"),
+                                "session_id": session_dict.get("session_id"),
                                 "session_type": SessionType.TEAM.value,
-                                "team_id": serialized_session.get("team_id"),
-                                "user_id": serialized_session.get("user_id"),
-                                "summary": serialized_session.get("summary"),
-                                "created_at": serialized_session.get("created_at"),
+                                "team_id": session_dict.get("team_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "summary": session_dict.get("summary"),
+                                "created_at": session_dict.get("created_at"),
                                 "updated_at": updated_at,
-                                "team_data": serialized_session.get("team_data"),
-                                "session_data": serialized_session.get("session_data"),
-                                "metadata": serialized_session.get("metadata"),
+                                "team_data": session_dict.get("team_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "metadata": session_dict.get("metadata"),
                             }
                         )
 
@@ -1796,6 +1825,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
+                            where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                         )
                         await sess.execute(stmt, team_data)
 
@@ -1805,6 +1835,12 @@ class AsyncSqliteDb(AsyncBaseDb):
                         result = (await sess.execute(select_stmt)).fetchall()
 
                         for row in result:
+                            submitted = sessions_by_id_and_user.get(
+                                (row._mapping["session_id"], owner_key(row._mapping["user_id"]))
+                            )
+                            if submitted is None:
+                                # The conflict update was refused: the row belongs to another user
+                                continue
                             session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_team_session = TeamSession.from_dict(session_dict)
@@ -1818,21 +1854,21 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if workflow_sessions:
                     workflow_data = []
                     for session in workflow_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
+                        session_dict = session.to_dict(include_runs=False)
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         workflow_data.append(
                             {
-                                "session_id": serialized_session.get("session_id"),
+                                "session_id": session_dict.get("session_id"),
                                 "session_type": SessionType.WORKFLOW.value,
-                                "workflow_id": serialized_session.get("workflow_id"),
-                                "user_id": serialized_session.get("user_id"),
-                                "summary": serialized_session.get("summary"),
-                                "created_at": serialized_session.get("created_at"),
+                                "workflow_id": session_dict.get("workflow_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "summary": session_dict.get("summary"),
+                                "created_at": session_dict.get("created_at"),
                                 "updated_at": updated_at,
-                                "workflow_data": serialized_session.get("workflow_data"),
-                                "session_data": serialized_session.get("session_data"),
-                                "metadata": serialized_session.get("metadata"),
+                                "workflow_data": session_dict.get("workflow_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "metadata": session_dict.get("metadata"),
                             }
                         )
 
@@ -1849,6 +1885,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
+                            where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                         )
                         await sess.execute(stmt, workflow_data)
 
@@ -1858,6 +1895,12 @@ class AsyncSqliteDb(AsyncBaseDb):
                         result = (await sess.execute(select_stmt)).fetchall()
 
                         for row in result:
+                            submitted = sessions_by_id_and_user.get(
+                                (row._mapping["session_id"], owner_key(row._mapping["user_id"]))
+                            )
+                            if submitted is None:
+                                # The conflict update was refused: the row belongs to another user
+                                continue
                             session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
@@ -1991,7 +2034,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
         Args:
             memory_id (str): The ID of the memory to get.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
             user_id (Optional[str]): The user ID to filter by. Defaults to None.
 
         Returns:
@@ -2050,7 +2093,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
 
 
         Returns:
@@ -2191,7 +2234,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
         Args:
             memory (UserMemory): The user memory to upsert.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -2910,7 +2953,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
             user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
@@ -2973,7 +3016,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
-            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
             create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
@@ -3051,7 +3094,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         Args:
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
             user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
@@ -4776,8 +4819,11 @@ class AsyncSqliteDb(AsyncBaseDb):
                 results = (await sess.execute(stmt)).fetchall()
                 return [dict(row._mapping) for row in results], total
         except Exception as e:
-            log_debug(f"Error listing approvals: {e}")
-            return [], 0
+            # Raise rather than return an empty page: the continue-run approval gate reads
+            # "no pending approval" as permission to continue, so a failed read must not
+            # look like one.
+            log_error(f"Error listing approvals: {e}")
+            raise e
 
     async def update_approval(
         self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
@@ -5073,3 +5119,171 @@ class AsyncSqliteDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error deleting service account: {e}")
             return False
+
+    # --- Authorization ---
+    # Async twins of the sync SQLite authz delegations: each resolves its table via the
+    # normal schema-aware _get_table path (created on first use, honouring configured
+    # schema/table-name overrides) and delegates to the shared agno.db.sql.authz async
+    # functions over this backend's AsyncEngine.
+
+    async def get_authz_policies(self, roles: List[str]) -> List[Tuple[str, str, str, str]]:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        return await authz_sql.aget_policies(self.db_engine, table, roles)
+
+    async def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        return await authz_sql.aget_role_policies(self.db_engine, table, role)
+
+    async def set_authz_role_policies(self, role: str, rows: List[Tuple[str, str, str]]) -> None:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        await authz_sql.aset_role_policies(self.db_engine, table, role, rows)
+
+    async def upsert_authz_policy(self, *, role: str, resource: str, action: str, effect: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        await authz_sql.aupsert_policy(
+            self.db_engine, table, role=role, resource=resource, action=action, effect=effect
+        )
+
+    async def delete_authz_policy(
+        self, *, role: str, resource: Optional[str] = None, action: Optional[str] = None
+    ) -> None:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        await authz_sql.adelete_policy(self.db_engine, table, role=role, resource=resource, action=action)
+
+    async def get_authz_direct_roles(self, subject: str) -> List[str]:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_sql.aget_direct_roles(self.db_engine, table, subject)
+
+    async def get_authz_direct_roles_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_sql.aget_direct_roles_many(self.db_engine, table, subjects)
+
+    async def list_authz_role_subjects(self, role: str) -> List[str]:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_sql.aget_role_subjects(self.db_engine, table, role)
+
+    async def authz_name_is_role(self, name: str) -> bool:
+        policy = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        grouping = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_sql.aname_is_role(self.db_engine, policy, grouping, name)
+
+    async def assign_authz_role(self, subject: str, role: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        await authz_sql.aassign_role(self.db_engine, table, subject, role)
+
+    async def unassign_authz_role(self, subject: str, role: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        await authz_sql.aunassign_role(self.db_engine, table, subject, role)
+
+    async def replace_authz_subject_roles(self, subject: str, role: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        await authz_sql.areplace_subject_roles(self.db_engine, table, subject, role)
+
+    async def list_authz_roles(self) -> List[str]:
+        policy = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        grouping = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_sql.alist_roles(self.db_engine, policy, grouping)
+
+    async def delete_authz_role(self, role: str) -> None:
+        policy = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        grouping = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        meta = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        await authz_sql.adelete_role(self.db_engine, policy, grouping, meta, role)
+
+    async def get_authz_role_meta(self, slug: str) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        return await authz_sql.aget_role_meta(self.db_engine, table, slug)
+
+    async def list_authz_role_meta(self) -> List[Dict[str, Any]]:
+        table = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        return await authz_sql.alist_role_meta(self.db_engine, table)
+
+    async def upsert_authz_role_meta(self, slug: str, values: Dict[str, Any]) -> None:
+        table = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        await authz_sql.aupsert_role_meta(self.db_engine, table, slug, values)
+
+    async def delete_authz_role_meta(self, slug: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        await authz_sql.adelete_role_meta(self.db_engine, table, slug)
+
+    async def get_authz_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.aget_user(self.db_engine, table, user_id)
+
+    async def list_authz_users(
+        self,
+        limit: int = 1000,
+        offset: int = 0,
+        include_disabled: bool = True,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+    ) -> List[Dict[str, Any]]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.alist_users(
+            self.db_engine, table, limit, offset, include_disabled, search, sort_by, order
+        )
+
+    async def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.acount_users(self.db_engine, table, include_disabled, search)
+
+    async def count_authz_users_by_status(self) -> Dict[str, int]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.acount_users_by_status(self.db_engine, table)
+
+    async def list_authz_user_ids(self, include_disabled: bool = True) -> List[str]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.alist_user_ids(self.db_engine, table, include_disabled)
+
+    async def count_authz_users_by_day(
+        self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+    ) -> List[Dict[str, int]]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.acount_users_by_day(self.db_engine, table, starting_at, ending_before)
+
+    async def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        await authz_sql.aupsert_user(self.db_engine, table, user_id, values)
+
+    async def set_authz_user_disabled(self, user_id: str, disabled: bool) -> None:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        await authz_sql.aset_user_disabled(self.db_engine, table, user_id, disabled)
+
+    async def delete_authz_user(self, user_id: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        await authz_sql.adelete_user(self.db_engine, table, user_id)
+
+    async def is_authz_user_disabled(self, user_id: str) -> bool:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.ais_user_disabled(self.db_engine, table, user_id)
+
+    async def record_authz_audit_event(self, values: Dict[str, Any]) -> None:
+        table = await self._get_table(table_type=AUTHZ_AUDIT, create_table_if_not_found=True)
+        await authz_sql.arecord_event(self.db_engine, table, values)
+
+    async def record_authz_decision(self, values: Dict[str, Any]) -> None:
+        table = await self._get_table(table_type=AUTHZ_DECISIONS, create_table_if_not_found=True)
+        await authz_sql.arecord_event(self.db_engine, table, values)
+
+    async def read_authz_audit_events(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+        decisions: bool = False,
+    ) -> List[Dict[str, Any]]:
+        table_type = AUTHZ_DECISIONS if decisions else AUTHZ_AUDIT
+        columns = ["actor", "action", "target"]
+        table = await self._get_table(table_type=table_type, create_table_if_not_found=True)
+        return await authz_sql.aread_events(
+            self.db_engine, table, limit, offset, search, sort_by, order, search_columns=columns
+        )
+
+    async def count_authz_audit_events(self, search: Optional[str] = None, decisions: bool = False) -> int:
+        table_type = AUTHZ_DECISIONS if decisions else AUTHZ_AUDIT
+        columns = ["actor", "action", "target"]
+        table = await self._get_table(table_type=table_type, create_table_if_not_found=True)
+        return await authz_sql.acount_events(self.db_engine, table, search, search_columns=columns)

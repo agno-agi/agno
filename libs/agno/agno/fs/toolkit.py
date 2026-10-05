@@ -17,8 +17,9 @@ tested.
 These names deliberately collide with the rest of the file-toolkit family
 (Workspace, FileTools, PythonTools, CodingTools, ...). Agno's tool resolver
 keeps the first registration per name and drops later duplicates with a logged
-warning, so attach at most one file-like toolkit per agent; when an agent
-genuinely needs both FileSystem and a local workspace, wrap one in a sub-agent.
+warning. Use ``Agent(filesystem=[...])`` for multiple filesystem stores: the
+agent qualifies each store's tool names to avoid collisions. Manually attached
+toolkits still need distinct tool names.
 """
 
 import asyncio
@@ -108,8 +109,8 @@ class FileSystemTools(Toolkit):
     ``search_content``, ``move_file``, ``delete_file``) deliberately collide with
     the rest of the file-toolkit family (Workspace, FileTools, PythonTools, ...).
     Agno's resolver keeps the first registration per name and drops later duplicates
-    with a logged warning, so attach at most one file-like toolkit per agent; if an
-    agent genuinely needs both, wrap one in a sub-agent.
+    with a logged warning. Pass multiple stores through ``Agent(filesystem=[...])``
+    to give each store distinct tool names.
     """
 
     # The whole surface, exported for callers that want everything explicitly.
@@ -151,6 +152,7 @@ class FileSystemTools(Toolkit):
     ):
         self.fs = fs
         self.read_only = read_only
+        self.allow_delete = allow_delete
         # Every mutating tool is a read-modify-write over one row, and a model's
         # tool calls for one turn are gathered concurrently (models/base.py) -
         # the path AgentOS REST and /mcp take. Two replace_lines on one note
@@ -200,6 +202,12 @@ class FileSystemTools(Toolkit):
             add_instructions=add_instructions,
             **kwargs,
         )
+
+    @property
+    def can_write(self) -> bool:
+        """Whether any registered tool can change files, after include/exclude_tools."""
+        read_capable = set(self._READ_CAPABLE_TOOLS)
+        return any(name not in read_capable for name in self.functions)
 
     # ------------------------------------------------------------------
     # Helpers

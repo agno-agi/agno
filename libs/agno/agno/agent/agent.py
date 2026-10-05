@@ -14,6 +14,7 @@ from typing import (
     Optional,
     Sequence,
     Set,
+    Tuple,
     Type,
     Union,
     overload,
@@ -40,7 +41,9 @@ from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
 
 if TYPE_CHECKING:
+    from agno.fs import FileSystem
     from agno.learn.machine import LearningMachine
+    from agno.tools.component import ComponentTool
 
 from agno.media import Audio, File, Image, Video
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
@@ -112,7 +115,9 @@ class Agent:
     session_summary_manager: Optional[SessionSummaryManager] = None
 
     # --- Agent Dependencies ---
-    # Dependencies available for tools and prompt functions
+    # Dependencies available for tools and prompt functions. Callables may request
+    # agent, run_context, run_input and session; resolved before pre-hooks.
+    # On continuation, run_input is the original RunInput (None for runs stored without it).
     dependencies: Optional[Dict[str, Any]] = None
     # If True, add the dependencies to the user prompt
     add_dependencies_to_context: bool = False
@@ -133,6 +138,12 @@ class Agent:
     # --- Database ---
     # Database to use for this agent
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
+
+    # --- FileSystem ---
+    # Enable a durable filesystem backed by the agent's database, or provide one or several stores.
+    # Each run acts in its user's partition of the store; see FileSystem.user_scoped.
+    # Choose the tool surface on the FileSystem, e.g. ``FileSystem(db, namespace=..., read_only=True)``.
+    filesystem: Optional[Union[bool, FileSystem, List[FileSystem]]] = None
 
     # --- Checkpointing ---
     # When to persist run state to the database.
@@ -403,6 +414,7 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+        filesystem: Optional[Union[bool, FileSystem, List[FileSystem]]] = None,
         checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,
@@ -522,6 +534,8 @@ class Agent:
         self.add_session_state_to_context = add_session_state_to_context
 
         self.db = db
+        self.filesystem = filesystem
+        self._filesystem: Optional["FileSystem"] = None
         self.checkpoint = checkpoint
 
         self.memory_manager = memory_manager
@@ -590,7 +604,14 @@ class Agent:
         elif is_callable_factory(tools, excluded_types=(Toolkit, Function)):
             self.tools = tools  # type: ignore[assignment]
         else:
-            self.tools = list(tools)  # type: ignore[arg-type]
+            # A ComponentTool is not a runnable tool, and must fail here,
+            # at construction -- not at the first run.
+            from agno.tools.component import raise_if_component_tool
+
+            concrete_tools = list(tools)  # type: ignore[arg-type]
+            for tool in concrete_tools:
+                raise_if_component_tool(tool, "Agent", "To let this agent delegate to another agent, use a Team.")
+            self.tools = concrete_tools
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
@@ -757,9 +778,45 @@ class Agent:
             _init.set_learning_machine(self)
         return self._learning
 
+    @property
+    def filesystem_instance(self) -> Optional["FileSystem"]:
+        """The first configured filesystem, if enabled. Use ``filesystems`` for every store."""
+        if self.filesystem and self._filesystem is None:
+            _init.set_filesystem(self)
+        return self._filesystem
+
+    @property
+    def filesystems(self) -> List[Tuple["FileSystem", bool]]:
+        """Every filesystem the agent holds as ``(filesystem, read_only)``: the setting, then tools."""
+        return _init.get_filesystems(self)
+
     # ---------------------------------------------------------------
     # _init module delegates
     # ---------------------------------------------------------------
+
+    def as_tool(
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        title: Optional[str] = None,
+        annotations: Optional[Dict[str, Any]] = None,
+    ) -> "ComponentTool":
+        """Publish this agent as a tool with its own model-facing name, description,
+        title, and behaviour annotations.
+
+        Returns a declarative :class:`~agno.tools.component.ComponentTool` marker
+        for surfaces that turn components into tools. The tool name must be a
+        valid tool identifier (start with a letter or underscore, then
+        letters/digits/hyphens/underscores).
+
+        ``title`` is the human-facing display name; ``annotations`` are MCP behaviour
+        hints (``readOnlyHint``, ``destructiveHint``, ``idempotentHint``,
+        ``openWorldHint``) merged over the publishing surface's defaults -- see
+        :mod:`agno.tools.annotations`.
+        """
+        from agno.tools.component import ComponentTool
+
+        return ComponentTool(component=self, name=name, description=description, title=title, annotations=annotations)
 
     def set_id(self) -> None:
         return _init.set_id(self)

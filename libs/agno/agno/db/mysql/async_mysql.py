@@ -839,7 +839,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return deleted
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
-            return False
+            raise e
 
     async def delete_runs(self, run_ids: List[str]) -> None:
         """Delete all given runs from the runs table."""
@@ -853,6 +853,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             log_debug(f"Successfully deleted {result.rowcount} runs")  # type: ignore
         except Exception as e:
             log_error(f"Error deleting runs: {str(e)}")
+            raise e
 
     # -- Session methods --
     async def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
@@ -949,7 +950,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             session_id (str): ID of the session to read.
             session_type (Optional[SessionType]): Type of session to get. Defaults to None.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Union[Session, Dict[str, Any], None]:
@@ -1055,7 +1056,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             page (Optional[int]): The page number to return. Defaults to None.
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
 
         Returns:
             Union[List[Session], Tuple[List[Dict], int]]:
@@ -1158,7 +1159,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name for the session.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -1651,7 +1652,7 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         Args:
             memory_id (str): The ID of the memory to get.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
 
         Returns:
             Union[UserMemory, Dict[str, Any], None]:
@@ -1711,7 +1712,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
 
         Returns:
             Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
@@ -1869,7 +1870,7 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         Args:
             memory (UserMemory): The user memory to upsert.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -2567,7 +2568,7 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
             user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
@@ -2631,7 +2632,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
-            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:

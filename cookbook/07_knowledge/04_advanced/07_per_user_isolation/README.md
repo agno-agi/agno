@@ -15,7 +15,7 @@ rely on an error.
 
 1. Set `OPENAI_API_KEY`
 2. LanceDB, Chroma and Qdrant run embedded - nothing else to start
-3. For a server backend, run the matching script: `./cookbook/scripts/run_pgvector.sh`, `run_weaviate.sh`, `run_opensearch.sh`, `run_redis.sh`, `run_valkey.sh`, `run_clickhouse.sh`, `run_cassandra.sh`, `run_couchbase.sh`, `run_surrealdb.sh`, `run_singlestore.sh`
+3. For a server backend, run the matching script: `./cookbook/scripts/run_pgvector.sh`, `run_weaviate.sh`, `run_opensearch.sh`, `run_elasticsearch.sh`, `run_redis.sh`, `run_valkey.sh`, `run_clickhouse.sh`, `run_cassandra.sh`, `run_couchbase.sh`, `run_surrealdb.sh`, `run_singlestore.sh`
 4. For Milvus: `bash standalone_embed.sh start` - Milvus Lite drops scalar fields on the search read path, so this one needs a standalone server
 5. For MongoDB: `docker run -d -p 27017:27017 mongodb/mongodb-atlas-local:latest` - plain MongoDB has no `$vectorSearch`
 6. For the cloud backends: Pinecone needs `PINECONE_API_KEY`; Upstash needs `UPSTASH_VECTOR_REST_URL` and `UPSTASH_VECTOR_REST_TOKEN` on a 1536-dimension index; SingleStore and Couchbase need their own credential env vars
@@ -34,6 +34,7 @@ Redis and Valkey both bind port 6379, so run only one of them at a time.
 | [mongo_db.py](./mongo_db.py) | Top-level `user_id` field, `$match {$in: [X, null]}` before `$vectorSearch` |
 | [weaviate_db.py](./weaviate_db.py) | `user_id` text property, `where` OR `is_none` |
 | [opensearch_db.py](./opensearch_db.py) | `user_id` keyword field, `term` OR `must_not exists` |
+| [elasticsearch_db.py](./elasticsearch_db.py) | `user_id` keyword field, `term` OR `must_not exists`, pre-filtered inside `knn` |
 | [redis_db.py](./redis_db.py) | `user_id` TAG field, `__shared__` sentinel tag |
 | [valkey_db.py](./valkey_db.py) | `user_id` TAG field, `__shared__` sentinel tag |
 | [clickhouse_db.py](./clickhouse_db.py) | Non-nullable `String` column, `""` sentinel for shared |

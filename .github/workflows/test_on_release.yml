@@ -7,8 +7,7 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
-      - "feat/v3.0"
-      - "perf/tool-schema-cache"
+      - "feat/v3.1"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
@@ -807,6 +806,7 @@ jobs:
           ./libs/agno/tests/integration/teams/test_session_state.py \
           ./libs/agno/tests/integration/teams/test_storage_and_memory.py \
           ./libs/agno/tests/integration/teams/human_in_the_loop/test_team_tool_hitl.py \
+          ./libs/agno/tests/integration/teams/human_in_the_loop/test_team_background_stream_continue.py \
           ./libs/agno/tests/integration/teams/test_filter_tool_calls.py \
           ./libs/agno/tests/integration/teams/test_multimodal.py
 
@@ -1013,14 +1013,48 @@ jobs:
           source .venv/bin/activate
           export SSL_CERT_FILE="$(python -m certifi)"
           python -m pytest ./libs/agno/tests/integration/knowledge/test_csv_knowledge.py \
-          ./libs/agno/tests/integration/knowledge/test_docling_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_docx_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_embedding_failure_handling.py \
           ./libs/agno/tests/integration/knowledge/test_json_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_md_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_pdf_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_pptx_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_text_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_async_knowledge_retriever.py
+
+  # Docling runs local layout and OCR models, so it gets its own job and budget
+  test-knowledge-3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/test_setup.sh
+      - name: Run Docling knowledge integration tests
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          export SSL_CERT_FILE="$(python -m certifi)"
+          python -m pytest ./libs/agno/tests/integration/knowledge/test_docling_knowledge.py
 
   test-knowledge-2:
     runs-on: ubuntu-latest
@@ -1128,7 +1162,7 @@ jobs:
           # agnoctl, which around a release is older than the workspace build
           # installed here, and layering it would downgrade that build.
           VIRTUAL_ENV=.venv uv pip install ./libs/agnoctl ./libs/agno
-          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy pytest pytest-asyncio pytest-cov pytest-mock pytest-rerunfailures pytest-timeout
+          VIRTUAL_ENV=.venv uv pip install openai chromadb "sqlalchemy[asyncio]" pytest pytest-asyncio pytest-cov pytest-mock pytest-rerunfailures pytest-timeout
       - name: Run Basic Clean Test
         working-directory: .
         env:
@@ -1200,7 +1234,7 @@ jobs:
           # agnoctl, which around a release is older than the workspace build
           # installed here, and layering it would downgrade that build.
           VIRTUAL_ENV=.venv uv pip install ./libs/agnoctl ./libs/agno
-          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy fastapi python-multipart pytest pytest-asyncio pytest-cov pytest-mock pytest-rerunfailures pytest-timeout
+          VIRTUAL_ENV=.venv uv pip install openai chromadb "sqlalchemy[asyncio]" fastapi python-multipart pytest pytest-asyncio pytest-cov pytest-mock pytest-rerunfailures pytest-timeout
       - name: Run Basic Clean Test
         working-directory: .
         env:
@@ -1339,6 +1373,10 @@ jobs:
   # so the largest Postgres-backed suite does not stretch that job's wall clock.
   # The pgvector service is on localhost:5532 — the exact host/port/creds the
   # conftest targets — so both the sqlite and postgresql lanes run in CI.
+  #
+  # Run page-storage tests here because the knowledge jobs have no Postgres.
+  # AGNO_PAGE_TEST_DB_URL uses this service to create and drop a temporary
+  # database for the suite. Report skipped tests with -rs.
   test-fs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1378,9 +1416,11 @@ jobs:
         working-directory: .
         env:
           AGNO_TELEMETRY: false
+          AGNO_PAGE_TEST_DB_URL: postgresql+psycopg://ai:ai@localhost:5532/ai
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/fs
+          python -m pytest -rs ./libs/agno/tests/integration/fs \
+          ./libs/agno/tests/integration/knowledge/test_page_storage.py
 
   test-dev-setup:
     runs-on: ubuntu-latest

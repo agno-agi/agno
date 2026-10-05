@@ -1,8 +1,9 @@
-"""Run `pip install ddgs pgvector google.genai` to install dependencies."""
+"""Run `uv pip install ddgs sqlalchemy 'psycopg[binary]' pgvector pypdf openai google.genai` to install dependencies."""
 
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
-from agno.knowledge import PDFUrlKnowledgeBase
+from agno.knowledge.embedder.google import GeminiEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.models.google import Gemini
 from agno.tools.websearch import WebSearchTools
 from agno.vectordb.pgvector import PgVector
@@ -13,16 +14,23 @@ from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-knowledge_base = PDFUrlKnowledgeBase(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
-    vector_db=PgVector(table_name="recipes", db_url=db_url),
+knowledge = Knowledge(
+    vector_db=PgVector(
+        table_name="recipes",
+        db_url=db_url,
+        embedder=GeminiEmbedder(),
+    ),
 )
-knowledge_base.load(recreate=True)  # Comment out after first run
+# Add content to the knowledge; reruns skip re-ingesting via the content hash
+knowledge.insert(
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+    skip_if_exists=True,
+)
 
 agent = Agent(
     model=Gemini(id="gemini-3.7-flash"),
     tools=[WebSearchTools()],
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     # Store the memories and summary in a database
     db=PostgresDb(db_url=db_url, memory_table="agent_memory"),
     update_memory_on_run=True,

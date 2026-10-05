@@ -20,6 +20,11 @@ def mock_embedder() -> MagicMock:
     embedder.get_embedding.return_value = [0.1] * 384
     embedder.get_embedding_and_usage.return_value = ([0.1] * 384, None)  # (embedding, usage)
     embedder.embedding_dim = 384
+    # The async variants must be awaitable: a plain MagicMock raises TypeError on await,
+    # which the embedding paths now surface instead of swallowing.
+    embedder.enable_batch = False
+    embedder.async_get_embedding = AsyncMock(return_value=[0.1] * 384)
+    embedder.async_get_embedding_and_usage = AsyncMock(return_value=([0.1] * 384, None))
     return embedder
 
 

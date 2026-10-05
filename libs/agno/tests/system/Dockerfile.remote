@@ -21,7 +21,7 @@ RUN pip install --no-cache-dir /app/agnoctl ".[os]"
 
 # Install additional dependencies for the server
 RUN pip install --no-cache-dir \
-    sqlalchemy \
+    "sqlalchemy[asyncio]" \
     psycopg-binary \
     psycopg \
     fastapi \
@@ -34,8 +34,8 @@ RUN pip install --no-cache-dir \
     opentelemetry-sdk \
     openinference-instrumentation-agno \
     PyJWT \
-    "mcp<2" \
-    fastmcp \
+    "mcp>=2.1.0,<3.0.0" \
+    "fastmcp>=4.0.0,<5" \
     "a2a-sdk>=0.3.0,<1.0" \
     agui \
     ag-ui-protocol \
