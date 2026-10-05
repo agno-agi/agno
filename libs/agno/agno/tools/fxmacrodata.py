@@ -44,7 +44,7 @@ class FXMacroDataTools(Toolkit):
             timeout: Per-request HTTP timeout in seconds. Default is 30.
         """
 
-        self.api_key: Optional[str] = api_key or getenv("FXMACRODATA_API_KEY")
+        self.api_key: Optional[str] = (api_key or getenv("FXMACRODATA_API_KEY") or "").strip() or None
         self.base_url: str = base_url.rstrip("/")
 
         tools: List[Any] = [
@@ -87,7 +87,17 @@ class FXMacroDataTools(Toolkit):
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
 
         try:
-            response = requests.get(url, headers=headers, params=clean_params, timeout=self.timeout)
+            # Redirects are not followed so the key header is never replayed to another host.
+            response = requests.get(
+                url, headers=headers, params=clean_params, timeout=self.timeout, allow_redirects=False
+            )
+            if 300 <= response.status_code < 400:
+                message = (
+                    f"FXMacroData returned an unexpected redirect (HTTP {response.status_code}) "
+                    f"for {endpoint}; redirects are not followed."
+                )
+                log_error(message)
+                return message
             response.raise_for_status()
             return response.text
         except requests.exceptions.HTTPError as e:
@@ -101,11 +111,15 @@ class FXMacroDataTools(Toolkit):
                     f"FXMacroData denied the request to {endpoint} (HTTP {status}). "
                     "This data requires an API key. USD data is available without one."
                 )
-            log_error(f"Error making request to {url}: {str(e)}")
-            return f"Error making request to {url}: {str(e)}"
+            log_error(f"Error making request to {url}: {self._redact(str(e))}")
+            return f"Error making request to {url}: {self._redact(str(e))}"
         except requests.exceptions.RequestException as e:
-            log_error(f"Error making request to {url}: {str(e)}")
-            return f"Error making request to {url}: {str(e)}"
+            log_error(f"Error making request to {url}: {self._redact(str(e))}")
+            return f"Error making request to {url}: {self._redact(str(e))}"
+
+    def _redact(self, text: str) -> str:
+        """Remove the API key from text that may be logged or returned to the agent."""
+        return text.replace(self.api_key, "***") if self.api_key else text
 
     # Discovery
 

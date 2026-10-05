@@ -17,6 +17,7 @@ def fxmacrodata_tools():
 def mock_response():
     """Fixture for a successful mocked API response."""
     response = MagicMock()
+    response.status_code = 200
     response.text = '{"currency":"USD","data":[]}'
     response.raise_for_status.return_value = None
     return response
@@ -164,3 +165,33 @@ def test_server_errors_are_reported(fxmacrodata_tools):
 
     assert "Error making request" in result
     assert "API key" not in result
+
+
+def test_redirects_are_not_followed_with_the_key(fxmacrodata_tools):
+    """A redirect must not replay the key header to another host."""
+    response = MagicMock()
+    response.status_code = 302
+    response.headers = {"Location": "https://other.example/v1/cot/gbp"}
+
+    with patch("requests.get", return_value=response) as mock_get:
+        result = fxmacrodata_tools.get_cot_positioning("GBP")
+
+    _, kwargs = mock_get.call_args
+    assert kwargs["allow_redirects"] is False
+    assert mock_get.call_count == 1
+    assert "redirect" in result
+    response.raise_for_status.assert_not_called()
+
+
+def test_error_text_never_contains_the_key():
+    """Errors that echo the header value must not leak the key."""
+    tools = FXMacroDataTools(api_key=" test_api_key\n")
+    error = requests.exceptions.InvalidHeader("Invalid header value: 'test_api_key'")
+
+    with patch("requests.get", side_effect=error) as mock_get:
+        result = tools.get_market_sessions()
+
+    _, kwargs = mock_get.call_args
+    assert kwargs["headers"]["X-API-Key"] == "test_api_key"
+    assert "Error making request" in result
+    assert "test_api_key" not in result
