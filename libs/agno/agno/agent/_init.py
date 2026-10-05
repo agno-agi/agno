@@ -220,6 +220,23 @@ def set_compaction(agent: Agent) -> None:
     if isinstance(agent.compaction, Compaction) and agent.compaction.model is None:
         agent.compaction.model = agent.model
 
+    if isinstance(agent.compaction, Compaction):
+        # Compaction folds the history a run replays. Without replayed history a size threshold
+        # has nothing to measure and a fold is never sent. Overflow recovery still acts within a
+        # run, so a bare compaction=True - which has no threshold - is not a mistake here.
+        if not agent.add_history_to_context and agent.compaction.compact_at_tokens is not None:
+            log_warning(
+                "compaction is set but add_history_to_context is False, so no history is replayed: "
+                "compact_at_tokens never fires and a fold is never sent. Set add_history_to_context=True."
+            )
+        # Both put a summary of the same history into the context, so the model reads it twice.
+        if agent.add_session_summary_to_context:
+            log_warning(
+                "compaction and session summaries are both enabled, so the context carries two summaries "
+                "of the same history. Compaction already replaces old turns with its own summary; "
+                "consider add_session_summary_to_context=False."
+            )
+
 
 def set_result_store(agent: Agent) -> None:
     """Resolve ``agent.offload_tool_results`` into the store the run uses.

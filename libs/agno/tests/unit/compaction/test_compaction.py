@@ -177,6 +177,36 @@ def test_context_size_is_estimated_locally_when_not_supplied():
     assert c.should_compact(_transcript(), model=ExplodingModel()) is True
 
 
+def test_a_threshold_without_replayed_history_is_warned_about(caplog):
+    """Compaction folds replayed history; with none, compact_at_tokens never fires."""
+    from agno.agent import Agent, _init
+
+    def warnings_for(**kwargs):
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            _init.set_compaction(Agent(**kwargs))
+        return [r.message for r in caplog.records if "add_history_to_context" in r.message]
+
+    assert warnings_for(add_history_to_context=False, compaction=Compaction())
+    # Overflow recovery still acts within a run, so threshold-free compaction is not a mistake.
+    assert not warnings_for(add_history_to_context=False, compaction=True)
+    assert not warnings_for(add_history_to_context=True, compaction=Compaction())
+
+
+def test_compaction_alongside_session_summaries_is_warned_about(caplog):
+    """Both put a summary of the same history into the context."""
+    from agno.agent import Agent, _init
+
+    def warnings_for(**kwargs):
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            _init.set_compaction(Agent(add_history_to_context=True, compaction=Compaction(), **kwargs))
+        return [r.message for r in caplog.records if "session summaries" in r.message]
+
+    assert warnings_for(add_session_summary_to_context=True)
+    assert not warnings_for()
+
+
 def test_a_small_replay_window_is_not_a_misconfiguration(caplog):
     """num_history_runs bounds only what a run sends; compaction reads its own window. A window at
     or below the kept tail overrides nothing, so there is nothing to warn about."""
