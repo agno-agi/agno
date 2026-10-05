@@ -49,10 +49,12 @@ class YouTubeTools(Toolkit):
             str: The video ID of the YouTube video.
         """
         parsed_url = urlparse(url)
+        if not parsed_url.scheme and not parsed_url.netloc:
+            parsed_url = urlparse(f"//{url}")
         hostname = parsed_url.hostname
 
         if hostname == "youtu.be":
-            return parsed_url.path[1:]
+            return parsed_url.path[1:] or None
         if hostname in (
             "www.youtube.com",
             "youtube.com",
@@ -60,12 +62,16 @@ class YouTubeTools(Toolkit):
             "music.youtube.com",
             "www.youtube-nocookie.com",
             "youtube-nocookie.com",
+            "www.youtube.com.br",
+            "youtube.com.br",
+            "www.youtube.co.uk",
+            "youtube.co.uk",
         ):
             if parsed_url.path == "/watch":
                 query_params = parse_qs(parsed_url.query)
                 return query_params.get("v", [None])[0]
             if parsed_url.path.startswith(("/embed/", "/v/", "/shorts/", "/live/")):
-                return parsed_url.path.split("/")[2]
+                return parsed_url.path.split("/")[2] or None
         return None
 
     def get_youtube_video_data(self, url: str) -> str:
@@ -135,17 +141,16 @@ class YouTubeTools(Toolkit):
         except Exception:
             return "Error getting video ID from URL, please provide a valid YouTube url"
 
+        if video_id is None:
+            return "No video ID found"
+
         try:
-            captions = None
             kwargs: Dict = {}
             if self.languages:
                 kwargs["languages"] = self.languages or ["en"]
             if self.proxies:
                 kwargs["proxies"] = self.proxies
-            if video_id is not None:
-                captions = YouTubeTranscriptApi().fetch(video_id, **kwargs)
-            else:
-                return "No video ID found"
+            captions = YouTubeTranscriptApi().fetch(video_id, **kwargs)
             if captions:
                 return " ".join(line.text for line in captions)
             return "No captions found for video"

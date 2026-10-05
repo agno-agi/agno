@@ -20,6 +20,14 @@ from agno.tools.youtube import YouTubeTools
         "https://m.youtube.com/watch?v=BGQWPY4IigY",
         "https://music.youtube.com/watch?v=BGQWPY4IigY",
         "https://www.youtube-nocookie.com/embed/BGQWPY4IigY",
+        "www.youtube.com/watch?v=BGQWPY4IigY",
+        "youtube.com/shorts/BGQWPY4IigY",
+        "youtu.be/BGQWPY4IigY",
+        "//m.youtube.com/watch?v=BGQWPY4IigY",
+        "https://youtube.com.br/watch?v=BGQWPY4IigY",
+        "https://www.youtube.com.br/shorts/BGQWPY4IigY",
+        "https://youtube.co.uk/live/BGQWPY4IigY",
+        "www.youtube.co.uk/watch?v=BGQWPY4IigY",
     ],
 )
 def test_get_youtube_video_captions_accepts_url_forms(url):
@@ -39,3 +47,34 @@ def test_get_youtube_video_data_without_video_id_skips_request():
 
     assert result == "No video ID found"
     urlopen.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.youtube.com/shorts",
+        "https://www.youtube.com/shorts/",
+        "https://www.youtube.com/live",
+        "https://www.youtube.com/live/",
+        "https://www.youtube.com/embed/",
+        "https://www.youtube.com/v/",
+        "https://youtu.be",
+        "https://youtu.be/",
+        "https://www.youtube.com/watch?v=",
+        "https://youtube.example.com/watch?v=BGQWPY4IigY",
+        "https://youtube.com.example.com/shorts/BGQWPY4IigY",
+        "https://notyoutube.com/watch?v=BGQWPY4IigY",
+        "youtube.co.uk.example.com/watch?v=BGQWPY4IigY",
+    ],
+)
+@pytest.mark.parametrize("method", ["get_youtube_video_captions", "get_youtube_video_data", "get_video_timestamps"])
+def test_missing_video_id_or_unrecognized_host_skips_requests(url: str, method: str) -> None:
+    with (
+        patch("agno.tools.youtube.urlopen") as urlopen,
+        patch("agno.tools.youtube.YouTubeTranscriptApi") as transcript_api,
+    ):
+        result = getattr(YouTubeTools(), method)(url)
+
+    assert result == "No video ID found"
+    urlopen.assert_not_called()
+    transcript_api.assert_not_called()
