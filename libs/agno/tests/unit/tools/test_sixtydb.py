@@ -409,3 +409,31 @@ def test_binary_pcm_declaration_preserves_signature_samples(content_type, payloa
     else:
         assert not result.audios
         assert result.content.startswith("Error:")
+
+
+@pytest.mark.parametrize("content_type", ["application/json", "application/x-ndjson"])
+@pytest.mark.parametrize("payload", [b"{}", b'{"audioContent":"AQAAAg=="}'])
+def test_declared_pcm_preserves_json_shaped_samples(content_type, payload):
+    payload += b" " * (len(payload) % 2)
+    body = json.dumps({"encoding": "pcm", "audioContent": base64.b64encode(payload).decode()}).encode()
+    with endpoint(body, content_type) as (url, _):
+        result = tool(url).text_to_speech(Agent(), "Hello")
+    assert result.audios
+    with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
+        assert wav.readframes(wav.getnframes()) == payload
+
+
+@pytest.mark.parametrize("payload", [b"{}", b'{"audioContent":"AQAAAg=="}'])
+def test_unlabeled_pcm_continuation_preserves_json_shaped_samples(payload):
+    payload += b" " * (len(payload) % 2)
+    body = b"\n".join(
+        [
+            json.dumps({"encoding": "pcm", "audioContent": base64.b64encode(PCM).decode()}).encode(),
+            json.dumps({"audioContent": base64.b64encode(payload).decode()}).encode(),
+        ]
+    )
+    with endpoint(body, "application/x-ndjson") as (url, _):
+        result = tool(url).text_to_speech(Agent(), "Hello")
+    assert result.audios
+    with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
+        assert wav.readframes(wav.getnframes()) == PCM + payload

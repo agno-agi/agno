@@ -66,8 +66,12 @@ def _record_audio(record: Any, formats: Optional[dict[int, str]] = None, offset:
     if not isinstance(value, str):
         raise TypeError("60db audio must be base64 text")
     audio = base64.b64decode(value, validate=True)
+    # Declared PCM remains sample bytes, including unlabeled continuations.
+    audio_format = declared_format
+    if audio_format is None and formats:
+        audio_format = next(reversed(formats.values()))
     # The SDK also accepts an initial chunk containing a base64 JSON envelope.
-    if audio.startswith(b"{"):
+    if audio.startswith(b"{") and audio_format != "pcm":
         try:
             inner = json.loads(audio)
         except (ValueError, UnicodeDecodeError):
