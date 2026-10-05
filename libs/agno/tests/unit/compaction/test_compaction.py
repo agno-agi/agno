@@ -177,46 +177,34 @@ def test_context_size_is_estimated_locally_when_not_supplied():
     assert c.should_compact(_transcript(), model=ExplodingModel()) is True
 
 
-def test_replay_window_below_the_tail_warns(caplog):
-    """Widening a number the user set must not be silent.
-
-    num_history_runs at or below uncompacted_runs cannot express a working compaction - the tail
-    would not fit in what the planner may read, so no anchor could ever resolve. The planner
-    widens its own read to avoid dropping every summary, and says so: quietly ignoring a
-    setting is worse than the misconfiguration it works around.
-    """
+def test_a_small_replay_window_is_not_a_misconfiguration(caplog):
+    """num_history_runs bounds only what a run sends; compaction reads its own window. A window at
+    or below the kept tail overrides nothing, so there is nothing to warn about."""
     from agno.agent import Agent, _init
 
-    for window, keep in ((3, 5), (5, 5)):
+    for window, keep in ((2, 5), (5, 5), (20, 5)):
         caplog.clear()
         agent = Agent(num_history_runs=window, compaction=Compaction(uncompacted_runs=keep))
         with caplog.at_level(logging.WARNING, logger="agno"):
             _init.set_compaction(agent)
-        assert any("uncompacted_runs" in r.message for r in caplog.records), (window, keep)
-        # The replay setting itself is untouched; only the planner reads wider.
+        assert not [r for r in caplog.records if "num_history_runs" in r.message], (window, keep)
         assert agent.num_history_runs == window
 
 
-def test_workable_replay_window_is_not_warned_about(caplog):
-    """A window larger than the tail is a normal configuration, not a mistake."""
+def test_an_agentos_copy_plans_over_the_same_window(caplog):
+    """AgentOS deep-copies the agent per request, passing num_history_runs=3 back as if the user had
+    set it. Nothing depends on telling the default from a choice, so the copy behaves the same."""
     from agno.agent import Agent, _init
+    from agno.agent._messages import _compaction_history_runs
 
-    agent = Agent(num_history_runs=20, compaction=Compaction(uncompacted_runs=5))
+    original = Agent(compaction=Compaction())
+    copy = original.deep_copy()
+
     with caplog.at_level(logging.WARNING, logger="agno"):
-        _init.set_compaction(agent)
+        _init.set_compaction(copy)
 
-    assert not [r for r in caplog.records if "uncompacted_runs" in r.message]
-
-
-def test_defaults_the_user_did_not_choose_are_not_warned_about(caplog):
-    """compaction=True collides two framework defaults - that is not the user's mistake."""
-    from agno.agent import Agent, _init
-
-    agent = Agent(compaction=True)
-    with caplog.at_level(logging.WARNING, logger="agno"):
-        _init.set_compaction(agent)
-
-    assert not [r for r in caplog.records if "uncompacted_runs" in r.message]
+    assert _compaction_history_runs(copy) == _compaction_history_runs(original) == 500
+    assert not [r for r in caplog.records if "num_history_runs" in r.message]
 
 
 def test_compaction_is_not_starved_by_the_default_history_window():
@@ -235,20 +223,16 @@ def test_compaction_is_not_starved_by_the_default_history_window():
     assert _compaction_history_runs(agent) > 5  # but the planner sees past it
 
 
-def test_explicit_history_window_is_respected_but_never_strands_the_anchor():
-    """An explicit window is the user's call on replay - until it would lose data.
-
-    Below the kept tail the boundary anchor falls outside the window and stops resolving, which
-    discards the summary silently. The window is raised just enough to prevent that.
-    """
+def test_compaction_reads_past_any_replay_window():
+    """The planner's read is never narrower than what a run sends - those messages are selected from
+    it - and otherwise reads wide, whether the window is the default or the user's choice."""
     from agno.agent import Agent
     from agno.agent._messages import _compaction_history_runs
 
-    roomy = Agent(num_history_runs=50, compaction=Compaction(uncompacted_runs=5))
-    assert _compaction_history_runs(roomy) == 50
-
-    too_small = Agent(num_history_runs=2, compaction=Compaction(uncompacted_runs=5))
-    assert _compaction_history_runs(too_small) > 5
+    for window in (2, 3, 50):
+        assert _compaction_history_runs(Agent(num_history_runs=window, compaction=Compaction())) == 500
+    assert _compaction_history_runs(Agent(num_history_runs=1_000, compaction=Compaction())) == 1_000
+    assert _compaction_history_runs(Agent(num_history_runs=2)) == 2  # no compaction, no widening
 
 
 class _RecordingModel:

@@ -585,13 +585,8 @@ class Agent:
                 "num_history_messages and num_history_runs cannot be set at the same time. Using num_history_runs."
             )
             self.num_history_messages = None
-        # Whether the 3-run window is this default or the user's own choice. Compaction needs to
-        # tell them apart: it may widen its own view past a default, but an explicit window is a
-        # decision it should respect.
-        self._num_history_runs_defaulted = False
         if self.num_history_messages is None and self.num_history_runs is None:
             self.num_history_runs = 3
-            self._num_history_runs_defaulted = True
 
         self.max_tool_calls_from_history = max_tool_calls_from_history
 

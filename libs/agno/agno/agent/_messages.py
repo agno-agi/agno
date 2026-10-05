@@ -159,19 +159,13 @@ def _compaction_history_runs(agent: "Agent") -> Optional[int]:
     silently along with the turns it replaced.
 
     So the planner reads its own window. Bounded, not unlimited: capped so a long session costs
-    no more than a short one.
+    no more than a short one. Never narrower than num_history_runs, though - what a run sends is
+    selected from what the planner reads. Reading wider changes nothing the model is sent, so a
+    window the user chose needs no special case.
     """
-    compaction = getattr(agent, "compaction", None)
-    if compaction is None:
+    if getattr(agent, "compaction", None) is None:
         return agent.num_history_runs
-
-    explicit = agent.num_history_runs if not getattr(agent, "_num_history_runs_defaulted", False) else None
-    if explicit is not None:
-        # An explicit window is the user's call on replay, but it must not silently disable
-        # compaction or strand an anchor. Keep whichever is larger.
-        keep = compaction.uncompacted_runs or 0
-        return max(explicit, keep + 1) if keep else explicit
-    return _PLANNER_WINDOW_MAX_RUNS
+    return max(agent.num_history_runs or 0, _PLANNER_WINDOW_MAX_RUNS)
 
 
 def _history_for_run(
