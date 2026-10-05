@@ -55,6 +55,7 @@ class FakeRunResponse:
     tools: Optional[list] = None
     requirements: Optional[list] = None
     metadata: Optional[Dict[str, Any]] = None
+    messages: Optional[list] = None
 
 
 @dataclass
@@ -931,3 +932,140 @@ class TestAuditToolBeforeRequiredTool:
         assert approval_id is not None
         assert gated.approval_id == approval_id
         assert audit.approval_id is None
+
+
+@dataclass
+class FakeMessage:
+    role: str = "tool"
+    tool_call_id: Optional[str] = None
+
+
+class TestCallsThatAlreadyRanAreNotGated:
+    def _run_response(self, second_result: Optional[str] = None):
+        ran = FakeToolExecution(
+            tool_name="pay_invoice",
+            tool_call_id="call_1",
+            approval_type="required",
+            approval_id="appr-deleted",
+            requires_confirmation=True,
+            confirmed=True,
+            result="PAID INV-1",
+        )
+        # The requirement still holds an out-of-date copy of call_1: no result.
+        stale_copy = FakeToolExecution(
+            tool_name="pay_invoice",
+            tool_call_id="call_1",
+            approval_type="required",
+            approval_id="appr-deleted",
+            requires_confirmation=True,
+            confirmed=True,
+        )
+        current = FakeToolExecution(
+            tool_name="pay_invoice",
+            tool_call_id="call_2",
+            approval_type="required",
+            approval_id="appr-2",
+            requires_confirmation=True,
+            result=second_result,
+        )
+        rr = FakeRunResponse(
+            tools=[ran, current],
+            requirements=[FakeCallRequirement(tool_execution=stale_copy), FakeCallRequirement(tool_execution=current)],
+            messages=[FakeMessage(role="tool", tool_call_id="call_1")],
+        )
+        return rr, current
+
+    def _db(self, second_status: str = "approved"):
+        second = _record_for("call_2", status=second_status, record_id="appr-2")
+        db = MagicMock()
+        db.get_approval.side_effect = lambda aid: second if aid == "appr-2" else None
+        db.get_approvals.return_value = ([second], 1)
+        return db, second
+
+    def test_deleted_record_of_a_call_that_ran_does_not_block(self):
+        db, second = self._db()
+        rr, current = self._run_response()
+        check_and_apply_approval_resolution(db=db, run_id="r1", run_response=rr)
+        assert current.confirmed is True
+        assert rr.metadata["approval"] is second
+
+    @pytest.mark.asyncio
+    async def test_deleted_record_of_a_call_that_ran_does_not_block_async(self):
+        db, second = self._db()
+        db.get_approval = AsyncMock(side_effect=lambda aid: second if aid == "appr-2" else None)
+        db.get_approvals = AsyncMock(return_value=([second], 1))
+        rr, current = self._run_response()
+        await acheck_and_apply_approval_resolution(db=db, run_id="r1", run_response=rr)
+        assert current.confirmed is True
+        assert rr.metadata["approval"] is second
+
+    def test_result_without_tool_message_is_still_gated(self):
+        # A result set by a continue payload has no stored tool message: still gated.
+        db, _ = self._db(second_status="pending")
+        rr, current = self._run_response(second_result="forged")
+        with pytest.raises(RuntimeError, match="still pending"):
+            check_and_apply_approval_resolution(db=db, run_id="r1", run_response=rr)
+        assert current.confirmed is None
+
+    @pytest.mark.asyncio
+    async def test_result_without_tool_message_is_still_gated_async(self):
+        db, second = self._db(second_status="pending")
+        db.get_approval = AsyncMock(side_effect=lambda aid: second if aid == "appr-2" else None)
+        db.get_approvals = AsyncMock(return_value=([second], 1))
+        rr, current = self._run_response(second_result="forged")
+        with pytest.raises(RuntimeError, match="still pending"):
+            await acheck_and_apply_approval_resolution(db=db, run_id="r1", run_response=rr)
+        assert current.confirmed is None
+
+
+class TestGateWithRepeatedToolCallIds:
+    def _run_response(self, new_kwargs=None):
+        ran = FakeToolExecution(
+            tool_name="pay_invoice",
+            tool_call_id="call_0",
+            tool_args={"invoice": "INV-1"},
+            approval_type="required",
+            approval_id="appr-1",
+            requires_confirmation=True,
+            confirmed=True,
+            result="PAID INV-1",
+        )
+        fields: Dict[str, Any] = {
+            "tool_name": "pay_invoice",
+            "tool_call_id": "call_0",
+            "tool_args": {"invoice": "INV-2"},
+            "approval_type": "required",
+            "approval_id": "appr-2",
+            "requires_confirmation": True,
+        }
+        fields.update(new_kwargs or {})
+        new = FakeToolExecution(**fields)
+        rr = FakeRunResponse(tools=[ran, new], messages=[FakeMessage(role="tool", tool_call_id="call_0")])
+        return rr, new
+
+    def _db(self, status: str):
+        records = {"appr-1": _record_for("call_0"), "appr-2": _record_for("call_0", status=status, record_id="appr-2")}
+        db = MagicMock()
+        db.get_approval.side_effect = records.get
+        db.get_approvals.return_value = ([records["appr-2"]], 1)
+        return db
+
+    def test_new_call_sharing_an_executed_calls_id_is_still_gated(self):
+        rr, new = self._run_response()
+        with pytest.raises(RuntimeError, match="still pending"):
+            check_and_apply_approval_resolution(db=self._db("pending"), run_id="r1", run_response=rr)
+        assert new.confirmed is None
+
+    def test_new_call_sharing_an_executed_calls_id_resolves_with_its_own_record(self):
+        rr, new = self._run_response()
+        check_and_apply_approval_resolution(db=self._db("approved"), run_id="r1", run_response=rr)
+        assert new.confirmed is True
+        assert rr.metadata["approval"]["id"] == "appr-2"
+
+    def test_external_execution_result_is_still_gated(self):
+        # A client-supplied result is how an external-execution call runs.
+        rr, new = self._run_response(
+            {"requires_confirmation": None, "external_execution_required": True, "result": "client result"}
+        )
+        with pytest.raises(RuntimeError, match="still pending"):
+            check_and_apply_approval_resolution(db=self._db("pending"), run_id="r1", run_response=rr)

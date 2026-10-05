@@ -733,16 +733,66 @@ def _sync_requirements_after_approval(run_response: Any, approval_status: str, o
                 req.confirmation = False
 
 
-def _record_for_this_continue(pairs: List[tuple]) -> Dict[str, Any]:
-    """The record a post-hook should see: the one for the first call this continue will run.
+def _calls_that_already_ran(run_response: Any) -> List[Any]:
+    """The run's own tool calls that ran at an earlier pause.
 
-    pairs also holds calls approved and executed at earlier pauses of the run; their
-    records are older, so pairs[0] would describe a call that already ran.
+    A call counts only when it has a result AND the run's stored messages hold a
+    tool message for it. A continue payload can put a result on a tool execution,
+    but it cannot add a tool message, so a call cannot skip the gate by claiming
+    it ran. External-execution calls never count: a client-supplied result is how
+    they run, so it must still pass the gate.
     """
-    for tool, record in pairs:
-        if getattr(tool, "result", None) is None:
-            return record
-    return pairs[-1][1]
+    tool_message_ids = {
+        getattr(m, "tool_call_id", None)
+        for m in getattr(run_response, "messages", None) or []
+        if getattr(m, "role", None) == "tool" and getattr(m, "tool_call_id", None)
+    }
+    return [
+        t
+        for t in getattr(run_response, "tools", None) or []
+        if getattr(t, "result", None) is not None
+        and not getattr(t, "external_execution_required", False)
+        and getattr(t, "tool_call_id", None) in tool_message_ids
+    ]
+
+
+def _is_copy_of(tool: Any, other: Any) -> bool:
+    """Same tool call by id, name and arguments: ids alone can repeat across turns."""
+    return (
+        getattr(tool, "tool_call_id", None) is not None
+        and getattr(tool, "tool_call_id", None) == getattr(other, "tool_call_id", None)
+        and getattr(tool, "tool_name", None) == getattr(other, "tool_name", None)
+        and getattr(tool, "tool_args", None) == getattr(other, "tool_args", None)
+    )
+
+
+def _tools_to_gate(run_response: Any) -> List[Any]:
+    """Required tools this continue still has to resolve.
+
+    Audit tools never get a required record: their record is written after the
+    HITL interaction resolves. Calls that already ran are skipped: there is
+    nothing left to approve, and their record may since have been deleted. That
+    covers the requirement's out-of-date copy of such a call (no result), matched
+    by id, name and arguments. A member's call stays gated, as provider-local
+    tool_call_ids can collide across members.
+    """
+    ran = _calls_that_already_ran(run_response)
+    run_tools = getattr(run_response, "tools", None) or []
+    gated: List[Any] = []
+    for t in _collect_all_approval_tools(run_response):
+        if getattr(t, "approval_type", None) != "required":
+            continue
+        if any(t is r for r in ran):
+            continue
+        is_requirement_copy = not any(t is r for r in run_tools)
+        if (
+            is_requirement_copy
+            and _member_run_id_for_tool(run_response, t) is None
+            and any(_is_copy_of(t, r) for r in ran)
+        ):
+            continue
+        gated.append(t)
+    return gated
 
 
 def _attach_resolved_approval(run_response: Any, approval: Dict[str, Any]) -> None:
@@ -764,11 +814,7 @@ def check_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any)
     if db is None:
         return
 
-    # Only required tools are gated. Audit tools never get a required record:
-    # their record is written after the HITL interaction resolves.
-    required_tools = [
-        t for t in _collect_all_approval_tools(run_response) if getattr(t, "approval_type", None) == "required"
-    ]
+    required_tools = _tools_to_gate(run_response)
     if not required_tools:
         return
 
@@ -785,7 +831,8 @@ def check_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any)
         _apply_approval_to_tools([tool], record.get("status", "pending"), record.get("resolution_data"))
         _sync_requirements_after_approval(run_response, record.get("status", "pending"), only_tool=tool)
 
-    _attach_resolved_approval(run_response, _record_for_this_continue(pairs))
+    # pairs holds only calls this continue runs, so pairs[0] is the current call's record.
+    _attach_resolved_approval(run_response, pairs[0][1])
 
 
 async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any) -> None:
@@ -793,11 +840,7 @@ async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_respons
     if db is None:
         return
 
-    # Only required tools are gated. Audit tools never get a required record:
-    # their record is written after the HITL interaction resolves.
-    required_tools = [
-        t for t in _collect_all_approval_tools(run_response) if getattr(t, "approval_type", None) == "required"
-    ]
+    required_tools = _tools_to_gate(run_response)
     if not required_tools:
         return
 
@@ -814,7 +857,8 @@ async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_respons
         _apply_approval_to_tools([tool], record.get("status", "pending"), record.get("resolution_data"))
         _sync_requirements_after_approval(run_response, record.get("status", "pending"), only_tool=tool)
 
-    _attach_resolved_approval(run_response, _record_for_this_continue(pairs))
+    # pairs holds only calls this continue runs, so pairs[0] is the current call's record.
+    _attach_resolved_approval(run_response, pairs[0][1])
 
 
 async def acreate_audit_approval(

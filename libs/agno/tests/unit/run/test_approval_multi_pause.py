@@ -470,3 +470,84 @@ def test_approval_call_after_audit_call_gets_its_own_record(db, build):
     run = entity.continue_run(run_id=run.run_id, session_id=run.session_id)
     assert not run.is_paused
     assert PAID == ["INV-1"]
+
+
+# ---------------------------------------------------------------------------
+# Deleting the record of a call that already ran must not block the next call
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("build", BUILDERS)
+def test_deleted_record_of_executed_call_does_not_block_next_call(db, build):
+    entity: Union[Agent, Team] = build(db)
+    run = entity.run("Pay INV-1 and INV-2.")
+    (first,) = _required_records(db, run.run_id)
+    _approve_pending(db, run.run_id)
+    run = entity.continue_run(run_id=run.run_id, session_id=run.session_id)
+    assert PAID == ["INV-1"]
+
+    # An admin deletes INV-1's record after it ran, then approves INV-2.
+    assert db.delete_approval(first["id"])
+    assert _approve_pending(db, run.run_id) == 1
+    run = entity.continue_run(run_id=run.run_id, session_id=run.session_id)
+
+    assert not run.is_paused
+    assert PAID == ["INV-1", "INV-2"]
+    assert run.metadata["approval"]["tool_args"] == {"invoice": "INV-2"}
+
+
+def test_agent_merge_with_repeated_tool_call_id():
+    # Some providers send no id and a fallback like call_{i} repeats across turns.
+    from agno.agent._run import _apply_requirement_tools
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunOutput
+    from agno.run.requirement import RunRequirement
+
+    paid = ToolExecution(
+        tool_call_id="call_0",
+        tool_name="pay_invoice",
+        tool_args={"invoice": "INV-1"},
+        requires_confirmation=True,
+        confirmed=True,
+        result="PAID INV-1",
+    )
+    new = ToolExecution(
+        tool_call_id="call_0", tool_name="pay_invoice", tool_args={"invoice": "INV-2"}, requires_confirmation=True
+    )
+    decided = ToolExecution(
+        tool_call_id="call_0",
+        tool_name="pay_invoice",
+        tool_args={"invoice": "INV-2"},
+        requires_confirmation=True,
+        confirmed=True,
+    )
+    run = RunOutput(run_id="r", tools=[paid, new])
+    _apply_requirement_tools(run, [RunRequirement(tool_execution=decided)])
+    assert run.tools[0] is paid
+    assert run.tools[1] is decided
+    assert run.tools[1].confirmed is True
+
+
+def test_team_merge_with_repeated_tool_call_id():
+    from agno.models.response import ToolExecution
+    from agno.team._run import _merge_tools_preserving_approval
+
+    paid = ToolExecution(
+        tool_call_id="call_0",
+        tool_name="pay_invoice",
+        tool_args={"invoice": "INV-1"},
+        requires_confirmation=True,
+        confirmed=True,
+        result="PAID INV-1",
+    )
+    new = ToolExecution(
+        tool_call_id="call_0", tool_name="pay_invoice", tool_args={"invoice": "INV-2"}, requires_confirmation=True
+    )
+    decided = ToolExecution(
+        tool_call_id="call_0",
+        tool_name="pay_invoice",
+        tool_args={"invoice": "INV-2"},
+        requires_confirmation=True,
+        confirmed=True,
+    )
+    merged = _merge_tools_preserving_approval([paid, new], {"call_0": decided})
+    assert merged[0] is paid
+    assert merged[1] is decided

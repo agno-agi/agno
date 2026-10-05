@@ -3390,9 +3390,14 @@ def _apply_requirement_tools(run_response: RunOutput, requirements: List[Any]) -
     run_response.requirements = requirements
     updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
     if updated_tools and run_response.tools:
-        executed = {tool.tool_call_id for tool in run_response.tools if tool.tool_call_id and tool.result is not None}
-        updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools if tool.tool_call_id not in executed}
-        run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+        # Checked per tool, not per tool_call_id: ids can repeat across turns (some
+        # providers send none and a fallback like call_{i} is used), and a new call
+        # sharing an executed call's id must still take its requirement.
+        updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+        run_response.tools = [
+            updated_tools_map.get(tool.tool_call_id, tool) if tool.result is None else tool
+            for tool in run_response.tools
+        ]
     else:
         run_response.tools = updated_tools
 
