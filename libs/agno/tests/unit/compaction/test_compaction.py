@@ -1089,6 +1089,13 @@ def test_context_overflow_folds_and_asks_for_a_retry():
     assert estimate_tokens(run_messages.messages) < before
 
 
+@pytest.mark.parametrize("ratio", [-1, -0.5, -2])
+def test_a_negative_min_fold_ratio_raises_naming_the_setting(ratio):
+    """-1 divided by zero in the tail limit; other negatives gave a nonsense limit silently."""
+    with pytest.raises(ValueError, match="min_fold_ratio"):
+        Compaction(min_fold_ratio=ratio)
+
+
 def test_revalidating_a_valid_config_never_raises():
     """Overflow recovery derives variants of the configured Compaction with dataclasses.replace(),
     which re-runs __post_init__. A config that validated once must validate again."""

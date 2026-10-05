@@ -144,6 +144,13 @@ class Compaction:
             raise ValueError(f"uncompacted_runs must be zero or a positive integer, got {self.uncompacted_runs}")
         if self.uncompacted_tokens is not None and self.uncompacted_tokens <= 0:
             raise ValueError(f"uncompacted_tokens must be a positive integer, got {self.uncompacted_tokens}")
+        # The tail limit divides by 1 + min_fold_ratio, so a negative ratio would divide by zero or
+        # flip the limit's sign.
+        if self.min_fold_ratio < 0:
+            raise ValueError(
+                f"min_fold_ratio must be zero or a positive number, got {self.min_fold_ratio}. "
+                "Use 0 to fold regardless of size."
+            )
         # Raise rather than pick a winner: silently honouring one of two settings the user
         # deliberately set is the kind of surprise that costs an afternoon to track down.
         # None is "not set", which is also what validation leaves behind below - so a config that
