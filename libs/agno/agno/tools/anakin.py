@@ -1,4 +1,5 @@
 import json
+import time
 from os import getenv
 from typing import Any, Dict, List, Optional
 
@@ -25,7 +26,9 @@ class AnakinTools(Toolkit):
         all (bool): Enable all tools. Overrides individual flags when True. Default is False.
         country (str): Default two-letter proxy egress country code for scrape/crawl. Default is "us".
         api_base_url (str): Base URL for the Anakin API. Default is "https://api.anakin.io/v1".
-        timeout (int): Timeout in seconds for API requests. Default is 60.
+        timeout (int): Timeout in seconds for each API request. Default is 60.
+        poll_interval (float): Seconds between status checks while waiting for a scrape/crawl/map job. Default is 2.
+        max_wait_time (float): Maximum seconds to wait for a job to finish before returning a timeout error. Default is 120.
     """
 
     def __init__(
@@ -39,6 +42,8 @@ class AnakinTools(Toolkit):
         country: str = "us",
         api_base_url: str = "https://api.anakin.io/v1",
         timeout: int = 60,
+        poll_interval: float = 2,
+        max_wait_time: float = 120,
         **kwargs,
     ):
         self.api_key: Optional[str] = api_key or getenv("ANAKIN_API_KEY")
@@ -48,6 +53,8 @@ class AnakinTools(Toolkit):
         self.api_base_url: str = api_base_url
         self.country: str = country
         self.timeout: int = timeout
+        self.poll_interval: float = poll_interval
+        self.max_wait_time: float = max_wait_time
 
         tools: List[Any] = []
         if all or enable_scrape:
@@ -61,21 +68,45 @@ class AnakinTools(Toolkit):
 
         super().__init__(name="anakin_tools", tools=tools, **kwargs)
 
-    def _request(self, method: str, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        payload = {k: v for k, v in payload.items() if v is not None}
+    def _request(self, method: str, path: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        body = {k: v for k, v in payload.items() if v is not None} if payload is not None else None
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-        response = httpx.request(
-            method, f"{self.api_base_url}{path}", json=payload, headers=headers, timeout=self.timeout
-        )
+        response = httpx.request(method, f"{self.api_base_url}{path}", json=body, headers=headers, timeout=self.timeout)
         response.raise_for_status()
         return response.json()
+
+    def _run_job(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Submit an async job to `POST {path}` and poll `GET {path}/{id}` until it completes.
+
+        Raises:
+            RuntimeError: If the job finishes with status "failed".
+            TimeoutError: If the job is still running after `max_wait_time` seconds.
+        """
+        submitted = self._request("POST", path, payload)
+        job_id = submitted.get("jobId") or submitted.get("id")
+        if not job_id:
+            raise RuntimeError(f"Anakin did not return a job id: {submitted}")
+
+        deadline = time.monotonic() + self.max_wait_time
+        while True:
+            result = self._request("GET", f"{path}/{job_id}")
+            status = result.get("status")
+            if status == "completed":
+                return result
+            if status == "failed":
+                raise RuntimeError(f"Job {job_id} failed: {result.get('error') or 'unknown error'}")
+            if time.monotonic() + self.poll_interval > deadline:
+                raise TimeoutError(
+                    f"Job {job_id} was still '{status}' after {self.max_wait_time}s. "
+                    f"Retry later or raise max_wait_time."
+                )
+            time.sleep(self.poll_interval)
 
     def scrape_url(
         self,
         url: str,
         generate_json: bool = False,
         use_browser: bool = False,
-        force_fresh: bool = False,
         country: Optional[str] = None,
     ) -> str:
         """Use this function to scrape a single URL using Anakin.
@@ -84,11 +115,10 @@ class AnakinTools(Toolkit):
             url (str): The URL to scrape.
             generate_json (bool): Also extract structured JSON from the page with AI. Defaults to False.
             use_browser (bool): Render with a stealth headless browser, for SPAs and JS-heavy pages. Defaults to False.
-            force_fresh (bool): Skip the cache and refetch. Defaults to False.
             country (Optional[str]): Two-letter proxy egress country code. Defaults to the toolkit's country.
 
         Returns:
-            str: JSON string with the scraped markdown (and structured data if requested).
+            str: JSON string with the scraped markdown (and structured data if requested), or an error message.
         """
         if not self.api_key:
             return "Error: ANAKIN_API_KEY not set"
@@ -97,10 +127,9 @@ class AnakinTools(Toolkit):
                 "url": url,
                 "generateJson": generate_json,
                 "useBrowser": use_browser,
-                "forceFresh": force_fresh,
                 "country": country or self.country,
             }
-            result = self._request("POST", "/scrape", payload)
+            result = self._run_job("/url-scraper", payload)
             return json.dumps(result)
         except httpx.HTTPStatusError as e:
             logger.exception("Anakin scrape request failed")
@@ -125,8 +154,8 @@ class AnakinTools(Toolkit):
             url (str): The starting URL to crawl from.
             max_pages (int): Maximum number of pages to fetch. Defaults to 10.
             depth (int): Link-hops from the starting URL to follow. Defaults to 1.
-            include_patterns (Optional[List[str]]): Only fetch URLs matching one of these glob/regex patterns.
-            exclude_patterns (Optional[List[str]]): Skip URLs matching any of these glob/regex patterns.
+            include_patterns (Optional[List[str]]): Only fetch URLs matching one of these glob patterns.
+            exclude_patterns (Optional[List[str]]): Skip URLs matching any of these glob patterns.
             use_browser (bool): Render each page with a headless browser, for SPAs. Defaults to False.
             country (Optional[str]): Two-letter proxy egress country code. Defaults to the toolkit's country.
 
@@ -145,7 +174,7 @@ class AnakinTools(Toolkit):
                 "useBrowser": use_browser,
                 "country": country or self.country,
             }
-            result = self._request("POST", "/crawl", payload)
+            result = self._run_job("/crawl", payload)
             return json.dumps(result)
         except httpx.HTTPStatusError as e:
             logger.exception("Anakin crawl request failed")
@@ -193,7 +222,7 @@ class AnakinTools(Toolkit):
                 "search": search,
                 "useBrowser": use_browser,
             }
-            result = self._request("POST", "/map", payload)
+            result = self._run_job("/map", payload)
             return json.dumps(result)
         except httpx.HTTPStatusError as e:
             logger.exception("Anakin map request failed")

@@ -18,11 +18,29 @@ def _mock_response(payload):
     return response
 
 
+def _job_api(*poll_responses, job_id="job_1"):
+    """Fake httpx.request: the POST submits a pending job, each GET returns the next poll response."""
+    polls = list(poll_responses)
+
+    def fake_request(method, url, **kwargs):
+        if method == "POST":
+            return _mock_response({"jobId": job_id, "status": "pending"})
+        return _mock_response(polls.pop(0) if len(polls) > 1 else polls[0])
+
+    return fake_request
+
+
 @pytest.fixture
 def anakin_tools():
     """Create an AnakinTools instance with every tool enabled."""
     with patch.dict("os.environ", {"ANAKIN_API_KEY": TEST_API_KEY}):
-        return AnakinTools(all=True)
+        return AnakinTools(all=True, poll_interval=0, max_wait_time=5)
+
+
+@pytest.fixture(autouse=True)
+def no_sleep():
+    with patch("agno.tools.anakin.time.sleep"):
+        yield
 
 
 # ============================================================================
@@ -39,11 +57,20 @@ def test_init_with_env_var():
 
 
 def test_init_with_params():
-    tools = AnakinTools(api_key="param_api_key", country="de", api_base_url="https://custom.anakin.io/v1", timeout=30)
+    tools = AnakinTools(
+        api_key="param_api_key",
+        country="de",
+        api_base_url="https://custom.anakin.io/v1",
+        timeout=30,
+        poll_interval=1,
+        max_wait_time=10,
+    )
     assert tools.api_key == "param_api_key"
     assert tools.country == "de"
     assert tools.api_base_url == "https://custom.anakin.io/v1"
     assert tools.timeout == 30
+    assert tools.poll_interval == 1
+    assert tools.max_wait_time == 10
 
 
 def test_init_default_tools():
@@ -72,30 +99,68 @@ def test_init_missing_api_key_logs_error():
 
 
 def test_scrape_url(anakin_tools):
-    mock_response = _mock_response({"url": "https://example.com", "markdown": "# Example Domain", "cached": False})
-    with patch("agno.tools.anakin.httpx.request", return_value=mock_response) as mock_request:
+    completed = {"id": "job_1", "status": "completed", "markdown": "# Example Domain"}
+    with patch("agno.tools.anakin.httpx.request", side_effect=_job_api(completed)) as mock_request:
         result = anakin_tools.scrape_url("https://example.com")
 
     assert "Example Domain" in result
-    args, kwargs = mock_request.call_args
-    assert args == ("POST", "https://api.anakin.io/v1/scrape")
-    assert kwargs["json"]["url"] == "https://example.com"
-    assert kwargs["json"]["country"] == "us"
-    assert kwargs["headers"]["Authorization"] == f"Bearer {TEST_API_KEY}"
+    submit, poll = mock_request.call_args_list
+    assert submit.args == ("POST", "https://api.anakin.io/v1/url-scraper")
+    assert submit.kwargs["json"]["url"] == "https://example.com"
+    assert submit.kwargs["json"]["country"] == "us"
+    assert submit.kwargs["headers"]["Authorization"] == f"Bearer {TEST_API_KEY}"
+    assert poll.args == ("GET", "https://api.anakin.io/v1/url-scraper/job_1")
+
+
+def test_scrape_url_polls_until_completed(anakin_tools):
+    api = _job_api(
+        {"id": "job_1", "status": "pending"},
+        {"id": "job_1", "status": "processing"},
+        {"id": "job_1", "status": "completed", "markdown": "done"},
+    )
+    with patch("agno.tools.anakin.httpx.request", side_effect=api) as mock_request:
+        result = anakin_tools.scrape_url("https://example.com")
+
+    assert "done" in result
+    assert mock_request.call_count == 4  # 1 submit + 3 polls
 
 
 def test_scrape_url_forwards_options(anakin_tools):
-    mock_response = _mock_response({"url": "https://example.com", "markdown": "content"})
-    with patch("agno.tools.anakin.httpx.request", return_value=mock_response) as mock_request:
-        anakin_tools.scrape_url(
-            "https://example.com", generate_json=True, use_browser=True, force_fresh=True, country="de"
-        )
+    completed = {"id": "job_1", "status": "completed", "markdown": "content"}
+    with patch("agno.tools.anakin.httpx.request", side_effect=_job_api(completed)) as mock_request:
+        anakin_tools.scrape_url("https://example.com", generate_json=True, use_browser=True, country="de")
 
-    payload = mock_request.call_args[1]["json"]
+    payload = mock_request.call_args_list[0].kwargs["json"]
     assert payload["generateJson"] is True
     assert payload["useBrowser"] is True
-    assert payload["forceFresh"] is True
     assert payload["country"] == "de"
+
+
+def test_scrape_url_job_failed(anakin_tools):
+    failed = {"id": "job_1", "status": "failed", "error": "Connection timeout"}
+    with patch("agno.tools.anakin.httpx.request", side_effect=_job_api(failed)):
+        result = anakin_tools.scrape_url("https://example.com")
+
+    assert result.startswith("Error scraping https://example.com")
+    assert "Connection timeout" in result
+
+
+def test_scrape_url_timeout(anakin_tools):
+    anakin_tools.max_wait_time = 0
+    pending = {"id": "job_1", "status": "processing"}
+    with patch("agno.tools.anakin.httpx.request", side_effect=_job_api(pending)):
+        result = anakin_tools.scrape_url("https://example.com")
+
+    assert result.startswith("Error scraping https://example.com")
+    assert "job_1" in result
+    assert "still 'processing'" in result
+
+
+def test_scrape_url_submit_missing_job_id(anakin_tools):
+    with patch("agno.tools.anakin.httpx.request", return_value=_mock_response({"status": "pending"})):
+        result = anakin_tools.scrape_url("https://example.com")
+
+    assert "did not return a job id" in result
 
 
 def test_scrape_url_missing_api_key():
@@ -135,37 +200,77 @@ def test_scrape_url_request_exception(anakin_tools):
 
 
 def test_crawl_website(anakin_tools):
-    mock_response = _mock_response({"url": "https://example.com", "totalPages": 2, "completedPages": 2})
-    with patch("agno.tools.anakin.httpx.request", return_value=mock_response) as mock_request:
+    completed = {
+        "id": "job_1",
+        "status": "completed",
+        "totalPages": 2,
+        "completedPages": 2,
+        "results": [{"url": "https://example.com", "status": "completed", "markdown": "# Home"}],
+    }
+    with patch("agno.tools.anakin.httpx.request", side_effect=_job_api(completed)) as mock_request:
         result = anakin_tools.crawl_website("https://example.com", max_pages=2)
 
-    assert "completedPages" in result
-    payload = mock_request.call_args[1]["json"]
-    assert payload["url"] == "https://example.com"
-    assert payload["maxPages"] == 2
-    assert payload["depth"] == 1
+    assert "# Home" in result  # page content, not just the job id
+    submit, poll = mock_request.call_args_list
+    assert submit.args == ("POST", "https://api.anakin.io/v1/crawl")
+    assert submit.kwargs["json"]["url"] == "https://example.com"
+    assert submit.kwargs["json"]["maxPages"] == 2
+    assert submit.kwargs["json"]["depth"] == 1
+    assert poll.args == ("GET", "https://api.anakin.io/v1/crawl/job_1")
+
+
+def test_crawl_website_polls_until_completed(anakin_tools):
+    api = _job_api(
+        {"id": "job_1", "status": "pending"},
+        {"id": "job_1", "status": "processing"},
+        {"id": "job_1", "status": "completed", "results": [{"url": "https://example.com", "markdown": "ok"}]},
+    )
+    with patch("agno.tools.anakin.httpx.request", side_effect=api):
+        result = anakin_tools.crawl_website("https://example.com")
+
+    assert '"status": "completed"' in result
+    assert "jobId" not in result
+
+
+def test_crawl_website_job_failed(anakin_tools):
+    failed = {"id": "job_1", "status": "failed", "error": "Blocked by robots"}
+    with patch("agno.tools.anakin.httpx.request", side_effect=_job_api(failed)):
+        result = anakin_tools.crawl_website("https://example.com")
+
+    assert result.startswith("Error crawling https://example.com")
+    assert "Blocked by robots" in result
+
+
+def test_crawl_website_timeout(anakin_tools):
+    anakin_tools.max_wait_time = 0
+    pending = {"id": "job_1", "status": "pending"}
+    with patch("agno.tools.anakin.httpx.request", side_effect=_job_api(pending)):
+        result = anakin_tools.crawl_website("https://example.com")
+
+    assert result.startswith("Error crawling https://example.com")
+    assert "job_1" in result
 
 
 def test_crawl_website_forwards_patterns(anakin_tools):
-    mock_response = _mock_response({"totalPages": 0})
-    with patch("agno.tools.anakin.httpx.request", return_value=mock_response) as mock_request:
+    completed = {"id": "job_1", "status": "completed", "totalPages": 0}
+    with patch("agno.tools.anakin.httpx.request", side_effect=_job_api(completed)) as mock_request:
         anakin_tools.crawl_website(
             "https://example.com",
             include_patterns=["/blog/*"],
             exclude_patterns=["/admin/*"],
         )
 
-    payload = mock_request.call_args[1]["json"]
+    payload = mock_request.call_args_list[0].kwargs["json"]
     assert payload["includePatterns"] == ["/blog/*"]
     assert payload["excludePatterns"] == ["/admin/*"]
 
 
 def test_crawl_website_omits_unset_patterns(anakin_tools):
-    mock_response = _mock_response({"totalPages": 0})
-    with patch("agno.tools.anakin.httpx.request", return_value=mock_response) as mock_request:
+    completed = {"id": "job_1", "status": "completed", "totalPages": 0}
+    with patch("agno.tools.anakin.httpx.request", side_effect=_job_api(completed)) as mock_request:
         anakin_tools.crawl_website("https://example.com")
 
-    payload = mock_request.call_args[1]["json"]
+    payload = mock_request.call_args_list[0].kwargs["json"]
     assert "includePatterns" not in payload
     assert "excludePatterns" not in payload
 
@@ -176,20 +281,53 @@ def test_crawl_website_omits_unset_patterns(anakin_tools):
 
 
 def test_map_website(anakin_tools):
-    mock_response = _mock_response({"url": "https://example.com", "links": ["https://example.com/a"], "totalLinks": 1})
-    with patch("agno.tools.anakin.httpx.request", return_value=mock_response) as mock_request:
+    completed = {"id": "job_1", "status": "completed", "links": ["https://example.com/a"], "totalLinks": 1}
+    with patch("agno.tools.anakin.httpx.request", side_effect=_job_api(completed)) as mock_request:
+        result = anakin_tools.map_website("https://example.com")
+
+    assert "https://example.com/a" in result  # discovered links, not just the job id
+    submit, poll = mock_request.call_args_list
+    assert submit.args == ("POST", "https://api.anakin.io/v1/map")
+    assert submit.kwargs["json"]["url"] == "https://example.com"
+    assert submit.kwargs["json"]["limit"] == 100
+    assert submit.kwargs["json"]["depth"] == 2
+    assert poll.args == ("GET", "https://api.anakin.io/v1/map/job_1")
+
+
+def test_map_website_polls_until_completed(anakin_tools):
+    api = _job_api(
+        {"id": "job_1", "status": "pending"},
+        {"id": "job_1", "status": "completed", "links": ["https://example.com/a"], "totalLinks": 1},
+    )
+    with patch("agno.tools.anakin.httpx.request", side_effect=api):
         result = anakin_tools.map_website("https://example.com")
 
     assert "totalLinks" in result
-    payload = mock_request.call_args[1]["json"]
-    assert payload["url"] == "https://example.com"
-    assert payload["limit"] == 100
-    assert payload["depth"] == 2
+    assert "jobId" not in result
+
+
+def test_map_website_job_failed(anakin_tools):
+    failed = {"id": "job_1", "status": "failed", "error": "Unreachable"}
+    with patch("agno.tools.anakin.httpx.request", side_effect=_job_api(failed)):
+        result = anakin_tools.map_website("https://example.com")
+
+    assert result.startswith("Error mapping https://example.com")
+    assert "Unreachable" in result
+
+
+def test_map_website_timeout(anakin_tools):
+    anakin_tools.max_wait_time = 0
+    pending = {"id": "job_1", "status": "processing"}
+    with patch("agno.tools.anakin.httpx.request", side_effect=_job_api(pending)):
+        result = anakin_tools.map_website("https://example.com")
+
+    assert result.startswith("Error mapping https://example.com")
+    assert "job_1" in result
 
 
 def test_map_website_forwards_options(anakin_tools):
-    mock_response = _mock_response({"totalLinks": 0})
-    with patch("agno.tools.anakin.httpx.request", return_value=mock_response) as mock_request:
+    completed = {"id": "job_1", "status": "completed", "totalLinks": 0}
+    with patch("agno.tools.anakin.httpx.request", side_effect=_job_api(completed)) as mock_request:
         anakin_tools.map_website(
             "https://example.com",
             include_external_links=True,
@@ -197,7 +335,7 @@ def test_map_website_forwards_options(anakin_tools):
             search="pricing",
         )
 
-    payload = mock_request.call_args[1]["json"]
+    payload = mock_request.call_args_list[0].kwargs["json"]
     assert payload["includeExternalLinks"] is True
     assert payload["includeSubdomains"] is True
     assert payload["search"] == "pricing"
