@@ -3,13 +3,17 @@
 import base64
 import io
 import json
+import runpy
 import threading
 import time
 import wave
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import httpx
 
 from agno.agent import Agent
 from agno.tools import sixtydb as provider
@@ -61,7 +65,7 @@ def endpoint(body=PCM, content_type="audio/pcm", status=200, delay=0, headers=No
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     server.daemon_threads = True
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     try:
         yield f"http://127.0.0.1:{server.server_port}", requests
@@ -437,3 +441,129 @@ def test_unlabeled_pcm_continuation_preserves_json_shaped_samples(payload):
     assert result.audios
     with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
         assert wav.readframes(wav.getnframes()) == PCM + payload
+
+
+@pytest.mark.parametrize("operation", ["get_voices", "text_to_speech"])
+def test_failures_log_safe_http_diagnostics(monkeypatch, operation):
+    messages = []
+    monkeypatch.setattr(provider, "log_error", lambda message, **kwargs: messages.append(message), raising=False)
+    with endpoint(b"private-test-key", "text/plain", status=401) as (url, _):
+        toolkit = tool(url)
+        result = toolkit.get_voices() if operation == "get_voices" else toolkit.text_to_speech(Agent(), "Hello")
+    assert "failed" in (result if isinstance(result, str) else result.content)
+    assert messages and "HTTP 401" in messages[0]
+    assert "private-test-key" not in messages[0]
+
+
+def test_repeated_base64_envelopes_are_rejected():
+    body = PCM
+    for _ in range(3):
+        body = json.dumps({"audioContent": base64.b64encode(body).decode()}).encode()
+    with endpoint(body, "application/json") as (url, _):
+        result = tool(url).text_to_speech(Agent(), "Hello")
+    assert not result.audios
+
+
+@pytest.mark.parametrize("has_audio", [True, False])
+def test_cookbook_discovers_voice_and_reports_output(monkeypatch, tmp_path, capsys, has_audio):
+    monkeypatch.setenv("SIXTYDB_API_KEY", "private-test-key")
+    monkeypatch.delenv("SIXTYDB_VOICE_ID", raising=False)
+    monkeypatch.chdir(tmp_path)
+    catalog = json.dumps({"success": True, "data": [{"voice_id": "workspace-voice", "name": "Test"}]}).encode()
+    with endpoint(catalog, "application/json") as (url, requests):
+
+        class LocalTools(SixtyDBTools):
+            def __init__(self, **kwargs):
+                super().__init__(base_url=url, **kwargs)
+
+        monkeypatch.setattr(provider, "SixtyDBTools", LocalTools)
+
+        def run(agent, prompt):
+            assert agent.tools[0].default_voice_id == "workspace-voice"
+            return SimpleNamespace(audio=[SimpleNamespace(content=wav_bytes())] if has_audio else None)
+
+        monkeypatch.setattr(Agent, "run", run)
+        runpy.run_path(
+            str(Path(__file__).resolve().parents[5] / "cookbook/91_tools/sixtydb_tools.py"), run_name="__main__"
+        )
+    output = capsys.readouterr().out
+    assert requests[0][:2] == ("GET", "/voices?model=quality")
+    assert not (tmp_path / "greeting.wav").exists()
+    if has_audio:
+        assert (tmp_path / "tmp/greeting.wav").read_bytes() == wav_bytes()
+        assert "tmp/greeting.wav" in output
+    else:
+        assert "No audio" in output
+        assert not (tmp_path / "tmp/greeting.wav").exists()
+
+
+@pytest.mark.parametrize(
+    "body,content_type,expected",
+    [
+        (b"private-test-key", "text/plain", "non-JSON text"),
+        (b'{"audio_base64": invalid private-test-key}', "application/json", "invalid JSON"),
+    ],
+)
+def test_malformed_responses_log_without_body(monkeypatch, body, content_type, expected):
+    messages = []
+    monkeypatch.setattr(provider, "log_error", lambda message, **kwargs: messages.append((message, kwargs)))
+    with endpoint(body, content_type) as (url, _):
+        result = tool(url).text_to_speech(Agent(), "Hello")
+    assert not result.audios
+    assert expected in messages[0][0]
+    assert "private-test-key" not in messages[0][0]
+    assert messages[0][1] == {"exc_info": False}
+
+
+def test_nested_audio_configuration_is_rejected():
+    body = json.dumps({"audio_config": {"audio_config": {}}, "audioContent": base64.b64encode(PCM).decode()}).encode()
+    with endpoint(body, "application/json") as (url, _):
+        assert not tool(url).text_to_speech(Agent(), "Hello").audios
+
+
+def test_transport_error_does_not_log_sensitive_details(monkeypatch):
+    messages = []
+    monkeypatch.setattr(provider, "log_error", lambda message, **kwargs: messages.append((message, kwargs)))
+
+    def request(*args, **kwargs):
+        raise httpx.ReadTimeout("private-test-key and private request URL")
+
+    toolkit = SixtyDBTools(api_key="private-test-key", default_voice_id="workspace-voice")
+    monkeypatch.setattr(toolkit, "_request", request)
+    result = toolkit.text_to_speech(Agent(), "Hello")
+    assert not result.audios
+    assert "ReadTimeout" in messages[0][0]
+    assert "private" not in messages[0][0]
+    assert messages[0][1] == {"exc_info": False}
+
+
+def test_cookbook_without_available_voices_exits_clearly(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("SIXTYDB_API_KEY", "private-test-key")
+    monkeypatch.delenv("SIXTYDB_VOICE_ID", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(SixtyDBTools, "get_voices", lambda self: "[]")
+    with pytest.raises(SystemExit) as error:
+        runpy.run_path(
+            str(Path(__file__).resolve().parents[5] / "cookbook/91_tools/sixtydb_tools.py"), run_name="__main__"
+        )
+    assert error.value.code == 1
+    assert "No workspace voice" in capsys.readouterr().out
+    assert not (tmp_path / "tmp/greeting.wav").exists()
+
+
+def test_cookbook_explicit_voice_skips_discovery(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("SIXTYDB_API_KEY", "private-test-key")
+    monkeypatch.setenv("SIXTYDB_VOICE_ID", "selected-voice")
+    monkeypatch.chdir(tmp_path)
+
+    def discovery(self):
+        pytest.fail("Explicit voice must not trigger a catalog request")
+
+    def run(agent, prompt):
+        assert agent.tools[0].default_voice_id == "selected-voice"
+        return SimpleNamespace(audio=None)
+
+    monkeypatch.setattr(SixtyDBTools, "get_voices", discovery)
+    monkeypatch.setattr(Agent, "run", run)
+    runpy.run_path(str(Path(__file__).resolve().parents[5] / "cookbook/91_tools/sixtydb_tools.py"), run_name="__main__")
+    assert "No audio" in capsys.readouterr().out

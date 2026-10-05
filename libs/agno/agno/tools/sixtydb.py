@@ -18,12 +18,23 @@ from agno.media import Audio
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
+from agno.utils.audio import pcm_to_wav_bytes
+from agno.utils.log import log_error
 
 SAMPLE_RATE = 24000
 MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 
 
 def _validate_metadata(record: dict[str, Any]) -> None:
+    _validate_audio_metadata(record)
+    if "audio_config" in record:
+        config = record["audio_config"]
+        if not isinstance(config, dict) or "audio_config" in config:
+            raise ValueError("60db returned invalid audio configuration")
+        _validate_audio_metadata(config)
+
+
+def _validate_audio_metadata(record: dict[str, Any]) -> None:
     if record.get("success") is False or record.get("type") == "error" or record.get("error"):
         raise ValueError("60db reported a synthesis error")
     for key in ("encoding", "audio_encoding", "output_format"):
@@ -37,14 +48,9 @@ def _validate_metadata(record: dict[str, Any]) -> None:
     ):
         if key in record and record[key] != expected:
             raise ValueError("60db returned incompatible audio metadata")
-    if "audio_config" in record:
-        config = record["audio_config"]
-        if not isinstance(config, dict):
-            raise ValueError("60db returned invalid audio configuration")
-        _validate_metadata(config)
 
 
-def _record_audio(record: Any, formats: Optional[dict[int, str]] = None, offset: int = 0) -> bytes:  # noqa: FA100
+def _record_audio(record: Any, formats: Optional[dict[int, str]] = None, offset: int = 0, unwrap: bool = True) -> bytes:
     if not isinstance(record, dict):
         raise TypeError("60db returned an invalid response object")
     _validate_metadata(record)
@@ -80,7 +86,9 @@ def _record_audio(record: Any, formats: Optional[dict[int, str]] = None, offset:
             key in inner for key in ("audioContent", "audio_base64", "result", "backendResponse")
         ):
             raise ValueError("60db audio envelope contains no audio")
-        audio = _record_audio(inner, formats, offset)
+        if not unwrap:
+            raise ValueError("60db audio contains repeated envelopes")
+        audio = _record_audio(inner, formats, offset, unwrap=False)
         if formats is not None and declared_format == "wav":
             formats[offset] = "wav"
         return audio
@@ -125,7 +133,7 @@ def _decode_wav(audio: bytes, offset: int) -> tuple[bytes, int]:
         return pcm, size
 
 
-def _pcm(audio: bytes, record_ends: Optional[list[int]] = None, formats: Optional[dict[int, str]] = None) -> bytes:  # noqa: FA100
+def _pcm(audio: bytes, record_ends: Optional[list[int]] = None, formats: Optional[dict[int, str]] = None) -> bytes:
     decoded = bytearray()
     offset = 0
     boundaries = iter(record_ends or [len(audio)])
@@ -167,14 +175,15 @@ def _pcm(audio: bytes, record_ends: Optional[list[int]] = None, formats: Optiona
 class SixtyDBTools(Toolkit):
     """Use workspace voices through 60db's HTTP API.
 
-    Credentials stay on the agent server. Speech text is sent to 60db when the
-    synthesis tool is invoked. Audio is validated and returned as PCM16 WAV.
+    Set SIXTYDB_API_KEY or pass api_key. Call get_voices to find a workspace
+    voice_id, then configure default_voice_id or supply a voice per synthesis.
+    Audio is returned as mono PCM16 WAV at 24 kHz.
     """
 
     def __init__(
         self,
-        api_key: Optional[str] = None,  # noqa: FA100
-        default_voice_id: Optional[str] = None,  # noqa: FA100
+        api_key: Optional[str] = None,
+        default_voice_id: Optional[str] = None,
         speed: float = 1.0,
         base_url: str = "https://api.60db.ai",
         timeout: float = 60.0,
@@ -232,8 +241,8 @@ class SixtyDBTools(Toolkit):
         ) as response:
             if not 200 <= response.status_code < 300:
                 raise ValueError("60db request failed (HTTP " + str(response.status_code) + ")")
-            _validate_metadata(
-                {
+            try:
+                metadata = {
                     key: int(response.headers[header])
                     for key, header in (
                         ("sample_rate", "X-Sample-Rate"),
@@ -242,7 +251,9 @@ class SixtyDBTools(Toolkit):
                     )
                     if header in response.headers
                 }
-            )
+            except ValueError:
+                raise ValueError("60db returned invalid HTTP audio metadata") from None
+            _validate_metadata(metadata)
             data = bytearray()
             for chunk in response.iter_bytes():
                 if monotonic() > deadline:
@@ -251,6 +262,16 @@ class SixtyDBTools(Toolkit):
                 if len(data) > MAX_RESPONSE_BYTES:
                     raise ValueError("60db response exceeds 32 MiB")
             return bytes(data), response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+
+    def _log_failure(self, operation: str, error: Exception) -> None:
+        # Transport exceptions may contain request URLs; never log response bodies or tracebacks.
+        if isinstance(error, (httpx.HTTPError, OSError)):
+            detail = "network request failed"
+        elif isinstance(error, json.JSONDecodeError):
+            detail = f"invalid JSON at line {error.lineno}, column {error.colno}"
+        else:
+            detail = str(error).replace(self.api_key, "<REDACTED>")[:500]
+        log_error(f"60db {operation} failed ({type(error).__name__}): {detail}", exc_info=False)
 
     def get_voices(self, model: Literal["quality", "fast"] = "quality") -> str:
         """List voices available in the authenticated workspace.
@@ -280,11 +301,11 @@ class SixtyDBTools(Toolkit):
                     raise TypeError("Invalid workspace voice")
                 voices.append({key: voice.get(key) for key in ("voice_id", "name", "model", "labels", "description")})
             return json.dumps(voices)
-        except (httpx.HTTPError, ValueError, TypeError, KeyError, RecursionError):
+        except (httpx.HTTPError, ValueError, TypeError, KeyError, RecursionError) as error:
+            self._log_failure("voice discovery", error)
             return json.dumps({"error": "60db voice discovery failed"})
 
-    # Python 3.9 evaluates these annotations when generating the tool schema.
-    def text_to_speech(self, agent: Union[Agent, Team], text: str, voice_id: Optional[str] = None) -> ToolResult:  # noqa: FA100
+    def text_to_speech(self, agent: Union[Agent, Team], text: str, voice_id: Optional[str] = None) -> ToolResult:
         """Convert text to a WAV audio artifact using a workspace voice.
 
         Args:
@@ -318,7 +339,13 @@ class SixtyDBTools(Toolkit):
                 total = 0
                 for line in body.splitlines():
                     if line.strip():
-                        record = _record_audio(json.loads(line), formats, total)
+                        try:
+                            parsed = json.loads(line)
+                        except (json.JSONDecodeError, UnicodeDecodeError):
+                            if content_type == "text/plain":
+                                raise ValueError("60db returned non-JSON text instead of NDJSON audio") from None
+                            raise
+                        record = _record_audio(parsed, formats, total)
                         if record:
                             audio_records.append(record)
                             total += len(record)
@@ -340,23 +367,27 @@ class SixtyDBTools(Toolkit):
                 if content_type in {"application/x-ndjson", "application/ndjson", "text/plain"}
                 else _pcm(audio, formats=formats)
             )
-            buffer = io.BytesIO()
-            with wave.open(buffer, "wb") as wav:
-                wav.setnchannels(1)
-                wav.setsampwidth(2)
-                wav.setframerate(SAMPLE_RATE)
-                wav.writeframes(pcm)
             return ToolResult(
                 content="Audio generated and attached.",
                 audios=[
                     Audio(
                         id=str(uuid4()),
-                        content=buffer.getvalue(),
+                        content=pcm_to_wav_bytes(pcm, channels=1, rate=SAMPLE_RATE, sample_width=2),
                         mime_type="audio/wav",
                         format="wav",
                         sample_rate=SAMPLE_RATE,
                     )
                 ],
             )
-        except (httpx.HTTPError, OSError, ValueError, TypeError, KeyError, RecursionError, EOFError, wave.Error):
+        except (
+            httpx.HTTPError,
+            OSError,
+            ValueError,
+            TypeError,
+            KeyError,
+            RecursionError,
+            EOFError,
+            wave.Error,
+        ) as error:
+            self._log_failure("speech generation", error)
             return ToolResult(content="Error: 60db speech generation failed")

@@ -35,6 +35,23 @@ tools = MCPTools(servers=["npx", "-y", "@anthropic/mcp-server-filesystem"])
 agent = Agent(tools=[tools])
 ```
 
+## Workspace speech
+
+`sixtydb_tools.py` uses 60db workspace voices. Set `SIXTYDB_API_KEY` and the
+credentials for the agent's model. `SIXTYDB_VOICE_ID` is optional: without it,
+the example calls `get_voices()` and selects the first voice in the quality
+catalog. Set the voice ID explicitly to use another voice, including one from
+`get_voices(model="fast")`. Voice IDs are specific to your workspace.
+
+Run `python cookbook/91_tools/sixtydb_tools.py` from the repository root. The
+example writes WAV audio to `tmp/greeting.wav`, prints the output path, and
+reports when no audio is returned. Discovery and synthesis failures log
+diagnostics without API keys or response bodies.
+
+The toolkit requests mono LINEAR16 at 24 kHz and accepts JSON/NDJSON base64
+audio or binary PCM/WAV. It validates WAV containers before producing an Agno
+audio artifact; incompatible encodings fail explicitly.
+
 ## Folders
 
 - `finance/` - FinanceTools: one finance toolkit, swappable data providers (yfinance, financialdatasets.ai)
