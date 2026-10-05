@@ -35,6 +35,7 @@ from typing import Dict, List, Optional, Set, Tuple, Union
 from agno.exceptions import PathSecurityError
 from agno.tools import Toolkit
 from agno.tools._local_file_utils import DEFAULT_EXCLUDE_PATTERNS, EXEMPT_PREFIX, compile_exclude_patterns
+from agno.tools._local_file_utils import extract_snippet as _extract_snippet
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.path_safety import safe_join_relative_path
 
@@ -161,23 +162,6 @@ def _format_size(size: float) -> str:
             return f"{int(size)}{unit}" if unit == "B" else f"{size:.1f}{unit}"
         size /= 1024
     return f"{size:.1f}GB"
-
-
-def _extract_snippet(content: str, query: str, context_chars: int = 200) -> str:
-    """Extract a snippet of content around the first case-insensitive match of query."""
-    lower_content = content.lower()
-    lower_query = query.lower()
-    idx = lower_content.find(lower_query)
-    if idx == -1:
-        return ""
-    start = max(0, idx - context_chars)
-    end = min(len(content), idx + len(query) + context_chars)
-    snippet = content[start:end]
-    if start > 0:
-        snippet = "..." + snippet
-    if end < len(content):
-        snippet = snippet + "..."
-    return snippet
 
 
 def _format_with_line_numbers(text: str, start_line: int = 1) -> str:
