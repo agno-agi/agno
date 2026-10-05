@@ -2293,9 +2293,11 @@ def _register_tool_run_api(
         real: the cancellation propagates through ``agent.arun`` into the model's own HTTP
         request, so generation ends rather than finishing unobserved.
 
-        A tool that blocks rather than awaits (``time.sleep``, a synchronous driver) cannot
-        be interrupted this way -- the cancellation only lands at an ``await``. The caller
-        still gets its 408.
+        A tool that blocks rather than awaits (``time.sleep``, a synchronous driver) is run
+        in fastmcp's threadpool, so the event loop keeps serving other requests and the 408
+        still lands on time. Only that worker thread runs on: Python cannot interrupt a
+        thread mid-call, so a sync tool that routinely outlives the budget ties up a thread
+        each time. Prefer ``async def`` for anything long-running.
         """
         work = asyncio.ensure_future(coro)
         timer = asyncio.ensure_future(asyncio.sleep(timeout_seconds))
