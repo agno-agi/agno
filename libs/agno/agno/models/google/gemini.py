@@ -1653,17 +1653,17 @@ class Gemini(Model):
         """
         metrics = MessageMetrics()
 
-        metrics.input_tokens = response_usage.prompt_token_count or 0
-        metrics.output_tokens = response_usage.candidates_token_count or 0
-        if response_usage.thoughts_token_count is not None:
-            metrics.reasoning_tokens = response_usage.thoughts_token_count or 0
         raw_thoughts_tokens = getattr(response_usage, "thoughts_token_count", None)
         thoughts_tokens: int = raw_thoughts_tokens if isinstance(raw_thoughts_tokens, int) else 0
+        metrics.input_tokens = response_usage.prompt_token_count or 0
+        metrics.output_tokens = (response_usage.candidates_token_count or 0) + thoughts_tokens
+        if response_usage.thoughts_token_count is not None:
+            metrics.reasoning_tokens = response_usage.thoughts_token_count or 0
         raw_total_tokens = getattr(response_usage, "total_token_count", None)
         metrics.total_tokens = (
             raw_total_tokens
             if isinstance(raw_total_tokens, int) and raw_total_tokens > 0
-            else (metrics.input_tokens + metrics.output_tokens + thoughts_tokens)
+            else (metrics.input_tokens + metrics.output_tokens)
         )
 
         metrics.cache_read_tokens = response_usage.cached_content_token_count or 0

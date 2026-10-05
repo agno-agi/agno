@@ -955,12 +955,12 @@ class TestGemini35ThinkingAndUsage:
         delta = model._parse_provider_response_delta(chunk)
         assert delta.response_usage is not None
         assert delta.response_usage.input_tokens == 12
-        assert delta.response_usage.output_tokens == 8
+        assert delta.response_usage.output_tokens == 28
         assert delta.response_usage.reasoning_tokens == 20
         assert delta.response_usage.total_tokens == 40
         assert delta.response_usage.cache_read_tokens == 4
 
-    def test_get_metrics_includes_thoughts_token_count_in_fallback_total(self):
+    def test_get_metrics_includes_thoughts_token_count_in_output_and_fallback_total(self):
         from google.genai.types import GenerateContentResponseUsageMetadata
 
         model = Gemini(id="gemini-3.5-flash", api_key="test-key")
@@ -972,6 +972,6 @@ class TestGemini35ThinkingAndUsage:
         )
         metrics = model._get_metrics(usage)
         assert metrics.input_tokens == 10
-        assert metrics.output_tokens == 15
+        assert metrics.output_tokens == 40
         assert metrics.reasoning_tokens == 25
         assert metrics.total_tokens == 50
