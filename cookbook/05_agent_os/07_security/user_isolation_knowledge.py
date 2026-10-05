@@ -2,7 +2,7 @@
 Per-user knowledge ownership
 ============================
 
-Turn on AuthorizationConfig(user_isolation=True) so every knowledge content row
+Turn on AgentOS(user_isolation=True) so every knowledge content row
 is owned by the JWT subject, and a row with no owner is shared, org-wide
 content. The smoke proves the read scope, the 403 on shared content, the 404 on
 another user's content, and the admin bypass. Rows are seeded straight into the
@@ -22,8 +22,7 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.sqlite import SqliteDb
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
-from agno.os import AgentOS
-from agno.os.config import AuthorizationConfig
+from agno.os import AgentOS, Authorization
 from fastapi.testclient import TestClient
 
 # ---------------------------------------------------------------------------
@@ -49,13 +48,12 @@ agent_os = AgentOS(
     agents=[knowledge_agent],
     knowledge=[handbook],
     db=db,
-    authorization=True,
-    authorization_config=AuthorizationConfig(
+    authorization=Authorization(
         verification_keys=[JWT_SECRET],
         algorithm="HS256",
         verify_audience=True,
-        user_isolation=True,
     ),
+    user_isolation=True,
 )
 app = agent_os.get_app()
 
