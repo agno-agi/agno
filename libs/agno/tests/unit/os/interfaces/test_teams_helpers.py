@@ -558,6 +558,38 @@ async def test_download_attachments_unsupported_mime_is_skipped():
 
 
 @pytest.mark.asyncio
+async def test_download_attachments_image_sent_as_a_file_is_still_an_image():
+    """Teams classifies a pasted image as image/* but an uploaded one as a file
+    attachment, so the paperclip path arrives here rather than in image_attachments.
+    File's allowlist carries no image types, so testing it against that list drops
+    the photo and tells the user it could not be read. It is an image either way."""
+    parsed = ActivityContent(
+        text="what is in this",
+        image_attachments=[],
+        file_attachments=[
+            {
+                "contentType": "application/vnd.microsoft.teams.file.download.info",
+                "contentUrl": "https://ex/photo",
+                "name": "photo.png",
+            }
+        ],
+    )
+    cfg = _make_config()
+
+    async def fake_download(url, config, use_bot_token=True):
+        return b"pngbytes", "image/png"
+
+    with patch("agno.os.interfaces.teams.helpers._download_attachment", side_effect=fake_download):
+        run_kwargs, skipped = await download_attachments_async(parsed, cfg)
+
+    assert skipped == []
+    assert "files" not in run_kwargs
+    assert len(run_kwargs["images"]) == 1
+    assert run_kwargs["images"][0].content == b"pngbytes"
+    assert run_kwargs["images"][0].mime_type == "image/png"
+
+
+@pytest.mark.asyncio
 async def test_download_attachments_resolves_supported_mime_from_filename():
     """A download that omits content-type must not cost the user a supported file:
     the type is resolved from the name, the way the model would have."""
