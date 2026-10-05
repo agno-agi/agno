@@ -3,7 +3,7 @@ import threading
 from abc import ABC, abstractmethod
 from datetime import date, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -1935,8 +1935,11 @@ class BaseDb(ABC):
         """Delete a session's records. Returns the number deleted."""
         raise NotImplementedError
 
-    def search_compactions(self, session_id: str, query: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Records in this session whose archived transcript contains ``query``."""
+    def search_compactions(
+        self, session_id: str, query: Union[str, Sequence[str]], limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Records in this session whose archived transcript contains ``query`` - or, given several
+        terms, any one of them - newest first."""
         raise NotImplementedError
 
     # --- Approvals (Optional) ---

@@ -9,7 +9,7 @@ from uuid import uuid4
 from agno.compaction._cut import choose_boundary, is_offload_envelope
 from agno.compaction._tokens import estimate_tokens
 from agno.compaction._view import build_view
-from agno.compaction.archive import CompactionArchive, render_message, render_messages
+from agno.compaction.archive import CompactionArchive, render_message, render_messages, search_terms
 from agno.compaction.prompts import (
     ARCHIVE_AWARE_PROMPT,
     ARCHIVE_LOOKUP_INSTRUCTION,
@@ -29,6 +29,17 @@ if TYPE_CHECKING:
 # overflow. Trim what the summarizer reads, oldest first, to this budget - about
 # 100k tokens, so a fold at the default compact_at_tokens fits in one call.
 DEFAULT_SUMMARIZE_CHAR_BUDGET = 400_000
+
+# Bounds on what one archive search can return. The result lands in the context window, so an
+# unbounded one could overflow it on its own - and on a small model, sink the retry after an
+# overflow fold as well.
+_SEARCH_MAX_CONTEXT_LINES = 10
+_SEARCH_LINE_CHARS = 500
+_SEARCH_OUTPUT_CHARS = 8_000
+# Folds one search scans. Generous, so a term common in recent folds cannot crowd out an older
+# fold that holds another term; the output cap bounds what comes back either way.
+_SEARCH_MAX_FOLDS = 20
+
 
 # The default kept tail, and a sentinel standing in for "nobody set this". Comparing against
 # the value alone cannot tell uncompacted_runs=5 written by hand from the default, so an explicit
@@ -786,47 +797,72 @@ class Compaction:
             command, or error message - that the summary does not carry.
 
             Args:
-                pattern: A regular expression, matched line by line against the stored
-                    transcript. Plain text works as a literal search.
-                context_lines: Lines of surrounding context to show around each match.
+                pattern: Text to find, matched case-insensitively line by line against the
+                    stored transcript. Separate alternatives with "|" to find any of them,
+                    e.g. "build hash|rotation window".
+                context_lines: Lines of surrounding context to show around each match (at most 10).
             """
-            rows = archive.search(pattern, limit=5)
+            rows = archive.search(pattern, limit=_SEARCH_MAX_FOLDS)
             if not rows:
-                return f"No compacted history matches {pattern!r}."
-            blocks = []
+                return f"No compacted history matches {pattern[:200]!r}."
+            blocks: List[str] = []
+            used = 0
             for row in rows:
                 hits = _grep(row.get("archived_messages") or "", pattern, context_lines)
-                if hits:
-                    blocks.append(hits)
+                if not hits:
+                    continue
+                # The cap holds across folds too, not just within each one.
+                if blocks and used + len(hits) > _SEARCH_OUTPUT_CHARS:
+                    blocks.append("... more matches in older folds; narrow the search.")
+                    break
+                blocks.append(hits)
+                used += len(hits)
             if not blocks:
-                return f"No compacted history matches {pattern!r}."
+                return f"No compacted history matches {pattern[:200]!r}."
             return "\n\n---\n\n".join(blocks)
 
         return [search_compacted_history]
 
 
+def _clip_line(line: str, match_start: Optional[int]) -> str:
+    """A line cut to _SEARCH_LINE_CHARS, kept around the match so the hit itself survives."""
+    if len(line) <= _SEARCH_LINE_CHARS:
+        return line
+    center = match_start if match_start is not None else 0
+    start = max(0, min(center - _SEARCH_LINE_CHARS // 2, len(line) - _SEARCH_LINE_CHARS))
+    end = start + _SEARCH_LINE_CHARS
+    return ("..." if start > 0 else "") + line[start:end] + ("..." if end < len(line) else "")
+
+
 def _grep(text: str, pattern: str, context_lines: int = 2, max_matches: int = 20) -> str:
     """Matching lines with surrounding context, numbered - the shape `grep -n -C` returns.
 
-    The regex is compiled here rather than pushed into SQL: databases disagree on regex support,
-    and a line-oriented result is what makes a transcript readable. SQL still prefilters which
-    rows are worth scanning, so this only ever runs over candidates.
+    The pattern is literal text, with "|" separating alternatives - never a regular expression. It
+    comes from a model, and a regex like "(a+)+$" backtracks for hours on a 40-character line,
+    which Python cannot interrupt. Literal alternatives match in linear time and cover what the
+    tool is for: recovering an exact value.
 
-    A pattern that fails to compile is treated as a literal string, since the caller is a model
-    that may well send plain text containing regex metacharacters.
+    SQL prefilters which rows are worth scanning, so this only ever runs over candidates. Output is
+    bounded - context lines, line length, and total size - since it goes into the context window.
     """
     import re
 
-    try:
-        compiled = re.compile(pattern, re.IGNORECASE)
-    except re.error:
-        compiled = re.compile(re.escape(pattern), re.IGNORECASE)
+    terms = search_terms(pattern)
+    if not terms:
+        return ""
+    compiled = re.compile("|".join(re.escape(term) for term in terms), re.IGNORECASE)
+    context_lines = max(0, min(context_lines, _SEARCH_MAX_CONTEXT_LINES))
 
     lines = text.split("\n")
-    hit_indexes = [i for i, line in enumerate(lines) if compiled.search(line)]
-    if not hit_indexes:
+    hits = {}
+    for i, line in enumerate(lines):
+        found = compiled.search(line)
+        if found:
+            hits[i] = found.start()
+    if not hits:
         return ""
 
+    hit_indexes = sorted(hits)
     truncated = len(hit_indexes) > max_matches
     hit_indexes = hit_indexes[:max_matches]
 
@@ -839,12 +875,19 @@ def _grep(text: str, pattern: str, context_lines: int = 2, max_matches: int = 20
         else:
             spans.append([start, end])
 
-    blocks = []
-    for start, end in spans:
-        blocks.append("\n".join(f"{i + 1}: {lines[i]}" for i in range(start, end)))
-    rendered = "\n--\n".join(blocks)
+    rendered = ""
+    for span_start, span_end in spans:
+        block = "\n".join(f"{i + 1}: {_clip_line(lines[i], hits.get(i))}" for i in range(span_start, span_end))
+        candidate = block if not rendered else f"{rendered}\n--\n{block}"
+        if len(candidate) > _SEARCH_OUTPUT_CHARS:
+            truncated = True
+            break
+        rendered = candidate
+    if not rendered:
+        # Even the first block is over the limit; return its start rather than nothing.
+        rendered = candidate[:_SEARCH_OUTPUT_CHARS]
     if truncated:
-        rendered += f"\n... more than {max_matches} matches; narrow the pattern."
+        rendered += "\n... more matches than fit; narrow the search."
     return rendered
 
 

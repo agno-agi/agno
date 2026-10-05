@@ -59,12 +59,13 @@ def _clip(text: str, limit: int) -> str:
     return text[:limit] + f"\n... [clipped, {len(text) - limit} more characters]"
 
 
-_REGEX_SYNTAX = set(".^$*+?{}[]\\|()")
+# The most alternatives one search may carry.
+MAX_SEARCH_TERMS = 20
 
 
-def _is_plain_text(query: str) -> bool:
-    """Whether this pattern can be handed to SQL as a literal substring."""
-    return not any(character in _REGEX_SYNTAX for character in query)
+def search_terms(pattern: str) -> List[str]:
+    """The literal terms of a search: the pattern split on "|"."""
+    return [term.strip() for term in pattern.split("|") if term.strip()][:MAX_SEARCH_TERMS]
 
 
 class CompactionArchive:
@@ -144,18 +145,17 @@ class CompactionArchive:
         return None
 
     def search(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Candidate rows for a search.
+        """Candidate rows for a search: every fold containing any of its terms, newest first.
 
-        A regex cannot be pushed into SQL portably, so anything with regex syntax in it falls
-        back to listing the session's rows and letting the caller scan them. Sessions hold a
-        handful of records, so the difference is between an indexed lookup and a trivial one -
-        and a prefilter that silently dropped rows a regex would have matched would be worse
-        than no prefilter at all.
+        All terms go to SQL as one substring filter. LIKE wildcards in a term can only widen the
+        match, and the caller matches exactly afterwards, so no fold that holds a term is dropped -
+        however old it is.
         """
+        terms = search_terms(query)
+        if not terms:
+            return []
         try:
-            if _is_plain_text(query):
-                return self._method("search_compactions")(self.session_id, query, limit)
-            return self._method("get_compactions_for_session")(self.session_id, limit)
+            return self._method("search_compactions")(self.session_id, terms, limit)
         except NotImplementedError:
             return []
         except Exception as e:  # noqa: BLE001
@@ -163,4 +163,10 @@ class CompactionArchive:
             return []
 
 
-__all__ = ["CompactionArchive", "render_message", "render_messages", "MAX_ARCHIVED_TOOL_RESULT_CHARS"]
+__all__ = [
+    "CompactionArchive",
+    "render_message",
+    "render_messages",
+    "search_terms",
+    "MAX_ARCHIVED_TOOL_RESULT_CHARS",
+]

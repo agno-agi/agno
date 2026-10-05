@@ -1742,13 +1742,78 @@ def test_grep_returns_numbered_lines_with_context():
     assert "1: alpha" not in out
 
 
-def test_grep_supports_regex():
+def test_search_patterns_are_literal_so_they_cannot_backtrack():
+    """The pattern comes from a model. As a regex, "(a+)+$" backtracks for hours on a 40-character
+    line and cannot be interrupted; as literal text it is a plain substring search."""
+    import time
+
     from agno.compaction.manager import _grep
 
-    text = "port 5432 open\nno numbers here"
+    started = time.perf_counter()
+    result = _grep("a" * 40 + "!", "(a+)+$")
 
-    assert "5432" in _grep(text, r"port \d+", context_lines=0)
-    assert _grep(text, r"port \d+", context_lines=0).count("\n") == 0
+    assert time.perf_counter() - started < 0.5
+    assert result == ""
+    assert "port \\d+ here" in _grep("literal port \\d+ here", "port \\d+", context_lines=0)
+
+
+def test_search_alternatives_match_any_term_case_insensitively():
+    from agno.compaction.manager import _grep
+
+    text = "Build hash b7f2\nRotation window: 47 days\nunrelated"
+    out = _grep(text, "build hash|ROTATION window", context_lines=0)
+
+    assert "Build hash b7f2" in out and "Rotation window" in out
+    assert "unrelated" not in out
+
+
+def test_search_context_lines_are_capped():
+    """An unbounded context_lines returned the whole archive."""
+    from agno.compaction.manager import _SEARCH_MAX_CONTEXT_LINES, _grep
+
+    text = "\n".join(f"line {i}" for i in range(500))
+    out = _grep(text, "line 250", context_lines=100_000)
+
+    assert len(out.splitlines()) == 2 * _SEARCH_MAX_CONTEXT_LINES + 1
+
+
+def test_a_long_matching_line_is_clipped_around_the_match():
+    """A long line came back whole; clipped from the start, a match in the middle would be lost."""
+    from agno.compaction.manager import _SEARCH_LINE_CHARS, _grep
+
+    out = _grep("x" * 150_000 + " SECRET-42 " + "y" * 150_000, "secret-42")
+
+    assert "SECRET-42" in out
+    assert len(out) < _SEARCH_LINE_CHARS + 50
+
+
+def test_search_output_is_capped():
+    """The result goes into the context window; on a small model an unbounded one overflows it."""
+    from agno.compaction.manager import _SEARCH_OUTPUT_CHARS, _grep
+
+    text = "\n".join(f"hit {i} " + "z" * 400 for i in range(5_000))
+    out = _grep(text, "hit", context_lines=0, max_matches=1_000)
+
+    assert len(out) <= _SEARCH_OUTPUT_CHARS + 100
+    assert out.endswith("narrow the search.")
+
+
+def test_the_search_tool_caps_output_across_folds():
+    """Each fold's result is capped; so is their sum, or five folds return five times the cap."""
+    from agno.compaction.archive import CompactionArchive
+    from agno.compaction.manager import _SEARCH_OUTPUT_CHARS
+
+    db = _db()
+    archive = CompactionArchive(db, "s")
+    folded = [Message(role="user", content="\n".join(f"hit {i} " + "z" * 400 for i in range(200)))]
+    for _ in range(5):
+        archive.write(CompactionRecord(messages_compacted=1, summary="s", first_kept_message_id="m"), folded)
+
+    (search,) = Compaction().tools_for("s", db)
+    out = search(pattern="hit", context_lines=0)
+
+    assert len(out) <= _SEARCH_OUTPUT_CHARS + 200
+    assert "narrow the search" in out
 
 
 def test_grep_falls_back_to_literal_on_bad_regex():
@@ -1769,12 +1834,57 @@ def test_grep_merges_overlapping_context():
     assert "--" not in out
 
 
-def test_regex_patterns_skip_the_sql_prefilter():
-    """A regex is not a valid ILIKE string; prefiltering on it would drop real matches."""
-    from agno.compaction.archive import _is_plain_text
+def _archive_with_folds(texts):
+    """An archive holding one fold per text, oldest first, with distinct timestamps."""
+    from agno.compaction.archive import CompactionArchive
 
-    assert _is_plain_text("INC-88213") is True
-    assert _is_plain_text(r"INC-\d+") is False
+    db = _db()
+    archive = CompactionArchive(db, "s")
+    for age, text in enumerate(texts):
+        record = CompactionRecord(messages_compacted=1, summary="s", first_kept_message_id="m", created_at=1_000 + age)
+        archive.write(record, [Message(role="user", content=text)])
+    return db
+
+
+def test_alternatives_reach_folds_older_than_the_newest_few():
+    """With "|" in the pattern, only the newest 5 folds used to be scanned. Models search that way
+    most of the time, so the earliest history - where facts are often first stated - went missing."""
+    db = _archive_with_folds(["vendor 12: Hooli Ltd, phone 1444"] + [f"fold {i}: nothing here" for i in range(1, 9)])
+    (search,) = Compaction().tools_for("s", db)
+
+    assert "1444" in search(pattern="vendor 12|contact list")
+
+
+def test_a_common_term_does_not_crowd_out_an_older_match():
+    """A term found in every recent fold must not fill the candidate slots ahead of the fold that
+    holds the other term."""
+    db = _archive_with_folds(
+        ["vendor 12: Hooli Ltd, phone 1444"] + [f"fold {i}: call the phone line" for i in range(1, 9)]
+    )
+    (search,) = Compaction().tools_for("s", db)
+
+    assert "1444" in search(pattern="phone|vendor 12")
+
+
+def test_the_prefilter_never_drops_a_matching_fold():
+    """Searches are literal, so a single term goes to SQL even with regex-looking characters in it,
+    and alternatives fall back to listing - either way every fold that matches is a candidate."""
+    from agno.compaction.archive import CompactionArchive
+
+    db = _db()
+    archive = CompactionArchive(db, "s")
+    for text in ("deployed version 1.2 to prod", "rotation window is 47 days", "nothing relevant"):
+        archive.write(
+            CompactionRecord(messages_compacted=1, summary="s", first_kept_message_id="m"),
+            [Message(role="user", content=text)],
+        )
+
+    def texts(rows):
+        return sorted(row["archived_messages"] for row in rows)
+
+    assert len(archive.search("version 1.2")) == 1
+    assert "version 1.2" in texts(archive.search("version 1.2"))[0]
+    assert sum("47 days" in t or "1.2" in t for t in texts(archive.search("version 1.2|47 days"))) == 2
 
 
 # --- token measurement ------------------------------------------------------

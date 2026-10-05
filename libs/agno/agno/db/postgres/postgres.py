@@ -1553,19 +1553,23 @@ class PostgresDb(BaseDb):
             result = sess.execute(table.delete().where(table.c.session_id == session_id))
             return result.rowcount or 0
 
-    def search_compactions(self, session_id: str, query: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Records whose archived transcript contains ``query``, newest first.
+    def search_compactions(
+        self, session_id: str, query: Union[str, Sequence[str]], limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Records whose archived transcript contains ``query`` - or any of several terms - newest first.
 
-        A substring match, scoped to one session so a search can never reach
-        another conversation's history.
+        A substring match, scoped to one session so a search can never reach another conversation's
+        history. Several terms are one query, so every fold matching any of them is a candidate.
         """
         table = self._get_table(table_type="compactions")
-        if table is None or not query:
+        terms = [query] if isinstance(query, str) else list(query)
+        terms = [term for term in terms if term]
+        if table is None or not terms:
             return []
         stmt = (
             select(table)
             .where(table.c.session_id == session_id)
-            .where(table.c.archived_messages.ilike(f"%{query}%"))
+            .where(or_(*(table.c.archived_messages.ilike(f"%{term}%") for term in terms)))
             .order_by(table.c.created_at.desc())
             .limit(limit)
         )
