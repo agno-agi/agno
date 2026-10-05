@@ -574,7 +574,10 @@ def _group_tools_by_approval(db: Any, run_id: str, run_response: Any, tools: Lis
                 key = f"run:{mid}"
                 if key not in cache:
                     cache[key] = _get_approval_for_run(db, mid)
-                record = cache[key]
+                # The member run's latest record covers only the calls it names:
+                # once a later call's own record is gone, an earlier call's
+                # approval must not execute it.
+                record = None if _record_names_other_tools(cache[key], tool) else cache[key]
         if record is None and aid and not mid:
             # A tool whose stamped record is gone and that owns no member run
             # resolves within its own run only: a record re-issued under this
@@ -630,7 +633,10 @@ async def _agroup_tools_by_approval(db: Any, run_id: str, run_response: Any, too
                 key = f"run:{mid}"
                 if key not in cache:
                     cache[key] = await _aget_approval_for_run(db, mid)
-                record = cache[key]
+                # The member run's latest record covers only the calls it names:
+                # once a later call's own record is gone, an earlier call's
+                # approval must not execute it.
+                record = None if _record_names_other_tools(cache[key], tool) else cache[key]
         if record is None and aid and not mid:
             # A tool whose stamped record is gone and that owns no member run
             # resolves within its own run only: a record re-issued under this
@@ -718,11 +724,15 @@ def check_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any)
     if db is None:
         return
 
-    all_approval_tools = _collect_all_approval_tools(run_response)
-    if not any(getattr(t, "approval_type", None) == "required" for t in all_approval_tools):
+    # Only required tools are gated. Audit tools never get a required record:
+    # their record is written after the HITL interaction resolves.
+    required_tools = [
+        t for t in _collect_all_approval_tools(run_response) if getattr(t, "approval_type", None) == "required"
+    ]
+    if not required_tools:
         return
 
-    pairs = _group_tools_by_approval(db, run_id, run_response, all_approval_tools)
+    pairs = _group_tools_by_approval(db, run_id, run_response, required_tools)
     if any(record is None for _, record in pairs):
         raise RuntimeError(
             "No approval record found for this run. Cannot continue a run that requires external approval."
@@ -743,11 +753,15 @@ async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_respons
     if db is None:
         return
 
-    all_approval_tools = _collect_all_approval_tools(run_response)
-    if not any(getattr(t, "approval_type", None) == "required" for t in all_approval_tools):
+    # Only required tools are gated. Audit tools never get a required record:
+    # their record is written after the HITL interaction resolves.
+    required_tools = [
+        t for t in _collect_all_approval_tools(run_response) if getattr(t, "approval_type", None) == "required"
+    ]
+    if not required_tools:
         return
 
-    pairs = await _agroup_tools_by_approval(db, run_id, run_response, all_approval_tools)
+    pairs = await _agroup_tools_by_approval(db, run_id, run_response, required_tools)
     if any(record is None for _, record in pairs):
         raise RuntimeError(
             "No approval record found for this run. Cannot continue a run that requires external approval."

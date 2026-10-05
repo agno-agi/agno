@@ -204,3 +204,186 @@ def test_second_call_does_not_run_while_its_approval_is_pending(db, build):
         pass
     assert PAID == ["INV-1"]
     assert _required_records(db, run_id)[1]["status"] == "pending"
+
+
+# ---------------------------------------------------------------------------
+# A required call followed by an audit call, and a member's deleted record
+# ---------------------------------------------------------------------------
+LOGGED: List[str] = []
+
+
+@approval(type="audit")
+@tool(requires_confirmation=True)
+def log_action(note: str) -> str:
+    """Log an action for the audit trail.
+
+    Args:
+        note (str): What happened
+    """
+    LOGGED.append(note)
+    return "logged"
+
+
+def _audit_script() -> List[tuple]:
+    return [
+        ("tool", "pay_invoice", {"invoice": "INV-1"}, "call_1"),
+        ("tool", "log_action", {"note": "paid INV-1"}, "call_2"),
+        ("content", "Done."),
+    ]
+
+
+def _build_agent_with_audit(db: SqliteDb) -> Agent:
+    return Agent(
+        id="payer", model=_ScriptedModel(_audit_script()), tools=[pay_invoice, log_action], db=db, telemetry=False
+    )
+
+
+def _build_team_with_audit(db: SqliteDb) -> Team:
+    helper = Agent(id="helper", model=_ScriptedModel([("content", "ok")]), telemetry=False)
+    return Team(
+        id="payer-team",
+        model=_ScriptedModel(_audit_script()),
+        members=[helper],
+        tools=[pay_invoice, log_action],
+        db=db,
+        telemetry=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "build",
+    [pytest.param(_build_agent_with_audit, id="agent"), pytest.param(_build_team_with_audit, id="team_level_tool")],
+)
+def test_audit_call_after_approved_call_can_be_continued(db, build):
+    LOGGED.clear()
+    entity: Union[Agent, Team] = build(db)
+    run = entity.run("Pay INV-1 and log it.")
+    assert _approve_pending(db, run.run_id) == 1
+    run = entity.continue_run(run_id=run.run_id, session_id=run.session_id)
+    assert run.is_paused
+    assert PAID == ["INV-1"]
+
+    # The audit call never gets a required record; the client confirms it directly.
+    decisions = [r for r in run.requirements if r.tool_execution.tool_call_id == "call_2"]
+    decisions[0].confirm()
+    run = entity.continue_run(run_id=run.run_id, session_id=run.session_id, requirements=decisions)
+
+    assert not run.is_paused
+    assert LOGGED == ["paid INV-1"]
+    assert PAID == ["INV-1"]
+
+
+def test_member_call_does_not_run_when_its_record_is_deleted(db):
+    payer = Agent(id="payer", model=_ScriptedModel(_script()), tools=[pay_invoice], db=db, telemetry=False)
+    team = Team(
+        id="finance-team",
+        model=_ScriptedModel(
+            [("tool", "delegate_task_to_member", {"member_id": "payer", "task": "Pay"}, "deleg_1"), ("content", "ok")]
+        ),
+        members=[payer],
+        db=db,
+        telemetry=False,
+    )
+    run = team.run("Pay INV-1 and INV-2.")
+    pending, _ = db.get_approvals(approval_type="required", status="pending")
+    assert [p["tool_args"] for p in pending] == [{"invoice": "INV-1"}]
+    _approve_pending(db, pending[0]["run_id"])
+    run = team.continue_run(run_id=run.run_id, session_id=run.session_id)
+    assert run.is_paused
+    assert PAID == ["INV-1"]
+
+    # Delete the second call's pending record: the first call's approval must not run it.
+    (second,) = db.get_approvals(approval_type="required", status="pending")[0]
+    assert second["tool_args"] == {"invoice": "INV-2"}
+    db.delete_approval(second["id"])
+    try:
+        run = team.continue_run(run_id=run.run_id, session_id=run.session_id)
+        assert run.is_paused
+    except ValueError:
+        pass
+    assert PAID == ["INV-1"]
+
+
+# ---------------------------------------------------------------------------
+# Sending every requirement back must not re-run a call that already ran
+# ---------------------------------------------------------------------------
+AUDIT_BUILDERS = [
+    pytest.param(_build_agent_with_audit, id="agent"),
+    pytest.param(_build_team_with_audit, id="team_level_tool"),
+]
+
+
+def _confirm_open(run) -> None:
+    for req in run.active_requirements:
+        if req.needs_confirmation:
+            req.confirm()
+
+
+@pytest.mark.parametrize("build", AUDIT_BUILDERS)
+def test_resending_all_requirements_does_not_rerun_executed_call(db, build):
+    LOGGED.clear()
+    entity: Union[Agent, Team] = build(db)
+    run = entity.run("Pay INV-1 and log it.")
+    _approve_pending(db, run.run_id)
+    run = entity.continue_run(run_id=run.run_id, session_id=run.session_id)
+    assert PAID == ["INV-1"]
+
+    # The client confirms the open call and sends back the run's whole requirements
+    # list, including the requirement of the INV-1 call that already ran.
+    _confirm_open(run)
+    run = entity.continue_run(run_id=run.run_id, session_id=run.session_id, requirements=run.requirements)
+
+    assert not run.is_paused
+    assert PAID == ["INV-1"]
+    assert LOGGED == ["paid INV-1"]
+
+
+@pytest.mark.parametrize("build", AUDIT_BUILDERS)
+@pytest.mark.asyncio
+async def test_resending_all_requirements_does_not_rerun_executed_call_async(db, build):
+    LOGGED.clear()
+    entity: Union[Agent, Team] = build(db)
+    run = await entity.arun("Pay INV-1 and log it.")
+    _approve_pending(db, run.run_id)
+    run = await entity.acontinue_run(run_id=run.run_id, session_id=run.session_id)
+    assert PAID == ["INV-1"]
+
+    _confirm_open(run)
+    run = await entity.acontinue_run(run_id=run.run_id, session_id=run.session_id, requirements=run.requirements)
+
+    assert not run.is_paused
+    assert PAID == ["INV-1"]
+    assert LOGGED == ["paid INV-1"]
+
+
+def _stale_and_executed():
+    from agno.models.response import ToolExecution
+
+    executed = ToolExecution(
+        tool_call_id="call_1", tool_name="pay_invoice", requires_confirmation=True, confirmed=True, result="PAID INV-1"
+    )
+    stale = ToolExecution(tool_call_id="call_1", tool_name="pay_invoice", requires_confirmation=True, confirmed=True)
+    open_call = ToolExecution(tool_call_id="call_2", tool_name="log_action", requires_confirmation=True)
+    decided = ToolExecution(tool_call_id="call_2", tool_name="log_action", requires_confirmation=True, confirmed=True)
+    return executed, stale, open_call, decided
+
+
+def test_agent_merge_keeps_executed_call():
+    from agno.agent._run import _apply_requirement_tools
+    from agno.run.agent import RunOutput
+    from agno.run.requirement import RunRequirement
+
+    executed, stale, open_call, decided = _stale_and_executed()
+    run = RunOutput(run_id="r", tools=[executed, open_call])
+    _apply_requirement_tools(run, [RunRequirement(tool_execution=stale), RunRequirement(tool_execution=decided)])
+    assert run.tools[0] is executed
+    assert run.tools[1] is decided
+
+
+def test_team_merge_keeps_executed_call():
+    from agno.team._run import _merge_tools_preserving_approval
+
+    executed, stale, open_call, decided = _stale_and_executed()
+    merged = _merge_tools_preserving_approval([executed, open_call], {"call_1": stale, "call_2": decided})
+    assert merged[0] is executed
+    assert merged[1] is decided

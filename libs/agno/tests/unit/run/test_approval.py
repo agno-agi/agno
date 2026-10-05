@@ -615,6 +615,13 @@ class FakeCallRequirement:
         return {"tool_execution": {"tool_call_id": te.tool_call_id, "tool_args": te.tool_args} if te else None}
 
 
+@dataclass
+class FakeMemberRequirement:
+    tool_execution: Optional[FakeToolExecution] = None
+    member_run_id: Optional[str] = None
+    confirmation: Optional[bool] = None
+
+
 def _second_pause_run_response():
     """A run at its second pause: call_1 was approved and executed under appr-1,
     call_2 was just raised. tools and requirements accumulate across pauses."""
@@ -751,3 +758,81 @@ class TestRunLevelFallbackNeverCrossesToolCalls:
         with pytest.raises(RuntimeError, match="No approval record found"):
             await acheck_and_apply_approval_resolution(db=db, run_id="r1", run_response=FakeRunResponse(tools=[t]))
         assert t.confirmed is None
+
+
+class TestGateReviewRegressions:
+    def _required_and_audit(self):
+        required = FakeToolExecution(
+            tool_name="pay_invoice",
+            tool_call_id="call_1",
+            approval_type="required",
+            approval_id="appr-1",
+            requires_confirmation=True,
+        )
+        audit = FakeToolExecution(
+            tool_name="log_action", tool_call_id="call_2", approval_type="audit", requires_confirmation=True
+        )
+        return required, audit
+
+    def test_audit_tool_does_not_need_a_required_record(self):
+        db = MagicMock()
+        db.get_approval.return_value = _record_for("call_1")
+        db.get_approvals.return_value = ([_record_for("call_1")], 1)
+        required, audit = self._required_and_audit()
+        audit.confirmed = True
+        check_and_apply_approval_resolution(db=db, run_id="r1", run_response=FakeRunResponse(tools=[required, audit]))
+        assert required.confirmed is True
+        assert audit.confirmed is True
+
+    @pytest.mark.asyncio
+    async def test_audit_tool_does_not_need_a_required_record_async(self):
+        db = MagicMock()
+        db.get_approval = AsyncMock(return_value=_record_for("call_1"))
+        db.get_approvals = AsyncMock(return_value=([_record_for("call_1")], 1))
+        required, audit = self._required_and_audit()
+        audit.confirmed = True
+        await acheck_and_apply_approval_resolution(
+            db=db, run_id="r1", run_response=FakeRunResponse(tools=[required, audit])
+        )
+        assert required.confirmed is True
+        assert audit.confirmed is True
+
+    def _member_call_with_deleted_record(self):
+        te = FakeToolExecution(
+            tool_name="pay_invoice",
+            tool_call_id="call_2",
+            approval_type="required",
+            approval_id="appr-deleted",
+            requires_confirmation=True,
+        )
+        rr = FakeRunResponse(
+            tools=[], requirements=[FakeMemberRequirement(tool_execution=te, member_run_id="member-run")]
+        )
+        return te, rr
+
+    def test_member_record_for_another_call_does_not_resolve_deleted_record(self):
+        te, rr = self._member_call_with_deleted_record()
+        db = MagicMock()
+        db.get_approval.return_value = None
+        db.get_approvals.return_value = ([_record_for("call_1")], 1)
+        with pytest.raises(RuntimeError, match="No approval record found"):
+            check_and_apply_approval_resolution(db=db, run_id="team-run", run_response=rr)
+        assert te.confirmed is None
+
+    @pytest.mark.asyncio
+    async def test_member_record_for_another_call_does_not_resolve_deleted_record_async(self):
+        te, rr = self._member_call_with_deleted_record()
+        db = MagicMock()
+        db.get_approval = AsyncMock(return_value=None)
+        db.get_approvals = AsyncMock(return_value=([_record_for("call_1")], 1))
+        with pytest.raises(RuntimeError, match="No approval record found"):
+            await acheck_and_apply_approval_resolution(db=db, run_id="team-run", run_response=rr)
+        assert te.confirmed is None
+
+    def test_member_record_naming_the_call_still_resolves_it(self):
+        te, rr = self._member_call_with_deleted_record()
+        db = MagicMock()
+        db.get_approval.return_value = None
+        db.get_approvals.return_value = ([_record_for("call_2", record_id="appr-reissued")], 1)
+        check_and_apply_approval_resolution(db=db, run_id="team-run", run_response=rr)
+        assert te.confirmed is True
