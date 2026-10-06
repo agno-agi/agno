@@ -39,6 +39,8 @@ def test_replace_file_chunk_replaces_inclusive_valid_range(tmp_path):
         ("a\n\n", "\n", 2),
         ("a||b||", "||", 2),
         ("||", "||", 1),
+        ("a|||", "||", 2),
+        ("aaa", "aa", 2),
         ("a\nb\nc", "\n", 3),
         ("你好\n世界\n", "\n", 2),
     ],
@@ -68,6 +70,8 @@ def test_replace_file_chunk_rejects_ranges_past_real_lines(tmp_path, original, s
         ("a\nb\nc", "\n", 1, 2, "a\nreplacement"),
         ("你好\n世界\n", "\n", 1, 1, "你好\nreplacement\n"),
         ("a\nb||c||", "||", 1, 1, "a\nb||replacement||"),
+        ("a|||", "||", 1, 1, "a||replacement"),
+        ("aaa", "aa", 1, 1, "aareplacement"),
     ],
 )
 def test_replace_file_chunk_preserves_real_line_boundaries(tmp_path, original, separator, start, end, expected):

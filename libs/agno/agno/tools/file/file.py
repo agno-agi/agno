@@ -218,7 +218,7 @@ class FileTools(Toolkit):
             lines = contents.split(self.line_separator)
             # A trailing separator terminates the last line rather than adding a line.
             # Keep its empty split element for reconstruction so the terminator survives.
-            line_count = len(lines) - 1 if not contents or contents.endswith(self.line_separator) else len(lines)
+            line_count = len(lines) - 1 if lines[-1] == "" else len(lines)
             if end_line >= line_count:
                 return f"Error patching file: end_line must be less than {line_count}"
             start = lines[0:start_line]
