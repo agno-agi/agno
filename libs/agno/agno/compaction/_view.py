@@ -15,6 +15,11 @@ from agno.models.message import Message
 
 _RESULT_ID_PATTERN = re.compile(r'<result id="([^"]+)"')
 _MAX_SURVIVING_IDS = 100
+# provider_data keys a provider continues a conversation from instead of the messages sent:
+# OpenAI Responses chains on response_id, GeminiInteractions on interaction_id. Left on a kept
+# assistant message, either makes the provider send only what follows it, so the server replays
+# the folded turns and the summary in front of it is never sent.
+_CHAINING_KEYS = ("response_id", "interaction_id")
 
 
 def surviving_result_ids(folded: List[Message]) -> List[str]:
@@ -71,7 +76,7 @@ def build_view(
     Leading system/developer messages pass verbatim. When the record's boundary resolves in this
     list, the summary is injected and everything before the boundary is omitted — a
     summary is never injected unless its cut applies, so an unresolvable boundary fails open to
-    the list as given. With strip_provider_chaining, assistant copies drop the response-chaining key from
+    the list as given. With strip_provider_chaining, assistant copies drop the chaining keys from
     provider_data (reasoning items and other payload survive: a function_call without its paired
     reasoning item is a provider error) so server-side chaining cannot silently rebuild the full
     history behind the view's back.
@@ -99,9 +104,9 @@ def build_view(
             strip_provider_chaining
             and message.role == "assistant"
             and message.provider_data is not None
-            and "response_id" in message.provider_data
+            and any(key in message.provider_data for key in _CHAINING_KEYS)
         ):
-            trimmed = {key: value for key, value in message.provider_data.items() if key != "response_id"}
+            trimmed = {key: value for key, value in message.provider_data.items() if key not in _CHAINING_KEYS}
             message = message.model_copy(update={"provider_data": trimmed or None})
         view.append(message)
     return view

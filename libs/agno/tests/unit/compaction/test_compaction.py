@@ -1542,6 +1542,28 @@ def test_only_the_chaining_key_is_stripped_not_the_exchange():
     assert messages[3].provider_data["response_id"] == "resp_123"
 
 
+def test_kept_messages_lose_gemini_interaction_chaining():
+    """GeminiInteractions chains on interaction_id the way OpenAI Responses chains on response_id:
+    left on a kept reply, the request sends previous_interaction_id and only what follows it, so
+    the summary in front of it is never sent and the server replays the folded turns."""
+    from agno.models.google.gemini_interactions import GeminiInteractions
+
+    messages = []
+    for i in range(3):
+        messages.append(Message(role="user", content=f"q{i}"))
+        messages.append(Message(role="assistant", content=f"a{i}", provider_data={"interaction_id": f"int_{i}"}))
+    messages.append(Message(role="user", content="new"))
+
+    view = Compaction().apply_record(messages, _record(messages, 4, summary="SUMMARY"))
+    kwargs = GeminiInteractions(api_key="test-key")._get_request_kwargs(view)
+
+    assert "previous_interaction_id" not in kwargs
+    texts = [item["text"] for step in kwargs["input"] for item in step["content"]]
+    assert texts[0].endswith("SUMMARY")
+    assert texts[1:] == ["q2", "a2", "new"]
+    assert messages[5].provider_data == {"interaction_id": "int_2"}  # the stored history is untouched
+
+
 def test_tool_exchanges_survive_when_there_is_no_server_state():
     """Nothing is dropped for providers that send history in the request."""
     messages = [

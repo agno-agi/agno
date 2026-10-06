@@ -551,9 +551,10 @@ class Compaction:
         mutated: every transformation lands on a shallow copy. When the record's anchor no longer
         resolves the view fails open to the full list, which is always valid to send.
 
-        ``strip_provider_chaining`` removes only the response-chaining key from assistant copies.
-        Some providers continue a conversation by id rather than from the messages sent (OpenAI
-        Responses chains on ``previous_response_id``), and the server then replays the whole
+        ``strip_provider_chaining`` removes only the chaining keys from assistant copies. Some
+        providers continue a conversation by id rather than from the messages sent (OpenAI
+        Responses on ``previous_response_id``, GeminiInteractions on ``previous_interaction_id``),
+        and the server then replays the whole
         pre-fold history behind the view's back - so the saving would be imaginary. The rest of
         provider_data survives: a function_call without its paired reasoning item is a provider
         error.
