@@ -446,6 +446,12 @@ class OpenAIResponses(Model):
                 request_params["include"] = include_list
 
             else:
+                # A chained response keeps the earlier input items but not the earlier instructions,
+                # so the system message goes as instructions to reach the model as rebuilt for this run.
+                system_content = [message.get_content_string() for message in messages if message.role == "system"]
+                if system_content:
+                    request_params["instructions"] = "\n\n".join(system_content)
+
                 # Check if the last assistant message has a previous_response_id to continue from
                 previous_response_id = None
                 for msg in reversed(messages):
@@ -689,7 +695,8 @@ class OpenAIResponses(Model):
         messages_to_format = messages
         previous_response_id: Optional[str] = None
 
-        if self._using_reasoning_model() and self._chains_responses():
+        chains_responses = self._using_reasoning_model() and self._chains_responses()
+        if chains_responses:
             # Detect whether we're chaining via previous_response_id. If so, we should NOT
             # re-send prior function_call items; the Responses API already has the state and
             # expects only the corresponding function_call_output items.
@@ -712,6 +719,10 @@ class OpenAIResponses(Model):
         fc_id_to_call_id = self._build_fc_id_to_call_id_map(messages)
 
         for message in messages_to_format:
+            # The system message is sent as instructions instead (see get_request_params).
+            if chains_responses and message.role == "system":
+                continue
+
             # Without a response to chain from, replay reasoning before the assistant's text or function calls.
             replayed_reasoning = False
             if (
