@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Dict, Literal, Optional, Union, get_args, get_origin
+from typing import Any, Dict, Literal, Optional, Union, get_args, get_origin, get_type_hints
 
 from pydantic import BaseModel
 
@@ -153,8 +153,15 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
         properties = {}
         required = []
 
+        # Field annotations are plain strings when the dataclass is declared in a
+        # module using `from __future__ import annotations`, so resolve them first.
+        try:
+            resolved_hints = get_type_hints(type_hint)
+        except Exception:
+            resolved_hints = {}
+
         for field_name, field in type_hint.__dataclass_fields__.items():
-            field_type = field.type
+            field_type = resolved_hints.get(field_name, field.type)
             field_schema = get_json_schema_for_arg(field_type)
 
             if (
@@ -184,6 +191,16 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
     # Bare dict means "arbitrary key-value pairs" — allow any properties
     if type_hint is dict:
         return {"type": "object", "additionalProperties": True}
+
+    # An annotation that is still a string here could not be resolved (for example a
+    # forward reference that is not importable), so fall back to its name instead of
+    # raising and dropping the parameter from the schema.
+    if isinstance(type_hint, str):
+        json_schema_for_name: Dict[str, Any] = {"type": get_json_type_for_py_type(type_hint)}
+        if json_schema_for_name["type"] == "object":
+            json_schema_for_name["properties"] = {}
+            json_schema_for_name["additionalProperties"] = False
+        return json_schema_for_name
 
     json_schema: Dict[str, Any] = {"type": get_json_type_for_py_type(type_hint.__name__)}
     if json_schema["type"] == "object":
