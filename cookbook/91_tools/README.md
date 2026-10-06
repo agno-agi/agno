@@ -48,9 +48,10 @@ example writes WAV audio to `tmp/greeting.wav`, prints the output path, and
 reports when no audio is returned. Discovery and synthesis failures log
 diagnostics without API keys or response bodies.
 
-The toolkit requests mono LINEAR16 at 24 kHz and accepts JSON/NDJSON base64
-audio or binary PCM/WAV. It validates WAV containers before producing an Agno
-audio artifact; incompatible encodings fail explicitly.
+The toolkit requests mono LINEAR16 at 24 kHz and reads `audio_base64` from a
+JSON object, either at the top level or under `backendResponse`. It decodes
+the base64 once and removes a WAV header when present before producing an
+Agno WAV audio artifact. Incompatible audio formats fail explicitly.
 
 ## Folders
 

@@ -9,7 +9,8 @@ generate a WAV artifact, and save audio under `tmp/` with an explicit result
 message. Set `SIXTYDB_API_KEY` and the credentials for the agent's model.
 
 **Result:** `pytest libs/agno/tests/unit/tools/test_sixtydb.py` covers real
-loopback HTTP requests, audio decoding, error diagnostics, bounded envelopes,
+loopback HTTP requests, top-level and `backendResponse` JSON audio, WAV
+validation, rejection of unsupported response shapes, error diagnostics,
 and the actual cookbook through `runpy`. The cookbook checks substitute only
 the LLM response and verify voice discovery, output bytes and the no-audio
 message. These do not verify an LLM-driven conversation or live synthesis;

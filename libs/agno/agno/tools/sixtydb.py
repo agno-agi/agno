@@ -50,126 +50,27 @@ def _validate_audio_metadata(record: dict[str, Any]) -> None:
             raise ValueError("60db returned incompatible audio metadata")
 
 
-def _record_audio(record: Any, formats: Optional[dict[int, str]] = None, offset: int = 0, unwrap: bool = True) -> bytes:
-    if not isinstance(record, dict):
-        raise TypeError("60db returned an invalid response object")
-    _validate_metadata(record)
-    result = record.get("result", record.get("backendResponse", record))
-    if not isinstance(result, dict):
-        raise TypeError("60db returned an invalid audio result")
-    _validate_metadata(result)
-    declared_format = None
-    if formats is not None:
-        for metadata in (record, result, record.get("audio_config", {}), result.get("audio_config", {})):
-            for key in ("encoding", "audio_encoding", "output_format"):
-                if key in metadata and declared_format != "wav":
-                    declared_format = "wav" if str(metadata[key]).lower() == "wav" else "pcm"
-        if declared_format is not None:
-            formats[offset] = declared_format
-    value = result.get("audioContent", result.get("audio_base64"))
-    if value is None:
-        return b""
-    if not isinstance(value, str):
-        raise TypeError("60db audio must be base64 text")
-    audio = base64.b64decode(value, validate=True)
-    # Declared PCM remains sample bytes, including unlabeled continuations.
-    audio_format = declared_format
-    if audio_format is None and formats:
-        audio_format = next(reversed(formats.values()))
-    # The SDK also accepts an initial chunk containing a base64 JSON envelope.
-    if audio.startswith(b"{") and audio_format != "pcm":
-        try:
-            inner = json.loads(audio)
-        except (ValueError, UnicodeDecodeError):
-            return audio
-        if not isinstance(inner, dict) or not any(
-            key in inner for key in ("audioContent", "audio_base64", "result", "backendResponse")
-        ):
-            raise ValueError("60db audio envelope contains no audio")
-        if not unwrap:
-            raise ValueError("60db audio contains repeated envelopes")
-        audio = _record_audio(inner, formats, offset, unwrap=False)
-        if formats is not None and declared_format == "wav":
-            formats[offset] = "wav"
-        return audio
-    return audio
-
-
-class _UnrecognizedWAVPrefix(ValueError):
-    pass
-
-
-def _decode_wav(audio: bytes, offset: int) -> tuple[bytes, int]:
-    if len(audio) - offset < 12 or audio[offset : offset + 4] != b"RIFF" or audio[offset + 8 : offset + 12] != b"WAVE":
-        raise _UnrecognizedWAVPrefix("60db returned invalid WAV framing")
-    size = int.from_bytes(audio[offset + 4 : offset + 8], "little") + 8
-    if size < 12:
-        raise _UnrecognizedWAVPrefix("60db returned invalid WAV size")
-    container_end = min(offset + size, len(audio))
-    chunk_offset = offset + 12
-    while chunk_offset + 8 <= container_end:
-        chunk_size = int.from_bytes(audio[chunk_offset + 4 : chunk_offset + 8], "little")
-        if audio[chunk_offset : chunk_offset + 4] == b"fmt ":
-            if chunk_size < 16 or chunk_offset + 8 + chunk_size > container_end:
-                raise ValueError("60db returned an invalid WAV format descriptor")
-            break
-        chunk_offset += 8 + chunk_size + (chunk_size % 2)
-    else:
-        raise _UnrecognizedWAVPrefix("60db audio has no WAV format descriptor")
-    if size > len(audio) - offset:
-        raise ValueError("60db returned truncated WAV audio")
-    with wave.open(io.BytesIO(audio[offset : offset + size]), "rb") as wav:
-        if (wav.getnchannels(), wav.getsampwidth(), wav.getframerate(), wav.getcomptype()) != (
-            1,
-            2,
-            SAMPLE_RATE,
-            "NONE",
-        ):
-            raise ValueError("60db WAV must be mono PCM16 at 24000 Hz")
-        frames = wav.getnframes()
-        pcm = wav.readframes(frames)
-        if len(pcm) != frames * 2:
-            raise ValueError("60db returned truncated WAV audio")
-        return pcm, size
-
-
-def _pcm(audio: bytes, record_ends: Optional[list[int]] = None, formats: Optional[dict[int, str]] = None) -> bytes:
-    decoded = bytearray()
-    offset = 0
-    boundaries = iter(record_ends or [len(audio)])
-    end = next(boundaries)
-    pcm_declared = False
-    while offset < len(audio):
-        while end <= offset:
-            end = next(boundaries, len(audio))
-        declared_format = formats.get(offset) if formats is not None else None
-        if declared_format is not None:
-            pcm_declared = declared_format == "pcm"
-        if declared_format == "wav" or (
-            declared_format != "pcm"
-            and audio[offset : offset + 4] == b"RIFF"
-            and (record_ends is None or audio[offset + 8 : offset + 12] == b"WAVE")
-        ):
-            try:
-                pcm, size = _decode_wav(audio, offset)
-            except _UnrecognizedWAVPrefix:
-                # An unlabeled PCM continuation may contain WAV-shaped sample bytes.
-                if not pcm_declared or declared_format is not None:
-                    raise
-            else:
-                decoded.extend(pcm)
-                offset += size
-                pcm_declared = False
-                continue
-        if record_ends is None and offset:
-            raise ValueError("60db returned invalid WAV framing")
-        if not pcm_declared and audio[offset : offset + 4].startswith((b"ID3", b"OggS", b"fLaC")):
-            raise ValueError("60db returned compressed audio instead of PCM")
-        decoded.extend(audio[offset:end])
-        offset = end
-    if not decoded or len(decoded) % 2:
+def _pcm(audio: bytes) -> bytes:
+    if audio.startswith(b"RIFF"):
+        if len(audio) < 12 or int.from_bytes(audio[4:8], "little") + 8 != len(audio):
+            raise ValueError("60db returned invalid or truncated WAV audio")
+        with wave.open(io.BytesIO(audio), "rb") as wav:
+            if (wav.getnchannels(), wav.getsampwidth(), wav.getframerate(), wav.getcomptype()) != (
+                1,
+                2,
+                SAMPLE_RATE,
+                "NONE",
+            ):
+                raise ValueError("60db WAV must be mono PCM16 at 24000 Hz")
+            frames = wav.getnframes()
+            audio = wav.readframes(frames)
+            if len(audio) != frames * 2:
+                raise ValueError("60db returned truncated WAV audio")
+    elif audio.startswith((b"ID3", b"OggS", b"fLaC")):
+        raise ValueError("60db returned compressed audio instead of PCM")
+    if not audio or len(audio) % 2:
         raise ValueError("60db returned empty or incomplete PCM16 audio")
-    return bytes(decoded)
+    return audio
 
 
 class SixtyDBTools(Toolkit):
@@ -332,41 +233,20 @@ class SixtyDBTools(Toolkit):
                     "audio_config": {"audio_encoding": "LINEAR16", "sample_rate_hertz": SAMPLE_RATE},
                 },
             )
-            formats: dict[int, str] = {}
-            if content_type in {"application/x-ndjson", "application/ndjson", "text/plain"}:
-                audio_records = []
-                ends = []
-                total = 0
-                for line in body.splitlines():
-                    if line.strip():
-                        try:
-                            parsed = json.loads(line)
-                        except (json.JSONDecodeError, UnicodeDecodeError):
-                            if content_type == "text/plain":
-                                raise ValueError("60db returned non-JSON text instead of NDJSON audio") from None
-                            raise
-                        record = _record_audio(parsed, formats, total)
-                        if record:
-                            audio_records.append(record)
-                            total += len(record)
-                            ends.append(total)
-                audio = _pcm(b"".join(audio_records), ends, formats)
-            elif content_type == "application/json":
-                audio = _record_audio(json.loads(body), formats)
-            elif content_type in {"audio/wav", "audio/x-wav", "audio/pcm", "application/octet-stream"}:
-                audio = body
-                if content_type in {"audio/wav", "audio/x-wav"}:
-                    formats[0] = "wav"
-                elif content_type == "audio/pcm":
-                    # Raw PCM has no magic number; preserve the declared sample bytes.
-                    formats[0] = "pcm"
-            else:
-                raise ValueError("Unsupported audio response")
-            pcm = (
-                audio
-                if content_type in {"application/x-ndjson", "application/ndjson", "text/plain"}
-                else _pcm(audio, formats=formats)
-            )
+            if content_type != "application/json":
+                raise ValueError("60db expected a JSON audio response")
+            record = json.loads(body)
+            if not isinstance(record, dict):
+                raise TypeError("60db returned an invalid response object")
+            _validate_metadata(record)
+            result = record if "audio_base64" in record else record.get("backendResponse")
+            if not isinstance(result, dict):
+                raise TypeError("60db returned an invalid audio result")
+            _validate_metadata(result)
+            encoded = result.get("audio_base64")
+            if not isinstance(encoded, str):
+                raise TypeError("60db audio_base64 must be text")
+            pcm = _pcm(base64.b64decode(encoded, validate=True))
             return ToolResult(
                 content="Audio generated and attached.",
                 audios=[

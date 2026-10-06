@@ -12,8 +12,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
 import httpx
+import pytest
 
 from agno.agent import Agent
 from agno.tools import sixtydb as provider
@@ -33,7 +33,13 @@ def wav_bytes(rate=24000, channels=1):
 
 
 @contextmanager
-def endpoint(body=PCM, content_type="audio/pcm", status=200, delay=0, headers=None):
+def endpoint(
+    body=json.dumps({"audio_base64": base64.b64encode(PCM).decode()}).encode(),
+    content_type="application/json",
+    status=200,
+    delay=0,
+    headers=None,
+):
     requests = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -79,22 +85,14 @@ def tool(url, **kwargs):
     return SixtyDBTools(api_key="private-test-key", default_voice_id="workspace-voice", base_url=url, **kwargs)
 
 
-@pytest.mark.parametrize("kind", ["pcm", "wav", "json", "ndjson", "envelope"])
-def test_audio_artifact_and_request(kind):
-    encoded = base64.b64encode(PCM).decode()
-    body, content_type = PCM, "audio/pcm"
-    if kind == "wav":
-        body, content_type = wav_bytes(), "audio/wav"
-    elif kind == "json":
-        body, content_type = (
-            json.dumps({"success": True, "audio_base64": encoded, "sample_rate": 24000}).encode(),
-            "application/json",
-        )
-    elif kind in {"ndjson", "envelope"}:
-        if kind == "envelope":
-            encoded = base64.b64encode(json.dumps({"result": {"audioContent": encoded}}).encode()).decode()
-        body = (json.dumps({"result": {"audioContent": encoded}}) + '\n{"type":"complete"}\n').encode()
-        content_type = "application/x-ndjson"
+@pytest.mark.parametrize("nested", [False, True], ids=["top_level", "backend_response"])
+@pytest.mark.parametrize("kind", ["pcm", "wav"])
+def test_audio_artifact_and_request(kind, nested):
+    encoded = base64.b64encode(wav_bytes() if kind == "wav" else PCM).decode()
+    record = {"audio_base64": encoded, "sample_rate": 24000}
+    if nested:
+        record = {"success": True, "backendResponse": record}
+    body, content_type = json.dumps(record).encode(), "application/json"
     with endpoint(body, content_type) as (url, requests):
         result = tool(url, speed=1.2).text_to_speech(Agent(), "Hello", voice_id="selected-voice")
     assert result.audios and len(result.audios) == 1
@@ -119,6 +117,31 @@ def test_audio_artifact_and_request(kind):
     ]
 
 
+@pytest.mark.parametrize(
+    "body,content_type",
+    [
+        (PCM, "audio/pcm"),
+        (wav_bytes(), "audio/wav"),
+        (
+            (json.dumps({"audio_base64": base64.b64encode(PCM).decode()}) + '\n{"type":"complete"}\n').encode(),
+            "application/x-ndjson",
+        ),
+        (json.dumps({"audioContent": base64.b64encode(PCM).decode()}).encode(), "application/json"),
+        (
+            json.dumps({"result": {"audio_base64": base64.b64encode(PCM).decode()}}).encode(),
+            "application/json",
+        ),
+    ],
+    ids=["binary_pcm", "binary_wav", "ndjson", "audio_content_alias", "result_alias"],
+)
+def test_synthesis_rejects_unsupported_response_shapes(body, content_type):
+    with endpoint(body, content_type) as (url, requests):
+        result = tool(url).text_to_speech(Agent(), "Hello")
+    assert requests[0][:2] == ("POST", "/tts-synthesize")
+    assert not result.audios
+    assert result.content == "Error: 60db speech generation failed"
+
+
 @pytest.mark.parametrize("status", [302, 401, 429, 500])
 def test_http_errors_and_redirects(status):
     with endpoint(b"private-test-key", "text/plain", status=status, headers={"Location": "/other"}) as (url, requests):
@@ -129,29 +152,48 @@ def test_http_errors_and_redirects(status):
 
 
 @pytest.mark.parametrize(
-    "body,content_type",
+    "record",
     [
-        (b'{"success":false,"message":"private-test-key"}', "application/json"),
-        (b'{"audio_base64":"bad!"}', "application/json"),
-        (b'{"audio_base64":"AQ=="}', "application/json"),
-        (b'{"audio_base64":"AQAAAg==","sample_rate":16000}', "application/json"),
-        (b'{"audio_base64":"AQAAAg==","encoding":"mp3"}', "application/json"),
-        (b"RIFFbroken", "audio/wav"),
-        (b"ID3broken", "audio/pcm"),
-        (wav_bytes(rate=16000), "audio/wav"),
-        (wav_bytes(channels=2), "audio/wav"),
-        (b"<html>private-test-key</html>", "text/html"),
-        (
-            (json.dumps({"audioContent": base64.b64encode(PCM).decode()}) + '\n{"type":"error"}\n').encode(),
-            "application/x-ndjson",
-        ),
+        {"success": False, "message": "private-test-key"},
+        {"audio_base64": "bad!"},
+        {"audio_base64": "AQ=="},
+        {"audio_base64": ""},
+        {"audio_base64": None},
+        {"audio_base64": 123},
+        {"audio_base64": "AQAAAg==", "sample_rate": 16000},
+        {"audio_base64": "AQAAAg==", "encoding": "mp3"},
+        {"backendResponse": {"audio_base64": "AQAAAg==", "channels": 2}},
+        {"backendResponse": None},
+        {"backendResponse": {"backendResponse": {"audio_base64": "AQAAAg=="}}},
+        {},
+        [],
     ],
 )
-def test_invalid_responses_create_no_artifact(body, content_type):
-    with endpoint(body, content_type) as (url, _):
+def test_invalid_responses_create_no_artifact(record):
+    with endpoint(json.dumps(record).encode()) as (url, _):
         result = tool(url).text_to_speech(Agent(), "Hello")
     assert not result.audios
     assert "private-test-key" not in result.content
+
+
+@pytest.mark.parametrize(
+    "audio",
+    [
+        b"RIFFbroken",
+        b"ID3broken!",
+        wav_bytes(rate=16000),
+        wav_bytes(channels=2),
+        wav_bytes()[:-2],
+        wav_bytes()[:4] + (len(wav_bytes()) - 10).to_bytes(4, "little") + wav_bytes()[8:-2],
+    ],
+    ids=["bad_header", "compressed", "wrong_rate", "stereo", "truncated_container", "truncated_frames"],
+)
+def test_invalid_json_audio_creates_no_artifact(audio):
+    body = json.dumps({"audio_base64": base64.b64encode(audio).decode()}).encode()
+    with endpoint(body) as (url, _):
+        result = tool(url).text_to_speech(Agent(), "Hello")
+    assert not result.audios
+    assert result.content == "Error: 60db speech generation failed"
 
 
 def test_catalog_and_tool_flags():
@@ -251,198 +293,6 @@ def test_invalid_http_audio_metadata(headers):
     assert not result.audios
 
 
-def test_ndjson_wav_chunks_preserve_all_audio():
-    body = (
-        b"\n".join(json.dumps({"audioContent": base64.b64encode(wav_bytes()).decode()}).encode() for _ in range(2))
-        + b'\n{"type":"complete"}\n'
-    )
-    with endpoint(body, "application/x-ndjson") as (url, _):
-        result = tool(url).text_to_speech(Agent(), "Hello")
-    assert result.audios
-    with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
-        assert wav.readframes(wav.getnframes()) == PCM * 2
-
-
-@pytest.mark.parametrize("split", [False, True])
-@pytest.mark.parametrize("pcm", [PCM, b"RIFF" + PCM], ids=["ordinary", "riff_samples"])
-def test_ndjson_split_wav_preserves_audio(pcm, split):
-    buffer = io.BytesIO()
-    with wave.open(buffer, "wb") as wav:
-        wav.setnchannels(1)
-        wav.setsampwidth(2)
-        wav.setframerate(24000)
-        wav.writeframes(pcm)
-    wav_payload = buffer.getvalue()
-    chunks = [wav_payload[:13], wav_payload[13:45], wav_payload[45:]] if split else [wav_payload]
-    body = b"\n".join(json.dumps({"audioContent": base64.b64encode(chunk).decode()}).encode() for chunk in chunks)
-    with endpoint(body, "application/x-ndjson") as (url, _):
-        result = tool(url).text_to_speech(Agent(), "Hello")
-    assert result.audios
-    with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
-        assert wav.readframes(wav.getnframes()) == pcm
-
-
-@pytest.mark.parametrize(
-    "chunks,expected",
-    [
-        ([wav_bytes(), PCM], PCM * 2),
-        ([PCM, wav_bytes()], PCM * 2),
-        ([b"\x01\x00", b"RIFF\x01\x00\x02\x00"], b"\x01\x00RIFF\x01\x00\x02\x00"),
-    ],
-    ids=["wav_first", "pcm_first", "riff_pcm"],
-)
-def test_ndjson_mixed_audio_records(chunks, expected):
-    body = b"\n".join(json.dumps({"audioContent": base64.b64encode(chunk).decode()}).encode() for chunk in chunks)
-    with endpoint(body, "application/x-ndjson") as (url, _):
-        result = tool(url).text_to_speech(Agent(), "Hello")
-    assert result.audios
-    with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
-        assert wav.readframes(wav.getnframes()) == expected
-
-
-@pytest.mark.parametrize("content_type", ["application/x-ndjson", "application/json"])
-@pytest.mark.parametrize("encoding,signature", [("wav", b"NOPE"), ("pcm", b"WAVE")])
-def test_ndjson_declared_format_controls_decoding(encoding, signature, content_type):
-    payload = b"RIFF\x08\x00\x00\x00" + signature + b"abcd"
-    body = json.dumps({"encoding": encoding, "audioContent": base64.b64encode(payload).decode()}).encode()
-    with endpoint(body, content_type) as (url, _):
-        result = tool(url).text_to_speech(Agent(), "Hello")
-    if encoding == "wav":
-        assert not result.audios
-    else:
-        assert result.audios
-        with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
-            assert wav.readframes(wav.getnframes()) == payload
-
-
-def test_labeled_pcm_followed_by_unlabeled_wav():
-    body = b"\n".join(
-        [
-            json.dumps({"encoding": "pcm", "audioContent": base64.b64encode(PCM).decode()}).encode(),
-            json.dumps({"audioContent": base64.b64encode(wav_bytes()).decode()}).encode(),
-        ]
-    )
-    with endpoint(body, "application/x-ndjson") as (url, _):
-        result = tool(url).text_to_speech(Agent(), "Hello")
-    assert result.audios
-    with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
-        assert wav.readframes(wav.getnframes()) == PCM * 2
-
-
-@pytest.mark.parametrize(
-    "tail", [b"ID3\x00", b"RIFF\x00\x00\x00\x00WAVE", b"RIFF\x04\x00\x00\x00WAVE", b"RIFF\xff\xff\xff\xffWAVE"]
-)
-def test_unlabeled_pcm_continuation_preserves_signature_samples(tail):
-    body = b"\n".join(
-        [
-            json.dumps({"encoding": "pcm", "audioContent": base64.b64encode(PCM).decode()}).encode(),
-            json.dumps({"audioContent": base64.b64encode(tail).decode()}).encode(),
-        ]
-    )
-    with endpoint(body, "application/x-ndjson") as (url, _):
-        result = tool(url).text_to_speech(Agent(), "Hello")
-    assert result.audios
-    with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
-        assert wav.readframes(wav.getnframes()) == PCM + tail
-
-
-@pytest.mark.parametrize("content_type", ["application/json", "application/x-ndjson"])
-@pytest.mark.parametrize("nested", [False, True])
-def test_wav_container_precedes_linear16_sample_encoding(content_type, nested):
-    audio = base64.b64encode(wav_bytes()).decode()
-    if nested:
-        audio = base64.b64encode(json.dumps({"audio_encoding": "LINEAR16", "audioContent": audio}).encode()).decode()
-    body = json.dumps(
-        {"output_format": "wav", "audio_config": {"audio_encoding": "LINEAR16"}, "audioContent": audio}
-    ).encode()
-    with endpoint(body, content_type) as (url, _):
-        result = tool(url).text_to_speech(Agent(), "Hello")
-    assert result.audios
-    with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
-        assert wav.readframes(wav.getnframes()) == PCM
-
-
-@pytest.mark.parametrize("invalid_kind", ["rate", "container", "frames", "descriptor"])
-def test_incompatible_unlabeled_wav_after_pcm_is_rejected(invalid_kind):
-    wav = io.BytesIO()
-    with wave.open(wav, "wb") as output:
-        output.setparams((1, 2, 16000 if invalid_kind == "rate" else 24000, 0, "NONE", "not compressed"))
-        output.writeframes(PCM)
-    payload = wav.getvalue()
-    if invalid_kind in {"container", "frames"}:
-        payload = payload[:-2]
-    if invalid_kind == "descriptor":
-        payload = payload[:20]
-    if invalid_kind == "frames":
-        payload = payload[:4] + (len(payload) - 8).to_bytes(4, "little") + payload[8:]
-    body = b"\n".join(
-        [
-            json.dumps({"encoding": "pcm", "audioContent": base64.b64encode(PCM).decode()}).encode(),
-            json.dumps({"audioContent": base64.b64encode(payload).decode()}).encode(),
-        ]
-    )
-    with endpoint(body, "application/x-ndjson") as (url, _):
-        result = tool(url).text_to_speech(Agent(), "Hello")
-    assert not result.audios
-    assert result.content.startswith("Error:")
-
-
-@pytest.mark.parametrize("content_type", ["audio/pcm", "audio/wav", "audio/x-wav"])
-def test_binary_content_type_controls_decoding(content_type):
-    payload = b"RIFF\x04\x00\x00\x00WAVE" if content_type == "audio/pcm" else PCM
-    with endpoint(payload, content_type) as (url, _):
-        result = tool(url).text_to_speech(Agent(), "Hello")
-    if content_type == "audio/pcm":
-        assert result.audios
-        with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
-            assert wav.readframes(wav.getnframes()) == payload
-    else:
-        assert not result.audios
-        assert result.content.startswith("Error:")
-
-
-@pytest.mark.parametrize("content_type", ["audio/pcm", "application/octet-stream"])
-@pytest.mark.parametrize("payload", [b"ID3\x00\x00\x00\x00\x00", b"OggS\x00\x00\x00\x00", b"fLaC\x00\x00\x00\x00"])
-def test_binary_pcm_declaration_preserves_signature_samples(content_type, payload):
-    with endpoint(payload, content_type) as (url, _):
-        result = tool(url).text_to_speech(Agent(), "Hello")
-    if content_type == "audio/pcm":
-        assert result.audios
-        with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
-            assert wav.readframes(wav.getnframes()) == payload
-    else:
-        assert not result.audios
-        assert result.content.startswith("Error:")
-
-
-@pytest.mark.parametrize("content_type", ["application/json", "application/x-ndjson"])
-@pytest.mark.parametrize("payload", [b"{}", b'{"audioContent":"AQAAAg=="}'])
-def test_declared_pcm_preserves_json_shaped_samples(content_type, payload):
-    payload += b" " * (len(payload) % 2)
-    body = json.dumps({"encoding": "pcm", "audioContent": base64.b64encode(payload).decode()}).encode()
-    with endpoint(body, content_type) as (url, _):
-        result = tool(url).text_to_speech(Agent(), "Hello")
-    assert result.audios
-    with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
-        assert wav.readframes(wav.getnframes()) == payload
-
-
-@pytest.mark.parametrize("payload", [b"{}", b'{"audioContent":"AQAAAg=="}'])
-def test_unlabeled_pcm_continuation_preserves_json_shaped_samples(payload):
-    payload += b" " * (len(payload) % 2)
-    body = b"\n".join(
-        [
-            json.dumps({"encoding": "pcm", "audioContent": base64.b64encode(PCM).decode()}).encode(),
-            json.dumps({"audioContent": base64.b64encode(payload).decode()}).encode(),
-        ]
-    )
-    with endpoint(body, "application/x-ndjson") as (url, _):
-        result = tool(url).text_to_speech(Agent(), "Hello")
-    assert result.audios
-    with wave.open(io.BytesIO(result.audios[0].content), "rb") as wav:
-        assert wav.readframes(wav.getnframes()) == PCM + payload
-
-
 @pytest.mark.parametrize("operation", ["get_voices", "text_to_speech"])
 def test_failures_log_safe_http_diagnostics(monkeypatch, operation):
     messages = []
@@ -453,15 +303,6 @@ def test_failures_log_safe_http_diagnostics(monkeypatch, operation):
     assert "failed" in (result if isinstance(result, str) else result.content)
     assert messages and "HTTP 401" in messages[0]
     assert "private-test-key" not in messages[0]
-
-
-def test_repeated_base64_envelopes_are_rejected():
-    body = PCM
-    for _ in range(3):
-        body = json.dumps({"audioContent": base64.b64encode(body).decode()}).encode()
-    with endpoint(body, "application/json") as (url, _):
-        result = tool(url).text_to_speech(Agent(), "Hello")
-    assert not result.audios
 
 
 @pytest.mark.parametrize("has_audio", [True, False])
@@ -500,7 +341,7 @@ def test_cookbook_discovers_voice_and_reports_output(monkeypatch, tmp_path, caps
 @pytest.mark.parametrize(
     "body,content_type,expected",
     [
-        (b"private-test-key", "text/plain", "non-JSON text"),
+        (b"private-test-key", "text/plain", "JSON audio response"),
         (b'{"audio_base64": invalid private-test-key}', "application/json", "invalid JSON"),
     ],
 )
@@ -516,7 +357,7 @@ def test_malformed_responses_log_without_body(monkeypatch, body, content_type, e
 
 
 def test_nested_audio_configuration_is_rejected():
-    body = json.dumps({"audio_config": {"audio_config": {}}, "audioContent": base64.b64encode(PCM).decode()}).encode()
+    body = json.dumps({"audio_config": {"audio_config": {}}, "audio_base64": base64.b64encode(PCM).decode()}).encode()
     with endpoint(body, "application/json") as (url, _):
         assert not tool(url).text_to_speech(Agent(), "Hello").audios
 
