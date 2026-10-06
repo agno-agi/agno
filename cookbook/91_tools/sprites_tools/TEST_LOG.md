@@ -23,7 +23,7 @@
 **Result:** The workspace check wrote, read, and removed the same uniquely named
 file path through `run_sprite_command`, printed its success message, and closed
 the client. No agent was created and no Sprite was deleted. This verifies the
-example's control flow; filesystem persistence in a live Sprite is unverified.
+example's control flow; see the separate live run below for filesystem persistence.
 
 ---
 
@@ -40,17 +40,36 @@ Model selection, tool calling by an actual model, and remote execution are unver
 
 ---
 
-### `example.py` with and without `--model` (live services)
+### `example.py --sprite YOUR_SPRITE` (live Sprite, no model)
 
-**Status:** NOT RUN (blocked)
+**Status:** PASS
 
-**Description:** Live execution is pending. The contributor's environment has no
-loaded Sprites MCP tools, its authorized remote access path. The model-backed run
-also requires a configured model provider.
+**Description:** The contributor ran the example against an existing Sprite with
+`SPRITES_TOKEN` configured, using the prepared Python environment and the Agno
+source at commit `3a23e48`. This entry records the contributor's terminal output;
+the run was not executed by Codex.
 
-**Result:** No live Sprite or model success is claimed. Run both commands from
-README.md with an existing Sprite and configured credentials before marking these
-checks passed.
+**Result:** The example printed:
+
+```text
+Workspace check passed: the second command read the first command's file.
+```
+
+This confirms file continuity between separate commands in a live Sprite. The
+example then removes its uniquely named temporary file; no cleanup warning was
+present in the reported output. No model was used.
+
+---
+
+### `example.py --sprite YOUR_SPRITE --model PROVIDER:MODEL` (live Sprite and model)
+
+**Status:** NOT RUN
+
+**Description:** The model-backed run still requires a configured provider and a
+live execution of this command.
+
+**Result:** Tool calling by an actual model remains unverified. Run the model
+example from README.md before marking this check passed.
 
 ---
 
