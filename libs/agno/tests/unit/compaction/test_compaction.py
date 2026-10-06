@@ -1452,6 +1452,36 @@ class _MeteredSummarizer:
 
 
 @pytest.mark.parametrize("use_async", [False, True])
+def test_a_threshold_fold_counts_the_summarizer_in_run_metrics(use_async):
+    """A fold triggered by compact_at_tokens happens inside the run, so its summarizer call is in
+    that run's metrics under compaction_model."""
+    import asyncio
+
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=InMemoryDb(),
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=40, uncompacted_runs=1, min_fold_ratio=0, model=_MeteredSummarizer()),
+    )
+
+    async def arun_all():
+        return [await agent.arun(f"question number {i} " + "word " * 10) for i in range(4)]
+
+    runs = (
+        asyncio.run(arun_all()) if use_async else [agent.run(f"question number {i} " + "word " * 10) for i in range(4)]
+    )
+
+    folded = [run for run in runs if run.compaction is not None]
+    assert folded
+    entries = folded[0].metrics.details["compaction_model"]
+    assert [(entry.id, entry.input_tokens, entry.output_tokens) for entry in entries] == [("summarizer", 700, 40)]
+
+
+@pytest.mark.parametrize("use_async", [False, True])
 def test_manual_compact_reports_the_summarizer_usage(use_async):
     """agent.compact() has no run to add the summarizer's tokens to, so the result carries them."""
     import asyncio
