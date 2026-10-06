@@ -1315,6 +1315,7 @@ def run_dispatch(
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
     run_id: Optional[str] = None,
+    caller_run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -1442,6 +1443,7 @@ def run_dispatch(
     # Create a new run_response for this attempt
     run_response = RunOutput(
         run_id=run_id,
+        caller_run_id=caller_run_id,
         session_id=session_id,
         agent_id=agent.id,
         user_id=user_id,
@@ -2838,6 +2840,7 @@ def arun_dispatch(  # type: ignore
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
     run_id: Optional[str] = None,
+    caller_run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -2968,6 +2971,7 @@ def arun_dispatch(  # type: ignore
     # Create a new run_response for this attempt
     run_response = RunOutput(
         run_id=run_id,
+        caller_run_id=caller_run_id,
         session_id=session_id,
         agent_id=agent.id,
         user_id=user_id,

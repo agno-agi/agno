@@ -92,12 +92,14 @@ class _StubTeam:
         self.seen: Optional[Dict[str, Any]] = None
         self.seen_metadata: Optional[Dict[str, Any]] = None
 
-    def run(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
+    def run(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None, caller_run_id=None):
         self.seen = {"message": message}
         self.seen_metadata = metadata
         return type("Out", (), {"run_id": "r", "session_id": "s", "status": "COMPLETED", "content": "sub-done"})()
 
-    async def arun(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
+    async def arun(
+        self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None, caller_run_id=None
+    ):
         return self.run(message, stream=stream, user_id=user_id, session_id=session_id, metadata=metadata)
 
     def deep_copy(self):
@@ -249,3 +251,49 @@ class TestGuardHoldsAcrossAPause:
         run2 = await _pause_then_resume(component, "agent", use_async, self_run)
         assert run2.status.value == "COMPLETED"
         assert solo.seen is None, "'once' recharged across a pause"
+
+
+class TestDispatchedRunRecordsItsCaller:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+    async def test_dispatched_run_links_to_caller_and_keeps_its_history(self, tmp_path, use_async):
+        # The dispatched run lives in its own sub-session. caller_run_id links it
+        # back to the dispatching run without marking it nested there, so the
+        # callee's earlier turns stay in its history on the next dispatch.
+        db = SqliteDb(db_file=str(tmp_path / "caller.db"))
+        callee = Agent(
+            id="callee",
+            name="Callee",
+            model=_ScriptedModel("m-callee", [("content", "pong")]),
+            db=db,
+            add_history_to_context=True,
+            telemetry=False,
+        )
+        dispatch = ("tool", "run_agent", {"agent_id": "callee", "message": "ping"}, "tc-dispatch")
+        caller = Agent(
+            id="caller",
+            name="Caller",
+            model=_ScriptedModel("m-caller", [dispatch, ("content", "done"), dispatch, ("content", "done")]),
+            tools=[StudioRunnerTools(include_agents=[callee])],
+            db=db,
+            telemetry=False,
+        )
+
+        caller_runs = []
+        for _ in range(2):
+            if use_async:
+                caller_runs.append(await caller.arun("go", session_id="caller-sess"))
+            else:
+                caller_runs.append(caller.run("go", session_id="caller-sess"))
+        payloads = [json.loads(run.tools[0].result) for run in caller_runs]
+
+        sub_session = payloads[0]["session_id"]
+        assert payloads[1]["session_id"] == sub_session
+        for caller_run, payload in zip(caller_runs, payloads):
+            dispatched = callee.get_run_output(run_id=payload["run_id"], session_id=sub_session)
+            assert dispatched is not None
+            assert dispatched.caller_run_id == caller_run.run_id
+            assert dispatched.parent_run_id is None
+
+        history = callee.get_session_messages(session_id=sub_session)
+        assert [m.content for m in history if m.role == "user"] == ["ping", "ping"]

@@ -4936,6 +4936,7 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        caller_run_id: Optional[str] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute workflow in background using asyncio.create_task()"""
@@ -4979,6 +4980,7 @@ class Workflow:
         # Create workflow run response with PENDING status
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
+            caller_run_id=caller_run_id,
             input=input,
             session_id=session_id,
             user_id=user_id,
@@ -5039,6 +5041,7 @@ class Workflow:
                             execution_input=inputs,
                             run_context=run_context,
                             stream=False,
+                            caller_run_id=caller_run_id,
                             **kwargs,
                         )
                     else:
@@ -5139,6 +5142,7 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        caller_run_id: Optional[str] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute workflow in background with streaming and WebSocket broadcasting (opt-in)"""
@@ -5182,6 +5186,7 @@ class Workflow:
         # Create workflow run response with PENDING status
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
+            caller_run_id=caller_run_id,
             input=input,
             session_id=session_id,
             user_id=user_id,
@@ -5259,6 +5264,7 @@ class Workflow:
                         run_context=run_context,
                         execution_input=inputs,
                         stream=True,
+                        caller_run_id=caller_run_id,
                         **kwargs,
                     )
                     async for event in result:  # type: ignore
@@ -5407,6 +5413,7 @@ class Workflow:
         stream_events: bool = False,
         dependencies: Optional[Dict[str, Any]] = None,
         background_tasks: Optional[Any] = None,
+        caller_run_id: Optional[str] = None,
         **kwargs: Any,
     ) -> AsyncIterator[str]:
         """Background streaming workflow run that survives client disconnections.
@@ -5451,6 +5458,7 @@ class Workflow:
         # RUNNING transition) waits for a concurrency slot.
         workflow_run_response = WfRunOutput(
             run_id=run_id,
+            caller_run_id=caller_run_id,
             input=input,
             session_id=session_id,
             user_id=user_id,
@@ -5519,6 +5527,7 @@ class Workflow:
                         run_context=run_context,
                         execution_input=inputs,
                         stream=True,
+                        caller_run_id=caller_run_id,
                         **kwargs,
                     )
                     async for event in result:  # type: ignore
@@ -5748,6 +5757,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         run_context: RunContext,
         stream: bool = False,
+        caller_run_id: Optional[str] = None,
         stream_events: bool = False,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
@@ -5774,6 +5784,7 @@ class Workflow:
                 execution_input=execution_input,
                 run_context=run_context,
                 stream=stream,
+                caller_run_id=caller_run_id,
                 stream_events=stream_events,
                 **kwargs,
             )
@@ -5784,6 +5795,7 @@ class Workflow:
                 execution_input=execution_input,
                 run_context=run_context,
                 stream=stream,
+                caller_run_id=caller_run_id,
             )
 
     def _run_workflow_agent_stream(
@@ -5793,6 +5805,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         run_context: RunContext,
         stream: bool = False,
+        caller_run_id: Optional[str] = None,
         **kwargs: Any,
     ) -> Iterator[WorkflowRunOutputEvent]:
         """
@@ -5830,6 +5843,7 @@ class Workflow:
         run_id = run_context.run_id or str(uuid4())
         direct_reply_run_response = WorkflowRunOutput(
             run_id=run_id,
+            caller_run_id=caller_run_id,
             input=execution_input.input,
             session_id=session.session_id,
             user_id=session.user_id,
@@ -5946,6 +5960,7 @@ class Workflow:
 
                 # Update the executed run with workflow_agent_run
                 executed_run.workflow_agent_run = agent_response
+                executed_run.caller_run_id = caller_run_id
 
                 # Store the full agent RunOutput and establish parent-child relationship
                 if agent_response:
@@ -5967,6 +5982,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         run_context: RunContext,
         stream: bool = False,
+        caller_run_id: Optional[str] = None,
     ) -> WorkflowRunOutput:
         """
         Execute the workflow agent in non-streaming mode.
@@ -6021,6 +6037,7 @@ class Workflow:
             run_id = run_context.run_id or str(uuid4())
             workflow_run_response = WorkflowRunOutput(
                 run_id=run_id,
+                caller_run_id=caller_run_id,
                 input=execution_input.input,
                 session_id=session.session_id,
                 user_id=session.user_id,
@@ -6056,6 +6073,7 @@ class Workflow:
             if reloaded_session and executed_run is not None:
                 # Update the executed run directly with workflow_agent_run
                 executed_run.workflow_agent_run = agent_response
+                executed_run.caller_run_id = caller_run_id
 
                 # Store the full agent RunOutput and establish parent-child relationship
                 if agent_response:
@@ -6074,6 +6092,7 @@ class Workflow:
                 # Return a placeholder error response
                 return WorkflowRunOutput(
                     run_id=run_context.run_id or str(uuid4()),
+                    caller_run_id=caller_run_id,
                     input=execution_input.input,
                     session_id=session.session_id,
                     user_id=session.user_id,
@@ -6129,6 +6148,7 @@ class Workflow:
         run_context: RunContext,
         execution_input: WorkflowExecutionInput,
         stream: bool = False,
+        caller_run_id: Optional[str] = None,
         websocket_handler: Optional["WebSocketHandler"] = None,
         **kwargs: Any,
     ):
@@ -6162,6 +6182,7 @@ class Workflow:
                     execution_input=execution_input,
                     run_context=run_context,
                     stream=stream,
+                    caller_run_id=caller_run_id,
                     websocket_handler=websocket_handler,
                     **kwargs,
                 ):
@@ -6181,6 +6202,7 @@ class Workflow:
                     execution_input=execution_input,
                     run_context=run_context,
                     stream=stream,
+                    caller_run_id=caller_run_id,
                 )
 
             return _execute()
@@ -6192,6 +6214,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         run_context: RunContext,
         stream: bool = False,
+        caller_run_id: Optional[str] = None,
         websocket_handler: Optional["WebSocketHandler"] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
@@ -6236,6 +6259,7 @@ class Workflow:
         run_id = run_context.run_id or str(uuid4())
         direct_reply_run_response = WorkflowRunOutput(
             run_id=run_id,
+            caller_run_id=caller_run_id,
             input=execution_input.input,
             session_id=session.session_id,
             user_id=session.user_id,
@@ -6365,6 +6389,7 @@ class Workflow:
 
                 # Update the executed run with workflow_agent_run
                 executed_run.workflow_agent_run = agent_response
+                executed_run.caller_run_id = caller_run_id
 
                 # Store the full agent RunOutput and establish parent-child relationship
                 if agent_response:
@@ -6386,6 +6411,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         run_context: RunContext,
         stream: bool = False,
+        caller_run_id: Optional[str] = None,
     ) -> WorkflowRunOutput:
         """
         Execute the workflow agent asynchronously in non-streaming mode.
@@ -6437,6 +6463,7 @@ class Workflow:
             run_id = run_context.run_id or str(uuid4())
             workflow_run_response = WorkflowRunOutput(
                 run_id=run_id,
+                caller_run_id=caller_run_id,
                 input=execution_input.input,
                 session_id=session.session_id,
                 user_id=session.user_id,
@@ -6484,6 +6511,7 @@ class Workflow:
 
                 # Update the executed run with workflow_agent_run
                 executed_run.workflow_agent_run = agent_response
+                executed_run.caller_run_id = caller_run_id
 
                 # Store the full agent RunOutput and establish parent-child relationship
                 if agent_response:
@@ -6504,6 +6532,7 @@ class Workflow:
                 # Return a placeholder error response
                 return WorkflowRunOutput(
                     run_id=run_context.run_id or str(uuid4()),
+                    caller_run_id=caller_run_id,
                     input=execution_input.input,
                     session_id=session.session_id,
                     user_id=session.user_id,
@@ -10563,6 +10592,7 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        caller_run_id: Optional[str] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -10586,6 +10616,7 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        caller_run_id: Optional[str] = None,
     ) -> Iterator[WorkflowRunOutputEvent]: ...
 
     def run(
@@ -10608,6 +10639,7 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        caller_run_id: Optional[str] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
@@ -10719,12 +10751,14 @@ class Workflow:
                 run_context=run_context,
                 stream=stream,
                 stream_events=stream_events,
+                caller_run_id=caller_run_id,
                 **kwargs,
             )
 
         # Create workflow run response for regular workflow execution
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
+            caller_run_id=caller_run_id,
             input=input,
             session_id=session_id,
             user_id=user_id,
@@ -10785,6 +10819,7 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        caller_run_id: Optional[str] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -10810,6 +10845,7 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        caller_run_id: Optional[str] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
     def arun(  # type: ignore
@@ -10834,6 +10870,7 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        caller_run_id: Optional[str] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """Execute the workflow with optional streaming.
@@ -10880,6 +10917,7 @@ class Workflow:
                     metadata=metadata,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
+                    caller_run_id=caller_run_id,
                     **kwargs,
                 )
             elif stream:
@@ -10899,6 +10937,7 @@ class Workflow:
                     stream_events=stream_events,
                     dependencies=dependencies,
                     background_tasks=background_tasks,
+                    caller_run_id=caller_run_id,
                     **kwargs,
                 )
             else:
@@ -10917,6 +10956,7 @@ class Workflow:
                     metadata=metadata,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
+                    caller_run_id=caller_run_id,
                     **kwargs,
                 )
 
@@ -11000,12 +11040,14 @@ class Workflow:
                 execution_input=inputs,
                 run_context=run_context,
                 stream=stream,
+                caller_run_id=caller_run_id,
                 **kwargs,
             )
 
         # Create workflow run response for regular workflow execution
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
+            caller_run_id=caller_run_id,
             input=input,
             session_id=session_id,
             user_id=user_id,
