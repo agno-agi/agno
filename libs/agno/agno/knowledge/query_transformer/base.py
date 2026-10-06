@@ -7,7 +7,7 @@ from agno.models.base import Model
 
 
 class QueryTransformer(BaseModel):
-    """Base class for query transformerers.
+    """Base class for query transformers.
 
     Rewrites the search query before it reaches the vector db, for strategies where the
     question as asked is not the best thing to search with. A reranker reorders results

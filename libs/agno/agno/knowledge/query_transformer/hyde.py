@@ -62,7 +62,7 @@ class HyDE(QueryTransformer):
         try:
             from agno.models.openai import OpenAIResponses
         except ModuleNotFoundError:
-            # Unlike an agent, a query transformerer is an enhancement: searching with the
+            # Unlike an agent, a query transformer is an enhancement: searching with the
             # query as asked beats refusing to search at all.
             log_warning(
                 "HyDE needs a model to generate a hypothetical answer. Provide a `model` "
