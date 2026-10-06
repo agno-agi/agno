@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "3.0.11"
+version = "3.1.1"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -77,8 +77,10 @@ dev = [
 ]
 
 # AgentOS server bundle
-os = ["fastapi", "python-multipart>=0.0.18", "uvicorn", "websockets", "sqlalchemy", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "agno[scheduler]"]
+os = ["fastapi", "python-multipart>=0.0.18", "uvicorn", "websockets", "sqlalchemy[asyncio]", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "agno[scheduler]"]
 mcp = ["mcp>=2.1.0,<3.0.0", "fastmcp>=4.0.0,<5"]
+# Optional extra for fine-grained / relationship-based authorization (ReBAC) via OpenFGA.
+fga = ["openfga-sdk>=0.9"]
 scheduler = ["croniter>=1.3", "pytz>=2023.3"]
 
 # Dependencies for Telemetry
@@ -189,13 +191,13 @@ async-mongo = ["pymongo>=4.9", "motor"]
 async-postgres = ["asyncpg"]
 firestore = ["google-cloud-firestore"]
 gcs = ["google-cloud-storage"]
-mysql = ["pymysql", "asyncmy"]
-postgres = ["sqlalchemy", "psycopg[binary]"]
+mysql = ["sqlalchemy[asyncio]", "pymysql", "asyncmy"]
+postgres = ["sqlalchemy[asyncio]", "psycopg[binary]"]
 pages = ["agno[postgres]", "agno[pgvector]", "dnspython>=2.6.1", "beautifulsoup4", "regex>=2024.5.15"]
 redis = ["redis>=4.5.4", "redisvl>=0.12.1"]  # >=4.5.4: safe cancellation of blocking commands (XREAD in event stream tail)
 s3 = ["boto3", "aioboto3"]
-sql = ["sqlalchemy"]
-sqlite = ["sqlalchemy", "aiosqlite"]
+sql = ["sqlalchemy[asyncio]"]
+sqlite = ["sqlalchemy[asyncio]", "aiosqlite"]
 valkey = ["valkey-glide-sync>=2.1.0"]
 
 # Dependencies for Vector databases
@@ -445,7 +447,7 @@ integration-tests = [
     "exa_py>=2.0.0",
     "ddgs",
     "yfinance",
-    "sqlalchemy",
+    "sqlalchemy[asyncio]",
     "Pillow",
     "agno[mcp]",
     "PyJWT",
@@ -484,7 +486,7 @@ demo = [
     "pillow",
     "psycopg[binary]",
     "pypdf",
-    "sqlalchemy",
+    "sqlalchemy[asyncio]",
     "yfinance",
     "youtube-transcript-api",
     "claude-agent-sdk",
@@ -630,6 +632,7 @@ module = [
   "newspaper.*",
   "numpy.*",
   "ollama.*",
+  "openfga_sdk.*",
   "openpyxl.*",
   "openai.*",
   "opensearchpy.*",
