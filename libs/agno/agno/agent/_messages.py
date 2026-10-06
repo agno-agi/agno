@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
+    from agno.compaction import Compaction
 
 from agno.agent._utils import convert_dependencies_to_string, convert_documents_to_string
 from agno.filters import FilterExpr
@@ -48,6 +49,17 @@ from agno.utils.prompts import get_json_output_prompt, get_response_model_format
 from agno.utils.timer import Timer
 
 
+def agent_compaction(agent: "Agent") -> Optional["Compaction"]:
+    """The agent's Compaction, or None when compaction is off.
+
+    set_compaction turns compaction=True into a Compaction at init, so anything else left on the
+    field means compaction is off.
+    """
+    from agno.compaction import Compaction
+
+    return agent.compaction if isinstance(agent.compaction, Compaction) else None
+
+
 def _stored_compaction(agent: "Agent", session: AgentSession, up_to_run_id: Optional[str] = None) -> Optional[Any]:
     """The compaction in force for this run.
 
@@ -57,7 +69,7 @@ def _stored_compaction(agent: "Agent", session: AgentSession, up_to_run_id: Opti
     """
     from agno.compaction.types import CompactionRecord
 
-    compaction = getattr(agent, "compaction", None)
+    compaction = agent_compaction(agent)
     if compaction is None:
         return None
     archive = compaction.archive_for(session.session_id, agent.db)
@@ -163,7 +175,7 @@ def _compaction_history_runs(agent: "Agent") -> Optional[int]:
     selected from what the planner reads. Reading wider changes nothing the model is sent, so a
     window the user chose needs no special case.
     """
-    if getattr(agent, "compaction", None) is None:
+    if agent_compaction(agent) is None:
         return agent.num_history_runs
     return max(agent.num_history_runs or 0, _PLANNER_WINDOW_MAX_RUNS)
 
@@ -191,7 +203,7 @@ def _history_for_run(
             agent_id=agent.id if agent.team_id is not None else None,
         )
 
-    if getattr(agent, "compaction", None) is None:
+    if agent_compaction(agent) is None:
         return fetch(agent.num_history_runs, agent.num_history_messages), None, None
 
     history = fetch(_compaction_history_runs(agent), None)
@@ -277,7 +289,7 @@ def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -
     """
     from agno.compaction.types import CompactionResult, CompactionStatus
 
-    compaction = getattr(agent, "compaction", None)
+    compaction = agent_compaction(agent)
     if compaction is None:
         return CompactionResult(status=CompactionStatus.NOT_ENABLED, message="Compaction is not enabled on this agent.")
     if not history:
@@ -315,7 +327,7 @@ def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -
 async def acompact_now(agent: "Agent", session: AgentSession, history: List[Message]) -> Any:
     from agno.compaction.types import CompactionResult, CompactionStatus
 
-    compaction = getattr(agent, "compaction", None)
+    compaction = agent_compaction(agent)
     if compaction is None:
         return CompactionResult(status=CompactionStatus.NOT_ENABLED, message="Compaction is not enabled on this agent.")
     if not history:
@@ -381,7 +393,7 @@ def _plan_overflow_fold(agent: "Agent", run_messages: Any) -> Optional[Tuple[Any
     from agno.compaction._cut import leading_system_count
     from agno.compaction._tokens import estimate_tokens
 
-    compaction = getattr(agent, "compaction", None)
+    compaction = agent_compaction(agent)
     if compaction is None or not getattr(compaction, "on_context_overflow", False):
         return None
 
@@ -560,7 +572,7 @@ def apply_compaction(
     and what the session persists is never touched: compaction shortens the
     request, not the record.
     """
-    compaction = getattr(agent, "compaction", None)
+    compaction = agent_compaction(agent)
     if compaction is None or not history:
         return history
 
@@ -624,7 +636,7 @@ async def aapply_compaction(
     tools: Optional[List[Any]] = None,
     replay_ids: Optional[Counter[str]] = None,
 ) -> List[Message]:
-    compaction = getattr(agent, "compaction", None)
+    compaction = agent_compaction(agent)
     if compaction is None or not history:
         return history
 
@@ -2219,7 +2231,7 @@ def _build_continue_run_messages(
 
             # Replay the stored fold, as a fresh run does. No new fold is planned here: the run
             # checked this same history before it paused, and its own messages are never folded.
-            if getattr(agent, "compaction", None) is not None:
+            if agent_compaction(agent) is not None:
                 history_copy = _replayed_view(agent.compaction, history_copy, stored_record, replay_ids)
 
             log_debug(f"Adding {len(history_copy)} messages from history")

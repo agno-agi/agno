@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union, cast
 from uuid import uuid4
 
 from agno.compaction._cut import choose_boundary, is_offload_envelope
@@ -19,6 +19,7 @@ from agno.compaction.prompts import (
 from agno.compaction.types import CompactionRecord, CompactionStats, CompactionStatus
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.models.utils import get_model
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 if TYPE_CHECKING:
@@ -88,8 +89,9 @@ class Compaction:
     # Type of the owner: "agent" or "team" (set when registered in the OS).
     owner_type: Optional[str] = None
 
-    # Model that writes the summary. Defaults to the agent's model.
-    model: Optional[Model] = None
+    # Model that writes the summary: a Model, or a "provider:model_id" string. Defaults to the
+    # agent's model.
+    model: Optional[Union[Model, str]] = None
     # Replaces the default summarization prompt.
     instructions: Optional[str] = None
     # Soft length target for the summary, stated in the prompt.
@@ -122,6 +124,9 @@ class Compaction:
     def __post_init__(self) -> None:
         if self.id is None:
             self.id = f"compaction_{uuid4().hex[:8]}"
+        # Resolve a "provider:model_id" string once, as the other managers do, so every summary
+        # call has a Model to call.
+        self.model = get_model(self.model)
         # Search reads the archived transcript, so unset it follows the archive. Asking for search
         # while turning the archive off is a contradiction - raise rather than drop it silently.
         if self.searchable is None:
@@ -245,8 +250,10 @@ class Compaction:
         """Index the kept tail starts at, for a request expressed in turns.
 
         ``uncompacted_runs`` names a position, so this returns one. The boundary walk then only
-        snaps it earlier for safety - it never moves later, which is what makes the setting a
-        floor: you may keep more than asked, never less.
+        snaps it earlier for safety - it never moves later, so the cut itself never keeps fewer
+        runs than asked. The tail limit can still keep fewer: when the requested runs exceed
+        compact_at_tokens / (1 + min_fold_ratio), the tail is cut to that size (never inside the
+        newest exchange), since a tail that large could never pass the fold ratio.
         """
         keep_runs = self.uncompacted_runs or 0
         if keep_runs <= 0:
@@ -420,11 +427,12 @@ class Compaction:
         run_metrics: Optional["RunMetrics"] = None,
         archived: bool = False,
     ) -> Optional[str]:
-        if self.model is None:
+        model = self._summary_model()
+        if model is None:
             log_warning("No compaction model available")
             return None
         try:
-            response = self.model.response(messages=self._summary_messages(messages, previous, archived))
+            response = model.response(messages=self._summary_messages(messages, previous, archived))
         except Exception as e:
             log_error(f"Error compacting conversation: {e}")
             return None
@@ -438,23 +446,29 @@ class Compaction:
         run_metrics: Optional["RunMetrics"] = None,
         archived: bool = False,
     ) -> Optional[str]:
-        if self.model is None:
+        model = self._summary_model()
+        if model is None:
             log_warning("No compaction model available")
             return None
         try:
-            response = await self.model.aresponse(messages=self._summary_messages(messages, previous, archived))
+            response = await model.aresponse(messages=self._summary_messages(messages, previous, archived))
         except Exception as e:
             log_error(f"Error compacting conversation: {e}")
             return None
         self._accumulate(response, run_metrics)
         return response.content
 
+    def _summary_model(self) -> Optional[Model]:
+        # __post_init__ resolved any string, so this is a Model or None.
+        return cast(Optional[Model], self.model)
+
     def _accumulate(self, response: Any, run_metrics: Optional["RunMetrics"]) -> None:
-        if run_metrics is None or self.model is None:
+        model = self._summary_model()
+        if run_metrics is None or model is None:
             return
         from agno.metrics import ModelType, accumulate_model_metrics
 
-        accumulate_model_metrics(response, self.model, ModelType.COMPACTION_MODEL, run_metrics)
+        accumulate_model_metrics(response, model, ModelType.COMPACTION_MODEL, run_metrics)
 
     # -- archive --------------------------------------------------------
 

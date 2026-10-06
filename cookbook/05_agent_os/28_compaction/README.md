@@ -1,4 +1,4 @@
-# 21_compaction
+# 28_compaction
 
 Conversation compaction served on AgentOS, with the fold visible in the chat UI.
 
@@ -23,7 +23,8 @@ Compaction also folds on demand, without waiting for the threshold:
 POST /agents/{agent_id}/sessions/{session_id}/compact
 ```
 
-The route always answers 200 with a `status`, because declining is a normal outcome:
+For a session that exists, the route answers 200 with a `status`, because declining is a
+normal outcome (a session that does not exist is a 404):
 a summary costs a few hundred tokens whatever it replaces, so folding a smaller span
 would leave the context bigger. Branch on `compacted`, and show `message` verbatim.
 
@@ -33,7 +34,7 @@ would leave the context bigger. Branch on `compacted`, and show `message` verbat
 | `not_worth_it` | the span is too small to pay for the summary replacing it |
 | `nothing_to_fold` | the kept tail covers the whole conversation |
 | `already_compacted` | a previous fold already covers everything foldable |
-| `no_history` | the session has no stored history yet |
+| `no_history` | the session exists but has no stored history yet |
 | `not_enabled` | compaction is not configured on this agent |
 | `summary_failed` | the summarizer returned nothing |
 
@@ -57,10 +58,10 @@ re-evaluates every turn, mostly to decline.
 - Create the demo environment with `./scripts/demo_setup.sh`, then run cookbooks with `.venvs/demo/bin/python`.
 
 ## Run
-- `.venvs/demo/bin/python cookbook/05_agent_os/21_compaction/compaction_os.py`
+- `.venvs/demo/bin/python cookbook/05_agent_os/28_compaction/compaction_os.py`
 - Open the chat UI, pick the Research Agent, and ask several questions in one session.
 - After the fourth turn the Behind the Scenes panel shows "Context compacted".
 
 With that server running, drive a fold over the API instead:
-- `.venvs/demo/bin/python cookbook/05_agent_os/21_compaction/rest_api_compaction.py`
-- Run it twice - the second run reports `already_compacted`.
+- `.venvs/demo/bin/python cookbook/05_agent_os/28_compaction/rest_api_compaction.py`
+- It compacts twice at the end: the second call reports `already_compacted`.

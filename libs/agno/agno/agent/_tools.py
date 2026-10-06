@@ -238,8 +238,10 @@ def get_tools(
 
     # Read-only search over history this session compacted away. Scoped to
     # this session's archive namespace, so one session can never read another's.
-    compaction = getattr(agent, "compaction", None)
-    if compaction is not None and getattr(compaction, "searchable", False):
+    from agno.agent._messages import agent_compaction
+
+    compaction = agent_compaction(agent)
+    if compaction is not None and compaction.searchable:
         archive_tools = compaction.tools_for(session.session_id, agent.db)
         if archive_tools:
             agent_tools.extend(archive_tools)
@@ -383,8 +385,10 @@ async def aget_tools(
 
     # Read-only search over history this session compacted away. Scoped to
     # this session's archive namespace, so one session can never read another's.
-    compaction = getattr(agent, "compaction", None)
-    if compaction is not None and getattr(compaction, "searchable", False):
+    from agno.agent._messages import agent_compaction
+
+    compaction = agent_compaction(agent)
+    if compaction is not None and compaction.searchable:
         archive_tools = compaction.tools_for(session.session_id, agent.db)
         if archive_tools:
             agent_tools.extend(archive_tools)

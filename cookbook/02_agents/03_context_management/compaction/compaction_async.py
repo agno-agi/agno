@@ -3,7 +3,8 @@ Async Compaction
 =============================
 
 Compaction works the same way on the async path - the summary is generated with
-`aresponse` and the archive is written through the filesystem's async surface.
+`aresponse`, so a fold never blocks the event loop, and the folded messages are archived
+in the agent's database alongside the session.
 """
 
 import asyncio

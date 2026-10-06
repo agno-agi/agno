@@ -1,4 +1,4 @@
-# Test Log -- 21_compaction
+# Test Log -- 28_compaction
 
 > Note: entries below predate the removal of `compact_at_runs` / `compact_at_messages`.
 > Compaction now triggers on `compact_at_tokens` only, or on an explicit `agent.compact()`.

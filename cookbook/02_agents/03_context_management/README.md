@@ -5,12 +5,12 @@ Examples for instructions, system messages, introduction messages, and context s
 ## Files
 - `compaction/compaction.py` - Keep a long session in the context window with `compaction=True`.
 - `compaction/compaction_thresholds.py` - Tune when compaction fires and how much it keeps.
-- `compaction/compaction_context_overflow.py` - Recover from a provider rejecting a request as too long, which is what `compaction=True` waits for.
+- `compaction/compaction_manual.py` - Fold now with `agent.compact()`, and read the status when it declines.
 - `compaction/compaction_tail_budget.py` - Bound the kept tail by size with `uncompacted_tokens`, for agents whose turns vary in length.
 - `compaction/compaction_searchable_archive.py` - Let the agent search history that was compacted away.
 - `compaction/compaction_events.py` - Stream `CompactionStarted` / `CompactionCompleted` and show what was reclaimed.
 - `compaction/compaction_async.py` - Compaction on the async path.
-- `compaction/compaction_with_tools.py` - Folding a transcript that contains tool calls, and eliding old tool results.
+- `compaction/compaction_with_tools.py` - Folding a transcript that contains tool calls, without splitting a call from its result.
 - `compaction/compaction_anthropic.py` - The same folding on Claude, which carries history in the request rather than by id.
 - `compaction/compaction_anthropic_thinking.py` - Extended thinking plus tool calls, the hardest shape for a cut to respect.
 - `few_shot_learning.py` - Demonstrates few-shot learning with example messages.

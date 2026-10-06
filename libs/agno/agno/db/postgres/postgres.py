@@ -1509,6 +1509,14 @@ class PostgresDb(BaseDb):
             result = sess.execute(table.delete().where(table.c.result_id.in_(result_ids)))
         return result.rowcount or 0
 
+    def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
+        table = self._get_table(table_type="tool_results")
+        if table is None:
+            return []
+        stmt = select(table).where(table.c.expires_at.is_not(None)).where(table.c.expires_at <= now)
+        with self.Session() as sess:
+            return [dict(row._mapping) for row in sess.execute(stmt).fetchall()]
+
     # --- Compactions ---
 
     def upsert_compaction(self, row: Dict[str, Any]) -> None:
@@ -1575,14 +1583,6 @@ class PostgresDb(BaseDb):
         )
         with self.Session() as sess:
             return [dict(r._mapping) for r in sess.execute(stmt).fetchall()]
-
-    def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
-        table = self._get_table(table_type="tool_results")
-        if table is None:
-            return []
-        stmt = select(table).where(table.c.expires_at.is_not(None)).where(table.c.expires_at <= now)
-        with self.Session() as sess:
-            return [dict(row._mapping) for row in sess.execute(stmt).fetchall()]
 
     def get_session(
         self,

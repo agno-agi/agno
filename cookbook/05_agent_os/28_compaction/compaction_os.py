@@ -25,7 +25,7 @@ Compaction also folds on demand, without waiting for the threshold:
 See rest_api_compaction.py in this folder for that flow end to end.
 
 Prerequisites: OPENAI_API_KEY
-Run: .venvs/demo/bin/python cookbook/05_agent_os/21_compaction/compaction_os.py
+Run: .venvs/demo/bin/python cookbook/05_agent_os/28_compaction/compaction_os.py
 Try: open the chat UI, then ask several long questions in one session
 """
 

@@ -1191,6 +1191,17 @@ def test_a_negative_min_fold_ratio_raises_naming_the_setting(ratio):
         Compaction(min_fold_ratio=ratio)
 
 
+def test_a_model_string_is_resolved_to_a_model():
+    """A "provider:model_id" string is accepted, as on the other managers. Left unresolved, the
+    first fold called .response on a str and failed."""
+    from agno.models.base import Model
+
+    compaction = Compaction(model="openai:gpt-5.6-luna")
+
+    assert isinstance(compaction.model, Model)
+    assert compaction.model.id == "gpt-5.6-luna"
+
+
 def test_revalidating_a_valid_config_never_raises():
     """Overflow recovery derives variants of the configured Compaction with dataclasses.replace(),
     which re-runs __post_init__. A config that validated once must validate again."""
@@ -1360,7 +1371,7 @@ def test_overflow_retry_sends_the_compacted_payload():
         messages[:] = [Message(role="user", content="tiny")]
         return True
 
-    call_model_with_fallback(_Model(), None, on_context_overflow=_fold, messages=messages)
+    call_model_with_fallback(_Model(), None, recover_from_overflow=_fold, messages=messages)
 
     assert len(received) == 2
     assert received[1] < received[0]
@@ -1398,7 +1409,7 @@ def test_streaming_also_recovers_from_an_overflow():
         messages[:] = [Message(role="user", content="tiny")]
         return True
 
-    events = list(call_model_stream_with_fallback(_Model(), None, on_context_overflow=_fold, messages=messages))
+    events = list(call_model_stream_with_fallback(_Model(), None, recover_from_overflow=_fold, messages=messages))
 
     assert len(received) == 2
     assert received[1] < received[0]
