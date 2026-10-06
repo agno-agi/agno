@@ -128,7 +128,10 @@ def extract_activity_content(activity: dict) -> Optional[ActivityContent]:
         # as 'application/vnd.microsoft.teams.file.download.info' or similar
         if content_type.startswith("image/"):
             image_atts.append(att)
-        elif att.get("contentUrl"):
+        # Ask the same resolver the download will use. Gating on contentUrl alone
+        # would drop an attachment carrying only content.downloadUrl before
+        # anything could report it -- and that field is the one Teams prefers.
+        elif _attachment_download_url(att):
             file_atts.append(att)
 
     if not text and not image_atts and not file_atts:
@@ -177,8 +180,11 @@ async def download_attachments_async(parsed: ActivityContent, config: TeamsConfi
 
     images: List[Image] = []
     for att in parsed.image_attachments:
-        url = att.get("contentUrl")
+        url = _attachment_download_url(att)
         if not url:
+            # Reported, not dropped: to the user an attachment with no url is the
+            # same loss as one whose download failed, which is already reported.
+            skipped.append("image")
             continue
         content, mime = await _download_attachment(url, config)
         if not content:
@@ -192,14 +198,15 @@ async def download_attachments_async(parsed: ActivityContent, config: TeamsConfi
 
     files: List[File] = []
     for att in parsed.file_attachments:
+        name = att.get("name")
         url = _attachment_download_url(att)
         if not url:
+            skipped.append(name or "file")
             continue
         content, mime = await _download_attachment(url, config)
         if not content:
-            skipped.append("file")
+            skipped.append(name or "file")
             continue
-        name = att.get("name")
         # Resolve the type the way the model would, then decide. Forwarding an
         # unsupported file with mime_type=None does not hide it -- the model falls
         # back to guessing from the filename and the provider rejects the run,
