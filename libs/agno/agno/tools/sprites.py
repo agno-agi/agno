@@ -113,14 +113,16 @@ class SpritesTools(Toolkit):
         )
 
     async def arun_sprite_command(self, args: List[str]) -> str:
-        """Execute a Sprite command without blocking the event loop, including under async tool hooks.
+        """Execute a command in the Sprite and return its result as JSON.
 
         Args:
             args (List[str]): Executable and arguments, passed without shell expansion.
                 For shell syntax, explicitly use ["bash", "-lc", "your command"].
 
         Returns:
-            str: The same JSON result as run_sprite_command. Cancelling the awaiting
-                task does not terminate the worker thread or remote command.
+            str: The same JSON result as run_sprite_command. The SDK runs on a worker
+                thread to avoid blocking the event loop, including under async tool
+                hooks. Cancelling the awaiting task does not terminate the worker
+                thread or remote command.
         """
         return await asyncio.to_thread(self.run_sprite_command, args)
