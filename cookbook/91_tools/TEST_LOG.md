@@ -1,5 +1,15 @@
 # Test Log
 
+### sendhq_tools.py (SendHQTools)
+
+**Status:** PASS
+
+**Description:** New `SendHQTools` toolkit (send_email, reply_to_email, list_emails, get_email, get_thread; sync and async) exercised directly against the live SendHQ API. Reads ran on a real workspace; every send went to the AWS SES success simulator (`success@simulator.amazonses.com`), so no person received mail.
+
+**Result:** 27 unit tests pass (`pytest libs/agno/tests/unit/tools/test_sendhq.py`). Live: list/get/thread returned trimmed emails; `send_email` was accepted and delivered; a retry with the same `idempotency_key` returned the same email id (no second send); async `reply_to_email` on the sent message landed in the same thread with `Re:` subject and In-Reply-To set; unverified sender, unknown id and bad key returned clean `{error, status}` results. The live run found a bug the mocks missed: every SendHQ email carries its own `error` field (null unless delivery failed), which the first draft read as a request failure. Request success is now tracked separately and a non-null email error is surfaced as `delivery_error`, with regression tests. The cookbook agents were not run with a model (no OpenAI credits in this environment); the generated tool schemas were checked instead.
+
+---
+
 ### atomic_mail_tools.py (AtomicMailTools + workflow)
 
 **Status:** PASS
