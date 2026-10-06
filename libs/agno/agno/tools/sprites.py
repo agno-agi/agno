@@ -1,12 +1,16 @@
+import asyncio
 import json
 import math
-from typing import Dict, List, Optional
+from concurrent.futures import TimeoutError as FutureTimeoutError
+from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
+from agno.utils.log import log_warning
 
 try:
     from sprites import Sprite
-    from sprites.exceptions import SpriteError
+    from sprites.exceptions import APIError, SpriteError
+    from sprites.exceptions import TimeoutError as SpriteTimeoutError
 except ImportError:
     raise ImportError("`sprites-py` not installed. Please install using `pip install 'agno[sprites]'`") from None
 
@@ -24,7 +28,7 @@ class SpritesTools(Toolkit):
     A timeout or connection loss leaves execution status unknown; commands are
     never retried automatically. Inspect the Sprite before retrying side effects.
 
-    ``max_output_chars`` limits each returned stream after the SDK captures it;
+    ``max_output_chars`` keeps the end of each stream after the SDK captures it;
     it does not limit remote output or SDK buffering. ``cwd`` sets a working
     directory, not a filesystem access boundary.
     """
@@ -34,12 +38,12 @@ class SpritesTools(Toolkit):
         sprite: Sprite,
         cwd: Optional[str] = None,
         env: Optional[Dict[str, str]] = None,
-        timeout: int = 60,
+        timeout: float = 60.0,
         max_output_chars: int = 16000,
-        enable_run_shell_command: bool = True,
+        enable_run_sprite_command: bool = True,
         **kwargs,
     ):
-        if not math.isfinite(timeout) or timeout <= 0:
+        if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout must be positive and finite")
         if max_output_chars <= 0:
             raise ValueError("max_output_chars must be positive")
@@ -48,11 +52,13 @@ class SpritesTools(Toolkit):
         self.cwd = cwd
         self.env = dict(env) if env is not None else None
         self.max_output_chars = max_output_chars
+        self.timeout = timeout
 
-        tools = [self.run_shell_command] if enable_run_shell_command else []
-        super().__init__(name="sprites_tools", tools=tools, timeout=timeout, **kwargs)
+        tools = [self.run_sprite_command] if enable_run_sprite_command else []
+        async_tools = [(self.arun_sprite_command, "run_sprite_command")] if enable_run_sprite_command else []
+        super().__init__(name="sprites_tools", tools=tools, async_tools=async_tools, **kwargs)
 
-    def run_shell_command(self, args: List[str]) -> str:
+    def run_sprite_command(self, args: List[str]) -> str:
         """Execute a command in the Sprite and return its result as JSON.
 
         Args:
@@ -72,7 +78,7 @@ class SpritesTools(Toolkit):
             result = self.sprite.run(
                 *args, capture_output=True, check=False, cwd=self.cwd, env=self.env, timeout=self.timeout
             )
-        except TimeoutError:
+        except (SpriteTimeoutError, TimeoutError, FutureTimeoutError):
             return json.dumps(
                 {
                     "exit_code": None,
@@ -81,22 +87,40 @@ class SpritesTools(Toolkit):
                 }
             )
         except SpriteError as error:
-            return json.dumps(
-                {
-                    "exit_code": None,
-                    "error": type(error).__name__,
-                    "message": "The Sprite request failed. Execution status may be unknown; no retry was attempted.",
-                }
-            )
+            response: Dict[str, Any] = {
+                "exit_code": None,
+                "error": type(error).__name__,
+                "message": "The Sprite request failed. Execution status may be unknown; no retry was attempted.",
+            }
+            status = ""
+            if isinstance(error, APIError) and error.status_code is not None:
+                response["status_code"] = error.status_code
+                status = f" (HTTP {error.status_code})"
+            # Keep SDK diagnostics local; the model receives only the error type and HTTP status.
+            log_warning(f"Sprite request failed: {type(error).__name__}{status}: {error}")
+            return json.dumps(response)
 
         stdout = (result.stdout or b"").decode("utf-8", errors="replace")
         stderr = (result.stderr or b"").decode("utf-8", errors="replace")
         return json.dumps(
             {
-                "stdout": stdout[: self.max_output_chars],
-                "stderr": stderr[: self.max_output_chars],
+                "stdout": stdout[-self.max_output_chars :],
+                "stderr": stderr[-self.max_output_chars :],
                 "exit_code": result.returncode,
                 "stdout_truncated": len(stdout) > self.max_output_chars,
                 "stderr_truncated": len(stderr) > self.max_output_chars,
             }
         )
+
+    async def arun_sprite_command(self, args: List[str]) -> str:
+        """Execute a Sprite command without blocking the event loop, including under async tool hooks.
+
+        Args:
+            args (List[str]): Executable and arguments, passed without shell expansion.
+                For shell syntax, explicitly use ["bash", "-lc", "your command"].
+
+        Returns:
+            str: The same JSON result as run_sprite_command. Cancelling the awaiting
+                task does not terminate the worker thread or remote command.
+        """
+        return await asyncio.to_thread(self.run_sprite_command, args)

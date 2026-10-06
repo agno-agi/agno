@@ -57,16 +57,23 @@ finally:
     client.close()
 ```
 
-`run_shell_command(args)` accepts an executable and its arguments. They are passed
+`run_sprite_command(args)` accepts an executable and its arguments. They are passed
 directly to the SDK; shell expansion requires an explicit `bash -lc` command.
 Results are JSON with separate `stdout`, `stderr`, and `exit_code` fields. Nonzero
 exit codes retain both streams. Each stream is limited to `max_output_chars`
-(16,000 by default), with truncation flags. This limit applies after SDK capture;
+(16,000 by default), keeping the end so final build errors survive truncation,
+with per-stream truncation flags. This limit applies after SDK capture;
 it does not bound transport buffering.
 
 Configure a fixed `cwd` and `env` on `SpritesTools` if needed. The directory must
 already exist. `cwd` is not a filesystem access restriction. Toolkit selection
 and confirmation options, including `requires_confirmation_tools`, work normally.
+
+Agno async runs use `arun_sprite_command`, registered under the same
+`run_sprite_command` tool name. It runs the synchronous SDK on a worker thread,
+including when async tool hooks are configured. The caller still supplies and
+owns a synchronous `Sprite`. Cancelling the awaiting task does not stop the
+worker thread or remote command.
 
 ## Lifecycle and failures
 
@@ -77,5 +84,8 @@ and confirmation options, including `requires_confirmation_tools`, work normally
 - A timeout bounds the SDK call and may leave the remote process running.
   Timeout and SDK failures return a null `exit_code`; the toolkit does not invent
   an exit status or automatically retry commands with potentially repeated side effects.
+- SDK failures are logged locally with their diagnostic message. Treat those logs
+  as potentially sensitive. Model-facing errors include the exception type and,
+  for API errors, the HTTP status code; they omit diagnostic messages and bodies.
 - This initial integration exposes command execution only. It does not provision
   Sprites or register deletion, checkpoint, or dedicated file-management tools.

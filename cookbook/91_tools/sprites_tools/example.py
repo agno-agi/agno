@@ -5,9 +5,8 @@ import json
 import os
 from uuid import uuid4
 
-from sprites import SpritesClient
-
 from agno.tools.sprites import SpritesTools
+from sprites import SpritesClient
 
 
 def check_workspace(tools: SpritesTools) -> None:
@@ -16,7 +15,7 @@ def check_workspace(tools: SpritesTools) -> None:
     expected = "Agno can reuse this Sprite."
     try:
         write = json.loads(
-            tools.run_shell_command(
+            tools.run_sprite_command(
                 [
                     "python",
                     "-c",
@@ -29,7 +28,7 @@ def check_workspace(tools: SpritesTools) -> None:
         if write.get("exit_code") != 0:
             raise RuntimeError(f"Write failed: {write}")
 
-        read = json.loads(tools.run_shell_command(["cat", path]))
+        read = json.loads(tools.run_sprite_command(["cat", path]))
         if read.get("exit_code") != 0 or read.get("stdout") != expected:
             raise RuntimeError(f"Read did not return the earlier file: {read}")
         print(
@@ -37,7 +36,7 @@ def check_workspace(tools: SpritesTools) -> None:
         )
     finally:
         # Remove only this check's uniquely named file. Keep the caller's Sprite.
-        cleanup = json.loads(tools.run_shell_command(["rm", "-f", "--", path]))
+        cleanup = json.loads(tools.run_sprite_command(["rm", "-f", "--", path]))
         if cleanup.get("exit_code") != 0:
             print(f"Temporary file cleanup was not confirmed: {path}")
 
@@ -64,7 +63,7 @@ def main() -> None:
                 model=args.model,
                 tools=[tools],
                 instructions=[
-                    "Use run_shell_command to execute commands in the Sprite.",
+                    "Use run_sprite_command to execute commands in the Sprite.",
                     "Pass an executable and arguments; use bash -lc explicitly if you need shell syntax.",
                     "Check exit_code, stderr, and truncation flags before interpreting a result.",
                     "If execution status is unknown, report that instead of retrying the command.",
