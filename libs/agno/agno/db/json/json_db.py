@@ -155,17 +155,21 @@ class JsonDb(BaseDb):
                 descriptor = os.open(file_path, os.O_WRONLY)
                 os.close(descriptor)
 
+            serializing = False
             try:
                 staging_path = file_path.with_name(f".agno-json-{uuid4().hex}.tmp")
                 with open(staging_path, "x", encoding="utf-8") as f:
                     temporary_path = staging_path
                     if existing is not None:
                         self._copy_table_metadata(staging_path, existing)
+                    serializing = True
                     json.dump(data, f, indent=2, default=str)
+                serializing = False
                 os.replace(staging_path, file_path)
             except OSError as e:
-                # Bind-mounted tables, read-only directories and foreign-owned tables can't be replaced
-                if existing is None or e.errno not in _IN_PLACE_WRITE_ERRNOS:
+                # Bind-mounted tables, read-only directories and foreign-owned tables can't be replaced.
+                # Serialization errors always propagate so the existing table is never truncated.
+                if serializing or existing is None or e.errno not in _IN_PLACE_WRITE_ERRNOS:
                     raise
                 log_debug(f"Writing {file_path} in place: {e}")
                 self._write_json_in_place(file_path, data)

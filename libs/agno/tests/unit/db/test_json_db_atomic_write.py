@@ -258,3 +258,18 @@ def test_table_creation_does_not_truncate_a_concurrently_published_table(tmp_pat
         assert db._read_json_file(db.session_table_name) == []
 
     assert table.read_bytes() == prior
+
+
+@pytest.mark.parametrize("error", [errno.EACCES, errno.EPERM, errno.EBUSY, errno.EXDEV])
+def test_serialization_error_is_not_written_in_place(tmp_path, error):
+    db, table, prior = saved_table(tmp_path)
+
+    def fail_dump(data, handle, **kwargs):
+        handle.write("[")
+        raise OSError(error, os.strerror(error))
+
+    with patch("agno.db.json.json_db.json.dump", side_effect=fail_dump), pytest.raises(OSError):
+        db.upsert_session(AgentSession(session_id="new", agent_id="agent"))
+
+    assert table.read_bytes() == prior
+    assert list(tmp_path.iterdir()) == [table]
