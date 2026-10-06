@@ -6428,14 +6428,15 @@ def _group_requirements_for_continue(
     the first match in member order while the paused run lives under another
     sibling. The resolved run's owner is authoritative for where the continue
     dispatches — following the leaf-id pick would hand one sibling's paused
-    run to the other and execute the wrong tool implementation. When the
-    owner cannot be resolved to exactly one direct member (it was removed
-    from the team, or several direct members share its id), the continue is
-    refused and the run stays paused.
+    run to the other and execute the wrong tool implementation. The owner is
+    looked up among the direct members, and below them only when this team
+    ran the paused run itself (a recursive delegation). When it cannot be
+    resolved to exactly one member (it was removed from the team, or several
+    members share its id), the continue is refused and the run stays paused.
 
     Returns entries of (routed_member, resolved_target_run_or_None, requirements).
     """
-    from agno.team._tools import _find_member_route_by_id
+    from agno.team._tools import _find_member_route_by_id, _find_nested_members_by_id
     from agno.utils.callables import get_resolved_members
     from agno.utils.team import get_member_id
 
@@ -6463,6 +6464,12 @@ def _group_requirements_for_continue(
             owner_id = target.agent_id
         if owner_id is not None:
             owners = [m for m in get_resolved_members(team, run_context) or [] if get_member_id(m) == owner_id]
+            if not owners and getattr(target, "parent_run_id", None) == run_response.run_id:
+                # delegate_task_to_member resolves ids through sub-teams, so this
+                # team may have run a nested member itself. The paused run is then
+                # this team's own child: no sub-team run sits in between to
+                # continue through, so the owner is continued where it sits.
+                owners = _find_nested_members_by_id(team, owner_id, run_context)
             if len(owners) == 1:
                 member = owners[0]
             elif not owners:

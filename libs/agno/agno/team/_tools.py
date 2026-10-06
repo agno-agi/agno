@@ -642,6 +642,26 @@ def _find_member_route_by_id(
     return None
 
 
+def _find_nested_members_by_id(
+    team: "Team", member_id: str, run_context: Optional[RunContext] = None
+) -> List[Union[Agent, "Team"]]:
+    """Every distinct member below the team's direct members whose URL-safe ID matches.
+
+    Unlike _find_member_by_id, which returns the first match, this returns all
+    of them, so a caller can refuse an ambiguous id instead of guessing.
+    """
+    from agno.team.team import Team
+    from agno.utils.callables import get_resolved_members
+
+    matches: List[Union[Agent, "Team"]] = []
+    for member in get_resolved_members(team, run_context) or []:
+        if isinstance(member, Team):
+            matches.extend(m for m in get_resolved_members(member, run_context) or [] if get_member_id(m) == member_id)
+            matches.extend(_find_nested_members_by_id(member, member_id, run_context))
+    # One instance shared by two sub-teams is one owner, not two.
+    return list({id(m): m for m in matches}.values())
+
+
 def _propagate_member_pause(
     run_response: TeamRunOutput,
     member_agent: Union[Agent, "Team"],
