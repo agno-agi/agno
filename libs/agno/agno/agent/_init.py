@@ -210,7 +210,7 @@ def set_compaction(agent: Agent) -> None:
     The model defaults to the agent's either way, so a bare ``compaction=True`` is still the
     cheapest correct configuration.
     """
-    from agno.compaction.manager import Compaction
+    from agno.compaction.compaction import Compaction
 
     if agent.compaction is True:
         agent.compaction = Compaction(compact_at_tokens=None, on_context_overflow=True)
@@ -435,7 +435,7 @@ def get_models(agent: Agent) -> None:
     if agent.compression_manager is not None and agent.compression_manager.model is None:
         agent.compression_manager.model = agent.model
 
-    from agno.compaction.manager import Compaction as _Compaction
+    from agno.compaction.compaction import Compaction as _Compaction
 
     if isinstance(agent.compaction, _Compaction) and agent.compaction.model is None:
         agent.compaction.model = agent.model

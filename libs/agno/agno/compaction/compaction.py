@@ -125,8 +125,9 @@ class Compaction:
         if self.id is None:
             self.id = f"compaction_{uuid4().hex[:8]}"
         # Resolve a "provider:model_id" string once, as the other managers do, so every summary
-        # call has a Model to call.
-        self.model = get_model(self.model)
+        # call has a Model to call. Anything else is used as given.
+        if isinstance(self.model, str):
+            self.model = get_model(self.model)
         # Search reads the archived transcript, so unset it follows the archive. Asking for search
         # while turning the archive off is a contradiction - raise rather than drop it silently.
         if self.searchable is None:

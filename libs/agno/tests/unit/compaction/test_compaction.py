@@ -2020,7 +2020,7 @@ def test_folded_envelope_ids_survive_in_the_summary():
 
 
 def test_grep_returns_numbered_lines_with_context():
-    from agno.compaction.manager import _grep
+    from agno.compaction.compaction import _grep
 
     text = "alpha\nbeta\nINC-42 here\ndelta\nepsilon"
 
@@ -2037,7 +2037,7 @@ def test_search_patterns_are_literal_so_they_cannot_backtrack():
     line and cannot be interrupted; as literal text it is a plain substring search."""
     import time
 
-    from agno.compaction.manager import _grep
+    from agno.compaction.compaction import _grep
 
     started = time.perf_counter()
     result = _grep("a" * 40 + "!", "(a+)+$")
@@ -2048,7 +2048,7 @@ def test_search_patterns_are_literal_so_they_cannot_backtrack():
 
 
 def test_search_alternatives_match_any_term_case_insensitively():
-    from agno.compaction.manager import _grep
+    from agno.compaction.compaction import _grep
 
     text = "Build hash b7f2\nRotation window: 47 days\nunrelated"
     out = _grep(text, "build hash|ROTATION window", context_lines=0)
@@ -2059,7 +2059,7 @@ def test_search_alternatives_match_any_term_case_insensitively():
 
 def test_search_context_lines_are_capped():
     """An unbounded context_lines returned the whole archive."""
-    from agno.compaction.manager import _SEARCH_MAX_CONTEXT_LINES, _grep
+    from agno.compaction.compaction import _SEARCH_MAX_CONTEXT_LINES, _grep
 
     text = "\n".join(f"line {i}" for i in range(500))
     out = _grep(text, "line 250", context_lines=100_000)
@@ -2069,7 +2069,7 @@ def test_search_context_lines_are_capped():
 
 def test_a_long_matching_line_is_clipped_around_the_match():
     """A long line came back whole; clipped from the start, a match in the middle would be lost."""
-    from agno.compaction.manager import _SEARCH_LINE_CHARS, _grep
+    from agno.compaction.compaction import _SEARCH_LINE_CHARS, _grep
 
     out = _grep("x" * 150_000 + " SECRET-42 " + "y" * 150_000, "secret-42")
 
@@ -2079,7 +2079,7 @@ def test_a_long_matching_line_is_clipped_around_the_match():
 
 def test_search_output_is_capped():
     """The result goes into the context window; on a small model an unbounded one overflows it."""
-    from agno.compaction.manager import _SEARCH_OUTPUT_CHARS, _grep
+    from agno.compaction.compaction import _SEARCH_OUTPUT_CHARS, _grep
 
     text = "\n".join(f"hit {i} " + "z" * 400 for i in range(5_000))
     out = _grep(text, "hit", context_lines=0, max_matches=1_000)
@@ -2091,7 +2091,7 @@ def test_search_output_is_capped():
 def test_the_search_tool_caps_output_across_folds():
     """Each fold's result is capped; so is their sum, or five folds return five times the cap."""
     from agno.compaction.archive import CompactionArchive
-    from agno.compaction.manager import _SEARCH_OUTPUT_CHARS
+    from agno.compaction.compaction import _SEARCH_OUTPUT_CHARS
 
     db = _db()
     archive = CompactionArchive(db, "s")
@@ -2108,13 +2108,13 @@ def test_the_search_tool_caps_output_across_folds():
 
 def test_grep_falls_back_to_literal_on_bad_regex():
     """The caller is a model; it may send plain text full of regex metacharacters."""
-    from agno.compaction.manager import _grep
+    from agno.compaction.compaction import _grep
 
     assert "found" in _grep("a (unclosed found", "(unclosed", context_lines=0)
 
 
 def test_grep_merges_overlapping_context():
-    from agno.compaction.manager import _grep
+    from agno.compaction.compaction import _grep
 
     text = "\n".join(f"hit {i}" for i in range(5))
 
@@ -2243,7 +2243,7 @@ def test_tail_covering_everything_means_nothing_to_fold():
 
 def test_oversized_transcripts_are_trimmed_oldest_first():
     """One summarization call cannot swallow an unbounded transcript."""
-    from agno.compaction.manager import DEFAULT_SUMMARIZE_CHAR_BUDGET
+    from agno.compaction.compaction import DEFAULT_SUMMARIZE_CHAR_BUDGET
 
     messages = [Message(role="user", content="x" * 40_000) for _ in range(12)]
 
@@ -2562,7 +2562,7 @@ def test_a_large_tool_result_does_not_crowd_the_rest_out_of_the_summary():
     """Every folded message leaves the context, so every one must reach the summarizer. A tool
     result is sent clipped, so it must be charged at its clipped size: charged raw, one result
     larger than the whole budget used to leave the summarizer seeing 1 of 6 messages."""
-    from agno.compaction.manager import DEFAULT_SUMMARIZE_CHAR_BUDGET
+    from agno.compaction.compaction import DEFAULT_SUMMARIZE_CHAR_BUDGET
 
     huge = Message(role="tool", tool_call_id="c1", tool_name="search", content="fare row " * 60_000)
     assert len(huge.content) > DEFAULT_SUMMARIZE_CHAR_BUDGET
