@@ -6,8 +6,7 @@
 
 **Status:** PASS
 
-**Description:** Ran with `.venvs/demo/bin/python` on Python 3.14.6 and
-`sprites-py==0.7.1`.
+**Description:** Ran CLI help with Python 3.14.6 and `sprites-py==0.7.1`.
 
 **Result:** Imports succeeded and CLI help described both execution modes.
 
@@ -36,7 +35,8 @@ objects. No network or model requests were made.
 
 **Result:** The model ID, Sprite toolkit, and `run_sprite_command` instructions
 were passed to the Agent; `print_response` was called and the client was closed.
-Model selection, tool calling by an actual model, and remote execution are unverified.
+This mocked check does not verify model selection or live tool calling; see the
+separate live-run entries below.
 
 ---
 
@@ -44,10 +44,8 @@ Model selection, tool calling by an actual model, and remote execution are unver
 
 **Status:** PASS
 
-**Description:** The contributor ran the example against an existing Sprite with
-`SPRITES_TOKEN` configured, using the prepared Python environment and the Agno
-source at commit `3a23e48`. This entry records the contributor's terminal output;
-the run was not executed by Codex.
+**Description:** Manual execution against an existing Sprite with credentials
+supplied through the environment. The result below was reported by the contributor.
 
 **Result:** The example printed:
 

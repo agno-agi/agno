@@ -49,7 +49,7 @@ from sprites import SpritesClient
 
 client = SpritesClient(token=os.environ["SPRITES_TOKEN"])
 try:
-    sprite = client.get_sprite("my-project")
+    sprite = client.get_sprite("YOUR_SPRITE")
     tools = SpritesTools(sprite=sprite, timeout=60)
     agent = Agent(model="PROVIDER:MODEL", tools=[tools])
     agent.print_response("Use Python to calculate the first ten square numbers.")
