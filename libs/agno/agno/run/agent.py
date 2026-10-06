@@ -874,8 +874,10 @@ class RunOutput:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunOutput":
+        # Reconstruct on a local mapping; popping fields must not consume the caller's record.
+        data = data.copy()
         if "run" in data:
-            data = data.pop("run")
+            data = data["run"].copy()
 
         events = data.pop("events", None)
         final_events = []

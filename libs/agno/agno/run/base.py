@@ -247,6 +247,8 @@ class BaseRunOutputEvent(_EventIndexCarrier):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]):
+        # Reconstruct on a local mapping; popping fields must not consume the caller's record.
+        data = data.copy()
         # Not a dataclass field (see its declaration): pop before
         # construction, restore by assignment after
         event_index = data.pop("event_index", None)
