@@ -171,6 +171,7 @@ salesforce = ["simple-salesforce"]
 scavio = ["scavio>=0.4.0"]
 scrapegraph = ["scrapegraph-py>=2.0.0"]
 seltz = ["seltz>=0.2.0"]
+sprites = ["sprites-py>=0.7.1,<1"]
 superserve = ["superserve"]
 tavily = ["tavily-python>=0.7.9"]
 telegram = ["pyTelegramBotAPI>=4.32.0", "aiohttp"]
@@ -338,6 +339,7 @@ tools = [
   "agno[scavio]",
   "agno[scrapegraph]",
   "agno[seltz]",
+  "agno[sprites]",
   "agno[superserve]",
   "agno[tavily]",
   "agno[telegram]",
@@ -667,6 +669,7 @@ module = [
   "simplejson.*",
   "slack_sdk.*",
   "spider.*",
+  "sprites.*",
   "sqlalchemy.*",
   "starlette.*",
   "streamlit.*",
