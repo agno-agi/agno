@@ -2,6 +2,7 @@ import asyncio
 import gc
 import tracemalloc
 from dataclasses import dataclass, field
+from itertools import zip_longest
 from os import getenv
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 from uuid import uuid4
@@ -298,7 +299,7 @@ class PerformanceEval:
         return adjusted_usage
 
     def _parse_eval_run_data(self, result: Optional[PerformanceResult]) -> dict:
-        """Parse the evaluation result into a dictionary with the data we want for monitoring."""
+        """Serialize all measured samples, using None for a disabled measurement."""
         if result is None:
             return {}
 
@@ -319,7 +320,7 @@ class PerformanceEval:
             },
             "runs": [
                 {"runtime": runtime, "memory": memory_usage}
-                for runtime, memory_usage in zip(result.run_times, result.memory_usages)
+                for runtime, memory_usage in zip_longest(result.run_times, result.memory_usages)
             ],
         }
 
