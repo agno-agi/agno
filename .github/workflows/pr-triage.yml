@@ -107,18 +107,21 @@ jobs:
               }
 
               // --- 4. Duplicate PRs and issue assignment checks ---
-              const issueRefs = new Set();
-              const closingPatterns = [
-                /(?:fixes|closes|resolves|fix|close|resolve)\s+#(\d+)/gi,
-                /github\.com\/agno-agi\/agno\/issues\/(\d+)/gi,
-              ];
-
-              for (const pattern of closingPatterns) {
-                let match;
-                while ((match = pattern.exec(body)) !== null) {
-                  issueRefs.add(parseInt(match[1], 10));
+              function getIssueRefs(prBody) {
+                const refs = new Set();
+                const closingPatterns = [
+                  /(?:fixes|closes|resolves|fix|close|resolve)\s+#(\d+)/gi,
+                  /github\.com\/agno-agi\/agno\/issues\/(\d+)/gi,
+                ];
+                for (const pattern of closingPatterns) {
+                  let match;
+                  while ((match = pattern.exec(prBody || '')) !== null) {
+                    refs.add(parseInt(match[1], 10));
+                  }
                 }
+                return refs;
               }
+              const issueRefs = getIssueRefs(body);
 
               if (issueRefs.size > 0) {
                 // --- 4a. Duplicate detection ---
@@ -130,7 +133,8 @@ jobs:
                       per_page: 10,
                     });
                     for (const item of searchResult.items) {
-                      if (item.number !== prNumber && item.pull_request) {
+                      // Search also matches unrelated numbers, such as test counts.
+                      if (item.number !== prNumber && item.pull_request && getIssueRefs(item.body).has(issueNumber)) {
                         duplicates.push({ issue: issueNumber, pr: item.number });
                       }
                     }
