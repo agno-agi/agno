@@ -2,7 +2,7 @@ from typing import List, Optional
 
 from pydantic import Field
 
-from agno.knowledge.query_transform.base import QueryTransform
+from agno.knowledge.query_transformer.base import QueryTransformer
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.utils.log import log_debug, log_warning
@@ -15,7 +15,7 @@ DEFAULT_PROMPT = (
 )
 
 
-class HyDE(QueryTransform):
+class HyDE(QueryTransformer):
     """Searches with a hypothetical answer instead of the question.
 
     Questions and the passages that answer them rarely share wording, so a question
@@ -62,7 +62,7 @@ class HyDE(QueryTransform):
         try:
             from agno.models.openai import OpenAIResponses
         except ModuleNotFoundError:
-            # Unlike an agent, a query transform is an enhancement: searching with the
+            # Unlike an agent, a query transformerer is an enhancement: searching with the
             # query as asked beats refusing to search at all.
             log_warning(
                 "HyDE needs a model to generate a hypothetical answer. Provide a `model` "

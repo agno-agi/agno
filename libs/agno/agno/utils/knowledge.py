@@ -140,7 +140,7 @@ def strict_user_id_kwarg(fn: Any, user_id: Optional[str]) -> Dict[str, Any]:
 def get_model_kwarg(fn: Any, model: Optional[Any]) -> Dict[str, Any]:
     """``{"model": ...}`` only when the callee accepts it.
 
-    A query transform that needs an LLM borrows the caller's model, so the agent offers
+    A query transformer that needs an LLM borrows the caller's model, so the agent offers
     its own on retrieval. Only a callee that names ``model`` is offered one: unlike
     :func:`get_user_id_kwarg`, where a dropped owner leaks data across users and
     ``**kwargs`` is worth the risk, this is an enhancement. A legacy

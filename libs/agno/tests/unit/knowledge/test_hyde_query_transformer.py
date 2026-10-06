@@ -6,8 +6,8 @@ import pytest
 
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.query_transform.base import QueryTransform
-from agno.knowledge.query_transform.hyde import HyDE
+from agno.knowledge.query_transformer.base import QueryTransformer
+from agno.knowledge.query_transformer.hyde import HyDE
 from agno.models.base import Model
 
 PASSAGE = "Revenue fell because enterprise renewals slipped into the next quarter."
@@ -173,7 +173,7 @@ async def test_async_provider_failure_falls_back_to_the_query():
 
 def test_knowledge_searches_with_the_transformed_query():
     db = RecordingVectorDb()
-    knowledge = Knowledge(vector_db=db, query_transform=HyDE(model=StubModel()))
+    knowledge = Knowledge(vector_db=db, query_transformer=HyDE(model=StubModel()))
 
     knowledge.search("why did revenue drop?", max_results=3)
 
@@ -183,7 +183,7 @@ def test_knowledge_searches_with_the_transformed_query():
 @pytest.mark.asyncio
 async def test_async_knowledge_searches_with_the_transformed_query():
     db = RecordingVectorDb()
-    knowledge = Knowledge(vector_db=db, query_transform=HyDE(model=StubModel()))
+    knowledge = Knowledge(vector_db=db, query_transformer=HyDE(model=StubModel()))
 
     await knowledge.asearch("why did revenue drop?", max_results=3)
 
@@ -213,7 +213,7 @@ def test_the_reranker_scores_against_the_original_question():
 
     knowledge = Knowledge(
         vector_db=RecordingVectorDb(),
-        query_transform=HyDE(model=StubModel()),
+        query_transformer=HyDE(model=StubModel()),
         reranker=Recorder(),
     )
 
@@ -223,12 +223,12 @@ def test_the_reranker_scores_against_the_original_question():
 
 
 def test_a_failing_transform_does_not_break_search():
-    class BrokenTransform(QueryTransform):
+    class BrokenTransform(QueryTransformer):
         def transform(self, query: str, model: Optional[Any] = None) -> str:
             raise RuntimeError("transform exploded")
 
     db = RecordingVectorDb()
-    knowledge = Knowledge(vector_db=db, query_transform=BrokenTransform())
+    knowledge = Knowledge(vector_db=db, query_transformer=BrokenTransform())
 
     results = knowledge.search("why did revenue drop?", max_results=3)
 
@@ -240,7 +240,7 @@ def test_retrieve_offers_the_model_to_the_transform():
     # The agent's search tool goes through retrieve(), not search(), so the model has to
     # reach the transform there too or HyDE silently builds its own default.
     db = RecordingVectorDb()
-    knowledge = Knowledge(vector_db=db, query_transform=HyDE())
+    knowledge = Knowledge(vector_db=db, query_transformer=HyDE())
     model = StubModel()
 
     knowledge.retrieve("why did revenue drop?", max_results=3, model=model)
@@ -252,7 +252,7 @@ def test_retrieve_offers_the_model_to_the_transform():
 @pytest.mark.asyncio
 async def test_aretrieve_offers_the_model_to_the_transform():
     db = RecordingVectorDb()
-    knowledge = Knowledge(vector_db=db, query_transform=HyDE())
+    knowledge = Knowledge(vector_db=db, query_transformer=HyDE())
     model = StubModel()
 
     await knowledge.aretrieve("why did revenue drop?", max_results=3, model=model)
@@ -266,7 +266,7 @@ def test_the_agent_retrieval_path_passes_its_model():
     from agno.utils.knowledge import get_model_kwarg
 
     model = StubModel()
-    knowledge = Knowledge(vector_db=RecordingVectorDb(), query_transform=HyDE())
+    knowledge = Knowledge(vector_db=RecordingVectorDb(), query_transformer=HyDE())
 
     assert get_model_kwarg(knowledge.retrieve, model) == {"model": model}
     assert get_model_kwarg(knowledge.aretrieve, model) == {"model": model}
@@ -283,11 +283,11 @@ def test_a_retriever_that_cannot_take_a_model_is_left_alone():
 
 def test_the_team_retrieval_path_passes_its_model():
     # Teams retrieve through their own code path, so wiring the Agent one is not enough:
-    # a query transform under a Team would otherwise build its own default model.
+    # a query transformer under a Team would otherwise build its own default model.
     from agno.utils.knowledge import get_model_kwarg
 
     model = StubModel()
-    knowledge = Knowledge(vector_db=RecordingVectorDb(), query_transform=HyDE())
+    knowledge = Knowledge(vector_db=RecordingVectorDb(), query_transformer=HyDE())
 
     assert get_model_kwarg(knowledge.retrieve, model) == {"model": model}
     assert get_model_kwarg(knowledge.aretrieve, model) == {"model": model}

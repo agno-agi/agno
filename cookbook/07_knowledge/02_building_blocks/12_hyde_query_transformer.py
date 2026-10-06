@@ -29,7 +29,7 @@ import asyncio
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.query_transform.hyde import HyDE
+from agno.knowledge.query_transformer.hyde import HyDE
 from agno.models.openai import OpenAIResponses
 from agno.vectordb.pgvector import PgVector
 
@@ -52,7 +52,7 @@ vector_db.create()
 
 knowledge = Knowledge(
     vector_db=vector_db,
-    query_transform=HyDE(),
+    query_transformer=HyDE(),
 )
 
 agent = Agent(

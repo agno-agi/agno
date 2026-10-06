@@ -14,7 +14,7 @@ plausible prose.
 Setup:
     ./cookbook/scripts/run_pgvector.sh
 
-See also: 12_hyde_query_transform.py for HyDE against plain vector search.
+See also: 12_hyde_query_transformer.py for HyDE against plain vector search.
 """
 
 import asyncio
@@ -22,7 +22,7 @@ import asyncio
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.query_transform.hyde import HyDE
+from agno.knowledge.query_transformer.hyde import HyDE
 from agno.models.openai import OpenAIResponses
 from agno.vectordb.pgvector import PgVector
 from agno.vectordb.search import SearchType
@@ -47,7 +47,7 @@ vector_db.create()
 
 knowledge = Knowledge(
     vector_db=vector_db,
-    query_transform=HyDE(
+    query_transformer=HyDE(
         model=OpenAIResponses(id="gpt-5.6-luna"),
         # Keep the question in the search string, so the keyword half of hybrid search
         # still matches on the words the user actually typed.
@@ -110,7 +110,7 @@ if __name__ == "__main__":
 
         # The search string itself is what the flag changes, so print it: the ranking
         # above may well be identical on a corpus this small.
-        transformed = await knowledge.query_transform.atransform(
+        transformed = await knowledge.query_transformer.atransform(
             QUERY, model=agent.model
         )
         print("Searched with:")

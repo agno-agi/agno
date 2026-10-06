@@ -1840,7 +1840,7 @@ def get_relevant_docs_from_knowledge(
             "filters": filters,
         }
         retrieve_kwargs.update(get_user_id_kwarg(retrieve_fn, run_context.user_id if run_context else team.user_id))
-        # Lets a query transform borrow the team's model when it has none of its own.
+        # Lets a query transformer borrow the team's model when it has none of its own.
         retrieve_kwargs.update(get_model_kwarg(retrieve_fn, getattr(team, "model", None)))
         relevant_docs: List[Document] = retrieve_fn(**retrieve_kwargs)
 
@@ -1953,7 +1953,7 @@ async def aget_relevant_docs_from_knowledge(
             "filters": filters,
         }
 
-        # Lets a query transform borrow the team's model when it has none of its own.
+        # Lets a query transformer borrow the team's model when it has none of its own.
         team_model = getattr(team, "model", None)
         if callable(aretrieve_fn):
             retrieve_kwargs.update(get_user_id_kwarg(aretrieve_fn, scope_user_id))
