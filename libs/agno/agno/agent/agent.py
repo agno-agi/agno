@@ -14,6 +14,7 @@ from typing import (
     Optional,
     Sequence,
     Set,
+    Tuple,
     Type,
     Union,
     overload,
@@ -41,6 +42,7 @@ from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
 
 if TYPE_CHECKING:
+    from agno.fs import FileSystem
     from agno.learn.machine import LearningMachine
     from agno.tools.component import ComponentTool
 
@@ -137,6 +139,12 @@ class Agent:
     # --- Database ---
     # Database to use for this agent
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
+
+    # --- FileSystem ---
+    # Enable a durable filesystem backed by the agent's database, or provide one or several stores.
+    # Each run acts in its user's partition of the store; see FileSystem.user_scoped.
+    # Choose the tool surface on the FileSystem, e.g. ``FileSystem(db, namespace=..., read_only=True)``.
+    filesystem: Optional[Union[bool, FileSystem, List[FileSystem]]] = None
 
     # --- Checkpointing ---
     # When to persist run state to the database.
@@ -408,6 +416,7 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+        filesystem: Optional[Union[bool, FileSystem, List[FileSystem]]] = None,
         checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,
@@ -527,6 +536,8 @@ class Agent:
         self.add_session_state_to_context = add_session_state_to_context
 
         self.db = db
+        self.filesystem = filesystem
+        self._filesystem: Optional["FileSystem"] = None
         self.checkpoint = checkpoint
 
         self.memory_manager = memory_manager
@@ -766,6 +777,18 @@ class Agent:
         ):
             _init.set_learning_machine(self)
         return self._learning
+
+    @property
+    def filesystem_instance(self) -> Optional["FileSystem"]:
+        """The first configured filesystem, if enabled. Use ``filesystems`` for every store."""
+        if self.filesystem and self._filesystem is None:
+            _init.set_filesystem(self)
+        return self._filesystem
+
+    @property
+    def filesystems(self) -> List[Tuple["FileSystem", bool]]:
+        """Every filesystem the agent holds as ``(filesystem, read_only)``: the setting, then tools."""
+        return _init.get_filesystems(self)
 
     # ---------------------------------------------------------------
     # _init module delegates
