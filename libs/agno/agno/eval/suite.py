@@ -107,6 +107,10 @@ class Case:
     scorer: Optional[Scorer] = None
     expected: Optional[Any] = None
 
+    # Session - set `session_id` to run the case in that session instead of a generated one,
+    # e.g. to continue the turns its setup ran. The suite never clears the session.
+    session_id: Optional[str] = None
+
     def __post_init__(self) -> None:
         # Exactly one of agent/team: neither has anything to run, both is ambiguous.
         if self.agent is None and self.team is None:
@@ -136,8 +140,8 @@ class CaseResult:
     # stays None.
     agent_id: Optional[str] = None
     team_id: Optional[str] = None
-    # The generated eval session id - links the case to its stored session/trace when
-    # db= is set. Empty for skipped cases: no session was created.
+    # The eval session id (Case.session_id, else generated) - links the case to its stored
+    # session/trace when db= is set. Empty for skipped cases: no session was created.
     session_id: str = ""
     duration_seconds: float = 0.0
     judge_passed: Optional[bool] = None  # None = check not configured
@@ -473,7 +477,7 @@ async def _arun_case(
         agent_id=_component_id(case) if case.agent is not None else None,
         team_id=_component_id(case) if case.team is not None else None,
         # Dedicated session per case so eval traffic doesn't pollute the agent or team's history
-        session_id=f"eval-{case.name}-{uuid4().hex[:8]}",
+        session_id=case.session_id or f"eval-{case.name}-{uuid4().hex[:8]}",
     )
     timeout = case.timeout_seconds if case.timeout_seconds is not None else default_timeout
 

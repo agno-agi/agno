@@ -1779,6 +1779,7 @@ def test_case_positional_construction_unchanged():
     assert case.setup is setup_fn
     assert case.teardown is teardown_fn
     assert case.scorer is None and case.expected is None
+    assert case.session_id is None
 
 
 def test_case_result_positional_construction_unchanged():
@@ -1814,3 +1815,48 @@ def test_case_and_case_result_type_hints_resolve():
 
     assert typing.get_type_hints(Case)["scorer"] is not None
     assert typing.get_type_hints(CaseResult)["score"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Case session (session_id)
+# ---------------------------------------------------------------------------
+
+
+def test_session_id_replaces_the_generated_session(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    agent = StubAgent()
+    case = _make_case(agent=agent, session_id="booking-1")
+
+    suite_result = run_cases([case])
+    result = suite_result.results[0]
+
+    assert agent.session_ids == ["booking-1"]
+    assert result.session_id == "booking-1"
+    assert suite_result.to_dict()["cases"][0]["session_id"] == "booking-1"
+
+
+def test_cases_sharing_a_session_id_run_in_the_same_session(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    agent = StubAgent()
+    cases = [
+        _make_case(agent=agent, name="turn_1", session_id="booking-1"),
+        _make_case(agent=agent, name="turn_2", session_id="booking-1"),
+        _make_case(agent=agent, name="unrelated"),
+    ]
+
+    results = run_cases(cases).results
+
+    assert agent.session_ids[:2] == ["booking-1", "booking-1"]
+    assert agent.session_ids[2].startswith("eval-unrelated-")
+    assert [result.session_id for result in results] == agent.session_ids
+
+
+def test_team_case_runs_in_the_given_session(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    team = StubAgent(id="research-team")
+    case = Case(name="t", team=team, input="q", criteria="c", session_id="booking-1")
+
+    result = run_cases([case]).results[0]
+
+    assert result.session_id == "booking-1"
+    assert team.session_ids == ["booking-1"]
