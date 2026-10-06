@@ -1,12 +1,19 @@
 import asyncio
+import json
 import tempfile
 from pathlib import Path
+from typing import Literal
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 pytest.importorskip("google.genai")
 
+from google.genai import Client
+from google.genai.types import HttpOptions
+
+from agno.agent import Agent
 from agno.exceptions import ModelProviderError
 from agno.media import File, Image, Video
 from agno.models.google.gemini import Gemini
@@ -468,6 +475,39 @@ class TestGeminiHeaders:
             assert "headers" in kwargs["http_options"]
             assert kwargs["http_options"]["headers"]["x-goog-api-client"] == f"agno/{agno_version}"
             assert kwargs["http_options"]["headers"]["custom-header"] == "value"
+
+
+def test_tool_with_integer_enum_parameter_receives_int():
+    """An integer enum parameter is sent as INTEGER with format enum, and the tool gets the model's value as an int."""
+    requests = []
+    received = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        if len(requests) == 1:
+            part = {"functionCall": {"name": "set_priority", "args": {"task": "T-1", "level": 2}}}
+        else:
+            part = {"text": "done"}
+        return httpx.Response(
+            200, json={"candidates": [{"content": {"role": "model", "parts": [part]}, "finishReason": "STOP"}]}
+        )
+
+    def set_priority(task: str, level: Literal[1, 2] = 1) -> str:
+        """Set the priority level of a task."""
+        received.append(level)
+        return f"{task}:{level}"
+
+    client = Client(
+        api_key="test-key", http_options=HttpOptions(httpx_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    )
+    agent = Agent(model=Gemini(id="gemini-2.5-flash", client=client), tools=[set_priority], telemetry=False)
+
+    agent.run("Set T-1 to priority 2")
+
+    level_schema = requests[0]["tools"][0]["functionDeclarations"][0]["parameters"]["properties"]["level"]
+    assert level_schema == {"type": "INTEGER", "format": "enum", "enum": ["1", "2"]}
+    assert received == [2]
+    assert isinstance(received[0], int)
 
 
 def test_parallel_search_requires_vertexai():
