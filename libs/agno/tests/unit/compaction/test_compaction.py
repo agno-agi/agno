@@ -807,6 +807,68 @@ def test_the_summary_budget_reaches_custom_instructions():
     assert default.count("750 tokens") == 1
 
 
+# --- continue_run ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_continuing_a_paused_run_from_the_db_replays_the_fold(use_async):
+    """A run resumed by run_id rebuilds its history from the session, since stored runs drop their
+    history copies. That rebuild must replay the fold, not the plain window of folded turns."""
+    import asyncio
+
+    from agno.agent import Agent
+    from agno.metrics import MessageMetrics
+    from agno.models.response import ModelResponse
+    from agno.tools import tool
+
+    @tool(requires_confirmation=True)
+    def deploy() -> str:
+        """Deploy."""
+        return "deployed"
+
+    model = _RecordingModel.build()
+    reply = model._reply
+    pause = {"next": False}
+
+    def reply_or_pause():
+        if not pause["next"]:
+            return reply()
+        pause["next"] = False
+        call = {"id": "call_1", "type": "function", "function": {"name": "deploy", "arguments": "{}"}}
+        return ModelResponse(role="assistant", content=None, tool_calls=[call], response_usage=MessageMetrics())
+
+    model._reply = reply_or_pause
+    agent = Agent(
+        model=model,
+        db=_db(),
+        session_id="s",
+        tools=[deploy],
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, model=_StubModel()),
+    )
+    for i in range(4):
+        agent.run(f"question number {i}")
+    assert agent.compact(session_id="s").compacted
+
+    pause["next"] = True
+    paused = agent.run("please deploy")
+    assert paused.is_paused
+    sent_by_the_run = [m.content for m in model.requests[-1]]
+    for requirement in paused.active_requirements:
+        requirement.confirm()
+
+    if use_async:
+        asyncio.run(agent.acontinue_run(run_id=paused.run_id, requirements=paused.requirements, session_id="s"))
+    else:
+        agent.continue_run(run_id=paused.run_id, requirements=paused.requirements, session_id="s")
+
+    sent = [str(m.content) for m in model.requests[-1]]
+    assert any("SUMMARY" in text for text in sent)
+    assert not any(text in ("question number 1", "question number 2") for text in sent)
+    # The resumed request carries the same history the paused run did, then the run itself.
+    assert [m.content for m in model.requests[-1]][: len(sent_by_the_run)] == sent_by_the_run
+
+
 # --- session deletion -------------------------------------------------------------
 
 

@@ -2183,11 +2183,8 @@ def _build_continue_run_messages(
             agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
         )
 
-        history: List[Message] = continue_history_session(session, run_response).get_messages(
-            last_n_runs=agent.num_history_runs,
-            limit=agent.num_history_messages,
-            skip_roles=[skip_role] if skip_role else None,
-            agent_id=agent.id if agent.team_id is not None else None,
+        history, stored_record, replay_ids = _history_for_run(
+            agent, continue_history_session(session, run_response), run_response, skip_role
         )
 
         if len(history) > 0:
@@ -2196,6 +2193,11 @@ def _build_continue_run_messages(
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
+
+            # Replay the stored fold, as a fresh run does. No new fold is planned here: the run
+            # checked this same history before it paused, and its own messages are never folded.
+            if getattr(agent, "compaction", None) is not None:
+                history_copy = _replayed_view(agent.compaction, history_copy, stored_record, replay_ids)
 
             log_debug(f"Adding {len(history_copy)} messages from history")
             run_messages.messages += history_copy
