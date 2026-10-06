@@ -516,7 +516,7 @@ def test_custom_workflow_socket_cannot_inherit_the_native_authentication_exempti
 
 
 def test_mcp_serves_only_explicit_tools_for_anonymous_and_admin_callers(runtime):
-    with TestClient(runtime.os.get_app()) as client:
+    with TestClient(runtime.os.get_app(), base_url="http://localhost") as client:
         for credentials in ({}, auth()):
             response = client.post(
                 "/mcp",
@@ -549,3 +549,54 @@ def test_configured_mcp_oauth_still_requires_its_own_authentication(runtime):
         assert response.status_code == 401, response.text
         assert "resource_metadata" in response.headers["www-authenticate"]
         assert client.get("/config", headers=auth()).status_code == 200
+
+
+@pytest.mark.parametrize("hosts,hostname", [(None, "localhost"), (["docs.example.com"], "docs.example.com")])
+def test_public_mcp_card_matches_anonymous_access_and_default_host_guard(runtime, hosts, hostname):
+    # The default host guard is localhost-only even though REST requires JWTs.
+    # An explicit deployment allowlist remains authoritative.
+    from agno.os.mcp import _mcp_server_is_open
+
+    assert _mcp_server_is_open(runtime.os) is True
+    runtime.os.mcp_config.allowed_hosts = hosts
+    with TestClient(runtime.os.get_app(), base_url=f"http://{hostname}") as client:
+        card = client.get("/mcp/server-card")
+        assert card.status_code == 200, card.text
+        assert "headers" not in card.json()["remotes"][0]
+        headers = {"Accept": "application/json, text/event-stream"}
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "public-card-test", "version": "1"},
+            },
+        }
+        response = client.post("/mcp", json=payload, headers=headers)
+        assert response.status_code == 200 and "serverInfo" in response.text, response.text
+        assert client.get("/config").status_code == 401
+        assert client.get("/config", headers=auth()).status_code == 200
+        rejected = client.post("/mcp", json=payload, headers={**headers, "Host": "unlisted.example.com"})
+        # PublicSurface sanitizes the transport's invalid_host error.
+        assert rejected.status_code == 400, rejected.text
+
+
+@pytest.mark.parametrize("authorization,public_mcp", [(False, True), (True, False)])
+def test_public_surface_does_not_hide_required_mcp_auth(runtime, monkeypatch, authorization, public_mcp):
+    from agno.os.mcp import _mcp_server_is_open
+
+    runtime.os.authorization = authorization
+    runtime.surface.mcp = public_mcp
+    # An environment JWT source keeps authentication configured even when
+    # per-route authorization is off.
+    monkeypatch.setenv("JWT_VERIFICATION_KEY", KEY)
+    assert _mcp_server_is_open(runtime.os) is False
+
+
+def test_public_surface_does_not_override_mcp_auth_provider(runtime):
+    from agno.os.mcp import _mcp_server_is_open
+
+    runtime.os.mcp_auth = object()
+    assert _mcp_server_is_open(runtime.os) is False

@@ -39,7 +39,10 @@ class MCPConfig(BaseModel):
     Pass this as ``AgentOS(mcp=MCPConfig(...))`` to expose agents/teams/workflows as
     individual MCP tools, register your own tools, scope the default tools, gate the
     server, and add middleware. With plain ``mcp=True``, all default tools are
-    registered and no extra gate or middleware is added.
+    registered and no extra gate or middleware is added. With ``MCPConfig``, default
+    tools and lifecycle additions are opt-in: pass ``tools=[...]`` to publish exactly
+    those tools, add ``lifecycle_tools=True`` for exposed component continuation and
+    cancellation, or set ``default_tools=True`` for all eight built-in tools.
 
     The default tools are tagged so they can be scoped as a group. See
     ``MCP_BUILTIN_TAGS`` for the canonical set; current values:
@@ -47,7 +50,7 @@ class MCPConfig(BaseModel):
         ``continue_run``, ``cancel_run``
       - ``"session"``   -> read-only session tools (``get_sessions``, ``get_session_runs``)
       - ``"lifecycle"`` -> ``continue_run``, ``cancel_run`` (dual-tagged with ``core``);
-        registered automatically alongside exposed components -- see ``lifecycle_tools``
+        opt in alongside exposed components with ``lifecycle_tools=True``
 
     The default surface is deliberately small (8 tools): it is an operator surface for
     LLM frontends, not a database console. Session writes and memory CRUD live on the
@@ -77,6 +80,31 @@ class MCPConfig(BaseModel):
     # only when that hostname is itself listed in ``allowed_hosts`` -- an unvalidated forwarded
     # host would otherwise be echoed into a publicly cacheable document.
     server_card_url: Optional[str] = None
+
+    # External transport path and optional legacy aliases. Policies use one native MCP route.
+    path: str = "/mcp"
+    path_aliases: List[str] = Field(default_factory=list)
+    # Serve / and /server-card on this exact Host; other REST paths are unaffected.
+    root_host: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _validate_routing(self) -> "MCPConfig":
+        import re
+
+        for path in [self.path, *self.path_aliases]:
+            if not re.fullmatch(r"/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+", path):
+                raise ValueError("MCP paths must be non-root absolute paths with plain segments; use root_host for /")
+        paths = [self.path, *self.path_aliases]
+        if len(set(paths)) != len(paths) or any(p + "/server-card" in paths for p in paths):
+            raise ValueError("MCP transport and server-card paths must not overlap")
+        if self.root_host is not None:
+            if not re.fullmatch(
+                r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?",
+                self.root_host,
+            ):
+                raise ValueError("MCP root_host must be an exact hostname without a scheme, port or wildcard")
+            self.root_host = self.root_host.lower()
+        return self
 
     # The tool surface of this MCP server. Each entry may be:
     #
@@ -112,9 +140,9 @@ class MCPConfig(BaseModel):
     # then -- the riding lifecycle pair is bounded to the components published at
     # build time). Listing here is publishing: every
     # caller who can reach tools/list sees the names and descriptions (invocation is
-    # still gated by scopes at call time). HITL works out of the box: whenever
-    # components are exposed, ``continue_run`` and ``cancel_run`` register alongside
-    # them (see ``lifecycle_tools``), and the exposed result's structuredContent
+    # still gated by scopes at call time). For HITL, set ``lifecycle_tools=True`` to
+    # add ``continue_run`` and ``cancel_run`` alongside exposed components. The
+    # exposed result's structuredContent
     # carries the component id a resume needs. Factories whose input_schema has
     # required fields cannot be invoked over MCP yet (true for run_agent too); invoke
     # those over REST.
@@ -143,27 +171,20 @@ class MCPConfig(BaseModel):
     # outright on raw bytes.
     tools: Optional[List[Any]] = None
 
-    # Master switch for the 8 default tools. Set to False to ship only your own
-    # ``tools`` surface. ``enable_builtin_tools`` is the deprecated spelling, still
-    # accepted at construction.
-    default_tools: bool = True
+    # Opt in to the 8 default tools alongside your own ``tools``. ``AgentOS(mcp=True)``
+    # still serves them all. ``enable_builtin_tools`` is the deprecated spelling.
+    default_tools: bool = False
 
-    # Whether ``continue_run``/``cancel_run`` ride along whenever components are
-    # exposed via ``tools`` -- even with ``default_tools=False``. Default True: an
-    # exposed component can pause on a confirmation-required (HITL) tool, and without
-    # continue_run the pause would be a dead end over MCP. The riding pair is bounded
-    # to the publication list: when it registered only because exposures exist (not
-    # via ``core`` or an explicit include), it refuses runs of unpublished roster
-    # components, and it is scope-gated per component like the tool that produced the
-    # run.
-    lifecycle_tools: bool = True
+    # Opt in to ``continue_run``/``cancel_run`` for components exposed via ``tools``, so
+    # paused (HITL) runs can resume without the full default surface. Additive: False does
+    # not remove the pair enabled by ``default_tools=True``. When it registers only via
+    # exposure, it is bounded to the published components and scope-gated per component.
+    lifecycle_tools: bool = False
 
-    # Finer scoping over the default tools via their tags (see ``MCP_BUILTIN_TAGS``).
-    # When ``include_tags`` is set, only default tools carrying one of those tags are
-    # registered (name ``lifecycle`` explicitly to serve just the run-resumption pair).
-    # ``exclude_tags`` is then subtracted. With ``default_tools=False`` there are no
-    # default tools to scope, but ``exclude_tags={"lifecycle"}`` still disables the
-    # exposure ride-along (see ``lifecycle_tools``).
+    # Scope the enabled default tools by tag (see ``MCP_BUILTIN_TAGS``); these do not opt in
+    # to them, so set ``default_tools=True`` first. ``include_tags`` keeps only tools carrying
+    # one of those tags, then ``exclude_tags`` is subtracted. ``exclude_tags={"lifecycle"}``
+    # also disables the exposure ride-along (see ``lifecycle_tools``).
     include_tags: Optional[Set[MCPBuiltinTag]] = None
     exclude_tags: Optional[Set[MCPBuiltinTag]] = None
 
@@ -211,11 +232,10 @@ class MCPConfig(BaseModel):
     # ``authorize`` layers, in the order listed.
     middleware: Optional[List[Any]] = None
 
-    # Serve the MCP endpoint without session tracking: every request gets a fresh transport
-    # and nothing is kept between requests. Lets any replica answer any request, so a
-    # multi-instance deployment needs no session affinity. Costs the features that require a
-    # retained session -- server-initiated notifications and SSE resumability -- so it stays
-    # off by default.
+    # Disable transport sessions for legacy MCP clients (2025-11-25 and earlier); modern
+    # requests are always sessionless. Costs server-initiated requests and SSE resumability,
+    # not request-scoped progress or Agno run state. Only True is forwarded, so False leaves
+    # FastMCP settings (including FASTMCP_STATELESS_HTTP) in control.
     stateless: bool = False
 
     @model_validator(mode="before")
@@ -302,14 +322,29 @@ class MCPConfig(BaseModel):
             self.server_card_url = parsed.scheme + self.server_card_url[len(scheme_written) :]
         return self
 
+    def _lifecycle_rides_along(self) -> bool:
+        """Whether the exposure ride-along will serve continue_run/cancel_run.
+
+        Mirrors the ``has_exposures and lifecycle_tools and "lifecycle" not in exclude_tags``
+        arm of ``_enabled_builtin_tags`` in ``agno/os/mcp.py``.
+        """
+        if not self.lifecycle_tools or "lifecycle" in (self.exclude_tags or set()):
+            return False
+
+        from agno.agent.agent import Agent
+        from agno.team.team import Team
+        from agno.tools.component import ComponentTool
+        from agno.workflow.workflow import Workflow
+
+        return any(isinstance(tool, (Agent, Team, Workflow, ComponentTool)) for tool in self.tools or [])
+
     @model_validator(mode="after")
     def _check_has_tools(self) -> "MCPConfig":
         """Refuse a config that would mount an MCP server with zero tools.
 
-        ``default_tools=False`` plus no ``tools`` is almost always a mistake -- the user
-        disabled the default tools intending to ship their own surface and forgot to
-        register it, and ends up with a working ``/mcp`` endpoint that lists nothing. Fail fast at construction with an actionable
-        message instead of booting a useless server.
+        Default tools are opt-in, so a config needs explicit tools or
+        ``default_tools=True``. Fail at construction with an actionable message
+        instead of mounting a working ``/mcp`` endpoint that lists nothing.
 
         The tags reach the same dead end without tripping that check: an explicitly empty
         ``include_tags``, or an ``exclude_tags`` covering every remaining tag, scopes out
@@ -319,10 +354,26 @@ class MCPConfig(BaseModel):
         if not self.default_tools and not self.tools:
             raise ValueError(
                 "MCPConfig would register zero tools: default_tools=False and tools is empty. "
-                "Pass tools=[...] -- components (chief), wrapped components "
-                "(chief.as_tool(name=..., description=...)), and custom callables all go there -- "
-                "or leave default_tools=True (the default) to ship the default tools."
+                "Pass MCPConfig(tools=[...]) to publish your tools, or "
+                "MCPConfig(default_tools=True) to enable the default tools. "
+                "Use AgentOS(mcp=True) for the default server without additional configuration."
             )
+
+        # include_tags only scopes enabled default tools, so without default_tools the
+        # requested tags register nothing. ``lifecycle`` is the exception: the ride-along
+        # serves the pair when an exposed component is published and the tag is not excluded.
+        if not self.default_tools and self.include_tags:
+            requested = set(self.include_tags)
+            if self._lifecycle_rides_along():
+                requested -= {"lifecycle"}
+            if requested:
+                from agno.utils.log import log_warning
+
+                log_warning(
+                    "MCPConfig include_tags has no effect without default_tools=True: "
+                    f"{sorted(requested)} will not be registered. To serve them, set "
+                    "default_tools=True to register the default tools it scopes."
+                )
 
         # Warn rather than raise: unlike the branch above, this configuration is accepted
         # today and callers may be relying on it, so the surface stays exactly as it is.
@@ -355,8 +406,39 @@ class MCPConfig(BaseModel):
 MCPServerConfig = MCPConfig
 
 
+# Fields that briefly existed on AuthorizationConfig and now live on ``Authorization``. Named in
+# the rejection so the error says where they went instead of a bare "extra inputs are not
+# permitted".
+_AUTHZ_FIELDS_MOVED_TO_AUTHORIZATION = ("issuer", "authorization_provider", "audit", "role_store")
+
+
 class AuthorizationConfig(BaseModel):
-    """Configuration for the JWT middleware"""
+    """Low-level JWT verification config. Deprecated as a public type.
+
+    Superseded by :class:`agno.os.authz.Authorization`, which owns every field here plus the
+    higher-level surface (roles, seeding, audit, the admin API). ``Authorization`` builds one of
+    these internally to feed the JWT middleware; ``AgentOS(authorization_config=...)`` still accepts
+    one so deployments written against the released field set keep booting, with a warning.
+    Frozen at exactly that released field set: do NOT add fields here -- add them to
+    ``Authorization``. Unknown fields are rejected rather than ignored: a config carrying a
+    field this class never had (or no longer has) must fail at construction, because silently
+    dropping, say, an authorization provider would boot an OS that enforces token scopes where
+    the author expected managed roles.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_fields_moved_to_authorization(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            moved = [name for name in _AUTHZ_FIELDS_MOVED_TO_AUTHORIZATION if name in data]
+            if moved:
+                raise ValueError(
+                    f"AuthorizationConfig no longer takes {', '.join(moved)}: configure "
+                    "Authorization(...) from agno.os.authz and pass it as AgentOS(authorization=...)."
+                )
+        return data
 
     verification_keys: Optional[List[str]] = None
     jwks_file: Optional[str] = None
@@ -367,6 +449,9 @@ class AuthorizationConfig(BaseModel):
     # Additional fnmatch path patterns that bypass all AgentOS authentication,
     # merged with the default public-route exclusions.
     excluded_route_paths: Optional[List[str]] = None
+    # NOTE: the credential-less user DIRECTORY (who the users are + the disabled
+    # kill-switch) is a peer concern, not authorization -- configure it via
+    # AgentOS(user_directory=UserDirectory(...)) from agno.os.authz.
     # Opt-in per-user data isolation. When True, AgentOS:
     #   - threads the JWT sub as ``user_id`` on every user-scoped DB read
     #     (sessions, memory, traces) for non-admin callers
