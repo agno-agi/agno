@@ -517,6 +517,9 @@ async def test_download_attachments_records_failures():
 
 @pytest.mark.asyncio
 async def test_download_attachments_skips_missing_url():
+    """No url means nothing to fetch, so no request is made -- but the attachment is
+    still gone, and the user hears about it the same way a failed download is
+    reported."""
     parsed = ActivityContent(
         text="hi",
         image_attachments=[{"contentType": "image/png"}],
@@ -527,7 +530,7 @@ async def test_download_attachments_skips_missing_url():
         run_kwargs, skipped = await download_attachments_async(parsed, cfg)
     mock_dl.assert_not_called()
     assert run_kwargs == {}
-    assert skipped == []
+    assert skipped == ["image"]
 
 
 @pytest.mark.asyncio
@@ -555,6 +558,45 @@ async def test_download_attachments_unsupported_mime_is_skipped():
 
     assert "files" not in run_kwargs
     assert skipped == ["report.bin", "clip.mp4"]
+
+
+def test_extract_content_classifies_a_file_that_carries_only_a_download_url():
+    """_attachment_download_url prefers content.downloadUrl, so gating classification
+    on contentUrl makes that preference unreachable for an attachment that has only
+    the one field. The attachment is then dropped before anything can report it."""
+    activity = {
+        "type": "message",
+        "text": "see attached",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.teams.file.download.info",
+                "name": "report.pdf",
+                "content": {"downloadUrl": "https://ex/dl/report.pdf"},
+            }
+        ],
+    }
+
+    parsed = extract_activity_content(activity)
+
+    assert parsed is not None
+    assert len(parsed.file_attachments) == 1
+
+
+@pytest.mark.asyncio
+async def test_download_attachments_reports_an_attachment_with_no_url():
+    """A failed download is reported; a missing url was not, so the attachment
+    vanished with the user told nothing at all. Both are the same loss to them."""
+    parsed = ActivityContent(
+        text="see attached",
+        image_attachments=[{"contentType": "image/png"}],
+        file_attachments=[{"name": "report.pdf"}],
+    )
+    cfg = _make_config()
+
+    run_kwargs, skipped = await download_attachments_async(parsed, cfg)
+
+    assert run_kwargs == {}
+    assert skipped == ["image", "report.pdf"]
 
 
 @pytest.mark.asyncio
