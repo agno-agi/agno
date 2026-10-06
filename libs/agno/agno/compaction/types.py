@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from time import time
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
+
+if TYPE_CHECKING:
+    from agno.metrics import RunMetrics
 
 # The namespace prefix every compaction archive lives under. Sibling to the
 # "tool-results" prefix result offloading uses, so one database backs both
@@ -48,6 +51,9 @@ class CompactionResult:
     status: CompactionStatus
     message: str
     record: Optional["CompactionRecord"] = None
+    # The summarizer's token usage, under compaction_model. A manual compaction has no run to
+    # add it to, so it is reported here instead. None when no summarizer call was made.
+    metrics: Optional["RunMetrics"] = None
 
     @property
     def compacted(self) -> bool:
@@ -59,6 +65,7 @@ class CompactionResult:
             "message": self.message,
             "compacted": self.compacted,
             "record": self.record.to_dict() if self.record is not None else None,
+            "metrics": self.metrics.to_dict() if self.metrics is not None else None,
         }
 
 

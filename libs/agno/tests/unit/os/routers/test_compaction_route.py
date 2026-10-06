@@ -92,7 +92,7 @@ def test_unknown_agent_is_a_404(client: TestClient):
 
 
 def test_response_shape_is_stable(client: TestClient):
-    """These four keys are the contract the FE renders; adding is safe, renaming is not."""
+    """These keys are the contract the FE renders; adding is safe, renaming is not."""
     body = client.post("/agents/a1/sessions/s1/compact").json()
 
-    assert set(body) == {"status", "message", "compacted", "record"}
+    assert set(body) == {"status", "message", "compacted", "record", "metrics"}

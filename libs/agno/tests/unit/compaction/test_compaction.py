@@ -598,6 +598,7 @@ def test_compaction_result_serializes_for_an_api():
         "message": "too small",
         "compacted": False,
         "record": None,
+        "metrics": None,
     }
 
 
@@ -1370,6 +1371,131 @@ def test_streaming_also_recovers_from_an_overflow():
     assert len(received) == 2
     assert received[1] < received[0]
     assert [e.content for e in events] == ["recovered"]
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_overflow_recovery_counts_the_summarizer_in_run_metrics(use_async):
+    """The summarizer call an overflow makes is billed like any other model call, so it belongs in
+    the run's metrics under compaction_model - as it is when the run-start trigger folds."""
+    import asyncio
+
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+    from agno.exceptions import ContextWindowExceededError
+
+    model = _RecordingModel.build()
+    calls = {"n": 0}
+    invoke, ainvoke = model.invoke, model.ainvoke
+
+    def reject_sixth(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 6:
+            raise ContextWindowExceededError("prompt is too long")
+        return invoke(*args, **kwargs)
+
+    async def areject_sixth(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 6:
+            raise ContextWindowExceededError("prompt is too long")
+        return await ainvoke(*args, **kwargs)
+
+    # Patch only the entry point each path calls: the recording ainvoke delegates to invoke, so
+    # patching both would count every async call twice.
+    if use_async:
+        model.ainvoke = areject_sixth
+    else:
+        model.invoke = reject_sixth
+    agent = Agent(
+        model=model,
+        db=InMemoryDb(),
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(
+            compact_at_tokens=None, on_context_overflow=True, uncompacted_runs=1, model=_MeteredSummarizer()
+        ),
+    )
+
+    async def arun_all():
+        for i in range(6):
+            run = await agent.arun(f"question number {i}")
+        return run
+
+    if use_async:
+        run = asyncio.run(arun_all())
+    else:
+        for i in range(6):
+            run = agent.run(f"question number {i}")
+
+    assert run.compaction is not None
+    entries = (run.metrics.details or {}).get("compaction_model") or []
+    assert [(entry.id, entry.input_tokens, entry.output_tokens) for entry in entries] == [("summarizer", 700, 40)]
+
+
+class _MeteredSummarizer:
+    """A summarizer whose responses carry token usage."""
+
+    id = "summarizer"
+    provider = "test"
+
+    def get_provider(self):
+        return self.provider
+
+    def response(self, messages, **kwargs):
+        from agno.metrics import MessageMetrics
+        from agno.models.response import ModelResponse
+
+        usage = MessageMetrics(input_tokens=700, output_tokens=40, total_tokens=740)
+        return ModelResponse(content="SUMMARY", response_usage=usage)
+
+    async def aresponse(self, messages, **kwargs):
+        return self.response(messages)
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_manual_compact_reports_the_summarizer_usage(use_async):
+    """agent.compact() has no run to add the summarizer's tokens to, so the result carries them."""
+    import asyncio
+
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=InMemoryDb(),
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, model=_MeteredSummarizer()),
+    )
+    for i in range(4):
+        agent.run(f"question number {i}")
+
+    result = asyncio.run(agent.acompact(session_id="s")) if use_async else agent.compact(session_id="s")
+
+    assert result.compacted
+    entries = result.metrics.details["compaction_model"]
+    assert [(entry.id, entry.input_tokens, entry.output_tokens) for entry in entries] == [("summarizer", 700, 40)]
+    assert result.to_dict()["metrics"]["details"]["compaction_model"][0]["input_tokens"] == 700
+
+
+def test_a_declined_manual_compact_reports_no_usage():
+    """No summarizer call was made, so there is nothing to report."""
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=InMemoryDb(),
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=None, uncompacted_runs=10, model=_MeteredSummarizer()),
+    )
+    agent.run("only question")
+
+    result = agent.compact(session_id="s")
+
+    assert not result.compacted
+    assert result.metrics is None
+    assert result.to_dict()["metrics"] is None
 
 
 def test_context_overflow_does_not_retry_what_it_cannot_shrink(caplog):

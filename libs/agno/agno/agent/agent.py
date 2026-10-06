@@ -1123,7 +1123,8 @@ class Agent:
         Returns a CompactionResult carrying a status and a human-readable message. A fold can
         legitimately decline: if the span is too small to pay for the summary replacing it,
         compacting would leave the context bigger, so it is reported rather than performed.
-        Check ``result.compacted``, or show ``result.message``.
+        Check ``result.compacted``, or show ``result.message``. ``result.metrics`` carries the
+        summarizer's token usage under ``compaction_model``, or None when no summary was made.
         """
         return _messages.compact_session(self, session_id=session_id, user_id=user_id)
 

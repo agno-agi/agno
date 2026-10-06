@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 from agno.agent._utils import convert_dependencies_to_string, convert_documents_to_string
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
+from agno.metrics import RunMetrics
 from agno.models.message import Message, MessageReferences
 from agno.models.response import ModelResponse
 from agno.run import RunContext
@@ -237,7 +238,7 @@ def _history_for_compaction(agent: "Agent", session: AgentSession) -> List[Messa
     )
 
 
-def _compaction_result(new_record: Any) -> Any:
+def _compaction_result(new_record: Any, metrics: Optional[RunMetrics] = None) -> Any:
     from agno.compaction.types import CompactionResult, CompactionStatus
 
     return CompactionResult(
@@ -247,6 +248,7 @@ def _compaction_result(new_record: Any) -> Any:
             f"({new_record.tokens_before} -> {new_record.tokens_after} tokens)."
         ),
         record=new_record,
+        metrics=metrics,
     )
 
 
@@ -278,21 +280,26 @@ def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -
 
     log_info("Compacting conversation history")
     inputs = _compaction_inputs(agent, history)
+    # No run to add the summarizer's usage to, so it is collected here and returned.
+    run_metrics = RunMetrics()
     new_record = compaction.compact(
         history,
         session_id=session.session_id,
         db=agent.db,
         user_id=session.user_id,
         previous=record,
+        run_metrics=run_metrics,
         tokens_before=inputs["context_tokens"],
     )
+    metrics = run_metrics if run_metrics.details else None
     if new_record is None:
         return CompactionResult(
             status=CompactionStatus.SUMMARY_FAILED,
             message="The summarizer returned nothing, so history was left unchanged.",
+            metrics=metrics,
         )
     _log_compaction(new_record, inputs)
-    return _compaction_result(new_record)
+    return _compaction_result(new_record, metrics)
 
 
 async def acompact_now(agent: "Agent", session: AgentSession, history: List[Message]) -> Any:
@@ -311,21 +318,26 @@ async def acompact_now(agent: "Agent", session: AgentSession, history: List[Mess
 
     log_info("Compacting conversation history")
     inputs = _compaction_inputs(agent, history)
+    # No run to add the summarizer's usage to, so it is collected here and returned.
+    run_metrics = RunMetrics()
     new_record = await compaction.acompact(
         history,
         session_id=session.session_id,
         db=agent.db,
         user_id=session.user_id,
         previous=record,
+        run_metrics=run_metrics,
         tokens_before=inputs["context_tokens"],
     )
+    metrics = run_metrics if run_metrics.details else None
     if new_record is None:
         return CompactionResult(
             status=CompactionStatus.SUMMARY_FAILED,
             message="The summarizer returned nothing, so history was left unchanged.",
+            metrics=metrics,
         )
     _log_compaction(new_record, inputs)
-    return _compaction_result(new_record)
+    return _compaction_result(new_record, metrics)
 
 
 def compact_session(agent: "Agent", session_id: Optional[str] = None, user_id: Optional[str] = None) -> Any:
@@ -455,6 +467,7 @@ def _overflow_fold_kwargs(
         user_id=session.user_id,
         previous=_stored_compaction(agent, session),
         run_id=run_response.run_id if run_response is not None else None,
+        run_metrics=run_response.metrics if run_response is not None else None,
         tokens_before=before,
     )
 
