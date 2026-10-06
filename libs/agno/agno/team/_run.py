@@ -5865,11 +5865,18 @@ def _merge_tools_preserving_approval(
 
     This function preserves approval_type and approval_id from the session originals
     whenever the incoming tool does not carry them.
+
+    A call that already ran keeps the session original. The payload can carry an
+    out-of-date copy of that call (confirmed, no result), for example after an
+    earlier pause was resolved from the approvals table; swapping it in would
+    execute the call a second time.
     """
     merged: List[Any] = []
     for orig in original_tools:
         updated = updated_tools_map.get(orig.tool_call_id)
-        if updated is not None:
+        if updated is not None and getattr(orig, "result", None) is not None:
+            merged.append(orig)
+        elif updated is not None:
             for attr in ("approval_type", "approval_id"):
                 if getattr(updated, attr, None) is None and getattr(orig, attr, None) is not None:
                     setattr(updated, attr, getattr(orig, attr))
