@@ -744,6 +744,27 @@ def handle_external_execution_update(
         raise ValueError(f"Tool {tool.tool_name} requires external execution, cannot continue run")
 
 
+def has_unanswered_user_input(run_response: RunOutput) -> bool:
+    """Return True if a requires_user_input tool still has a field without a value.
+
+    Dispatch copies the schema's values into the tool arguments and runs the tool,
+    so a field left empty would reach it as None. Only tools that reach the
+    user-input branch of handle_tool_call_updates count: confirmation and
+    external-execution tools are settled by their own branches, and
+    get_user_input / ask_user hand their answers to the model instead of running.
+    """
+    for t in run_response.tools or []:
+        if (
+            t.requires_user_input is True
+            and t.requires_confirmation is not True
+            and t.external_execution_required is not True
+            and t.tool_name not in ("get_user_input", "ask_user")
+            and any(field.value is None for field in t.user_input_schema or [])
+        ):
+            return True
+    return False
+
+
 def handle_user_input_update(agent: Agent, tool: ToolExecution):
     for field in tool.user_input_schema or []:
         if not tool.tool_args:

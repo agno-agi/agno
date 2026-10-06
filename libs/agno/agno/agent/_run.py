@@ -3803,16 +3803,23 @@ def _continue_run(
         update_run_response,
     )
     from agno.agent._telemetry import log_agent_telemetry
-    from agno.agent._tools import handle_tool_call_updates
+    from agno.agent._tools import handle_tool_call_updates, has_unanswered_user_input
 
     register_run(run_response.run_id)  # type: ignore
 
     agent.model = cast(Model, agent.model)
 
-    # 1. Handle the updated tools
-    handle_tool_call_updates(agent, run_response=run_response, run_messages=run_messages, tools=tools)
-
     try:
+        # A user-input field left empty keeps the run paused: dispatching would
+        # run the tool with None for it.
+        if has_unanswered_user_input(run_response):
+            return handle_agent_run_paused(
+                agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+            )
+
+        # 1. Handle the updated tools
+        handle_tool_call_updates(agent, run_response=run_response, run_messages=run_messages, tools=tools)
+
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
             try:
@@ -4023,7 +4030,7 @@ def _continue_run_stream(
         parse_response_with_parser_model_stream,
     )
     from agno.agent._telemetry import log_agent_telemetry
-    from agno.agent._tools import handle_tool_call_updates_stream
+    from agno.agent._tools import handle_tool_call_updates_stream, has_unanswered_user_input
 
     register_run(run_response.run_id)  # type: ignore
 
@@ -4046,6 +4053,19 @@ def _continue_run_stream(
                         events_to_skip=agent.events_to_skip,  # type: ignore
                         store_events=agent.store_events,
                     )
+
+                # A user-input field left empty keeps the run paused: dispatching
+                # would run the tool with None for it.
+                if has_unanswered_user_input(run_response):
+                    yield from handle_agent_run_paused_stream(
+                        agent,
+                        run_response=run_response,
+                        session=session,
+                        run_context=run_context,
+                        user_id=user_id,
+                        yield_run_output=yield_run_output or False,
+                    )
+                    return
 
                 # 2. Handle the updated tools
                 for event in handle_tool_call_updates_stream(
@@ -4830,7 +4850,7 @@ async def _acontinue_run(
     )
     from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
     from agno.agent._telemetry import alog_agent_telemetry
-    from agno.agent._tools import ahandle_tool_call_updates, determine_tools_for_model
+    from agno.agent._tools import ahandle_tool_call_updates, determine_tools_for_model, has_unanswered_user_input
 
     log_debug(f"Agent Run Continue: {run_response.run_id if run_response else run_id}", center=True)  # type: ignore
     agent_session: Optional[AgentSession] = None
@@ -5053,6 +5073,17 @@ async def _acontinue_run(
 
                 # Register run for cancellation tracking
                 await aregister_run(run_response.run_id)  # type: ignore
+
+                # A user-input field left empty keeps the run paused: dispatching
+                # would run the tool with None for it.
+                if has_unanswered_user_input(run_response):
+                    return await ahandle_agent_run_paused(
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    )
 
                 # 7. Handle the updated tools
                 await ahandle_tool_call_updates(
@@ -5347,7 +5378,11 @@ async def _acontinue_run_stream(
     )
     from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
     from agno.agent._telemetry import alog_agent_telemetry
-    from agno.agent._tools import ahandle_tool_call_updates_stream, determine_tools_for_model
+    from agno.agent._tools import (
+        ahandle_tool_call_updates_stream,
+        determine_tools_for_model,
+        has_unanswered_user_input,
+    )
 
     log_debug(f"Agent Run Continue: {run_response.run_id if run_response else run_id}", center=True)  # type: ignore
 
@@ -5578,6 +5613,20 @@ async def _acontinue_run_stream(
                         events_to_skip=agent.events_to_skip,  # type: ignore
                         store_events=agent.store_events,
                     )
+
+                # A user-input field left empty keeps the run paused: dispatching
+                # would run the tool with None for it.
+                if has_unanswered_user_input(run_response):
+                    async for item in ahandle_agent_run_paused_stream(
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                        yield_run_output=yield_run_output or False,
+                    ):
+                        yield item
+                    return
 
                 # 7. Handle the updated tools
                 async for event in ahandle_tool_call_updates_stream(
