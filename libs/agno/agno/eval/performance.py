@@ -356,7 +356,12 @@ class PerformanceEval:
         """
         Runs tracemalloc multiple times with an empty function to establish
         a stable average baseline for memory usage in MiB.
+
+        Refuse an already-active tracer: stopping it would discard the caller's
+        allocation history, and its existing peak is not this eval's baseline.
         """
+        if tracemalloc.is_tracing():
+            raise RuntimeError("tracemalloc is already tracing; stop it before measuring PerformanceEval memory")
 
         def empty_func():
             return
