@@ -808,6 +808,38 @@ def test_the_summary_budget_reaches_custom_instructions():
     assert default.count("750 tokens") == 1
 
 
+@pytest.mark.parametrize("num_history_runs", [1, 3])
+def test_a_fork_and_its_source_are_replayed_as_without_compaction(num_history_runs):
+    """A continue_run fork copies its source run's messages with the same ids. With only the fork
+    in the window, filtering by id let the source's copies in too and sent those turns twice; with
+    both in the window, both are history and both are sent. Either way, as without compaction."""
+
+    def sent_after_a_fork(compaction):
+        from agno.agent import Agent
+        from agno.db.in_memory import InMemoryDb
+
+        model = _RecordingModel.build()
+        agent = Agent(
+            model=model,
+            db=InMemoryDb(),
+            session_id="s",
+            add_history_to_context=True,
+            num_history_runs=num_history_runs,
+            compaction=compaction,
+        )
+        agent.run("q0")
+        source = agent.run("q1 source")
+        agent.continue_run(run_id=source.run_id, session_id="s", fork=True, input="q1 follow-up")
+        agent.run("q2")
+        return [str(m.content) for m in model.requests[-1] if m.role != "system"]
+
+    plain = sent_after_a_fork(None)
+    with_compaction = sent_after_a_fork(Compaction(compact_at_tokens=None, model=_StubModel()))
+
+    assert with_compaction == plain
+    assert plain.count("q1 source") == (1 if num_history_runs == 1 else 2)
+
+
 # --- continue_run ----------------------------------------------------------------
 
 

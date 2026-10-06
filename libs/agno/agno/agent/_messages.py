@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import string
-from collections import ChainMap
+from collections import ChainMap, Counter
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -12,7 +12,6 @@ from typing import (
     List,
     Optional,
     Sequence,
-    Set,
     Tuple,
     Type,
     Union,
@@ -171,9 +170,10 @@ def _compaction_history_runs(agent: "Agent") -> Optional[int]:
 
 def _history_for_run(
     agent: "Agent", session: AgentSession, run_response: Optional[RunOutput], skip_role: Optional[str]
-) -> Tuple[List[Message], Any, Optional[Set[str]]]:
+) -> Tuple[List[Message], Any, Optional[Counter[str]]]:
     """The history a run works from, the fold in force for it, and the ids of the messages
-    num_history_runs and num_history_messages replay.
+    num_history_runs and num_history_messages replay, counted - a fork copies its source run's
+    messages with the same ids, so one id can stand for more than one message.
 
     Both of those are replay settings: they bound what a run sends before the first fold, not
     what compaction may read. The planner reads a wider window, and once a fold exists its anchor
@@ -204,11 +204,11 @@ def _history_for_run(
             history = everything[start:]
 
     replay = fetch(agent.num_history_runs, agent.num_history_messages)
-    return history, record, {m.id for m in replay if m.id is not None}
+    return history, record, Counter(m.id for m in replay if m.id is not None)
 
 
 def _replayed_view(
-    compaction: Any, history: List[Message], record: Any, replay_ids: Optional[Set[str]]
+    compaction: Any, history: List[Message], record: Any, replay_ids: Optional[Counter[str]]
 ) -> List[Message]:
     """What a run sends from ``history``.
 
@@ -221,7 +221,17 @@ def _replayed_view(
             return compaction.apply_record(history, record)
     if replay_ids is None:
         return history
-    return [m for m in history if m.id in replay_ids]
+    # The window is the newest runs, so match it from the end, each id as many times as the window
+    # holds it. A plain membership test would also let in a fork's source run from outside the
+    # window, since the fork's copies share its message ids, and send those turns twice.
+    remaining = Counter(replay_ids)
+    kept: List[Message] = []
+    for message in reversed(history):
+        if message.id is not None and remaining[message.id] > 0:
+            remaining[message.id] -= 1
+            kept.append(message)
+    kept.reverse()
+    return kept
 
 
 def _history_for_compaction(agent: "Agent", session: AgentSession) -> List[Message]:
@@ -542,7 +552,7 @@ def apply_compaction(
     events: Optional[List[Any]] = None,
     context_prefix: Optional[List[Message]] = None,
     tools: Optional[List[Any]] = None,
-    replay_ids: Optional[Set[str]] = None,
+    replay_ids: Optional[Counter[str]] = None,
 ) -> List[Message]:
     """Replace the head of ``history`` with a summary once it grows too long.
 
@@ -612,7 +622,7 @@ async def aapply_compaction(
     events: Optional[List[Any]] = None,
     context_prefix: Optional[List[Message]] = None,
     tools: Optional[List[Any]] = None,
-    replay_ids: Optional[Set[str]] = None,
+    replay_ids: Optional[Counter[str]] = None,
 ) -> List[Message]:
     compaction = getattr(agent, "compaction", None)
     if compaction is None or not history:
