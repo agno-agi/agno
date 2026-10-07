@@ -1,37 +1,47 @@
 """Browser origin matching shared by CORS, auth errors and public admission."""
 
 import re
-from typing import Optional, Sequence
+from typing import Collection, Sequence
 
-_LEADING_FLAGS = re.compile(r"\(\?([aiLmsux]+)\)")
-
-
-def _scoped(pattern: str) -> str:
-    # Leading global flags like (?i) are only valid at the start of a whole expression.
-    flags = ""
-    while match := _LEADING_FLAGS.match(pattern):
-        flags += match.group(1)
-        pattern = pattern[match.end() :]
-    tail = "\n" if "x" in flags else ""  # a trailing verbose comment must not swallow the ")"
-    return f"(?{flags}:{pattern}{tail})" if flags else f"(?:{pattern})"
-
-
-def combine_origin_patterns(patterns: Sequence[str]) -> Optional[str]:
-    """Join full-match origin patterns into one expression for Starlette's CORSMiddleware."""
-    if not patterns:
-        return None
-    if len(patterns) == 1:
-        return patterns[0]
-    combined = "|".join(_scoped(pattern) for pattern in patterns)
-    re.compile(combined)
-    return combined
+from starlette.middleware.cors import CORSMiddleware
+from starlette.types import ASGIApp
 
 
 class OriginPolicy:
-    def __init__(self, origins: Sequence[str], pattern: Optional[str] = None):
+    def __init__(self, origins: Sequence[str], patterns: Sequence[str] = ()):
         self.origins = tuple(origins)
-        self.pattern = pattern
-        self._compiled = re.compile(pattern) if pattern is not None else None
+        self.patterns = tuple(patterns)
+        self._compiled = tuple(re.compile(pattern) for pattern in self.patterns)
 
     def allows(self, origin: str) -> bool:
-        return origin in self.origins or bool(self._compiled and self._compiled.fullmatch(origin))
+        return origin in self.origins or any(pattern.fullmatch(origin) for pattern in self._compiled)
+
+
+class OriginPolicyCORSMiddleware(CORSMiddleware):
+    """CORSMiddleware for several origin patterns, each matched independently.
+
+    Starlette accepts a single ``allow_origin_regex``; joining patterns into one
+    expression breaks valid patterns that share group names or use backreferences.
+    """
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        origin_policy: OriginPolicy,
+        allow_methods: Collection[str] = ("GET",),
+        allow_headers: Collection[str] = (),
+        allow_credentials: bool = False,
+        expose_headers: Collection[str] = (),
+    ) -> None:
+        super().__init__(
+            app,
+            allow_origins=list(origin_policy.origins),
+            allow_methods=allow_methods,
+            allow_headers=allow_headers,
+            allow_credentials=allow_credentials,
+            expose_headers=expose_headers,
+        )
+        self.origin_policy = origin_policy
+
+    def is_allowed_origin(self, origin: str) -> bool:
+        return self.origin_policy.allows(origin)

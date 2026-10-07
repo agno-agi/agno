@@ -75,6 +75,7 @@ from agno.os.routers.workflows import get_workflow_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     _generate_knowledge_id,
+    _is_cors_middleware,
     collect_components_from_os,
     collect_mcp_tools_from_registry,
     collect_mcp_tools_from_team,
@@ -1804,12 +1805,10 @@ class AgentOS:
             validate_mcp_routes(fastapi_app, routing_config, self._mcp_app)
             fastapi_app.add_middleware(MCPRoutingMiddleware, config=routing_config)
 
-        from starlette.middleware.cors import CORSMiddleware
-
         # Preflights and auth/admission failures use the same configured CORS policy.
-        cors = [middleware for middleware in fastapi_app.user_middleware if middleware.cls is CORSMiddleware]
+        cors = [middleware for middleware in fastapi_app.user_middleware if _is_cors_middleware(middleware)]
         fastapi_app.user_middleware[:] = cors + [
-            middleware for middleware in fastapi_app.user_middleware if middleware.cls is not CORSMiddleware
+            middleware for middleware in fastapi_app.user_middleware if not _is_cors_middleware(middleware)
         ]
 
         if self.base_app is not None:

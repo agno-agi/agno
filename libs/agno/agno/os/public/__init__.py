@@ -45,7 +45,9 @@ class PublicSurface:
     service-account credentials retain their existing public request contracts.
 
     ``enforce_browser_origins=True`` rejects run and workflow-socket requests with
-    an Origin outside AgentOS's exact/regex CORS policy. Requests without Origin
+    an Origin outside AgentOS's exact/regex CORS policy. Browsers also send Origin
+    on same-origin POSTs and WebSockets, so a page served from the AgentOS's own
+    domain is rejected unless that origin is listed too. Requests without Origin
     retain their native authentication and quotas. It does not trust client IPs.
     """
 

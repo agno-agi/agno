@@ -6,14 +6,14 @@ from starlette.middleware.cors import CORSMiddleware
 
 from agno.agent import Agent
 from agno.os import AgentOS, CORSConfig
-from agno.os.middleware.cors import OriginPolicy, combine_origin_patterns
-from agno.os.utils import resolve_origins, update_cors_middleware
+from agno.os.middleware.cors import OriginPolicy, OriginPolicyCORSMiddleware
+from agno.os.utils import _is_cors_middleware, resolve_origins, update_cors_middleware
 
 
-def _starlette_cors(app: FastAPI) -> CORSMiddleware:
-    cors = [m for m in app.user_middleware if m.cls is CORSMiddleware]
+def _installed_cors(app: FastAPI) -> CORSMiddleware:
+    cors = [m for m in app.user_middleware if _is_cors_middleware(m)]
     assert len(cors) == 1
-    return CORSMiddleware(app, **cors[0].kwargs)
+    return cors[0].cls(app, **cors[0].kwargs)
 
 
 def _preflight(app: FastAPI, origin: str):
@@ -34,7 +34,7 @@ def test_base_app_origins_and_patterns_can_be_preserved_or_replaced(merge):
     assert policy.allows("https://old.example") is merge
     assert policy.allows("https://old-feature.example") is merge
     assert not policy.allows("https://new-feature.example.evil")
-    middleware = _starlette_cors(app)
+    middleware = _installed_cors(app)
     for origin in ("https://docs.example", "https://new-feature.example", "https://old.example", "https://evil.test"):
         assert middleware.is_allowed_origin(origin) == policy.allows(origin)
 
@@ -112,14 +112,57 @@ def test_inline_flag_regex_on_base_app_merges_with_agentos_regex():
         ([r"(?i)https://a\.test", r"https://b\.test"], ["https://A.TEST", "https://b.test"], ["https://B.TEST"]),
         ([r"(?x) https://a \. test  # verbose", r"https://b\.test"], ["https://a.test", "https://b.test"], []),
         ([r"https://a\.test|https://c\.test", r"https://b\.test"], ["https://c.test", "https://b.test"], []),
+        (
+            [r"https://(?P<sub>[a-z]+)\.a\.test", r"https://(?P<sub>[a-z]+)\.b\.test"],
+            ["https://x.a.test", "https://y.b.test"],
+            [],
+        ),
+        ([r"https://(x)\1\.test", r"https://(y)\1\.test"], ["https://xx.test", "https://yy.test"], ["https://xy.test"]),
     ],
 )
-def test_combined_patterns_keep_each_pattern_semantics(patterns, allowed, denied):
-    policy = OriginPolicy([], combine_origin_patterns(patterns))
+def test_patterns_are_matched_independently(patterns, allowed, denied):
+    policy = OriginPolicy([], patterns)
     for origin in allowed:
         assert policy.allows(origin), origin
     for origin in [*denied, "https://a.test.evil", "https://evil.test"]:
         assert not policy.allows(origin), origin
+
+
+def test_named_groups_in_cors_config_and_base_app_patterns():
+    base = FastAPI()
+    base.add_middleware(CORSMiddleware, allow_origin_regex=r"https://(?P<sub>[a-z]+)\.legacy\.test")
+    app = AgentOS(
+        agents=[Agent(id="docs", telemetry=False)],
+        base_app=base,
+        cors=CORSConfig(origins=[], origin_regex=r"https://(?P<sub>[a-z]+)\.docs\.test"),
+        telemetry=False,
+    ).get_app()
+    assert [m.cls for m in app.user_middleware if _is_cors_middleware(m)] == [OriginPolicyCORSMiddleware]
+    assert _preflight(app, "https://a.legacy.test").status_code == 200
+    assert _preflight(app, "https://b.docs.test").status_code == 200
+    assert _preflight(app, "https://b.docs.test.evil").status_code == 400
+
+
+def test_single_pattern_keeps_plain_starlette_cors_middleware():
+    base = FastAPI()
+    base.add_middleware(CORSMiddleware, allow_origins=["https://old.example"], allow_origin_regex=r"https://a\.test")
+    app = AgentOS(agents=[Agent(id="docs", telemetry=False)], base_app=base, telemetry=False).get_app()
+    cors = [m for m in app.user_middleware if _is_cors_middleware(m)]
+    assert [m.cls for m in cors] == [CORSMiddleware]
+    assert cors[0].kwargs["allow_origin_regex"] == r"https://a\.test"
+    assert "https://old.example" in cors[0].kwargs["allow_origins"]
+
+
+def test_policy_middleware_is_merged_again_on_reapplication():
+    app = FastAPI()
+    first = update_cors_middleware(app, ["https://a.test"], origin_regex=r"https://b\.test")
+    app.add_middleware(CORSMiddleware, allow_origin_regex=r"https://c\.test")
+    update_cors_middleware(app, [], origin_regex=r"https://d\.test")
+    second = update_cors_middleware(app, [], origin_regex=r"https://e\.test")
+    assert first.allows("https://b.test")
+    for origin in ("https://a.test", "https://b.test", "https://c.test", "https://d.test", "https://e.test"):
+        assert second.allows(origin), origin
+        assert _installed_cors(app).is_allowed_origin(origin), origin
 
 
 def test_base_app_replacement_is_available_on_agentos():

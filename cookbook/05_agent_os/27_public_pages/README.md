@@ -570,8 +570,10 @@ CORS wraps authentication, public admission and native MCP routing, so allowed
 browsers receive consistent headers on 401/403/413/429 responses. With
 `PublicSurface(enforce_browser_origins=True)`, the same origin policy also rejects
 run/cancel requests and workflow WebSocket upgrades from unlisted or ambiguous
-origins. Missing Origin remains valid for non-browser clients and does not bypass
-authentication or quotas. Origin enforcement is opt-in for existing applications.
+origins. Browsers send Origin on same-origin POSTs and WebSockets as well, so if
+pages are served from the AgentOS's own domain, list that origin too. Missing
+Origin remains valid for non-browser clients and does not bypass authentication
+or quotas. Origin enforcement is opt-in for existing applications.
 
 For public MCP with this option enabled, explicitly allowed browser origins and
 patterns are accepted by the MCP transport's origin guard as well. Its existing
