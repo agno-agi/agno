@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
     from agno.offload.store import ResultStore
 
+from agno.agent.followup import FollowupConfig, model_identity
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
@@ -265,6 +266,20 @@ def _offload_from_config(value: Any) -> Optional[Union[bool, "ResultStore"]]:
         from agno.offload.store import ResultStore
 
         return ResultStore.from_dict(value)
+    return bool(value)
+
+
+def _followups_to_config(value: Union[bool, FollowupConfig]) -> Union[bool, Dict[str, Any]]:
+    """The followups setting as it is stored: True, False, or the FollowupConfig fields."""
+    if isinstance(value, FollowupConfig):
+        return value.to_dict()
+    return bool(value)
+
+
+def _followups_from_config(value: Any, registry: Optional[Registry] = None) -> Union[bool, FollowupConfig]:
+    """The followups setting from a stored config: False when unset, True, False, or a FollowupConfig."""
+    if isinstance(value, dict):
+        return FollowupConfig.from_dict(value, registry)
     return bool(value)
 
 
@@ -1034,6 +1049,19 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
             config["reasoning_model"] = str(agent.reasoning_model)
     # Skip reasoning_agent to avoid circular serialization
 
+    # --- Followup settings ---
+    if agent.followups:
+        config["followups"] = _followups_to_config(agent.followups)
+    # A FollowupConfig carries the count and model; the top-level fields are stored only without one.
+    if not isinstance(agent.followups, FollowupConfig):
+        if agent.num_followups != 3:
+            config["num_followups"] = agent.num_followups
+        if agent.followup_model is not None:
+            if isinstance(agent.followup_model, Model):
+                config["followup_model"] = model_identity(agent.followup_model)
+            else:
+                config["followup_model"] = str(agent.followup_model)
+
     # --- Default tools settings ---
     if agent.read_chat_history:
         config["read_chat_history"] = agent.read_chat_history
@@ -1175,6 +1203,10 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # TODO: implement compression manager serialization
     # if agent.compression_manager is not None:
     #     config["compression_manager"] = agent.compression_manager.to_dict()
+    # TODO: implement compaction serialization - until then an agent saved with compaction
+    # (True or a Compaction) loads back with it off.
+    # if agent.compaction is not None:
+    #     config["compaction"] = agent.compaction if isinstance(agent.compaction, bool) else agent.compaction.to_dict()
 
     # --- Callable factory settings ---
     if not agent.cache_callables:
@@ -1227,6 +1259,10 @@ def from_dict(
     # --- Handle reasoning_model reconstruction ---
     if config.get("reasoning_model") is not None:
         config["reasoning_model"] = resolve_model(config["reasoning_model"], registry)
+
+    # --- Handle followup model reconstruction ---
+    if config.get("followup_model") is not None:
+        config["followup_model"] = resolve_model(config["followup_model"], registry)
 
     # --- Handle parser_model reconstruction ---
     # TODO: implement parser model deserialization
@@ -1391,6 +1427,12 @@ def from_dict(
     #     from agno.compression.manager import CompressionManager
     #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
 
+    # --- Handle Compaction reconstruction ---
+    # TODO: implement compaction deserialization
+    # if "compaction" in config and isinstance(config["compaction"], dict):
+    #     from agno.compaction import Compaction
+    #     config["compaction"] = Compaction.from_dict(config["compaction"])
+
     # --- Handle Learning reconstruction ---
     # A named machine is stored as a reference and resolved from the registry;
     # any other dict is an inline machine config and is rebuilt here.
@@ -1459,6 +1501,10 @@ def from_dict(
         tool_choice=config.get("tool_choice"),
         # --- Reasoning settings ---
         reasoning_model=config.get("reasoning_model"),
+        # --- Followup settings ---
+        followups=_followups_from_config(config.get("followups"), registry),
+        num_followups=config.get("num_followups"),
+        followup_model=config.get("followup_model"),
         # --- Default tools settings ---
         read_chat_history=config.get("read_chat_history", False),
         search_knowledge=config.get("search_knowledge", True),

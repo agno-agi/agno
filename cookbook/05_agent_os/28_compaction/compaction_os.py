@@ -25,7 +25,7 @@ Compaction also folds on demand, without waiting for the threshold:
 See rest_api_compaction.py in this folder for that flow end to end.
 
 Prerequisites: OPENAI_API_KEY
-Run: .venvs/demo/bin/python cookbook/05_agent_os/21_compaction/compaction_os.py
+Run: .venvs/demo/bin/python cookbook/05_agent_os/28_compaction/compaction_os.py
 Try: open the chat UI, then ask several long questions in one session
 """
 
@@ -65,7 +65,7 @@ research_agent = Agent(
         # pay for the summary. A 1-turn tail reaches that after a few turns; a larger
         # one needs proportionally more conversation in front of it first.
         uncompacted_runs=1,
-        searchable=True,
+        search_compacted_messages=True,
     ),
     markdown=True,
     instructions=[
@@ -89,7 +89,7 @@ manual_agent = Agent(
         # No automatic trigger: this session folds only via POST .../compact.
         compact_at_tokens=None,
         uncompacted_runs=1,
-        searchable=True,
+        search_compacted_messages=True,
     ),
     markdown=True,
     instructions=[

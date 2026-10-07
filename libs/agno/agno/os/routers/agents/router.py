@@ -54,6 +54,7 @@ from agno.os.job_queue import (
 )
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
+    SESSION_NOT_FOUND,
     assert_session_matches_component,
     assert_session_writable,
     caller_is_admin,
@@ -1846,7 +1847,7 @@ def get_agent_router(
             "- ``nothing_to_fold`` - the kept tail covers the whole conversation\n"
             "- ``already_compacted`` - a previous fold already covers everything up to the only "
             "safe cut point\n"
-            "- ``no_history`` - the session has no stored history yet\n"
+            "- ``no_history`` - the session exists but has no stored history yet\n"
             "- ``not_enabled`` - compaction is not configured on this agent\n"
             "- ``summary_failed`` - the summarizer returned nothing"
         ),
@@ -1886,7 +1887,7 @@ def get_agent_router(
                     }
                 },
             },
-            404: {"description": "Agent not found", "model": NotFoundResponse},
+            404: {"description": "Agent or session not found", "model": NotFoundResponse},
         },
         dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
     )
@@ -1921,6 +1922,20 @@ def get_agent_router(
         # Scope the session read to the caller, so one user cannot compact another's session.
         scoped_user_id = get_scoped_user_id(request)
         effective_user_id = scoped_user_id or user_id
+
+        # The session must belong to this agent: the per-resource gate authorised agent_id, not
+        # whichever session id the client named.
+        await verify_run_belongs_to_component(
+            request,
+            getattr(agent, "db", None) or os.db,
+            component_type="agents",
+            component_id=agent_id,
+            session_id=session_id,
+        )
+        # A missing session is a 404, as on the other session routes. no_history is kept for a
+        # session that exists but has nothing to fold yet.
+        if await agent.aget_session(session_id=session_id, user_id=effective_user_id) is None:  # type: ignore[union-attr]
+            raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
 
         result = await agent.acompact(session_id=session_id, user_id=effective_user_id)  # type: ignore[union-attr]
         return result.to_dict()

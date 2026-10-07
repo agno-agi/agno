@@ -3,7 +3,7 @@
 The archive is what makes compaction non-lossy. A summary alone is a guess about what mattered;
 with the originals still readable the summary becomes an index over ground truth, and a detail it
 dropped can still be recovered - by a developer reading the row, or by the agent itself when
-``searchable`` is on.
+``search_compacted_messages`` is on.
 
 Records live in the ``agno_compactions`` table, one row per fold, written once and never updated.
 Rows rather than files because a fold is a fact about a run: two containers writing different runs
@@ -24,6 +24,25 @@ from agno.utils.log import log_debug, log_warning
 MAX_ARCHIVED_TOOL_RESULT_CHARS = 20_000
 
 
+def render_message(message: Message) -> str:
+    """Render one message as a markdown block. Tool results are clipped to MAX_ARCHIVED_TOOL_RESULT_CHARS."""
+    heading = message.role
+    if message.tool_name:
+        heading = f"{message.role} ({message.tool_name})"
+    parts: List[str] = [f"## {heading}"]
+
+    content = message.get_content_string()
+    if content:
+        parts.append(_clip(content, MAX_ARCHIVED_TOOL_RESULT_CHARS) if message.role == "tool" else content)
+
+    for tool_call in message.tool_calls or []:
+        function = tool_call.get("function") if isinstance(tool_call, dict) else None
+        if isinstance(function, dict):
+            parts.append(f"**calls** `{function.get('name')}`: {function.get('arguments')}")
+
+    return "\n\n".join(parts)
+
+
 def render_messages(messages: List[Message]) -> str:
     """Render messages as readable markdown.
 
@@ -31,24 +50,7 @@ def render_messages(messages: List[Message]) -> str:
     name the tool: a search for a tool name or a phrase from an old answer should land on the turn
     that produced it.
     """
-    blocks: List[str] = []
-    for message in messages:
-        heading = message.role
-        if message.tool_name:
-            heading = f"{message.role} ({message.tool_name})"
-        parts: List[str] = [f"## {heading}"]
-
-        content = message.get_content_string()
-        if content:
-            parts.append(_clip(content, MAX_ARCHIVED_TOOL_RESULT_CHARS) if message.role == "tool" else content)
-
-        for tool_call in message.tool_calls or []:
-            function = tool_call.get("function") if isinstance(tool_call, dict) else None
-            if isinstance(function, dict):
-                parts.append(f"**calls** `{function.get('name')}`: {function.get('arguments')}")
-
-        blocks.append("\n\n".join(parts))
-    return "\n\n".join(blocks)
+    return "\n\n".join(render_message(message) for message in messages)
 
 
 def _clip(text: str, limit: int) -> str:
@@ -57,12 +59,13 @@ def _clip(text: str, limit: int) -> str:
     return text[:limit] + f"\n... [clipped, {len(text) - limit} more characters]"
 
 
-_REGEX_SYNTAX = set(".^$*+?{}[]\\|()")
+# The most alternatives one search may carry.
+MAX_SEARCH_TERMS = 20
 
 
-def _is_plain_text(query: str) -> bool:
-    """Whether this pattern can be handed to SQL as a literal substring."""
-    return not any(character in _REGEX_SYNTAX for character in query)
+def search_terms(pattern: str) -> List[str]:
+    """The literal terms of a search: the pattern split on "|"."""
+    return [term.strip() for term in pattern.split("|") if term.strip()][:MAX_SEARCH_TERMS]
 
 
 class CompactionArchive:
@@ -142,18 +145,17 @@ class CompactionArchive:
         return None
 
     def search(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Candidate rows for a search.
+        """Candidate rows for a search: every fold containing any of its terms, newest first.
 
-        A regex cannot be pushed into SQL portably, so anything with regex syntax in it falls
-        back to listing the session's rows and letting the caller scan them. Sessions hold a
-        handful of records, so the difference is between an indexed lookup and a trivial one -
-        and a prefilter that silently dropped rows a regex would have matched would be worse
-        than no prefilter at all.
+        All terms go to SQL as one substring filter. LIKE wildcards in a term can only widen the
+        match, and the caller matches exactly afterwards, so no fold that holds a term is dropped -
+        however old it is.
         """
+        terms = search_terms(query)
+        if not terms:
+            return []
         try:
-            if _is_plain_text(query):
-                return self._method("search_compactions")(self.session_id, query, limit)
-            return self._method("get_compactions_for_session")(self.session_id, limit)
+            return self._method("search_compactions")(self.session_id, terms, limit)
         except NotImplementedError:
             return []
         except Exception as e:  # noqa: BLE001
@@ -161,4 +163,10 @@ class CompactionArchive:
             return []
 
 
-__all__ = ["CompactionArchive", "render_messages", "MAX_ARCHIVED_TOOL_RESULT_CHARS"]
+__all__ = [
+    "CompactionArchive",
+    "render_message",
+    "render_messages",
+    "search_terms",
+    "MAX_ARCHIVED_TOOL_RESULT_CHARS",
+]

@@ -1297,6 +1297,7 @@ class PostgresDb(BaseDb):
             if table is None:
                 return False
             runs_table = self._get_table(table_type="runs")
+            compactions_table = self._get_table(table_type="compactions")
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
@@ -1311,6 +1312,11 @@ class PostgresDb(BaseDb):
                 # Also delete the runs belonging to the session
                 if runs_table is not None:
                     sess.execute(runs_table.delete().where(runs_table.c.session_id == session_id))
+                # And its compaction records. They hold the folded transcript verbatim, and are
+                # found by session id - left behind, a session recreated under the same id would
+                # inherit the old fold and offer the agent a search over the deleted conversation.
+                if compactions_table is not None:
+                    sess.execute(compactions_table.delete().where(compactions_table.c.session_id == session_id))
 
                 log_debug(f"Successfully deleted session with session_id: {session_id} in table {table.name}")
 
@@ -1340,6 +1346,7 @@ class PostgresDb(BaseDb):
             if table is None:
                 return
             runs_table = self._get_table(table_type="runs")
+            compactions_table = self._get_table(table_type="compactions")
 
             with self.Session() as sess, sess.begin():
                 # The ids a user_id-scoped delete is allowed to touch. The
@@ -1365,6 +1372,13 @@ class PostgresDb(BaseDb):
                     if user_id is not None:
                         runs_delete_stmt = runs_delete_stmt.where(runs_table.c.user_id == user_id)
                     sess.execute(runs_delete_stmt)
+
+                # And their compaction records. They hold the folded transcript verbatim, and are
+                # found by session id - left behind, a session recreated under the same id would
+                # inherit the old fold and offer the agent a search over the deleted conversation.
+                # Scoped like the tool-result cascade: only sessions this delete was allowed to remove.
+                if compactions_table is not None:
+                    sess.execute(compactions_table.delete().where(compactions_table.c.session_id.in_(cascade_ids)))
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")
 
@@ -1495,6 +1509,14 @@ class PostgresDb(BaseDb):
             result = sess.execute(table.delete().where(table.c.result_id.in_(result_ids)))
         return result.rowcount or 0
 
+    def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
+        table = self._get_table(table_type="tool_results")
+        if table is None:
+            return []
+        stmt = select(table).where(table.c.expires_at.is_not(None)).where(table.c.expires_at <= now)
+        with self.Session() as sess:
+            return [dict(row._mapping) for row in sess.execute(stmt).fetchall()]
+
     # --- Compactions ---
 
     def upsert_compaction(self, row: Dict[str, Any]) -> None:
@@ -1539,32 +1561,28 @@ class PostgresDb(BaseDb):
             result = sess.execute(table.delete().where(table.c.session_id == session_id))
             return result.rowcount or 0
 
-    def search_compactions(self, session_id: str, query: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Records whose archived transcript contains ``query``, newest first.
+    def search_compactions(
+        self, session_id: str, query: Union[str, Sequence[str]], limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Records whose archived transcript contains ``query`` - or any of several terms - newest first.
 
-        A substring match, scoped to one session so a search can never reach
-        another conversation's history.
+        A substring match, scoped to one session so a search can never reach another conversation's
+        history. Several terms are one query, so every fold matching any of them is a candidate.
         """
         table = self._get_table(table_type="compactions")
-        if table is None or not query:
+        terms = [query] if isinstance(query, str) else list(query)
+        terms = [term for term in terms if term]
+        if table is None or not terms:
             return []
         stmt = (
             select(table)
             .where(table.c.session_id == session_id)
-            .where(table.c.archived_messages.ilike(f"%{query}%"))
+            .where(or_(*(table.c.archived_messages.ilike(f"%{term}%") for term in terms)))
             .order_by(table.c.created_at.desc())
             .limit(limit)
         )
         with self.Session() as sess:
             return [dict(r._mapping) for r in sess.execute(stmt).fetchall()]
-
-    def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
-        table = self._get_table(table_type="tool_results")
-        if table is None:
-            return []
-        stmt = select(table).where(table.c.expires_at.is_not(None)).where(table.c.expires_at <= now)
-        with self.Session() as sess:
-            return [dict(row._mapping) for row in sess.execute(stmt).fetchall()]
 
     def get_session(
         self,

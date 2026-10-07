@@ -41,7 +41,7 @@ compaction = Compaction(
     # A small model is enough to summarize a transcript.
     model=OpenAIResponses(id="gpt-5-mini"),
     compact_at_tokens=1_000,
-    # Keep the last two turns verbatim; everything older folds into the summary.
+    # Keep the last turn verbatim; everything older folds into the summary.
     uncompacted_runs=1,
 )
 

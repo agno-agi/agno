@@ -554,7 +554,7 @@ def _run(
                 model_response: ModelResponse = call_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
-                    on_context_overflow=lambda: _recompact_after_overflow(
+                    recover_from_overflow=lambda: _recompact_after_overflow(
                         agent, agent_session, run_messages, run_response, _tools
                     ),
                     messages=run_messages.messages,
@@ -1547,7 +1547,7 @@ async def _arun(
     """
     from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
-    from agno.agent._messages import _recompact_after_overflow, aget_run_messages
+    from agno.agent._messages import _arecompact_after_overflow, aget_run_messages
     from agno.agent._response import (
         agenerate_followups,
         agenerate_response_with_output_model,
@@ -1705,7 +1705,7 @@ async def _arun(
                 model_response: ModelResponse = await acall_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
-                    on_context_overflow=lambda: _recompact_after_overflow(
+                    recover_from_overflow=lambda: _arecompact_after_overflow(
                         agent, agent_session, run_messages, run_response, _tools
                     ),
                     messages=run_messages.messages,
@@ -3406,6 +3406,29 @@ def _sync_requirements_with_tools(run_response: RunOutput, updated_tools: List[A
                 req.tool_execution = updated_tools_map[req.tool_execution.tool_call_id]
 
 
+def _apply_requirement_tools(run_response: RunOutput, requirements: List[Any]) -> None:
+    """Set the continue requirements on the run and merge their tool executions into run_response.tools.
+
+    A call that already ran keeps the run's own copy. A requirement can carry an
+    out-of-date copy of that call (confirmed, no result), for example after an
+    earlier pause was resolved from the approvals table; swapping it in would
+    execute the call a second time.
+    """
+    run_response.requirements = requirements
+    updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+    if updated_tools and run_response.tools:
+        # Checked per tool, not per tool_call_id: ids can repeat across turns (some
+        # providers send none and a fallback like call_{i} is used), and a new call
+        # sharing an executed call's id must still take its requirement.
+        updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+        run_response.tools = [
+            updated_tools_map.get(tool.tool_call_id, tool) if tool.result is None else tool
+            for tool in run_response.tools
+        ]
+    else:
+        run_response.tools = updated_tools
+
+
 def continue_run_dispatch(
     agent: Agent,
     run_response: Optional[RunOutput] = None,
@@ -3649,13 +3672,7 @@ def continue_run_dispatch(
 
         # If we have requirements, get the updated tools and set them in the run_response
         if requirements is not None:
-            run_response.requirements = requirements
-            updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
-            if updated_tools and run_response.tools:
-                updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
-            else:
-                run_response.tools = updated_tools
+            _apply_requirement_tools(run_response, requirements)
 
         else:
             # No tools / requirements in the body. Two cases:
@@ -3835,7 +3852,7 @@ def _continue_run(
                 model_response: ModelResponse = call_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
-                    on_context_overflow=lambda: _recompact_after_overflow(
+                    recover_from_overflow=lambda: _recompact_after_overflow(
                         agent, session, run_messages, run_response, tools
                     ),
                     messages=run_messages.messages,
@@ -4834,7 +4851,7 @@ async def _acontinue_run(
     """
     from agno.agent._hooks import aexecute_post_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
-    from agno.agent._messages import _recompact_after_overflow, aget_continue_run_messages
+    from agno.agent._messages import _arecompact_after_overflow, aget_continue_run_messages
     from agno.agent._response import (
         agenerate_followups,
         agenerate_response_with_output_model,
@@ -4989,15 +5006,7 @@ async def _acontinue_run(
 
                     # If we have requirements, get the updated tools and set them in the run_response
                     if requirements is not None:
-                        run_response.requirements = requirements
-                        updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
-                        if updated_tools and run_response.tools:
-                            updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                            run_response.tools = [
-                                updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools
-                            ]
-                        else:
-                            run_response.tools = updated_tools
+                        _apply_requirement_tools(run_response, requirements)
 
                     else:
                         # No tools / requirements in the body. Two cases:
@@ -5085,7 +5094,7 @@ async def _acontinue_run(
                 model_response: ModelResponse = await acall_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
-                    on_context_overflow=lambda: _recompact_after_overflow(
+                    recover_from_overflow=lambda: _arecompact_after_overflow(
                         agent, agent_session, run_messages, run_response, _tools
                     ),
                     messages=run_messages.messages,
@@ -5516,15 +5525,7 @@ async def _acontinue_run_stream(
 
                     # If we have requirements, get the updated tools and set them in the run_response
                     if requirements is not None:
-                        run_response.requirements = requirements
-                        updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
-                        if updated_tools and run_response.tools:
-                            updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                            run_response.tools = [
-                                updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools
-                            ]
-                        else:
-                            run_response.tools = updated_tools
+                        _apply_requirement_tools(run_response, requirements)
 
                     else:
                         # No tools / requirements in the body. Two cases:

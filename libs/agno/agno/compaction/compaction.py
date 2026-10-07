@@ -3,22 +3,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union, cast
 from uuid import uuid4
 
 from agno.compaction._cut import choose_boundary, is_offload_envelope
 from agno.compaction._tokens import TokenCounter, count_request, estimate_tokens
 from agno.compaction._view import build_view
-from agno.compaction.archive import CompactionArchive, render_messages
+from agno.compaction.archive import CompactionArchive, render_message, render_messages, search_terms
 from agno.compaction.prompts import (
     ARCHIVE_AWARE_PROMPT,
     ARCHIVE_LOOKUP_INSTRUCTION,
     DEFAULT_COMPACTION_PROMPT,
-    SUMMARY_BUDGET_INSTRUCTION,
 )
 from agno.compaction.types import CompactionRecord, CompactionStats, CompactionStatus
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.models.utils import get_model
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 if TYPE_CHECKING:
@@ -26,8 +26,20 @@ if TYPE_CHECKING:
 
 
 # Summarizing an enormous transcript in one call is unreliable and can itself
-# overflow. Trim what the summarizer reads, oldest first, to this budget.
-DEFAULT_SUMMARIZE_CHAR_BUDGET = 100_000
+# overflow. Trim what the summarizer reads, oldest first, to this budget - about
+# 100k tokens, so a fold at the default compact_at_tokens fits in one call.
+DEFAULT_SUMMARIZE_CHAR_BUDGET = 400_000
+
+# Bounds on what one archive search can return. The result lands in the context window, so an
+# unbounded one could overflow it on its own - and on a small model, sink the retry after an
+# overflow fold as well.
+_SEARCH_MAX_CONTEXT_LINES = 10
+_SEARCH_LINE_CHARS = 500
+_SEARCH_OUTPUT_CHARS = 8_000
+# Folds one search scans. Generous, so a term common in recent folds cannot crowd out an older
+# fold that holds another term; the output cap bounds what comes back either way.
+_SEARCH_MAX_FOLDS = 20
+
 
 # The default kept tail, and a sentinel standing in for "nobody set this". Comparing against
 # the value alone cannot tell uncompacted_runs=5 written by hand from the default, so an explicit
@@ -56,11 +68,11 @@ _UNCOMPACTED_RUNS_UNSET = _Unset(_UNCOMPACTED_RUNS_DEFAULT)
 class Compaction:
     """Keeps a long session inside the context window.
 
-    When the conversation crosses a threshold, the older messages are archived
+    When the conversation crosses a threshold, the older messages are stored
     verbatim and replaced in context by a generated summary. Nothing is lost:
     the summary stands in for the originals, and the originals stay readable -
     by a developer reading the row, and by the agent itself, which gets a
-    read-only search over them unless ``searchable`` is turned off.
+    read-only search over them unless ``search_compacted_messages`` is turned off.
 
     Only the message list sent to the model is rewritten. What the session
     persists is untouched, so compaction can never corrupt the record of what
@@ -76,12 +88,13 @@ class Compaction:
     # Type of the owner: "agent" or "team" (set when registered in the OS).
     owner_type: Optional[str] = None
 
-    # Model that writes the summary. Defaults to the agent's model.
-    model: Optional[Model] = None
-    # Replaces the default summarization prompt.
+    # Model that writes the summary: a Model, or a "provider:model_id" string. Defaults to the
+    # agent's model.
+    model: Optional[Union[Model, str]] = None
+    # Extra guidance for the summarizer, added to the default prompt - e.g. "Keep every ticket id".
     instructions: Optional[str] = None
     # Soft length target for the summary, stated in the prompt.
-    summary_budget_tokens: int = 2_000
+    compacted_token_budget: int = 2_000
 
     # -- when to compact ------------------------------------------------
     # Fold when the context reaches this many tokens. None folds only on agent.compact() or overflow.
@@ -97,11 +110,13 @@ class Compaction:
     # Recent history kept verbatim, by size instead of runs. Mutually exclusive with uncompacted_runs.
     uncompacted_tokens: Optional[int] = None
 
-    # -- archive --------------------------------------------------------
-    # Store folded messages so they stay recoverable.
-    archive: bool = True
-    # Let the agent search the archive for detail the summary dropped.
-    searchable: bool = True
+    # -- stored history -------------------------------------------------
+    # Store the folded messages in the database so they stay recoverable. The fold and its summary
+    # are stored either way; this keeps the original messages too.
+    store_compacted_messages: bool = True
+    # Give the agent a tool to search the stored messages for detail the summary dropped. Unset, it
+    # follows store_compacted_messages.
+    search_compacted_messages: Optional[bool] = None
 
     # Also fold and retry when the provider rejects a request as too long. compaction=True turns it on.
     on_context_overflow: bool = False
@@ -113,6 +128,20 @@ class Compaction:
     def __post_init__(self) -> None:
         if self.id is None:
             self.id = f"compaction_{uuid4().hex[:8]}"
+        # Resolve a "provider:model_id" string once, as the other managers do, so every summary
+        # call has a Model to call. Anything else is used as given.
+        if isinstance(self.model, str):
+            self.model = get_model(self.model)
+        # Search reads the stored messages, so unset it follows storing them. Asking for search
+        # while turning storage off is a contradiction - raise rather than drop it silently.
+        if self.search_compacted_messages is None:
+            self.search_compacted_messages = self.store_compacted_messages
+        elif self.search_compacted_messages and not self.store_compacted_messages:
+            raise ValueError(
+                "search_compacted_messages=True needs store_compacted_messages=True: the search tool "
+                "reads the stored messages, which store_compacted_messages=False does not keep. Turn "
+                "storing on, or leave search_compacted_messages unset."
+            )
         # Asking for overflow recovery is asking to fold when the provider says so. A default
         # threshold would pre-empt that on any model with a window above it - which is every
         # large model - leaving the flag dead code. An explicit threshold still wins: naming
@@ -131,6 +160,13 @@ class Compaction:
             raise ValueError(f"uncompacted_runs must be zero or a positive integer, got {self.uncompacted_runs}")
         if self.uncompacted_tokens is not None and self.uncompacted_tokens <= 0:
             raise ValueError(f"uncompacted_tokens must be a positive integer, got {self.uncompacted_tokens}")
+        # The tail limit divides by 1 + min_fold_ratio, so a negative ratio would divide by zero or
+        # flip the limit's sign.
+        if self.min_fold_ratio < 0:
+            raise ValueError(
+                f"min_fold_ratio must be zero or a positive number, got {self.min_fold_ratio}. "
+                "Use 0 to fold regardless of size."
+            )
         # Raise rather than pick a winner: silently honouring one of two settings the user
         # deliberately set is the kind of surprise that costs an afternoon to track down.
         # None is "not set", which is also what validation leaves behind below - so a config that
@@ -228,8 +264,10 @@ class Compaction:
         """Index the kept tail starts at, for a request expressed in turns.
 
         ``uncompacted_runs`` names a position, so this returns one. The boundary walk then only
-        snaps it earlier for safety - it never moves later, which is what makes the setting a
-        floor: you may keep more than asked, never less.
+        snaps it earlier for safety - it never moves later, so the cut itself never keeps fewer
+        runs than asked. The tail limit can still keep fewer: when the requested runs exceed
+        compact_at_tokens / (1 + min_fold_ratio), the tail is cut to that size (never inside the
+        newest exchange), since a tail that large could never pass the fold ratio.
         """
         keep_runs = self.uncompacted_runs or 0
         if keep_runs <= 0:
@@ -350,11 +388,16 @@ class Compaction:
     # -- summarizing ----------------------------------------------------
 
     def _trim_for_summary(self, messages: List[Message]) -> List[Message]:
-        """Drop the oldest messages that do not fit the summarizer's budget."""
+        """Drop the oldest messages that do not fit the summarizer's budget.
+
+        Each message is measured as it is rendered for the summarizer, so a large tool result
+        counts at its clipped size - the text actually sent - rather than spending budget on
+        characters the summarizer never receives.
+        """
         kept: List[Message] = []
         budget = DEFAULT_SUMMARIZE_CHAR_BUDGET
         for message in reversed(messages):
-            size = len(message.get_content_string())
+            size = len(render_message(message)) + 2  # + the block separator
             if budget - size < 0 and kept:
                 break
             budget -= size
@@ -375,12 +418,11 @@ class Compaction:
             transcript = (
                 f"Summary of the conversation before this point:\n{previous}\n\nConversation since then:\n{transcript}"
             )
+        prompt = DEFAULT_COMPACTION_PROMPT.format(budget_tokens=self.compacted_token_budget)
         if self.instructions:
-            # Custom instructions replace the default prompt, and with it the length budget.
-            budget = SUMMARY_BUDGET_INSTRUCTION.format(budget_tokens=self.summary_budget_tokens)
-            prompt = f"{self.instructions}\n\n{budget}"
-        else:
-            prompt = DEFAULT_COMPACTION_PROMPT.format(budget_tokens=self.summary_budget_tokens)
+            # Added to, not instead of, the prompt: guidance like "keep ticket ids" must not cost
+            # the structure that carries earlier summaries forward.
+            prompt += f"\n\nAdditional instructions:\n{self.instructions}"
         # Only ask the summary to flag its own gaps when there is somewhere to
         # go and read them. Without an archive the line would name detail the
         # assistant has no way to recover, which is worse than not saying it.
@@ -398,11 +440,12 @@ class Compaction:
         run_metrics: Optional["RunMetrics"] = None,
         archived: bool = False,
     ) -> Optional[str]:
-        if self.model is None:
+        model = self._summary_model()
+        if model is None:
             log_warning("No compaction model available")
             return None
         try:
-            response = self.model.response(messages=self._summary_messages(messages, previous, archived))
+            response = model.response(messages=self._summary_messages(messages, previous, archived))
         except Exception as e:
             log_error(f"Error compacting conversation: {e}")
             return None
@@ -416,31 +459,41 @@ class Compaction:
         run_metrics: Optional["RunMetrics"] = None,
         archived: bool = False,
     ) -> Optional[str]:
-        if self.model is None:
+        model = self._summary_model()
+        if model is None:
             log_warning("No compaction model available")
             return None
         try:
-            response = await self.model.aresponse(messages=self._summary_messages(messages, previous, archived))
+            response = await model.aresponse(messages=self._summary_messages(messages, previous, archived))
         except Exception as e:
             log_error(f"Error compacting conversation: {e}")
             return None
         self._accumulate(response, run_metrics)
         return response.content
 
+    def _summary_model(self) -> Optional[Model]:
+        # __post_init__ resolved any string, so this is a Model or None.
+        return cast(Optional[Model], self.model)
+
     def _accumulate(self, response: Any, run_metrics: Optional["RunMetrics"]) -> None:
-        if run_metrics is None or self.model is None:
+        model = self._summary_model()
+        if run_metrics is None or model is None:
             return
         from agno.metrics import ModelType, accumulate_model_metrics
 
-        accumulate_model_metrics(response, self.model, ModelType.COMPACTION_MODEL, run_metrics)
+        accumulate_model_metrics(response, model, ModelType.COMPACTION_MODEL, run_metrics)
 
     # -- archive --------------------------------------------------------
 
     def archive_for(
         self, session_id: str, db: Optional[Any] = None, user_id: Optional[str] = None
     ) -> Optional[CompactionArchive]:
-        """The archive for one session, or None when it is off or unavailable."""
-        if not self.archive or db is None:
+        """The record store for one session, or None without a database.
+
+        Fold records are kept whatever ``store_compacted_messages`` says - they are what makes a fold
+        outlast the run that made it. It decides only whether the folded messages go in with them.
+        """
+        if db is None:
             return None
         return CompactionArchive(db, session_id, user_id)
 
@@ -466,7 +519,7 @@ class Compaction:
         # search tools the archive exists for a developer, not the model, and
         # telling it to read a file it cannot open invites a refusal or an
         # invented answer.
-        if record.archived and self.searchable:
+        if record.archived and self.search_compacted_messages:
             # State the rule, not a suggestion. A model asked to "search if
             # needed" will usually judge the summary sufficient and answer from
             # it - including for the exact values a summary is least likely to
@@ -525,9 +578,10 @@ class Compaction:
         mutated: every transformation lands on a shallow copy. When the record's anchor no longer
         resolves the view fails open to the full list, which is always valid to send.
 
-        ``strip_provider_chaining`` removes only the response-chaining key from assistant copies.
-        Some providers continue a conversation by id rather than from the messages sent (OpenAI
-        Responses chains on ``previous_response_id``), and the server then replays the whole
+        ``strip_provider_chaining`` removes only the chaining keys from assistant copies. Some
+        providers continue a conversation by id rather than from the messages sent (OpenAI
+        Responses on ``previous_response_id``, GeminiInteractions on ``previous_interaction_id``),
+        and the server then replays the whole
         pre-fold history behind the view's back - so the saving would be imaginary. The rest of
         provider_data survives: a function_call without its paired reasoning item is a provider
         error.
@@ -545,7 +599,7 @@ class Compaction:
         Promised only when the archive exists *and* the search tools are attached: telling a
         model to read a file it cannot open invites a refusal or an invented answer.
         """
-        if not (self.searchable and record.archived):
+        if not (self.search_compacted_messages and record.archived):
             return None
         return ARCHIVE_LOOKUP_INSTRUCTION
 
@@ -663,6 +717,7 @@ class Compaction:
         tokens_before: Optional[int] = None,
         run_id: Optional[str] = None,
         context_prefix: Optional[List[Message]] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[CompactionRecord]:
         """Archive and summarize the head of ``messages``.
 
@@ -678,13 +733,13 @@ class Compaction:
 
         already = self._resolved_boundary(messages, previous)
         to_compact = messages[already:boundary]
-        archive = self.archive_for(session_id, db)
+        archive = self.archive_for(session_id, db, user_id)
 
         summary = self._summarize(
             to_compact,
             previous.summary if previous else None,
             run_metrics,
-            archived=archive is not None,
+            archived=self.store_compacted_messages and archive is not None,
         )
         if not summary:
             return None
@@ -699,7 +754,9 @@ class Compaction:
         self._log_tail_limit(messages, already)
         self._warn_if_still_over(record)
         if archive is not None:
-            record.archived = archive.write(record, to_compact)
+            # The record is stored either way; the transcript only when archiving is on.
+            stored = archive.write(record, to_compact if self.store_compacted_messages else [])
+            record.archived = stored and self.store_compacted_messages
         self.stats.record(record)
         return record
 
@@ -714,6 +771,7 @@ class Compaction:
         tokens_before: Optional[int] = None,
         run_id: Optional[str] = None,
         context_prefix: Optional[List[Message]] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[CompactionRecord]:
         # See the sync path: only the span the previous compaction did not
         # already cover is new.
@@ -723,13 +781,13 @@ class Compaction:
 
         already = self._resolved_boundary(messages, previous)
         to_compact = messages[already:boundary]
-        archive = self.archive_for(session_id, db)
+        archive = self.archive_for(session_id, db, user_id)
 
         summary = await self._asummarize(
             to_compact,
             previous.summary if previous else None,
             run_metrics,
-            archived=archive is not None,
+            archived=self.store_compacted_messages and archive is not None,
         )
         if not summary:
             return None
@@ -744,7 +802,9 @@ class Compaction:
         self._log_tail_limit(messages, already)
         self._warn_if_still_over(record)
         if archive is not None:
-            record.archived = archive.write(record, to_compact)
+            # The record is stored either way; the transcript only when archiving is on.
+            stored = archive.write(record, to_compact if self.store_compacted_messages else [])
+            record.archived = stored and self.store_compacted_messages
         self.stats.record(record)
         return record
 
@@ -759,7 +819,7 @@ class Compaction:
         Returns None until something has actually been archived: offering the tool over an empty
         archive only invites a pointless lookup on the first turn.
         """
-        if not (self.searchable and self.archive):
+        if not (self.search_compacted_messages and self.store_compacted_messages):
             return None
         archive = self.archive_for(session_id, db)
         if archive is None or archive.latest() is None:
@@ -772,47 +832,72 @@ class Compaction:
             command, or error message - that the summary does not carry.
 
             Args:
-                pattern: A regular expression, matched line by line against the stored
-                    transcript. Plain text works as a literal search.
-                context_lines: Lines of surrounding context to show around each match.
+                pattern: Text to find, matched case-insensitively line by line against the
+                    stored transcript. Separate alternatives with "|" to find any of them,
+                    e.g. "build hash|rotation window".
+                context_lines: Lines of surrounding context to show around each match (at most 10).
             """
-            rows = archive.search(pattern, limit=5)
+            rows = archive.search(pattern, limit=_SEARCH_MAX_FOLDS)
             if not rows:
-                return f"No compacted history matches {pattern!r}."
-            blocks = []
+                return f"No compacted history matches {pattern[:200]!r}."
+            blocks: List[str] = []
+            used = 0
             for row in rows:
                 hits = _grep(row.get("archived_messages") or "", pattern, context_lines)
-                if hits:
-                    blocks.append(hits)
+                if not hits:
+                    continue
+                # The cap holds across folds too, not just within each one.
+                if blocks and used + len(hits) > _SEARCH_OUTPUT_CHARS:
+                    blocks.append("... more matches in older folds; narrow the search.")
+                    break
+                blocks.append(hits)
+                used += len(hits)
             if not blocks:
-                return f"No compacted history matches {pattern!r}."
+                return f"No compacted history matches {pattern[:200]!r}."
             return "\n\n---\n\n".join(blocks)
 
         return [search_compacted_history]
 
 
+def _clip_line(line: str, match_start: Optional[int]) -> str:
+    """A line cut to _SEARCH_LINE_CHARS, kept around the match so the hit itself survives."""
+    if len(line) <= _SEARCH_LINE_CHARS:
+        return line
+    center = match_start if match_start is not None else 0
+    start = max(0, min(center - _SEARCH_LINE_CHARS // 2, len(line) - _SEARCH_LINE_CHARS))
+    end = start + _SEARCH_LINE_CHARS
+    return ("..." if start > 0 else "") + line[start:end] + ("..." if end < len(line) else "")
+
+
 def _grep(text: str, pattern: str, context_lines: int = 2, max_matches: int = 20) -> str:
     """Matching lines with surrounding context, numbered - the shape `grep -n -C` returns.
 
-    The regex is compiled here rather than pushed into SQL: databases disagree on regex support,
-    and a line-oriented result is what makes a transcript readable. SQL still prefilters which
-    rows are worth scanning, so this only ever runs over candidates.
+    The pattern is literal text, with "|" separating alternatives - never a regular expression. It
+    comes from a model, and a regex like "(a+)+$" backtracks for hours on a 40-character line,
+    which Python cannot interrupt. Literal alternatives match in linear time and cover what the
+    tool is for: recovering an exact value.
 
-    A pattern that fails to compile is treated as a literal string, since the caller is a model
-    that may well send plain text containing regex metacharacters.
+    SQL prefilters which rows are worth scanning, so this only ever runs over candidates. Output is
+    bounded - context lines, line length, and total size - since it goes into the context window.
     """
     import re
 
-    try:
-        compiled = re.compile(pattern, re.IGNORECASE)
-    except re.error:
-        compiled = re.compile(re.escape(pattern), re.IGNORECASE)
+    terms = search_terms(pattern)
+    if not terms:
+        return ""
+    compiled = re.compile("|".join(re.escape(term) for term in terms), re.IGNORECASE)
+    context_lines = max(0, min(context_lines, _SEARCH_MAX_CONTEXT_LINES))
 
     lines = text.split("\n")
-    hit_indexes = [i for i, line in enumerate(lines) if compiled.search(line)]
-    if not hit_indexes:
+    hits = {}
+    for i, line in enumerate(lines):
+        found = compiled.search(line)
+        if found:
+            hits[i] = found.start()
+    if not hits:
         return ""
 
+    hit_indexes = sorted(hits)
     truncated = len(hit_indexes) > max_matches
     hit_indexes = hit_indexes[:max_matches]
 
@@ -825,12 +910,19 @@ def _grep(text: str, pattern: str, context_lines: int = 2, max_matches: int = 20
         else:
             spans.append([start, end])
 
-    blocks = []
-    for start, end in spans:
-        blocks.append("\n".join(f"{i + 1}: {lines[i]}" for i in range(start, end)))
-    rendered = "\n--\n".join(blocks)
+    rendered = ""
+    for span_start, span_end in spans:
+        block = "\n".join(f"{i + 1}: {_clip_line(lines[i], hits.get(i))}" for i in range(span_start, span_end))
+        candidate = block if not rendered else f"{rendered}\n--\n{block}"
+        if len(candidate) > _SEARCH_OUTPUT_CHARS:
+            truncated = True
+            break
+        rendered = candidate
+    if not rendered:
+        # Even the first block is over the limit; return its start rather than nothing.
+        rendered = candidate[:_SEARCH_OUTPUT_CHARS]
     if truncated:
-        rendered += f"\n... more than {max_matches} matches; narrow the pattern."
+        rendered += "\n... more matches than fit; narrow the search."
     return rendered
 
 

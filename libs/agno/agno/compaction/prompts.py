@@ -4,9 +4,6 @@
 # Fixed so injected summaries are identifiable (and skippable) across builds.
 SUMMARY_PREFIX = "Summary of earlier conversation (compacted):\n\n"
 
-# Appended to custom instructions, which replace the default prompt and with it the budget line.
-SUMMARY_BUDGET_INSTRUCTION = "Hard length budget: {budget_tokens} tokens. Compress prose before dropping facts."
-
 DEFAULT_COMPACTION_PROMPT = """You maintain the running summary of a long conversation between a user and an AI agent. The
 conversation exceeds the model's context window, so everything older than a recent tail is folded into
 the summary you produce. Your summary is the ONLY memory of the folded conversation: anything you omit

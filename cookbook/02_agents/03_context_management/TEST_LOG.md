@@ -65,14 +65,13 @@ model. Two short runs stayed well under the threshold.
 
 **Status:** PASS
 **Tier:** untagged
-**Description:** `searchable=True` with the default summarization prompt (no artificial lossiness).
-Plants unguessable values (ticket KR-4417-QX, a 47-day window, build hash b7f2ae91c4), buries them
-under five unrelated turns, then asks for them back. Sets `min_chars_to_reclaim=500` because the
-demo turns are short; the default suits real sessions.
-**Result:** Completed successfully. 2 compactions; the final turn shows `read_file` and
-`search_content` calls against the archive before answering with both exact values. Confirmed the
-summarizer emits its "Not covered here:" line, and that the summary message only promises a lookup
-when `searchable=True`.
+**Description:** `search_compacted_messages=True` with `compacted_token_budget=150` and manual folding, on a fresh
+session per run. Shares a 30-row parts list, folds it away - no 150-token summary can carry 30 rows -
+then asks for the lot number of part 23 with `print_response`, so the tool call is visible.
+**Result:** 6 of 6 live runs on `gpt-5.6-luna` folded, called `search_compacted_history` (e.g.
+`pattern=part 23|23|lot`, shown in the Tool Calls panel) and answered with the correct lot number,
+82137. The earlier version planted three short values a summary could keep, so the final question
+was often answered from the summary with no search, and reused a fixed session id across runs.
 
 ---
 

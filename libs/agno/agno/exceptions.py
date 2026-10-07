@@ -145,9 +145,11 @@ class ModelProviderError(AgnoError):
         "prompt is too long",
         "prompt too long",
         "exceeds the model",
-        # Gemini reports the count rather than the limit and never says "context window":
-        # "The input token count (1050000) exceeds the maximum number of tokens allowed".
-        # Both halves are required - "token count" alone matches billing messages.
+        # Gemini reports the count rather than the limit and never says "context window", in
+        # more than one wording. "token count exceeds" matches the short forms ("input token count
+        # exceeds the maximum"); the long form puts the count between those words ("The input token
+        # count (1050000) exceeds the maximum number of tokens allowed"), so it needs the second
+        # pattern. "token count" alone is not enough - it also appears in billing messages.
         "token count exceeds",
         "exceeds the maximum number of tokens",
     ]

@@ -2,24 +2,25 @@
 Compaction With A Searchable Archive
 =============================
 
-`searchable=True` gives the agent read-only search over its own archived
+`search_compacted_messages=True` gives the agent read-only search over its own stored
 history, which changes what a summary is for. Normally a summary replaces the
 conversation, so any detail it left out is gone. Here the originals are still
 stored, so the summary works as an index and the agent can go read the rest.
 
-This example plants a specific fact early, buries it under enough turns to be
-compacted away, and then asks for it back.
-
 The flow is summary-first, archive-as-fallback. When a summary is enough the
-agent just answers from it. When the question needs an exact value a summary is
-unlikely to have kept, the agent reads the archive instead - you will see the
-tool call in the output.
+agent answers from it. When the question needs a detail the summary could not
+keep, the agent calls `search_compacted_history` and reads it from the archive.
 
-Two built-in nudges make that fallback reliable: the summarizer is asked to end
-with a "Not covered here:" line naming what it dropped, and the summary message
-tells the agent to consult the archive before answering anything that turns on
-an exact value.
+This example makes that fallback happen every time. It shares a 30-row parts
+list, folds it away under a deliberately small summary budget - no summary of
+that size can carry 30 rows - and then asks for a single row. The run prints
+the search the agent made, so you can see where the answer came from.
+
+`search_compacted_messages` is on by default whenever `store_compacted_messages` is;
+it is set here to make the example explicit.
 """
+
+from uuid import uuid4
 
 from agno.agent import Agent
 from agno.compaction import Compaction
@@ -30,12 +31,14 @@ from agno.models.openai import OpenAIResponses
 # Compaction
 # ---------------------------------------------------------------------------
 compaction = Compaction(
-    # Adds read_file, list_files and search_content, scoped to this session's
-    # archive - one session can never read another's history.
-    searchable=True,
-    # The turns here are short, so keep only one of them: the guard skips a fold
-    # that would not be meaningfully larger than the tail it keeps.
+    search_compacted_messages=True,
+    # Fold only when this example says so, so every run folds at the same point.
+    compact_at_tokens=None,
+    # Keep only the most recent turn verbatim; everything before it is folded.
     uncompacted_runs=1,
+    # A summary this small cannot carry a 30-row table, so the rows have to be
+    # looked up in the archive - which is what this example demonstrates.
+    compacted_token_budget=150,
 )
 
 # ---------------------------------------------------------------------------
@@ -50,7 +53,8 @@ db = PostgresDb(db_url=db_url)
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.6-luna"),
     db=db,
-    session_id="compaction_searchable",
+    # A fresh session per run, so an earlier run's history cannot change this one.
+    session_id=f"compaction_searchable_{uuid4().hex[:8]}",
     add_history_to_context=True,
     compaction=compaction,
 )
@@ -59,38 +63,35 @@ agent = Agent(
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # 1. Plant a fact that the summary is unlikely to preserve verbatim.
-    # Values the model cannot guess or reconstruct, so recovering them proves
-    # the answer came out of the archive and nowhere else. Deliberately mundane
-    # operational data - calling something a "secret" makes some models decline
-    # to repeat it, which muddies what the example is demonstrating.
+    # 1. Share a detailed list. Values a model cannot guess, so a correct answer
+    #    can only have come from the archive.
+    parts = "\n".join(
+        f"part {i}: {['valve', 'gasket', 'bearing', 'seal', 'flange'][i % 5]}, "
+        f"supplier {['Acme', 'Globex', 'Initech', 'Umbrella', 'Hooli'][i % 5]}, "
+        f"lot {i * 7919 % 100000:05d}"
+        for i in range(1, 31)
+    )
+    agent.print_response(f"Here is our parts list for later. Just say noted.\n{parts}")
+
+    # 2. A turn after it, so there is history in front of the kept tail to fold.
+    agent.print_response("In one sentence: what is a bill of materials?")
+
+    # 3. Fold now. The parts list leaves the context; only a short summary and the
+    #    archived original remain.
+    result = agent.compact(session_id=agent.session_id)
+    print(f"\n[{result.status.value}] {result.message}")
+
+    # 4. Ask for one row. The summary cannot have it, so the agent searches - the
+    #    search_compacted_history call shows up in the output below.
     agent.print_response(
-        "Log this for later: the deploy key rotation runbook is ticket "
-        "KR-4417-QX, the rotation window is 47 days, and the pinned build "
-        "hash is 'b7f2ae91c4'."
+        "What is the lot number of part 23 in the parts list I shared?"
     )
 
-    # 2. Bury it under unrelated turns, then fold explicitly.
-    for question in [
-        "What is a blue-green deployment?",
-        "How does a canary release differ from that?",
-        "What is a good rollback strategy?",
-        "How should we monitor a deploy?",
-        "What belongs in a post-deploy checklist?",
-    ]:
-        agent.print_response(question)
-
-    # Fold now: a demo never reaches compact_at_tokens, and the point here is what
-    # happens AFTER the planted fact has been summarized away.
-    agent.compact(session_id=agent.session_id)
-
-    # 3. Ask for the buried fact. It is no longer in context, so the agent has
-    #    to find it in the archive. Asking for the build hash makes that
-    #    verifiable: a ticket id is guessable from its pattern, a random hash
-    #    is not.
-    agent.print_response(
-        "What exactly was the pinned build hash, and how long is the rotation window? "
-        "Answer only from what I told you earlier."
-    )
-
-    print(f"\nCompactions: {compaction.stats.compactions}")
+    run = agent.get_last_run_output()
+    searches = [
+        tool.tool_args.get("pattern")
+        for tool in (run.tools if run else None) or []
+        if tool.tool_name == "search_compacted_history"
+    ]
+    print(f"\nArchive searches: {searches}")
+    print(f"Expected lot number: {23 * 7919 % 100000:05d}")

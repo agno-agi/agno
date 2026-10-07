@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from os import getenv
 from typing import (
     TYPE_CHECKING,
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
     from agno.fs import FileSystem
 
+from agno.agent.followup import FollowupConfig
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb
 from agno.memory import MemoryManager
@@ -210,7 +212,7 @@ def set_compaction(agent: Agent) -> None:
     The model defaults to the agent's either way, so a bare ``compaction=True`` is still the
     cheapest correct configuration.
     """
-    from agno.compaction.manager import Compaction
+    from agno.compaction.compaction import Compaction
 
     if agent.compaction is True:
         agent.compaction = Compaction(compact_at_tokens=None, on_context_overflow=True)
@@ -220,20 +222,21 @@ def set_compaction(agent: Agent) -> None:
     if isinstance(agent.compaction, Compaction) and agent.compaction.model is None:
         agent.compaction.model = agent.model
 
-    # A replay window at or below the kept tail cannot express a working compaction: the tail
-    # would not fit inside what the planner may read, so the boundary anchor could never be
-    # found again and every summary would be dropped on the next run. The planner widens its
-    # own read to keep that from happening - say so, because silently ignoring a number the
-    # user set is worse than the misconfiguration it works around.
-    if isinstance(agent.compaction, Compaction) and not getattr(agent, "_num_history_runs_defaulted", False):
-        keep = agent.compaction.uncompacted_runs
-        window = agent.num_history_runs
-        if keep is not None and window is not None and window <= keep:
+    if isinstance(agent.compaction, Compaction):
+        # Compaction folds the history a run replays. Without replayed history a size threshold
+        # has nothing to measure and a fold is never sent. Overflow recovery still acts within a
+        # run, so a bare compaction=True - which has no threshold - is not a mistake here.
+        if not agent.add_history_to_context and agent.compaction.compact_at_tokens is not None:
             log_warning(
-                f"num_history_runs={window} is not larger than compaction's uncompacted_runs={keep}, "
-                f"so there would be no history in front of the kept tail to fold. Compaction will "
-                f"read {keep + 1} runs instead; num_history_runs still governs what the model "
-                f"replays. Set uncompacted_runs below num_history_runs to silence this."
+                "compaction is set but add_history_to_context is False, so no history is replayed: "
+                "compact_at_tokens never fires and a fold is never sent. Set add_history_to_context=True."
+            )
+        # Both put a summary of the same history into the context, so the model reads it twice.
+        if agent.add_session_summary_to_context:
+            log_warning(
+                "compaction and session summaries are both enabled, so the context carries two summaries "
+                "of the same history. Compaction already replaces old turns with its own summary; "
+                "consider add_session_summary_to_context=False."
             )
 
 
@@ -428,13 +431,22 @@ def get_models(agent: Agent) -> None:
         if agent.output_model is not None:
             agent.output_model.model_type = ModelType.OUTPUT_MODEL
 
+    # Follow-up slots resolve strings like the siblings but keep the instance's
+    # model_type: follow-up metrics are attributed explicitly at the call site, and
+    # the same instance may also serve as the main model.
+    if agent.followup_model is not None:
+        agent.followup_model = get_model(agent.followup_model)
+    if isinstance(agent.followups, FollowupConfig) and isinstance(agent.followups.model, str):
+        # Resolve on a copy: one config object may be shared across components.
+        agent.followups = replace(agent.followups, model=get_model(agent.followups.model))
+
     if agent.fallback_config is not None:
         agent.fallback_config.resolve_models()
 
     if agent.compression_manager is not None and agent.compression_manager.model is None:
         agent.compression_manager.model = agent.model
 
-    from agno.compaction.manager import Compaction as _Compaction
+    from agno.compaction.compaction import Compaction as _Compaction
 
     if isinstance(agent.compaction, _Compaction) and agent.compaction.model is None:
         agent.compaction.model = agent.model

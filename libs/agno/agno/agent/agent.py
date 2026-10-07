@@ -33,7 +33,8 @@ from agno.agent import (
     _tools,
     _utils,
 )
-from agno.compaction.manager import Compaction
+from agno.compaction.compaction import Compaction
+from agno.agent.followup import FollowupConfig, resolve_followup_settings
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
@@ -333,11 +334,12 @@ class Agent:
     save_response_to_file: Optional[str] = None
 
     # --- Followups ---
-    # If True, generate followup prompts after the main response
-    followups: bool = False
-    # Number of followup prompts to generate (default 3)
+    # False, True for the defaults, or a FollowupConfig that enables followups and carries their
+    # model, instructions and count. Kept as given; a string model is resolved on a copy of it.
+    followups: Union[bool, FollowupConfig] = False
+    # Number of followup prompts to generate (default 3); with a FollowupConfig, the maximum it allows
     num_followups: int = 3
-    # Optional model to use for generating followups (defaults to agent's model)
+    # Optional model to use for generating followups (defaults to agent's model); with a FollowupConfig, its model
     followup_model: Optional[Model] = None
 
     # --- Agent Streaming ---
@@ -500,8 +502,8 @@ class Agent:
         structured_outputs: Optional[bool] = None,
         use_json_mode: bool = False,
         save_response_to_file: Optional[str] = None,
-        followups: bool = False,
-        num_followups: int = 3,
+        followups: Union[bool, FollowupConfig] = False,
+        num_followups: Optional[int] = None,
         followup_model: Optional[Union[Model, str]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
@@ -585,13 +587,8 @@ class Agent:
                 "num_history_messages and num_history_runs cannot be set at the same time. Using num_history_runs."
             )
             self.num_history_messages = None
-        # Whether the 3-run window is this default or the user's own choice. Compaction needs to
-        # tell them apart: it may widen its own view past a default, but an explicit window is a
-        # decision it should respect.
-        self._num_history_runs_defaulted = False
         if self.num_history_messages is None and self.num_history_runs is None:
             self.num_history_runs = 3
-            self._num_history_runs_defaulted = True
 
         self.max_tool_calls_from_history = max_tool_calls_from_history
 
@@ -684,9 +681,7 @@ class Agent:
         self.save_response_to_file = save_response_to_file
 
         self.followups = followups
-        if num_followups < 1:
-            raise ValueError("num_followups must be at least 1")
-        self.num_followups = num_followups
+        self.num_followups = resolve_followup_settings(followups, num_followups, followup_model)
         self.followup_model = followup_model  # type: ignore[assignment]
 
         self.stream = stream
@@ -1128,7 +1123,8 @@ class Agent:
         Returns a CompactionResult carrying a status and a human-readable message. A fold can
         legitimately decline: if the span is too small to pay for the summary replacing it,
         compacting would leave the context bigger, so it is reported rather than performed.
-        Check ``result.compacted``, or show ``result.message``.
+        Check ``result.compacted``, or show ``result.message``. ``result.metrics`` carries the
+        summarizer's token usage under ``compaction_model``, or None when no summary was made.
         """
         return _messages.compact_session(self, session_id=session_id, user_id=user_id)
 

@@ -7,8 +7,9 @@ over /runs, fold it with /compact, and confirm the stored transcript is untouche
 
     POST /agents/{agent_id}/sessions/{session_id}/compact
 
-The route always answers 200 with a status, because declining to compact is a normal
-outcome rather than a failure. A summary costs a few hundred tokens whatever it
+For a session that exists, the route answers 200 with a status, because declining to
+compact is a normal outcome rather than a failure (a session that does not exist is a
+404, as on the other session routes). A summary costs a few hundred tokens whatever it
 replaces, so folding a span smaller than that would leave the context BIGGER - which
 is why the server declines instead of obeying:
 
@@ -16,15 +17,15 @@ is why the server declines instead of obeying:
     not_worth_it      the span is too small to pay for the summary replacing it
     nothing_to_fold   the kept tail covers the whole conversation
     already_compacted a previous fold already covers everything foldable
-    no_history        the session has no stored history yet
+    no_history        the session exists but has no stored history yet
     not_enabled       compaction is not configured on this agent
     summary_failed    the summarizer returned nothing
 
 A UI branches on "compacted" and shows "message" verbatim.
 
 Prerequisites: compaction_os.py running on http://localhost:7777
-Run: .venvs/demo/bin/python cookbook/05_agent_os/21_compaction/rest_api_compaction.py
-Try: run it twice - the second run reports already_compacted
+Run: .venvs/demo/bin/python cookbook/05_agent_os/28_compaction/rest_api_compaction.py
+The script compacts twice at the end: the second call reports already_compacted.
 """
 
 import os
@@ -69,6 +70,9 @@ def ask(client: httpx.Client, session_id: str, message: str) -> None:
 def compact(client: httpx.Client, session_id: str) -> dict[str, Any]:
     """Fold this session's history now, and report what the server decided."""
     response = client.post(f"/agents/{AGENT_ID}/sessions/{session_id}/compact")
+    if response.status_code == 404:
+        # Not a decline: there is no such session to fold.
+        return {"status": "404", "message": response.json().get("detail", "Not found")}
     response.raise_for_status()
     return response.json()
 
@@ -108,8 +112,9 @@ def main() -> None:
     with httpx.Client(base_url=BASE_URL, timeout=300.0) as client:
         print(f"Session: {session_id}\n")
 
-        # 1. A session that has nothing to fold yet declines, and says why.
-        print("Compacting an empty session:")
+        # 1. The session is only created by the first run, so compacting it now is a 404 -
+        #    an error, unlike the declines below, which are normal outcomes.
+        print("Compacting a session that does not exist yet:")
         show(compact(client, session_id))
 
         # 2. Build up a conversation worth folding. Compacting mid-loop would only
