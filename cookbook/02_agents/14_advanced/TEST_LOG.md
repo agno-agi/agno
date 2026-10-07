@@ -185,3 +185,13 @@
 **Observation:** Running the earlier version of this cookbook (all runs sharing the agent's default session) reproduced the known shared-session status-clobbering bug on cue - runs stuck at PENDING forever with free slots (different victims each run: 1 then 2). The transition-site fix ships in the durable run queue PR chain; the cookbook now uses one session per run, which is also the realistic shape.
 
 ---
+
+### followup_instructions.py
+
+**Status:** PASS
+
+**Description:** An agent limited to Python documentation, with `followups=FollowupConfig(max_followups=3, ...)` (up to 3) carrying a separate follow-up model and domain instructions, asked for a sea poem it should decline.
+
+**Result:** 2026-09-29, three live runs with gpt-5.5: the agent declined each time, and every follow-up stayed within Python documentation (docstring conventions, pydoc, library docs); none re-offered the poem. Separately, the prompt builder was checked live on four refusal scenarios in all three count modes (exactly 3, up to 3, 1 to 3), 5 runs each on gpt-5.6-luna and gpt-5.5: 2 to 7 of about 60 suggestions per mode pointed at the declined topic (a weather source, whether a Rust SDK is planned), against 51/60 and 26/60 with the previous prompt, and none re-offered the declined request itself.
+
+---
