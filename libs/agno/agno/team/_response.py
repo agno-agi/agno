@@ -1762,7 +1762,7 @@ def generate_team_followups(
     if model is None:
         return
 
-    response_format = _get_followups_response_format(model)
+    response_format = _get_followups_response_format(model, team.followup_use_json_mode)
     user_message = run_response.input.input_content_string() if run_response.input else None
     messages = _build_followup_messages(
         run_response.content, team.num_followups, user_message=user_message, response_format=response_format
@@ -1796,7 +1796,7 @@ async def agenerate_team_followups(
     if model is None:
         return
 
-    response_format = _get_followups_response_format(model)
+    response_format = _get_followups_response_format(model, team.followup_use_json_mode)
     user_message = run_response.input.input_content_string() if run_response.input else None
     messages = _build_followup_messages(
         run_response.content, team.num_followups, user_message=user_message, response_format=response_format
@@ -1839,7 +1839,7 @@ def generate_team_followups_stream(
             store_events=team.store_events,
         )
 
-    response_format = _get_followups_response_format(model)
+    response_format = _get_followups_response_format(model, team.followup_use_json_mode)
     user_message = run_response.input.input_content_string() if run_response.input else None
     messages = _build_followup_messages(
         run_response.content, team.num_followups, user_message=user_message, response_format=response_format
@@ -1890,7 +1890,7 @@ async def agenerate_team_followups_stream(
             store_events=team.store_events,
         )
 
-    response_format = _get_followups_response_format(model)
+    response_format = _get_followups_response_format(model, team.followup_use_json_mode)
     user_message = run_response.input.input_content_string() if run_response.input else None
     messages = _build_followup_messages(
         run_response.content, team.num_followups, user_message=user_message, response_format=response_format
