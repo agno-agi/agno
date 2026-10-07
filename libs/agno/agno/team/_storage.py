@@ -22,10 +22,13 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.agent._storage import (
+    _followups_from_config,
+    _followups_to_config,
     is_auto_generated_memory_manager_id,
     resolve_learning_reference,
     resolve_memory_manager_reference,
 )
+from agno.agent.followup import FollowupConfig, model_identity
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
@@ -824,6 +827,19 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         else:
             config["reasoning_model"] = str(team.reasoning_model)
 
+    # --- Followup settings ---
+    if team.followups:
+        config["followups"] = _followups_to_config(team.followups)
+    # A FollowupConfig carries the count and model; the top-level fields are stored only without one.
+    if not isinstance(team.followups, FollowupConfig):
+        if team.num_followups != 3:
+            config["num_followups"] = team.num_followups
+        if team.followup_model is not None:
+            if isinstance(team.followup_model, Model):
+                config["followup_model"] = model_identity(team.followup_model)
+            else:
+                config["followup_model"] = str(team.followup_model)
+
     # --- Streaming settings ---
     if team.stream is not None:
         config["stream"] = team.stream
@@ -1143,6 +1159,10 @@ def from_dict(
     if config.get("reasoning_model") is not None:
         config["reasoning_model"] = resolve_model(config["reasoning_model"], registry)
 
+    # --- Handle followup model reconstruction ---
+    if config.get("followup_model") is not None:
+        config["followup_model"] = resolve_model(config["followup_model"], registry)
+
     # --- Handle parser_model reconstruction ---
     # TODO: implement parser model deserialization
     # if "parser_model" in config:
@@ -1392,6 +1412,10 @@ def from_dict(
             offload_tool_results=_offload_from_config(config.get("offload_tool_results")),
             # --- Reasoning settings ---
             reasoning_model=config.get("reasoning_model"),
+            # --- Followup settings ---
+            followups=_followups_from_config(config.get("followups"), registry),
+            num_followups=config.get("num_followups"),
+            followup_model=config.get("followup_model"),
             # --- Streaming settings ---
             stream=config.get("stream"),
             stream_events=config.get("stream_events"),
