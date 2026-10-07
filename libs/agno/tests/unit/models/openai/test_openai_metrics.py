@@ -6,7 +6,12 @@ Tests that the collect_metrics_on_completion flag works correctly for OpenAI mod
 
 from typing import Optional
 
+import pytest
+from openai.types.completion_usage import CompletionUsage
+from openai.types.responses import ResponseUsage
+
 from agno.models.openai.chat import OpenAIChat
+from agno.models.openai.responses import OpenAIResponses
 
 
 class MockCompletionUsage:
@@ -129,3 +134,40 @@ def test_openai_get_metrics_computes_audio_total_tokens():
     assert metrics.audio_input_tokens == 11
     assert metrics.audio_output_tokens == 13
     assert metrics.audio_total_tokens == 24
+
+
+@pytest.mark.parametrize(
+    "model_class,usage_class,input_field,output_field",
+    [
+        (OpenAIChat, CompletionUsage, "prompt_tokens", "completion_tokens"),
+        (OpenAIResponses, ResponseUsage, "input_tokens", "output_tokens"),
+    ],
+)
+@pytest.mark.parametrize(
+    "cache_details,expected_writes",
+    [({"cache_write_tokens": 3000}, 3000), ({"cache_write_tokens": 0}, 0), ({"cache_write_tokens": None}, 0), ({}, 0)],
+    ids=["writes", "zero", "null", "omitted"],
+)
+def test_openai_get_metrics_preserves_cache_writes(
+    model_class, usage_class, input_field, output_field, cache_details, expected_writes
+):
+    """Preserve cache-write usage without requiring the field in older payloads."""
+    # Match the SDK's non-strict response parsing for older provider payloads.
+    usage = usage_class.construct(
+        **{
+            input_field: 15000,
+            output_field: 50,
+            "total_tokens": 15050,
+            f"{input_field}_details": {"cached_tokens": 12000, **cache_details},
+            f"{output_field}_details": {"reasoning_tokens": 7},
+        }
+    )
+
+    metrics = model_class()._get_metrics(usage)
+
+    assert metrics.cache_write_tokens == expected_writes
+    assert metrics.cache_read_tokens == 12000
+    assert metrics.input_tokens == 15000
+    assert metrics.output_tokens == 50
+    assert metrics.total_tokens == 15050
+    assert metrics.reasoning_tokens == 7
