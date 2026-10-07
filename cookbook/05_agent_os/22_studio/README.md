@@ -18,6 +18,7 @@ Registry/Components HTTP contracts.
 | `studio_runner_dispatcher.py` | Dispatch Studio-built components from a runner-only Agent with `StudioRunnerTools`. |
 | `studio_runner_direct.py` | Call the runner's list/run tools directly and observe the registry guard's refusal. |
 | `registry_learning.py` | Declare `LearningMachine`s on the Registry, discover them with `list_learning`, wire a built agent with `learning_name`, and rehydrate it with the shared machine. |
+| `registry_declared_tools_only.py` | Keep served agents' own tools out of `GET /registry` with `AgentOS(auto_populate_registry_tools=False)`, so user-built components can only call declared tools. |
 
 ## Prerequisites
 

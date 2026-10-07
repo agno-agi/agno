@@ -155,3 +155,20 @@ no provider): `note-taker` stored `learning: True`, rehydrated through
 live pass.
 
 ---
+
+### registry_declared_tools_only.py
+
+**Status:** PASS
+
+**Test mode:** LOCAL (no model call)
+
+**Description:** Served an internal agent carrying `run_sql` and `send_email`
+next to a registry declaring `CalculatorTools`, then read
+`GET /registry?resource_type=tool` with `auto_populate_registry_tools` on and
+off. Run on 2026-10-07 with `.venvs/demo/bin/python` and `PYTHONPATH` set to
+this worktree's `libs/agno`.
+
+**Result:** Default listed `calculator`, `run_sql`, `send_email`; the opt-out
+listed only `calculator`.
+
+---

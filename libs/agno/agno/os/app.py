@@ -317,6 +317,7 @@ class AgentOS:
         event_stream: Optional[BaseEventStream] = None,
         telemetry: bool = True,
         registry: Optional[Registry] = None,
+        auto_populate_registry_tools: bool = True,
         scheduler: bool = False,
         scheduler_poll_interval: int = 15,
         scheduler_base_url: Optional[str] = None,
@@ -405,6 +406,11 @@ class AgentOS:
                 in-memory stream when neither is set.
             telemetry: Whether to enable telemetry
             registry: Optional registry to use for the AgentOS
+            auto_populate_registry_tools: Whether to add the tools of served agents and teams to the
+                registry. Discovered tools are not in the StudioTools build palette, but ``GET /registry``
+                lists them and stored components built from the registry can call them. Set False to
+                expose only the tools declared on the registry; stored components that reference a
+                served component's tool then load it without an entrypoint.
             scheduler: Whether to enable the cron scheduler
             scheduler_poll_interval: Seconds between scheduler poll cycles (default: 15)
             scheduler_base_url: Base URL for scheduler HTTP calls (default: http://127.0.0.1:7777)
@@ -466,6 +472,7 @@ class AgentOS:
         self.lifespan = lifespan
 
         self.registry = registry
+        self.auto_populate_registry_tools = auto_populate_registry_tools
         # Knowledge mirrored into the registry by a sync (component-owned
         # instances collected for name resolution) is not a knowledge-route
         # source; anything else on the registry list the user put there -- at
@@ -1368,7 +1375,13 @@ class AgentOS:
             self.registry = Registry()
 
         try:
-            collect_components_from_os(self._agents, self._teams, self._workflows, self.registry)
+            collect_components_from_os(
+                self._agents,
+                self._teams,
+                self._workflows,
+                self.registry,
+                include_tools=self.auto_populate_registry_tools,
+            )
         except Exception as e:
             log_debug(f"Registry auto-population skipped: {e}")
 

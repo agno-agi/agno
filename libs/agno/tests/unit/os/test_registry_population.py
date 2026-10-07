@@ -463,6 +463,85 @@ class TestPopulateRegistryComponentsNested:
         assert ("openai", "route-model") in keys
 
 
+class TestPopulateRegistryToolsOptOut:
+    """auto_populate_registry_tools=False keeps served components' tools out of the registry."""
+
+    def test_default_populates_tools(self):
+        def my_tool(x: str) -> str:
+            """Echo."""
+            return x
+
+        agent = Agent(name="A1", id="a1", tools=[my_tool], telemetry=False)
+
+        os = AgentOS(agents=[agent], telemetry=False)
+
+        assert os.auto_populate_registry_tools is True
+        assert "my_tool" in _tool_names(os.registry)
+
+    def test_opt_out_skips_tools_across_the_tree(self):
+        def agent_tool(x: str) -> str:
+            """Echo."""
+            return x
+
+        def member_tool(x: str) -> str:
+            """Echo."""
+            return x
+
+        def team_tool(x: str) -> str:
+            """Echo."""
+            return x
+
+        def step_tool(x: str) -> str:
+            """Echo."""
+            return x
+
+        agent = Agent(name="A1", id="a1", model=_model("agent-model"), tools=[agent_tool], telemetry=False)
+        member = Agent(name="M", id="m", tools=[member_tool], telemetry=False)
+        team = Team(name="T", id="t", members=[member], tools=[team_tool], telemetry=False)
+        step_agent = Agent(name="S", id="s", tools=[step_tool], telemetry=False)
+        workflow = Workflow(name="WF", id="wf", steps=[Step(name="s", agent=step_agent)])
+
+        os = AgentOS(
+            agents=[agent],
+            teams=[team],
+            workflows=[workflow],
+            auto_populate_registry_tools=False,
+            telemetry=False,
+        )
+
+        assert os.registry.tools == []
+        assert os.registry.undeclared_tool_names == set()
+        assert ("openai", "agent-model") in _model_keys(os.registry)
+
+    def test_opt_out_keeps_declared_tools(self):
+        def declared_tool(x: str) -> str:
+            """Echo."""
+            return x
+
+        def agent_tool(x: str) -> str:
+            """Echo."""
+            return x
+
+        registry = Registry(tools=[declared_tool])
+        agent = Agent(name="A1", id="a1", tools=[agent_tool], telemetry=False)
+
+        os = AgentOS(agents=[agent], registry=registry, auto_populate_registry_tools=False, telemetry=False)
+
+        assert _tool_names(os.registry) == {"declared_tool"}
+
+    def test_opt_out_survives_resync(self):
+        def my_tool(x: str) -> str:
+            """Echo."""
+            return x
+
+        agent = Agent(name="A1", id="a1", tools=[my_tool], telemetry=False)
+
+        os = AgentOS(agents=[agent], auto_populate_registry_tools=False, telemetry=False)
+        os.resync(app=os.get_app())
+
+        assert os.registry.tools == []
+
+
 class TestPopulateRegistryComponentsSafety:
     """The walk degrades gracefully and never breaks construction."""
 

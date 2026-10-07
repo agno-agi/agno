@@ -2340,7 +2340,9 @@ def _collect_components_from_knowledge(knowledge: Any, registry: Registry) -> No
     registry.add_db(getattr(knowledge, "contents_db", None))
 
 
-def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[int]) -> None:
+def collect_components_from_agent(
+    agent: Any, registry: Registry, visited: Set[int], include_tools: bool = True
+) -> None:
     """Add the models, tools, schemas, db and vector db referenced by an agent to the registry.
 
     ``visited`` tracks already-walked agents/teams/workflows (by object id) to
@@ -2357,7 +2359,7 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
     _collect_fallback_models(agent, registry)
 
     tools = getattr(agent, "tools", None)
-    if isinstance(tools, list):
+    if include_tools and isinstance(tools, list):
         for tool in tools:
             registry.add_tool(tool, source=ToolSource.DISCOVERED)
 
@@ -2375,7 +2377,7 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
     registry.add_learning(getattr(agent, "learning", None))
 
 
-def collect_components_from_team(team: Any, registry: Registry, visited: Set[int]) -> None:
+def collect_components_from_team(team: Any, registry: Registry, visited: Set[int], include_tools: bool = True) -> None:
     """Add a team's components to the registry, recursing into all of its members."""
     if id(team) in visited:
         return
@@ -2388,7 +2390,7 @@ def collect_components_from_team(team: Any, registry: Registry, visited: Set[int
     _collect_fallback_models(team, registry)
 
     tools = getattr(team, "tools", None)
-    if isinstance(tools, list):
+    if include_tools and isinstance(tools, list):
         for tool in tools:
             registry.add_tool(tool, source=ToolSource.DISCOVERED)
 
@@ -2402,12 +2404,14 @@ def collect_components_from_team(team: Any, registry: Registry, visited: Set[int
     if isinstance(members, list):
         for member in members:
             if isinstance(member, Agent):
-                collect_components_from_agent(member, registry, visited)
+                collect_components_from_agent(member, registry, visited, include_tools)
             elif isinstance(member, Team):
-                collect_components_from_team(member, registry, visited)
+                collect_components_from_team(member, registry, visited, include_tools)
 
 
-def collect_components_from_workflow(workflow: Any, registry: Registry, visited: Set[int]) -> None:
+def collect_components_from_workflow(
+    workflow: Any, registry: Registry, visited: Set[int], include_tools: bool = True
+) -> None:
     """Add a workflow's components (coordinator agent and step tree) to the registry."""
     if id(workflow) in visited:
         return
@@ -2419,23 +2423,23 @@ def collect_components_from_workflow(workflow: Any, registry: Registry, visited:
     # Agentic workflow coordinator (WorkflowAgent is an Agent subclass)
     workflow_agent = getattr(workflow, "agent", None)
     if workflow_agent is not None:
-        collect_components_from_agent(workflow_agent, registry, visited)
+        collect_components_from_agent(workflow_agent, registry, visited, include_tools)
 
-    _collect_components_from_steps(getattr(workflow, "steps", None), registry, visited)
+    _collect_components_from_steps(getattr(workflow, "steps", None), registry, visited, include_tools)
 
 
-def _collect_components_from_steps(steps: Any, registry: Registry, visited: Set[int]) -> None:
+def _collect_components_from_steps(steps: Any, registry: Registry, visited: Set[int], include_tools: bool) -> None:
     """Add components from a workflow's ``steps`` value (list, container or callable)."""
     if steps is None:
         return
     if isinstance(steps, list):
         for step in steps:
-            _collect_components_from_step(step, registry, visited)
+            _collect_components_from_step(step, registry, visited, include_tools)
     else:
-        _collect_components_from_step(steps, registry, visited)
+        _collect_components_from_step(steps, registry, visited, include_tools)
 
 
-def _collect_components_from_step(step: Any, registry: Registry, visited: Set[int]) -> None:
+def _collect_components_from_step(step: Any, registry: Registry, visited: Set[int], include_tools: bool) -> None:
     """Add components from a single workflow step of any type.
 
     Handles primitive steps (Step pointing at an agent/team/nested workflow),
@@ -2455,23 +2459,23 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
 
     if isinstance(step, Step):
         if step.agent is not None:
-            collect_components_from_agent(step.agent, registry, visited)
+            collect_components_from_agent(step.agent, registry, visited, include_tools)
         if step.team is not None:
-            collect_components_from_team(step.team, registry, visited)
+            collect_components_from_team(step.team, registry, visited, include_tools)
         nested_workflow = getattr(step, "workflow", None)
         if nested_workflow is not None:
-            collect_components_from_workflow(nested_workflow, registry, visited)
+            collect_components_from_workflow(nested_workflow, registry, visited, include_tools)
         if callable(getattr(step, "executor", None)):
             registry.add_function(step.executor)
 
     elif isinstance(step, Agent):
-        collect_components_from_agent(step, registry, visited)
+        collect_components_from_agent(step, registry, visited, include_tools)
 
     elif isinstance(step, Team):
-        collect_components_from_team(step, registry, visited)
+        collect_components_from_team(step, registry, visited, include_tools)
 
     elif isinstance(step, Workflow):
-        collect_components_from_workflow(step, registry, visited)
+        collect_components_from_workflow(step, registry, visited, include_tools)
 
     elif isinstance(step, (Steps, Loop, Parallel, Condition, Router)):
         # Container-level callable refs resolve by function name at rehydration.
@@ -2487,7 +2491,7 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
             sub_steps = getattr(step, attr, None)
             if isinstance(sub_steps, list):
                 for sub_step in sub_steps:
-                    _collect_components_from_step(sub_step, registry, visited)
+                    _collect_components_from_step(sub_step, registry, visited, include_tools)
 
     elif callable(step):
         # A bare callable used directly as a step serializes as an executor ref.
@@ -2499,6 +2503,7 @@ def collect_components_from_os(
     teams: Optional[List[Any]],
     workflows: Optional[List[Any]],
     registry: Registry,
+    include_tools: bool = True,
 ) -> None:
     """Walk all agents, teams and workflows of an AgentOS and add their components to ``registry``.
 
@@ -2506,7 +2511,8 @@ def collect_components_from_os(
     added directly during the walk. Each top-level node is walked inside its own
     guard, so a single malformed agent/team/workflow degrades to "not collected"
     rather than failing the whole walk. Remote and factory components are skipped
-    because they expose no locally-walkable instances.
+    because they expose no locally-walkable instances. With ``include_tools=False``
+    the components' own tools are left out of the registry.
     """
     visited: Set[int] = set()
 
@@ -2514,7 +2520,7 @@ def collect_components_from_os(
         if not isinstance(agent, Agent):
             continue
         try:
-            collect_components_from_agent(agent, registry, visited)
+            collect_components_from_agent(agent, registry, visited, include_tools)
         except Exception as e:
             log_debug(f"Registry auto-population: skipped agent due to error: {e}")
 
@@ -2522,7 +2528,7 @@ def collect_components_from_os(
         if not isinstance(team, Team):
             continue
         try:
-            collect_components_from_team(team, registry, visited)
+            collect_components_from_team(team, registry, visited, include_tools)
         except Exception as e:
             log_debug(f"Registry auto-population: skipped team due to error: {e}")
 
@@ -2530,7 +2536,7 @@ def collect_components_from_os(
         if not isinstance(workflow, Workflow):
             continue
         try:
-            collect_components_from_workflow(workflow, registry, visited)
+            collect_components_from_workflow(workflow, registry, visited, include_tools)
         except Exception as e:
             log_debug(f"Registry auto-population: skipped workflow due to error: {e}")
 
