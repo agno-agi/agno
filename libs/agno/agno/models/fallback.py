@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable, Iterator, List, Optional, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Iterator, List, Optional, Union
 
 from agno.exceptions import ContextWindowExceededError, ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
@@ -12,6 +12,9 @@ from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.utils.log import log_warning
+
+if TYPE_CHECKING:
+    from agno.run.steering import RunSteering
 
 # Stream event type returned by response_stream / aresponse_stream
 StreamEvent = Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]
@@ -163,7 +166,24 @@ def call_model_with_fallback(
     """Call the primary model, falling back on failure.
 
     Each model (including primary) uses its own retry logic before moving to the next.
+    A ``steering`` kwarg is opened for the whole call, so input accepted while the
+    primary model was failing reaches the fallback model.
     """
+    steering: Optional[RunSteering] = kwargs.get("steering")
+    if steering is not None:
+        steering.open()
+    try:
+        return _call_model_with_fallback(model, fallback_config, **kwargs)
+    finally:
+        if steering is not None:
+            steering.release()
+
+
+def _call_model_with_fallback(
+    model: Model,
+    fallback_config: Optional[FallbackConfig],
+    **kwargs: Any,
+) -> ModelResponse:
     try:
         return model.response(**kwargs)
     except ModelProviderError as primary_error:
@@ -188,6 +208,21 @@ async def acall_model_with_fallback(
     **kwargs: Any,
 ) -> ModelResponse:
     """Async variant of call_model_with_fallback."""
+    steering: Optional[RunSteering] = kwargs.get("steering")
+    if steering is not None:
+        await steering.aopen()
+    try:
+        return await _acall_model_with_fallback(model, fallback_config, **kwargs)
+    finally:
+        if steering is not None:
+            await steering.arelease()
+
+
+async def _acall_model_with_fallback(
+    model: Model,
+    fallback_config: Optional[FallbackConfig],
+    **kwargs: Any,
+) -> ModelResponse:
     try:
         return await model.aresponse(**kwargs)
     except ModelProviderError as primary_error:
@@ -216,7 +251,25 @@ def call_model_stream_with_fallback(
     fallback_config: Optional[FallbackConfig],
     **kwargs: Any,
 ) -> Iterator[StreamEvent]:
-    """Call the primary model stream, falling back on failure."""
+    """Call the primary model stream, falling back on failure.
+
+    A ``steering`` kwarg is opened for the whole stream; see call_model_with_fallback.
+    """
+    steering: Optional[RunSteering] = kwargs.get("steering")
+    if steering is not None:
+        steering.open()
+    try:
+        yield from _call_model_stream_with_fallback(model, fallback_config, **kwargs)
+    finally:
+        if steering is not None:
+            steering.release()
+
+
+def _call_model_stream_with_fallback(
+    model: Model,
+    fallback_config: Optional[FallbackConfig],
+    **kwargs: Any,
+) -> Iterator[StreamEvent]:
     try:
         yield from model.response_stream(**kwargs)
     except ModelProviderError as primary_error:
@@ -241,6 +294,22 @@ async def acall_model_stream_with_fallback(
     **kwargs: Any,
 ) -> AsyncIterator[StreamEvent]:
     """Async variant of call_model_stream_with_fallback."""
+    steering: Optional[RunSteering] = kwargs.get("steering")
+    if steering is not None:
+        await steering.aopen()
+    try:
+        async for event in _acall_model_stream_with_fallback(model, fallback_config, **kwargs):
+            yield event
+    finally:
+        if steering is not None:
+            await steering.arelease()
+
+
+async def _acall_model_stream_with_fallback(
+    model: Model,
+    fallback_config: Optional[FallbackConfig],
+    **kwargs: Any,
+) -> AsyncIterator[StreamEvent]:
     try:
         async for event in model.aresponse_stream(**kwargs):
             yield event

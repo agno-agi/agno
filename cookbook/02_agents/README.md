@@ -28,8 +28,9 @@ Practical examples for building agents with Agno, organized by feature area.
 | 20 | [20_time_travel](./20_time_travel/) | Rewind a run and resume from an earlier point | 2 |
 | 21 | [21_fork_session](./21_fork_session/) | Fork a whole session into a new one | 1 |
 | 22 | [22_result_offloading](./22_result_offloading/) | Large tool results stored as files, envelopes in the transcript | 2 |
+| 23 | [23_steering](./23_steering/) | Send the user's follow-up to a run while it is still executing | 1 |
 
-**Total: 125 files across 22 directories**
+**Total: 126 files across 23 directories**
 
 ## Prerequisites
 
