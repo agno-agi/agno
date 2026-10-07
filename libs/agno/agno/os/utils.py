@@ -22,6 +22,7 @@ from agno.factory import (
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
+from agno.media import normalize_filename, normalize_mime_type
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
 from agno.registry import Registry, ToolSource
@@ -998,44 +999,12 @@ def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
 # Supported MIME types per media category, used to route uploaded files to the
 # correct processor. Keep these aligned with `File.valid_mime_types()` in agno.media
 # for document types.
-IMAGE_MIME_TYPES = {
-    "image/png",
-    "image/jpeg",
-    "image/jpg",
-    "image/gif",
-    "image/webp",
-    "image/bmp",
-    "image/tiff",
-    "image/tif",
-    "image/avif",
-    "image/heic",
-    "image/heif",
-}
-
-AUDIO_MIME_TYPES = {
-    "audio/wav",
-    "audio/wave",
-    "audio/mp3",
-    "audio/mpeg",
-    "audio/ogg",
-    "audio/mp4",
-    "audio/m4a",
-    "audio/aac",
-    "audio/flac",
-}
-
-VIDEO_MIME_TYPES = {
-    "video/x-flv",
-    "video/quicktime",
-    "video/mpeg",
-    "video/mpegs",
-    "video/mpgs",
-    "video/mpg",
-    "video/mp4",
-    "video/webm",
-    "video/wmv",
-    "video/3gpp",
-}
+IMAGE_MIME_TYPES = Image.allowed_mime_types()
+AUDIO_MIME_TYPES = Audio.allowed_mime_types()
+VIDEO_MIME_TYPES = Video.allowed_mime_types()
+# NOTE: These are sourced from the media classes so the routers can never drift
+# from the set of MIME types the media models actually accept. Validation is
+# standardized in agno.media (normalize_mime_type / validate_content_type).
 
 # NOTE: Keep this in sync with `File.valid_mime_types()` in agno.media. Every type here must
 # be valid there, or the upload returns 200 but the file is silently dropped during FileMedia
@@ -1156,7 +1125,10 @@ def classify_upload_file(file: UploadFile) -> Optional[str]:
     to be useful (common for `.md` and `.pptx` uploaded from browsers), falls back to the
     filename extension. Returns None if the file type is not supported.
     """
-    content_type = _normalize_document_mime_type(file.content_type)
+    # Normalize once up front: lowercase and strip media-type parameters
+    # (handles e.g. ``IMAGE/PNG`` and ``image/png; charset=utf-8``).
+    content_type = normalize_mime_type(file.content_type)
+    content_type = _normalize_document_mime_type(content_type)
     if content_type in IMAGE_MIME_TYPES:
         return "image"
     if content_type in AUDIO_MIME_TYPES:
@@ -1178,21 +1150,36 @@ def process_image(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Image(content=content, format=extract_format(file), mime_type=file.content_type, metadata=metadata)
+    return Image(
+        content=content,
+        format=extract_format(file),
+        mime_type=Image.normalize_mime_type(file.content_type),
+        metadata=metadata,
+    )
 
 
 def process_audio(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Audio:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Audio(content=content, format=extract_format(file), mime_type=file.content_type, metadata=metadata)
+    return Audio(
+        content=content,
+        format=extract_format(file),
+        mime_type=Audio.normalize_mime_type(file.content_type),
+        metadata=metadata,
+    )
 
 
 def process_video(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Video:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Video(content=content, format=extract_format(file), mime_type=file.content_type, metadata=metadata)
+    return Video(
+        content=content,
+        format=extract_format(file),
+        mime_type=Video.normalize_mime_type(file.content_type),
+        metadata=metadata,
+    )
 
 
 # Map document file extensions to their canonical MIME type, used to recover a valid
@@ -1230,7 +1217,10 @@ def _resolve_document_mime_type(file: UploadFile) -> Optional[str]:
     documents with ambiguous content types (e.g. `.md` sent as octet-stream) still get a
     mime_type accepted by `FileMedia`.
     """
-    content_type = _normalize_document_mime_type(file.content_type)
+    # Normalize first (lowercase + strip params) so e.g. ``APPLICATION/PDF`` or
+    # ``application/pdf; charset=utf-8`` still resolve.
+    content_type = normalize_mime_type(file.content_type)
+    content_type = _normalize_document_mime_type(content_type)
     if content_type and content_type in DOCUMENT_MIME_TYPES:
         return content_type
     if file.filename and "." in file.filename:
@@ -1248,7 +1238,7 @@ def process_document(file: UploadFile, metadata: Optional[Dict[str, Any]] = None
     # dropped here (the upload still returns 200). The unit tests assert the two stay in sync.
     return FileMedia(
         content=content,
-        filename=file.filename,
+        filename=normalize_filename(file.filename),
         format=extract_format(file),
         mime_type=_resolve_document_mime_type(file),
         metadata=metadata,
