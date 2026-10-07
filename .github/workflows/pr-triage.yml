@@ -88,6 +88,8 @@ jobs:
               // full issue URLs, and issues linked from the PR sidebar, but GitHub only
               // populates it for PRs targeting the default branch. Closing keywords in the
               // body are also parsed so PRs against other branches are not treated as unlinked.
+              // Only issues in this repo count: closing keywords can reference other repos
+              // (Fixes someuser/somerepo#1), where the PR author controls the labels.
               let linkedIssues = null;
               try {
                 const { repository } = await github.graphql(`
@@ -98,6 +100,7 @@ jobs:
                           nodes {
                             number
                             createdAt
+                            repository { nameWithOwner }
                             labels(first: 50) { nodes { name } }
                             assignees(first: 10) { nodes { login } }
                           }
@@ -106,13 +109,15 @@ jobs:
                     }
                   }
                 `, { owner, repo, number: prNumber });
-                linkedIssues = repository.pullRequest.closingIssuesReferences.nodes;
+                linkedIssues = repository.pullRequest.closingIssuesReferences.nodes.filter(
+                  issue => issue.repository.nameWithOwner.toLowerCase() === `${owner}/${repo}`.toLowerCase()
+                );
 
                 const bodyWithoutCode = body
                   .replace(/```[\s\S]*?```/g, '')
                   .replace(/`[^`\n]*`/g, '');
                 const closingRef = new RegExp(
-                  `\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\\s+(?:#|https://github\\.com/${owner}/${repo}/issues/)(\\d+)`,
+                  `\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\\s+(?:#|${owner}/${repo}#|https://github\\.com/${owner}/${repo}/issues/)(\\d+)`,
                   'gi',
                 );
                 const bodyRefs = new Set(
