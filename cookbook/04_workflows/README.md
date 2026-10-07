@@ -12,6 +12,7 @@ Runnable workflow examples under: cookbook/04_workflows
 - 06_advanced_concepts/: Additional examples for 06 advanced concepts.
 - 07_cel_expressions/: Additional examples for 07 cel expressions.
 - 08_human_in_the_loop/: Sequential HITL decision trees and confirmation patterns.
+- 09_invoice_processing/: Extract an invoice from a URL with one model, verify it with another.
 - assets/: Reference images used by workflow documentation.
 
 ## Prerequisites
