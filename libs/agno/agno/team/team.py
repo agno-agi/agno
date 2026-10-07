@@ -307,6 +307,8 @@ class Team:
     use_json_mode: bool = False
     # If True, parse the response
     parse_response: bool = True
+    # Fail the run if requested Pydantic parsing fails; ignored when parse_response is False.
+    fail_on_output_parse_error: bool = False
 
     # --- History ---
     # Enable the agent to manage memories of the user.
@@ -541,6 +543,7 @@ class Team:
         output_model_prompt: Optional[str] = None,
         use_json_mode: bool = False,
         parse_response: bool = True,
+        fail_on_output_parse_error: bool = False,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
         enable_agentic_memory: bool = False,
@@ -660,6 +663,7 @@ class Team:
             output_model_prompt=output_model_prompt,
             use_json_mode=use_json_mode,
             parse_response=parse_response,
+            fail_on_output_parse_error=fail_on_output_parse_error,
             db=db,
             checkpoint=checkpoint,
             enable_agentic_memory=enable_agentic_memory,

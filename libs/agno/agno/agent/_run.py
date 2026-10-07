@@ -36,6 +36,7 @@ from agno.agent._tools import result_store_kwargs
 from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
+    OutputParseError,
     RunCancelledException,
     RunNotContinuableError,
     RunNotFoundError,
@@ -736,8 +737,12 @@ def _run(
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
 
+                if isinstance(e, OutputParseError):
+                    run_error = create_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
+                    run_response.events = add_error_event(error=run_error, events=run_response.events)
+
                 # If the content is None, set it to the error message
-                if run_response.content is None:
+                if run_response.content is None and not isinstance(e, OutputParseError):
                     run_response.content = str(e)
 
                 log_error(f"Error in Agent run: {str(e)}")
@@ -809,6 +814,7 @@ def _run_stream(
     from agno.agent._init import disconnect_connectable_tools
     from agno.agent._messages import get_run_messages
     from agno.agent._response import (
+        convert_response_to_structured_format,
         generate_followups_stream,
         generate_response_with_output_model_stream,
         handle_model_response_stream,
@@ -1018,6 +1024,7 @@ def _run_stream(
                         run_response=run_response,
                         run_messages=run_messages,
                         stream_events=stream_events,
+                        run_context=run_context,
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1074,6 +1081,15 @@ def _run_stream(
                         yield_run_output=yield_run_output or False,
                     )
                     return
+
+                # Validate the final structured output before completion events and post-hooks.
+                if (
+                    agent.fail_on_output_parse_error
+                    and agent.parse_response
+                    and isinstance(run_context.output_schema, type)
+                    and not any(tool_call.is_paused for tool_call in run_response.tools or [])
+                ):
+                    convert_response_to_structured_format(agent, run_response=run_response, run_context=run_context)
 
                 # Yield RunContentCompletedEvent
                 if stream_events:
@@ -1272,7 +1288,7 @@ def _run_stream(
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
-                if run_response.content is None:
+                if run_response.content is None and not isinstance(e, OutputParseError):
                     run_response.content = str(e)
 
                 log_error(f"Error in Agent run: {str(e)}")
@@ -1895,8 +1911,12 @@ async def _arun(
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
 
+                if isinstance(e, OutputParseError):
+                    run_error = create_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
+                    run_response.events = add_error_event(error=run_error, events=run_response.events)
+
                 # If the content is None, set it to the error message
-                if run_response.content is None:
+                if run_response.content is None and not isinstance(e, OutputParseError):
                     run_response.content = str(e)
 
                 log_error(f"Error in Agent run: {str(e)}")
@@ -2294,6 +2314,7 @@ async def _arun_stream(
         ahandle_model_response_stream,
         ahandle_reasoning_stream,
         aparse_response_with_parser_model_stream,
+        convert_response_to_structured_format,
     )
     from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
     from agno.agent._telemetry import alog_agent_telemetry
@@ -2504,6 +2525,7 @@ async def _arun_stream(
                         run_response=run_response,
                         run_messages=run_messages,
                         stream_events=stream_events,
+                        run_context=run_context,
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2533,6 +2555,15 @@ async def _arun_stream(
                     if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event  # type: ignore
+
+                # Validate the final structured output before completion events and post-hooks.
+                if (
+                    agent.fail_on_output_parse_error
+                    and agent.parse_response
+                    and isinstance(run_context.output_schema, type)
+                    and not any(tool_call.is_paused for tool_call in run_response.tools or [])
+                ):
+                    convert_response_to_structured_format(agent, run_response=run_response, run_context=run_context)
 
                 if stream_events:
                     yield handle_event(  # type: ignore
@@ -2786,7 +2817,7 @@ async def _arun_stream(
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
-                if run_response.content is None:
+                if run_response.content is None and not isinstance(e, OutputParseError):
                     run_response.content = str(e)
 
                 log_error(f"Error in Agent run: {str(e)}")
@@ -3969,8 +4000,12 @@ def _continue_run(
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
 
+                if isinstance(e, OutputParseError):
+                    run_error = create_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
+                    run_response.events = add_error_event(error=run_error, events=run_response.events)
+
                 # If the content is None, set it to the error message
-                if run_response.content is None:
+                if run_response.content is None and not isinstance(e, OutputParseError):
                     run_response.content = str(e)
 
                 log_error(f"Error in Agent run: {str(e)}")
@@ -4018,6 +4053,7 @@ def _continue_run_stream(
     from agno.agent._hooks import execute_post_hooks
     from agno.agent._init import disconnect_connectable_tools
     from agno.agent._response import (
+        convert_response_to_structured_format,
         generate_followups_stream,
         handle_model_response_stream,
         parse_response_with_parser_model_stream,
@@ -4096,6 +4132,15 @@ def _continue_run_stream(
                     if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                         raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
+
+                # Validate the final structured output before completion events and post-hooks.
+                if (
+                    agent.fail_on_output_parse_error
+                    and agent.parse_response
+                    and isinstance(run_context.output_schema, type)
+                    and not any(tool_call.is_paused for tool_call in run_response.tools or [])
+                ):
+                    convert_response_to_structured_format(agent, run_response=run_response, run_context=run_context)
 
                 # Yield RunContentCompletedEvent
                 if stream_events:
@@ -4283,7 +4328,7 @@ def _continue_run_stream(
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
-                if run_response.content is None:
+                if run_response.content is None and not isinstance(e, OutputParseError):
                     run_response.content = str(e)
 
                 log_error(f"Error in Agent run: {str(e)}")
@@ -5271,7 +5316,7 @@ async def _acontinue_run(
                 run_response.events = add_error_event(error=run_error, events=run_response.events)  # type: ignore
 
                 # If the content is None, set it to the error message
-                if run_response.content is None:  # type: ignore
+                if run_response.content is None and not isinstance(e, OutputParseError):  # type: ignore
                     run_response.content = str(e)  # type: ignore
 
                 log_error(f"Error in Agent run: {str(e)}")
@@ -5344,6 +5389,7 @@ async def _acontinue_run_stream(
         agenerate_response_with_output_model_stream,
         ahandle_model_response_stream,
         aparse_response_with_parser_model_stream,
+        convert_response_to_structured_format,
     )
     from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
     from agno.agent._telemetry import alog_agent_telemetry
@@ -5640,6 +5686,7 @@ async def _acontinue_run_stream(
                         run_response=run_response,
                         run_messages=run_messages,
                         stream_events=stream_events,
+                        run_context=run_context,
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -5669,6 +5716,15 @@ async def _acontinue_run_stream(
                     if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event  # type: ignore
+
+                # Validate the final structured output before completion events and post-hooks.
+                if (
+                    agent.fail_on_output_parse_error
+                    and agent.parse_response
+                    and isinstance(run_context.output_schema, type)
+                    and not any(tool_call.is_paused for tool_call in run_response.tools or [])
+                ):
+                    convert_response_to_structured_format(agent, run_response=run_response, run_context=run_context)
 
                 # Yield RunContentCompletedEvent
                 if stream_events:
@@ -5906,7 +5962,7 @@ async def _acontinue_run_stream(
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
-                if run_response.content is None:
+                if run_response.content is None and not isinstance(e, OutputParseError):
                     run_response.content = str(e)
 
                 log_error(f"Error in Agent run: {str(e)}")

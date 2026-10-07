@@ -144,6 +144,7 @@ def __init__(
     output_model_prompt: Optional[str] = None,
     use_json_mode: bool = False,
     parse_response: bool = True,
+    fail_on_output_parse_error: bool = False,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
     enable_agentic_memory: bool = False,
@@ -328,6 +329,7 @@ def __init__(
     team.output_model_prompt = output_model_prompt
     team.use_json_mode = use_json_mode
     team.parse_response = parse_response
+    team.fail_on_output_parse_error = fail_on_output_parse_error
 
     team.db = db
     team.checkpoint = checkpoint

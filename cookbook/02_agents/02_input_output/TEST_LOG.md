@@ -85,3 +85,15 @@
 **Result:** Completed successfully in 9s.
 
 ---
+
+### output_parse_failure.py
+
+**Status:** PASS (offline model substitution only)
+**Tier:** untagged
+**Description:** Executed the cookbook with deterministic model responses using
+Python 3.12.14 and the development environment. Verified both a valid Ticket and
+a malformed reply that produces RunStatus.error and an output_parse_error event.
+**Result:** Success and failure branches passed without a provider request. The
+live OpenAI example was not executed.
+
+---
