@@ -8,11 +8,10 @@ from agno.exceptions import ModelAuthenticationError
 from agno.metrics import MessageMetrics
 from agno.models.decision.base import AnswerType, DecisionModel, _score_answer
 from agno.models.decision.types import (
+    BinaryQuestion,
     Choice,
     ChoiceAnswer,
     DecisionResult,
-    Noul,
-    NoulAnswer,
     RefusalAnswer,
     Score,
     State,
@@ -85,15 +84,17 @@ class OpenAIDecisions(DecisionModel):
         self.async_client = _require_decisions(AsyncOpenAI(**client_params))
         return self.async_client
 
-    def _build_request(self, state: State, questions: Dict[str, Union[Noul, Choice, Score]]) -> Dict[str, Any]:
+    def _build_request(
+        self, state: State, questions: Dict[str, Union[BinaryQuestion, Choice, Score]]
+    ) -> Dict[str, Any]:
         return {
             "model": self.id,
             "input": _state_to_input(state),
             "questions": [self._question_to_openai(name, q) for name, q in questions.items()],
         }
 
-    def _question_to_openai(self, name: str, question: Union[Noul, Choice, Score]) -> Dict[str, Any]:
-        if isinstance(question, Noul):
+    def _question_to_openai(self, name: str, question: Union[BinaryQuestion, Choice, Score]) -> Dict[str, Any]:
+        if isinstance(question, BinaryQuestion):
             instructions = question.instructions
             if question.yes is not None and question.no is not None:
                 instructions = f"{instructions}\nYes means: {question.yes}\nNo means: {question.no}"
@@ -112,7 +113,9 @@ class OpenAIDecisions(DecisionModel):
             "levels": [_described("label", label, desc) for label, desc in question.levels.items()],
         }
 
-    def _parse_response(self, raw: Dict[str, Any], questions: Dict[str, Union[Noul, Choice, Score]]) -> DecisionResult:
+    def _parse_response(
+        self, raw: Dict[str, Any], questions: Dict[str, Union[BinaryQuestion, Choice, Score]]
+    ) -> DecisionResult:
         by_name = {a.get("name"): a for a in raw.get("answers") or []}
         answers: Dict[str, AnswerType] = {}
         for name, question in questions.items():
@@ -123,14 +126,14 @@ class OpenAIDecisions(DecisionModel):
         return DecisionResult(answers=answers, model=raw.get("model"), metrics=self._openai_usage(raw.get("usage")))
 
     def _parse_openai_answer(
-        self, name: str, question: Union[Noul, Choice, Score], answer: Dict[str, Any]
+        self, name: str, question: Union[BinaryQuestion, Choice, Score], answer: Dict[str, Any]
     ) -> AnswerType:
         if answer.get("type") == "refusal":
             return RefusalAnswer()
         try:
-            if isinstance(question, Noul):
+            if isinstance(question, BinaryQuestion):
                 probability = float(answer["probability"])
-                return NoulAnswer(probability=probability, value=probability >= question.threshold)
+                return question.answer(probability)
             if isinstance(question, Choice):
                 return ChoiceAnswer(
                     value=str(answer["choice"]),

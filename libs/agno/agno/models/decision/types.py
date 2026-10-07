@@ -16,20 +16,40 @@ def _to_described(value: Any, kind: str) -> Any:
     return value
 
 
-class Noul(BaseModel):
-    """A yes/no question. The answer is the probability that the statement is true."""
+class BinaryQuestion(BaseModel):
+    """Fields shared by Noul and Predicate. Every provider accepts both."""
 
-    type: Literal["noul"] = "noul"
     instructions: str
     yes: Optional[str] = Field(default=None, description="What a yes means")
     no: Optional[str] = Field(default=None, description="What a no means")
     threshold: float = Field(default=0.5, gt=0, lt=1, description="Probability at or above which the answer is yes")
 
     @model_validator(mode="after")
-    def _check_criteria(self) -> "Noul":
+    def _check_criteria(self) -> "BinaryQuestion":
         if (self.yes is None) != (self.no is None):
-            raise ValueError("Noul needs both `yes` and `no`, or neither")
+            raise ValueError(f"{type(self).__name__} needs both `yes` and `no`, or neither")
         return self
+
+    def answer(self, probability: float) -> "BinaryAnswer":
+        raise NotImplementedError
+
+
+class Noul(BinaryQuestion):
+    """A yes/no question, in TypeSafe's terms. Same as Predicate."""
+
+    type: Literal["noul"] = "noul"
+
+    def answer(self, probability: float) -> "NoulAnswer":
+        return NoulAnswer(probability=probability, value=probability >= self.threshold)
+
+
+class Predicate(BinaryQuestion):
+    """A statement to check as true or false, in OpenAI's terms. Same as Noul."""
+
+    type: Literal["predicate"] = "predicate"
+
+    def answer(self, probability: float) -> "PredicateAnswer":
+        return PredicateAnswer(probability=probability, value=probability >= self.threshold)
 
 
 class Choice(BaseModel):
@@ -72,13 +92,20 @@ class Score(BaseModel):
         return value
 
 
-Question = Annotated[Union[Noul, Choice, Score], Field(discriminator="type")]
+Question = Annotated[Union[Noul, Predicate, Choice, Score], Field(discriminator="type")]
 
 
-class NoulAnswer(BaseModel):
-    type: Literal["noul"] = "noul"
+class BinaryAnswer(BaseModel):
     probability: float
     value: bool
+
+
+class NoulAnswer(BinaryAnswer):
+    type: Literal["noul"] = "noul"
+
+
+class PredicateAnswer(BinaryAnswer):
+    type: Literal["predicate"] = "predicate"
 
 
 class ChoiceAnswer(BaseModel):
@@ -104,7 +131,9 @@ class RefusalAnswer(BaseModel):
     value: None = None
 
 
-Answer = Annotated[Union[NoulAnswer, ChoiceAnswer, ScoreAnswer, RefusalAnswer], Field(discriminator="type")]
+Answer = Annotated[
+    Union[NoulAnswer, PredicateAnswer, ChoiceAnswer, ScoreAnswer, RefusalAnswer], Field(discriminator="type")
+]
 
 State = Union[str, Dict[str, Any], List[str]]
 
@@ -113,12 +142,12 @@ State = Union[str, Dict[str, Any], List[str]]
 class DecisionResult(Mapping[str, Any]):
     """Answers keyed by question name. Reads like a dict: result["urgent"].probability."""
 
-    answers: Dict[str, Union[NoulAnswer, ChoiceAnswer, ScoreAnswer, RefusalAnswer]]
+    answers: Dict[str, Union[BinaryAnswer, ChoiceAnswer, ScoreAnswer, RefusalAnswer]]
     model: Optional[str] = None
     metrics: Optional[MessageMetrics] = None
     raw: Optional[Dict[str, Any]] = field(default=None, repr=False)
 
-    def __getitem__(self, name: str) -> Union[NoulAnswer, ChoiceAnswer, ScoreAnswer, RefusalAnswer]:
+    def __getitem__(self, name: str) -> Union[BinaryAnswer, ChoiceAnswer, ScoreAnswer, RefusalAnswer]:
         return self.answers[name]
 
     def __iter__(self) -> Iterator[str]:

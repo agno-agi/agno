@@ -15,6 +15,8 @@ from agno.models.decision import (
     DecisionModel,
     Noul,
     NoulAnswer,
+    Predicate,
+    PredicateAnswer,
     RefusalAnswer,
     Score,
     ScoreAnswer,
@@ -345,3 +347,30 @@ def test_decide_rejects_empty_questions_and_bad_state():
         model.decide("x", {})
     with pytest.raises(TypeError, match="state must be"):
         model.decide(42, {"q": Noul(instructions="i")})  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Noul and Predicate
+# ---------------------------------------------------------------------------
+
+
+def test_predicate_is_sent_as_noul_and_answered_as_predicate():
+    model, recorder = make_model([ok({"answers": {"q": {"type": "noul", "noul": 0.8}}})])
+    result = model.decide("x", {"q": Predicate(instructions="Is it spam", yes="Unsolicited", no="Expected")})
+    assert recorder.body["questions"]["q"] == {
+        "type": "noul",
+        "instructions": "Is it spam",
+        "criteria": {"true": "Unsolicited", "false": "Expected"},
+    }
+    assert result["q"] == PredicateAnswer(probability=0.8, value=True)
+
+
+def test_questions_accept_predicate_dicts():
+    model, _ = make_model([ok({"answers": {"q": {"type": "noul", "noul": 0.3}}})])
+    result = model.decide("x", {"q": {"type": "predicate", "instructions": "Is it spam"}})
+    assert result["q"] == PredicateAnswer(probability=0.3, value=False)
+
+
+def test_predicate_validation_matches_noul():
+    with pytest.raises(ValidationError):
+        Predicate(instructions="i", no="only no")

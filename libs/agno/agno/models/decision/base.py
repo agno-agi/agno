@@ -11,11 +11,11 @@ from pydantic import TypeAdapter
 from agno.exceptions import ModelAuthenticationError, ModelProviderError
 from agno.metrics import MessageMetrics
 from agno.models.decision.types import (
+    BinaryAnswer,
+    BinaryQuestion,
     Choice,
     ChoiceAnswer,
     DecisionResult,
-    Noul,
-    NoulAnswer,
     Question,
     RefusalAnswer,
     Score,
@@ -28,7 +28,7 @@ T = TypeVar("T")
 
 _question_adapter: TypeAdapter = TypeAdapter(Question)
 
-AnswerType = Union[NoulAnswer, ChoiceAnswer, ScoreAnswer, RefusalAnswer]
+AnswerType = Union[BinaryAnswer, ChoiceAnswer, ScoreAnswer, RefusalAnswer]
 
 
 @dataclass
@@ -113,16 +113,19 @@ class DecisionModel:
     # Wire format hooks
     # ------------------------------------------------------------------
 
-    def _build_request(self, state: State, questions: Dict[str, Union[Noul, Choice, Score]]) -> Dict[str, Any]:
+    def _build_request(
+        self, state: State, questions: Dict[str, Union[BinaryQuestion, Choice, Score]]
+    ) -> Dict[str, Any]:
         return {
             "model": self.id,
             "state": state,
             "questions": {name: self._question_to_wire(q) for name, q in questions.items()},
         }
 
-    def _question_to_wire(self, question: Union[Noul, Choice, Score]) -> Dict[str, Any]:
-        wire: Dict[str, Any] = {"type": question.type, "instructions": question.instructions}
-        if isinstance(question, Noul):
+    def _question_to_wire(self, question: Union[BinaryQuestion, Choice, Score]) -> Dict[str, Any]:
+        wire_type = "noul" if isinstance(question, BinaryQuestion) else question.type
+        wire: Dict[str, Any] = {"type": wire_type, "instructions": question.instructions}
+        if isinstance(question, BinaryQuestion):
             if question.yes is not None and question.no is not None:
                 wire["criteria"] = {"true": question.yes, "false": question.no}
         elif isinstance(question, Choice):
@@ -133,7 +136,9 @@ class DecisionModel:
             ]
         return wire
 
-    def _parse_response(self, raw: Dict[str, Any], questions: Dict[str, Union[Noul, Choice, Score]]) -> DecisionResult:
+    def _parse_response(
+        self, raw: Dict[str, Any], questions: Dict[str, Union[BinaryQuestion, Choice, Score]]
+    ) -> DecisionResult:
         answers_raw = raw.get("answers") or {}
         answers: Dict[str, AnswerType] = {}
         for name, question in questions.items():
@@ -143,13 +148,15 @@ class DecisionModel:
             answers[name] = self._parse_answer(name, question, answer)
         return DecisionResult(answers=answers, model=raw.get("model"), metrics=self._usage_to_metrics(raw.get("usage")))
 
-    def _parse_answer(self, name: str, question: Union[Noul, Choice, Score], answer: Dict[str, Any]) -> AnswerType:
+    def _parse_answer(
+        self, name: str, question: Union[BinaryQuestion, Choice, Score], answer: Dict[str, Any]
+    ) -> AnswerType:
         if answer.get("type") == "refusal":
             return RefusalAnswer()
         try:
-            if isinstance(question, Noul):
+            if isinstance(question, BinaryQuestion):
                 probability = float(answer["noul"])
-                return NoulAnswer(probability=probability, value=probability >= question.threshold)
+                return question.answer(probability)
             if isinstance(question, Choice):
                 return ChoiceAnswer(
                     value=answer["choice"],
@@ -246,22 +253,24 @@ class DecisionModel:
             ModelProviderError(message=message, status_code=status_code, model_name=self.name, model_id=self.id)
         )
 
-    def _validate(self, state: State, questions: Mapping[str, Any]) -> Dict[str, Union[Noul, Choice, Score]]:
+    def _validate(self, state: State, questions: Mapping[str, Any]) -> Dict[str, Union[BinaryQuestion, Choice, Score]]:
         if not isinstance(state, (str, dict, list)):
             raise TypeError(f"state must be a str, dict or list of str, got {type(state).__name__}")
         if not questions:
             raise ValueError("decide() needs at least one question")
-        validated: Dict[str, Union[Noul, Choice, Score]] = {}
+        validated: Dict[str, Union[BinaryQuestion, Choice, Score]] = {}
         for name, question in questions.items():
             if not isinstance(name, str) or not name:
                 raise ValueError("Question names must be non-empty strings")
             validated[name] = (
-                question if isinstance(question, (Noul, Choice, Score)) else _question_adapter.validate_python(question)
+                question
+                if isinstance(question, (BinaryQuestion, Choice, Score))
+                else _question_adapter.validate_python(question)
             )
         return validated
 
     def _finish(
-        self, raw: Dict[str, Any], questions: Dict[str, Union[Noul, Choice, Score]], start: float
+        self, raw: Dict[str, Any], questions: Dict[str, Union[BinaryQuestion, Choice, Score]], start: float
     ) -> DecisionResult:
         result = self._parse_response(raw, questions)
         result.raw = raw

@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from agno.exceptions import ModelAuthenticationError, ModelRateLimitError
-from agno.models.decision import Choice, Noul, RefusalAnswer, Score
+from agno.models.decision import Choice, Noul, NoulAnswer, Predicate, PredicateAnswer, RefusalAnswer, Score
 from agno.models.openai import OpenAIDecisions
 
 QUESTIONS = {
@@ -146,3 +146,17 @@ async def test_adecide():
     result = await model.adecide("x", QUESTIONS)
     assert result["department"].value == "billing"
     assert body(requests)["questions"][0]["type"] == "predicate"
+
+
+def test_noul_and_predicate_both_map_to_predicate():
+    model, requests = make_model([httpx.Response(200, json=RESPONSE), httpx.Response(200, json=RESPONSE)])
+    noul_result = model.decide("x", QUESTIONS)
+    predicate_questions = dict(QUESTIONS, damaged=Predicate(instructions="Is the product damaged"))
+    predicate_result = model.decide("x", predicate_questions)
+    assert body(requests)["questions"][0] == {
+        "type": "predicate",
+        "name": "damaged",
+        "instructions": "Is the product damaged",
+    }
+    assert noul_result["damaged"] == NoulAnswer(probability=0.92, value=True)
+    assert predicate_result["damaged"] == PredicateAnswer(probability=0.92, value=True)
