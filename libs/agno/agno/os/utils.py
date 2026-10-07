@@ -24,7 +24,7 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
-from agno.registry import Registry, ToolSource
+from agno.registry import Registry, ResourceSource
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
@@ -2315,7 +2315,7 @@ def _collect_fallback_models(owner: Any, registry: Registry) -> None:
     if isinstance(fallback_models, list):
         for fallback_model in fallback_models:
             # May contain plain string ids; Registry.add_model ignores non-Model values
-            registry.add_model(fallback_model)
+            registry.add_model(fallback_model, source=ResourceSource.DISCOVERED)
 
     fallback_config = getattr(owner, "fallback_config", None)
     if fallback_config is not None:
@@ -2323,7 +2323,7 @@ def _collect_fallback_models(owner: Any, registry: Registry) -> None:
             models = getattr(fallback_config, attr, None)
             if isinstance(models, list):
                 for fallback_model in models:
-                    registry.add_model(fallback_model)
+                    registry.add_model(fallback_model, source=ResourceSource.DISCOVERED)
 
 
 def _collect_components_from_knowledge(knowledge: Any, registry: Registry) -> None:
@@ -2336,13 +2336,11 @@ def _collect_components_from_knowledge(knowledge: Any, registry: Registry) -> No
     if knowledge is None:
         return
     registry.add_knowledge(knowledge, mirrored=True)
-    registry.add_vector_db(getattr(knowledge, "vector_db", None))
-    registry.add_db(getattr(knowledge, "contents_db", None))
+    registry.add_vector_db(getattr(knowledge, "vector_db", None), source=ResourceSource.DISCOVERED)
+    registry.add_db(getattr(knowledge, "contents_db", None), source=ResourceSource.DISCOVERED)
 
 
-def collect_components_from_agent(
-    agent: Any, registry: Registry, visited: Set[int], include_tools: bool = True
-) -> None:
+def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[int]) -> None:
     """Add the models, tools, schemas, db and vector db referenced by an agent to the registry.
 
     ``visited`` tracks already-walked agents/teams/workflows (by object id) to
@@ -2352,94 +2350,92 @@ def collect_components_from_agent(
         return
     visited.add(id(agent))
 
-    registry.add_model(getattr(agent, "model", None))
-    registry.add_model(getattr(agent, "reasoning_model", None))
-    registry.add_model(getattr(agent, "parser_model", None))
-    registry.add_model(getattr(agent, "output_model", None))
+    registry.add_model(getattr(agent, "model", None), source=ResourceSource.DISCOVERED)
+    registry.add_model(getattr(agent, "reasoning_model", None), source=ResourceSource.DISCOVERED)
+    registry.add_model(getattr(agent, "parser_model", None), source=ResourceSource.DISCOVERED)
+    registry.add_model(getattr(agent, "output_model", None), source=ResourceSource.DISCOVERED)
     _collect_fallback_models(agent, registry)
 
     tools = getattr(agent, "tools", None)
-    if include_tools and isinstance(tools, list):
+    if isinstance(tools, list):
         for tool in tools:
-            registry.add_tool(tool, source=ToolSource.DISCOVERED)
+            registry.add_tool(tool, source=ResourceSource.DISCOVERED)
 
-    registry.add_schema(getattr(agent, "input_schema", None))
-    registry.add_schema(getattr(agent, "output_schema", None))
-    registry.add_db(getattr(agent, "db", None))
+    registry.add_schema(getattr(agent, "input_schema", None), source=ResourceSource.DISCOVERED)
+    registry.add_schema(getattr(agent, "output_schema", None), source=ResourceSource.DISCOVERED)
+    registry.add_db(getattr(agent, "db", None), source=ResourceSource.DISCOVERED)
     for filesystem, _read_only in getattr(agent, "filesystems", []):
         filesystem_backend = getattr(filesystem, "backend", None)
-        registry.add_db(getattr(filesystem_backend, "db", None))
+        registry.add_db(getattr(filesystem_backend, "db", None), source=ResourceSource.DISCOVERED)
     _collect_components_from_knowledge(getattr(agent, "knowledge", None), registry)
     # A named LearningMachine on a code-defined component is a registry
     # resource: its stored config references it by name, so the registry the
     # AgentOS resolves through must hold it. add_learning ignores True, None
     # and unnamed (inline) machines.
-    registry.add_learning(getattr(agent, "learning", None))
+    registry.add_learning(getattr(agent, "learning", None), source=ResourceSource.DISCOVERED)
 
 
-def collect_components_from_team(team: Any, registry: Registry, visited: Set[int], include_tools: bool = True) -> None:
+def collect_components_from_team(team: Any, registry: Registry, visited: Set[int]) -> None:
     """Add a team's components to the registry, recursing into all of its members."""
     if id(team) in visited:
         return
     visited.add(id(team))
 
-    registry.add_model(getattr(team, "model", None))
-    registry.add_model(getattr(team, "reasoning_model", None))
-    registry.add_model(getattr(team, "parser_model", None))
-    registry.add_model(getattr(team, "output_model", None))
+    registry.add_model(getattr(team, "model", None), source=ResourceSource.DISCOVERED)
+    registry.add_model(getattr(team, "reasoning_model", None), source=ResourceSource.DISCOVERED)
+    registry.add_model(getattr(team, "parser_model", None), source=ResourceSource.DISCOVERED)
+    registry.add_model(getattr(team, "output_model", None), source=ResourceSource.DISCOVERED)
     _collect_fallback_models(team, registry)
 
     tools = getattr(team, "tools", None)
-    if include_tools and isinstance(tools, list):
+    if isinstance(tools, list):
         for tool in tools:
-            registry.add_tool(tool, source=ToolSource.DISCOVERED)
+            registry.add_tool(tool, source=ResourceSource.DISCOVERED)
 
-    registry.add_schema(getattr(team, "input_schema", None))
-    registry.add_schema(getattr(team, "output_schema", None))
-    registry.add_db(getattr(team, "db", None))
+    registry.add_schema(getattr(team, "input_schema", None), source=ResourceSource.DISCOVERED)
+    registry.add_schema(getattr(team, "output_schema", None), source=ResourceSource.DISCOVERED)
+    registry.add_db(getattr(team, "db", None), source=ResourceSource.DISCOVERED)
     _collect_components_from_knowledge(getattr(team, "knowledge", None), registry)
-    registry.add_learning(getattr(team, "learning", None))
+    registry.add_learning(getattr(team, "learning", None), source=ResourceSource.DISCOVERED)
 
     members = getattr(team, "members", None)
     if isinstance(members, list):
         for member in members:
             if isinstance(member, Agent):
-                collect_components_from_agent(member, registry, visited, include_tools)
+                collect_components_from_agent(member, registry, visited)
             elif isinstance(member, Team):
-                collect_components_from_team(member, registry, visited, include_tools)
+                collect_components_from_team(member, registry, visited)
 
 
-def collect_components_from_workflow(
-    workflow: Any, registry: Registry, visited: Set[int], include_tools: bool = True
-) -> None:
+def collect_components_from_workflow(workflow: Any, registry: Registry, visited: Set[int]) -> None:
     """Add a workflow's components (coordinator agent and step tree) to the registry."""
     if id(workflow) in visited:
         return
     visited.add(id(workflow))
 
-    registry.add_schema(getattr(workflow, "input_schema", None))
-    registry.add_db(getattr(workflow, "db", None))
+    registry.add_schema(getattr(workflow, "input_schema", None), source=ResourceSource.DISCOVERED)
+    registry.add_db(getattr(workflow, "db", None), source=ResourceSource.DISCOVERED)
 
     # Agentic workflow coordinator (WorkflowAgent is an Agent subclass)
     workflow_agent = getattr(workflow, "agent", None)
     if workflow_agent is not None:
-        collect_components_from_agent(workflow_agent, registry, visited, include_tools)
+        collect_components_from_agent(workflow_agent, registry, visited)
 
-    _collect_components_from_steps(getattr(workflow, "steps", None), registry, visited, include_tools)
+    _collect_components_from_steps(getattr(workflow, "steps", None), registry, visited)
 
 
-def _collect_components_from_steps(steps: Any, registry: Registry, visited: Set[int], include_tools: bool) -> None:
+def _collect_components_from_steps(steps: Any, registry: Registry, visited: Set[int]) -> None:
     """Add components from a workflow's ``steps`` value (list, container or callable)."""
     if steps is None:
         return
     if isinstance(steps, list):
         for step in steps:
-            _collect_components_from_step(step, registry, visited, include_tools)
+            _collect_components_from_step(step, registry, visited)
     else:
-        _collect_components_from_step(steps, registry, visited, include_tools)
+        _collect_components_from_step(steps, registry, visited)
 
 
-def _collect_components_from_step(step: Any, registry: Registry, visited: Set[int], include_tools: bool) -> None:
+def _collect_components_from_step(step: Any, registry: Registry, visited: Set[int]) -> None:
     """Add components from a single workflow step of any type.
 
     Handles primitive steps (Step pointing at an agent/team/nested workflow),
@@ -2459,43 +2455,43 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
 
     if isinstance(step, Step):
         if step.agent is not None:
-            collect_components_from_agent(step.agent, registry, visited, include_tools)
+            collect_components_from_agent(step.agent, registry, visited)
         if step.team is not None:
-            collect_components_from_team(step.team, registry, visited, include_tools)
+            collect_components_from_team(step.team, registry, visited)
         nested_workflow = getattr(step, "workflow", None)
         if nested_workflow is not None:
-            collect_components_from_workflow(nested_workflow, registry, visited, include_tools)
+            collect_components_from_workflow(nested_workflow, registry, visited)
         if callable(getattr(step, "executor", None)):
-            registry.add_function(step.executor)
+            registry.add_function(step.executor, source=ResourceSource.DISCOVERED)
 
     elif isinstance(step, Agent):
-        collect_components_from_agent(step, registry, visited, include_tools)
+        collect_components_from_agent(step, registry, visited)
 
     elif isinstance(step, Team):
-        collect_components_from_team(step, registry, visited, include_tools)
+        collect_components_from_team(step, registry, visited)
 
     elif isinstance(step, Workflow):
-        collect_components_from_workflow(step, registry, visited, include_tools)
+        collect_components_from_workflow(step, registry, visited)
 
     elif isinstance(step, (Steps, Loop, Parallel, Condition, Router)):
         # Container-level callable refs resolve by function name at rehydration.
         if isinstance(step, Condition) and callable(getattr(step, "evaluator", None)):
-            registry.add_function(step.evaluator)
+            registry.add_function(step.evaluator, source=ResourceSource.DISCOVERED)
         if isinstance(step, Router) and callable(getattr(step, "selector", None)):
-            registry.add_function(step.selector)
+            registry.add_function(step.selector, source=ResourceSource.DISCOVERED)
         if isinstance(step, Loop) and callable(getattr(step, "end_condition", None)):
-            registry.add_function(step.end_condition)
+            registry.add_function(step.end_condition, source=ResourceSource.DISCOVERED)
         # Walk every sub-step container: `steps` (all), `else_steps` (Condition)
         # and `choices` (Router, before it is prepared into `steps`).
         for attr in ("steps", "else_steps", "choices"):
             sub_steps = getattr(step, attr, None)
             if isinstance(sub_steps, list):
                 for sub_step in sub_steps:
-                    _collect_components_from_step(sub_step, registry, visited, include_tools)
+                    _collect_components_from_step(sub_step, registry, visited)
 
     elif callable(step):
         # A bare callable used directly as a step serializes as an executor ref.
-        registry.add_function(step)
+        registry.add_function(step, source=ResourceSource.DISCOVERED)
 
 
 def collect_components_from_os(
@@ -2503,7 +2499,6 @@ def collect_components_from_os(
     teams: Optional[List[Any]],
     workflows: Optional[List[Any]],
     registry: Registry,
-    include_tools: bool = True,
 ) -> None:
     """Walk all agents, teams and workflows of an AgentOS and add their components to ``registry``.
 
@@ -2511,8 +2506,7 @@ def collect_components_from_os(
     added directly during the walk. Each top-level node is walked inside its own
     guard, so a single malformed agent/team/workflow degrades to "not collected"
     rather than failing the whole walk. Remote and factory components are skipped
-    because they expose no locally-walkable instances. With ``include_tools=False``
-    the components' own tools are left out of the registry.
+    because they expose no locally-walkable instances.
     """
     visited: Set[int] = set()
 
@@ -2520,7 +2514,7 @@ def collect_components_from_os(
         if not isinstance(agent, Agent):
             continue
         try:
-            collect_components_from_agent(agent, registry, visited, include_tools)
+            collect_components_from_agent(agent, registry, visited)
         except Exception as e:
             log_debug(f"Registry auto-population: skipped agent due to error: {e}")
 
@@ -2528,7 +2522,7 @@ def collect_components_from_os(
         if not isinstance(team, Team):
             continue
         try:
-            collect_components_from_team(team, registry, visited, include_tools)
+            collect_components_from_team(team, registry, visited)
         except Exception as e:
             log_debug(f"Registry auto-population: skipped team due to error: {e}")
 
@@ -2536,7 +2530,7 @@ def collect_components_from_os(
         if not isinstance(workflow, Workflow):
             continue
         try:
-            collect_components_from_workflow(workflow, registry, visited, include_tools)
+            collect_components_from_workflow(workflow, registry, visited)
         except Exception as e:
             log_debug(f"Registry auto-population: skipped workflow due to error: {e}")
 

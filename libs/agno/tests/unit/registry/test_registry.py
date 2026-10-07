@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
-from agno.registry.registry import Registry, ToolSource
+from agno.registry.registry import Registry, RegistryResourceType, ResourceSource, ToolSource
 from agno.tools.function import RUNTIME_ONLY_FIELDS, SERIALIZED_FIELDS, Function
 from agno.tools.toolkit import Toolkit
 
@@ -2340,3 +2340,87 @@ class TestAddToolSource:
         registry = Registry()
         registry.add_tool(Toolkit(name="legacy_kit", tools=[sample_function]), source="discovered")
         assert "legacy_kit" in registry.undeclared_tool_names
+
+
+class TestDiscover:
+    """Registry(discover=...) decides which kinds of discovered resources are accepted."""
+
+    @staticmethod
+    def _discover_everything(registry):
+        from agno.db.sqlite import SqliteDb
+        from agno.knowledge.knowledge import Knowledge
+        from agno.learn import LearningMachine
+
+        registry.add_tool(Toolkit(name="found_kit", tools=[sample_function]), source=ResourceSource.DISCOVERED)
+        registry.add_model(_model("found-model"), source=ResourceSource.DISCOVERED)
+        registry.add_db(SqliteDb(db_file=":memory:", id="found-db"), source=ResourceSource.DISCOVERED)
+        registry.add_schema(SampleInputSchema, source=ResourceSource.DISCOVERED)
+        registry.add_function(sample_function, source=ResourceSource.DISCOVERED)
+        registry.add_knowledge(Knowledge(name="found-kb"), mirrored=True)
+        registry.add_learning(LearningMachine(name="found-lm"), source=ResourceSource.DISCOVERED)
+
+    def test_default_accepts_every_discovered_kind(self):
+        registry = Registry()
+        self._discover_everything(registry)
+
+        assert len(registry.tools) == 1
+        assert len(registry.models) == 1
+        assert len(registry.dbs) == 1
+        assert registry.schemas == [SampleInputSchema]
+        assert registry.functions == [sample_function]
+        assert len(registry.knowledge) == 1
+        assert len(registry.learning) == 1
+
+    def test_false_refuses_every_discovered_kind(self):
+        registry = Registry(discover=False)
+        self._discover_everything(registry)
+
+        assert registry.tools == []
+        assert registry.models == []
+        assert registry.dbs == []
+        assert registry.schemas == []
+        assert registry.functions == []
+        assert registry.knowledge == []
+        assert registry.learning == []
+        assert registry.undeclared_tool_names == set()
+
+    def test_false_still_accepts_declared_resources(self):
+        registry = Registry(discover=False)
+        registry.add_tool(Toolkit(name="declared_kit", tools=[sample_function]))
+        registry.add_model(_model("declared-model"))
+
+        assert len(registry.tools) == 1
+        assert len(registry.models) == 1
+
+    def test_collection_accepts_only_listed_kinds(self):
+        registry = Registry(discover={"model", RegistryResourceType.DB})
+        self._discover_everything(registry)
+
+        assert len(registry.models) == 1
+        assert len(registry.dbs) == 1
+        assert registry.tools == []
+        assert registry.knowledge == []
+
+    def test_discovers_reports_the_setting(self):
+        registry = Registry(discover=["tool"])
+
+        assert registry.discovers("tool")
+        assert registry.discovers(RegistryResourceType.TOOL)
+        assert not registry.discovers(RegistryResourceType.AGENT)
+        assert Registry().discovers("agent")
+        assert not Registry(discover=False).discovers("agent")
+
+    def test_unknown_kind_is_rejected(self):
+        with pytest.raises(ValueError, match="unknown resource type 'tools'"):
+            Registry(discover={"tools"})
+
+    def test_bare_string_is_rejected(self):
+        with pytest.raises(ValueError, match="not a single string"):
+            Registry(discover="tool")
+
+    def test_tool_source_alias_still_works(self):
+        registry = Registry(discover=False)
+        registry.add_tool(Toolkit(name="legacy_kit", tools=[sample_function]), source=ToolSource.DISCOVERED)
+
+        assert ToolSource is ResourceSource
+        assert registry.tools == []

@@ -84,7 +84,7 @@ from agno.os.utils import (
     setup_tracing_for_os,
     update_cors_middleware,
 )
-from agno.registry import Registry
+from agno.registry import Registry, RegistryResourceType
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.team import RemoteTeam, Team, TeamFactory
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -317,7 +317,6 @@ class AgentOS:
         event_stream: Optional[BaseEventStream] = None,
         telemetry: bool = True,
         registry: Optional[Registry] = None,
-        auto_populate_registry_tools: bool = True,
         scheduler: bool = False,
         scheduler_poll_interval: int = 15,
         scheduler_base_url: Optional[str] = None,
@@ -406,11 +405,6 @@ class AgentOS:
                 in-memory stream when neither is set.
             telemetry: Whether to enable telemetry
             registry: Optional registry to use for the AgentOS
-            auto_populate_registry_tools: Whether to add the tools of served agents and teams to the
-                registry. Discovered tools are not in the StudioTools build palette, but ``GET /registry``
-                lists them and stored components built from the registry can call them. Set False to
-                expose only the tools declared on the registry; stored components that reference a
-                served component's tool then load it without an entrypoint.
             scheduler: Whether to enable the cron scheduler
             scheduler_poll_interval: Seconds between scheduler poll cycles (default: 15)
             scheduler_base_url: Base URL for scheduler HTTP calls (default: http://127.0.0.1:7777)
@@ -472,7 +466,6 @@ class AgentOS:
         self.lifespan = lifespan
 
         self.registry = registry
-        self.auto_populate_registry_tools = auto_populate_registry_tools
         # Knowledge mirrored into the registry by a sync (component-owned
         # instances collected for name resolution) is not a knowledge-route
         # source; anything else on the registry list the user put there -- at
@@ -1106,7 +1099,7 @@ class AgentOS:
             if existing_index is not None and existing_index > 0:
                 self.registry.dbs.insert(0, self.registry.dbs.pop(existing_index))
 
-        if self._agents:
+        if self._agents and self.registry.discovers(RegistryResourceType.AGENT):
             existing_agents = {aid: a for a in self.registry.agents if (aid := getattr(a, "id", None)) is not None}
             for agent in self._agents:
                 agent_id = getattr(agent, "id", None)
@@ -1126,7 +1119,7 @@ class AgentOS:
                 self.registry.agents.append(agent)
                 existing_agents[agent_id] = agent
 
-        if self._teams:
+        if self._teams and self.registry.discovers(RegistryResourceType.TEAM):
             existing_teams = {tid: t for t in self.registry.teams if (tid := getattr(t, "id", None)) is not None}
             for team in self._teams:
                 team_id = getattr(team, "id", None)
@@ -1146,7 +1139,7 @@ class AgentOS:
                 self.registry.teams.append(team)
                 existing_teams[team_id] = team
 
-        if self._workflows:
+        if self._workflows and self.registry.discovers(RegistryResourceType.WORKFLOW):
             existing_workflows = {
                 wid: w for w in self.registry.workflows if (wid := getattr(w, "id", None)) is not None
             }
@@ -1316,7 +1309,7 @@ class AgentOS:
             owner_id = getattr(owner, "id", None)
 
             mm = getattr(owner, "memory_manager", None)
-            if mm is not None:
+            if mm is not None and registry.discovers(RegistryResourceType.MEMORY_MANAGER):
                 mm_id = getattr(mm, "id", None)
                 if mm_id is not None:
                     existing = memory_by_id.get(mm_id)
@@ -1333,7 +1326,7 @@ class AgentOS:
                         memory_by_id[mm_id] = mm
 
             sm = getattr(owner, "session_summary_manager", None)
-            if sm is not None:
+            if sm is not None and registry.discovers(RegistryResourceType.SESSION_SUMMARY_MANAGER):
                 sm_id = getattr(sm, "id", None)
                 if sm_id is not None:
                     existing = summary_by_id.get(sm_id)
@@ -1375,13 +1368,7 @@ class AgentOS:
             self.registry = Registry()
 
         try:
-            collect_components_from_os(
-                self._agents,
-                self._teams,
-                self._workflows,
-                self.registry,
-                include_tools=self.auto_populate_registry_tools,
-            )
+            collect_components_from_os(self._agents, self._teams, self._workflows, self.registry)
         except Exception as e:
             log_debug(f"Registry auto-population skipped: {e}")
 

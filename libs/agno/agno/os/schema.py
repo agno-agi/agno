@@ -23,6 +23,7 @@ from agno.os.config import (
 )
 from agno.os.scopes import split_scope
 from agno.os.utils import extract_input_media, get_run_input, get_session_name, to_utc_datetime
+from agno.registry.registry import RegistryResourceType  # noqa: F401
 from agno.run.base import CancellationStage
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.factory import TeamFactory
@@ -1043,24 +1044,6 @@ class ComponentDeleteRequest(BaseModel):
     """
 
     guard: Optional[ComponentGuard] = Field(None, description="Optional compare-and-set guard")
-
-
-class RegistryResourceType(str, Enum):
-    """Types of resources that can be stored in a registry."""
-
-    TOOL = "tool"
-    MODEL = "model"
-    DB = "db"
-    VECTOR_DB = "vector_db"
-    SCHEMA = "schema"
-    FUNCTION = "function"
-    AGENT = "agent"
-    TEAM = "team"
-    WORKFLOW = "workflow"
-    KNOWLEDGE = "knowledge"
-    MEMORY_MANAGER = "memory_manager"
-    SESSION_SUMMARY_MANAGER = "session_summary_manager"
-    LEARNING = "learning"
 
 
 class CallableMetadata(BaseModel):
