@@ -1,6 +1,7 @@
+import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.routing import APIRouter
@@ -12,7 +13,7 @@ from agno.db.utils import (
     identify_metrics_by_owner,
     is_legacy_metric,
     merge_os_metrics_json,
-    merge_os_model_metrics,
+    merge_os_metrics_totals,
     os_metrics_percentile,
 )
 from agno.exceptions import AgnoError
@@ -29,6 +30,7 @@ from agno.os.routers.metrics.schemas import (
     MetricsResponse,
     ModelUsage,
     OSLatencyMetricsResponse,
+    OSMetricsRefreshResponse,
     OSMetricsRefreshStatusResponse,
     OSModelMetricsResponse,
     OSRunMetricsResponse,
@@ -46,7 +48,7 @@ from agno.os.settings import AgnoAPISettings
 from agno.os.utils import AgnoHTTPException, get_db, to_utc_datetime
 from agno.remote.base import RemoteDb
 from agno.run.base import RunStatus
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_warning
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,11 @@ logger = logging.getLogger(__name__)
 # equal to the ending_date covers that one day.
 DEFAULT_WINDOW_DAYS = 30
 MAX_WINDOW_DAYS = 365
+
+# The /os/metrics routes read every database of the AgentOS at the same time, this many at once. A database
+# that has not answered within the timeout is left out of the response and named in skipped_db_ids.
+_MAX_CONCURRENT_OS_METRICS_READS = 8
+_OS_METRICS_READ_TIMEOUT_SECONDS = 30.0
 
 
 def _window(starting_date: Optional[date], ending_date: Optional[date]) -> Tuple[date, date]:
@@ -457,44 +464,166 @@ def attach_routes(
         scoped_user_id = get_scoped_user_id(request)
         return scoped_user_id if scoped_user_id is not None else user_id
 
-    async def _os_metrics(
+    def _os_dbs(db_ids: Optional[List[str]]) -> Dict[str, Union[BaseDb, AsyncBaseDb, RemoteDb]]:
+        """The databases a read covers, by id: the requested ones, else every database of the AgentOS, each once."""
+        registered_dbs: Dict[str, Union[BaseDb, AsyncBaseDb, RemoteDb]] = {str(_require_os_db().id): _require_os_db()}
+        for registered_db_id, db_list in dbs.items():
+            if db_list:
+                registered_dbs.setdefault(registered_db_id, db_list[0])
+        if not db_ids:
+            return registered_dbs
+        os_dbs = {}
+        for db_id in db_ids:
+            if db_id not in registered_dbs:
+                raise HTTPException(status_code=404, detail=f"No database found with id '{db_id}'")
+            os_dbs[db_id] = registered_dbs[db_id]
+        return os_dbs
+
+    async def _read_os_metrics(
         db: Union[BaseDb, AsyncBaseDb],
         effective_user_id: Optional[str],
         starting_date: date,
         ending_date: date,
         fields: List[str],
-    ) -> Tuple[List[Dict[str, Any]], Optional[datetime]]:
-        """The window's OS metrics, totalled by the database per day, oldest first."""
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """One database's OS metrics for the window, totalled by the database per day, oldest first."""
+        if isinstance(db, AsyncBaseDb):
+            return await db.get_os_metrics(
+                starting_date=starting_date,
+                ending_date=ending_date,
+                user_id=effective_user_id,
+                fields=fields,
+            )
+        return await run_in_threadpool(
+            db.get_os_metrics,
+            starting_date=starting_date,
+            ending_date=ending_date,
+            user_id=effective_user_id,
+            fields=fields,
+        )
+
+    async def _read_os_metrics_totals(
+        db: Union[BaseDb, AsyncBaseDb],
+        effective_user_id: Optional[str],
+        starting_date: date,
+        ending_date: date,
+        fields: List[str],
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """One database's OS metrics for the window, totalled by the database into one set of totals."""
         try:
             if isinstance(db, AsyncBaseDb):
-                totals, latest_updated_at = await db.get_os_metrics(
+                return await db.get_os_metrics_totals(
                     starting_date=starting_date,
                     ending_date=ending_date,
                     user_id=effective_user_id,
                     fields=fields,
                 )
-            else:
-                totals, latest_updated_at = await run_in_threadpool(
-                    db.get_os_metrics,
-                    starting_date=starting_date,
-                    ending_date=ending_date,
-                    user_id=effective_user_id,
-                    fields=fields,
-                )
+            return await run_in_threadpool(
+                db.get_os_metrics_totals,
+                starting_date=starting_date,
+                ending_date=ending_date,
+                user_id=effective_user_id,
+                fields=fields,
+            )
         except NotImplementedError:
-            raise HTTPException(status_code=501, detail="OS metrics not supported by the configured database")
-        return totals, to_utc_datetime(latest_updated_at)
+            # A database that totals per day only has its days totalled here
+            totals, latest_updated_at = await _read_os_metrics(
+                db, effective_user_id, starting_date, ending_date, fields
+            )
+            return merge_os_metrics_totals(totals, fields), latest_updated_at
 
-    async def _os_metrics_by_day(
-        db: Union[BaseDb, AsyncBaseDb],
+    async def _read_os_dbs(
+        os_dbs: Dict[str, Union[BaseDb, AsyncBaseDb, RemoteDb]],
+        read: Callable[[Union[BaseDb, AsyncBaseDb]], Awaitable[Tuple[Any, Optional[int]]]],
+    ) -> Tuple[List[Any], Dict[str, Any]]:
+        """Read every database at the same time, at most _MAX_CONCURRENT_OS_METRICS_READS at once.
+
+        Returns what each database that answered read, and what a response says about its databases: the
+        updated_at of each, the newest of them, and why any other database was skipped.
+        """
+
+        async def _read_one(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> Any:
+            if isinstance(db, RemoteDb):
+                raise NotImplementedError
+            return await asyncio.wait_for(read(db), timeout=_OS_METRICS_READ_TIMEOUT_SECONDS)
+
+        results: List[Any] = []
+        db_ids: Dict[str, Optional[datetime]] = {}
+        skipped_db_ids: Dict[str, str] = {}
+        sources = list(os_dbs.items())
+        for start in range(0, len(sources), _MAX_CONCURRENT_OS_METRICS_READS):
+            batch = sources[start : start + _MAX_CONCURRENT_OS_METRICS_READS]
+            outcomes = await asyncio.gather(*(_read_one(db) for _, db in batch), return_exceptions=True)
+            for (db_id, _), outcome in zip(batch, outcomes):
+                if isinstance(outcome, NotImplementedError):
+                    skipped_db_ids[db_id] = "unsupported"
+                elif isinstance(outcome, asyncio.TimeoutError):
+                    skipped_db_ids[db_id] = "timeout"
+                elif isinstance(outcome, BaseException):
+                    log_warning(f"Could not read OS metrics from database '{db_id}': {str(outcome)}")
+                    skipped_db_ids[db_id] = "failed"
+                else:
+                    result, latest_updated_at = outcome
+                    results.append(result)
+                    db_ids[db_id] = to_utc_datetime(latest_updated_at)
+
+        # A response from no database at all would read as a window without traffic
+        if not db_ids:
+            skipped = ", ".join(f"'{db_id}' ({reason})" for db_id, reason in skipped_db_ids.items())
+            raise HTTPException(status_code=503, detail=f"OS metrics not available from any database: {skipped}")
+        updated_ats = [updated_at for updated_at in db_ids.values() if updated_at is not None]
+        return results, {
+            "updated_at": max(updated_ats) if updated_ats else None,
+            "db_ids": db_ids,
+            "skipped_db_ids": skipped_db_ids,
+        }
+
+    async def _os_metrics(
+        os_dbs: Dict[str, Union[BaseDb, AsyncBaseDb, RemoteDb]],
         effective_user_id: Optional[str],
         starting_date: date,
         ending_date: date,
         fields: List[str],
-    ) -> Tuple[Dict[date, Dict[str, Any]], Optional[datetime]]:
-        """The window's OS metrics, totalled per day by the database, keyed by day."""
-        totals, updated_at = await _os_metrics(db, effective_user_id, starting_date, ending_date, fields)
-        return {day_totals["date"]: day_totals for day_totals in totals}, updated_at
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """The window's OS metrics, totalled per day and added up across the databases, oldest first."""
+        results, databases = await _read_os_dbs(
+            os_dbs, lambda db: _read_os_metrics(db, effective_user_id, starting_date, ending_date, fields)
+        )
+        if len(results) == 1:
+            return results[0], databases
+        totals_by_date: Dict[date, List[Dict[str, Any]]] = {}
+        for totals in results:
+            for day_totals in totals:
+                totals_by_date.setdefault(day_totals["date"], []).append(day_totals)
+        return [
+            {"date": day, **merge_os_metrics_totals(totals_by_date[day], fields)} for day in sorted(totals_by_date)
+        ], databases
+
+    async def _os_metrics_by_day(
+        os_dbs: Dict[str, Union[BaseDb, AsyncBaseDb, RemoteDb]],
+        effective_user_id: Optional[str],
+        starting_date: date,
+        ending_date: date,
+        fields: List[str],
+    ) -> Tuple[Dict[date, Dict[str, Any]], Dict[str, Any]]:
+        """The window's OS metrics, totalled per day and added up across the databases, keyed by day."""
+        totals, databases = await _os_metrics(os_dbs, effective_user_id, starting_date, ending_date, fields)
+        return {day_totals["date"]: day_totals for day_totals in totals}, databases
+
+    async def _os_metrics_totals(
+        os_dbs: Dict[str, Union[BaseDb, AsyncBaseDb, RemoteDb]],
+        effective_user_id: Optional[str],
+        starting_date: date,
+        ending_date: date,
+        fields: List[str],
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """The window's OS metrics, totalled into one set of totals and added up across the databases."""
+        results, databases = await _read_os_dbs(
+            os_dbs, lambda db: _read_os_metrics_totals(db, effective_user_id, starting_date, ending_date, fields)
+        )
+        if len(results) == 1:
+            return results[0], databases
+        return merge_os_metrics_totals(results, fields), databases
 
     def _days(starting_date: date, ending_date: date) -> List[date]:
         """Every day of the window, a day without rows included."""
@@ -577,8 +706,10 @@ def attach_routes(
                 },
             },
             500: {"description": "Failed to get OS session metrics", "model": InternalServerErrorResponse},
-            501: {"description": "OS metrics not supported by the configured database"},
-            503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
+            503: {
+                "description": "No AgentOS database configured, or no database answered",
+                "model": InternalServerErrorResponse,
+            },
         },
     )
     async def get_os_session_metrics(
@@ -593,13 +724,17 @@ def attach_routes(
         user_id: Optional[str] = Query(
             default=None, description="Return only this user's sessions. Ignored for non-admin callers"
         ),
+        db_id: Optional[List[str]] = Query(
+            default=None,
+            description="Database ID to read OS metrics from. Repeat it to read several. Defaults to every database",
+        ),
     ) -> OSSessionMetricsResponse:
         try:
-            db = _require_os_db()
+            os_dbs = _os_dbs(db_id)
             starting_date, ending_date = _window(starting_date, ending_date)
             previous_starting_date = _previous_starting_date(starting_date, ending_date)
-            totals, updated_at = await _os_metrics_by_day(
-                db, _owner(request, user_id), previous_starting_date, ending_date, ["sessions_count"]
+            totals, databases = await _os_metrics_by_day(
+                os_dbs, _owner(request, user_id), previous_starting_date, ending_date, ["sessions_count"]
             )
 
             metrics = [
@@ -618,7 +753,7 @@ def attach_routes(
                 previous_total_sessions=previous_total_sessions,
                 change_percent=_change_percent(total_sessions, previous_total_sessions),
                 window_days=(ending_date - starting_date).days + 1,
-                updated_at=updated_at,
+                **databases,
             )
 
         except HTTPException:
@@ -662,8 +797,10 @@ def attach_routes(
                 },
             },
             500: {"description": "Failed to get OS token metrics", "model": InternalServerErrorResponse},
-            501: {"description": "OS metrics not supported by the configured database"},
-            503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
+            503: {
+                "description": "No AgentOS database configured, or no database answered",
+                "model": InternalServerErrorResponse,
+            },
         },
     )
     async def get_os_token_metrics(
@@ -678,13 +815,17 @@ def attach_routes(
         user_id: Optional[str] = Query(
             default=None, description="Return only this user's tokens. Ignored for non-admin callers"
         ),
+        db_id: Optional[List[str]] = Query(
+            default=None,
+            description="Database ID to read OS metrics from. Repeat it to read several. Defaults to every database",
+        ),
     ) -> OSTokenMetricsResponse:
         try:
-            db = _require_os_db()
+            os_dbs = _os_dbs(db_id)
             starting_date, ending_date = _window(starting_date, ending_date)
             previous_starting_date = _previous_starting_date(starting_date, ending_date)
-            totals, updated_at = await _os_metrics_by_day(
-                db, _owner(request, user_id), previous_starting_date, ending_date, ["token_metrics"]
+            totals, databases = await _os_metrics_by_day(
+                os_dbs, _owner(request, user_id), previous_starting_date, ending_date, ["token_metrics"]
             )
 
             metrics = []
@@ -705,7 +846,7 @@ def attach_routes(
                 previous_total_tokens=previous_total_tokens,
                 change_percent=_change_percent(total_tokens, previous_total_tokens),
                 window_days=(ending_date - starting_date).days + 1,
-                updated_at=updated_at,
+                **databases,
             )
 
         except HTTPException:
@@ -748,8 +889,10 @@ def attach_routes(
                 },
             },
             500: {"description": "Failed to get OS model metrics", "model": InternalServerErrorResponse},
-            501: {"description": "OS metrics not supported by the configured database"},
-            503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
+            503: {
+                "description": "No AgentOS database configured, or no database answered",
+                "model": InternalServerErrorResponse,
+            },
         },
     )
     async def get_os_model_metrics(
@@ -764,21 +907,21 @@ def attach_routes(
         user_id: Optional[str] = Query(
             default=None, description="Return only this user's metrics. Ignored for non-admin callers"
         ),
+        db_id: Optional[List[str]] = Query(
+            default=None,
+            description="Database ID to read OS metrics from. Repeat it to read several. Defaults to every database",
+        ),
     ) -> OSModelMetricsResponse:
         try:
-            db = _require_os_db()
+            os_dbs = _os_dbs(db_id)
             starting_date, ending_date = _window(starting_date, ending_date)
-            totals, updated_at = await _os_metrics(
-                db, _owner(request, user_id), starting_date, ending_date, ["model_metrics"]
+            totals, databases = await _os_metrics_totals(
+                os_dbs, _owner(request, user_id), starting_date, ending_date, ["model_metrics"]
             )
-
-            model_metrics: List[Dict[str, Any]] = []
-            for day_totals in totals:
-                merge_os_model_metrics(model_metrics, day_totals["model_metrics"])
 
             # One entry per model and caller, so the runs add up per model
             run_counts: Dict[Tuple[str, Optional[str]], int] = {}
-            for model_metric in model_metrics:
+            for model_metric in totals["model_metrics"]:
                 key = (model_metric["model_id"], model_metric["model_provider"] or None)
                 run_counts[key] = run_counts.get(key, 0) + model_metric["count"]
 
@@ -797,7 +940,7 @@ def attach_routes(
                 ],
                 total_model_runs=total_model_runs,
                 window_days=(ending_date - starting_date).days + 1,
-                updated_at=updated_at,
+                **databases,
             )
 
         except HTTPException:
@@ -845,8 +988,10 @@ def attach_routes(
                 },
             },
             500: {"description": "Failed to get OS run metrics", "model": InternalServerErrorResponse},
-            501: {"description": "OS metrics not supported by the configured database"},
-            503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
+            503: {
+                "description": "No AgentOS database configured, or no database answered",
+                "model": InternalServerErrorResponse,
+            },
         },
     )
     async def get_os_run_metrics(
@@ -861,13 +1006,17 @@ def attach_routes(
         user_id: Optional[str] = Query(
             default=None, description="Return only this user's runs. Ignored for non-admin callers"
         ),
+        db_id: Optional[List[str]] = Query(
+            default=None,
+            description="Database ID to read OS metrics from. Repeat it to read several. Defaults to every database",
+        ),
     ) -> OSRunMetricsResponse:
         try:
-            db = _require_os_db()
+            os_dbs = _os_dbs(db_id)
             starting_date, ending_date = _window(starting_date, ending_date)
             previous_starting_date = _previous_starting_date(starting_date, ending_date)
-            totals, updated_at = await _os_metrics_by_day(
-                db, _owner(request, user_id), previous_starting_date, ending_date, ["runs_count", "status_metrics"]
+            totals, databases = await _os_metrics_by_day(
+                os_dbs, _owner(request, user_id), previous_starting_date, ending_date, ["runs_count", "status_metrics"]
             )
 
             metrics = []
@@ -903,7 +1052,7 @@ def attach_routes(
                 previous_total_runs=previous_total_runs,
                 change_percent=_change_percent(total_runs, previous_total_runs),
                 window_days=(ending_date - starting_date).days + 1,
-                updated_at=updated_at,
+                **databases,
             )
 
         except HTTPException:
@@ -970,8 +1119,10 @@ def attach_routes(
                 },
             },
             500: {"description": "Failed to get OS latency metrics", "model": InternalServerErrorResponse},
-            501: {"description": "OS metrics not supported by the configured database"},
-            503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
+            503: {
+                "description": "No AgentOS database configured, or no database answered",
+                "model": InternalServerErrorResponse,
+            },
         },
     )
     async def get_os_latency_metrics(
@@ -986,13 +1137,17 @@ def attach_routes(
         user_id: Optional[str] = Query(
             default=None, description="Return only this user's runs. Ignored for non-admin callers"
         ),
+        db_id: Optional[List[str]] = Query(
+            default=None,
+            description="Database ID to read OS metrics from. Repeat it to read several. Defaults to every database",
+        ),
     ) -> OSLatencyMetricsResponse:
         try:
-            db = _require_os_db()
+            os_dbs = _os_dbs(db_id)
             starting_date, ending_date = _window(starting_date, ending_date)
             # The medians and p95s are read from each day's bucket counts
-            totals, updated_at = await _os_metrics_by_day(
-                db, _owner(request, user_id), starting_date, ending_date, ["duration_metrics", "duration_buckets"]
+            totals, databases = await _os_metrics_by_day(
+                os_dbs, _owner(request, user_id), starting_date, ending_date, ["duration_metrics", "duration_buckets"]
             )
 
             metrics = []
@@ -1008,7 +1163,7 @@ def attach_routes(
             return OSLatencyMetricsResponse(
                 metrics=metrics,
                 window_days=(ending_date - starting_date).days + 1,
-                updated_at=updated_at,
+                **databases,
                 **_latency(window_duration_metrics, window_buckets),
             )
 
@@ -1031,12 +1186,72 @@ def attach_routes(
             AsyncBaseDb.calculate_os_metrics,
         )
 
-    async def _do_os_refresh(db: Union[BaseDb, AsyncBaseDb], refresh_key: str) -> None:
+    async def _refresh_os_metrics(db: Union[BaseDb, AsyncBaseDb]) -> Tuple[Optional[int], Optional[int], bool]:
+        """Rebuild one database's OS metrics: when they were last updated before and after, and whether they changed."""
         try:
+            if isinstance(db, AsyncBaseDb):
+                return await db.refresh_os_metrics()
+            return await run_in_threadpool(db.refresh_os_metrics)
+        except NotImplementedError:
+            # A database that only rebuilds cannot say what the rebuild did, so it is taken to have changed
             if isinstance(db, AsyncBaseDb):
                 await db.calculate_os_metrics()
             else:
                 await run_in_threadpool(db.calculate_os_metrics)
+            return None, None, True
+
+    async def _refresh_os_dbs(os_dbs: Dict[str, Union[BaseDb, AsyncBaseDb, RemoteDb]]) -> Dict[str, Any]:
+        """Rebuild every database at the same time, at most _MAX_CONCURRENT_OS_METRICS_READS at once.
+
+        Returns what a refresh says about its databases: the updated_at of each, the newest of them before and
+        after, whether any of them changed, and why any other database was skipped.
+        """
+
+        async def _refresh_one(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> Tuple[Optional[int], Optional[int], bool]:
+            if isinstance(db, RemoteDb) or not _stores_os_metrics(db):
+                raise NotImplementedError
+            return await _refresh_os_metrics(db)
+
+        db_ids: Dict[str, Optional[datetime]] = {}
+        previous_updated_ats: List[datetime] = []
+        changed = False
+        skipped_db_ids: Dict[str, str] = {}
+        errors: List[str] = []
+        sources = list(os_dbs.items())
+        for start in range(0, len(sources), _MAX_CONCURRENT_OS_METRICS_READS):
+            batch = sources[start : start + _MAX_CONCURRENT_OS_METRICS_READS]
+            outcomes = await asyncio.gather(*(_refresh_one(db) for _, db in batch), return_exceptions=True)
+            for (db_id, _), outcome in zip(batch, outcomes):
+                if isinstance(outcome, NotImplementedError):
+                    skipped_db_ids[db_id] = "unsupported"
+                elif isinstance(outcome, BaseException):
+                    # An exception with no message is recorded by its type
+                    errors.append(str(outcome) or type(outcome).__name__)
+                    skipped_db_ids[db_id] = "failed"
+                else:
+                    previous_updated_at, latest_updated_at, db_changed = outcome
+                    db_ids[db_id] = to_utc_datetime(latest_updated_at)
+                    if previous_updated_at is not None:
+                        previous_updated_ats.append(to_utc_datetime(previous_updated_at))  # type: ignore[arg-type]
+                    changed = changed or db_changed
+
+        # Refused before anything is reported, so a refresh that rebuilt no database is never told "completed"
+        if not db_ids and not errors:
+            raise NotImplementedError
+        if not db_ids:
+            raise RuntimeError(errors[0])
+        updated_ats = [updated_at for updated_at in db_ids.values() if updated_at is not None]
+        return {
+            "previous_updated_at": max(previous_updated_ats) if previous_updated_ats else None,
+            "updated_at": max(updated_ats) if updated_ats else None,
+            "changed": changed,
+            "db_ids": db_ids,
+            "skipped_db_ids": skipped_db_ids,
+        }
+
+    async def _do_os_refresh(os_dbs: Dict[str, Union[BaseDb, AsyncBaseDb, RemoteDb]], refresh_key: str) -> None:
+        try:
+            await _refresh_os_dbs(os_dbs)
         except Exception as e:
             # An exception with no message, like a bare NotImplementedError, is recorded by its type
             error = str(e) or type(e).__name__
@@ -1047,13 +1262,14 @@ def attach_routes(
 
     @router.post(
         "/os/metrics/refresh",
-        response_model=Union[MetricsRefreshStatusResponse, MetricsRefreshResponse],
+        response_model=Union[OSMetricsRefreshResponse, MetricsRefreshResponse],
         status_code=200,
         operation_id="refresh_os_metrics",
         summary="Refresh OS Metrics",
         description=(
-            "Rebuild the OS metrics of the AgentOS database from its sessions and runs. "
-            "By default the refresh runs synchronously and returns its outcome. Pass background=true "
+            "Rebuild the OS metrics of every database of the AgentOS from its sessions and runs. "
+            "By default the refresh runs synchronously and returns its outcome: whether the rebuild wrote or "
+            "deleted any row, and when the metrics were last updated before and after it. Pass background=true "
             "to run the refresh in the background instead: the endpoint returns 202 Accepted immediately. "
             "If this server process is already refreshing, returns status 'already_running' without "
             "starting a new one."
@@ -1068,6 +1284,11 @@ def attach_routes(
                             "started_at": "2025-08-12T08:01:47Z",
                             "finished_at": "2025-08-12T08:01:49Z",
                             "error": None,
+                            "previous_updated_at": "2025-08-12T07:58:11Z",
+                            "updated_at": "2025-08-12T08:01:48Z",
+                            "changed": True,
+                            "db_ids": {"agno-db": "2025-08-12T08:01:48Z"},
+                            "skipped_db_ids": {},
                         }
                     }
                 },
@@ -1092,15 +1313,20 @@ def attach_routes(
         background: bool = Query(
             default=False, description="Run the refresh in the background and return 202 immediately"
         ),
-    ) -> Union[MetricsRefreshStatusResponse, MetricsRefreshResponse]:
+        db_id: Optional[List[str]] = Query(
+            default=None,
+            description="Database ID to refresh OS metrics for. Repeat it to refresh several. Defaults to every database",
+        ),
+    ) -> Union[OSMetricsRefreshResponse, MetricsRefreshResponse]:
         try:
             db = _require_os_db()
+            os_dbs = _os_dbs(db_id)
             # Resolved before the background branch so an identity-less token cannot start a refresh.
             get_scoped_user_id(request)
             # Kept apart from the daily metrics refresh of the same database, which rebuilds another table
             refresh_key = f"os_metrics:{db.id}"
-            # Refused before anything runs, so a database without the table is never told "started"
-            if not _stores_os_metrics(db):
+            # Refused before anything runs, so an AgentOS without the table is never told "started"
+            if not any(not isinstance(os_db, RemoteDb) and _stores_os_metrics(os_db) for os_db in os_dbs.values()):
                 raise HTTPException(status_code=501, detail="OS metrics not supported by the configured database")
 
             if background:
@@ -1109,7 +1335,7 @@ def attach_routes(
                     return _already_running_response()
 
                 _mark_refresh_running(refresh_key)
-                background_tasks.add_task(_do_os_refresh, db, refresh_key)
+                background_tasks.add_task(_do_os_refresh, os_dbs, refresh_key)
 
                 return MetricsRefreshResponse(status="started", message="Metrics refresh started in background")
 
@@ -1120,16 +1346,13 @@ def attach_routes(
 
             _mark_refresh_running(refresh_key)
             try:
-                if isinstance(db, AsyncBaseDb):
-                    await db.calculate_os_metrics()
-                else:
-                    await run_in_threadpool(db.calculate_os_metrics)
+                databases = await _refresh_os_dbs(os_dbs)
             except Exception as e:
                 _record_refresh_outcome(refresh_key, error=str(e) or type(e).__name__)
                 raise
             _record_refresh_outcome(refresh_key)
 
-            return refresh_states[refresh_key]
+            return OSMetricsRefreshResponse(**refresh_states[refresh_key].model_dump(), **databases)
 
         except HTTPException:
             raise
@@ -1157,8 +1380,10 @@ def attach_routes(
                 "content": {"application/json": {"example": {"updated_at": "2025-08-12T08:01:49Z"}}},
             },
             500: {"description": "Failed to get OS metrics refresh status", "model": InternalServerErrorResponse},
-            501: {"description": "OS metrics not supported by the configured database"},
-            503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
+            503: {
+                "description": "No AgentOS database configured, or no database answered",
+                "model": InternalServerErrorResponse,
+            },
         },
     )
     async def get_os_metrics_refresh_status(
@@ -1173,15 +1398,19 @@ def attach_routes(
         user_id: Optional[str] = Query(
             default=None, description="Return only this user's metrics. Ignored for non-admin callers"
         ),
+        db_id: Optional[List[str]] = Query(
+            default=None,
+            description="Database ID to read OS metrics from. Repeat it to read several. Defaults to every database",
+        ),
     ) -> OSMetricsRefreshStatusResponse:
         try:
-            db = _require_os_db()
+            os_dbs = _os_dbs(db_id)
             starting_date, ending_date = _window(starting_date, ending_date)
             # The cheapest total to read; only its updated_at is used
-            _, updated_at = await _os_metrics(
-                db, _owner(request, user_id), starting_date, ending_date, ["sessions_count"]
+            _, databases = await _os_metrics(
+                os_dbs, _owner(request, user_id), starting_date, ending_date, ["sessions_count"]
             )
-            return OSMetricsRefreshStatusResponse(updated_at=updated_at)
+            return OSMetricsRefreshStatusResponse(**databases)
 
         except HTTPException:
             raise

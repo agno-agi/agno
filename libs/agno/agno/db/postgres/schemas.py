@@ -149,6 +149,9 @@ METRICS_TABLE_SCHEMA = {
 OS_METRICS_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "date": {"type": Date, "nullable": False, "index": True},
+    # The period of this row: "daily" for a row of one owner and component, "daily_total" for the total row of
+    # a completed day, which has no owner and no component. A completed month has month rows, dated its first
+    # day: a "monthly" row per owner and component, and a "monthly_total" row with no owner and no component.
     "aggregation_period": {"type": String, "nullable": False},
     # Owner and component of this row, each an empty string when there is none, since Postgres treats
     # NULLs as distinct. Only the id matching the component's type is set.

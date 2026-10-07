@@ -1,6 +1,7 @@
 """Tests for the GET /os/metrics/* routes and POST /os/metrics/refresh on the metrics router."""
 
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,9 +10,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.db.utils import resolve_os_metrics_fields
+from agno.db.utils import merge_os_metrics_totals, resolve_os_metrics_fields
 from agno.os.routers.metrics.metrics import MAX_WINDOW_DAYS, get_metrics_router
 from agno.os.settings import AgnoAPISettings
+from agno.remote.base import RemoteDb
 
 # =============================================================================
 # Fixtures
@@ -56,6 +58,16 @@ def _totals(*rows):
             {"date": row["date"], **{field: row[field] for field in fields if field in row}}
             for row in sorted(inside, key=lambda row: row["date"])
         ], UPDATED_AT
+
+    return read
+
+
+def _window_totals(*rows):
+    """Answer each get_os_metrics_totals read with the requested fields of the rows inside its window, as one total."""
+
+    def read(*args, **kwargs):
+        totals, updated_at = _totals(*rows)(*args, **kwargs)
+        return merge_os_metrics_totals(totals, kwargs["fields"]), updated_at if totals else None
 
     return read
 
@@ -156,7 +168,12 @@ def mock_db():
     db = MagicMock()
     db.id = "db-1"
     db.get_os_metrics = MagicMock(side_effect=_totals(_today_row(), _yesterday_row(), _three_days_ago_row()))
+    db.get_os_metrics_totals = MagicMock(
+        side_effect=_window_totals(_today_row(), _yesterday_row(), _three_days_ago_row())
+    )
     db.calculate_os_metrics = MagicMock(return_value=None)
+    # A database that only rebuilds, as the committed tests of the refresh assume
+    db.refresh_os_metrics = MagicMock(side_effect=NotImplementedError)
     return db
 
 
@@ -501,9 +518,11 @@ class TestModels:
         with _scope(None):
             body = client.get(f"/os/metrics/models?{_last(2)}").json()
 
-        kwargs = _read_kwargs(mock_db)
+        mock_db.get_os_metrics.assert_not_called()
+        kwargs = mock_db.get_os_metrics_totals.call_args.kwargs
         assert kwargs["fields"] == ["model_metrics"]
         assert kwargs["starting_date"] == _day(1)
+        assert kwargs["ending_date"] == _day(0)
         assert [(model["model_id"], model["model_provider"], model["run_count"]) for model in body["models"]] == [
             ("gpt-5.5", "OpenAI", 4),
             ("claude-opus-5", "Anthropic", 1),
@@ -514,8 +533,29 @@ class TestModels:
         assert set(body["models"][0]) == {"model_id", "model_provider", "run_count", "run_share"}
         assert body["updated_at"] == UPDATED_AT_ISO
 
+    def test_database_without_window_totals_has_its_days_totalled(self, client, mock_db):
+        """The window is read per day and totalled by the route."""
+        mock_db.get_os_metrics_totals.side_effect = NotImplementedError
+        with _scope(None):
+            body = client.get(f"/os/metrics/models?{_last(2)}").json()
+
+        kwargs = _read_kwargs(mock_db)
+        assert kwargs["fields"] == ["model_metrics"]
+        assert kwargs["starting_date"] == _day(1)
+        assert [(model["model_id"], model["run_count"]) for model in body["models"]] == [
+            ("gpt-5.5", 4),
+            ("claude-opus-5", 1),
+        ]
+        assert body["updated_at"] == UPDATED_AT_ISO
+
+    def test_scoped_caller_reads_only_their_own_models(self, client, mock_db):
+        with _scope("alice"):
+            client.get(f"/os/metrics/models?{_last(1)}&user_id=bob")
+
+        assert mock_db.get_os_metrics_totals.call_args.kwargs["user_id"] == "alice"
+
     def test_window_without_runs_lists_no_models(self, client, mock_db):
-        mock_db.get_os_metrics.side_effect = _totals()
+        mock_db.get_os_metrics_totals.side_effect = _window_totals()
         with _scope(None):
             body = client.get(f"/os/metrics/models?{_last(1)}").json()
 
@@ -545,6 +585,7 @@ class TestRefresh:
         db = MagicMock(spec=AsyncBaseDb)
         db.id = "db-async"
         db.calculate_os_metrics = AsyncMock(return_value=None)
+        db.refresh_os_metrics = AsyncMock(side_effect=NotImplementedError)
         with _scope(None):
             response = _client(db).post("/os/metrics/refresh")
 
@@ -634,6 +675,104 @@ class TestRefresh:
         assert response.json() == {"status": "started", "message": "Metrics refresh started in background"}
         mock_db.calculate_os_metrics.assert_called_once_with()
 
+    def test_refresh_that_found_nothing_new_reports_no_change(self, client, mock_db):
+        mock_db.refresh_os_metrics = MagicMock(return_value=(UPDATED_AT, UPDATED_AT, False))
+        with _scope(None):
+            body = client.post("/os/metrics/refresh").json()
+
+        mock_db.refresh_os_metrics.assert_called_once_with()
+        mock_db.calculate_os_metrics.assert_not_called()
+        assert body["status"] == "completed"
+        assert body["changed"] is False
+        assert body["previous_updated_at"] == UPDATED_AT_ISO
+        assert body["updated_at"] == UPDATED_AT_ISO
+        assert body["db_ids"] == {"db-1": UPDATED_AT_ISO}
+        assert body["skipped_db_ids"] == {}
+
+    def test_refresh_that_wrote_a_row_reports_the_change(self, client, mock_db):
+        mock_db.refresh_os_metrics = MagicMock(return_value=(UPDATED_AT, UPDATED_AT + 60, True))
+        with _scope(None):
+            body = client.post("/os/metrics/refresh").json()
+
+        assert body["changed"] is True
+        assert body["previous_updated_at"] == UPDATED_AT_ISO
+        assert body["updated_at"] == "2027-01-15T08:01:00Z"
+
+    def test_change_is_what_the_rebuild_did_not_what_the_stamps_say(self, client, mock_db):
+        """Two rebuilds within one second, or a rebuild that only deleted rows, leave the stamp where it was."""
+        mock_db.refresh_os_metrics = MagicMock(return_value=(UPDATED_AT, UPDATED_AT, True))
+        with _scope(None):
+            body = client.post("/os/metrics/refresh").json()
+
+        assert body["previous_updated_at"] == body["updated_at"]
+        assert body["changed"] is True
+
+    def test_first_refresh_of_an_empty_table_has_no_previous_stamp(self, client, mock_db):
+        mock_db.refresh_os_metrics = MagicMock(return_value=(None, UPDATED_AT, True))
+        with _scope(None):
+            body = client.post("/os/metrics/refresh").json()
+
+        assert body["previous_updated_at"] is None
+        assert body["updated_at"] == UPDATED_AT_ISO
+
+    def test_database_that_only_rebuilds_is_taken_to_have_changed(self, client, mock_db):
+        with _scope(None):
+            body = client.post("/os/metrics/refresh").json()
+
+        mock_db.calculate_os_metrics.assert_called_once_with()
+        assert body["changed"] is True
+        assert body["updated_at"] is None
+        assert body["db_ids"] == {"db-1": None}
+
+    def test_async_database_is_awaited_for_what_changed(self):
+        db = MagicMock(spec=AsyncBaseDb)
+        db.id = "db-async"
+        db.refresh_os_metrics = AsyncMock(return_value=(UPDATED_AT, UPDATED_AT + 60, True))
+        with _scope(None):
+            body = _client(db).post("/os/metrics/refresh").json()
+
+        db.refresh_os_metrics.assert_awaited_once_with()
+        assert body["changed"] is True
+
+    def test_every_database_is_refreshed_and_one_change_is_a_change(self):
+        first, second, third = _db("db-1"), _db("db-2"), _db("db-3")
+        first.refresh_os_metrics = MagicMock(return_value=(UPDATED_AT, UPDATED_AT, False))
+        second.refresh_os_metrics = MagicMock(return_value=(UPDATED_AT - 60, UPDATED_AT + 60, True))
+        third.refresh_os_metrics = MagicMock(side_effect=RuntimeError("database unavailable"))
+        with _scope(None):
+            response = _dbs_client(first, second, third).post("/os/metrics/refresh")
+
+        body = response.json()
+        assert response.status_code == 200
+        assert body["status"] == "completed"
+        assert body["changed"] is True
+        assert body["previous_updated_at"] == UPDATED_AT_ISO
+        assert body["updated_at"] == "2027-01-15T08:01:00Z"
+        assert body["db_ids"] == {"db-1": UPDATED_AT_ISO, "db-2": "2027-01-15T08:01:00Z"}
+        assert body["skipped_db_ids"] == {"db-3": "failed"}
+
+    def test_db_id_chooses_the_databases_to_refresh(self):
+        first, second = _db("db-1"), _db("db-2")
+        first.refresh_os_metrics = MagicMock(return_value=(UPDATED_AT, UPDATED_AT, False))
+        second.refresh_os_metrics = MagicMock(return_value=(UPDATED_AT, UPDATED_AT, False))
+        with _scope(None):
+            body = _dbs_client(first, second).post("/os/metrics/refresh?db_id=db-2").json()
+
+        first.refresh_os_metrics.assert_not_called()
+        assert list(body["db_ids"]) == ["db-2"]
+
+    def test_background_refresh_is_read_back_from_the_status(self, client, mock_db):
+        """The 202 is sent before the rebuild runs, so what changed is read from the status afterwards."""
+        mock_db.refresh_os_metrics = MagicMock(return_value=(UPDATED_AT - 60, UPDATED_AT, True))
+        with _scope(None):
+            started = client.post("/os/metrics/refresh?background=true")
+            status = client.get("/os/metrics/refresh/status").json()
+
+        assert started.status_code == 202
+        assert started.json() == {"status": "started", "message": "Metrics refresh started in background"}
+        mock_db.refresh_os_metrics.assert_called_once_with()
+        assert status == {"updated_at": UPDATED_AT_ISO, "db_ids": {"db-1": UPDATED_AT_ISO}, "skipped_db_ids": {}}
+
     def test_identity_less_caller_cannot_start_a_refresh(self, client, mock_db):
         with patch(
             "agno.os.routers.metrics.metrics.get_scoped_user_id",
@@ -655,7 +794,7 @@ class TestRefreshStatus:
         with _scope(None):
             body = client.get(f"/os/metrics/refresh/status?{_last(3)}").json()
 
-        assert body == {"updated_at": UPDATED_AT_ISO}
+        assert body == {"updated_at": UPDATED_AT_ISO, "db_ids": {"db-1": UPDATED_AT_ISO}, "skipped_db_ids": {}}
         kwargs = _read_kwargs(mock_db)
         assert kwargs["starting_date"] == _day(2)
         assert kwargs["ending_date"] == _day(0)
@@ -682,7 +821,7 @@ class TestRefreshStatus:
 
         assert refresh["status"] == "completed"
         mock_db.calculate_os_metrics.assert_called_once_with()
-        assert body == {"updated_at": UPDATED_AT_ISO}
+        assert body["updated_at"] == UPDATED_AT_ISO
 
 
 # =============================================================================
@@ -694,13 +833,14 @@ READ_ROUTES = ("sessions", "tokens", "runs", "latency", "models", "refresh/statu
 
 class TestAvailability:
     @pytest.mark.parametrize("route", READ_ROUTES)
-    def test_database_without_os_metrics_is_a_501(self, client, mock_db, route):
+    def test_only_database_without_os_metrics_is_a_503(self, client, mock_db, route):
         mock_db.get_os_metrics.side_effect = NotImplementedError
+        mock_db.get_os_metrics_totals.side_effect = NotImplementedError
         with _scope(None):
             response = client.get(f"/os/metrics/{route}?{_last(1)}")
 
-        assert response.status_code == 501
-        assert response.json()["detail"] == "OS metrics not supported by the configured database"
+        assert response.status_code == 503
+        assert response.json()["detail"] == "OS metrics not available from any database: 'db-1' (unsupported)"
 
     @pytest.mark.parametrize("route", READ_ROUTES)
     def test_os_without_a_database_is_a_503(self, route):
@@ -713,12 +853,13 @@ class TestAvailability:
         with _scope(None):
             assert _client().post("/os/metrics/refresh").status_code == 503
 
-    def test_database_failure_is_a_500(self, client, mock_db):
+    def test_only_database_failing_is_a_503(self, client, mock_db):
         mock_db.get_os_metrics.side_effect = RuntimeError("boom")
         with _scope(None):
             response = client.get(f"/os/metrics/sessions?{_last(1)}")
 
-        assert response.status_code == 500
+        assert response.status_code == 503
+        assert response.json()["detail"] == "OS metrics not available from any database: 'db-1' (failed)"
 
     def test_async_database_is_awaited_for_a_read(self):
         db = MagicMock(spec=AsyncBaseDb)
@@ -729,6 +870,174 @@ class TestAvailability:
 
         db.get_os_metrics.assert_awaited_once()
         assert body["total_sessions"] == 3
+
+
+# =============================================================================
+# Several databases, read at the same time and added up
+# =============================================================================
+
+
+def _db(db_id, *rows):
+    """A database with the given id that answers both reads from the given rows."""
+    db = MagicMock()
+    db.id = db_id
+    db.get_os_metrics = MagicMock(side_effect=_totals(*rows))
+    db.get_os_metrics_totals = MagicMock(side_effect=_window_totals(*rows))
+    return db
+
+
+def _dbs_client(os_db, *other_dbs):
+    """A test client of the metrics router for an AgentOS with the given databases, the first its own."""
+    app = FastAPI()
+    with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
+        app.include_router(
+            get_metrics_router(dbs={db.id: [db] for db in (os_db, *other_dbs)}, settings=AgnoAPISettings(), os_db=os_db)
+        )
+    return TestClient(app)
+
+
+class TestDatabases:
+    def test_databases_are_added_up(self):
+        """Two databases hold today's row each, and one also yesterday's: every number is the sum."""
+        client = _dbs_client(_db("db-1", _today_row(), _yesterday_row()), _db("db-2", _today_row()))
+        with _scope(None):
+            sessions = client.get(f"/os/metrics/sessions?{_last(2)}").json()
+            runs = client.get(f"/os/metrics/runs?{_last(2)}").json()
+            latency = client.get(f"/os/metrics/latency?{_last(1)}").json()
+            models = client.get(f"/os/metrics/models?{_last(2)}").json()
+
+        assert [day["sessions_count"] for day in sessions["metrics"]] == [1, 6]
+        assert sessions["total_sessions"] == 7
+        assert runs["metrics"][1]["status_metrics"] == {"COMPLETED": 6, "ERROR": 2}
+        assert runs["total_runs"] == 10
+        # A maximum is the larger of the two, and the median is read from the added bucket counts
+        assert latency["runs_count"] == 6
+        assert latency["avg_duration_ms"] == 2000
+        assert latency["max_duration_ms"] == 4000
+        assert (
+            latency["median_duration_ms"]
+            == _client(_db("db-3", _today_row())).get(f"/os/metrics/latency?{_last(1)}").json()["median_duration_ms"]
+        )
+        assert [(model["model_id"], model["run_count"]) for model in models["models"]] == [
+            ("gpt-5.5", 7),
+            ("claude-opus-5", 2),
+        ]
+        assert sessions["db_ids"] == {"db-1": UPDATED_AT_ISO, "db-2": UPDATED_AT_ISO}
+        assert sessions["skipped_db_ids"] == {}
+
+    def test_one_database_still_names_itself(self, client):
+        with _scope(None):
+            body = client.get(f"/os/metrics/sessions?{_last(1)}").json()
+
+        assert body["db_ids"] == {"db-1": UPDATED_AT_ISO}
+        assert body["skipped_db_ids"] == {}
+
+    def test_updated_at_is_the_newest_of_the_databases(self):
+        later = _db("db-2", _today_row())
+        later.get_os_metrics.side_effect = lambda **kwargs: ([], UPDATED_AT + 60)
+        with _scope(None):
+            body = _dbs_client(_db("db-1", _today_row()), later).get(f"/os/metrics/sessions?{_last(1)}").json()
+
+        assert body["db_ids"] == {"db-1": UPDATED_AT_ISO, "db-2": "2027-01-15T08:01:00Z"}
+        assert body["updated_at"] == "2027-01-15T08:01:00Z"
+
+    @pytest.mark.parametrize(
+        "error, reason", [(RuntimeError("boom"), "failed"), (NotImplementedError(), "unsupported")]
+    )
+    def test_database_that_cannot_be_read_is_skipped(self, error, reason):
+        """The other database still answers, and the response names the one left out and why."""
+        broken = _db("db-2", _today_row())
+        broken.get_os_metrics.side_effect = error
+        broken.get_os_metrics_totals.side_effect = error
+        client = _dbs_client(_db("db-1", _today_row()), broken)
+        with _scope(None):
+            sessions = client.get(f"/os/metrics/sessions?{_last(1)}")
+            models = client.get(f"/os/metrics/models?{_last(1)}")
+
+        assert sessions.status_code == 200
+        assert sessions.json()["total_sessions"] == 3
+        assert sessions.json()["db_ids"] == {"db-1": UPDATED_AT_ISO}
+        assert sessions.json()["skipped_db_ids"] == {"db-2": reason}
+        assert models.json()["total_model_runs"] == 4
+        assert models.json()["skipped_db_ids"] == {"db-2": reason}
+
+    def test_database_that_does_not_answer_in_time_is_skipped(self):
+        slow = _db("db-2", _today_row())
+        slow.get_os_metrics.side_effect = lambda **kwargs: time.sleep(0.5) or ([], None)
+        client = _dbs_client(_db("db-1", _today_row()), slow)
+        with _scope(None), patch("agno.os.routers.metrics.metrics._OS_METRICS_READ_TIMEOUT_SECONDS", 0.05):
+            body = client.get(f"/os/metrics/sessions?{_last(1)}").json()
+
+        assert body["total_sessions"] == 3
+        assert body["skipped_db_ids"] == {"db-2": "timeout"}
+
+    def test_remote_database_is_unsupported(self):
+        remote = MagicMock(spec=RemoteDb)
+        remote.id = "db-remote"
+        with _scope(None):
+            body = _dbs_client(_db("db-1", _today_row()), remote).get(f"/os/metrics/sessions?{_last(1)}").json()
+
+        assert body["skipped_db_ids"] == {"db-remote": "unsupported"}
+
+    def test_every_database_skipped_is_a_503(self):
+        first, second = _db("db-1"), _db("db-2")
+        first.get_os_metrics.side_effect = RuntimeError("boom")
+        second.get_os_metrics.side_effect = NotImplementedError
+        with _scope(None):
+            response = _dbs_client(first, second).get(f"/os/metrics/sessions?{_last(1)}")
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == (
+            "OS metrics not available from any database: 'db-1' (failed), 'db-2' (unsupported)"
+        )
+
+    def test_db_id_chooses_the_databases_to_read(self):
+        dbs = [_db("db-1", _today_row()), _db("db-2", _today_row()), _db("db-3", _today_row())]
+        client = _dbs_client(*dbs)
+        with _scope(None):
+            one = client.get(f"/os/metrics/sessions?{_last(1)}&db_id=db-2").json()
+            two = client.get(f"/os/metrics/sessions?{_last(1)}&db_id=db-3&db_id=db-1").json()
+
+        assert one["total_sessions"] == 3
+        assert list(one["db_ids"]) == ["db-2"]
+        assert two["total_sessions"] == 6
+        assert set(two["db_ids"]) == {"db-1", "db-3"}
+        assert dbs[0].get_os_metrics.call_count == 1
+
+    @pytest.mark.parametrize("route", READ_ROUTES)
+    def test_unknown_db_id_is_refused(self, client, mock_db, route):
+        with _scope(None):
+            response = client.get(f"/os/metrics/{route}?{_last(1)}&db_id=db-1&db_id=nope")
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "No database found with id 'nope'"
+        mock_db.get_os_metrics.assert_not_called()
+
+    def test_database_registered_more_than_once_is_read_once(self):
+        db = _db("db-1", _today_row())
+        app = FastAPI()
+        with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
+            app.include_router(get_metrics_router(dbs={"db-1": [db, db]}, settings=AgnoAPISettings(), os_db=db))
+        with _scope(None):
+            body = TestClient(app).get(f"/os/metrics/sessions?{_last(1)}").json()
+
+        assert db.get_os_metrics.call_count == 1
+        assert body["total_sessions"] == 3
+
+    def test_every_database_is_read_for_the_caller(self):
+        dbs = [_db("db-1", _today_row()), _db("db-2", _today_row())]
+        with _scope("alice"):
+            _dbs_client(*dbs).get(f"/os/metrics/sessions?{_last(1)}&user_id=bob")
+
+        assert [db.get_os_metrics.call_args.kwargs["user_id"] for db in dbs] == ["alice", "alice"]
+
+    def test_more_databases_than_are_read_at_once(self):
+        dbs = [_db(f"db-{index}", _today_row()) for index in range(10)]
+        with _scope(None):
+            body = _dbs_client(*dbs).get(f"/os/metrics/sessions?{_last(1)}").json()
+
+        assert body["total_sessions"] == 30
+        assert len(body["db_ids"]) == 10
 
 
 class TestWindow:

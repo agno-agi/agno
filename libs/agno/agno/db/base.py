@@ -758,6 +758,8 @@ class BaseDb(ABC):
 
     # --- OS Metrics (Optional) ---
     # Optional: daily OS metrics (agno_os_metrics), one row per owner and agent, team or workflow.
+    # Optional: a completed day may also store a total row, and a completed month its month rows,
+    # read in place of the rows they total.
     # ``user_id`` works as in get_metrics: ``None`` totals every owner, a name totals that user's
     # rows, and ``""`` totals the unowned ones.
 
@@ -771,8 +773,26 @@ class BaseDb(ABC):
         """The OS metrics totals of each day in the date range, and when they were last updated."""
         raise NotImplementedError
 
+    def get_os_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """The OS metrics totals of the whole date range, and when they were last updated."""
+        raise NotImplementedError
+
     def calculate_os_metrics(self) -> Optional[List[Dict[str, Any]]]:
         """Calculate OS metrics for all dates without complete OS metrics."""
+        raise NotImplementedError
+
+    def refresh_os_metrics(self) -> Tuple[Optional[int], Optional[int], bool]:
+        """Calculate OS metrics as calculate_os_metrics does, and report whether any row changed.
+
+        Returns when the OS metrics were last updated before the calculation and after it, and whether it
+        wrote or deleted any row.
+        """
         raise NotImplementedError
 
     # --- Knowledge ---
@@ -2643,8 +2663,26 @@ class AsyncBaseDb(ABC):
         """The OS metrics totals of each day in the date range, and when they were last updated."""
         raise NotImplementedError
 
+    async def get_os_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """The OS metrics totals of the whole date range, and when they were last updated."""
+        raise NotImplementedError
+
     async def calculate_os_metrics(self) -> Optional[List[Dict[str, Any]]]:
         """Calculate OS metrics for all dates without complete OS metrics."""
+        raise NotImplementedError
+
+    async def refresh_os_metrics(self) -> Tuple[Optional[int], Optional[int], bool]:
+        """Calculate OS metrics as calculate_os_metrics does, and report whether any row changed.
+
+        Returns when the OS metrics were last updated before the calculation and after it, and whether it
+        wrote or deleted any row.
+        """
         raise NotImplementedError
 
     # --- Knowledge ---

@@ -63,8 +63,34 @@ class MetricsRefreshStatusResponse(BaseModel):
     error: Optional[str] = Field(None, description="Error message if the most recent refresh failed")
 
 
+class OSMetricsRefreshResponse(BaseModel):
+    status: str = Field(..., description="Refresh status: 'completed' or 'failed'")
+    started_at: Optional[datetime] = Field(None, description="When the refresh started")
+    finished_at: Optional[datetime] = Field(None, description="When the refresh finished")
+    error: Optional[str] = Field(None, description="Error message if the refresh failed")
+    previous_updated_at: Optional[datetime] = Field(
+        None, description="Timestamp of the most recent metrics update before the refresh"
+    )
+    updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
+    changed: bool = Field(..., description="Whether the refresh wrote or deleted any metrics row")
+    db_ids: Dict[str, Optional[datetime]] = Field(
+        default_factory=dict, description="Databases that were refreshed, each with its most recent update"
+    )
+    skipped_db_ids: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Databases left out of the refresh, each with the reason: 'failed' or 'unsupported'",
+    )
+
+
 class OSMetricsRefreshStatusResponse(BaseModel):
     updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
+    db_ids: Dict[str, Optional[datetime]] = Field(
+        default_factory=dict, description="Databases the metrics were read from, each with its most recent update"
+    )
+    skipped_db_ids: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Databases left out of the metrics, each with the reason: 'timeout', 'failed' or 'unsupported'",
+    )
 
 
 class ModelUsage(BaseModel):
@@ -83,6 +109,13 @@ class OSModelMetricsResponse(BaseModel):
     )
     window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
     updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
+    db_ids: Dict[str, Optional[datetime]] = Field(
+        default_factory=dict, description="Databases the metrics were read from, each with its most recent update"
+    )
+    skipped_db_ids: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Databases left out of the metrics, each with the reason: 'timeout', 'failed' or 'unsupported'",
+    )
 
 
 class DaySessionMetrics(BaseModel):
@@ -106,6 +139,13 @@ class OSSessionMetricsResponse(BaseModel):
     )
     window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
     updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
+    db_ids: Dict[str, Optional[datetime]] = Field(
+        default_factory=dict, description="Databases the metrics were read from, each with its most recent update"
+    )
+    skipped_db_ids: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Databases left out of the metrics, each with the reason: 'timeout', 'failed' or 'unsupported'",
+    )
 
 
 class DayTokenMetrics(BaseModel):
@@ -127,6 +167,13 @@ class OSTokenMetricsResponse(BaseModel):
     )
     window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
     updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
+    db_ids: Dict[str, Optional[datetime]] = Field(
+        default_factory=dict, description="Databases the metrics were read from, each with its most recent update"
+    )
+    skipped_db_ids: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Databases left out of the metrics, each with the reason: 'timeout', 'failed' or 'unsupported'",
+    )
 
 
 class DayRunMetrics(BaseModel):
@@ -154,6 +201,13 @@ class OSRunMetricsResponse(BaseModel):
     )
     window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
     updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
+    db_ids: Dict[str, Optional[datetime]] = Field(
+        default_factory=dict, description="Databases the metrics were read from, each with its most recent update"
+    )
+    skipped_db_ids: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Databases left out of the metrics, each with the reason: 'timeout', 'failed' or 'unsupported'",
+    )
 
 
 class DayLatencyMetrics(BaseModel):
@@ -212,3 +266,10 @@ class OSLatencyMetricsResponse(BaseModel):
     max_model_call_ms: Optional[int] = Field(None, description="Duration of the slowest model call in the window")
     window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
     updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
+    db_ids: Dict[str, Optional[datetime]] = Field(
+        default_factory=dict, description="Databases the metrics were read from, each with its most recent update"
+    )
+    skipped_db_ids: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Databases left out of the metrics, each with the reason: 'timeout', 'failed' or 'unsupported'",
+    )

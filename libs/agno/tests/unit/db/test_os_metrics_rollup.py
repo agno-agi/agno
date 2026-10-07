@@ -6,7 +6,7 @@ back out of the bucket counts.
 """
 
 import statistics
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -14,15 +14,23 @@ from agno.db.postgres.utils import build_os_metrics_run, build_os_metrics_totals
 from agno.db.utils import (
     _OS_METRICS_BUCKET_BOUNDS_MS,
     _OS_METRICS_TOKEN_FIELDS,
+    OS_METRICS_DAY_PERIODS,
     OS_METRICS_FIXED_KEYS,
     _os_metrics_row_key,
     calculate_date_os_metrics,
+    calculate_month_os_metrics,
+    get_months_to_calculate_os_metrics_for,
     merge_os_metrics_json,
+    merge_os_metrics_totals,
     merge_os_model_metrics,
+    os_metrics_dates_to_read,
+    os_metrics_full_months,
+    os_metrics_month_end,
     os_metrics_nested_run_ids,
     os_metrics_percentile,
     os_metrics_rows_to_write,
     resolve_os_metrics_fields,
+    total_os_metrics_records,
 )
 from agno.run.base import RunStatus
 
@@ -113,10 +121,11 @@ def _run(
 
 
 def _rows(sessions=(), runs=(), stored_run_ids=frozenset()):
-    """Build the day's rows keyed by (user_id, agent_id, team_id, workflow_id)."""
+    """Build the day's rows keyed by (user_id, agent_id, team_id, workflow_id), without its total row."""
     return {
         (row["user_id"], row["agent_id"], row["team_id"], row["workflow_id"]): row
         for row in calculate_date_os_metrics(TARGET_DATE, list(sessions), list(runs), set(stored_run_ids))
+        if row["aggregation_period"] == "daily"
     }
 
 
@@ -128,6 +137,17 @@ def _only_row(sessions=(), runs=()):
 
 def _stable(row):
     return {key: value for key, value in row.items() if key not in EPHEMERAL}
+
+
+def _total_row(sessions=(), runs=(), target_date=TARGET_DATE):
+    """Build the day's total row, or None when the day has none."""
+    total_rows = [
+        row
+        for row in calculate_date_os_metrics(target_date, list(sessions), list(runs), set())
+        if row["aggregation_period"] != "daily"
+    ]
+    assert len(total_rows) <= 1
+    return total_rows[0] if total_rows else None
 
 
 # Rows: one per owner and component
@@ -166,7 +186,7 @@ def test_row_shape():
     """A row carries the columns the upsert expects, keyed by its owner and component within the day."""
     row = _only_row(runs=[_run()])
 
-    assert _os_metrics_row_key(row) == ("alice", "agent-1", "", "")
+    assert _os_metrics_row_key(row) == (OS_METRICS_DAY_PERIODS.index("daily"), "alice", "agent-1", "", "")
     assert len(row["id"]) == 36
     assert row["date"] == TARGET_DATE
     assert row["aggregation_period"] == "daily"
@@ -496,8 +516,9 @@ def test_changed_number_is_written():
 
     changed, stale = os_metrics_rows_to_write(rebuilt, stored)
 
-    assert [_os_metrics_row_key(row) for row in changed] == [_os_metrics_row_key(stored[0])]
-    assert changed[0]["runs_count"] == 2
+    # The day's total row moved with its row
+    assert [_os_metrics_row_key(row) for row in changed] == [_os_metrics_row_key(row) for row in stored]
+    assert all(row["runs_count"] == 2 for row in changed)
     assert stale == []
 
 
@@ -521,7 +542,9 @@ def test_stored_row_missing_from_rebuild_is_stale():
 
     changed, stale = os_metrics_rows_to_write(rebuilt, stored)
 
-    assert changed == []
+    # Bob's row goes, and every row left is rewritten: the day's total row no longer counts him
+    assert [(row["aggregation_period"], row["user_id"]) for row in changed] == [("daily_total", ""), ("daily", "alice")]
+    assert changed[0]["runs_count"] == 1
     assert stale == [bob_id]
 
 
@@ -536,7 +559,320 @@ def test_only_read_rows_can_be_stale():
     assert set(stale) <= {row["id"] for row in read}
 
 
+def test_total_row_is_not_stale():
+    """A completed day's total row is compared like its rows, so an unchanged rebuild does not drop it."""
+    runs = [_run("run-1", user_id="alice"), _run("run-2", user_id="bob")]
+    stored = calculate_date_os_metrics(TARGET_DATE, [], runs, set())
+    rebuilt = calculate_date_os_metrics(TARGET_DATE, [], runs, set())
+
+    assert [row["aggregation_period"] for row in stored] == ["daily_total", "daily", "daily"]
+    assert os_metrics_rows_to_write(rebuilt, stored) == ([], [])
+
+
+def test_changed_row_rewrites_the_total_row_of_its_day():
+    """Only Alice's row moved; the day's total row is rewritten with it, and Bob's row is left alone."""
+    stored = calculate_date_os_metrics(
+        TARGET_DATE, [], [_run("run-1", user_id="alice"), _run("run-2", user_id="bob")], set()
+    )
+    rebuilt = calculate_date_os_metrics(
+        TARGET_DATE,
+        [],
+        [_run("run-1", user_id="alice"), _run("run-2", user_id="bob"), _run("run-3", user_id="alice")],
+        set(),
+    )
+
+    changed, stale = os_metrics_rows_to_write(rebuilt, stored)
+
+    assert [(row["aggregation_period"], row["user_id"]) for row in changed] == [("daily_total", ""), ("daily", "alice")]
+    assert stale == []
+
+
+def test_rows_to_write_come_total_row_first():
+    """A day's total row is written ahead of the rows it totals."""
+    rebuilt = calculate_date_os_metrics(
+        TARGET_DATE, [], [_run("run-1", user_id="bob"), _run("run-2", user_id="alice")], set()
+    )
+
+    changed, _ = os_metrics_rows_to_write(list(reversed(rebuilt)), [])
+
+    assert [(row["aggregation_period"], row["user_id"]) for row in changed] == [
+        ("daily_total", ""),
+        ("daily", "alice"),
+        ("daily", "bob"),
+    ]
+
+
+# Total rows
+
+
+def test_completed_day_has_one_total_row_for_every_owner():
+    """Alice's two rows and Bob's one are totalled into one row with no owner and no component."""
+    day = _total_row(
+        sessions=[_session("alice"), _session("alice", "team", "team-1"), _session("bob")],
+        runs=[
+            _run("run-1", user_id="alice", tokens={"total_tokens": 10}, duration=1.0),
+            _run("run-2", "team", "team-1", user_id="alice", tokens={"total_tokens": 20}, duration=3.0),
+            _run("run-3", user_id="bob", status=ERROR, details=False),
+        ],
+    )
+
+    assert day["aggregation_period"] == "daily_total"
+    assert (day["user_id"], day["agent_id"], day["team_id"], day["workflow_id"]) == ("", "", "", "")
+    assert day["sessions_count"] == 3
+    assert day["runs_count"] == 3
+    assert day["status_metrics"] == {COMPLETED: 2, ERROR: 1}
+    assert day["token_metrics"] == {"total_tokens": 30}
+    assert day["duration_metrics"] == {
+        "duration_runs_count": 2,
+        "total_duration_ms": 4000,
+        "max_duration_ms": 3000,
+        "duration_ms_buckets": {"le_1000": 1, "le_3000": 1},
+    }
+    assert sorted(model["count"] for model in day["model_metrics"]) == [1, 1]
+    assert day["date"] == TARGET_DATE
+    assert day["completed"] is True
+
+
+def test_total_row_comes_ahead_of_the_rows_it_totals():
+    rows = calculate_date_os_metrics(TARGET_DATE, [], [_run("run-1", user_id="alice")], set())
+
+    assert [row["aggregation_period"] for row in rows] == ["daily_total", "daily"]
+
+
+def test_open_day_has_no_total_row():
+    """Today is still open, so it is read from its rows."""
+    today = datetime.now(timezone.utc).date()
+
+    assert _total_row(runs=[_run()], target_date=today) is None
+
+
+def test_day_without_rows_has_no_total_row():
+    assert calculate_date_os_metrics(TARGET_DATE, [], [], set()) == []
+
+
+def test_total_row_is_apart_from_the_unowned_rows():
+    """The unowned row and the day's total row both have an empty user_id, and are told apart by their period."""
+    rows = calculate_date_os_metrics(
+        TARGET_DATE, [], [_run("run-1", user_id=None), _run("run-2", user_id="alice")], set()
+    )
+
+    assert [(row["aggregation_period"], row["user_id"], row["runs_count"]) for row in rows] == [
+        ("daily_total", "", 2),
+        ("daily", "", 1),
+        ("daily", "alice", 1),
+    ]
+    assert rows[0]["id"] != rows[1]["id"]
+
+
+# Month rows
+
+
+def _stored_day_rows(day, runs):
+    """The rows a rebuild stored for a completed day, without its total row."""
+    return [
+        row for row in calculate_date_os_metrics(day, [], list(runs), set()) if row["aggregation_period"] == "daily"
+    ]
+
+
+def test_month_rows_total_the_days_of_the_month():
+    """A month of completed days gets a total row, then a row per owner and component, dated its first day."""
+    stored_rows = [
+        *_stored_day_rows(date(2026, 1, 1), [_run("run-1", user_id="alice", duration=1.0)]),
+        *_stored_day_rows(
+            date(2026, 1, 15),
+            [
+                _run("run-2", user_id="alice", duration=5.0),
+                _run("run-3", user_id="bob"),
+                _run("run-4", "team", "team-1", user_id="alice"),
+            ],
+        ),
+    ]
+    for row, updated_at in zip(stored_rows, (100, 300, 200, 250)):
+        row["updated_at"] = updated_at
+
+    month_rows = calculate_month_os_metrics(date(2026, 1, 1), stored_rows)
+
+    assert [
+        (row["aggregation_period"], row["user_id"], row["agent_id"], row["team_id"], row["workflow_id"])
+        for row in month_rows
+    ] == [
+        ("monthly_total", "", "", "", ""),
+        ("monthly", "alice", "", "team-1", ""),
+        ("monthly", "alice", "agent-1", "", ""),
+        ("monthly", "bob", "agent-1", "", ""),
+    ]
+    month, alice_team, alice_agent, bob_agent = month_rows
+    assert month["runs_count"] == 4
+    assert month["duration_metrics"]["max_duration_ms"] == 5000
+    assert month["duration_metrics"]["duration_ms_buckets"] == {"le_1000": 1, "le_5000": 1}
+    assert (alice_team["runs_count"], alice_agent["runs_count"], bob_agent["runs_count"]) == (1, 2, 1)
+    assert alice_agent["duration_metrics"]["total_duration_ms"] == 6000
+    # Each month row reports when the rows it totals were last written
+    assert month["updated_at"] == 300
+    assert alice_agent["updated_at"] == 300
+    assert bob_agent["updated_at"] == 200
+    for row in month_rows:
+        assert row["date"] == date(2026, 1, 1)
+        assert row["completed"] is True
+
+
+def test_month_with_an_open_day_gets_no_month_rows():
+    stored_rows = _stored_day_rows(date(2026, 1, 1), [_run("run-1")]) + _stored_day_rows(
+        date(2026, 1, 2), [_run("run-2")]
+    )
+    stored_rows[-1]["completed"] = False
+
+    assert calculate_month_os_metrics(date(2026, 1, 1), stored_rows) == []
+
+
+def test_month_without_rows_gets_no_month_rows():
+    assert calculate_month_os_metrics(date(2026, 1, 1), []) == []
+
+
+def test_month_is_calculated_once_it_ended_before_yesterday():
+    """Last month is completed unless it ended yesterday; this month never is."""
+    today = datetime.now(timezone.utc).date()
+    this_month = today.replace(day=1)
+    last_month = (this_month - timedelta(days=1)).replace(day=1)
+    two_months_ago = (last_month - timedelta(days=1)).replace(day=1)
+    total_days = [two_months_ago + timedelta(days=3), last_month, this_month]
+
+    months = get_months_to_calculate_os_metrics_for(total_days, [])
+
+    assert two_months_ago in months
+    assert this_month not in months
+    assert (last_month in months) == (os_metrics_month_end(last_month) < today - timedelta(days=1))
+
+
+def test_month_without_month_rows_is_calculated_by_a_later_rebuild():
+    """Every completed month with no month rows is returned, however long ago its days were rebuilt."""
+    total_days = [date(2025, 3, 10), date(2025, 4, 2), date(2025, 4, 20), date(2025, 6, 1)]
+
+    assert get_months_to_calculate_os_metrics_for(total_days, [date(2025, 4, 1)]) == [
+        date(2025, 3, 1),
+        date(2025, 6, 1),
+    ]
+
+
+def test_month_end():
+    assert os_metrics_month_end(date(2026, 1, 1)) == date(2026, 1, 31)
+    assert os_metrics_month_end(date(2024, 2, 1)) == date(2024, 2, 29)
+    assert os_metrics_month_end(date(2025, 12, 1)) == date(2025, 12, 31)
+
+
+def test_full_months_are_the_months_wholly_inside_the_range():
+    assert os_metrics_full_months(date(2026, 1, 1), date(2026, 3, 31)) == [
+        date(2026, 1, 1),
+        date(2026, 2, 1),
+        date(2026, 3, 1),
+    ]
+    assert os_metrics_full_months(date(2026, 1, 2), date(2026, 3, 30)) == [date(2026, 2, 1)]
+    assert os_metrics_full_months(date(2026, 1, 10), date(2026, 2, 20)) == []
+
+
+# Periods of a read
+
+
+def test_day_with_a_total_row_is_read_from_it_and_no_other_period():
+    """Every day of the range is read from exactly one period."""
+    total_days = {date(2026, 1, 30), date(2026, 1, 31), date(2026, 2, 1)}
+
+    month_starts, total_days_to_read, row_days = os_metrics_dates_to_read(
+        date(2026, 1, 30), date(2026, 2, 2), total_days, set()
+    )
+
+    assert month_starts == []
+    assert total_days_to_read == [date(2026, 1, 30), date(2026, 1, 31), date(2026, 2, 1)]
+    assert row_days == [date(2026, 2, 2)]
+
+
+def test_month_inside_the_range_is_read_from_its_month_rows():
+    """February is whole and calculated, so none of its days is read; January and March are partly outside."""
+    total_days = {date(2026, 1, 31), date(2026, 2, 1), date(2026, 2, 28), date(2026, 3, 1)}
+    calculated_months = {date(2026, 1, 1), date(2026, 2, 1)}
+
+    month_starts, total_days_to_read, row_days = os_metrics_dates_to_read(
+        date(2026, 1, 31), date(2026, 3, 2), total_days, calculated_months
+    )
+
+    assert month_starts == [date(2026, 2, 1)]
+    assert total_days_to_read == [date(2026, 1, 31), date(2026, 3, 1)]
+    assert row_days == [date(2026, 3, 2)]
+
+
+def test_month_without_month_rows_is_read_from_its_days():
+    month_starts, total_days_to_read, row_days = os_metrics_dates_to_read(
+        date(2026, 2, 1), date(2026, 2, 28), {date(2026, 2, 1)}, set()
+    )
+
+    assert month_starts == []
+    assert total_days_to_read == [date(2026, 2, 1)]
+    assert len(row_days) == 27
+
+
 # Totals
+
+
+def test_total_os_metrics_records_totals_per_date():
+    """Stored records are totalled per date, oldest first, the bucket objects apart from the duration counts."""
+    records = [
+        *_stored_day_rows(date(2026, 1, 2), [_run("run-1", duration=1.0, tokens={"total_tokens": 5})]),
+        *_stored_day_rows(
+            date(2026, 1, 1),
+            [_run("run-2", user_id="alice", duration=2.0), _run("run-3", user_id="bob", duration=4.0)],
+        ),
+    ]
+    records[0]["updated_at"] = 50
+    records[1]["updated_at"] = 70
+    records[2]["updated_at"] = 60
+
+    totals, latest_updated_at = total_os_metrics_records(
+        records, ["runs_count", "token_metrics", "duration_metrics", "duration_buckets", "model_metrics"]
+    )
+
+    assert [day_totals["date"] for day_totals in totals] == [date(2026, 1, 1), date(2026, 1, 2)]
+    assert totals[0]["runs_count"] == 2
+    assert totals[0]["duration_metrics"] == {
+        "duration_runs_count": 2,
+        "total_duration_ms": 6000,
+        "max_duration_ms": 4000,
+    }
+    assert totals[0]["duration_buckets"] == {"duration_ms_buckets": {"le_2000": 1, "le_4000": 1}}
+    assert totals[0]["model_metrics"] == [
+        {"model_id": "gpt-5", "model_provider": "OpenAI", "agent_id": "agent-1", "count": 2}
+    ]
+    assert totals[1]["token_metrics"] == {"total_tokens": 5}
+    assert "sessions_count" not in totals[0]
+    assert latest_updated_at == 70
+
+
+def test_total_os_metrics_records_of_nothing():
+    assert total_os_metrics_records([], ["runs_count"]) == ([], None)
+
+
+def test_merge_os_metrics_totals():
+    """The totals of several dates merge into one set of totals, with every asked field present."""
+    totals = [
+        {"date": date(2026, 1, 1), "runs_count": 2, "duration_metrics": {"max_duration_ms": 10}, "model_metrics": []},
+        {
+            "date": date(2026, 1, 2),
+            "runs_count": 3,
+            "duration_metrics": {"max_duration_ms": 30, "total_duration_ms": 40},
+            "model_metrics": [{"model_id": "gpt-5", "model_provider": "OpenAI", "count": 3}],
+        },
+    ]
+    fields = ["runs_count", "duration_metrics", "model_metrics", "status_metrics"]
+
+    assert merge_os_metrics_totals(totals, fields) == {
+        "runs_count": 5,
+        "duration_metrics": {"max_duration_ms": 30, "total_duration_ms": 40},
+        "model_metrics": [{"model_id": "gpt-5", "model_provider": "OpenAI", "count": 3}],
+        "status_metrics": {},
+    }
+    assert merge_os_metrics_totals([], ["sessions_count", "model_metrics"]) == {
+        "sessions_count": 0,
+        "model_metrics": [],
+    }
 
 
 def test_merge_os_metrics_json():

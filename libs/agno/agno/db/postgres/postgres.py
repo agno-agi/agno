@@ -30,6 +30,7 @@ from agno.db.postgres.utils import (
     apply_sorting,
     build_os_metrics_run,
     build_os_metrics_runs_query,
+    build_os_metrics_total_dates_query,
     build_os_metrics_totals,
     build_os_metrics_totals_queries,
     bulk_upsert_metrics,
@@ -69,16 +70,23 @@ from agno.db.sql import authz as authz_sql
 from agno.db.sql import mcp_oauth as mcp_oauth_sql
 from agno.db.utils import (
     HISTORY_SKIP_STATUSES,
+    OS_METRICS_DAY_PERIODS,
     SessionRunObjectCache,
     build_single_run_row,
     calculate_date_os_metrics,
+    calculate_month_os_metrics,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
     filter_context_runs,
+    get_months_to_calculate_os_metrics_for,
     learning_search_patterns,
+    merge_os_metrics_totals,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
+    os_metrics_dates_to_read,
+    os_metrics_full_months,
+    os_metrics_month_end,
     os_metrics_nested_run_ids,
     os_metrics_rows_to_write,
     resolve_os_metrics_fields,
@@ -2916,11 +2924,45 @@ class PostgresDb(BaseDb):
         """
         return self._calculate_os_metrics(wait_for_rebuild=True)
 
-    def _calculate_os_metrics(self, wait_for_rebuild: bool) -> Optional[List[Dict[str, Any]]]:
+    def refresh_os_metrics(self) -> Tuple[Optional[int], Optional[int], bool]:
+        """Calculate OS metrics for all dates without complete OS metrics, and report whether any row changed.
+
+        Returns:
+            Tuple[Optional[int], Optional[int], bool]: When the OS metrics were last updated before the
+                calculation and after it, and whether it wrote or deleted any row.
+
+        Raises:
+            Exception: If an error occurs during OS metrics calculation.
+        """
+        try:
+            table = self._get_table(table_type="os_metrics", create_table_if_not_found=True)
+            if table is None:
+                return None, None, False
+
+            with self.Session() as sess:
+                previous_updated_at = sess.execute(select(func.max(table.c.updated_at))).scalar()
+
+            changed_ids: List[str] = []
+            self._calculate_os_metrics(wait_for_rebuild=True, changed_ids=changed_ids)
+
+            with self.Session() as sess:
+                latest_updated_at = sess.execute(select(func.max(table.c.updated_at))).scalar()
+
+            return previous_updated_at, latest_updated_at, bool(changed_ids)
+
+        except Exception as e:
+            log_error(f"Exception refreshing OS metrics: {str(e)}")
+            raise e
+
+    def _calculate_os_metrics(
+        self, wait_for_rebuild: bool, changed_ids: Optional[List[str]] = None
+    ) -> Optional[List[Dict[str, Any]]]:
         """Calculate OS metrics for all dates without complete OS metrics.
 
         Args:
             wait_for_rebuild (bool): Wait for a rebuild another process is running. When False, skip instead.
+            changed_ids (Optional[List[str]]): When given, the ids of the rows deleted and of the calculated
+                rows written are added to it.
 
         Returns:
             Optional[List[Dict[str, Any]]]: The calculated OS metrics.
@@ -3013,7 +3055,12 @@ class PostgresDb(BaseDb):
                             stored_run_ids = {record.run_id for record in sess.execute(stored_stmt).fetchall()}
 
                     records = calculate_date_os_metrics(date_to_process, sessions, runs, stored_run_ids)
-                    result = sess.execute(select(table).where(table.c.date == date_to_process)).fetchall()
+                    # A month row is dated the first day of its month, and is no row of that day
+                    result = sess.execute(
+                        select(table).where(
+                            table.c.date == date_to_process, table.c.aggregation_period.in_(OS_METRICS_DAY_PERIODS)
+                        )
+                    ).fetchall()
                     stored_rows = [dict(record._mapping) for record in result]
 
                     changed_rows, stale_ids = os_metrics_rows_to_write(records, stored_rows)
@@ -3021,6 +3068,12 @@ class PostgresDb(BaseDb):
                         sess.execute(table.delete().where(table.c.id.in_(stale_ids)))
                     bulk_upsert_os_metrics(session=sess, table=table, os_metrics_records=changed_rows)
                     results.extend(records)
+                    if changed_ids is not None:
+                        changed_ids.extend([*stale_ids, *(row["id"] for row in changed_rows)])
+
+            month_rows = self._calculate_month_os_metrics(table)
+            if changed_ids is not None:
+                changed_ids.extend(row["id"] for row in month_rows)
 
             log_debug("Updated OS metrics calculations")
 
@@ -3029,6 +3082,41 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Exception refreshing OS metrics: {str(e)}")
             raise e
+
+    def _calculate_month_os_metrics(self, table: Table) -> List[Dict[str, Any]]:
+        """Calculate the month rows of every completed month that has none.
+
+        A completed month gets its month rows once, whichever rebuild completed its days. They are written
+        after the days' own transaction, so a month that fails to calculate never holds back the rows of a day.
+
+        Args:
+            table (Table): The OS metrics table.
+
+        Returns:
+            List[Dict[str, Any]]: The month rows written.
+        """
+        results = []
+        with self.Session() as sess, sess.begin():
+            total_dates = sess.execute(
+                build_os_metrics_total_dates_query(table, ["daily_total", "monthly_total"])
+            ).fetchall()
+            total_days = [record.date for record in total_dates if record.aggregation_period == "daily_total"]
+            calculated_months = [record.date for record in total_dates if record.aggregation_period == "monthly_total"]
+            for month_start in get_months_to_calculate_os_metrics_for(total_days, calculated_months):
+                result = sess.execute(
+                    select(table).where(
+                        table.c.date >= month_start,
+                        table.c.date <= os_metrics_month_end(month_start),
+                        table.c.aggregation_period == "daily",
+                    )
+                ).fetchall()
+                stored_rows = [dict(record._mapping) for record in result]
+
+                month_rows = calculate_month_os_metrics(month_start, stored_rows)
+                bulk_upsert_os_metrics(session=sess, table=table, os_metrics_records=month_rows)
+                results.extend(month_rows)
+
+        return results
 
     def get_os_metrics(
         self,
@@ -3040,7 +3128,7 @@ class PostgresDb(BaseDb):
         """Get the OS metrics totals of each day in the given date range.
 
         OS metrics are refreshed lazily, at most once per minute per process, without waiting for a rebuild another
-        process is running.
+        process is running. For every owner, a day that has a total row is read from it, any other day from its rows.
 
         Args:
             starting_date (date): The first day to total.
@@ -3068,16 +3156,126 @@ class PostgresDb(BaseDb):
             if table is None:
                 return [], None
 
-            queries = build_os_metrics_totals_queries(table, starting_date, ending_date, user_id, fields)
-            rows_by_query = {}
-            with self.Session() as sess, sess.begin():
-                for name, query in queries.items():
-                    rows_by_query[name] = sess.execute(query).fetchall()
-            return build_os_metrics_totals(fields, rows_by_query)
+            return self._get_os_metrics_totals_by_date(table, starting_date, ending_date, user_id, fields)
 
         except Exception as e:
             log_error(f"Exception getting OS metrics: {str(e)}")
             raise e
+
+    def get_os_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """Get the OS metrics totals of the whole given date range.
+
+        OS metrics are refreshed lazily, as in get_os_metrics. A calendar month inside the date range that has
+        month rows is read from them, and every other day as get_os_metrics reads it.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[Dict[str, Any], Optional[int]]: The totals of the date range, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_os_metrics_fields(fields)
+
+            # Refresh at most once per minute per process, without waiting for a rebuild running elsewhere
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    self._calculate_os_metrics(wait_for_rebuild=False)
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            table = self._get_table(table_type="os_metrics", create_table_if_not_found=True)
+            if table is None:
+                return merge_os_metrics_totals([], fields), None
+
+            totals, latest_updated_at = self._get_os_metrics_totals_by_date(
+                table, starting_date, ending_date, user_id, fields, use_month_rows=True
+            )
+            return merge_os_metrics_totals(totals, fields), latest_updated_at
+
+        except Exception as e:
+            log_error(f"Exception getting OS metrics totals: {str(e)}")
+            raise e
+
+    def _get_os_metrics_totals_by_date(
+        self,
+        table: Table,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str],
+        fields: List[str],
+        use_month_rows: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Total the OS metrics of the given date range, every day from one period.
+
+        Args:
+            table (Table): The OS metrics table.
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner.
+            fields (List[str]): The columns to total.
+            use_month_rows (bool): Total a calendar month inside the date range from its month rows, as one date.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
+        """
+        # One owner's days are read from their rows, which are few. Total rows are looked up only for every owner,
+        # and month rows only when the date range holds a whole calendar month.
+        aggregation_periods = []
+        if user_id is None:
+            aggregation_periods.append("daily_total")
+        if use_month_rows and os_metrics_full_months(starting_date, ending_date):
+            aggregation_periods.append("monthly_total")
+
+        month_starts: List[date] = []
+        total_days: List[date] = []
+        row_days: Optional[List[date]] = None
+        rows_by_query = {}
+        with self.Session() as sess, sess.begin():
+            if aggregation_periods:
+                # Which dates have a total row is read first, so the totals queries look up only the rows they total
+                total_dates = sess.execute(
+                    build_os_metrics_total_dates_query(
+                        table, aggregation_periods, starting_date=starting_date, ending_date=ending_date
+                    )
+                ).fetchall()
+                stored_total_days = {
+                    record.date for record in total_dates if record.aggregation_period == "daily_total"
+                }
+                calculated_months = {
+                    record.date for record in total_dates if record.aggregation_period == "monthly_total"
+                }
+                month_starts, total_days, row_days = os_metrics_dates_to_read(
+                    starting_date, ending_date, stored_total_days, calculated_months
+                )
+            # Without a total row or month rows to read, every day of the date range is read from its rows
+            if not month_starts and not total_days:
+                row_days = None
+            queries = build_os_metrics_totals_queries(
+                table,
+                starting_date,
+                ending_date,
+                user_id,
+                fields,
+                month_starts=month_starts,
+                total_days=total_days,
+                row_days=row_days,
+            )
+            for name, query in queries.items():
+                rows_by_query[name] = sess.execute(query).fetchall()
+        return build_os_metrics_totals(fields, rows_by_query)
 
     # -- Knowledge methods --
     def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):

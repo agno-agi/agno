@@ -8,6 +8,7 @@ import pytest_asyncio
 from sqlalchemy import inspect, select, text
 
 from agno.db.postgres import AsyncPostgresDb
+from agno.db.utils import merge_os_metrics_totals, resolve_os_metrics_fields, total_os_metrics_records
 from agno.metrics import MessageMetrics, ModelMetrics, RunMetrics
 from agno.models.message import Message
 from agno.run.agent import RunOutput
@@ -86,12 +87,33 @@ def _assistant_message(duration: float) -> Message:
 
 
 async def _stored_rows(db: AsyncPostgresDb) -> Dict[tuple, Dict]:
-    """Every OS metrics row in the table, keyed by (date, user_id, agent_id, team_id, workflow_id)"""
+    """Every OS metrics row in the table, keyed by (date, user_id, agent_id, team_id, workflow_id)
+
+    The total rows and month rows are left out: see ``_stored_total_rows``.
+    """
     table = await db._get_table("os_metrics", create_table_if_not_found=True)
     async with db.async_session_factory() as sess:
-        result = await sess.execute(select(table))
+        result = await sess.execute(select(table).where(table.c.aggregation_period == "daily"))
         return {
             (row.date, row.user_id, row.agent_id, row.team_id, row.workflow_id): dict(row._mapping)
+            for row in result.fetchall()
+        }
+
+
+async def _stored_total_rows(db: AsyncPostgresDb) -> Dict[tuple, Dict]:
+    """Every total row and month row in the table, keyed by its date, period, owner and component"""
+    table = await db._get_table("os_metrics", create_table_if_not_found=True)
+    async with db.async_session_factory() as sess:
+        result = await sess.execute(select(table).where(table.c.aggregation_period != "daily"))
+        return {
+            (
+                row.date,
+                row.aggregation_period,
+                row.user_id,
+                row.agent_id,
+                row.team_id,
+                row.workflow_id,
+            ): dict(row._mapping)
             for row in result.fetchall()
         }
 
@@ -400,7 +422,8 @@ async def test_calculate_os_metrics(async_postgres_db_real: AsyncPostgresDb, sam
 
     result = await async_postgres_db_real.calculate_os_metrics()
     assert result is not None
-    assert len(result) == len(YESTERDAY_ROW_KEYS) + 1
+    # Yesterday's rows with its total row, and today's row
+    assert len(result) == len(YESTERDAY_ROW_KEYS) + 2
 
     yesterday = _utc_date(1)
     today = _utc_date(0)
@@ -483,7 +506,7 @@ async def test_calculate_os_metrics_rewrites_only_changed_rows(
 
     result = await async_postgres_db_real.calculate_os_metrics()
     assert result is not None
-    row_count = len(result)
+    row_count = len(await _stored_rows(async_postgres_db_real))
 
     # Mark every stored row, so a rewrite shows as a fresh updated_at
     table = await async_postgres_db_real._get_table("os_metrics", create_table_if_not_found=True)
@@ -751,7 +774,8 @@ async def test_os_metrics_multiple_days(
 
     result = await async_postgres_db_real.calculate_os_metrics()
     assert result is not None
-    assert len(result) == 2
+    # Each day's row, with the day's total row
+    assert len(result) == 4
 
     first_day = _utc_date(3)
     second_day = _utc_date(2)
@@ -770,3 +794,484 @@ async def test_os_metrics_multiple_days(
         starting_date=second_day, ending_date=second_day, fields=["sessions_count", "runs_count"]
     )
     assert metrics == [{"date": second_day, "sessions_count": 1, "runs_count": 1}]
+
+
+def _month_start(months_ago: int):
+    """The first day of the calendar month ``months_ago`` months back."""
+    month_start = datetime.now(timezone.utc).date().replace(day=1)
+    for _ in range(months_ago):
+        month_start = (month_start - timedelta(days=1)).replace(day=1)
+    return month_start
+
+
+def _session_on(day, session_id: str, user_id, input_tokens: int = 10) -> AgentSession:
+    """An agent session created at midday UTC of the given day, with one completed run."""
+    created_at = int(datetime(day.year, day.month, day.day, 12, tzinfo=timezone.utc).timestamp())
+    return AgentSession(
+        session_id=session_id,
+        agent_id="agent-1",
+        user_id=user_id,
+        runs=[
+            RunOutput(
+                run_id=f"{session_id}_run",
+                agent_id="agent-1",
+                user_id=user_id,
+                status=RunStatus.completed,
+                model="gpt-5",
+                model_provider="OpenAI",
+                metrics=_run_metrics(input_tokens, 5, duration=2.0),
+                messages=[_assistant_message(1.5)],
+                created_at=created_at,
+            )
+        ],
+        created_at=created_at,
+        updated_at=created_at,
+    )
+
+
+@pytest.fixture
+def sample_multi_month_sessions_for_os_metrics() -> List[AgentSession]:
+    """Fixture returning sessions in two completed months, plus one of today.
+
+    Three months back: alice and an unowned session on the 1st, alice and bob on the 15th.
+    Two months back: bob on the 10th. Today: alice.
+    """
+    first_month = _month_start(3)
+    second_month = _month_start(2)
+    return [
+        _session_on(first_month, "first_month_alice_1", "alice", input_tokens=100),
+        _session_on(first_month, "first_month_unowned", None, input_tokens=5),
+        _session_on(first_month + timedelta(days=14), "first_month_alice_2", "alice", input_tokens=20),
+        _session_on(first_month + timedelta(days=14), "first_month_bob", "bob", input_tokens=40),
+        _session_on(second_month + timedelta(days=9), "second_month_bob", "bob", input_tokens=70),
+        _session_on(_utc_date(0), "today_alice", "alice", input_tokens=1),
+    ]
+
+
+def _comparable(totals):
+    """Totals with their model entries in a set order, as the database returns them in none."""
+    totals = [totals] if isinstance(totals, dict) else totals
+    return [
+        {
+            **entry,
+            "model_metrics": sorted(
+                entry.get("model_metrics", []), key=lambda m: (m.get("agent_id", ""), m.get("team_id", ""))
+            ),
+        }
+        for entry in totals
+    ]
+
+
+async def _stored_month_rows(db: AsyncPostgresDb) -> Dict[tuple, Dict]:
+    """Every month row in the table, keyed as in ``_stored_total_rows``"""
+    return {key: row for key, row in (await _stored_total_rows(db)).items() if key[1] in ("monthly", "monthly_total")}
+
+
+async def _sessions_counts(db: AsyncPostgresDb, day, user_id) -> List[int]:
+    """The sessions_count of each day get_os_metrics returns for the given day, for every owner or one"""
+    metrics, _ = await db.get_os_metrics(starting_date=day, ending_date=day, user_id=user_id, fields=["sessions_count"])
+    return [day_totals["sessions_count"] for day_totals in metrics]
+
+
+async def _total_sessions_count(db: AsyncPostgresDb, starting_date, ending_date, user_id=None) -> int:
+    """The sessions_count get_os_metrics_totals returns for the date range, for every owner or one"""
+    totals, _ = await db.get_os_metrics_totals(
+        starting_date=starting_date, ending_date=ending_date, user_id=user_id, fields=["sessions_count"]
+    )
+    return totals["sessions_count"]
+
+
+@pytest.mark.asyncio
+async def test_calculate_os_metrics_writes_a_total_row_for_a_completed_day(
+    async_postgres_db_real: AsyncPostgresDb, sample_sessions_for_os_metrics
+):
+    """Ensure a completed day gets one total row for every owner, and an open day none"""
+    for session in sample_sessions_for_os_metrics:
+        await _persist(async_postgres_db_real, session)
+    await async_postgres_db_real.calculate_os_metrics()
+
+    yesterday = _utc_date(1)
+    stored_rows = await _stored_rows(async_postgres_db_real)
+    total_rows = await _stored_total_rows(async_postgres_db_real)
+    assert set(total_rows) == {(yesterday, "daily_total", "", "", "", "")}
+
+    day_row = total_rows[(yesterday, "daily_total", "", "", "", "")]
+    assert day_row["sessions_count"] == 4
+    assert day_row["runs_count"] == 6
+    assert day_row["status_metrics"] == {COMPLETED: 5, ERROR: 1}
+    assert day_row["token_metrics"] == {"input_tokens": 385, "output_tokens": 185, "total_tokens": 570}
+    # The bucket objects are kept inside duration_metrics, as in a row
+    assert day_row["duration_metrics"]["duration_runs_count"] == 4
+    assert day_row["duration_metrics"]["max_duration_ms"] == 4000
+    assert day_row["duration_metrics"]["duration_ms_buckets"] == {
+        "le_1000": 1,
+        "le_2000": 1,
+        "le_3000": 1,
+        "le_4000": 1,
+    }
+    assert sum(model["count"] for model in day_row["model_metrics"]) == 5
+    assert day_row["completed"] is True
+    # A total row reports when the rows it totals were written
+    assert day_row["updated_at"] == max(row["updated_at"] for row in stored_rows.values() if row["date"] == yesterday)
+
+
+@pytest.mark.asyncio
+async def test_get_os_metrics_reads_a_completed_day_from_its_total_row(
+    async_postgres_db_real: AsyncPostgresDb, sample_sessions_for_os_metrics
+):
+    """Ensure a read equals the sum of the rows, with a completed day read from its total row for every owner"""
+    for session in sample_sessions_for_os_metrics:
+        await _persist(async_postgres_db_real, session)
+    await async_postgres_db_real.calculate_os_metrics()
+
+    yesterday = _utc_date(1)
+    today = _utc_date(0)
+    stored_rows = list((await _stored_rows(async_postgres_db_real)).values())
+    fields = resolve_os_metrics_fields(None)
+
+    # Every owner, then one owner: the same totals as the rows add up to
+    metrics, latest_updated_at = await async_postgres_db_real.get_os_metrics(starting_date=yesterday, ending_date=today)
+    expected, expected_updated_at = total_os_metrics_records(stored_rows, fields)
+    assert _comparable(metrics) == _comparable(expected)
+    assert latest_updated_at == expected_updated_at
+    metrics, latest_updated_at = await async_postgres_db_real.get_os_metrics(
+        starting_date=yesterday, ending_date=today, user_id="bob"
+    )
+    expected, expected_updated_at = total_os_metrics_records(
+        [row for row in stored_rows if row["user_id"] == "bob"], fields
+    )
+    assert _comparable(metrics) == _comparable(expected)
+    assert latest_updated_at == expected_updated_at
+
+    # Change every row: for every owner yesterday is still read from its total row and today from its rows
+    table = await async_postgres_db_real._get_table("os_metrics", create_table_if_not_found=True)
+    async with async_postgres_db_real.async_session_factory() as sess, sess.begin():
+        await sess.execute(table.update().where(table.c.aggregation_period == "daily").values(sessions_count=50))
+    metrics, _ = await async_postgres_db_real.get_os_metrics(
+        starting_date=yesterday, ending_date=today, fields=["sessions_count"]
+    )
+    assert metrics == [{"date": yesterday, "sessions_count": 4}, {"date": today, "sessions_count": 50}]
+    # One owner is read from that owner's rows on every day: bob has three rows yesterday
+    metrics, _ = await async_postgres_db_real.get_os_metrics(
+        starting_date=yesterday, ending_date=today, user_id="bob", fields=["sessions_count"]
+    )
+    assert metrics == [{"date": yesterday, "sessions_count": 150}]
+
+
+@pytest.mark.asyncio
+async def test_get_os_metrics_reads_a_day_without_a_total_row_from_its_rows(
+    async_postgres_db_real: AsyncPostgresDb, sample_sessions_for_os_metrics
+):
+    """Ensure a day whose total row is missing is read from its rows"""
+    for session in sample_sessions_for_os_metrics:
+        await _persist(async_postgres_db_real, session)
+    await async_postgres_db_real.calculate_os_metrics()
+
+    yesterday = _utc_date(1)
+    today = _utc_date(0)
+    table = await async_postgres_db_real._get_table("os_metrics", create_table_if_not_found=True)
+    async with async_postgres_db_real.async_session_factory() as sess, sess.begin():
+        await sess.execute(table.delete().where(table.c.aggregation_period == "daily_total"))
+
+    metrics, _ = await async_postgres_db_real.get_os_metrics(
+        starting_date=yesterday, ending_date=today, fields=["sessions_count"]
+    )
+    assert metrics == [{"date": yesterday, "sessions_count": 4}, {"date": today, "sessions_count": 1}]
+
+
+@pytest.mark.asyncio
+async def test_get_os_metrics_never_reads_a_total_row_for_one_owner(
+    async_postgres_db_real: AsyncPostgresDb, sample_sessions_for_os_metrics
+):
+    """Ensure one owner's read uses only that owner's rows, and the empty owner's never the row of every owner"""
+    for session in sample_sessions_for_os_metrics:
+        await _persist(async_postgres_db_real, session)
+    await async_postgres_db_real.calculate_os_metrics()
+
+    yesterday = _utc_date(1)
+    table = await async_postgres_db_real._get_table("os_metrics", create_table_if_not_found=True)
+    async with async_postgres_db_real.async_session_factory() as sess, sess.begin():
+        await sess.execute(
+            table.update().where(table.c.aggregation_period == "daily_total").values(sessions_count=1000)
+        )
+
+    assert await _sessions_counts(async_postgres_db_real, yesterday, None) == [1000]
+    assert await _sessions_counts(async_postgres_db_real, yesterday, "alice") == [1]
+    assert await _sessions_counts(async_postgres_db_real, yesterday, "bob") == [2]
+    # The unowned row, not the total row of every owner, which also has an empty user_id
+    assert await _sessions_counts(async_postgres_db_real, yesterday, "") == [1]
+    assert await _sessions_counts(async_postgres_db_real, yesterday, "carol") == []
+
+
+@pytest.mark.asyncio
+async def test_calculate_os_metrics_writes_month_rows_for_a_completed_month(
+    async_postgres_db_real: AsyncPostgresDb, sample_multi_month_sessions_for_os_metrics
+):
+    """Ensure a completed month gets a total row and a row per owner and component, and this month none"""
+    for session in sample_multi_month_sessions_for_os_metrics:
+        await _persist(async_postgres_db_real, session)
+    await async_postgres_db_real.calculate_os_metrics()
+
+    first_month = _month_start(3)
+    second_month = _month_start(2)
+    stored_rows = await _stored_rows(async_postgres_db_real)
+    month_rows = await _stored_month_rows(async_postgres_db_real)
+    assert set(month_rows) == {
+        (first_month, "monthly_total", "", "", "", ""),
+        (first_month, "monthly", "", "agent-1", "", ""),
+        (first_month, "monthly", "alice", "agent-1", "", ""),
+        (first_month, "monthly", "bob", "agent-1", "", ""),
+        (second_month, "monthly_total", "", "", "", ""),
+        (second_month, "monthly", "bob", "agent-1", "", ""),
+    }
+
+    month_row = month_rows[(first_month, "monthly_total", "", "", "", "")]
+    assert month_row["sessions_count"] == 4
+    assert month_row["runs_count"] == 4
+    assert month_row["token_metrics"] == {"input_tokens": 165, "output_tokens": 20, "total_tokens": 185}
+    assert month_row["duration_metrics"]["duration_ms_buckets"] == {"le_2000": 4}
+    assert month_row["completed"] is True
+    alice_row = month_rows[(first_month, "monthly", "alice", "agent-1", "", "")]
+    assert alice_row["sessions_count"] == 2
+    assert alice_row["token_metrics"]["input_tokens"] == 120
+    assert alice_row["model_metrics"] == [
+        {"model_id": "gpt-5", "model_provider": "OpenAI", "agent_id": "agent-1", "count": 2}
+    ]
+    assert month_rows[(first_month, "monthly", "", "agent-1", "", "")]["sessions_count"] == 1
+    assert month_rows[(second_month, "monthly_total", "", "", "", "")]["sessions_count"] == 1
+    # A month row reports when the rows it totals were written
+    assert month_row["updated_at"] == max(
+        row["updated_at"] for row in stored_rows.values() if row["date"] < second_month
+    )
+
+    # The month rows are no rows of the first day of their month: a rebuild leaves them alone
+    await async_postgres_db_real.calculate_os_metrics()
+    assert await _stored_month_rows(async_postgres_db_real) == month_rows
+
+
+@pytest.mark.asyncio
+async def test_calculate_os_metrics_calculates_a_month_once_none_of_its_days_is_open(
+    async_postgres_db_real: AsyncPostgresDb, sample_multi_month_sessions_for_os_metrics
+):
+    """Ensure a month with an open day gets no month rows, and a later rebuild writes them once it has none"""
+    for session in sample_multi_month_sessions_for_os_metrics:
+        await _persist(async_postgres_db_real, session)
+    await async_postgres_db_real.calculate_os_metrics()
+
+    first_month = _month_start(3)
+    second_month = _month_start(2)
+    table = await async_postgres_db_real._get_table("os_metrics", create_table_if_not_found=True)
+
+    # The first month loses its month rows and has a day still open
+    async with async_postgres_db_real.async_session_factory() as sess, sess.begin():
+        await sess.execute(
+            table.delete().where(
+                table.c.date == first_month, table.c.aggregation_period.in_(["monthly", "monthly_total"])
+            )
+        )
+        await sess.execute(
+            table.update()
+            .where(table.c.date == first_month, table.c.aggregation_period == "daily", table.c.user_id == "alice")
+            .values(completed=False)
+        )
+    await async_postgres_db_real.calculate_os_metrics()
+    assert set(await _stored_month_rows(async_postgres_db_real)) == {
+        (second_month, "monthly_total", "", "", "", ""),
+        (second_month, "monthly", "bob", "agent-1", "", ""),
+    }
+
+    # None of its days is rebuilt again, and the next rebuild still calculates it
+    async with async_postgres_db_real.async_session_factory() as sess, sess.begin():
+        await sess.execute(table.update().where(table.c.date == first_month).values(completed=True))
+    result = await async_postgres_db_real.calculate_os_metrics()
+    assert result is not None
+    assert {row["date"] for row in result} == {_utc_date(0)}
+    assert set(await _stored_month_rows(async_postgres_db_real)) == {
+        (first_month, "monthly_total", "", "", "", ""),
+        (first_month, "monthly", "", "agent-1", "", ""),
+        (first_month, "monthly", "alice", "agent-1", "", ""),
+        (first_month, "monthly", "bob", "agent-1", "", ""),
+        (second_month, "monthly_total", "", "", "", ""),
+        (second_month, "monthly", "bob", "agent-1", "", ""),
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_os_metrics_totals(
+    async_postgres_db_real: AsyncPostgresDb, sample_multi_month_sessions_for_os_metrics
+):
+    """Ensure the totals of a date range equal its days' totals summed, for every owner or one"""
+    for session in sample_multi_month_sessions_for_os_metrics:
+        await _persist(async_postgres_db_real, session)
+    await async_postgres_db_real.calculate_os_metrics()
+
+    first_month = _month_start(3)
+    second_month = _month_start(2)
+    today = _utc_date(0)
+    fields = resolve_os_metrics_fields(None)
+    windows = [
+        # A whole month, part of a month, and both months with every day since
+        (first_month, second_month - timedelta(days=1)),
+        (first_month + timedelta(days=9), second_month + timedelta(days=9)),
+        (first_month, today),
+    ]
+    for starting_date, ending_date in windows:
+        for user_id in (None, "alice", "bob", "", "carol"):
+            totals, latest_updated_at = await async_postgres_db_real.get_os_metrics_totals(
+                starting_date=starting_date, ending_date=ending_date, user_id=user_id
+            )
+            metrics, expected_updated_at = await async_postgres_db_real.get_os_metrics(
+                starting_date=starting_date, ending_date=ending_date, user_id=user_id
+            )
+            assert _comparable(totals) == _comparable(merge_os_metrics_totals(metrics, fields))
+            assert latest_updated_at == expected_updated_at
+
+    totals, _ = await async_postgres_db_real.get_os_metrics_totals(
+        starting_date=first_month, ending_date=today, fields=["sessions_count", "runs_count"]
+    )
+    assert totals == {"sessions_count": 6, "runs_count": 6}
+    totals, latest_updated_at = await async_postgres_db_real.get_os_metrics_totals(
+        starting_date=first_month, ending_date=today, user_id="carol", fields=["sessions_count", "model_metrics"]
+    )
+    assert totals == {"sessions_count": 0, "model_metrics": []}
+    assert latest_updated_at is None
+
+
+@pytest.mark.asyncio
+async def test_get_os_metrics_totals_reads_a_whole_month_from_its_month_rows(
+    async_postgres_db_real: AsyncPostgresDb, sample_multi_month_sessions_for_os_metrics
+):
+    """Ensure a month inside the date range is read from its month rows, each owner from their own"""
+    for session in sample_multi_month_sessions_for_os_metrics:
+        await _persist(async_postgres_db_real, session)
+    await async_postgres_db_real.calculate_os_metrics()
+
+    first_month = _month_start(3)
+    second_month = _month_start(2)
+    table = await async_postgres_db_real._get_table("os_metrics", create_table_if_not_found=True)
+    async with async_postgres_db_real.async_session_factory() as sess, sess.begin():
+        await sess.execute(
+            table.update()
+            .where(table.c.date == first_month, table.c.aggregation_period == "monthly_total")
+            .values(sessions_count=1000)
+        )
+        await sess.execute(
+            table.update()
+            .where(table.c.date == first_month, table.c.aggregation_period == "monthly", table.c.user_id == "bob")
+            .values(sessions_count=500)
+        )
+
+    # The whole first month comes from its month row, with the days after it added
+    assert await _total_sessions_count(async_postgres_db_real, first_month, second_month - timedelta(days=1)) == 1000
+    assert await _total_sessions_count(async_postgres_db_real, first_month, _utc_date(0)) == 1002
+    # A month partly outside the date range is read from its days
+    assert (
+        await _total_sessions_count(
+            async_postgres_db_real, first_month + timedelta(days=1), second_month - timedelta(days=1)
+        )
+        == 2
+    )
+    assert await _total_sessions_count(async_postgres_db_real, first_month, second_month - timedelta(days=2)) == 4
+    # One owner's month comes from that owner's month rows, and the empty owner's never from the row of every owner
+    assert (
+        await _total_sessions_count(async_postgres_db_real, first_month, second_month - timedelta(days=1), "alice") == 2
+    )
+    assert (
+        await _total_sessions_count(async_postgres_db_real, first_month, second_month - timedelta(days=1), "bob") == 500
+    )
+    assert await _total_sessions_count(async_postgres_db_real, first_month, second_month - timedelta(days=1), "") == 1
+    # The read of each day never uses a month row
+    metrics, _ = await async_postgres_db_real.get_os_metrics(
+        starting_date=first_month, ending_date=second_month - timedelta(days=1), fields=["sessions_count"]
+    )
+    assert metrics == [
+        {"date": first_month, "sessions_count": 2},
+        {"date": first_month + timedelta(days=14), "sessions_count": 2},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_refresh_os_metrics_reports_what_changed(
+    async_postgres_db_real: AsyncPostgresDb, sample_sessions_for_os_metrics
+):
+    """Ensure refresh_os_metrics reports a change only when the rebuild wrote or deleted a row"""
+    for session in sample_sessions_for_os_metrics:
+        await _persist(async_postgres_db_real, session)
+
+    previous_updated_at, updated_at, changed = await async_postgres_db_real.refresh_os_metrics()
+    assert previous_updated_at is None
+    assert updated_at is not None
+    assert changed is True
+
+    # Nothing new: no row is written, and the table was last updated when it was before
+    assert await async_postgres_db_real.refresh_os_metrics() == (updated_at, updated_at, False)
+
+    # One more run today: reported even when it lands in the same second as the rebuild before it
+    alice_today_session = sample_sessions_for_os_metrics[4]
+    await async_postgres_db_real.upsert_run(
+        RunOutput(
+            run_id="alice_today_run_2",
+            agent_id="agent-1",
+            user_id="alice",
+            status=RunStatus.completed,
+            messages=[],
+            created_at=alice_today_session.created_at + 60,
+        ),
+        session_id=alice_today_session.session_id,
+        user_id=alice_today_session.user_id,
+        run_index=1,
+    )
+    previous_updated_at, latest_updated_at, changed = await async_postgres_db_real.refresh_os_metrics()
+    assert previous_updated_at == updated_at
+    assert latest_updated_at >= updated_at
+    assert changed is True
+    assert (await _stored_rows(async_postgres_db_real))[(_utc_date(0), "alice", "agent-1", "", "")]["runs_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_refresh_os_metrics_after_a_delete_moves_the_day(
+    async_postgres_db_real: AsyncPostgresDb, sample_sessions_for_os_metrics
+):
+    """Ensure a rebuild that only deletes a row reports the change, moves the day's updated_at and keeps its totals"""
+    alice_today_session = sample_sessions_for_os_metrics[4]
+    bob_today_session = AgentSession(
+        session_id="bob_today_session",
+        agent_id="agent-1",
+        user_id="bob",
+        runs=[
+            RunOutput(
+                run_id="bob_today_run",
+                agent_id="agent-1",
+                user_id="bob",
+                status=RunStatus.completed,
+                messages=[],
+                created_at=alice_today_session.created_at,
+            )
+        ],
+        created_at=alice_today_session.created_at,
+        updated_at=alice_today_session.created_at,
+    )
+    for session in [*sample_sessions_for_os_metrics, bob_today_session]:
+        await _persist(async_postgres_db_real, session)
+    await async_postgres_db_real.refresh_os_metrics()
+
+    # Mark every stored row, so a rewrite shows as a fresh updated_at
+    table = await async_postgres_db_real._get_table("os_metrics", create_table_if_not_found=True)
+    async with async_postgres_db_real.async_session_factory() as sess, sess.begin():
+        await sess.execute(table.update().values(updated_at=1))
+
+    assert await async_postgres_db_real.delete_session("bob_today_session") is True
+    previous_updated_at, latest_updated_at, changed = await async_postgres_db_real.refresh_os_metrics()
+    assert previous_updated_at == 1
+    assert latest_updated_at != 1
+    assert changed is True
+
+    # Bob's row is gone, and alice's row of the day is rewritten, so a read of the day reports the new time
+    today = _utc_date(0)
+    metrics, read_updated_at = await async_postgres_db_real.get_os_metrics(
+        starting_date=today, ending_date=today, fields=["sessions_count", "runs_count"]
+    )
+    assert metrics == [{"date": today, "sessions_count": 1, "runs_count": 1}]
+    assert read_updated_at == latest_updated_at
+    stored_rows = await _stored_rows(async_postgres_db_real)
+    assert all(row["updated_at"] == 1 for row in stored_rows.values() if row["date"] != today)

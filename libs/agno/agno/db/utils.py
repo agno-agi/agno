@@ -955,9 +955,20 @@ def resolve_os_metrics_fields(fields: Optional[Sequence[str]]) -> List[str]:
     return list(fields)
 
 
-def _os_metrics_row_key(row: Dict[str, Any]) -> Tuple[str, str, str, str]:
-    """The owner and component a row is unique by within its day."""
-    return (row.get("user_id") or "", row.get("agent_id") or "", row.get("team_id") or "", row.get("workflow_id") or "")
+# The periods stored under a day's own date, in the order a rebuild writes them: a total row sorts ahead of the
+# rows it totals. A month row is dated the first day of its month.
+OS_METRICS_DAY_PERIODS = ("daily_total", "daily")
+
+
+def _os_metrics_row_key(row: Dict[str, Any]) -> Tuple[int, str, str, str, str]:
+    """The period, owner and component a row is unique by within its day, a total row ordered first."""
+    return (
+        OS_METRICS_DAY_PERIODS.index(row["aggregation_period"]),
+        row.get("user_id") or "",
+        row.get("agent_id") or "",
+        row.get("team_id") or "",
+        row.get("workflow_id") or "",
+    )
 
 
 def _os_metrics_component(record: Dict[str, Any]) -> Tuple[str, str, str]:
@@ -1068,7 +1079,8 @@ def calculate_date_os_metrics(
             own, on any date. Those are counted where they are stored.
 
     Returns:
-        List[Dict[str, Any]]: The calculated OS metrics, one record per user and agent, team or workflow.
+        List[Dict[str, Any]]: The calculated OS metrics, one record per user and agent, team or workflow. Once
+            the date is completed, its total record comes ahead of them.
     """
 
     def _empty_os_metrics_record() -> Dict[str, Any]:
@@ -1183,6 +1195,9 @@ def calculate_date_os_metrics(
             }
         )
 
+    # A completed day is never rebuilt, so its total is stored with it and read in place of its records
+    if completed and records:
+        return [build_os_metrics_total_row(records, date_to_process, "daily_total")] + records
     return records
 
 
@@ -1192,7 +1207,8 @@ def os_metrics_rows_to_write(
     """Compare a day's rebuilt rows with the rows stored for it.
 
     Returns the rows that are new or changed, in key order so no two writers lock rows in opposite orders,
-    and the ids of stored rows the day no longer has. Only rows that were read are ever deleted.
+    and the ids of stored rows the day no longer has. Only rows that were read are ever deleted. When the day
+    lost a row, every row left is returned, so the time the day was last updated moves.
     """
     stored_by_key = {_os_metrics_row_key(row): row for row in stored_rows}
     changed_rows = []
@@ -1205,7 +1221,18 @@ def os_metrics_rows_to_write(
             if column not in ["id", "created_at", "updated_at"]
         ):
             changed_rows.append(row)
-    return changed_rows, sorted(row["id"] for row in stored_by_key.values())
+    stale_ids = sorted(row["id"] for row in stored_by_key.values())
+    # A day that lost a row has every row left rewritten, so its updated_at moves for the next read of the day
+    if stale_ids:
+        return sorted(computed_rows, key=_os_metrics_row_key), stale_ids
+    # A day's total row is rewritten with its rows, so both periods report the same time of the last rebuild
+    if any(row["aggregation_period"] == "daily" for row in changed_rows):
+        changed_ids = {row["id"] for row in changed_rows}
+        changed_rows.extend(
+            row for row in computed_rows if row["aggregation_period"] != "daily" and row["id"] not in changed_ids
+        )
+        changed_rows.sort(key=_os_metrics_row_key)
+    return changed_rows, stale_ids
 
 
 def merge_os_metrics_json(target: Dict[str, Any], extra: Optional[Dict[str, Any]]) -> None:
@@ -1232,6 +1259,222 @@ def merge_os_model_metrics(target: List[Dict[str, Any]], extra: List[Dict[str, A
         else:
             entry["count"] = (entry.get("count") or 0) + (m.get("count") or 0)
     target[:] = list(index.values())
+
+
+def total_os_metrics_records(
+    records: Sequence[Dict[str, Any]], fields: Sequence[str]
+) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+    """Total OS metrics records per date, to build a total row or a month row from the rows it totals.
+
+    Returns one dict per date, oldest first, in the shape get_os_metrics totals to, and when the records
+    were last updated. A key no record reported stays out, as it does there.
+    """
+    totals_by_date: Dict[date, Dict[str, Any]] = {}
+    latest_updated_at: Optional[int] = None
+    for record in records:
+        day = metric_record_day(record)
+        if day is None:
+            continue
+        day_totals = totals_by_date.get(day)
+        if day_totals is None:
+            day_totals = {"date": day}
+            for field in fields:
+                if field in ["sessions_count", "runs_count"]:
+                    day_totals[field] = 0
+                elif field == "model_metrics":
+                    day_totals[field] = []
+                else:
+                    day_totals[field] = {}
+            totals_by_date[day] = day_totals
+
+        duration_metrics = record.get("duration_metrics") or {}
+        for field in fields:
+            if field in ["sessions_count", "runs_count"]:
+                day_totals[field] += record.get(field) or 0
+            elif field == "model_metrics":
+                merge_os_model_metrics(day_totals[field], record.get(field) or [])
+            elif field == "duration_metrics":
+                # The bucket objects are totalled apart, under duration_buckets
+                merge_os_metrics_json(
+                    day_totals[field],
+                    {key: value for key, value in duration_metrics.items() if not isinstance(value, dict)},
+                )
+            elif field == "duration_buckets":
+                merge_os_metrics_json(
+                    day_totals[field],
+                    {key: value for key, value in duration_metrics.items() if isinstance(value, dict)},
+                )
+            else:
+                merge_os_metrics_json(day_totals[field], record.get(field))
+
+        updated_at = record.get("updated_at")
+        if updated_at is not None and (latest_updated_at is None or updated_at > latest_updated_at):
+            latest_updated_at = updated_at
+
+    return [totals_by_date[day] for day in sorted(totals_by_date)], latest_updated_at
+
+
+def merge_os_metrics_totals(totals: Sequence[Dict[str, Any]], fields: Sequence[str]) -> Dict[str, Any]:
+    """Merge the OS metrics totals of several dates into the totals of the whole date range."""
+    range_totals: Dict[str, Any] = {}
+    for field in fields:
+        if field in ["sessions_count", "runs_count"]:
+            range_totals[field] = 0
+        elif field == "model_metrics":
+            range_totals[field] = []
+        else:
+            range_totals[field] = {}
+    for day_totals in totals:
+        for field in fields:
+            if field in ["sessions_count", "runs_count"]:
+                range_totals[field] += day_totals.get(field) or 0
+            elif field == "model_metrics":
+                merge_os_model_metrics(range_totals[field], day_totals.get(field) or [])
+            else:
+                merge_os_metrics_json(range_totals[field], day_totals.get(field))
+    return range_totals
+
+
+def build_os_metrics_total_row(
+    rows: Sequence[Dict[str, Any]],
+    row_date: date,
+    aggregation_period: str,
+    user_id: str = "",
+    agent_id: str = "",
+    team_id: str = "",
+    workflow_id: str = "",
+) -> Dict[str, Any]:
+    """Build the row that totals the given rows: the total row of a day or of a month, or a month row of one
+    owner and component.
+
+    Args:
+        rows (Sequence[Dict[str, Any]]): The rows to total.
+        row_date (date): The date of the row: the day, or the first day of the month.
+        aggregation_period (str): The period of the row.
+        user_id (str): The owner of a month row of one owner and component. Empty for a total row.
+        agent_id (str): The agent of a month row of one owner and component.
+        team_id (str): The team of a month row of one owner and component.
+        workflow_id (str): The workflow of a month row of one owner and component.
+
+    Returns:
+        Dict[str, Any]: The row, in the shape calculate_date_os_metrics writes.
+    """
+    totals, latest_updated_at = total_os_metrics_records(rows, OS_METRICS_FIELDS)
+    row_totals = merge_os_metrics_totals(totals, OS_METRICS_FIELDS)
+    current_time = int(time.time())
+    return {
+        "id": str(uuid4()),
+        "date": row_date,
+        "completed": True,
+        "created_at": current_time,
+        # When the rows it totals were last written, so a read reports the same time from either period
+        "updated_at": latest_updated_at,
+        "aggregation_period": aggregation_period,
+        "user_id": user_id,
+        "agent_id": agent_id,
+        "team_id": team_id,
+        "workflow_id": workflow_id,
+        "sessions_count": row_totals["sessions_count"],
+        "runs_count": row_totals["runs_count"],
+        "status_metrics": row_totals["status_metrics"],
+        "token_metrics": row_totals["token_metrics"],
+        # Stored the way a row keeps them: the bucket objects inside duration_metrics
+        "duration_metrics": {**row_totals["duration_metrics"], **row_totals["duration_buckets"]},
+        "model_metrics": row_totals["model_metrics"],
+        "metadata": None,
+    }
+
+
+def os_metrics_month_end(month_start: date) -> date:
+    """The last day of the calendar month that starts on the given day."""
+    return (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+
+
+def os_metrics_full_months(starting_date: date, ending_date: date) -> List[date]:
+    """The first day of every calendar month that is fully inside the given date range."""
+    month_starts = []
+    month_start = starting_date.replace(day=1)
+    while month_start <= ending_date:
+        if month_start >= starting_date and os_metrics_month_end(month_start) <= ending_date:
+            month_starts.append(month_start)
+        month_start = os_metrics_month_end(month_start) + timedelta(days=1)
+    return month_starts
+
+
+def get_months_to_calculate_os_metrics_for(total_days: Sequence[date], calculated_months: Sequence[date]) -> List[date]:
+    """Return the list of months to calculate month rows for.
+
+    A month is completed once it ended before yesterday. Every completed month with a total row and no month
+    rows is returned, whenever its days were rebuilt, so a month one rebuild could not calculate is calculated by
+    a later one.
+
+    Args:
+        total_days (Sequence[date]): The days that have a total row.
+        calculated_months (Sequence[date]): The first day of every month that has month rows.
+
+    Returns:
+        List[date]: The first day of every month to calculate month rows for.
+    """
+    yesterday = datetime.now(timezone.utc).date() - timedelta(days=1)
+    month_starts = {day.replace(day=1) for day in total_days} - set(calculated_months)
+    return sorted(month_start for month_start in month_starts if os_metrics_month_end(month_start) < yesterday)
+
+
+def calculate_month_os_metrics(month_start: date, stored_rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Calculate the month rows of a completed month from the rows stored for its days.
+
+    A completed day is never rebuilt, so a month of completed days never changes and its month rows are written
+    once.
+
+    Args:
+        month_start (date): The first day of the month.
+        stored_rows (Sequence[Dict[str, Any]]): The rows stored for the days of the month.
+
+    Returns:
+        List[Dict[str, Any]]: The total row of the month, then one row per user and agent, team or workflow.
+            Empty while a day of the month is still open.
+    """
+    if not stored_rows or any(not row.get("completed") for row in stored_rows):
+        return []
+    per_owner: Dict[Tuple[str, str, str, str], List[Dict[str, Any]]] = {}
+    for row in stored_rows:
+        bucket_key = (
+            row.get("user_id") or "",
+            row.get("agent_id") or "",
+            row.get("team_id") or "",
+            row.get("workflow_id") or "",
+        )
+        per_owner.setdefault(bucket_key, []).append(row)
+    month_rows = [build_os_metrics_total_row(stored_rows, month_start, "monthly_total")]
+    for bucket_key, rows in sorted(per_owner.items()):
+        month_rows.append(build_os_metrics_total_row(rows, month_start, "monthly", *bucket_key))
+    return month_rows
+
+
+def os_metrics_dates_to_read(
+    starting_date: date, ending_date: date, total_days: Set[date], calculated_months: Set[date]
+) -> Tuple[List[date], List[date], List[date]]:
+    """Pick the period a read totals each day of the date range from, so no day is counted from two.
+
+    Args:
+        starting_date (date): The first day of the range.
+        ending_date (date): The last day of the range.
+        total_days (Set[date]): The days to read from their total row.
+        calculated_months (Set[date]): The first day of every month to read from its month rows, when the
+            whole month is inside the range.
+
+    Returns:
+        Tuple[List[date], List[date], List[date]]: The first day of every month read from its month rows, the
+            days read from their total row, and the days read from their rows.
+    """
+    month_starts = [
+        month_start
+        for month_start in os_metrics_full_months(starting_date, ending_date)
+        if month_start in calculated_months
+    ]
+    days = [starting_date + timedelta(days=offset) for offset in range((ending_date - starting_date).days + 1)]
+    days = [day for day in days if day.replace(day=1) not in month_starts]
+    return month_starts, [day for day in days if day in total_days], [day for day in days if day not in total_days]
 
 
 def os_metrics_percentile(buckets: Dict[str, int], fraction: float, max_ms: Optional[int] = None) -> Optional[int]:

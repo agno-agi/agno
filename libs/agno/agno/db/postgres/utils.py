@@ -23,6 +23,7 @@ try:
         func,
         literal,
         literal_column,
+        or_,
         select,
         true,
         union_all,
@@ -562,12 +563,40 @@ def build_os_metrics_run(row: Any) -> Dict[str, Any]:
     return run
 
 
+def build_os_metrics_total_dates_query(
+    table: Table,
+    aggregation_periods: Sequence[str],
+    starting_date: Optional[date] = None,
+    ending_date: Optional[date] = None,
+) -> Select:
+    """Build the query that reads which dates have a total row of the given periods.
+
+    Args:
+        table (Table): The OS metrics table.
+        aggregation_periods (Sequence[str]): "daily_total", "monthly_total" or both.
+        starting_date (Optional[date]): The first date to read. ``None`` reads from the first one stored.
+        ending_date (Optional[date]): The last date to read. ``None`` reads to the last one stored.
+
+    Returns:
+        Select: The query, one row per date and period. A month row is dated the first day of its month.
+    """
+    conditions = [table.c.user_id == "", table.c.aggregation_period.in_(aggregation_periods)]
+    if starting_date is not None:
+        conditions.append(table.c.date >= starting_date)
+    if ending_date is not None:
+        conditions.append(table.c.date <= ending_date)
+    return select(table.c.date, table.c.aggregation_period).where(*conditions)
+
+
 def build_os_metrics_totals_queries(
     table: Table,
     starting_date: date,
     ending_date: date,
     user_id: Optional[str],
     fields: Sequence[str],
+    month_starts: Optional[Sequence[date]] = None,
+    total_days: Optional[Sequence[date]] = None,
+    row_days: Optional[Sequence[date]] = None,
 ) -> Dict[str, Any]:
     """Build the queries that total the OS metrics rows of each day in the given date range.
 
@@ -577,14 +606,38 @@ def build_os_metrics_totals_queries(
         ending_date (date): The last day to total.
         user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner.
         fields (Sequence[str]): The columns to total.
+        month_starts (Optional[Sequence[date]]): The first day of every month to total from its month rows.
+        total_days (Optional[Sequence[date]]): The days to total from their total row.
+        row_days (Optional[Sequence[date]]): The days to total from their rows. ``None`` totals every day of
+            the date range from its rows.
 
     Returns:
         Dict[str, Any]: The queries, keyed "totals", "duration_buckets" and "model_metrics".
     """
-    conditions = [table.c.date >= starting_date, table.c.date <= ending_date]
+    conditions = [table.c.aggregation_period == "daily"]
+    if row_days is None:
+        conditions.extend([table.c.date >= starting_date, table.c.date <= ending_date])
+    else:
+        conditions.append(table.c.date.in_(row_days))
     if user_id is not None:
         conditions.append(table.c.user_id == user_id)
     where = and_(*conditions)
+    # The total row of every owner has no owner, and one owner's month is that owner's month rows
+    if total_days:
+        where = or_(
+            where,
+            and_(table.c.user_id == "", table.c.aggregation_period == "daily_total", table.c.date.in_(total_days)),
+        )
+    if month_starts and user_id is None:
+        where = or_(
+            where,
+            and_(table.c.user_id == "", table.c.aggregation_period == "monthly_total", table.c.date.in_(month_starts)),
+        )
+    elif month_starts:
+        where = or_(
+            where,
+            and_(table.c.user_id == user_id, table.c.aggregation_period == "monthly", table.c.date.in_(month_starts)),
+        )
 
     totals = [func.max(table.c.updated_at).label("updated_at")]
     for field in fields:
@@ -644,15 +697,15 @@ def build_os_metrics_totals(
     fields: Sequence[str],
     rows_by_query: Dict[str, Sequence[Any]],
 ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
-    """Build the OS metrics totals of each day from the rows of the totals queries.
+    """Build the OS metrics totals of each date from the rows of the totals queries.
 
     Args:
         fields (Sequence[str]): The columns that were totalled.
         rows_by_query (Dict[str, Sequence[Any]]): The rows of each query of build_os_metrics_totals_queries.
 
     Returns:
-        Tuple[List[Dict[str, Any]], Optional[int]]: One dict per day, oldest first, and when the rows were
-            last updated.
+        Tuple[List[Dict[str, Any]], Optional[int]]: One dict per date, oldest first, and when the rows were
+            last updated. A month totalled from its month rows is one dict, dated its first day.
     """
     totals_by_date: Dict[date, Dict[str, Any]] = {}
     latest_updated_at: Optional[int] = None
