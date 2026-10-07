@@ -93,7 +93,8 @@ class Compaction:
     model: Optional[Union[Model, str]] = None
     # Extra guidance for the summarizer, added to the default prompt - e.g. "Keep every ticket id".
     instructions: Optional[str] = None
-    # Soft length target for the summary, stated in the prompt.
+    # Length budget for the summary. It is stated in the prompt, and a summary that still comes
+    # back longer is trimmed to fit, dropping whole items from the least needed sections first.
     compacted_token_budget: int = 2_000
 
     # -- when to compact ------------------------------------------------
@@ -151,6 +152,8 @@ class Compaction:
             raise ValueError(f"uncompacted_runs must be zero or a positive integer, got {self.uncompacted_runs}")
         if self.uncompacted_tokens is not None and self.uncompacted_tokens <= 0:
             raise ValueError(f"uncompacted_tokens must be a positive integer, got {self.uncompacted_tokens}")
+        if self.compacted_token_budget <= 0:
+            raise ValueError(f"compacted_token_budget must be a positive integer, got {self.compacted_token_budget}")
         # The tail limit divides by 1 + min_fold_ratio, so a negative ratio would divide by zero or
         # flip the limit's sign.
         if self.min_fold_ratio < 0:
@@ -459,6 +462,30 @@ class Compaction:
         self._accumulate(response, run_metrics)
         return response.content
 
+    def _fit_to_budget(self, summary: str, searchable: bool) -> str:
+        """The summary, trimmed by section when it came back over compacted_token_budget.
+
+        A model cannot count the tokens it writes, so the budget in the prompt only steers the
+        length. Whole items go, from the sections least needed to carry on first, so the cap holds
+        without cutting the end - where in-progress work and exact identifiers are.
+        """
+        from agno.compaction._trim import fit_summary
+        from agno.utils.tokens import count_text_tokens
+
+        model_id = getattr(self.model, "id", None) or "gpt-4o"
+        note = "(Some earlier items were dropped to fit the summary length budget."
+        note += " They are in the stored messages and can be searched.)" if searchable else ")"
+        before = count_text_tokens(summary, model_id)
+        fitted, dropped = fit_summary(
+            summary, self.compacted_token_budget, lambda text: count_text_tokens(text, model_id), note
+        )
+        if fitted != summary:
+            log_info(
+                f"Compaction: the summary was {before} tokens against a {self.compacted_token_budget}-token "
+                f"budget, so {dropped} {'item was' if dropped == 1 else 'items were'} dropped to fit."
+            )
+        return fitted
+
     def _summary_model(self) -> Optional[Model]:
         # __post_init__ resolved any string, so this is a Model or None.
         return cast(Optional[Model], self.model)
@@ -731,6 +758,7 @@ class Compaction:
         )
         if not summary:
             return None
+        summary = self._fit_to_budget(summary, searchable=bool(self.search_compacted_messages and archive is not None))
 
         record = self.build_record(
             messages, summary, messages[boundary].id, len(to_compact), tokens_before, run_id=run_id
@@ -779,6 +807,7 @@ class Compaction:
         )
         if not summary:
             return None
+        summary = self._fit_to_budget(summary, searchable=bool(self.search_compacted_messages and archive is not None))
 
         record = self.build_record(
             messages, summary, messages[boundary].id, len(to_compact), tokens_before, run_id=run_id

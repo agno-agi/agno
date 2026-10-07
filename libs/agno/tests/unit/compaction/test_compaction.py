@@ -2770,3 +2770,191 @@ def test_archive_tools_absent_when_not_searchable():
 
 def test_not_searchable_by_default():
     assert Compaction().tools_for("s", _db()) is None
+
+
+# --- fitting the summary to its budget --------------------------------------
+
+
+def _words(text):
+    return len(text.split())
+
+
+_LONG_SUMMARY = """## Goal
+Ship the billing migration.
+
+## Constraints & preferences
+- Never restart billing during business hours.
+
+## Completed
+- Old item one finished.
+- Old item two finished.
+  - with a sub-point that belongs to it
+- Newer item three finished.
+
+## Key decisions & facts
+- Chose Postgres over MySQL for the ledger.
+
+## In progress / next steps
+- Canary at 5% on staging.
+
+## Errors & fixes
+- BILLING_E512 fixed by raising the pool.
+
+## Critical context
+- Ticket OPS-4821, config /srv/billing/config/prod.yaml
+
+Not covered here: full error text, per-service latency tables"""
+
+
+def test_a_summary_within_budget_is_left_alone():
+    from agno.compaction._trim import fit_summary
+
+    assert fit_summary(_LONG_SUMMARY, 10_000, _words, "(trimmed)") == (_LONG_SUMMARY, 0)
+
+
+def test_an_oversized_summary_drops_whole_items_from_the_least_needed_sections_first():
+    """Completed goes first, oldest item first; what the agent needs to carry on stays."""
+    from agno.compaction._trim import fit_summary
+
+    budget = _words(_LONG_SUMMARY) - 8
+    fitted, dropped = fit_summary(_LONG_SUMMARY, budget, _words, "(trimmed)")
+
+    assert _words(fitted) <= budget
+    # Item one went first, then item two with its sub-bullet - never one without the other. That
+    # left room for item one again, so it was put back.
+    assert dropped == 1
+    assert "Old item two" not in fitted and "sub-point" not in fitted
+    assert "Old item one" in fitted
+    assert "Newer item three" in fitted
+    for kept in ("Ship the billing migration", "Never restart", "Canary at 5%", "OPS-4821", "Chose Postgres"):
+        assert kept in fitted
+
+
+def test_trimming_never_cuts_a_line_and_keeps_the_closing_lines_last():
+    """Cutting at the budget would lose the end - in-progress work, exact identifiers, and the line
+    that sends the agent to search - and could leave half an identifier that looks like data."""
+    from agno.compaction._trim import fit_summary
+
+    fitted, _ = fit_summary(_LONG_SUMMARY, 45, _words, "(trimmed)")
+
+    original_lines = set(_LONG_SUMMARY.splitlines())
+    assert all(line in original_lines or line == "(trimmed)" for line in fitted.splitlines())
+    assert fitted.splitlines()[-1] == "Not covered here: full error text, per-service latency tables"
+    assert fitted.splitlines()[-3] == "(trimmed)"
+    # When every section is down to its last item, the goal is the one kept longest.
+    assert "Ship the billing migration." in fitted
+
+
+def test_the_sections_needed_to_carry_on_are_trimmed_only_when_nothing_else_is_left():
+    from agno.compaction._trim import fit_summary
+
+    fitted, _ = fit_summary(_LONG_SUMMARY, 40, _words, "(trimmed)")
+
+    assert _words(fitted) <= 40
+    for gone in ("Old item", "Newer item", "BILLING_E512", "Chose Postgres"):
+        assert gone not in fitted
+    assert "Ship the billing migration." in fitted and "Canary at 5% on staging." in fitted
+
+
+def test_no_section_the_agent_needs_is_emptied_while_another_keeps_a_long_list():
+    """A long Critical context list shrinks before Goal or In progress lose their only item. Found
+    live: emptying those sections in document order left a summary with no goal and ten ticket
+    lines."""
+    from agno.compaction._trim import fit_summary
+
+    context = "\n".join(f"- /srv/svc{i}/config.yaml: OPS-{1000 + i}" for i in range(12))
+    summary = (
+        "## Goal\nShip the migration.\n\n## In progress / next steps\n- Canary at 5%.\n\n"
+        f"## Completed\n- Done one.\n- Done two.\n\n## Critical context\n{context}"
+    )
+    fitted, _ = fit_summary(summary, _words(summary) - 25, _words, "(trimmed)")
+
+    assert "Ship the migration." in fitted and "Canary at 5%." in fitted
+    assert "Done one." not in fitted
+    # Oldest context lines went first; the newest are kept.
+    assert "OPS-1000" not in fitted and "OPS-1011" in fitted
+
+
+def test_room_left_by_a_large_dropped_item_is_refilled():
+    """Dropping one large item can take the summary well under budget. Smaller items dropped
+    before it go back in when they still fit, so the cap is not paid for twice."""
+    from agno.compaction._trim import fit_summary
+
+    big = "- " + "detail " * 40
+    summary = f"## Completed\n- Small one.\n- Small two.\n{big}\n\n## Goal\nShip it."
+    fitted, dropped = fit_summary(summary, _words(summary) - 20, _words, "(trimmed)")
+
+    assert dropped == 1
+    assert "detail" not in fitted
+    assert "Small one." in fitted and "Small two." in fitted
+    assert fitted.index("Small one.") < fitted.index("Small two.")
+
+
+def test_a_summary_without_headings_is_trimmed_by_paragraph():
+    from agno.compaction._trim import fit_summary
+
+    summary = "\n\n".join(f"Paragraph {i} " + "word " * 20 for i in range(6))
+    fitted, dropped = fit_summary(summary, 60, _words, "(trimmed)")
+
+    assert _words(fitted) <= 60
+    assert dropped >= 1
+    assert "Paragraph 5" in fitted and "Paragraph 0" not in fitted
+
+
+def test_emptied_sections_lose_their_headings():
+    """A heading with nothing under it costs tokens and says nothing. Found live: a tight budget
+    kept seven empty headings and dropped the goal to pay for them."""
+    from agno.compaction._trim import fit_summary
+
+    fitted, _ = fit_summary(_LONG_SUMMARY, 60, _words, "(trimmed)")
+
+    assert _words(fitted) <= 60
+    assert "## Completed" not in fitted and "## Errors & fixes" not in fitted
+    assert "Ship the billing migration." in fitted
+
+
+def test_the_cap_holds_even_when_nothing_but_the_closing_lines_is_left():
+    from agno.compaction._trim import fit_summary
+
+    for budget in (12, 8, 3, 1):
+        fitted, _ = fit_summary(_LONG_SUMMARY, budget, _words, "(trimmed)")
+        assert fitted
+        assert _words(fitted) <= budget
+
+
+def test_a_tiny_budget_still_holds_and_returns_something():
+    from agno.compaction._trim import fit_summary
+
+    fitted, _ = fit_summary(_LONG_SUMMARY, 3, _words, "(trimmed)")
+
+    assert fitted
+    assert _words(fitted) <= 3
+
+
+def test_compaction_stores_a_summary_within_its_budget():
+    """The summarizer is asked for 60 tokens and returns far more; the stored summary fits."""
+    from agno.utils.tokens import count_text_tokens
+
+    class _Verbose:
+        id = "stub"
+
+        def response(self, messages, **kwargs):
+            from agno.models.response import ModelResponse
+
+            items = "\n".join(f"- finished step {i} with detail {i * 7}" for i in range(80))
+            return ModelResponse(content=f"## Goal\nShip it.\n\n## Completed\n{items}\n\n## Critical context\n- OPS-1")
+
+    messages = _transcript(6)
+    compaction = Compaction(uncompacted_runs=1, min_fold_ratio=0, compacted_token_budget=60, model=_Verbose())
+
+    record = compaction.compact(messages, session_id="s")
+
+    assert record is not None
+    assert count_text_tokens(record.summary, "stub") <= 60
+    assert "Ship it." in record.summary and "OPS-1" in record.summary
+    assert "dropped to fit the summary length budget" in record.summary
+
+
+def test_the_summary_budget_must_be_positive():
+    with pytest.raises(ValueError, match="compacted_token_budget"):
+        Compaction(compacted_token_budget=0)
