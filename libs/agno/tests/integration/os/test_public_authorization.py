@@ -16,7 +16,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.base import Model
 from agno.models.message import MessageMetrics
 from agno.models.response import ModelResponse
-from agno.os import AgentOS, MCPConfig
+from agno.os import AgentOS, CORSConfig, MCPConfig
 from agno.os.config import AuthorizationConfig
 from agno.os.middleware.jwt import AuthMiddleware
 from agno.os.public import PublicSurface
@@ -608,7 +608,7 @@ PREVIEW_PATTERN = r"https://docs-[a-z0-9-]+\.example\.com"
 
 def browser_runtime(runtime):
     runtime.os.cors_allowed_origins = [ORIGIN]
-    runtime.os.cors_allowed_origin_regex = PREVIEW_PATTERN
+    runtime.os.cors = CORSConfig(origins=[ORIGIN], origin_regex=PREVIEW_PATTERN)
     runtime.surface.enforce_browser_origins = True
     return TestClient(runtime.os.get_app())
 

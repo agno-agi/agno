@@ -23,9 +23,11 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.job_queue import QueueConfig
 from agno.knowledge.knowledge import Knowledge
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
+from agno.os.middleware.cors import OriginPolicy
 from agno.os.config import (
     AgentOSConfig,
     AuthorizationConfig,
+    CORSConfig,
     DatabaseConfig,
     EvalsConfig,
     EvalsDomainConfig,
@@ -301,8 +303,7 @@ class AgentOS:
         user_isolation: bool = False,
         user_directory: Optional[Union[bool, "UserDirectory"]] = None,
         cors_allowed_origins: Optional[List[str]] = None,
-        cors_allowed_origin_regex: Optional[str] = None,
-        cors_merge_base_app_origins: bool = True,
+        cors: Optional[CORSConfig] = None,
         media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
@@ -384,9 +385,10 @@ class AgentOS:
                 ``agno.os.authz``) for control. Audit is not configured here: it lives on
                 ``Authorization(audit=...)``, since a change trail without a verified identity has
                 no actor to record.
-            cors_allowed_origins: Exact browser origins. None uses settings defaults; [] allows none.
-            cors_allowed_origin_regex: Optional full-match pattern for additional browser origins.
-            cors_merge_base_app_origins: Include existing base-app CORS origins/patterns (default True).
+            cors_allowed_origins: List of allowed CORS origins. Empty or None uses the settings defaults.
+                Shorthand for ``cors=CORSConfig(origins=...)``; pass only one of the two.
+            cors: Browser origin policy (``CORSConfig``): exact origins, a full-match origin
+                regex, and whether to keep CORS origins already configured on ``base_app``.
             media_storage: Backend the media routes read stored media from. Defaults to the first
                 one configured on an agent, team or workflow.
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
@@ -550,13 +552,14 @@ class AgentOS:
         # open only on a no-auth OS, where every route is open. See _admin_api_routers, which
         # passes auth_enabled so the gate knows which mode it is in.
 
-        # Explicit origins replace settings defaults; base-app origins are merged separately.
-        self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
-        self.cors_allowed_origin_regex = cors_allowed_origin_regex
-        self.cors_merge_base_app_origins = cors_merge_base_app_origins
-        from agno.os.middleware.cors import OriginPolicy
-
-        self._cors_origin_policy = OriginPolicy(self.cors_allowed_origins, cors_allowed_origin_regex)
+        if cors is not None and cors_allowed_origins is not None:
+            raise ValueError("Pass either cors=CORSConfig(origins=...) or cors_allowed_origins, not both.")
+        self.cors = cors
+        if cors is not None and cors.origins is not None:
+            self.cors_allowed_origins = list(cors.origins)
+        else:
+            self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
+        self._cors_origin_policy: Optional[OriginPolicy] = None
         self.media_storage = media_storage
 
         # If True, run agent/team hooks as FastAPI background tasks
@@ -1675,12 +1678,11 @@ class AgentOS:
         origin_policy = update_cors_middleware(
             fastapi_app,
             self.cors_allowed_origins,
-            origin_regex=self.cors_allowed_origin_regex,
-            merge_existing=self.cors_merge_base_app_origins,
+            origin_regex=self.cors.origin_regex if self.cors is not None else None,
+            merge_existing=self.cors.merge_base_app if self.cors is not None else True,
         )
         fastapi_app.state.cors_origin_policy = origin_policy
         self._cors_origin_policy = origin_policy
-        self.cors_allowed_origins = list(origin_policy.origins)
 
         # Set agent_os_id and cors_allowed_origins on app state
         # This allows middleware (like JWT) to access these values

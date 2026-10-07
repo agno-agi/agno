@@ -1,14 +1,23 @@
-import re
-
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from starlette.middleware.cors import CORSMiddleware
 
 from agno.agent import Agent
-from agno.os import AgentOS
-from agno.os.middleware.cors import OriginPolicy
+from agno.os import AgentOS, CORSConfig
+from agno.os.middleware.cors import OriginPolicy, combine_origin_patterns
 from agno.os.utils import resolve_origins, update_cors_middleware
+
+
+def _starlette_cors(app: FastAPI) -> CORSMiddleware:
+    cors = [m for m in app.user_middleware if m.cls is CORSMiddleware]
+    assert len(cors) == 1
+    return CORSMiddleware(app, **cors[0].kwargs)
+
+
+def _preflight(app: FastAPI, origin: str):
+    return TestClient(app).options("/health", headers={"Origin": origin, "Access-Control-Request-Method": "GET"})
 
 
 @pytest.mark.parametrize("merge", [False, True])
@@ -25,22 +34,92 @@ def test_base_app_origins_and_patterns_can_be_preserved_or_replaced(merge):
     assert policy.allows("https://old.example") is merge
     assert policy.allows("https://old-feature.example") is merge
     assert not policy.allows("https://new-feature.example.evil")
-    cors = [m for m in app.user_middleware if m.cls is CORSMiddleware]
-    assert len(cors) == 1
-    middleware = CORSMiddleware(app, **cors[0].kwargs)
+    middleware = _starlette_cors(app)
     for origin in ("https://docs.example", "https://new-feature.example", "https://old.example", "https://evil.test"):
         assert middleware.is_allowed_origin(origin) == policy.allows(origin)
 
 
-def test_empty_origins_are_explicit_not_default_fallback():
-    assert resolve_origins([], ["https://default.example"]) == []
+def test_legacy_empty_cors_allowed_origins_still_uses_defaults():
+    assert resolve_origins([], ["https://default.example"]) == ["https://default.example"]
     assert resolve_origins(None, ["https://default.example"]) == ["https://default.example"]
-    assert not OriginPolicy([]).allows("https://default.example")
+    agent_os = AgentOS(agents=[Agent(id="docs", telemetry=False)], cors_allowed_origins=[], telemetry=False)
+    assert agent_os.cors_allowed_origins == agent_os.settings.cors_origin_list
+
+
+def test_cors_config_empty_origins_allow_none():
+    agent_os = AgentOS(agents=[Agent(id="docs", telemetry=False)], cors=CORSConfig(origins=[]), telemetry=False)
+    assert agent_os.cors_allowed_origins == []
+    response = _preflight(agent_os.get_app(), "https://os.agno.com")
+    assert response.status_code == 400
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_cors_config_without_origins_uses_defaults():
+    agent_os = AgentOS(
+        agents=[Agent(id="docs", telemetry=False)], cors=CORSConfig(origin_regex=r"https://x\.test"), telemetry=False
+    )
+    assert agent_os.cors_allowed_origins == agent_os.settings.cors_origin_list
+
+
+def test_cors_and_cors_allowed_origins_are_mutually_exclusive():
+    with pytest.raises(ValueError, match="not both"):
+        AgentOS(
+            agents=[Agent(id="docs", telemetry=False)],
+            cors=CORSConfig(origins=["https://a.test"]),
+            cors_allowed_origins=["https://b.test"],
+        )
 
 
 def test_invalid_regex_fails_during_configuration():
-    with pytest.raises(re.error):
-        AgentOS(agents=[Agent(id="docs", telemetry=False)], cors_allowed_origin_regex="[")
+    with pytest.raises(ValidationError, match="origin_regex"):
+        CORSConfig(origin_regex="[")
+
+
+def test_cors_config_rejects_unknown_fields():
+    with pytest.raises(ValidationError):
+        CORSConfig(origin=["https://a.test"])  # type: ignore[call-arg]
+
+
+def test_inline_flag_regex_on_agentos():
+    agent_os = AgentOS(
+        agents=[Agent(id="docs", telemetry=False)],
+        cors=CORSConfig(origins=[], origin_regex=r"(?i)https://docs-[a-z]+\.example\.com"),
+        telemetry=False,
+    )
+    app = agent_os.get_app()
+    assert _preflight(app, "https://DOCS-Feature.example.com").status_code == 200
+    assert _preflight(app, "https://docs-feature.example.com.evil.test").status_code == 400
+
+
+def test_inline_flag_regex_on_base_app_merges_with_agentos_regex():
+    base = FastAPI()
+    base.add_middleware(CORSMiddleware, allow_origin_regex=r"(?i)https://legacy-[a-z]+\.example\.com")
+    app = AgentOS(
+        agents=[Agent(id="docs", telemetry=False)],
+        base_app=base,
+        cors=CORSConfig(origins=[], origin_regex=r"https://docs-[a-z]+\.example\.com"),
+        telemetry=False,
+    ).get_app()
+    assert _preflight(app, "https://LEGACY-old.example.com").status_code == 200
+    assert _preflight(app, "https://docs-new.example.com").status_code == 200
+    # The base app's case-insensitive flag stays scoped to its own pattern.
+    assert _preflight(app, "https://DOCS-new.example.com").status_code == 400
+
+
+@pytest.mark.parametrize(
+    "patterns, allowed, denied",
+    [
+        ([r"(?i)https://a\.test", r"https://b\.test"], ["https://A.TEST", "https://b.test"], ["https://B.TEST"]),
+        ([r"(?x) https://a \. test  # verbose", r"https://b\.test"], ["https://a.test", "https://b.test"], []),
+        ([r"https://a\.test|https://c\.test", r"https://b\.test"], ["https://c.test", "https://b.test"], []),
+    ],
+)
+def test_combined_patterns_keep_each_pattern_semantics(patterns, allowed, denied):
+    policy = OriginPolicy([], combine_origin_patterns(patterns))
+    for origin in allowed:
+        assert policy.allows(origin), origin
+    for origin in [*denied, "https://a.test.evil", "https://evil.test"]:
+        assert not policy.allows(origin), origin
 
 
 def test_base_app_replacement_is_available_on_agentos():
@@ -49,12 +128,23 @@ def test_base_app_replacement_is_available_on_agentos():
     app = AgentOS(
         agents=[Agent(id="docs", telemetry=False)],
         base_app=base,
-        cors_allowed_origins=[],
-        cors_merge_base_app_origins=False,
+        cors=CORSConfig(origins=[], merge_base_app=False),
         telemetry=False,
     ).get_app()
-    response = TestClient(app).options(
-        "/health", headers={"Origin": "https://old.example", "Access-Control-Request-Method": "GET"}
-    )
+    response = _preflight(app, "https://old.example")
     assert response.status_code == 400
     assert "access-control-allow-origin" not in response.headers
+
+
+def test_get_app_does_not_rewrite_configured_origins():
+    base = FastAPI()
+    base.add_middleware(CORSMiddleware, allow_origins=["https://old.example"])
+    agent_os = AgentOS(
+        agents=[Agent(id="docs", telemetry=False)],
+        base_app=base,
+        cors_allowed_origins=["https://new.example"],
+        telemetry=False,
+    )
+    app = agent_os.get_app()
+    assert agent_os.cors_allowed_origins == ["https://new.example"]
+    assert _preflight(app, "https://old.example").status_code == 200

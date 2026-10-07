@@ -7,7 +7,7 @@ from fastapi import FastAPI
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.os import AgentOS, MCPConfig
+from agno.os import AgentOS, CORSConfig, MCPConfig
 from agno.os.config import AuthorizationConfig
 from agno.os.public import PublicSurface
 from agno.os.public._limits import Admission
@@ -38,7 +38,7 @@ async def client(*, host="mcp.example.com", mounted=False, origin_regex=None, en
     surface._limiter = limiter
     server = AgentOS(
         id="mcp-routing",
-        cors_allowed_origin_regex=origin_regex,
+        cors=CORSConfig(origin_regex=origin_regex),
         agents=[Agent(id="docs", telemetry=False)],
         db=PostgresDb(db_url="postgresql+psycopg://unused:unused@127.0.0.1:1/unused"),
         authorization=True,

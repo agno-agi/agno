@@ -9,7 +9,7 @@ from os import getenv
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
-from agno.os import AgentOS
+from agno.os import AgentOS, CORSConfig
 from agno.os.public import PublicSurface
 
 db = PostgresDb(
@@ -23,9 +23,11 @@ agent_os = AgentOS(
     agents=[agent],
     db=db,
     public=PublicSurface(agents=[agent], enforce_browser_origins=True),
-    cors_allowed_origins=["https://docs.example.com", "https://os.agno.com"],
-    cors_allowed_origin_regex=r"https://docs-[a-z0-9-]+\.example\.com",
-    cors_merge_base_app_origins=False,
+    cors=CORSConfig(
+        origins=["https://docs.example.com", "https://os.agno.com"],
+        origin_regex=r"https://docs-[a-z0-9-]+\.example\.com",
+        merge_base_app=False,
+    ),
 )
 app = agent_os.get_app()
 

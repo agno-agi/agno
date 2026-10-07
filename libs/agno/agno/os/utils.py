@@ -1882,7 +1882,7 @@ def resolve_origins(user_origins: Optional[List[str]] = None, default_origins: O
         List of allowed CORS origins (user-provided if set, otherwise defaults)
     """
     # User-provided origins override defaults
-    if user_origins is not None:
+    if user_origins:
         return user_origins
 
     # Default Agno domains
@@ -2074,7 +2074,7 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
 def update_cors_middleware(
     app: FastAPI, new_origins: list, *, origin_regex: Optional[str] = None, merge_existing: bool = True
 ):
-    from agno.os.middleware.cors import OriginPolicy
+    from agno.os.middleware.cors import OriginPolicy, combine_origin_patterns
 
     origins = list(new_origins)
     patterns = [origin_regex] if origin_regex is not None else []
@@ -2088,7 +2088,7 @@ def update_cors_middleware(
                 if isinstance(existing_pattern, str):
                     patterns.append(existing_pattern)
     final_origins = list(dict.fromkeys(origin for origin in origins if origin != "*"))
-    pattern = "|".join(f"(?:{part})" for part in patterns) if patterns else None
+    pattern = combine_origin_patterns(patterns)
     policy = OriginPolicy(final_origins, pattern)
     app.user_middleware = [m for m in app.user_middleware if m.cls is not CORSMiddleware]
     app.middleware_stack = None

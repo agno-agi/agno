@@ -558,11 +558,13 @@ visible. No tool is exposed automatically.
 
 ## Browser origins and previews
 
-`browser_origins.py` configures exact browser origins plus
-`cors_allowed_origin_regex`, matched against the whole Origin value. An explicit
-`cors_allowed_origins=[]` allows none; `None` selects settings defaults. Existing
-base-app CORS origins and patterns are preserved unless
-`cors_merge_base_app_origins=False` selects only the AgentOS settings.
+`browser_origins.py` passes `AgentOS(cors=CORSConfig(...))` with exact browser
+origins plus `origin_regex`, matched against the whole Origin value. In
+`CORSConfig`, `origins=[]` allows no exact origins and `None` selects settings
+defaults. Existing base-app CORS origins and patterns are preserved unless
+`merge_base_app=False` selects only the AgentOS settings. The existing
+`cors_allowed_origins=[...]` argument keeps working as before; pass it or `cors`,
+not both.
 
 CORS wraps authentication, public admission and native MCP routing, so allowed
 browsers receive consistent headers on 401/403/413/429 responses. With
