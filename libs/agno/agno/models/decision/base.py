@@ -258,8 +258,8 @@ class DecisionModel:
             error = self._provider_error(message, status_code=response.status_code)
         # The id lets a failed request be traced with the provider; retry_after is the wait the
         # provider asked for, which the retry loop prefers over its own delay
-        error.request_id = request_id  # type: ignore[attr-defined]
-        error.retry_after = _retry_after_seconds(response)  # type: ignore[attr-defined]
+        setattr(error, "request_id", request_id)
+        setattr(error, "retry_after", _retry_after_seconds(response))
         raise error
 
     def _provider_error(self, message: str, status_code: int = 502) -> ModelProviderError:
