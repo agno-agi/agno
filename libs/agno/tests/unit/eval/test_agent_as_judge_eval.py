@@ -112,6 +112,26 @@ def test_batch_mode():
         assert isinstance(eval_result.passed, bool)
 
 
+def test_batch_mode_empty_cases():
+    """Test batch evaluation with an empty cases list."""
+    eval = AgentAsJudgeEval(
+        criteria="Response must be helpful",
+        scoring_strategy="numeric",
+        threshold=7,
+    )
+
+    # Mock the evaluator
+    _mock_evaluator_numeric(eval, score=8)
+
+    result = eval.run(
+        cases=[],
+        print_results=False,
+    )
+
+    assert result is not None
+    assert len(result.results) == 0
+
+
 def test_additional_guidelines():
     """Test evaluation with additional guidelines."""
     eval = AgentAsJudgeEval(

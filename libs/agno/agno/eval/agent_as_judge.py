@@ -716,7 +716,7 @@ class AgentAsJudgeEval(BaseEval):
                     result.results.append(evaluation)
                     result.compute_stats()
 
-            status.stop()
+                status.stop()
 
         # Save result to file
         if self.file_path_to_save_results:
