@@ -1550,6 +1550,64 @@ def test_manual_compact_reports_the_summarizer_usage(use_async):
     assert result.to_dict()["metrics"]["details"]["compaction_model"][0]["input_tokens"] == 700
 
 
+def _stored_compaction_usage(db, session_id):
+    """The compaction_model entries in the session's stored metrics, read back from the database."""
+    from agno.db.base import SessionType
+
+    session = db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+    metrics = (session.session_data or {}).get("session_metrics") or {}
+    entries = (metrics.get("details") or {}).get("compaction_model") or []
+    return [(entry["id"], entry["input_tokens"], entry["output_tokens"]) for entry in entries]
+
+
+def test_a_threshold_fold_is_added_to_the_session_metrics():
+    """A fold inside a run is in that run's metrics, and the session's totals add up its runs."""
+    from agno.agent import Agent
+
+    db = _db()
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=db,
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=40, uncompacted_runs=1, min_fold_ratio=0, model=_MeteredSummarizer()),
+    )
+    runs = [agent.run(f"question number {i} " + "word " * 10) for i in range(4)]
+
+    assert any(run.compaction is not None for run in runs)
+    assert ("summarizer", 700, 40) in _stored_compaction_usage(db, "s")
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_manual_compact_is_added_to_the_session_metrics(use_async):
+    """A manual fold has no run, so its summarizer call is added to the session's metrics directly -
+    otherwise session totals, and the AgentOS metrics built from them, would leave it out."""
+    import asyncio
+
+    from agno.agent import Agent
+    from agno.db.base import SessionType
+
+    db = _db()
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=db,
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, model=_MeteredSummarizer()),
+    )
+    for i in range(4):
+        agent.run(f"question number {i}")
+    stored = db.get_session(session_id="s", session_type=SessionType.AGENT).session_data["session_metrics"]
+    before = stored.get("total_tokens", 0)
+
+    result = asyncio.run(agent.acompact(session_id="s")) if use_async else agent.compact(session_id="s")
+
+    assert result.compacted
+    assert _stored_compaction_usage(db, "s") == [("summarizer", 700, 40)]
+    after = db.get_session(session_id="s", session_type=SessionType.AGENT).session_data["session_metrics"]
+    assert after["total_tokens"] == before + 740
+
+
 def test_a_declined_manual_compact_reports_no_usage():
     """No summarizer call was made, so there is nothing to report."""
     from agno.agent import Agent
@@ -1569,6 +1627,7 @@ def test_a_declined_manual_compact_reports_no_usage():
     assert not result.compacted
     assert result.metrics is None
     assert result.to_dict()["metrics"] is None
+    assert "compaction_model" not in (agent.get_session_metrics(session_id="s").details or {})
 
 
 def test_context_overflow_does_not_retry_what_it_cannot_shrink(caplog):

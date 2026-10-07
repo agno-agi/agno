@@ -362,6 +362,22 @@ async def acompact_now(agent: "Agent", session: AgentSession, history: List[Mess
     return _compaction_result(new_record, metrics)
 
 
+def _add_to_session_metrics(agent: "Agent", session: AgentSession, metrics: RunMetrics) -> None:
+    """Add a manual compaction's summarizer usage to the session's metrics.
+
+    A fold inside a run reaches them through the run's metrics. A manual one has no run, so
+    without this its model call would be missing from the session's totals and from the metrics
+    AgentOS aggregates from them.
+    """
+    from agno.agent._storage import get_session_metrics_internal
+
+    session_metrics = get_session_metrics_internal(agent, session)
+    session_metrics.accumulate_from_run(metrics)
+    if session.session_data is None:
+        session.session_data = {}
+    session.session_data["session_metrics"] = session_metrics.to_dict()
+
+
 def compact_session(agent: "Agent", session_id: Optional[str] = None, user_id: Optional[str] = None) -> Any:
     from agno.agent import _session
     from agno.compaction.types import CompactionResult, CompactionStatus
@@ -369,7 +385,14 @@ def compact_session(agent: "Agent", session_id: Optional[str] = None, user_id: O
     session = _session.get_session(agent, session_id=session_id, user_id=user_id)
     if session is None or not isinstance(session, AgentSession):
         return CompactionResult(status=CompactionStatus.NO_HISTORY, message="No such session.")
-    return compact_now(agent, session, _history_for_compaction(agent, session))
+    result = compact_now(agent, session, _history_for_compaction(agent, session))
+    if result.metrics is not None:
+        _add_to_session_metrics(agent, session, result.metrics)
+        try:
+            _session.save_session(agent, session)
+        except Exception as e:  # noqa: BLE001 - the fold is already stored; only the totals are lost
+            log_warning(f"Could not add the compaction's usage to the session metrics: {e}")
+    return result
 
 
 async def acompact_session(agent: "Agent", session_id: Optional[str] = None, user_id: Optional[str] = None) -> Any:
@@ -379,7 +402,14 @@ async def acompact_session(agent: "Agent", session_id: Optional[str] = None, use
     session = await _session.aget_session(agent, session_id=session_id, user_id=user_id)
     if session is None or not isinstance(session, AgentSession):
         return CompactionResult(status=CompactionStatus.NO_HISTORY, message="No such session.")
-    return await acompact_now(agent, session, _history_for_compaction(agent, session))
+    result = await acompact_now(agent, session, _history_for_compaction(agent, session))
+    if result.metrics is not None:
+        _add_to_session_metrics(agent, session, result.metrics)
+        try:
+            await _session.asave_session(agent, session)
+        except Exception as e:  # noqa: BLE001 - the fold is already stored; only the totals are lost
+            log_warning(f"Could not add the compaction's usage to the session metrics: {e}")
+    return result
 
 
 def _plan_overflow_fold(agent: "Agent", run_messages: Any) -> Optional[Tuple[Any, Any, List[Message]]]:
