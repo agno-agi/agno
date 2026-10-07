@@ -14,6 +14,7 @@ from typing import (
     Optional,
     Sequence,
     Set,
+    Tuple,
     Type,
     Union,
     overload,
@@ -32,6 +33,7 @@ from agno.agent import (
     _tools,
     _utils,
 )
+from agno.agent.followup import FollowupConfig, resolve_followup_settings
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
@@ -40,6 +42,7 @@ from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
 
 if TYPE_CHECKING:
+    from agno.fs import FileSystem
     from agno.learn.machine import LearningMachine
     from agno.tools.component import ComponentTool
 
@@ -136,6 +139,12 @@ class Agent:
     # --- Database ---
     # Database to use for this agent
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
+
+    # --- FileSystem ---
+    # Enable a durable filesystem backed by the agent's database, or provide one or several stores.
+    # Each run acts in its user's partition of the store; see FileSystem.user_scoped.
+    # Choose the tool surface on the FileSystem, e.g. ``FileSystem(db, namespace=..., read_only=True)``.
+    filesystem: Optional[Union[bool, FileSystem, List[FileSystem]]] = None
 
     # --- Checkpointing ---
     # When to persist run state to the database.
@@ -323,11 +332,12 @@ class Agent:
     save_response_to_file: Optional[str] = None
 
     # --- Followups ---
-    # If True, generate followup prompts after the main response
-    followups: bool = False
-    # Number of followup prompts to generate (default 3)
+    # False, True for the defaults, or a FollowupConfig that enables followups and carries their
+    # model, instructions and count. Kept as given; a string model is resolved on a copy of it.
+    followups: Union[bool, FollowupConfig] = False
+    # Number of followup prompts to generate (default 3); with a FollowupConfig, the maximum it allows
     num_followups: int = 3
-    # Optional model to use for generating followups (defaults to agent's model)
+    # Optional model to use for generating followups (defaults to agent's model); with a FollowupConfig, its model
     followup_model: Optional[Model] = None
 
     # --- Agent Streaming ---
@@ -406,6 +416,7 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+        filesystem: Optional[Union[bool, FileSystem, List[FileSystem]]] = None,
         checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,
@@ -481,8 +492,8 @@ class Agent:
         structured_outputs: Optional[bool] = None,
         use_json_mode: bool = False,
         save_response_to_file: Optional[str] = None,
-        followups: bool = False,
-        num_followups: int = 3,
+        followups: Union[bool, FollowupConfig] = False,
+        num_followups: Optional[int] = None,
         followup_model: Optional[Union[Model, str]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
@@ -525,6 +536,8 @@ class Agent:
         self.add_session_state_to_context = add_session_state_to_context
 
         self.db = db
+        self.filesystem = filesystem
+        self._filesystem: Optional["FileSystem"] = None
         self.checkpoint = checkpoint
 
         self.memory_manager = memory_manager
@@ -655,9 +668,7 @@ class Agent:
         self.save_response_to_file = save_response_to_file
 
         self.followups = followups
-        if num_followups < 1:
-            raise ValueError("num_followups must be at least 1")
-        self.num_followups = num_followups
+        self.num_followups = resolve_followup_settings(followups, num_followups, followup_model)
         self.followup_model = followup_model  # type: ignore[assignment]
 
         self.stream = stream
@@ -766,6 +777,18 @@ class Agent:
         ):
             _init.set_learning_machine(self)
         return self._learning
+
+    @property
+    def filesystem_instance(self) -> Optional["FileSystem"]:
+        """The first configured filesystem, if enabled. Use ``filesystems`` for every store."""
+        if self.filesystem and self._filesystem is None:
+            _init.set_filesystem(self)
+        return self._filesystem
+
+    @property
+    def filesystems(self) -> List[Tuple["FileSystem", bool]]:
+        """Every filesystem the agent holds as ``(filesystem, read_only)``: the setting, then tools."""
+        return _init.get_filesystems(self)
 
     # ---------------------------------------------------------------
     # _init module delegates

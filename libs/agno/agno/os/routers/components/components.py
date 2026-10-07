@@ -41,7 +41,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import AgnoHTTPException, draft_preview_identity, may_read_draft_configs
+from agno.os.utils import AgnoHTTPException, adraft_preview_identity, draft_preview_identity, may_read_draft_configs
 from agno.registry import Registry
 from agno.utils.log import log_error, log_warning
 from agno.utils.string import generate_component_id_from_name, hash_string_sha256, validate_component_id
@@ -850,6 +850,13 @@ def attach_routes(
                 db, config, links=links, scoped_user_id=scoped_user_id, own_component_id=component_id
             )
 
+            # Falls back to the unscoped JWT sub so admin-created components still carry an owner.
+            creator_user_id = scoped_user_id or getattr(request.state, "user_id", None)
+
+            _validate_referenced_component_ownership(
+                db, config, links=links, scoped_user_id=scoped_user_id, own_component_id=component_id
+            )
+
             component, _config = db.create_component_with_config(
                 component_id=component_id,
                 component_type=DbComponentType(body.component_type.value),
@@ -1152,7 +1159,7 @@ def attach_routes(
             if component_row is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             configs = db.list_configs(component_id, include_config=include_config)
-            actor, privileged = draft_preview_identity(request)
+            actor, privileged = await adraft_preview_identity(request)
             if not may_read_draft_configs(component_row, actor, privileged):
                 configs = [c for c in configs if c.get("stage") == "published"]
             return [_config_response(c, component_row, scoped_user_id) for c in configs]
@@ -1348,7 +1355,7 @@ def attach_routes(
             if component_row is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             config = db.get_config(component_id, version=version)
-            actor, privileged = draft_preview_identity(request)
+            actor, privileged = await adraft_preview_identity(request)
             if (
                 config is not None
                 and config.get("stage") != "published"
