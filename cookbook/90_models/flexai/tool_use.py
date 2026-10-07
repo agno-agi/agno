@@ -1,7 +1,6 @@
 """
 FlexAI Tool Use
 ===============
-
 Cookbook example for `flexai/tool_use.py`.
 """
 
