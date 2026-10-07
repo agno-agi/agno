@@ -241,7 +241,7 @@ def get_tools(
     from agno.agent._messages import agent_compaction
 
     compaction = agent_compaction(agent)
-    if compaction is not None and compaction.searchable:
+    if compaction is not None and compaction.search_compacted_messages:
         archive_tools = compaction.tools_for(session.session_id, agent.db)
         if archive_tools:
             agent_tools.extend(archive_tools)
@@ -388,7 +388,7 @@ async def aget_tools(
     from agno.agent._messages import agent_compaction
 
     compaction = agent_compaction(agent)
-    if compaction is not None and compaction.searchable:
+    if compaction is not None and compaction.search_compacted_messages:
         archive_tools = compaction.tools_for(session.session_id, agent.db)
         if archive_tools:
             agent_tools.extend(archive_tools)

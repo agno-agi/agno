@@ -65,7 +65,7 @@ research_agent = Agent(
         # pay for the summary. A 1-turn tail reaches that after a few turns; a larger
         # one needs proportionally more conversation in front of it first.
         uncompacted_runs=1,
-        searchable=True,
+        search_compacted_messages=True,
     ),
     markdown=True,
     instructions=[
@@ -89,7 +89,7 @@ manual_agent = Agent(
         # No automatic trigger: this session folds only via POST .../compact.
         compact_at_tokens=None,
         uncompacted_runs=1,
-        searchable=True,
+        search_compacted_messages=True,
     ),
     markdown=True,
     instructions=[

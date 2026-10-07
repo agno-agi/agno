@@ -382,7 +382,11 @@ def test_a_fold_replays_its_summary_and_everything_from_the_anchor():
         add_history_to_context=True,
         num_history_runs=2,
         compaction=Compaction(
-            compact_at_tokens=None, uncompacted_runs=3, min_fold_ratio=0, searchable=False, model=_StubModel()
+            compact_at_tokens=None,
+            uncompacted_runs=3,
+            min_fold_ratio=0,
+            search_compacted_messages=False,
+            model=_StubModel(),
         ),
     )
     for i in range(6):
@@ -416,7 +420,9 @@ def test_the_summary_survives_its_anchor_leaving_the_window(window, tail):
         db=_db(),
         session_id="s",
         add_history_to_context=True,
-        compaction=Compaction(compact_at_tokens=None, min_fold_ratio=0, searchable=False, model=_StubModel(), **tail),
+        compaction=Compaction(
+            compact_at_tokens=None, min_fold_ratio=0, search_compacted_messages=False, model=_StubModel(), **tail
+        ),
         **window,
     )
     for i in range(4):
@@ -513,7 +519,9 @@ def test_manual_compact_folds_without_the_size_trigger():
     session = AgentSession(session_id="s1", runs=runs)
 
     # compact_at_tokens far above this conversation: the automatic path would never fire.
-    compaction = Compaction(compact_at_tokens=10_000_000, uncompacted_runs=3, archive=False, model=_StubModel())
+    compaction = Compaction(
+        compact_at_tokens=10_000_000, uncompacted_runs=3, store_compacted_messages=False, model=_StubModel()
+    )
     agent = Agent(compaction=compaction)
 
     result = compact_now(agent, session, _history_for_compaction(agent, session))
@@ -546,7 +554,7 @@ def test_manual_compact_still_honours_the_ratio_guard():
             Message(role="assistant", content=f"a{i}", id=f"a{i}"),
         )
     ]
-    compaction = Compaction(uncompacted_runs=2, archive=False, model=_StubModel())
+    compaction = Compaction(uncompacted_runs=2, store_compacted_messages=False, model=_StubModel())
     agent = Agent(compaction=compaction)
 
     result = compact_now(agent, AgentSession(session_id="s1", runs=[]), history)
@@ -576,7 +584,7 @@ def test_not_worth_it_message_carries_the_numbers():
             Message(role="assistant", content="a " * 600, id=f"a{i}"),
         )
     ]
-    agent = Agent(compaction=Compaction(uncompacted_runs=2, archive=False, model=_StubModel()))
+    agent = Agent(compaction=Compaction(uncompacted_runs=2, store_compacted_messages=False, model=_StubModel()))
 
     result = compact_now(agent, AgentSession(session_id="s1", runs=[]), history)
 
@@ -612,7 +620,7 @@ def test_declines_are_reported_not_raised():
     from agno.agent._messages import compact_now
     from agno.session.agent import AgentSession
 
-    agent = Agent(compaction=Compaction(uncompacted_runs=2, archive=False, model=_StubModel()))
+    agent = Agent(compaction=Compaction(uncompacted_runs=2, store_compacted_messages=False, model=_StubModel()))
     session = AgentSession(session_id="s1", runs=[])
 
     for history, expected in (
@@ -766,16 +774,18 @@ def test_cutting_a_chosen_run_count_is_logged_at_info(caplog):
     messages = _runs_of(5)
 
     with caplog.at_level(logging.DEBUG, logger="agno"):
-        Compaction(compact_at_tokens=2_000, uncompacted_runs=4, model=_StubModel(), archive=False).compact(
-            messages, session_id="s"
-        )
+        Compaction(
+            compact_at_tokens=2_000, uncompacted_runs=4, model=_StubModel(), store_compacted_messages=False
+        ).compact(messages, session_id="s")
     chosen = [r for r in caplog.records if "tail limit" in r.message]
     assert chosen and chosen[0].levelno == logging.INFO
 
     # log_debug only emits in debug mode, so the default leaves nothing at info level or above.
     caplog.clear()
     with caplog.at_level(logging.DEBUG, logger="agno"):
-        Compaction(compact_at_tokens=2_000, model=_StubModel(), archive=False).compact(messages, session_id="s")
+        Compaction(compact_at_tokens=2_000, model=_StubModel(), store_compacted_messages=False).compact(
+            messages, session_id="s"
+        )
     assert not [r for r in caplog.records if "tail limit" in r.message and r.levelno >= logging.INFO]
 
 
@@ -786,7 +796,7 @@ def test_a_fold_that_leaves_the_context_over_the_threshold_warns(caplog):
     huge_system_prompt = [Message(role="system", content="rule " * 3_000)]
 
     with caplog.at_level(logging.WARNING, logger="agno"):
-        record = Compaction(compact_at_tokens=2_000, model=_StubModel(), archive=False).compact(
+        record = Compaction(compact_at_tokens=2_000, model=_StubModel(), store_compacted_messages=False).compact(
             messages, session_id="s", context_prefix=huge_system_prompt
         )
 
@@ -1135,8 +1145,8 @@ def test_the_archive_is_searchable_by_default():
     """
     c = Compaction()
 
-    assert c.archive is True
-    assert c.searchable is True
+    assert c.store_compacted_messages is True
+    assert c.search_compacted_messages is True
     assert c.tools_for("s1", None) is None  # nothing archived yet
 
 
@@ -1175,7 +1185,9 @@ def test_context_overflow_folds_and_asks_for_a_retry():
     before = estimate_tokens(messages)
     agent = Agent(
         num_history_runs=50,
-        compaction=Compaction(uncompacted_runs=5, archive=False, model=_StubModel(), on_context_overflow=True),
+        compaction=Compaction(
+            uncompacted_runs=5, store_compacted_messages=False, model=_StubModel(), on_context_overflow=True
+        ),
     )
 
     assert _recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages, None) is True
@@ -1242,7 +1254,9 @@ def test_overflow_recovery_works_with_a_token_tail():
     before = estimate_tokens(messages)
     agent = Agent(
         num_history_runs=50,
-        compaction=Compaction(uncompacted_tokens=3_000, archive=False, model=_StubModel(), on_context_overflow=True),
+        compaction=Compaction(
+            uncompacted_tokens=3_000, store_compacted_messages=False, model=_StubModel(), on_context_overflow=True
+        ),
     )
 
     assert _recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages, None) is True
@@ -1646,7 +1660,9 @@ def test_context_overflow_does_not_retry_what_it_cannot_shrink(caplog):
         ]
     )
     agent = Agent(
-        compaction=Compaction(uncompacted_runs=1, archive=False, model=_StubModel(), on_context_overflow=True)
+        compaction=Compaction(
+            uncompacted_runs=1, store_compacted_messages=False, model=_StubModel(), on_context_overflow=True
+        )
     )
 
     with caplog.at_level(logging.WARNING, logger="agno"):
@@ -1849,9 +1865,9 @@ def test_summary_points_at_the_archive_only_when_the_agent_can_read_it():
     messages = _transcript()
     archived = _record(messages, 3, summary="s", archived=True)
 
-    searchable = Compaction(searchable=True).apply_record(messages, archived)[0]
-    not_searchable = Compaction(searchable=False).apply_record(messages, archived)[0]
-    no_archive = Compaction(searchable=True).apply_record(messages, _record(messages, 3, summary="s"))[0]
+    searchable = Compaction(search_compacted_messages=True).apply_record(messages, archived)[0]
+    not_searchable = Compaction(search_compacted_messages=False).apply_record(messages, archived)[0]
+    no_archive = Compaction(search_compacted_messages=True).apply_record(messages, _record(messages, 3, summary="s"))[0]
 
     assert "searchable" in searchable.content
     assert "search it rather than relying" in searchable.content
@@ -2349,9 +2365,9 @@ def test_lookup_is_promised_only_when_the_agent_can_act_on_it():
     archived = CompactionRecord(messages_compacted=2, summary="s", archived=True)
     unarchived = CompactionRecord(messages_compacted=2, summary="s", archived=False)
 
-    assert Compaction(searchable=True)._archive_instruction(archived)
-    assert Compaction(searchable=True)._archive_instruction(unarchived) is None
-    assert Compaction(searchable=False)._archive_instruction(archived) is None
+    assert Compaction(search_compacted_messages=True)._archive_instruction(archived)
+    assert Compaction(search_compacted_messages=True)._archive_instruction(unarchived) is None
+    assert Compaction(search_compacted_messages=False)._archive_instruction(archived) is None
 
 
 # --- async parity -----------------------------------------------------------
@@ -2509,32 +2525,34 @@ def test_archive_degrades_when_db_cannot_store_records(caplog):
 def test_search_follows_the_archive_by_default():
     """Search reads the archived transcript, so unset it is on exactly when there is one. Turning the
     archive off is not a request about search, so it says nothing and raises nothing."""
-    assert Compaction().searchable is True
-    assert Compaction(archive=False).searchable is False
+    assert Compaction().search_compacted_messages is True
+    assert Compaction(store_compacted_messages=False).search_compacted_messages is False
 
 
 def test_asking_for_search_without_an_archive_is_rejected():
     """Two settings the user chose contradict each other; dropping one silently would leave them
     wondering where the search tool went."""
-    with pytest.raises(ValueError, match="searchable=True needs archive=True"):
-        Compaction(archive=False, searchable=True)
+    with pytest.raises(ValueError, match="search_compacted_messages=True needs store_compacted_messages=True"):
+        Compaction(store_compacted_messages=False, search_compacted_messages=True)
 
 
 def test_search_can_still_be_turned_off():
-    assert Compaction(searchable=False).searchable is False
-    assert Compaction(archive=False, searchable=False).searchable is False
+    assert Compaction(search_compacted_messages=False).search_compacted_messages is False
+    assert (
+        Compaction(store_compacted_messages=False, search_compacted_messages=False).search_compacted_messages is False
+    )
 
 
 def test_a_resolved_search_setting_survives_revalidation():
     """Overflow recovery derives variants with dataclasses.replace(), which re-runs __post_init__."""
     from dataclasses import replace
 
-    assert replace(Compaction(archive=False), min_fold_ratio=0).searchable is False
-    assert replace(Compaction(), min_fold_ratio=0).searchable is True
+    assert replace(Compaction(store_compacted_messages=False), min_fold_ratio=0).search_compacted_messages is False
+    assert replace(Compaction(), min_fold_ratio=0).search_compacted_messages is True
 
 
 def test_a_fold_without_an_archive_still_persists():
-    """archive=False turns off storing the folded transcript, not storing the fold. Without the
+    """store_compacted_messages=False turns off storing the folded transcript, not storing the fold. Without the
     record the fold vanished after its own run: the next run sent the full history again, and the
     next threshold crossing summarized from scratch."""
     from agno.agent import Agent
@@ -2548,7 +2566,11 @@ def test_a_fold_without_an_archive_still_persists():
         add_history_to_context=True,
         num_history_runs=20,
         compaction=Compaction(
-            compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, archive=False, model=_StubModel()
+            compact_at_tokens=None,
+            uncompacted_runs=1,
+            min_fold_ratio=0,
+            store_compacted_messages=False,
+            model=_StubModel(),
         ),
     )
     for i in range(5):
@@ -2585,7 +2607,7 @@ def test_without_an_archive_there_is_nothing_to_search_or_point_to():
             return ModelResponse(content="SUMMARY")
 
     db = _db()
-    compaction = Compaction(uncompacted_runs=1, min_fold_ratio=0, archive=False, model=_Summarizer())
+    compaction = Compaction(uncompacted_runs=1, min_fold_ratio=0, store_compacted_messages=False, model=_Summarizer())
     assert compaction.compact(_transcript(4), session_id="s", db=db) is not None
 
     assert ARCHIVE_AWARE_PROMPT.strip() not in seen["system"]
@@ -2669,7 +2691,7 @@ def test_render_clips_huge_tool_results():
 
 def test_searchable_exposes_read_only_tools():
     """Once something is archived, the read-only surface is attached."""
-    c = Compaction(searchable=True)
+    c = Compaction(search_compacted_messages=True)
     db = _db()
     c.archive_for("s", db).write(
         CompactionRecord(messages_compacted=1, summary="s", first_kept_message_id="m1", id="c9"),
@@ -2687,7 +2709,7 @@ def test_no_tools_until_something_is_archived():
     Attaching the tools on turn one only invites a pointless lookup before
     any compaction has happened.
     """
-    assert Compaction(searchable=True).tools_for("s", _db()) is None
+    assert Compaction(search_compacted_messages=True).tools_for("s", _db()) is None
 
 
 def test_searchable_tools_reach_the_agent():
@@ -2705,7 +2727,7 @@ def test_searchable_tools_reach_the_agent():
     from agno.session import AgentSession
 
     db = _db()
-    compaction = Compaction(searchable=True)
+    compaction = Compaction(search_compacted_messages=True)
     compaction.archive_for("s", db).write(
         CompactionRecord(messages_compacted=1, summary="s", first_kept_message_id="m1", id="c8"),
         [Message(role="user", content="archived")],

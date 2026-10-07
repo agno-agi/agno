@@ -3,7 +3,7 @@
 The archive is what makes compaction non-lossy. A summary alone is a guess about what mattered;
 with the originals still readable the summary becomes an index over ground truth, and a detail it
 dropped can still be recovered - by a developer reading the row, or by the agent itself when
-``searchable`` is on.
+``search_compacted_messages`` is on.
 
 Records live in the ``agno_compactions`` table, one row per fold, written once and never updated.
 Rows rather than files because a fold is a fact about a run: two containers writing different runs

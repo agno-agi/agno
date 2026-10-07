@@ -2,7 +2,7 @@
 Compaction With A Searchable Archive
 =============================
 
-`searchable=True` gives the agent read-only search over its own archived
+`search_compacted_messages=True` gives the agent read-only search over its own stored
 history, which changes what a summary is for. Normally a summary replaces the
 conversation, so any detail it left out is gone. Here the originals are still
 stored, so the summary works as an index and the agent can go read the rest.
@@ -16,8 +16,8 @@ list, folds it away under a deliberately small summary budget - no summary of
 that size can carry 30 rows - and then asks for a single row. The run prints
 the search the agent made, so you can see where the answer came from.
 
-`searchable` is on by default whenever `archive` is; it is set here to make the
-example explicit.
+`search_compacted_messages` is on by default whenever `store_compacted_messages` is;
+it is set here to make the example explicit.
 """
 
 from uuid import uuid4
@@ -31,7 +31,7 @@ from agno.models.openai import OpenAIResponses
 # Compaction
 # ---------------------------------------------------------------------------
 compaction = Compaction(
-    searchable=True,
+    search_compacted_messages=True,
     # Fold only when this example says so, so every run folds at the same point.
     compact_at_tokens=None,
     # Keep only the most recent turn verbatim; everything before it is folded.

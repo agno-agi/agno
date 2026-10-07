@@ -68,11 +68,11 @@ _UNCOMPACTED_RUNS_UNSET = _Unset(_UNCOMPACTED_RUNS_DEFAULT)
 class Compaction:
     """Keeps a long session inside the context window.
 
-    When the conversation crosses a threshold, the older messages are archived
+    When the conversation crosses a threshold, the older messages are stored
     verbatim and replaced in context by a generated summary. Nothing is lost:
     the summary stands in for the originals, and the originals stay readable -
     by a developer reading the row, and by the agent itself, which gets a
-    read-only search over them unless ``searchable`` is turned off.
+    read-only search over them unless ``search_compacted_messages`` is turned off.
 
     Only the message list sent to the model is rewritten. What the session
     persists is untouched, so compaction can never corrupt the record of what
@@ -106,12 +106,13 @@ class Compaction:
     # Recent history kept verbatim, by size instead of runs. Mutually exclusive with uncompacted_runs.
     uncompacted_tokens: Optional[int] = None
 
-    # -- archive --------------------------------------------------------
-    # Store folded messages so they stay recoverable.
-    archive: bool = True
-    # Let the agent search the archive for detail the summary dropped. Unset, it is on whenever
-    # there is an archive to search.
-    searchable: Optional[bool] = None
+    # -- stored history -------------------------------------------------
+    # Store the folded messages in the database so they stay recoverable. The fold and its summary
+    # are stored either way; this keeps the original messages too.
+    store_compacted_messages: bool = True
+    # Give the agent a tool to search the stored messages for detail the summary dropped. Unset, it
+    # follows store_compacted_messages.
+    search_compacted_messages: Optional[bool] = None
 
     # Also fold and retry when the provider rejects a request as too long. compaction=True turns it on.
     on_context_overflow: bool = False
@@ -127,14 +128,15 @@ class Compaction:
         # call has a Model to call. Anything else is used as given.
         if isinstance(self.model, str):
             self.model = get_model(self.model)
-        # Search reads the archived transcript, so unset it follows the archive. Asking for search
-        # while turning the archive off is a contradiction - raise rather than drop it silently.
-        if self.searchable is None:
-            self.searchable = self.archive
-        elif self.searchable and not self.archive:
+        # Search reads the stored messages, so unset it follows storing them. Asking for search
+        # while turning storage off is a contradiction - raise rather than drop it silently.
+        if self.search_compacted_messages is None:
+            self.search_compacted_messages = self.store_compacted_messages
+        elif self.search_compacted_messages and not self.store_compacted_messages:
             raise ValueError(
-                "searchable=True needs archive=True: the search tool reads the archived transcript, "
-                "which archive=False does not store. Turn archive on, or leave searchable unset."
+                "search_compacted_messages=True needs store_compacted_messages=True: the search tool "
+                "reads the stored messages, which store_compacted_messages=False does not keep. Turn "
+                "storing on, or leave search_compacted_messages unset."
             )
         # Asking for overflow recovery is asking to fold when the provider says so. A default
         # threshold would pre-empt that on any model with a window above it - which is every
@@ -476,8 +478,8 @@ class Compaction:
     ) -> Optional[CompactionArchive]:
         """The record store for one session, or None without a database.
 
-        Fold records are kept whatever ``archive`` says - they are what makes a fold outlast the
-        run that made it. ``archive`` decides only whether the folded transcript goes in with them.
+        Fold records are kept whatever ``store_compacted_messages`` says - they are what makes a fold
+        outlast the run that made it. It decides only whether the folded messages go in with them.
         """
         if db is None:
             return None
@@ -505,7 +507,7 @@ class Compaction:
         # search tools the archive exists for a developer, not the model, and
         # telling it to read a file it cannot open invites a refusal or an
         # invented answer.
-        if record.archived and self.searchable:
+        if record.archived and self.search_compacted_messages:
             # State the rule, not a suggestion. A model asked to "search if
             # needed" will usually judge the summary sufficient and answer from
             # it - including for the exact values a summary is least likely to
@@ -585,7 +587,7 @@ class Compaction:
         Promised only when the archive exists *and* the search tools are attached: telling a
         model to read a file it cannot open invites a refusal or an invented answer.
         """
-        if not (self.searchable and record.archived):
+        if not (self.search_compacted_messages and record.archived):
             return None
         return ARCHIVE_LOOKUP_INSTRUCTION
 
@@ -725,7 +727,7 @@ class Compaction:
             to_compact,
             previous.summary if previous else None,
             run_metrics,
-            archived=self.archive and archive is not None,
+            archived=self.store_compacted_messages and archive is not None,
         )
         if not summary:
             return None
@@ -741,8 +743,8 @@ class Compaction:
         self._warn_if_still_over(record)
         if archive is not None:
             # The record is stored either way; the transcript only when archiving is on.
-            stored = archive.write(record, to_compact if self.archive else [])
-            record.archived = stored and self.archive
+            stored = archive.write(record, to_compact if self.store_compacted_messages else [])
+            record.archived = stored and self.store_compacted_messages
         self.stats.record(record)
         return record
 
@@ -773,7 +775,7 @@ class Compaction:
             to_compact,
             previous.summary if previous else None,
             run_metrics,
-            archived=self.archive and archive is not None,
+            archived=self.store_compacted_messages and archive is not None,
         )
         if not summary:
             return None
@@ -789,8 +791,8 @@ class Compaction:
         self._warn_if_still_over(record)
         if archive is not None:
             # The record is stored either way; the transcript only when archiving is on.
-            stored = archive.write(record, to_compact if self.archive else [])
-            record.archived = stored and self.archive
+            stored = archive.write(record, to_compact if self.store_compacted_messages else [])
+            record.archived = stored and self.store_compacted_messages
         self.stats.record(record)
         return record
 
@@ -805,7 +807,7 @@ class Compaction:
         Returns None until something has actually been archived: offering the tool over an empty
         archive only invites a pointless lookup on the first turn.
         """
-        if not (self.searchable and self.archive):
+        if not (self.search_compacted_messages and self.store_compacted_messages):
             return None
         archive = self.archive_for(session_id, db)
         if archive is None or archive.latest() is None:
