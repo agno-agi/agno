@@ -68,7 +68,7 @@ from agno.knowledge.page.types import (
     encoded_size,
 )
 from agno.utils.bounded import BoundedWorkers, WorkBudget
-from agno.utils.log import log_info, log_warning
+from agno.utils.log import log_debug, log_info, log_warning
 from agno.vectordb.pgvector import PgVector
 from agno.vectordb.pgvector.index import HNSW
 
@@ -1447,7 +1447,7 @@ class PageCoordinator:
         budget = budget or WorkBudget(3900)
         source = PageSource(url, public_url, budget)
         updated = deleted = failed = unknown = processed = discovered = 0
-        log_info(f"Starting page sync: namespace={self.namespace}; waiting for the sync lock")
+        log_debug(f"Starting page sync: namespace={self.namespace}; waiting for the sync lock")
         progress("waiting")
         errors = []
         failed_paths: list[str] = []
@@ -1476,10 +1476,10 @@ class PageCoordinator:
                     if binding["source"] not in (None, source.url):
                         raise ValueError("filesystem namespace is bound to another documentation source")
                     self._source_attempt(conn, source, "processing")
-                log_info(f"Discovering documentation pages: namespace={self.namespace}")
+                log_debug(f"Discovering documentation pages: namespace={self.namespace}")
                 pages = source.discover()
                 discovered = len(pages)
-                log_info(f"Discovered {discovered} pages; downloading, embedding, and publishing")
+                log_debug(f"Discovered {discovered} pages; downloading, embedding, and publishing")
                 progress("discovered")
                 if validate_discovery is not None:
                     with conn.begin():
@@ -1545,7 +1545,7 @@ class PageCoordinator:
                                 self._settings(conn, budget)
                                 self._attempt(conn, page, "failed")
                         if processed == 1 or processed % 25 == 0 or processed == discovered:
-                            log_info(
+                            log_debug(
                                 f"Page sync progress: {processed}/{discovered} processed; "
                                 f"updated={updated}, failed={failed}"
                             )
@@ -1610,7 +1610,7 @@ class PageCoordinator:
                     with conn.begin():
                         self._settings(conn, budget)
                         self._source_attempt(conn, source, "partial" if errors else "completed", report)
-                log_info(
+                log_debug(
                     f"Page sync {report.status}: namespace={self.namespace}; "
                     f"updated={updated}, deleted={deleted}, failed={failed}, unknown={unknown}"
                 )
