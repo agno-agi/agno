@@ -227,3 +227,29 @@ def test_get_run_get_runs_apis():
 
     db.delete_session("sx")
     assert db._database["agno_runs"].count_documents({"session_id": "sx"}) == 0
+
+
+def _run_content(db, run_id: str) -> str:
+    row = db.get_run(run_id, deserialize=False)
+    return row["run_data"]["content"]
+
+
+def test_migration_rerun_keeps_a_run_updated_after_the_first_run():
+    """The runs store wins on conflict: a re-run (retry, ``up(force=True)``) must not put the
+    stale legacy blob copy over a run that was updated after the first migration."""
+    from agno.db.migrations.versions.v3_0_0 import _migrate_mongo
+
+    db = _new_db()
+    legacy = [_make_run(f"r{i}", "s7", f"stale-{i}").to_dict() for i in range(2)]
+    _insert_legacy_session(db, "s7", legacy)
+
+    assert _migrate_mongo(db, "sessions", "agno_sessions") is True
+    assert _run_content(db, "r0") == "stale-0"
+
+    db.upsert_run(run=_make_run("r0", "s7", "fresh-0"), session_id="s7", user_id="u1", run_index=0)
+    assert _run_content(db, "r0") == "fresh-0"
+
+    _migrate_mongo(db, "sessions", "agno_sessions")
+
+    assert _run_content(db, "r0") == "fresh-0"
+    assert _run_content(db, "r1") == "stale-1"
