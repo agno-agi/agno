@@ -293,29 +293,32 @@ async def test_missing_previous_response_is_not_retried_without_a_chain(stale_ch
     assert len(requests) == 1
 
 
-def test_count_tokens_counts_the_whole_history_despite_stored_response_ids():
+@pytest.mark.parametrize("mode", ["sync", "async"])
+async def test_count_tokens_counts_the_whole_history_despite_stored_response_ids(mode):
     """A count call carries no previous_response_id, so it must not drop what a chained request
     would leave to the server - otherwise the input is empty and the API rejects it."""
-    from types import SimpleNamespace
+    requests = []
 
-    from agno.models.message import Message
-    from agno.models.openai import OpenAIResponses
+    def handle(request):
+        requests.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 123})
 
-    sent = {}
-
-    def count(**kwargs):
-        sent.update(kwargs)
-        return SimpleNamespace(input_tokens=123)
-
-    client = SimpleNamespace(responses=SimpleNamespace(input_tokens=SimpleNamespace(count=count)))
-    model = OpenAIResponses(id="gpt-5-mini")
-    model.get_client = lambda: client  # type: ignore[method-assign]
-
+    transport = httpx.MockTransport(handle)
     messages = [
         Message(role="user", content="first question"),
         Message(role="assistant", content="first answer", provider_data={"response_id": "resp_1"}),
         Message(role="user", content="second question"),
     ]
+    with OpenAI(api_key="test", http_client=httpx.Client(transport=transport)) as client:
+        async with AsyncOpenAI(api_key="test", http_client=httpx.AsyncClient(transport=transport)) as async_client:
+            model = OpenAIResponses(id="gpt-5.6-luna", client=client, async_client=async_client)
+            if mode == "sync":
+                counted = model.count_tokens(messages)
+            else:
+                counted = await model.acount_tokens(messages)
 
-    assert model.count_tokens(messages) == 123
-    assert len(sent["input"]) == 3
+    assert counted == 123
+    path, payload = requests[0]
+    assert path.endswith("/responses/input_tokens")
+    assert "previous_response_id" not in payload
+    assert [item["content"] for item in payload["input"]] == ["first question", "first answer", "second question"]

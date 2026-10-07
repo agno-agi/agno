@@ -43,7 +43,11 @@ llama3 = Tokenizer.from_pretrained("Xenova/llama-3-tokenizer")
 def llama3_counter(messages, tools):
     text = "\n".join(message.get_content_string() for message in messages)
     if tools:
-        text += "\n" + json.dumps(tools, default=str)
+        # Tools arrive as Function objects; count the schema the model is sent, not their repr.
+        schemas = [
+            tool.to_dict() if hasattr(tool, "to_dict") else tool for tool in tools
+        ]
+        text += "\n" + json.dumps(schemas)
     return len(llama3.encode(text).ids)
 
 
