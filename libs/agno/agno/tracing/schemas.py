@@ -215,6 +215,14 @@ class Span:
         )
 
 
+def _extract_run_id(attrs: Dict[str, Any]) -> Optional[str]:
+    return attrs.get("run_id") or attrs.get("agno.run.id")
+
+
+def _find_run_id(spans: List[Span]) -> Optional[str]:
+    return next((run_id for span in spans if (run_id := _extract_run_id(span.attributes))), None)
+
+
 def create_trace_from_spans(spans: List[Span]) -> Optional[Trace]:
     """
     Create a Trace object from a list of Span objects with the same trace_id.
@@ -231,9 +239,11 @@ def create_trace_from_spans(spans: List[Span]) -> Optional[Trace]:
     # Find a true root span (no parent) in this batch.
     # If none is present (e.g. only child spans were exported in this batch,
     # which happens when a post-hook agent's spans finish before the outer
-    # parent span ends), we must NOT pull context fields from a non-root span:
-    # those would carry the child run's session_id / agent_id / etc., which
-    # would clobber the parent trace's identity at the upsert layer.
+    # parent span ends), we must NOT pull root context fields from a non-root
+    # span: those would carry the child run's session_id / agent_id / etc.,
+    # which would clobber the parent trace's identity at the upsert layer.
+    # run_id is the exception because workflow root spans can omit it while
+    # their child agent spans still carry the run id users query traces by.
     root_span = next((s for s in spans if not s.parent_span_id), None)
 
     # Calculate aggregated metrics
@@ -250,17 +260,19 @@ def create_trace_from_spans(spans: List[Span]) -> Optional[Trace]:
     if root_span is not None:
         attrs = root_span.attributes
         name = root_span.name
-        run_id = attrs.get("run_id") or attrs.get("agno.run.id")
+        run_id = _extract_run_id(attrs) or _find_run_id(spans)
         session_id = attrs.get("session_id") or attrs.get("agno.session.id") or attrs.get("session.id")
         user_id = attrs.get("user_id") or attrs.get("agno.user.id") or attrs.get("user.id")
         agent_id = attrs.get("agent_id") or attrs.get("agno.agent.id")
         team_id = attrs.get("team_id") or attrs.get("agno.team.id")
         workflow_id = attrs.get("workflow_id") or attrs.get("agno.workflow.id")
     else:
-        # Child-only batch: leave context fields blank so the upsert's COALESCE
-        # preserves whatever the root-span batch wrote (or will write).
+        # Child-only batch: leave root context fields blank so the upsert's
+        # COALESCE preserves whatever the root-span batch wrote (or will
+        # write). run_id may be filled from child spans because workflow root
+        # spans can omit it entirely.
         name = spans[0].name
-        run_id = None
+        run_id = _find_run_id(spans)
         session_id = None
         user_id = None
         agent_id = None
