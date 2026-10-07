@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional, Set, Union
 from uuid import uuid4
 
 from agno.db.schemas.scheduler import Schedule
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 # Default timeout (in seconds) when stopping the poller
 _DEFAULT_STOP_TIMEOUT = 30
@@ -16,7 +16,8 @@ class SchedulePoller:
 
     Each poll tick repeatedly calls ``db.claim_due_schedule()`` until no more
     schedules are due, spawning an ``asyncio.create_task`` for each claimed
-    schedule so they run concurrently.
+    schedule so they run concurrently. A schedule already executing on this
+    worker is not dispatched again when its stale lock is reclaimed.
     """
 
     def __init__(
@@ -37,6 +38,12 @@ class SchedulePoller:
         self._task: Optional[asyncio.Task] = None  # type: ignore[type-arg]
         self._running = False
         self._in_flight: Set[asyncio.Task] = set()  # type: ignore[type-arg]
+        # How many executions of each schedule id are running on this worker.
+        # A claim lock goes stale after lock_grace_seconds (300 by default) while a single
+        # execution may run for Schedule.timeout_seconds (3600 by default), so a long
+        # execution gets claimed again here before it finishes. Counted rather than a set
+        # because trigger() can start an execution of a schedule the poll loop already runs.
+        self._in_flight_schedule_ids: Dict[str, int] = {}
 
     async def start(self) -> None:
         """Start the polling loop as a background task."""
@@ -71,6 +78,7 @@ class SchedulePoller:
                 )
 
             self._in_flight.clear()
+        self._in_flight_schedule_ids.clear()
         # Close the executor's httpx client
         if hasattr(self.executor, "close"):
             await self.executor.close()
@@ -90,8 +98,29 @@ class SchedulePoller:
                 log_error(f"Scheduler poll error: {exc}")
                 await asyncio.sleep(self.poll_interval)
 
+    def _track(self, task: "asyncio.Task", schedule_id: Optional[str]) -> None:  # type: ignore[type-arg]
+        """Hold a strong reference to *task* and record which schedule it is running."""
+        self._in_flight.add(task)
+        if schedule_id is not None:
+            self._in_flight_schedule_ids[schedule_id] = self._in_flight_schedule_ids.get(schedule_id, 0) + 1
+
+        def _done(finished: "asyncio.Task") -> None:  # type: ignore[type-arg]
+            self._in_flight.discard(finished)
+            if schedule_id is None:
+                return
+            remaining = self._in_flight_schedule_ids.get(schedule_id, 0) - 1
+            if remaining > 0:
+                self._in_flight_schedule_ids[schedule_id] = remaining
+            else:
+                self._in_flight_schedule_ids.pop(schedule_id, None)
+
+        task.add_done_callback(_done)
+
     async def _poll_once(self) -> None:
         """Claim all due schedules in a tight loop and fire them off."""
+        # Schedules reclaimed during this tick because they are still running here. A second
+        # sighting means the adapter did not refresh the lock, so stop instead of spinning.
+        reclaimed: Set[str] = set()
         while self._running:
             # Enforce concurrency limit
             self._in_flight -= {t for t in self._in_flight if t.done()}
@@ -109,10 +138,18 @@ class SchedulePoller:
                     break
 
                 sched = Schedule.from_dict(schedule) if isinstance(schedule, dict) else schedule
+
+                if sched.id in self._in_flight_schedule_ids:
+                    # The claim just refreshed this schedule's lock, which is what a still
+                    # running execution needs. Starting a second one would duplicate the run.
+                    log_debug(f"Schedule {sched.name or sched.id} is still running here, lock refreshed")
+                    if sched.id in reclaimed:
+                        break
+                    reclaimed.add(sched.id)
+                    continue
+
                 log_info(f"Claimed schedule: {sched.name or sched.id}")
-                task = asyncio.create_task(self._execute_safe(sched))
-                self._in_flight.add(task)
-                task.add_done_callback(lambda t: self._in_flight.discard(t))
+                self._track(asyncio.create_task(self._execute_safe(sched)), sched.id)
             except Exception as exc:
                 log_error(f"Error claiming schedule: {exc}")
                 break
@@ -144,8 +181,8 @@ class SchedulePoller:
                 return
 
             log_info(f"Manually triggering schedule: {sched.name or schedule_id}")
-            task = asyncio.create_task(self.executor.execute(sched, self.db, release_schedule=False))
-            self._in_flight.add(task)
-            task.add_done_callback(self._in_flight.discard)
+            # An explicit trigger always runs, even while the poll loop has this schedule in
+            # flight. Registering it keeps the poll loop from stacking another execution on top.
+            self._track(asyncio.create_task(self.executor.execute(sched, self.db, release_schedule=False)), sched.id)
         except Exception as exc:
             log_error(f"Error triggering schedule {schedule_id}: {exc}")
