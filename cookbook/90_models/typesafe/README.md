@@ -41,3 +41,17 @@ Start an SGLang server with an open-weight checkpoint (see the script docstring)
 ```shell
 python cookbook/90_models/typesafe/self_hosted.py
 ```
+
+### 7. Run an Agent on a decision model
+
+Each field of `output_schema` becomes one typed question; `run.decisions` holds the probabilities.
+
+```shell
+python cookbook/90_models/typesafe/agent_triage.py
+```
+
+### 8. Decision Agent with a guardrail and storage
+
+```shell
+python cookbook/90_models/typesafe/agent_with_guardrail.py
+```

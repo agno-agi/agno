@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Literal, Mapping, Optional, Union
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, TypeAdapter, field_validator, model_validator
 from typing_extensions import Annotated
 
 from agno.metrics import MessageMetrics
@@ -16,13 +16,28 @@ def _to_described(value: Any, kind: str) -> Any:
     return value
 
 
+class _InertWhenAnnotated:
+    """Lets a question instance sit in `Annotated[...]` metadata without pydantic using it as the field's schema.
+
+    Pydantic builds a field's schema from any metadata object that has `__get_pydantic_core_schema__`, and a model
+    instance inherits it from its class. Instances pass the field's own type through; the class keeps BaseModel's.
+    """
+
+    def __get__(self, obj: Any, objtype: Any = None) -> Any:
+        if obj is None:
+            return BaseModel.__dict__["__get_pydantic_core_schema__"].__get__(objtype, objtype)
+        return lambda source, handler: handler(source)
+
+
 class BinaryQuestion(BaseModel):
     """Fields shared by Noul and Predicate. Every provider accepts both."""
 
-    instructions: str
+    instructions: Optional[str] = None
     yes: Optional[str] = Field(default=None, description="What a yes means")
     no: Optional[str] = Field(default=None, description="What a no means")
     threshold: float = Field(default=0.5, gt=0, lt=1, description="Probability at or above which the answer is yes")
+
+    __get_pydantic_core_schema__ = _InertWhenAnnotated()  # type: ignore[assignment]
 
     @model_validator(mode="after")
     def _check_criteria(self) -> "BinaryQuestion":
@@ -56,8 +71,10 @@ class Choice(BaseModel):
     """Pick one of a fixed set of options. Options map each value to an optional description."""
 
     type: Literal["choice"] = "choice"
-    instructions: str
-    options: Dict[str, Optional[str]]
+    instructions: Optional[str] = None
+    options: Optional[Dict[str, Optional[str]]] = None
+
+    __get_pydantic_core_schema__ = _InertWhenAnnotated()  # type: ignore[assignment]
 
     @field_validator("options", mode="before")
     @classmethod
@@ -66,8 +83,8 @@ class Choice(BaseModel):
 
     @field_validator("options")
     @classmethod
-    def _check_options(cls, value: Dict[str, Optional[str]]) -> Dict[str, Optional[str]]:
-        if len(value) < 2:
+    def _check_options(cls, value: Optional[Dict[str, Optional[str]]]) -> Optional[Dict[str, Optional[str]]]:
+        if value is not None and len(value) < 2:
             raise ValueError("Choice needs at least 2 options")
         return value
 
@@ -76,8 +93,10 @@ class Score(BaseModel):
     """Rate on an ordered scale. Levels map each label to an optional description, lowest first."""
 
     type: Literal["score"] = "score"
-    instructions: str
-    levels: Dict[str, Optional[str]]
+    instructions: Optional[str] = None
+    levels: Optional[Dict[str, Optional[str]]] = None
+
+    __get_pydantic_core_schema__ = _InertWhenAnnotated()  # type: ignore[assignment]
 
     @field_validator("levels", mode="before")
     @classmethod
@@ -86,8 +105,8 @@ class Score(BaseModel):
 
     @field_validator("levels")
     @classmethod
-    def _check_levels(cls, value: Dict[str, Optional[str]]) -> Dict[str, Optional[str]]:
-        if not 2 <= len(value) <= 10:
+    def _check_levels(cls, value: Optional[Dict[str, Optional[str]]]) -> Optional[Dict[str, Optional[str]]]:
+        if value is not None and not 2 <= len(value) <= 10:
             raise ValueError("Score needs between 2 and 10 levels")
         return value
 
@@ -136,6 +155,18 @@ Answer = Annotated[
 ]
 
 State = Union[str, Dict[str, Any], List[str]]
+
+_answer_adapter: TypeAdapter = TypeAdapter(Answer)
+
+
+def answers_to_dict(answers: Mapping[str, Any]) -> Dict[str, Any]:
+    """Serialize answers for storage; values that are already dicts pass through."""
+    return {name: a.model_dump() if isinstance(a, BaseModel) else a for name, a in answers.items()}
+
+
+def answers_from_dict(data: Mapping[str, Any]) -> Dict[str, Any]:
+    """Rebuild typed answers from `answers_to_dict` output."""
+    return {name: a if isinstance(a, BaseModel) else _answer_adapter.validate_python(a) for name, a in data.items()}
 
 
 @dataclass

@@ -1342,6 +1342,12 @@ def run_dispatch(
     if isinstance(agent.media_storage, AsyncMediaStorage):
         raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 
+    from agno.agent._decision import is_decision_agent, validate_decision_agent
+
+    decision_agent = is_decision_agent(agent)
+    if decision_agent:
+        validate_decision_agent(agent, output_schema if output_schema is not None else agent.output_schema)
+
     # Set the id for the run and register it immediately for cancellation tracking
     run_id = run_id or str(uuid4())
 
@@ -1437,7 +1443,11 @@ def run_dispatch(
     )
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
-    response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
+    response_format = (
+        get_response_format(agent, run_context=run_context)
+        if agent.parser_model is None and not decision_agent
+        else None
+    )
 
     # Create a new run_response for this attempt
     run_response = RunOutput(
@@ -1457,6 +1467,28 @@ def run_dispatch(
     # Start the run metrics timer, to calculate the run duration
     run_response.metrics = RunMetrics()
     run_response.metrics.start_timer()
+
+    if decision_agent:
+        from agno.agent._decision import run_decision, run_decision_stream
+
+        decision_kwargs = dict(
+            run_context=run_context,
+            session_id=session_id,
+            user_id=user_id,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            pre_session=agent_session,
+            **kwargs,
+        )
+        if opts.stream:
+            return run_decision_stream(
+                agent,
+                run_response,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
+                **decision_kwargs,
+            )
+        return run_decision(agent, run_response, **decision_kwargs)
 
     if opts.stream:
         response_iterator = _run_stream(
@@ -2857,6 +2889,12 @@ def arun_dispatch(  # type: ignore
 ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
     """Async Run the Agent and return the response."""
 
+    from agno.agent._decision import is_decision_agent, validate_decision_agent
+
+    decision_agent = is_decision_agent(agent)
+    if decision_agent:
+        validate_decision_agent(agent, output_schema if output_schema is not None else agent.output_schema)
+
     # Set the id for the run and register it immediately for cancellation tracking
     from agno.agent._response import get_response_format
 
@@ -2963,7 +3001,11 @@ def arun_dispatch(  # type: ignore
     )
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
-    response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
+    response_format = (
+        get_response_format(agent, run_context=run_context)
+        if agent.parser_model is None and not decision_agent
+        else None
+    )
 
     # Create a new run_response for this attempt
     run_response = RunOutput(
@@ -2983,6 +3025,30 @@ def arun_dispatch(  # type: ignore
     # Start the run metrics timer, to calculate the run duration
     run_response.metrics = RunMetrics()
     run_response.metrics.start_timer()
+
+    if decision_agent:
+        if background:
+            raise ValueError("Background runs are not supported with a decision model")
+        from agno.agent._decision import arun_decision, arun_decision_stream
+
+        decision_kwargs = dict(
+            run_context=run_context,
+            session_id=session_id,
+            user_id=user_id,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            pre_session=_pre_session,
+            **kwargs,
+        )
+        if opts.stream:
+            return arun_decision_stream(  # type: ignore[return-value]
+                agent,
+                run_response,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
+                **decision_kwargs,
+            )
+        return arun_decision(agent, run_response, **decision_kwargs)  # type: ignore[return-value]
 
     # Background execution
     if background:
@@ -3427,12 +3493,16 @@ def continue_run_dispatch(
         metadata: The metadata to use for the run.
         debug_mode: Whether to enable debug mode.
     """
+    from agno.agent._decision import is_decision_agent
     from agno.agent._init import has_async_db, set_default_model
     from agno.agent._messages import get_continue_run_messages
     from agno.agent._response import get_response_format
     from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
     from agno.agent._tools import determine_tools_for_model
     from agno.media.storage.base import AsyncMediaStorage
+
+    if is_decision_agent(agent):
+        raise ValueError("Decision model runs never pause, so they cannot be continued")
 
     if run_response is None and run_id is None:
         raise ValueError("Either run_response or run_id must be provided.")
@@ -4334,7 +4404,11 @@ def acontinue_run_dispatch(  # type: ignore
         debug_mode: Whether to enable debug mode.
         yield_run_output: Whether to yield the run response.
     """
+    from agno.agent._decision import is_decision_agent
     from agno.agent._response import get_response_format
+
+    if is_decision_agent(agent):
+        raise ValueError("Decision model runs never pause, so they cannot be continued")
 
     if run_response is None and run_id is None:
         raise ValueError("Either run_response or run_id must be provided.")

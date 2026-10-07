@@ -21,6 +21,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.agent._init import chat_model
 from agno.agent._utils import convert_dependencies_to_string, convert_documents_to_string
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
@@ -208,7 +209,7 @@ def get_system_message(
             instructions.extend(_instructions)
 
     # 3.1.1 Add instructions from the Model
-    _model_instructions = agent.model.get_instructions_for_model(tools)
+    _model_instructions = chat_model(agent).get_instructions_for_model(tools)
     if _model_instructions is not None:
         instructions.extend(_model_instructions)
 
@@ -400,7 +401,7 @@ def get_system_message(
                 system_message_content += knowledge_context + "\n"
 
     # 3.3.14 Add the system message from the Model
-    system_message_from_model = agent.model.get_system_message_for_model(tools)
+    system_message_from_model = chat_model(agent).get_system_message_for_model(tools)
     if system_message_from_model is not None:
         system_message_content += system_message_from_model
 
@@ -410,7 +411,7 @@ def get_system_message(
         output_schema is not None
         and agent.parser_model is None
         and not (
-            (agent.model.supports_native_structured_outputs or agent.model.supports_json_schema_outputs)
+            (chat_model(agent).supports_native_structured_outputs or chat_model(agent).supports_json_schema_outputs)
             and (not agent.use_json_mode or agent.structured_outputs is True)
         )
     ):
@@ -505,7 +506,7 @@ async def aget_system_message(
             instructions.extend(_instructions)
 
     # 3.1.1 Add instructions from the Model
-    _model_instructions = agent.model.get_instructions_for_model(tools)
+    _model_instructions = chat_model(agent).get_instructions_for_model(tools)
     if _model_instructions is not None:
         instructions.extend(_model_instructions)
 
@@ -703,7 +704,7 @@ async def aget_system_message(
                 system_message_content += knowledge_context + "\n"
 
     # 3.3.14 Add the system message from the Model
-    system_message_from_model = agent.model.get_system_message_for_model(tools)
+    system_message_from_model = chat_model(agent).get_system_message_for_model(tools)
     if system_message_from_model is not None:
         system_message_content += system_message_from_model
 
@@ -713,7 +714,7 @@ async def aget_system_message(
         output_schema is not None
         and agent.parser_model is None
         and not (
-            (agent.model.supports_native_structured_outputs or agent.model.supports_json_schema_outputs)
+            (chat_model(agent).supports_native_structured_outputs or chat_model(agent).supports_json_schema_outputs)
             and (not agent.use_json_mode or agent.structured_outputs is True)
         )
     ):

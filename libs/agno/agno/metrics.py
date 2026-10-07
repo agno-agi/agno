@@ -23,6 +23,7 @@ class ModelType(str, Enum):
 
 if TYPE_CHECKING:
     from agno.models.base import Model
+    from agno.models.decision.base import DecisionModel
     from agno.models.response import ModelResponse
 
 
@@ -630,7 +631,7 @@ class SessionMetrics(BaseMetrics):
 
 def accumulate_model_metrics(
     model_response: "ModelResponse",
-    model: "Model",
+    model: "Union[Model, DecisionModel]",
     model_type: "Union[ModelType, str]",
     run_metrics: Optional[RunMetrics] = None,
 ) -> None:

@@ -98,6 +98,7 @@ class BaseRunOutputEvent(_EventIndexCarrier):
         "tasks",
         "memories",
         "followups",
+        "decisions",
     )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -134,6 +135,11 @@ class BaseRunOutputEvent(_EventIndexCarrier):
 
         if hasattr(self, "followups") and self.followups is not None:
             _dict["followups"] = self.followups
+
+        if hasattr(self, "decisions") and self.decisions is not None:
+            from agno.models.decision.types import answers_to_dict
+
+            _dict["decisions"] = answers_to_dict(self.decisions)
 
         if hasattr(self, "member_responses") and self.member_responses:
             _dict["member_responses"] = [response.to_dict() for response in self.member_responses]

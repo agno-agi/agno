@@ -922,7 +922,7 @@ def _default_model_for(agent: Any) -> Optional[Model]:
 
         probe = copy.copy(agent)
         set_default_model(probe)
-        return probe.model
+        return probe.model if isinstance(probe.model, Model) else None
     except Exception:
         return None
 
