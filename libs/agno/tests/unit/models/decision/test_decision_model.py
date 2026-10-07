@@ -220,6 +220,77 @@ def test_bad_request_is_not_retried():
     assert len(recorder.requests) == 1
 
 
+def test_retry_after_seconds_is_honoured():
+    model, recorder = make_model(
+        [
+            httpx.Response(429, json={"error": "slow down"}, headers={"Retry-After": "2.5"}),
+            ok({"answers": {"q": {"type": "noul", "noul": 0.9}}}),
+        ],
+        retries=1,
+        delay_between_retries=0,
+    )
+    with patch("agno.models.decision.base.sleep") as sleep:
+        assert model.decide("x", {"q": Noul(instructions="i")})["q"].probability == 0.9
+    # The provider's wait wins over the model's own delay
+    sleep.assert_called_once_with(2.5)
+    assert len(recorder.requests) == 2
+
+
+def test_retry_after_http_date_is_honoured():
+    from datetime import datetime, timedelta, timezone
+    from email.utils import format_datetime
+
+    until = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=3), usegmt=True)
+    model, _ = make_model(
+        [
+            httpx.Response(529, json={"error": "overloaded"}, headers={"Retry-After": until}),
+            ok({"answers": {"q": {"type": "noul", "noul": 0.9}}}),
+        ],
+        retries=1,
+        delay_between_retries=0,
+    )
+    with patch("agno.models.decision.base.sleep") as sleep:
+        model.decide("x", {"q": Noul(instructions="i")})
+    assert 0 < sleep.call_args.args[0] <= 3
+
+
+def test_unparseable_retry_after_falls_back_to_the_model_delay():
+    model, _ = make_model(
+        [
+            httpx.Response(429, json={"error": "slow down"}, headers={"Retry-After": "soon"}),
+            ok({"answers": {"q": {"type": "noul", "noul": 0.9}}}),
+        ],
+        retries=1,
+        delay_between_retries=4,
+    )
+    with patch("agno.models.decision.base.sleep") as sleep:
+        model.decide("x", {"q": Noul(instructions="i")})
+    sleep.assert_called_once_with(4)
+
+
+def test_request_id_is_surfaced_on_results_and_errors():
+    model, _ = make_model([httpx.Response(200, json=TRIAGE_RESPONSE, headers={"x-typesafe-request-id": "req_123"})])
+    result = model.decide("x", TRIAGE_QUESTIONS)
+    assert result.request_id == "req_123"
+    # The body is kept as received
+    assert result.raw == TRIAGE_RESPONSE
+
+    model, _ = make_model([httpx.Response(400, json={"error": "bad"}, headers={"x-request-id": "req_400"})])
+    with pytest.raises(ModelProviderError) as error:
+        model.decide("x", {"q": Noul(instructions="i")})
+    assert error.value.request_id == "req_400"
+
+    model, _ = make_model([httpx.Response(401, json={"error": "bad key"}, headers={"x-request-id": "req_401"})])
+    with pytest.raises(ModelAuthenticationError) as auth_error:
+        model.decide("x", {"q": Noul(instructions="i")})
+    assert auth_error.value.request_id == "req_401"
+
+
+def test_result_without_request_id_header():
+    model, _ = make_model([ok()])
+    assert model.decide("x", TRIAGE_QUESTIONS).request_id is None
+
+
 def test_connection_error_is_a_provider_error():
     def fail(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused", request=request)
@@ -239,6 +310,23 @@ async def test_adecide_matches_decide():
     result = await model.adecide("Checkout is down", TRIAGE_QUESTIONS)
     assert result["severity"].label == "Degraded"
     assert recorder.body["questions"]["area"]["criteria"] == {"billing": "Payments", "technical": None}
+
+
+async def test_adecide_honours_retry_after():
+    model, recorder = make_model(
+        [
+            httpx.Response(429, json={"error": "slow down"}, headers={"Retry-After": "1.5"}),
+            ok({"answers": {"q": {"type": "noul", "noul": 0.9}}}),
+        ],
+        async_client=True,
+        retries=1,
+        delay_between_retries=0,
+    )
+    with patch("agno.models.decision.base.asyncio.sleep") as sleep:
+        result = await model.adecide("x", {"q": Noul(instructions="i")})
+    assert result["q"].probability == 0.9
+    sleep.assert_awaited_once_with(1.5)
+    assert len(recorder.requests) == 2
 
 
 async def test_adecide_retries():

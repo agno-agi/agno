@@ -145,6 +145,8 @@ class DecisionResult(Mapping[str, Any]):
     answers: Dict[str, Union[BinaryAnswer, ChoiceAnswer, ScoreAnswer, RefusalAnswer]]
     model: Optional[str] = None
     metrics: Optional[MessageMetrics] = None
+    # The provider's id for this request, from the response headers, for support and debugging
+    request_id: Optional[str] = None
     raw: Optional[Dict[str, Any]] = field(default=None, repr=False)
 
     def __getitem__(self, name: str) -> Union[BinaryAnswer, ChoiceAnswer, ScoreAnswer, RefusalAnswer]:
