@@ -257,6 +257,12 @@ class BaseRunOutputEvent(_EventIndexCarrier):
         # construction, restore by assignment after
         event_index = data.pop("event_index", None)
 
+        decisions = data.pop("decisions", None)
+        if decisions:
+            from agno.models.decision.types import answers_from_dict
+
+            data["decisions"] = answers_from_dict(decisions)
+
         tool = data.pop("tool", None)
         if tool:
             from agno.models.response import ToolExecution

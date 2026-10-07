@@ -1342,11 +1342,12 @@ def run_dispatch(
     if isinstance(agent.media_storage, AsyncMediaStorage):
         raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 
-    from agno.agent._decision import is_decision_agent, validate_decision_agent
+    from agno.agent._decision import is_decision_agent, reject_media, validate_decision_agent
 
     decision_agent = is_decision_agent(agent)
     if decision_agent:
         validate_decision_agent(agent, output_schema if output_schema is not None else agent.output_schema)
+        reject_media(images=images, audio=audio, videos=videos, files=files)
 
     # Set the id for the run and register it immediately for cancellation tracking
     run_id = run_id or str(uuid4())
@@ -2889,11 +2890,12 @@ def arun_dispatch(  # type: ignore
 ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
     """Async Run the Agent and return the response."""
 
-    from agno.agent._decision import is_decision_agent, validate_decision_agent
+    from agno.agent._decision import is_decision_agent, reject_media, validate_decision_agent
 
     decision_agent = is_decision_agent(agent)
     if decision_agent:
         validate_decision_agent(agent, output_schema if output_schema is not None else agent.output_schema)
+        reject_media(images=images, audio=audio, videos=videos, files=files)
 
     # Set the id for the run and register it immediately for cancellation tracking
     from agno.agent._response import get_response_format

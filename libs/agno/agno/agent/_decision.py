@@ -73,31 +73,22 @@ def validate_decision_agent(agent: "Agent", output_schema: Optional[Any], requir
         "fallback_config": agent.fallback_config is not None,
         "learning": bool(agent.learning),
         "introduction": agent.introduction is not None,
+        "memory": agent.update_memory_on_run or agent.enable_agentic_memory or agent.memory_manager is not None,
+        "session summaries": agent.enable_session_summaries or agent.session_summary_manager is not None,
+        "compression": agent.compress_tool_results or agent.compression_manager is not None,
+        "followups": agent.followups,
+        "add_history_to_context": agent.add_history_to_context,
     }
     for setting, used in unsupported.items():
         if used:
-            raise ValueError(f"{name} is a decision model and cannot be used with `{setting}`")
+            raise ValueError(f"{name} is a decision model and does not support `{setting}`")
 
-    needs_own_model = {
-        "memory_manager": (
-            agent.update_memory_on_run or agent.enable_agentic_memory or agent.memory_manager is not None,
-            agent.memory_manager is not None and agent.memory_manager.model is not None,
-        ),
-        "session_summary_manager": (
-            agent.enable_session_summaries or agent.session_summary_manager is not None,
-            agent.session_summary_manager is not None and agent.session_summary_manager.model is not None,
-        ),
-        "compression_manager": (
-            agent.compress_tool_results or agent.compression_manager is not None,
-            agent.compression_manager is not None and agent.compression_manager.model is not None,
-        ),
-        "followup_model": (agent.followups, agent.followup_model is not None),
-    }
-    for setting, (enabled, has_model) in needs_own_model.items():
-        if enabled and not has_model:
-            raise ValueError(
-                f"{name} is a decision model and cannot generate text, so `{setting}` needs its own chat model"
-            )
+
+def reject_media(**media: Any) -> None:
+    """Decision models read only the text or structured input, so attachments would be silently ignored."""
+    attached = [kind for kind, value in media.items() if value]
+    if attached:
+        raise ValueError(f"Decision models do not accept {', '.join(attached)}; pass the content as text instead")
 
 
 # ---------------------------------------------------------------------------

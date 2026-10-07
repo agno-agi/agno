@@ -9,6 +9,7 @@ from typing_extensions import Annotated
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.exceptions import InputCheckError, ModelProviderError
+from agno.media import File, Image
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.decision import ChoiceAnswer, DecisionModel, NoulAnswer, Score, ScoreAnswer
@@ -228,9 +229,11 @@ def lookup(query: str) -> str:
         ({"tools": [lookup]}, "`tools`"),
         ({"parser_model": OpenAIResponses(id="gpt-5.6-luna", api_key="k")}, "`parser_model`"),
         ({"reasoning_model": OpenAIResponses(id="gpt-5.6-luna", api_key="k")}, "`reasoning_model`"),
-        ({"update_memory_on_run": True}, "`memory_manager` needs its own chat model"),
-        ({"followups": True}, "`followup_model` needs its own chat model"),
-        ({"enable_session_summaries": True}, "`session_summary_manager` needs its own chat model"),
+        ({"update_memory_on_run": True}, "`memory`"),
+        ({"followups": True, "followup_model": OpenAIResponses(id="gpt-5.6-luna", api_key="k")}, "`followups`"),
+        ({"enable_session_summaries": True}, "`session summaries`"),
+        ({"compress_tool_results": True}, "`compression`"),
+        ({"add_history_to_context": True}, "`add_history_to_context`"),
         ({"introduction": "Hi"}, "`introduction`"),
     ],
 )
@@ -239,9 +242,24 @@ def test_construction_rejects_chat_only_settings(settings, message):
         Agent(model=FakeDecisionModel(), output_schema=Ticket, **settings)
 
 
-def test_side_jobs_with_their_own_model_are_allowed():
+def test_memory_is_rejected_even_with_its_own_model():
     memory = MemoryManager(model=OpenAIResponses(id="gpt-5.6-luna", api_key="k"))
-    Agent(model=FakeDecisionModel(), output_schema=Ticket, memory_manager=memory)
+    with pytest.raises(ValueError, match="`memory`"):
+        Agent(model=FakeDecisionModel(), output_schema=Ticket, memory_manager=memory)
+
+
+def test_media_is_rejected_instead_of_dropped():
+    model = FakeDecisionModel()
+    agent = Agent(model=model, output_schema=Ticket)
+    with pytest.raises(ValueError, match="do not accept images"):
+        agent.run("x", images=[Image(url="https://example.com/a.png")])
+    assert model.requests == []
+
+
+async def test_async_media_is_rejected():
+    agent = Agent(model=FakeDecisionModel(), output_schema=Ticket)
+    with pytest.raises(ValueError, match="do not accept files"):
+        await agent.arun("x", files=[File(content=b"data", mime_type="text/plain")])
 
 
 def test_run_without_output_schema_raises():
@@ -273,6 +291,15 @@ async def test_background_run_is_rejected(tmp_path):
 # ---------------------------------------------------------------------------
 # Storage and model resolution
 # ---------------------------------------------------------------------------
+
+
+def test_completed_event_round_trip_keeps_typed_decisions():
+    agent = Agent(model=FakeDecisionModel(), output_schema=Ticket)
+    events = list(agent.run("x", stream=True, stream_events=True))
+    completed = events[-1]
+    restored = RunCompletedEvent.from_dict(json.loads(json.dumps(completed.to_dict())))
+    assert restored.decisions == completed.decisions
+    assert isinstance(restored.decisions["urgent"], NoulAnswer)
 
 
 def test_run_output_round_trip_keeps_typed_decisions():
