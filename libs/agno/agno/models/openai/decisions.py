@@ -150,9 +150,11 @@ class OpenAIDecisions(DecisionModel):
     def _openai_usage(self, usage: Optional[Dict[str, Any]]) -> MessageMetrics:
         metrics = self._usage_to_metrics(usage)
         if usage:
-            details = usage.get("input_tokens_details") or {}
-            metrics.cache_read_tokens = details.get("cached_tokens") or 0
-            metrics.cache_write_tokens = details.get("cache_write_tokens") or 0
+            input_details = usage.get("input_tokens_details") or {}
+            metrics.cache_read_tokens = input_details.get("cached_tokens") or 0
+            metrics.cache_write_tokens = input_details.get("cache_write_tokens") or 0
+            output_details = usage.get("output_tokens_details") or {}
+            metrics.reasoning_tokens = output_details.get("reasoning_tokens") or 0
         return metrics
 
     def _request(self, body: Dict[str, Any]) -> Dict[str, Any]:
@@ -184,7 +186,8 @@ class OpenAIDecisions(DecisionModel):
 def _require_decisions(client: Any) -> Any:
     if not hasattr(client, "decisions"):
         raise ImportError(
-            "This version of `openai` has no Decisions API. Please upgrade using `pip install --upgrade openai`"
+            "OpenAIDecisions needs `openai>=3.26.0`, the first release with the Decisions API. "
+            "Please upgrade using `pip install --upgrade openai`"
         )
     return client
 

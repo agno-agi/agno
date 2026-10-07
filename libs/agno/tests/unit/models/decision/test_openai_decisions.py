@@ -4,6 +4,8 @@ from typing import Any, Dict, List
 import httpx
 import pytest
 
+pytest.importorskip("openai.resources.decisions", reason="requires openai>=3.26.0, the first release with Decisions")
+
 from agno.exceptions import ModelAuthenticationError, ModelRateLimitError
 from agno.models.decision import Choice, Noul, NoulAnswer, Predicate, PredicateAnswer, RefusalAnswer, Score
 from agno.models.openai import OpenAIDecisions
@@ -40,7 +42,7 @@ RESPONSE = {
         "input_tokens": 100,
         "input_tokens_details": {"cache_write_tokens": 0, "cached_tokens": 40},
         "output_tokens": 3,
-        "output_tokens_details": {"reasoning_tokens": 0},
+        "output_tokens_details": {"reasoning_tokens": 2},
         "total_tokens": 103,
     },
 }
@@ -118,6 +120,7 @@ def test_response_translates_back():
         103,
         40,
     )
+    assert result.metrics.reasoning_tokens == 2
 
 
 def test_refusal():

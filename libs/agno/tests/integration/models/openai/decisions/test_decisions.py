@@ -2,6 +2,8 @@ import os
 
 import pytest
 
+pytest.importorskip("openai.resources.decisions", reason="requires openai>=3.26.0, the first release with Decisions")
+
 from agno.models.decision import Choice, Noul, Score
 from agno.models.openai import OpenAIDecisions
 
