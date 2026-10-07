@@ -2347,7 +2347,7 @@ class Model(ABC):
                 if tool_result.files:
                     function_execution_result.files = tool_result.files
             else:
-                function_call_output = str(function_execution_result.result) if function_execution_result.result else ""
+                function_call_output = str(function_execution_result.result)
 
             if function_call.function.show_result and function_call_output is not None:
                 yield ModelResponse(content=function_call_output)

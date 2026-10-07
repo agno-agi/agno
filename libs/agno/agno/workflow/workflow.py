@@ -46,7 +46,7 @@ from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.message import Message
 from agno.registry import Registry
-from agno.run import RunContext, RunStatus
+from agno.run import CancellationStage, RunContext, RunStatus
 from agno.run.agent import (
     RunCancelledEvent as AgentRunCancelledEvent,
 )
@@ -204,6 +204,20 @@ WorkflowStep = Union[
         Union[StepOutput, Awaitable[StepOutput], Iterator[StepOutput], AsyncIterator[StepOutput]],
     ],
 ]
+
+
+def _mark_workflow_run_cancelled(
+    workflow_run_response: WorkflowRunOutput,
+    error: Union[RunCancelledException, asyncio.CancelledError, KeyboardInterrupt, GeneratorExit],
+) -> None:
+    """Set status, cancellation stage and content together for a cancelled
+    workflow run. Only a run cancellation is a stage; task-level interrupts
+    (shutdown, a disconnected streaming task, a KeyboardInterrupt) leave it
+    unknown, matching the agent and team handlers."""
+    workflow_run_response.status = RunStatus.cancelled
+    if isinstance(error, RunCancelledException):
+        workflow_run_response.cancellation_stage = CancellationStage.executing
+    workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, error)
 
 
 def _normalize_workflow_cancellation_reason(
@@ -915,7 +929,7 @@ class Workflow:
     def initialize_workflow(self):
         if self.id is None:
             self.set_id()
-            log_debug(f"Generated new workflow_id: {self.id}")
+            log_debug(f"Generated new workflow_id: {self.id}", log_level=2)
 
     def _initialize_session(
         self,
@@ -932,7 +946,7 @@ class Workflow:
                 # We make the session_id sticky to the agent instance if no session_id is provided
                 self.session_id = session_id
 
-        log_debug(f"Session ID: {session_id}", center=True)
+        log_debug(f"Session: {session_id}")
 
         # Use the default user_id when necessary
         if user_id is None or user_id == "":
@@ -1706,13 +1720,13 @@ class Workflow:
         # Try to load from database
         workflow_session = None
         if self.db is not None:
-            log_debug(f"Reading WorkflowSession: {session_id}")
+            log_debug(f"Reading WorkflowSession: {session_id}", log_level=2)
 
             workflow_session = cast(WorkflowSession, self._read_session(session_id=session_id, user_id=user_id))
 
         if workflow_session is None:
             # Creating new session if none found
-            log_debug(f"Creating new WorkflowSession: {session_id}")
+            log_debug(f"Creating new WorkflowSession: {session_id}", log_level=2)
             from copy import deepcopy
 
             session_data = {}
@@ -1750,13 +1764,13 @@ class Workflow:
         # Try to load from database
         workflow_session = None
         if self.db is not None:
-            log_debug(f"Reading WorkflowSession: {session_id}")
+            log_debug(f"Reading WorkflowSession: {session_id}", log_level=2)
 
             workflow_session = cast(WorkflowSession, await self._aread_session(session_id=session_id, user_id=user_id))
 
         if workflow_session is None:
             # Creating new session if none found
-            log_debug(f"Creating new WorkflowSession: {session_id}")
+            log_debug(f"Creating new WorkflowSession: {session_id}", log_level=2)
             from copy import deepcopy
 
             session_data = {}
@@ -1866,7 +1880,7 @@ class Workflow:
             if result is None:
                 log_warning(f"WorkflowSession not persisted (ownership mismatch): {session.session_id}")
             else:
-                log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
+                log_debug(f"Created or updated WorkflowSession record: {session.session_id}", log_level=2)
 
     def save_session(self, session: WorkflowSession) -> None:
         """Save the WorkflowSession to storage
@@ -1896,7 +1910,7 @@ class Workflow:
             if result is None:
                 log_warning(f"WorkflowSession not persisted (ownership mismatch): {session.session_id}")
             else:
-                log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
+                log_debug(f"Created or updated WorkflowSession record: {session.session_id}", log_level=2)
 
     def _persist_cancelled_run_in_background(
         self, workflow_run_response: WorkflowRunOutput, session: WorkflowSession
@@ -2959,8 +2973,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
             except RunCancelledException as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
-                workflow_run_response.status = RunStatus.cancelled
-                workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+                _mark_workflow_run_cancelled(workflow_run_response, e)
             finally:
                 if workflow_run_response.metrics:
                     workflow_run_response.metrics.stop_timer()
@@ -2998,7 +3011,7 @@ class Workflow:
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     current_step_name = step_name
                     current_step = step
-                    log_debug(f"Executing step {i + 1}/{self._get_step_count()}: {step_name}")
+                    log_debug(f"Step started: {step_name} step={i + 1}/{self._get_step_count()} streaming=false")
 
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
@@ -3205,8 +3218,7 @@ class Workflow:
                 raise e
             except RunCancelledException as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
-                workflow_run_response.status = RunStatus.cancelled
-                workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+                _mark_workflow_run_cancelled(workflow_run_response, e)
 
                 # If cancel fired inside a step, append a placeholder so the
                 # in-flight step is visible in step_results (mirrors the streaming
@@ -3317,8 +3329,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
             except RunCancelledException as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
-                workflow_run_response.status = RunStatus.cancelled
-                workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+                _mark_workflow_run_cancelled(workflow_run_response, e)
                 if workflow_run_response.metrics:
                     workflow_run_response.metrics.stop_timer()
                 try:
@@ -3391,7 +3402,7 @@ class Workflow:
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     step_name = getattr(step, "name", f"step_{i + 1}")
-                    log_debug(f"Streaming step {i + 1}/{self._get_step_count()}: {step_name}")
+                    log_debug(f"Step started: {step_name} step={i + 1}/{self._get_step_count()} streaming=true")
 
                     # Track current step for cancellation handler
                     current_step_name = step_name
@@ -3736,8 +3747,7 @@ class Workflow:
             except RunCancelledException as e:
                 # Handle run cancellation during streaming
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
-                workflow_run_response.status = RunStatus.cancelled
-                workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+                _mark_workflow_run_cancelled(workflow_run_response, e)
 
                 # Capture partial progress from the step that was cancelled mid-stream
                 if cancelled_step_output is not None:
@@ -3988,8 +3998,7 @@ class Workflow:
             except (RunCancelledException, asyncio.CancelledError, KeyboardInterrupt) as e:
                 # Persistence happens below after the if/else; just mark cancelled and fall through
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
-                workflow_run_response.status = RunStatus.cancelled
-                workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+                _mark_workflow_run_cancelled(workflow_run_response, e)
                 # Client disconnect: persist on a detached task, then re-raise.
                 # cancel_run() and Ctrl-C fall through to the inline persist below.
                 if isinstance(e, asyncio.CancelledError):
@@ -4022,7 +4031,7 @@ class Workflow:
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     current_step_name = step_name
                     current_step = step
-                    log_debug(f"Async Executing step {i + 1}/{self._get_step_count()}: {step_name}")
+                    log_debug(f"Step started: {step_name} step={i + 1}/{self._get_step_count()} streaming=false")
 
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
@@ -4230,8 +4239,7 @@ class Workflow:
                 raise e
             except (RunCancelledException, asyncio.CancelledError, KeyboardInterrupt) as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
-                workflow_run_response.status = RunStatus.cancelled
-                workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+                _mark_workflow_run_cancelled(workflow_run_response, e)
 
                 # If cancel fired inside a step, append a placeholder so the
                 # in-flight step is visible in step_results (mirrors the streaming
@@ -4363,8 +4371,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
             except RunCancelledException as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
-                workflow_run_response.status = RunStatus.cancelled
-                workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+                _mark_workflow_run_cancelled(workflow_run_response, e)
                 if workflow_run_response.metrics:
                     workflow_run_response.metrics.stop_timer()
                 try:
@@ -4440,7 +4447,7 @@ class Workflow:
                     if workflow_run_response.run_id:
                         await araise_if_cancelled(workflow_run_response.run_id)
                     step_name = getattr(step, "name", f"step_{i + 1}")
-                    log_debug(f"Async streaming step {i + 1}/{self._get_step_count()}: {step_name}")
+                    log_debug(f"Step started: {step_name} step={i + 1}/{self._get_step_count()} streaming=true")
 
                     current_step_name = step_name
                     current_step = step
@@ -4800,8 +4807,7 @@ class Workflow:
             except (RunCancelledException, asyncio.CancelledError, KeyboardInterrupt, GeneratorExit) as e:
                 # Handle run cancellation during streaming
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
-                workflow_run_response.status = RunStatus.cancelled
-                workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+                _mark_workflow_run_cancelled(workflow_run_response, e)
 
                 # Capture partial progress from the step that was cancelled mid-stream
                 if cancelled_step_output is not None:
@@ -5074,6 +5080,7 @@ class Workflow:
                 # so persist CANCELLED and deregister the run here.
                 log_info(f"Background run {workflow_run_response.run_id} cancelled while waiting for a slot")
                 workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.cancellation_stage = CancellationStage.pending
                 try:
                     await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
                 except Exception:
@@ -5347,6 +5354,7 @@ class Workflow:
                 # persist CANCELLED and deregister the run here.
                 log_info(f"Background stream run {run_context.run_id} cancelled while waiting for a slot")
                 workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.cancellation_stage = CancellationStage.pending
                 try:
                     await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
                 except Exception:
@@ -5597,6 +5605,7 @@ class Workflow:
                 log_info(f"Background stream workflow run {run_id} cancelled while waiting for a slot")
                 try:
                     workflow_run_response.status = RunStatus.cancelled
+                    workflow_run_response.cancellation_stage = CancellationStage.pending
                     await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
                 except Exception:
                     log_error(
@@ -6734,6 +6743,7 @@ class Workflow:
                 if rejected_step.max_retries and rejected_step.retry_count >= rejected_step.max_retries:
                     # Max retries reached — cancel
                     run_response.status = RunStatus.cancelled
+                    run_response.cancellation_stage = CancellationStage.paused
                     run_response.content = (
                         f"Max retries ({rejected_step.max_retries}) reached for step '{rejected_step.step_name}'"
                     )
@@ -6787,6 +6797,7 @@ class Workflow:
             else:
                 # Cancel workflow (default behavior for "cancel")
                 run_response.status = RunStatus.cancelled
+                run_response.cancellation_stage = CancellationStage.paused
                 run_response.content = f"Workflow cancelled: Step '{rejected_step.step_name}' was rejected"
 
                 # Save and return
@@ -7483,8 +7494,7 @@ class Workflow:
 
         except RunCancelledException as e:
             logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
-            workflow_run_response.status = RunStatus.cancelled
-            workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+            _mark_workflow_run_cancelled(workflow_run_response, e)
             # Preserve any completed step outputs before cancellation
             if collected_step_outputs:
                 workflow_run_response.step_results = collected_step_outputs
@@ -8541,8 +8551,7 @@ class Workflow:
 
         except RunCancelledException as e:
             logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
-            workflow_run_response.status = RunStatus.cancelled
-            workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+            _mark_workflow_run_cancelled(workflow_run_response, e)
             # Preserve any completed step outputs before cancellation
             if collected_step_outputs:
                 workflow_run_response.step_results = collected_step_outputs
@@ -8766,6 +8775,7 @@ class Workflow:
                 # Retry the rejected step
                 if rejected_step.max_retries and rejected_step.retry_count >= rejected_step.max_retries:
                     run_response.status = RunStatus.cancelled
+                    run_response.cancellation_stage = CancellationStage.paused
                     run_response.content = (
                         f"Max retries ({rejected_step.max_retries}) reached for step '{rejected_step.step_name}'"
                     )
@@ -8817,6 +8827,7 @@ class Workflow:
             else:
                 # Cancel workflow (default behavior for "cancel")
                 run_response.status = RunStatus.cancelled
+                run_response.cancellation_stage = CancellationStage.paused
                 run_response.content = f"Workflow cancelled: Step '{rejected_step.step_name}' was rejected"
 
                 # Save and return
@@ -9529,8 +9540,7 @@ class Workflow:
 
         except RunCancelledException as e:
             logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
-            workflow_run_response.status = RunStatus.cancelled
-            workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+            _mark_workflow_run_cancelled(workflow_run_response, e)
             # Preserve any completed step outputs before cancellation
             if collected_step_outputs:
                 workflow_run_response.step_results = collected_step_outputs
@@ -10301,8 +10311,7 @@ class Workflow:
 
         except (RunCancelledException, asyncio.CancelledError, KeyboardInterrupt, GeneratorExit) as e:
             logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
-            workflow_run_response.status = RunStatus.cancelled
-            workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+            _mark_workflow_run_cancelled(workflow_run_response, e)
             # Preserve any completed step outputs before cancellation
             if collected_step_outputs:
                 workflow_run_response.step_results = collected_step_outputs
@@ -10478,14 +10487,34 @@ class Workflow:
                         await self.asave_session(session=session)
                 raise
             except RunCancelledException:
-                # Cancelled while waiting for a slot — execution never started, so
-                # persist CANCELLED and deregister the run here.
+                # Cancelled while waiting for a slot: the continuation never
+                # re-started, so persist CANCELLED and deregister the run here.
+                # The run itself is a paused one with history, so that is the
+                # stage, not "never started"
                 log_info(
                     f"Background continue-run stream {workflow_run_response.run_id} cancelled while waiting for a slot"
                 )
                 workflow_run_response.status = RunStatus.cancelled
-                session.upsert_run(run=workflow_run_response)
-                await self.asave_session(session=session)
+                workflow_run_response.cancellation_stage = CancellationStage.paused
+                # The fenced transition, as the initial-run twin and the agent
+                # and team twins use: on databases that persist runs
+                # separately from the session, a whole-session save does not
+                # write the run at all, and this cancel never landed.
+                try:
+                    await apersist_run_transition(
+                        self,
+                        "workflow",
+                        workflow_run_response.session_id or session.session_id,
+                        workflow_run_response,
+                        user_id=workflow_run_response.user_id,
+                    )
+                except Exception:
+                    # A failed persist must not skip the cleanup below
+                    log_error(
+                        f"Failed to persist cancelled state for background continue-run stream "
+                        f"{workflow_run_response.run_id}",
+                        exc_info=True,
+                    )
                 if workflow_run_response.run_id:
                     await acleanup_run(workflow_run_response.run_id)
             except Exception as e:
@@ -10640,7 +10669,7 @@ class Workflow:
             run_id=run_id,
         )
 
-        log_debug(f"Workflow Run Start: {self.name}", center=True)
+        log_debug(f"Workflow started: {self.id or self.name} run={run_id}")
 
         # Use stream override value when necessary
         if stream is None:
@@ -10651,8 +10680,8 @@ class Workflow:
         if stream is False:
             stream_events = False
 
-        log_debug(f"Stream: {stream}")
-        log_debug(f"Total steps: {self._get_step_count()}")
+        log_debug(f"Stream: {stream}", log_level=2)
+        log_debug(f"Total steps: {self._get_step_count()}", log_level=2)
 
         # Prepare steps
         self._prepare_steps()
@@ -10666,7 +10695,8 @@ class Workflow:
             files=files,  # type: ignore
         )
         log_debug(
-            f"Created pipeline input with session state keys: {list(session_state.keys()) if session_state else 'None'}"
+            f"Created pipeline input with session state keys: {list(session_state.keys()) if session_state else 'None'}",
+            log_level=2,
         )
 
         self.update_agents_and_teams_session_info()
@@ -10945,7 +10975,7 @@ class Workflow:
             metadata=resolved["metadata"],
         )
 
-        log_debug(f"Async Workflow Run Start: {self.name}", center=True)
+        log_debug(f"Workflow started: {self.id or self.name} run={run_id}")
 
         # Use stream override value when necessary
         if stream is None:
@@ -10956,7 +10986,7 @@ class Workflow:
         if stream is False:
             stream_events = False
 
-        log_debug(f"Stream: {stream}")
+        log_debug(f"Stream: {stream}", log_level=2)
 
         # Prepare steps
         self._prepare_steps()
@@ -10970,7 +11000,8 @@ class Workflow:
             files=files,
         )
         log_debug(
-            f"Created async pipeline input with session state keys: {list(session_state.keys()) if session_state else 'None'}"
+            f"Created async pipeline input with session state keys: {list(session_state.keys()) if session_state else 'None'}",
+            log_level=2,
         )
 
         self.update_agents_and_teams_session_info()
@@ -11039,19 +11070,19 @@ class Workflow:
             for i, step in enumerate(self.steps):  # type: ignore
                 if callable(step) and hasattr(step, "__name__"):
                     step_name = step.__name__
-                    log_debug(f"Step {i + 1}: Wrapping callable function '{step_name}'")
+                    log_debug(f"Step {i + 1}: Wrapping callable function '{step_name}'", log_level=2)
                     prepared_steps.append(Step(name=step_name, description="User-defined callable step", executor=step))  # type: ignore
                 elif isinstance(step, Agent):
                     step_name = step.name or f"step_{i + 1}"
-                    log_debug(f"Step {i + 1}: Agent '{step_name}'")
+                    log_debug(f"Step {i + 1}: Agent '{step_name}'", log_level=2)
                     prepared_steps.append(Step(name=step_name, description=step.description, agent=step))
                 elif isinstance(step, Team):
                     step_name = step.name or f"step_{i + 1}"
-                    log_debug(f"Step {i + 1}: Team '{step_name}' with {len(step.members)} members")
+                    log_debug(f"Step {i + 1}: Team '{step_name}' with {len(step.members)} members", log_level=2)
                     prepared_steps.append(Step(name=step_name, description=step.description, team=step))
                 elif isinstance(step, Workflow):
                     step_name = step.name or f"step_{i + 1}"
-                    log_debug(f"Step {i + 1}: Nested Workflow '{step_name}'")
+                    log_debug(f"Step {i + 1}: Nested Workflow '{step_name}'", log_level=2)
                     prepared_steps.append(Step(name=step_name, description=step.description, workflow=step))
                 elif isinstance(step, Step) and step.add_workflow_history is True and self.db is None:
                     log_warning(
@@ -11062,13 +11093,13 @@ class Workflow:
                 elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
                     step_type = type(step).__name__
                     step_name = getattr(step, "name", f"unnamed_{step_type.lower()}")
-                    log_debug(f"Step {i + 1}: {step_type} '{step_name}'")
+                    log_debug(f"Step {i + 1}: {step_type} '{step_name}'", log_level=2)
                     prepared_steps.append(step)
                 else:
                     raise ValueError(f"Invalid step type: {type(step).__name__}")
 
             self.steps = prepared_steps  # type: ignore
-            log_debug("Step preparation completed")
+            log_debug("Step preparation completed", log_level=2)
 
     def print_response(
         self,
@@ -11367,8 +11398,24 @@ class Workflow:
                     )
         return SessionMetrics()
 
+    def _log_run_outcome(self, run: WorkflowRunOutput) -> None:
+        """Report execution status without implying that a persistence operation succeeded."""
+        # Execution summaries follow the actual terminal status, including paused
+        # and failed runs. Never report success just because a request returned.
+        status = run.status
+        if status in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
+            duration = run.metrics.duration if run.metrics else None
+            elapsed = f" duration={duration:.2f}s" if duration is not None else ""
+            outcome = "failed" if status == RunStatus.error else status.value.lower()
+            message = f"Workflow {outcome}: {self.id or self.name} run={run.run_id}{elapsed}"
+            log_debug(message)
+
     def _update_session_metrics(self, session: WorkflowSession, workflow_run_response: WorkflowRunOutput):
         """Calculate and update session metrics - convert run Metrics to SessionMetrics."""
+        # Pauses are reported by save_paused_session; the enclosing non-stream
+        # finalizer may aggregate the same paused run again.
+        if workflow_run_response.status != RunStatus.paused:
+            self._log_run_outcome(workflow_run_response)
         # Get existing session metrics
         session_metrics = self._get_session_metrics(session=session)
 
@@ -11408,7 +11455,7 @@ class Workflow:
 
     def update_agents_and_teams_session_info(self):
         """Update agents and teams with workflow session information"""
-        log_debug("Updating agents and teams with session information")
+        log_debug("Updating agents and teams with session information", log_level=2)
         # Initialize steps - only if steps is iterable (not callable)
         if self.steps and not callable(self.steps):
             steps_list = self.steps.steps if isinstance(self.steps, Steps) else self.steps
@@ -11735,7 +11782,7 @@ class Workflow:
         # Create a new Workflow
         try:
             new_workflow = self.__class__(**fields_for_new_workflow)
-            log_debug(f"Created new {self.__class__.__name__}")
+            log_debug(f"Created new {self.__class__.__name__}", log_level=2)
             return new_workflow
         except Exception as e:
             log_error(f"Failed to create deep copy of {self.__class__.__name__}: {str(e)}")

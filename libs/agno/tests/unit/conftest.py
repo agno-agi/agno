@@ -2,6 +2,8 @@
 
 from typing import Any, Callable, List, Union
 
+from pathlib import Path
+
 import pytest
 
 import agno.run.cancel as cancel_module
@@ -31,6 +33,23 @@ def skips_but_the_argument_fragments() -> Callable[[Any], List[Union[RunEvent, T
         return [event for event in default if event not in _ARGUMENT_FRAGMENT_EVENTS]
 
     return without_the_fragments
+
+
+@pytest.fixture
+def cp1252_default_encoding(monkeypatch):
+    """Run the test as if on a Windows machine whose default text encoding is cp1252, so a
+    file read or write that does not name an encoding would mangle non-ASCII text."""
+    read_text = Path.read_text
+    write_text = Path.write_text
+
+    def read_text_cp1252(self, encoding=None, **kwargs):
+        return read_text(self, encoding=encoding or "cp1252", **kwargs)
+
+    def write_text_cp1252(self, data, encoding=None, **kwargs):
+        return write_text(self, data, encoding=encoding or "cp1252", **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text_cp1252)
+    monkeypatch.setattr(Path, "write_text", write_text_cp1252)
 
 
 @pytest.fixture(autouse=True)

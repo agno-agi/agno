@@ -107,7 +107,10 @@ class FieldLabeledCSVReader(Reader):
                 log_debug(f"Reading retrieved file: {getattr(file, 'name', 'BytesIO')}")
                 csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
                 file.seek(0)
-                file_content = io.StringIO(file.read().decode(self.encoding or "utf-8"))
+                content = file.read()
+                if isinstance(content, bytes):
+                    content = content.decode(self.encoding or "utf-8")
+                file_content = io.StringIO(content, newline="")
 
             documents = []
 
@@ -173,7 +176,14 @@ class FieldLabeledCSVReader(Reader):
         page_size: int = 1000,
         name: Optional[str] = None,
     ) -> List[Document]:
-        """Read a CSV file asynchronously and convert each row to a field-labeled document."""
+        """Read a CSV file asynchronously and convert each row to a field-labeled document.
+
+        Raises:
+            ValueError: If page_size is less than zero.
+        """
+        if page_size < 0:
+            raise ValueError("page_size cannot be a negative value.")
+
         try:
             if isinstance(file, Path):
                 if not file.exists():
@@ -181,13 +191,16 @@ class FieldLabeledCSVReader(Reader):
                 log_debug(f"Reading async: {file}")
                 async with aiofiles.open(file, mode="r", encoding=self.encoding or "utf-8", newline="") as file_content:
                     content = await file_content.read()
-                    file_content_io = io.StringIO(content)
+                    file_content_io = io.StringIO(content, newline="")
                 csv_name = name or file.stem
             else:
                 log_debug(f"Reading retrieved file async: {getattr(file, 'name', 'BytesIO')}")
                 csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
                 file.seek(0)
-                file_content_io = io.StringIO(file.read().decode(self.encoding or "utf-8"))
+                content = file.read()
+                if isinstance(content, bytes):
+                    content = content.decode(self.encoding or "utf-8")
+                file_content_io = io.StringIO(content, newline="")
 
             file_content_io.seek(0)
             csv_reader = csv.reader(file_content_io, delimiter=delimiter, quotechar=quotechar)

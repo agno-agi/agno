@@ -47,7 +47,7 @@ from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.run import RunContext, RunStatus
+from agno.run import CancellationStage, RunContext, RunStatus
 from agno.run.agent import (
     RunCancelledEvent,
     RunCompletedEvent,
@@ -2013,6 +2013,7 @@ async def _arun_background(
             log_info(f"Background run {run_response.run_id} cancelled while waiting for a slot")
             try:
                 run_response.status = RunStatus.cancelled
+                run_response.cancellation_stage = CancellationStage.pending
                 await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
             except Exception as e:
                 log_error(f"Failed to persist cancelled state for background run {run_response.run_id}: {str(e)}")
@@ -2200,6 +2201,7 @@ async def _arun_background_stream(
             log_info(f"Background stream run {run_id} cancelled while waiting for a slot")
             try:
                 run_response.status = RunStatus.cancelled
+                run_response.cancellation_stage = CancellationStage.pending
                 await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
             except Exception:
                 log_error(f"Failed to persist cancelled state for background stream run {run_id}", exc_info=True)
@@ -3377,6 +3379,29 @@ def _sync_requirements_with_tools(run_response: RunOutput, updated_tools: List[A
                 req.tool_execution = updated_tools_map[req.tool_execution.tool_call_id]
 
 
+def _apply_requirement_tools(run_response: RunOutput, requirements: List[Any]) -> None:
+    """Set the continue requirements on the run and merge their tool executions into run_response.tools.
+
+    A call that already ran keeps the run's own copy. A requirement can carry an
+    out-of-date copy of that call (confirmed, no result), for example after an
+    earlier pause was resolved from the approvals table; swapping it in would
+    execute the call a second time.
+    """
+    run_response.requirements = requirements
+    updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+    if updated_tools and run_response.tools:
+        # Checked per tool, not per tool_call_id: ids can repeat across turns (some
+        # providers send none and a fallback like call_{i} is used), and a new call
+        # sharing an executed call's id must still take its requirement.
+        updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+        run_response.tools = [
+            updated_tools_map.get(tool.tool_call_id, tool) if tool.result is None else tool
+            for tool in run_response.tools
+        ]
+    else:
+        run_response.tools = updated_tools
+
+
 def continue_run_dispatch(
     agent: Agent,
     run_response: Optional[RunOutput] = None,
@@ -3620,13 +3645,7 @@ def continue_run_dispatch(
 
         # If we have requirements, get the updated tools and set them in the run_response
         if requirements is not None:
-            run_response.requirements = requirements
-            updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
-            if updated_tools and run_response.tools:
-                updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
-            else:
-                run_response.tools = updated_tools
+            _apply_requirement_tools(run_response, requirements)
 
         else:
             # No tools / requirements in the body. Two cases:
@@ -3708,6 +3727,7 @@ def continue_run_dispatch(
         session=agent_session,
         add_history_to_context=agent.add_history_to_context,
         run_context=run_context,
+        run_response=run_response,
     )
 
     # Reset the run state
@@ -4680,6 +4700,10 @@ async def _acontinue_run_background_stream(
                     cancelled_run = cast(Optional[RunOutput], lookup_session.get_run(_run_id))
                 if cancelled_run is not None:
                     cancelled_run.status = RunStatus.cancelled
+                    # A continuation only ever resumes a run that paused for
+                    # HITL: it has output and requirements, so the stage is
+                    # the status it held, not "never started"
+                    cancelled_run.cancellation_stage = CancellationStage.paused
                     await apersist_run_transition(agent, "agent", session_id, cancelled_run, user_id=user_id)
             except Exception:
                 log_error(
@@ -4951,15 +4975,7 @@ async def _acontinue_run(
 
                     # If we have requirements, get the updated tools and set them in the run_response
                     if requirements is not None:
-                        run_response.requirements = requirements
-                        updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
-                        if updated_tools and run_response.tools:
-                            updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                            run_response.tools = [
-                                updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools
-                            ]
-                        else:
-                            run_response.tools = updated_tools
+                        _apply_requirement_tools(run_response, requirements)
 
                     else:
                         # No tools / requirements in the body. Two cases:
@@ -5029,6 +5045,7 @@ async def _acontinue_run(
                     input=input_messages,
                     session=agent_session,
                     add_history_to_context=agent.add_history_to_context,
+                    run_response=run_response,
                 )
 
                 # Reset the run state
@@ -5474,15 +5491,7 @@ async def _acontinue_run_stream(
 
                     # If we have requirements, get the updated tools and set them in the run_response
                     if requirements is not None:
-                        run_response.requirements = requirements
-                        updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
-                        if updated_tools and run_response.tools:
-                            updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                            run_response.tools = [
-                                updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools
-                            ]
-                        else:
-                            run_response.tools = updated_tools
+                        _apply_requirement_tools(run_response, requirements)
 
                     else:
                         # No tools / requirements in the body. Two cases:
@@ -5552,6 +5561,7 @@ async def _acontinue_run_stream(
                     input=input_messages,
                     session=agent_session,
                     add_history_to_context=agent.add_history_to_context,
+                    run_response=run_response,
                 )
 
                 # Reset the run state
@@ -6004,6 +6014,12 @@ def _handle_run_cancellation(
     reason = _normalize_cancellation_reason(run_response, error)
     log_debug(f"Run {run_response.run_id} was cancelled")
     run_response.status = RunStatus.cancelled
+    # Only a run cancellation is a stage. Callers also route task-level
+    # interrupts here (event-loop shutdown, a disconnected streaming task) as
+    # a KeyboardInterrupt; those are neither a user cancel nor a never-started
+    # run and stay unknown.
+    if isinstance(error, RunCancelledException):
+        run_response.cancellation_stage = CancellationStage.executing
     has_partial_content = bool(run_response.content)
     if not run_response.content:
         run_response.content = reason

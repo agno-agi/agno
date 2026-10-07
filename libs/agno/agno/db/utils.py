@@ -835,6 +835,16 @@ def identify_metrics_by_owner(rows: Sequence[Dict[str, Any]], user_id: str) -> L
     return identified
 
 
+def owner_key(user_id: Any) -> Optional[str]:
+    """Give a submitted and a stored user_id the same shape before comparing them.
+
+    A stored row comes back as the text its column holds, so a session submitted with a
+    non-string user_id would never match the row it just wrote and would be read as a write
+    the owner check refused.
+    """
+    return None if user_id is None else str(user_id)
+
+
 def get_sort_value(record: Dict[str, Any], sort_by: str) -> Any:
     """Get the sort value for a record, with fallback to created_at for updated_at.
 

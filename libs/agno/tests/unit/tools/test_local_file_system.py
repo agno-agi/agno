@@ -302,3 +302,64 @@ def test_restrict_to_base_dir_false_allows_escape(temp_dir):
 
     assert "Successfully wrote file" in result
     assert (outside_dir / "pwn.txt").read_text() == "escaped"
+
+
+_NON_ASCII_CONTENT = "🎉 café 日本語"
+
+
+def test_read_write_round_trip_non_ascii_under_non_utf8_locale(tmp_path):
+    """read_file/write_file must round-trip non-ASCII text regardless of locale.
+
+    ``Path.read_text()``/``write_text()`` default to the locale encoding, so on a
+    host whose preferred encoding is not UTF-8 the tool mangles (mojibake) or
+    fails outright (``UnicodeEncodeError``/``UnicodeDecodeError``) on perfectly
+    valid UTF-8 content — the same class fixed for the YAML/Antigravity readers and
+    ``GithubTools.get_file_content``. The round-trip runs in a subprocess with a
+    forced non-UTF-8 locale; the script is passed as a file so the payload never
+    travels through the (locale-encoded) command line.
+    """
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    script = tmp_path / "_locale_roundtrip.py"
+    script.write_text(
+        textwrap.dedent(
+            f"""
+            import locale
+
+            if locale.getpreferredencoding(False).lower().replace("-", "") == "utf8":
+                print("SKIP")
+            else:
+                import sys
+
+                from agno.tools.local_file_system import LocalFileSystemTools
+
+                tools = LocalFileSystemTools(target_directory=sys.argv[1])
+                written = tools.write_file(content={_NON_ASCII_CONTENT!r}, filename="locale.txt")
+                assert "Successfully wrote file" in written, written
+                assert tools.read_file("locale.txt") == {_NON_ASCII_CONTENT!r}
+                print("OK")
+            """
+        ),
+        encoding="utf-8",
+    )
+    env = {
+        **os.environ,
+        "PYTHONUTF8": "0",
+        "PYTHONCOERCECLOCALE": "0",
+        "LC_ALL": "C",
+        "LANG": "C",
+    }
+    result = subprocess.run(
+        [sys.executable, str(script), str(tmp_path)],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    if "SKIP" in result.stdout:
+        pytest.skip("platform could not produce a non-UTF-8 locale")
+    assert result.returncode == 0, result.stderr
+    assert "OK" in result.stdout

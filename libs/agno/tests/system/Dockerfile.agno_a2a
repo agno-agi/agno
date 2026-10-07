@@ -21,7 +21,7 @@ RUN pip install --no-cache-dir /app/agnoctl ".[os]"
 
 # Install additional dependencies for the server
 RUN pip install --no-cache-dir \
-    sqlalchemy \
+    "sqlalchemy[asyncio]" \
     psycopg-binary \
     psycopg \
     fastapi \

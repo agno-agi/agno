@@ -18,7 +18,7 @@ See the [examples](./models/).
 
 A powerful feature of Agno is the ability to use a separate reasoning model from the main model. This is useful when you want to use a more powerful reasoning model than the main model.
 
-See the [examples](./models/openai/reasoning_gpt_4_1.py).
+See the [examples](./models/openai/reasoning_model_gpt_4_1.py).
 
 ## Reasoning Tools
 

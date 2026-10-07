@@ -6,6 +6,7 @@ behind human approval; these tests lock that documented pattern and guard the
 kwargs passthrough against regressions.
 """
 
+import sys
 import tempfile
 
 from agno.tools.shell import ShellTools
@@ -28,3 +29,33 @@ def test_requires_confirmation_tools_gates_run_shell_command():
     """The documented HITL pattern marks run_shell_command for confirmation."""
     tools = ShellTools(requires_confirmation_tools=["run_shell_command"])
     assert tools.functions["run_shell_command"].requires_confirmation is True
+
+
+def test_run_shell_command_zero_tail_returns_empty():
+    """tail=0 asks for no lines; [-0:] slicing returns the whole output instead."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = ShellTools(base_dir=tmp_dir)
+        out = tools.run_shell_command(
+            [sys.executable, "-c", "import sys; sys.stdout.write(chr(97) + chr(10) + chr(98) + chr(10) + chr(99))"],
+            tail=0,
+        )
+        assert out == ""
+
+
+def test_run_shell_command_positive_tail_returns_last_lines():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = ShellTools(base_dir=tmp_dir)
+        out = tools.run_shell_command(
+            [sys.executable, "-c", "import sys; sys.stdout.write(chr(97) + chr(10) + chr(98) + chr(10) + chr(99))"],
+            tail=2,
+        )
+        assert out == "b" + chr(10) + "c"
+
+
+def test_utils_shell_zero_tail_returns_empty():
+    from agno.utils.shell import run_shell_command as util_run_shell_command
+
+    out = util_run_shell_command(
+        [sys.executable, "-c", "import sys; sys.stdout.write(chr(97) + chr(10) + chr(98) + chr(10) + chr(99))"], tail=0
+    )
+    assert out == ""
