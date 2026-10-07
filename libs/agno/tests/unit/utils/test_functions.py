@@ -1,10 +1,28 @@
 import json
-from typing import Dict
+from typing import Any, Dict
 
 import pytest
 
 from agno.tools.function import Function, FunctionCall
-from agno.utils.functions import get_function_call
+from agno.utils.functions import coerce_literal_argument_values, get_function_call
+
+
+def _same_argument_value(left: Any, right: Any) -> bool:
+    """Whether two decoded argument values match with no type coercion at all.
+
+    Plain equality would let True stand in for 1 and 1 for 1.0, and what a
+    comparison of decoded arguments pins is the type a tool is called with as
+    much as the value.
+    """
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return len(left) == len(right) and all(
+            key in right and _same_argument_value(value, right[key]) for key, value in left.items()
+        )
+    if isinstance(left, list):
+        return len(left) == len(right) and all(_same_argument_value(a, b) for a, b in zip(left, right))
+    return bool(left == right)
 
 
 @pytest.fixture
@@ -162,6 +180,46 @@ def test_get_function_call_coercion_with_surrounding_whitespace(sample_functions
     assert result is not None
     assert result.error is None
     assert result.arguments == {"param1": None, "param2": True, "param3": False}
+
+
+def test_get_function_call_decodes_arguments_through_the_shared_coercion(sample_functions):
+    """The values a tool is called with come from the shared coercion.
+
+    Anything holding a copy of a call's arguments against the run's own has to
+    read them the way the run did, so the coercion has one definition and this
+    pins the decoding to it: the values below are the ones decoding has always
+    produced, and they are also exactly what that definition returns.
+    """
+    sent = {
+        "param1": "true",
+        "param2": " FALSE ",
+        "param3": "null",
+        "param4": "hello",
+        "param5": {"nested": "true"},
+        "param6": ["true"],
+        "param7": 1,
+    }
+
+    result = get_function_call(
+        name="test_function",
+        arguments=json.dumps(sent),
+        functions=sample_functions,
+    )
+
+    expected = {
+        "param1": True,
+        "param2": False,
+        "param3": None,
+        "param4": "hello",
+        "param5": {"nested": "true"},
+        "param6": ["true"],
+        "param7": 1,
+    }
+
+    assert result is not None
+    assert result.error is None
+    assert _same_argument_value(result.arguments, expected), result.arguments
+    assert _same_argument_value(result.arguments, coerce_literal_argument_values(sent)), result.arguments
 
 
 def test_get_function_call_argument_advanced(sample_functions):

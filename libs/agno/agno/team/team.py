@@ -45,6 +45,7 @@ from agno.models.response import ModelResponse
 
 if TYPE_CHECKING:
     from agno.offload.store import ResultStore
+    from agno.utils.tools import ToolCallArgsStream
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
@@ -385,7 +386,7 @@ class Team:
 
     # Store the events from the Team
     store_events: bool = False
-    # List of events to skip from the Team
+    # List of events the Team keeps out of the stored run. Emission is unaffected.
     events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None
     # Store member agent runs inside the team's RunOutput
     store_member_responses: bool = False
@@ -1257,6 +1258,7 @@ class Team:
         parse_structured_output: bool = False,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
+        tool_args_stream: Optional[ToolCallArgsStream] = None,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
         yield from _response._handle_model_response_chunk(
             self,
@@ -1269,6 +1271,7 @@ class Team:
             parse_structured_output=parse_structured_output,
             session_state=session_state,
             run_context=run_context,
+            tool_args_stream=tool_args_stream,
         )
 
     ###########################################################################
