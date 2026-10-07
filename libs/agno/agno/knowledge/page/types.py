@@ -51,9 +51,76 @@ class SyncFailed(PageError):
     code = "sync_failed"
 
 
+class PageMoved(PageError):
+    """A listed page redirects to a different page or another host: an alias, not a page of this source."""
+
+    code = "page_moved"
+
+    def __init__(self, target: str):
+        super().__init__()
+        self.target = target
+
+
+class PageNotMarkdown(PageError):
+    """A listed Markdown page answered with HTML; it is never stored as page text."""
+
+    code = "page_not_markdown"
+
+
 class PageResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     schema_version: Literal[1] = 1
+
+
+class PageSourceBinding(PageResult):
+    namespace: str
+    filesystem: str
+    catalog: str
+    vectors: str
+    source: Optional[str]
+    revision: int
+
+
+class PageSourceMigration(PageResult):
+    before: PageSourceBinding
+    after: PageSourceBinding
+    target_source: str
+    dry_run: bool
+    changed: bool
+
+
+class PageSourceBusy(PageError):
+    code = "page_source_busy"
+
+
+class PageCommandResult(PageResult):
+    text: str
+    is_error: bool = False
+    errors: Tuple[str, ...] = ()
+    partial: bool = False
+    truncated: bool = False
+    continuation: Optional[str] = None
+    stop_reason: Optional[str] = None
+
+    def bounded(self, max_bytes: int) -> "PageCommandResult":
+        """Bound the complete UTF-8 JSON value without slicing a code point."""
+        if type(max_bytes) is not int or max_bytes < 1024:
+            raise ValueError("max_output_bytes must be an integer of at least 1024")
+        if encoded_size(self) <= max_bytes:
+            return self
+        # Byte clipping invalidates line-based continuation; do not skip unseen text.
+        result = self.model_copy(update={"truncated": True, "continuation": None})
+        low, high = 0, len(self.text)
+        while low < high:
+            middle = (low + high + 1) // 2
+            if encoded_size(result.model_copy(update={"text": self.text[:middle]})) <= max_bytes:
+                low = middle
+            else:
+                high = middle - 1
+        result = result.model_copy(update={"text": self.text[:low]})
+        if encoded_size(result) > max_bytes:
+            result = result.model_copy(update={"errors": ("output_limit",), "stop_reason": "output_limit"})
+        return result
 
 
 class Page(PageResult):
@@ -120,6 +187,19 @@ class GrepResult(PageResult):
     stop_reason: Optional[Literal["limit", "output_limit", "deadline"]] = None
 
 
+class PageSyncProgress(PageResult):
+    """Observer snapshot; terminal success/partial status is carried by SyncReport."""
+
+    stage: Literal["waiting", "discovered", "publishing", "pruning"]
+    discovered: int = 0
+    processed: int = 0
+    updated: int = 0
+    deleted: int = 0
+    failed: int = 0
+    unknown: int = 0
+    path: Optional[str] = None
+
+
 class SyncReport(PageResult):
     status: Literal["unchanged", "completed", "partial"]
     discovered: int = 0
@@ -128,6 +208,13 @@ class SyncReport(PageResult):
     failed: int = 0
     unknown: int = 0
     errors: Tuple[str, ...] = ()
+    # Site paths (e.g. "/guides/setup.md") of pages that failed to publish or delete
+    # in this run, first 20, so callers can name them; `failed` stays the full count.
+    failed_paths: Tuple[str, ...] = ()
+    # Listed pages that redirect to another page or host (aliases, not pages of this source).
+    # They are not failures and do not block pruning; `skipped_paths` names the first 20.
+    skipped: int = 0
+    skipped_paths: Tuple[str, ...] = ()
 
 
 def encoded_size(value: BaseModel) -> int:

@@ -15,6 +15,7 @@ from typing import (
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.agent.followup import drop_derived_followup_fields
 from agno.filters import FilterExpr
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -124,6 +125,7 @@ SHARED_BY_REFERENCE_FIELDS = (
     "session_summary_manager",
     "compression_manager",
     "learning",
+    "filesystem",
     "skills",
 )
 
@@ -163,6 +165,7 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
     # Update fields if provided
     if update:
         fields_for_new_agent.update(update)
+    drop_derived_followup_fields(fields_for_new_agent, update)
 
     # Create a new Agent
     try:
@@ -218,6 +221,10 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
             # If entire tools processing fails, log and return original list
             log_warning(f"Failed to process tools for deep copy: {str(e)}")
             return field_value
+
+    if field_name == "filesystem" and isinstance(field_value, list):
+        # Keep durable stores shared, but let the copy change its own attachment list.
+        return list(field_value)
 
     # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
     if field_name in SHARED_BY_REFERENCE_FIELDS:

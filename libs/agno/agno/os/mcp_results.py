@@ -243,14 +243,12 @@ def build_run_tool_result(
         requirements = serialized_paused_requirements(run_output) or []
         text = f"Run paused: {len(requirements)} requirement(s) awaiting resolution."
     if getattr(run_output, "is_paused", False) and not continue_run_available:
-        # continue_run rides along with exposures by default, so this fires only when
-        # the deployer opted out (lifecycle_tools=False / exclude_tags={"lifecycle"},
-        # or tag scoping that drops both core and lifecycle). The paused run is then a
-        # dead end over MCP -- say so at the moment it happens instead of letting the
-        # client hunt for a tool that is not registered.
+        # Custom surfaces do not add continue_run unless explicitly enabled. A paused
+        # run cannot resume over MCP without it, so point to recovery at the moment it
+        # happens instead of letting the client hunt for an unregistered tool.
         text = (
             f"{text} The continue_run tool is not registered on this server; resume this run over "
-            "the REST API, or re-enable the run-lifecycle tools (lifecycle_tools=True, and do not "
+            "the REST API, or enable the run-lifecycle tools (lifecycle_tools=True, and do not "
             'exclude the "lifecycle" tag).'
         ).strip()
 

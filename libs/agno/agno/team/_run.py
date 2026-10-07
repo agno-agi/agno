@@ -42,7 +42,7 @@ from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ToolExecution
-from agno.run import RunContext, RunStatus
+from agno.run import CancellationStage, RunContext, RunStatus
 from agno.run.agent import (
     RunCancelledEvent as AgentRunCancelledEvent,
 )
@@ -90,7 +90,7 @@ from agno.run.team import (
     TeamRunOutputEvent,
 )
 from agno.session import TeamSession
-from agno.session._utils import resolve_run_index
+from agno.session._utils import continue_history_session, resolve_run_index
 from agno.tools.function import Function
 from agno.utils.agent import (
     abuild_full_run_storage_copy,
@@ -3523,6 +3523,7 @@ async def _arun_background(
             log_info(f"Background run {run_response.run_id} cancelled while waiting for a slot")
             try:
                 run_response.status = RunStatus.cancelled
+                run_response.cancellation_stage = CancellationStage.pending
                 await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
             except Exception as e:
                 log_error(f"Failed to persist cancelled state for background run {run_response.run_id}: {str(e)}")
@@ -3704,6 +3705,7 @@ async def _arun_background_stream(
             log_info(f"Background stream run {run_id} cancelled while waiting for a slot")
             try:
                 run_response.status = RunStatus.cancelled
+                run_response.cancellation_stage = CancellationStage.pending
                 await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
             except Exception:
                 log_error(f"Failed to persist cancelled state for background stream run {run_id}", exc_info=True)
@@ -4538,6 +4540,12 @@ def _handle_team_run_cancellation(
     reason = _normalize_team_cancellation_reason(run_response, error)
     log_debug(f"Team run {run_response.run_id} was cancelled")
     run_response.status = RunStatus.cancelled
+    # Only a run cancellation is a stage. Callers also route task-level
+    # interrupts here (event-loop shutdown, a disconnected streaming task) as
+    # a KeyboardInterrupt; those are neither a user cancel nor a never-started
+    # run and stay unknown.
+    if isinstance(error, RunCancelledException):
+        run_response.cancellation_stage = CancellationStage.executing
     has_partial_content = bool(run_response.content)
     if not run_response.content:
         run_response.content = reason
@@ -5409,6 +5417,7 @@ def _build_continue_run_messages(
     session: Optional[TeamSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
+    run_response: Optional[TeamRunOutput] = None,
 ) -> RunMessages:
     """Build a RunMessages object from the existing conversation messages.
 
@@ -5450,7 +5459,7 @@ def _build_continue_run_messages(
 
         skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
 
-        history: List[Message] = session.get_messages(
+        history: List[Message] = continue_history_session(session, run_response).get_messages(
             last_n_runs=team.num_history_runs,
             limit=team.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
@@ -5482,12 +5491,13 @@ def _get_continue_run_messages(
     session: Optional[TeamSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
+    run_response: Optional[TeamRunOutput] = None,
 ) -> RunMessages:
     """Build the messages that resume a paused run, reading offloaded media back first.
 
     The paused run's own messages come off the database carrying a reference and no bytes.
     """
-    run_messages = _build_continue_run_messages(team, input, session, add_history_to_context, run_context)
+    run_messages = _build_continue_run_messages(team, input, session, add_history_to_context, run_context, run_response)
     if team.media_storage is not None:
         from agno.utils.media_offload import refresh_messages_media
 
@@ -5501,9 +5511,10 @@ async def _aget_continue_run_messages(
     session: Optional[TeamSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
+    run_response: Optional[TeamRunOutput] = None,
 ) -> RunMessages:
     """Async variant of :func:`_get_continue_run_messages`."""
-    run_messages = _build_continue_run_messages(team, input, session, add_history_to_context, run_context)
+    run_messages = _build_continue_run_messages(team, input, session, add_history_to_context, run_context, run_response)
     if team.media_storage is not None:
         from agno.utils.media_offload import arefresh_messages_media
 
@@ -5854,11 +5865,18 @@ def _merge_tools_preserving_approval(
 
     This function preserves approval_type and approval_id from the session originals
     whenever the incoming tool does not carry them.
+
+    A call that already ran keeps the session original. The payload can carry an
+    out-of-date copy of that call (confirmed, no result), for example after an
+    earlier pause was resolved from the approvals table; swapping it in would
+    execute the call a second time.
     """
     merged: List[Any] = []
     for orig in original_tools:
         updated = updated_tools_map.get(orig.tool_call_id)
-        if updated is not None:
+        if updated is not None and getattr(orig, "result", None) is not None:
+            merged.append(orig)
+        elif updated is not None:
             for attr in ("approval_type", "approval_id"):
                 if getattr(updated, attr, None) is None and getattr(orig, attr, None) is not None:
                     setattr(updated, attr, getattr(orig, attr))
@@ -7725,6 +7743,7 @@ def continue_run_dispatch(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            run_response=run_response,
         )
 
         log_debug(f"Team Continue Run (forked): {run_response.run_id}", center=True)
@@ -7969,6 +7988,7 @@ def continue_run_dispatch(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            run_response=run_response,
         )
 
         # Handle tool call updates (execute confirmed tools, etc.)
@@ -8041,6 +8061,7 @@ def continue_run_dispatch(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            run_response=run_response,
         )
 
         # Prepare for member HITL continuation
@@ -8203,6 +8224,7 @@ def _continue_run_dispatch_stream_with_member_events(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            run_response=run_response,
         )
 
         _handle_team_tool_call_updates(team, run_response=run_response, run_messages=run_messages, tools=_tools)
@@ -8254,6 +8276,7 @@ def _continue_run_dispatch_stream_with_member_events(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            run_response=run_response,
         )
 
         _prepare_member_hitl_continuation(run_response, run_messages, member_results)
@@ -9033,6 +9056,10 @@ async def _acontinue_run_background_stream(
                     cancelled_run = _get_session_run(lookup_session)
                 if cancelled_run is not None:
                     cancelled_run.status = RunStatus.cancelled
+                    # A continuation only ever resumes a run that paused for
+                    # HITL: it has output and requirements, so the stage is
+                    # the status it held, not "never started"
+                    cancelled_run.cancellation_stage = CancellationStage.paused
                     await apersist_run_transition(team, "team", session_id, cancelled_run, user_id=user_id)
             except Exception:
                 log_error(
@@ -9733,6 +9760,7 @@ async def _acontinue_run(
                         session=team_session,
                         add_history_to_context=team.add_history_to_context,
                         run_context=run_context,
+                        run_response=run_response,
                     )
 
                     await _ahandle_team_tool_call_updates(
@@ -9781,6 +9809,7 @@ async def _acontinue_run(
                         session=team_session,
                         add_history_to_context=team.add_history_to_context,
                         run_context=run_context,
+                        run_response=run_response,
                     )
 
                     # Prepare for member HITL continuation
@@ -10219,6 +10248,7 @@ async def _acontinue_run_stream(
                         session=team_session,
                         add_history_to_context=team.add_history_to_context,
                         run_context=run_context,
+                        run_response=run_response,
                     )
 
                     run_response.status = RunStatus.running
@@ -10347,6 +10377,7 @@ async def _acontinue_run_stream(
                         session=team_session,
                         add_history_to_context=team.add_history_to_context,
                         run_context=run_context,
+                        run_response=run_response,
                     )
 
                     # Prepare for member HITL continuation
