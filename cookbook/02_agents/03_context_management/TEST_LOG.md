@@ -65,7 +65,7 @@ model. Two short runs stayed well under the threshold.
 
 **Status:** PASS
 **Tier:** untagged
-**Description:** `search_compacted_messages=True` with `summary_budget_tokens=150` and manual folding, on a fresh
+**Description:** `search_compacted_messages=True` with `compacted_token_budget=150` and manual folding, on a fresh
 session per run. Shares a 30-row parts list, folds it away - no 150-token summary can carry 30 rows -
 then asks for the lot number of part 23 with `print_response`, so the tool call is visible.
 **Result:** 6 of 6 live runs on `gpt-5.6-luna` folded, called `search_compacted_history` (e.g.

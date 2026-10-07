@@ -94,7 +94,7 @@ class Compaction:
     # Extra guidance for the summarizer, added to the default prompt - e.g. "Keep every ticket id".
     instructions: Optional[str] = None
     # Soft length target for the summary, stated in the prompt.
-    summary_budget_tokens: int = 2_000
+    compacted_token_budget: int = 2_000
 
     # -- when to compact ------------------------------------------------
     # Fold when the context reaches this many tokens. None folds only on agent.compact() or overflow.
@@ -406,7 +406,7 @@ class Compaction:
             transcript = (
                 f"Summary of the conversation before this point:\n{previous}\n\nConversation since then:\n{transcript}"
             )
-        prompt = DEFAULT_COMPACTION_PROMPT.format(budget_tokens=self.summary_budget_tokens)
+        prompt = DEFAULT_COMPACTION_PROMPT.format(budget_tokens=self.compacted_token_budget)
         if self.instructions:
             # Added to, not instead of, the prompt: guidance like "keep ticket ids" must not cost
             # the structure that carries earlier summaries forward.

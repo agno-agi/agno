@@ -38,7 +38,7 @@ compaction = Compaction(
     uncompacted_runs=1,
     # A summary this small cannot carry a 30-row table, so the rows have to be
     # looked up in the archive - which is what this example demonstrates.
-    summary_budget_tokens=150,
+    compacted_token_budget=150,
 )
 
 # ---------------------------------------------------------------------------
