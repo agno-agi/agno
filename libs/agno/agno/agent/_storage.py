@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
     from agno.offload.store import ResultStore
 
+from agno.agent.followup import FollowupConfig, model_identity
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
@@ -43,6 +44,7 @@ from agno.utils.db_fallback import require_db_fallback_matches
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.string import generate_id_from_name
+
 
 # MemoryManager.__init__ (agno/memory/manager.py) auto-generates
 # ``memory_manager_<8 hex>`` when no id is passed. Such an id is minted fresh
@@ -264,6 +266,20 @@ def _offload_from_config(value: Any) -> Optional[Union[bool, "ResultStore"]]:
         from agno.offload.store import ResultStore
 
         return ResultStore.from_dict(value)
+    return bool(value)
+
+
+def _followups_to_config(value: Union[bool, FollowupConfig]) -> Union[bool, Dict[str, Any]]:
+    """The followups setting as it is stored: True, False, or the FollowupConfig fields."""
+    if isinstance(value, FollowupConfig):
+        return value.to_dict()
+    return bool(value)
+
+
+def _followups_from_config(value: Any, registry: Optional[Registry] = None) -> Union[bool, FollowupConfig]:
+    """The followups setting from a stored config: False when unset, True, False, or a FollowupConfig."""
+    if isinstance(value, dict):
+        return FollowupConfig.from_dict(value, registry)
     return bool(value)
 
 
@@ -873,6 +889,19 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     if agent.add_dependencies_to_context:
         config["add_dependencies_to_context"] = agent.add_dependencies_to_context
 
+    if agent.filesystem is True:
+        config["filesystem"] = True
+    elif agent.filesystem is not None and agent.filesystem is not False:
+        from agno.fs import FileSystem
+
+        stores = agent.filesystem if isinstance(agent.filesystem, list) else [agent.filesystem]
+        serialized_stores = []
+        for store in stores:
+            if not isinstance(store, FileSystem):
+                raise TypeError("filesystem must contain only FileSystem instances")
+            serialized_stores.append(store.to_dict())
+        config["filesystem"] = serialized_stores if isinstance(agent.filesystem, list) else serialized_stores[0]
+
     # --- Agentic Memory settings ---
     # Stored as a registry reference by id, like knowledge: the manager holds
     # a model and callables, so the config names it and the registry supplies
@@ -1019,6 +1048,19 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         else:
             config["reasoning_model"] = str(agent.reasoning_model)
     # Skip reasoning_agent to avoid circular serialization
+
+    # --- Followup settings ---
+    if agent.followups:
+        config["followups"] = _followups_to_config(agent.followups)
+    # A FollowupConfig carries the count and model; the top-level fields are stored only without one.
+    if not isinstance(agent.followups, FollowupConfig):
+        if agent.num_followups != 3:
+            config["num_followups"] = agent.num_followups
+        if agent.followup_model is not None:
+            if isinstance(agent.followup_model, Model):
+                config["followup_model"] = model_identity(agent.followup_model)
+            else:
+                config["followup_model"] = str(agent.followup_model)
 
     # --- Default tools settings ---
     if agent.read_chat_history:
@@ -1214,6 +1256,10 @@ def from_dict(
     if config.get("reasoning_model") is not None:
         config["reasoning_model"] = resolve_model(config["reasoning_model"], registry)
 
+    # --- Handle followup model reconstruction ---
+    if config.get("followup_model") is not None:
+        config["followup_model"] = resolve_model(config["followup_model"], registry)
+
     # --- Handle parser_model reconstruction ---
     # TODO: implement parser model deserialization
     # if "parser_model" in config:
@@ -1280,6 +1326,34 @@ def from_dict(
             # backends the caller's own db is the fallback, in both modes.
             log_warning(f"{component_label} has a serialized db config that could not be resolved.")
             del config["db"]
+
+    # --- Handle FileSystem reconstruction ---
+    if isinstance(config.get("filesystem"), (dict, list)):
+        from agno.fs import FileSystem
+
+        try:
+            filesystem_config = config["filesystem"]
+            store_configs = filesystem_config if isinstance(filesystem_config, list) else [filesystem_config]
+            restored_stores: List[FileSystem] = []
+            for store_config in store_configs:
+                if not isinstance(store_config, dict):
+                    raise TypeError("each serialized filesystem must be an object")
+                filesystem_db_id = (store_config.get("backend") or {}).get("db_id")
+                agent_db = config.get("db")
+                filesystem_db = None
+                if filesystem_db_id is None or getattr(agent_db, "id", None) == filesystem_db_id:
+                    filesystem_db = agent_db
+                elif registry is not None:
+                    filesystem_db = registry.get_db(filesystem_db_id)
+                if filesystem_db_id is not None and filesystem_db is None:
+                    raise ValueError(f"database {filesystem_db_id!r} was not found on the agent or in the registry")
+                restored_stores.append(FileSystem.from_dict(store_config, db=filesystem_db))
+            config["filesystem"] = restored_stores if isinstance(filesystem_config, list) else restored_stores[0]
+        except (TypeError, ValueError) as e:
+            if strict:
+                raise ComponentRehydrationError(f"{component_label} filesystem could not be restored: {e}") from e
+            log_warning(f"{component_label} filesystem could not be restored: {e}")
+            del config["filesystem"]
 
     # --- Handle Schema reconstruction ---
     if "input_schema" in config and isinstance(config["input_schema"], str):
@@ -1389,6 +1463,7 @@ def from_dict(
         # --- Dependencies ---
         dependencies=config.get("dependencies"),
         add_dependencies_to_context=config.get("add_dependencies_to_context", False),
+        filesystem=config.get("filesystem", False),
         # --- Agentic Memory settings ---
         memory_manager=config.get("memory_manager"),
         enable_agentic_memory=config.get("enable_agentic_memory", False),
@@ -1416,6 +1491,10 @@ def from_dict(
         tool_choice=config.get("tool_choice"),
         # --- Reasoning settings ---
         reasoning_model=config.get("reasoning_model"),
+        # --- Followup settings ---
+        followups=_followups_from_config(config.get("followups"), registry),
+        num_followups=config.get("num_followups"),
+        followup_model=config.get("followup_model"),
         # --- Default tools settings ---
         read_chat_history=config.get("read_chat_history", False),
         search_knowledge=config.get("search_knowledge", True),

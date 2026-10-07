@@ -126,7 +126,7 @@ class TestSearchEmulation:
         matches = backend.search(NS, "world")
         assert matches[0].snippet == "hello world"
 
-    def test_limit_and_directory_scope(self, backend):
+    def test_directory_scope(self, backend):
         backend.write(NS, "seen/a.md", "needle")
         backend.write(NS, "seen-old/b.md", "needle")
         matches = backend.search(NS, "needle", directory="seen")
@@ -160,7 +160,7 @@ class TestContainsEmulation:
         assert backend.contains(NS, ["one", "two"]) == {"one", "two"}
         assert backend.contains(NS, ["one", "two"], directory="seen") == {"one"}
 
-    def test_empty_lines_no_calls(self, backend):
+    def test_empty_lines_return_empty(self, backend):
         assert backend.contains(NS, []) == set()
 
 
