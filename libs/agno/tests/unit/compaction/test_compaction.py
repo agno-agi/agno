@@ -794,18 +794,16 @@ def test_a_fold_that_leaves_the_context_over_the_threshold_warns(caplog):
     assert any("will fold again" in r.message for r in caplog.records)
 
 
-def test_the_summary_budget_reaches_custom_instructions():
-    """Custom instructions replace the default prompt, which is where the budget used to live - so
-    setting instructions silently dropped summary_budget_tokens."""
-    messages = _transcript()
+def test_instructions_add_to_the_default_prompt():
+    """instructions is guidance on top of the default prompt, as everywhere else in Agno. Replacing
+    the prompt with it dropped the structure that carries earlier summaries and identifiers
+    forward, so a one-line "keep ticket ids" cost far more than it asked for."""
+    from agno.compaction.prompts import DEFAULT_COMPACTION_PROMPT
 
-    custom = Compaction(instructions="Summarize as bullet points.", summary_budget_tokens=750)
-    system = custom._summary_messages(messages, previous=None)[0].content
-    assert system.startswith("Summarize as bullet points.")
-    assert "750 tokens" in system
+    system = Compaction(instructions="Keep every ticket id.")._summary_messages(_transcript(), previous=None)[0].content
 
-    default = Compaction(summary_budget_tokens=750)._summary_messages(messages, previous=None)[0].content
-    assert default.count("750 tokens") == 1
+    assert system.startswith(DEFAULT_COMPACTION_PROMPT.format(budget_tokens=2_000))
+    assert system.endswith("Additional instructions:\nKeep every ticket id.")
 
 
 @pytest.mark.parametrize("num_history_runs", [1, 3])

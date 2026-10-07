@@ -14,7 +14,6 @@ from agno.compaction.prompts import (
     ARCHIVE_AWARE_PROMPT,
     ARCHIVE_LOOKUP_INSTRUCTION,
     DEFAULT_COMPACTION_PROMPT,
-    SUMMARY_BUDGET_INSTRUCTION,
 )
 from agno.compaction.types import CompactionRecord, CompactionStats, CompactionStatus
 from agno.models.base import Model
@@ -92,7 +91,7 @@ class Compaction:
     # Model that writes the summary: a Model, or a "provider:model_id" string. Defaults to the
     # agent's model.
     model: Optional[Union[Model, str]] = None
-    # Replaces the default summarization prompt.
+    # Extra guidance for the summarizer, added to the default prompt - e.g. "Keep every ticket id".
     instructions: Optional[str] = None
     # Soft length target for the summary, stated in the prompt.
     summary_budget_tokens: int = 2_000
@@ -405,12 +404,11 @@ class Compaction:
             transcript = (
                 f"Summary of the conversation before this point:\n{previous}\n\nConversation since then:\n{transcript}"
             )
+        prompt = DEFAULT_COMPACTION_PROMPT.format(budget_tokens=self.summary_budget_tokens)
         if self.instructions:
-            # Custom instructions replace the default prompt, and with it the length budget.
-            budget = SUMMARY_BUDGET_INSTRUCTION.format(budget_tokens=self.summary_budget_tokens)
-            prompt = f"{self.instructions}\n\n{budget}"
-        else:
-            prompt = DEFAULT_COMPACTION_PROMPT.format(budget_tokens=self.summary_budget_tokens)
+            # Added to, not instead of, the prompt: guidance like "keep ticket ids" must not cost
+            # the structure that carries earlier summaries forward.
+            prompt += f"\n\nAdditional instructions:\n{self.instructions}"
         # Only ask the summary to flag its own gaps when there is somewhere to
         # go and read them. Without an archive the line would name detail the
         # assistant has no way to recover, which is worse than not saying it.
