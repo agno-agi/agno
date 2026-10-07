@@ -3,7 +3,7 @@ import os
 import pytest
 
 from agno.models.decision import Choice, Noul, Score
-from agno.models.perplexity import PerplexityDecider
+from agno.models.perplexity import PerplexityDecisions
 
 pytestmark = pytest.mark.skipif(not os.getenv("PERPLEXITY_API_KEY"), reason="PERPLEXITY_API_KEY not set")
 
@@ -26,8 +26,8 @@ def _check(result):
 
 
 def test_decide():
-    _check(PerplexityDecider().decide(state=TICKET, questions=QUESTIONS))
+    _check(PerplexityDecisions().decide(state=TICKET, questions=QUESTIONS))
 
 
 async def test_adecide():
-    _check(await PerplexityDecider().adecide(state=TICKET, questions=QUESTIONS))
+    _check(await PerplexityDecisions().adecide(state=TICKET, questions=QUESTIONS))

@@ -43,8 +43,8 @@ python cookbook/90_models/perplexity/knowledge.py
 
 ### Decisions API
 
-Ask typed questions and get probabilities back with Perplexity's Decider model.
+Ask typed questions and get probabilities back with Perplexity's Decisions API.
 
 ```shell
-python cookbook/90_models/perplexity/decider.py
+python cookbook/90_models/perplexity/decisions.py
 ```

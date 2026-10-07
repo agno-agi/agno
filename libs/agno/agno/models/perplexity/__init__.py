@@ -1,7 +1,7 @@
-from agno.models.perplexity.decider import PerplexityDecider
+from agno.models.perplexity.decisions import PerplexityDecisions
 from agno.models.perplexity.perplexity import Perplexity
 
 __all__ = [
     "Perplexity",
-    "PerplexityDecider",
+    "PerplexityDecisions",
 ]

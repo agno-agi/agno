@@ -19,7 +19,7 @@ from agno.models.decision import (
     Score,
     ScoreAnswer,
 )
-from agno.models.perplexity import PerplexityDecider
+from agno.models.perplexity import PerplexityDecisions
 from agno.models.typesafe import Jev
 
 TRIAGE_QUESTIONS = {
@@ -263,8 +263,8 @@ def test_provider_defaults():
         "TypeSafe",
         "https://api.typesafe.ai/v1/systemone",
     )
-    decider = PerplexityDecider(api_key="k")
-    assert (decider.id, decider.provider, decider._url()) == (
+    perplexity = PerplexityDecisions(api_key="k")
+    assert (perplexity.id, perplexity.provider, perplexity._url()) == (
         "pplx-decider-v1.1-27b",
         "Perplexity",
         "https://api.perplexity.ai/v1/decisions",

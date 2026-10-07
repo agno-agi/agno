@@ -5,7 +5,7 @@ from agno.models.decision.base import DecisionModel
 
 
 @dataclass
-class PerplexityDecider(DecisionModel):
+class PerplexityDecisions(DecisionModel):
     """Perplexity's Decider decision model, served by the Perplexity Decisions API.
 
     Attributes:
@@ -15,7 +15,7 @@ class PerplexityDecider(DecisionModel):
     """
 
     id: str = "pplx-decider-v1.1-27b"
-    name: str = "PerplexityDecider"
+    name: str = "PerplexityDecisions"
     provider: Optional[str] = "Perplexity"
 
     base_url: Optional[str] = "https://api.perplexity.ai"

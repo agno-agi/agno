@@ -1,19 +1,19 @@
 """
-Perplexity Decider
-==================
+Perplexity Decisions
+====================
 
 The same ticket triage as `typesafe/basic.py`, on Perplexity's Decisions API.
 Swapping decision models is a one-line change.
 """
 
 from agno.models.decision import Choice, Noul, Score
-from agno.models.perplexity import PerplexityDecider
+from agno.models.perplexity import PerplexityDecisions
 
 # ---------------------------------------------------------------------------
 # Create Model
 # ---------------------------------------------------------------------------
 
-decider = PerplexityDecider()
+model = PerplexityDecisions()
 
 questions = {
     "urgent": Noul(instructions="Does the customer need this resolved today?"),
@@ -31,7 +31,7 @@ questions = {
 # Run Model
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    result = decider.decide(
+    result = model.decide(
         state="Checkout has returned 500 errors for an hour and our sale launches tomorrow morning.",
         questions=questions,
     )
