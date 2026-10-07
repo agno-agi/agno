@@ -159,6 +159,7 @@ def create_run_completed_event(from_run_response: RunOutput) -> RunCompletedEven
         metadata=from_run_response.metadata,  # type: ignore
         metrics=from_run_response.metrics,  # type: ignore
         session_state=from_run_response.session_state,  # type: ignore
+        decisions=from_run_response.decisions,
     )
 
 

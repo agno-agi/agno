@@ -48,6 +48,7 @@ from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.memory import MemoryManager
 from agno.metrics import SessionMetrics
 from agno.models.base import Model
+from agno.models.decision.base import DecisionModel
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
 
@@ -74,7 +75,7 @@ from agno.utils.safe_formatter import SafeFormatter
 class Agent:
     # --- Agent settings ---
     # Model for this Agent
-    model: Optional[Model] = None
+    model: Optional[Union[Model, DecisionModel]] = None
     # Fallback models tried when the primary model fails
     fallback_models: Optional[List[Union[Model, str]]] = None
     # Fallback configuration for model failures (advanced: error-specific routing)
@@ -388,7 +389,7 @@ class Agent:
     def __init__(
         self,
         *,
-        model: Optional[Union[Model, str]] = None,
+        model: Optional[Union[Model, DecisionModel, str]] = None,
         fallback_config: Optional[FallbackConfig] = None,
         fallback_models: Optional[List[Union[Model, str]]] = None,
         name: Optional[str] = None,

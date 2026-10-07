@@ -21,12 +21,14 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
     from agno.offload.store import ResultStore
 
+from agno.agent._init import chat_model
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
+from agno.models.decision.base import DecisionModel
 from agno.models.message import Message
 from agno.registry.registry import Registry, _memory_manager_resource_name
 from agno.run.agent import RunOutput
@@ -827,7 +829,7 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
 
     # --- Agent Settings ---
     if agent.model is not None:
-        if isinstance(agent.model, Model):
+        if isinstance(agent.model, (Model, DecisionModel)):
             config["model"] = agent.model.to_dict()
         else:
             config["model"] = str(agent.model)
@@ -968,7 +970,7 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     if agent.model is not None and agent.tools and isinstance(agent.tools, list):
         _tools = parse_tools(
             agent,
-            model=agent.model,
+            model=chat_model(agent),
             tools=agent.tools,
         )
         _claimed_names: Set[str] = set()

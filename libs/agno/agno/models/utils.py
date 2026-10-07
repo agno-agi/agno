@@ -3,6 +3,7 @@ from collections import Counter
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
 
 from agno.models.base import Model
+from agno.models.decision.base import DecisionModel
 
 if TYPE_CHECKING:
     from agno.registry.registry import Registry
@@ -62,11 +63,13 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "ollama-responses": ("agno.models.ollama", "OllamaResponses", "OllamaResponses", "ollama"),
     "openai": ("agno.models.openai", "OpenAIResponses", "OpenAIResponses", "openai"),
     "openai-chat": ("agno.models.openai", "OpenAIChat", "OpenAIChat", "openai"),
+    "openai-decisions": ("agno.models.openai", "OpenAIDecisions", "OpenAIDecisions", "openai"),
     "openai-responses": ("agno.models.openai", "OpenAIResponses", "OpenAIResponses", "openai"),
     "open-responses": ("agno.models.openai", "OpenResponses", "OpenResponses", "openresponses"),
     "openrouter": ("agno.models.openrouter", "OpenRouter", "OpenRouter", "openrouter"),
     "openrouter-responses": ("agno.models.openrouter", "OpenRouterResponses", "OpenRouterResponses", "openrouter"),
     "perplexity": ("agno.models.perplexity", "Perplexity", "Perplexity", "perplexity"),
+    "perplexity-decisions": ("agno.models.perplexity", "PerplexityDecisions", "PerplexityDecisions", "perplexity"),
     "portkey": ("agno.models.portkey", "Portkey", "Portkey", "portkey"),
     "ramp": ("agno.models.ramp", "RampRouter", "RampRouter", "ramprouter"),
     "requesty": ("agno.models.requesty", "Requesty", "Requesty", "requesty"),
@@ -74,6 +77,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "siliconflow": ("agno.models.siliconflow", "Siliconflow", "Siliconflow", "siliconflow"),
     "synthorai": ("agno.models.synthorai", "Synthorai", "Synthorai", "synthorai"),
     "together": ("agno.models.together", "Together", "Together", "together"),
+    "typesafe": ("agno.models.typesafe", "Jev", "Jev", "typesafe"),
     "tokenlab": ("agno.models.tokenlab", "TokenLab", "TokenLab", "tokenlab"),
     "trustedrouter": ("agno.models.trustedrouter", "TrustedRouter", "TrustedRouter", "trustedrouter"),
     "tuning-engines": ("agno.models.tuning_engines", "TuningEngines", "Tuning Engines", "tuning engines"),
@@ -150,7 +154,7 @@ def _resolve_provider_key(model_provider: Optional[str], model_name: Optional[st
     return provider_key
 
 
-def _get_model_class(model_id: str, model_provider: str) -> Model:
+def _get_model_class(model_id: str, model_provider: str) -> Union[Model, DecisionModel]:
     entry = MODEL_PROVIDER_CLASSES.get(model_provider)
     if entry is None:
         # Allow alias forms (e.g. "azure", "inceptionlabs") to resolve too.
@@ -165,7 +169,7 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
     return model_class(id=model_id)
 
 
-def _parse_model_string(model_string: str) -> Model:
+def _parse_model_string(model_string: str) -> Union[Model, DecisionModel]:
     if not model_string or not isinstance(model_string, str):
         raise ValueError(f"Model string must be a non-empty string, got: {model_string}")
 
@@ -193,9 +197,20 @@ def _parse_model_string(model_string: str) -> Model:
 
 
 def get_model(model: Union[Model, str, None]) -> Optional[Model]:
+    resolved = get_agent_model(model)
+    if isinstance(resolved, DecisionModel):
+        raise ValueError(
+            f"{type(resolved).__name__} is a decision model; it can only be used as an Agent's `model`, "
+            "with an `output_schema`"
+        )
+    return resolved
+
+
+def get_agent_model(model: Union[Model, DecisionModel, str, None]) -> Optional[Union[Model, DecisionModel]]:
+    """Resolve an Agent's `model`, which unlike other model slots may be a decision model."""
     if model is None:
         return None
-    elif isinstance(model, Model):
+    elif isinstance(model, (Model, DecisionModel)):
         return model
     elif isinstance(model, str):
         return _parse_model_string(model)
@@ -203,7 +218,7 @@ def get_model(model: Union[Model, str, None]) -> Optional[Model]:
         raise ValueError("Model must be a Model instance, string, or None")
 
 
-def get_model_from_dict(model_data: Dict[str, Any]) -> Optional[Model]:
+def get_model_from_dict(model_data: Dict[str, Any]) -> Optional[Union[Model, DecisionModel]]:
     """Reconstruct a Model from its serialized dict (as produced by ``Model.to_dict``).
 
     Uses both the serialized ``provider`` and ``name`` to resolve the exact provider class,
@@ -242,5 +257,5 @@ def resolve_model(model_data: Any, registry: Optional["Registry"] = None) -> Any
                 return registered_model
         return get_model_from_dict(model_data)
     elif isinstance(model_data, str):
-        return get_model(model_data)
+        return get_agent_model(model_data)
     return model_data

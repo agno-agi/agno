@@ -104,13 +104,13 @@ class OpenAIDecisions(DecisionModel):
                 "type": "choice",
                 "name": name,
                 "instructions": question.instructions,
-                "choices": [_described("value", value, desc) for value, desc in question.options.items()],
+                "choices": [_described("value", value, desc) for value, desc in (question.options or {}).items()],
             }
         return {
             "type": "score",
             "name": name,
             "instructions": question.instructions,
-            "levels": [_described("label", label, desc) for label, desc in question.levels.items()],
+            "levels": [_described("label", label, desc) for label, desc in (question.levels or {}).items()],
         }
 
     def _parse_response(
@@ -140,7 +140,7 @@ class OpenAIDecisions(DecisionModel):
                     probabilities={str(p["value"]): float(p["probability"]) for p in answer["probabilities"]},
                     confidence=answer.get("confidence"),
                 )
-            labels = list(question.levels)
+            labels = list(question.levels or {})
             by_index = {int(p["value"]): float(p["probability"]) for p in answer["probabilities"]}
             probabilities = [by_index.get(i, 0.0) for i in range(len(labels))]
             return _score_answer(labels, probabilities, float(answer["score"]), answer.get("confidence"))

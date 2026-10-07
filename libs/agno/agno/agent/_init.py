@@ -21,7 +21,9 @@ if TYPE_CHECKING:
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb
 from agno.memory import MemoryManager
-from agno.models.utils import get_model
+from agno.models.base import Model
+from agno.models.decision.base import DecisionModel
+from agno.models.utils import get_agent_model, get_model
 from agno.session import SessionSummaryManager
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -81,6 +83,13 @@ def set_checkpoint(agent: Agent) -> None:
         )
 
 
+def chat_model(agent: Agent) -> Model:
+    """The agent's model on paths that generate text; a decision model never reaches them."""
+    if isinstance(agent.model, DecisionModel):
+        raise ValueError(f"{type(agent.model).__name__} is a decision model and cannot generate text")
+    return cast(Model, agent.model)
+
+
 def set_default_model(agent: Agent) -> None:
     # Use the default Model (OpenAIResponses) if no model is provided
     if agent.model is None:
@@ -101,10 +110,10 @@ def set_memory_manager(agent: Agent) -> None:
         log_warning("Database not provided. Memories will not be stored.")
 
     if agent.memory_manager is None:
-        agent.memory_manager = MemoryManager(model=agent.model, db=agent.db)
+        agent.memory_manager = MemoryManager(model=chat_model(agent), db=agent.db)
     else:
         if agent.memory_manager.model is None:
-            agent.memory_manager.model = agent.model
+            agent.memory_manager.model = chat_model(agent)
         if agent.memory_manager.db is None:
             agent.memory_manager.db = agent.db
 
@@ -142,7 +151,7 @@ def set_learning_machine(agent: Agent) -> None:
     # Handle learning=True: create default LearningMachine
     # Enables user_profile (structured fields) and user_memory (unstructured observations)
     if agent.learning is True:
-        agent._learning = LearningMachine(db=agent.db, model=agent.model, user_profile=True, user_memory=True)
+        agent._learning = LearningMachine(db=agent.db, model=chat_model(agent), user_profile=True, user_memory=True)
         return
 
     # Handle learning=LearningMachine(...): inject dependencies
@@ -150,7 +159,7 @@ def set_learning_machine(agent: Agent) -> None:
         if agent.learning.db is None:
             agent.learning.db = agent.db
         if agent.learning.model is None:
-            agent.learning.model = agent.model
+            agent.learning.model = chat_model(agent)
         if (
             agent.learning.learned_knowledge
             and agent.learning.knowledge is None
@@ -166,11 +175,11 @@ def set_learning_machine(agent: Agent) -> None:
 
 def set_session_summary_manager(agent: Agent) -> None:
     if agent.enable_session_summaries and agent.session_summary_manager is None:
-        agent.session_summary_manager = SessionSummaryManager(model=agent.model)
+        agent.session_summary_manager = SessionSummaryManager(model=chat_model(agent))
 
     if agent.session_summary_manager is not None:
         if agent.session_summary_manager.model is None:
-            agent.session_summary_manager.model = agent.model
+            agent.session_summary_manager.model = chat_model(agent)
 
     if agent.add_session_summary_to_context is None:
         agent.add_session_summary_to_context = (
@@ -181,11 +190,11 @@ def set_session_summary_manager(agent: Agent) -> None:
 def set_compression_manager(agent: Agent) -> None:
     if agent.compress_tool_results and agent.compression_manager is None:
         agent.compression_manager = CompressionManager(
-            model=agent.model,
+            model=chat_model(agent),
         )
 
     if agent.compression_manager is not None and agent.compression_manager.model is None:
-        agent.compression_manager.model = agent.model
+        agent.compression_manager.model = chat_model(agent)
 
     # Check compression flag on the compression manager
     if agent.compression_manager is not None and agent.compression_manager.compress_tool_results:
@@ -261,8 +270,8 @@ def get_models(agent: Agent) -> None:
     from agno.metrics import ModelType
 
     if agent.model is not None:
-        agent.model = get_model(agent.model)
-        if agent.model is not None:
+        agent.model = get_agent_model(agent.model)
+        if isinstance(agent.model, Model):
             agent.model.model_type = ModelType.MODEL
     if agent.reasoning_model is not None:
         agent.reasoning_model = get_model(agent.reasoning_model)
@@ -277,11 +286,16 @@ def get_models(agent: Agent) -> None:
         if agent.output_model is not None:
             agent.output_model.model_type = ModelType.OUTPUT_MODEL
 
+    if isinstance(agent.model, DecisionModel):
+        from agno.agent._decision import validate_decision_agent
+
+        validate_decision_agent(agent, agent.output_schema, require_schema=False)
+
     if agent.fallback_config is not None:
         agent.fallback_config.resolve_models()
 
     if agent.compression_manager is not None and agent.compression_manager.model is None:
-        agent.compression_manager.model = agent.model
+        agent.compression_manager.model = chat_model(agent)
 
 
 def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:

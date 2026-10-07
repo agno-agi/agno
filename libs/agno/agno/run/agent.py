@@ -292,6 +292,7 @@ class RunCompletedEvent(BaseAgentRunEvent):
     metadata: Optional[Dict[str, Any]] = None
     metrics: Optional[RunMetrics] = None
     session_state: Optional[Dict[str, Any]] = None
+    decisions: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -657,6 +658,9 @@ class RunOutput:
 
     followups: Optional[List[str]] = None
 
+    # Per-field answers with probabilities, set when the agent's model is a decision model
+    decisions: Optional[Dict[str, Any]] = None
+
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
 
@@ -747,6 +751,7 @@ class RunOutput:
         "references",
         "requirements",
         "followups",
+        "decisions",
     )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -794,6 +799,11 @@ class RunOutput:
 
         if self.followups is not None:
             _dict["followups"] = self.followups
+
+        if self.decisions is not None:
+            from agno.models.decision.types import answers_to_dict
+
+            _dict["decisions"] = answers_to_dict(self.decisions)
 
         if self.images is not None:
             _dict["images"] = []
@@ -943,6 +953,12 @@ class RunOutput:
         if references is not None:
             references = [MessageReferences.model_validate(reference) for reference in references]
 
+        decisions = data.pop("decisions", None)
+        if decisions is not None:
+            from agno.models.decision.types import answers_from_dict
+
+            decisions = answers_from_dict(decisions)
+
         # Filter data to only include fields that are actually defined in the RunOutput dataclass
         from dataclasses import fields
 
@@ -969,6 +985,7 @@ class RunOutput:
             reasoning_messages=reasoning_messages,
             references=references,
             requirements=requirements,
+            decisions=decisions,
             **filtered_data,
         )
 

@@ -129,10 +129,11 @@ class DecisionModel:
             if question.yes is not None and question.no is not None:
                 wire["criteria"] = {"true": question.yes, "false": question.no}
         elif isinstance(question, Choice):
-            wire["criteria"] = dict(question.options)
+            wire["criteria"] = dict(question.options or {})
         else:
             wire["criteria"] = [
-                f"{label}: {description}" if description else label for label, description in question.levels.items()
+                f"{label}: {description}" if description else label
+                for label, description in (question.levels or {}).items()
             ]
         return wire
 
@@ -163,7 +164,7 @@ class DecisionModel:
                     probabilities={str(k): float(v) for k, v in answer["probabilities"].items()},
                     confidence=answer.get("confidence"),
                 )
-            labels = list(question.levels)
+            labels = list(question.levels or {})
             probabilities = [float(answer["probabilities"].get(str(i), 0.0)) for i in range(len(labels))]
             return _score_answer(labels, probabilities, float(answer["score"]), answer.get("confidence"))
         except (KeyError, TypeError, ValueError) as e:
@@ -267,6 +268,7 @@ class DecisionModel:
                 if isinstance(question, (BinaryQuestion, Choice, Score))
                 else _question_adapter.validate_python(question)
             )
+            _check_complete(name, validated[name])
         return validated
 
     def _finish(
@@ -314,6 +316,15 @@ class DecisionModel:
                 log_warning(f"{self.get_provider()} error (attempt {attempt + 1}): {e}. Retrying in {delay}s")
                 await asyncio.sleep(delay)
         raise last_error  # type: ignore[misc]
+
+
+def _check_complete(name: str, question: Union[BinaryQuestion, Choice, Score]) -> None:
+    if not question.instructions:
+        raise ValueError(f"Question '{name}' needs `instructions`")
+    if isinstance(question, Choice) and question.options is None:
+        raise ValueError(f"Choice question '{name}' needs `options`")
+    if isinstance(question, Score) and question.levels is None:
+        raise ValueError(f"Score question '{name}' needs `levels`")
 
 
 def _score_answer(

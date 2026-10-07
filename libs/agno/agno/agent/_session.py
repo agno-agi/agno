@@ -17,6 +17,7 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.agent._init import chat_model
 from agno.db.base import SessionType
 from agno.metrics import SessionMetrics
 from agno.models.message import Message
@@ -574,7 +575,7 @@ def generate_session_name(agent: Agent, session: AgentSession, max_retries: int 
     generate_name_messages = [system_message, user_message]
 
     # Generate name
-    generated_name = agent.model.response(messages=generate_name_messages)
+    generated_name = chat_model(agent).response(messages=generate_name_messages)
     content = generated_name.content
     if content is None:
         if _attempt >= max_retries:

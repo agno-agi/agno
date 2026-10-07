@@ -8,6 +8,7 @@ from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalFilterType, EvalType
 from agno.exceptions import AgnoError
+from agno.models.base import Model
 from agno.models.utils import get_model
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import apply_scope_to_kwargs, get_scoped_user_id
@@ -450,7 +451,7 @@ def attach_routes(
             default_model = None
             if (
                 hasattr(agent, "model")
-                and agent.model is not None
+                and isinstance(agent.model, Model)
                 and eval_run_input.model_id is not None
                 and eval_run_input.model_provider is not None
             ):

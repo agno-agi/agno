@@ -48,3 +48,9 @@ Ask typed questions and get probabilities back with Perplexity's Decisions API.
 ```shell
 python cookbook/90_models/perplexity/decisions.py
 ```
+
+Run an Agent on Perplexity's Decisions API, filling an `output_schema`:
+
+```shell
+python cookbook/90_models/perplexity/decisions_agent.py
+```

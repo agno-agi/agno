@@ -22,6 +22,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.agent._init import chat_model
 from agno.agent._tools import result_store_kwargs
 from agno.exceptions import RunCancelledException
 from agno.media import Audio
@@ -1817,7 +1818,7 @@ def generate_followups(
     if not agent.followups or run_response.content is None:
         return
 
-    model = agent.followup_model or agent.model
+    model = agent.followup_model or chat_model(agent)
     if model is None:
         return
 
@@ -1848,7 +1849,7 @@ async def agenerate_followups(
     if not agent.followups or run_response.content is None:
         return
 
-    model = agent.followup_model or agent.model
+    model = agent.followup_model or chat_model(agent)
     if model is None:
         return
 
@@ -1880,7 +1881,7 @@ def generate_followups_stream(
     if not agent.followups or run_response.content is None:
         return
 
-    model = agent.followup_model or agent.model
+    model = agent.followup_model or chat_model(agent)
     if model is None:
         return
 
@@ -1928,7 +1929,7 @@ async def agenerate_followups_stream(
     if not agent.followups or run_response.content is None:
         return
 
-    model = agent.followup_model or agent.model
+    model = agent.followup_model or chat_model(agent)
     if model is None:
         return
 
