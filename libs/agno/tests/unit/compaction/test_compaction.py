@@ -1141,6 +1141,53 @@ def test_async_overflow_recovery_counts_with_the_token_counter_off_the_event_loo
     assert counted_on and all(thread is not threading.main_thread() for thread in counted_on)
 
 
+@pytest.mark.parametrize("use_async", [False, True])
+def test_the_token_counter_is_only_called_when_its_count_is_used(use_async):
+    """A token_counter is usually a network call. Without compact_at_tokens the trigger has nothing
+    to compare against, and a manual compact sizes its record with measure(), so neither may call
+    it - both used to, and threw the count away."""
+    import asyncio
+
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+
+    class _AsyncStub(_StubModel):
+        async def aresponse(self, messages, **kwargs):
+            return self.response(messages)
+
+    calls = []
+
+    def counter(messages, tools):
+        calls.append(len(messages))
+        return 10 * len(messages)
+
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=InMemoryDb(),
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(
+            compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, token_counter=counter, model=_AsyncStub()
+        ),
+    )
+
+    async def scenario():
+        for i in range(4):
+            await agent.arun(f"question number {i}")
+        return await agent.acompact(session_id="s")
+
+    if use_async:
+        result = asyncio.run(scenario())
+    else:
+        for i in range(4):
+            agent.run(f"question number {i}")
+        result = agent.compact(session_id="s")
+
+    assert result.compacted
+    assert result.record.tokens_before  # still sized, by measure()
+    assert calls == []
+
+
 def test_uncompacted_runs_and_uncompacted_tokens_are_mutually_exclusive():
     """Two settings claiming the same tail is a configuration nobody can reason about.
 

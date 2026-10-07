@@ -166,7 +166,7 @@ async def _arequest_tokens(compaction: Any, messages: List[Message], tools: Opti
     return await asyncio.to_thread(_request_tokens, compaction, messages, tools)
 
 
-def _log_compaction(record: Any, inputs: Dict[str, Any]) -> None:
+def _log_compaction(record: Any) -> None:
     """Report what one fold achieved. Sizes were measured when the record was built."""
     detail = f"Compacted {record.messages_compacted} messages"
     if record.tokens_before and record.tokens_after:
@@ -341,7 +341,6 @@ def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -
         return CompactionResult(status=status, message=reason)
 
     log_info("Compacting conversation history")
-    inputs = _compaction_inputs(agent, history)
     # No run to add the summarizer's usage to, so it is collected here and returned.
     run_metrics = RunMetrics()
     new_record = compaction.compact(
@@ -351,7 +350,6 @@ def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -
         user_id=session.user_id,
         previous=record,
         run_metrics=run_metrics,
-        tokens_before=inputs["context_tokens"],
     )
     metrics = run_metrics if run_metrics.details else None
     if new_record is None:
@@ -360,7 +358,7 @@ def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -
             message="The summarizer returned nothing, so history was left unchanged.",
             metrics=metrics,
         )
-    _log_compaction(new_record, inputs)
+    _log_compaction(new_record)
     return _compaction_result(new_record, metrics)
 
 
@@ -379,7 +377,6 @@ async def acompact_now(agent: "Agent", session: AgentSession, history: List[Mess
         return CompactionResult(status=status, message=reason)
 
     log_info("Compacting conversation history")
-    inputs = await _acompaction_inputs(agent, history)
     # No run to add the summarizer's usage to, so it is collected here and returned.
     run_metrics = RunMetrics()
     new_record = await compaction.acompact(
@@ -389,7 +386,6 @@ async def acompact_now(agent: "Agent", session: AgentSession, history: List[Mess
         user_id=session.user_id,
         previous=record,
         run_metrics=run_metrics,
-        tokens_before=inputs["context_tokens"],
     )
     metrics = run_metrics if run_metrics.details else None
     if new_record is None:
@@ -398,7 +394,7 @@ async def acompact_now(agent: "Agent", session: AgentSession, history: List[Mess
             message="The summarizer returned nothing, so history was left unchanged.",
             metrics=metrics,
         )
-    _log_compaction(new_record, inputs)
+    _log_compaction(new_record)
     return _compaction_result(new_record, metrics)
 
 
@@ -649,6 +645,10 @@ def apply_compaction(
     in_context = _replayed_view(compaction, history, record, replay_ids)
 
     prefix = context_prefix or []
+    # Size is the only automatic trigger. Without a threshold nothing would read a count, so none
+    # is taken - whatever does the counting, and some token_counters are a network call.
+    if compaction.compact_at_tokens is None:
+        return in_context
     inputs = _compaction_inputs(agent, prefix + in_context, tools)
     if not compaction.should_compact(in_context, **inputs):
         return in_context
@@ -683,7 +683,7 @@ def apply_compaction(
 
     compacted = compaction.apply_record(history, new_record)
     # Measure before storing, so the persisted record carries the real sizes.
-    _log_compaction(new_record, inputs)
+    _log_compaction(new_record)
     # Surface it on the run, so `run.compaction` reports what happened here.
     if run_response is not None:
         run_response.compaction = new_record
@@ -710,6 +710,10 @@ async def aapply_compaction(
     in_context = _replayed_view(compaction, history, record, replay_ids)
 
     prefix = context_prefix or []
+    # Size is the only automatic trigger. Without a threshold nothing would read a count, so none
+    # is taken - whatever does the counting, and some token_counters are a network call.
+    if compaction.compact_at_tokens is None:
+        return in_context
     inputs = await _acompaction_inputs(agent, prefix + in_context, tools)
     if not compaction.should_compact(in_context, **inputs):
         return in_context
@@ -742,7 +746,7 @@ async def aapply_compaction(
 
     compacted = compaction.apply_record(history, new_record)
     # Measure before storing, so the persisted record carries the real sizes.
-    _log_compaction(new_record, inputs)
+    _log_compaction(new_record)
     # Surface it on the run, so `run.compaction` reports what happened here.
     if run_response is not None:
         run_response.compaction = new_record
