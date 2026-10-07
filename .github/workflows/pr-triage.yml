@@ -85,7 +85,9 @@ jobs:
 
               // --- 2. Linked issues ---
               // closingIssuesReferences covers closing keywords (Fixes/Closes/Resolves #N),
-              // full issue URLs, and issues linked from the PR sidebar.
+              // full issue URLs, and issues linked from the PR sidebar, but GitHub only
+              // populates it for PRs targeting the default branch. Closing keywords in the
+              // body are also parsed so PRs against other branches are not treated as unlinked.
               let linkedIssues = null;
               try {
                 const { repository } = await github.graphql(`
@@ -105,8 +107,37 @@ jobs:
                   }
                 `, { owner, repo, number: prNumber });
                 linkedIssues = repository.pullRequest.closingIssuesReferences.nodes;
+
+                const bodyWithoutCode = body
+                  .replace(/```[\s\S]*?```/g, '')
+                  .replace(/`[^`\n]*`/g, '');
+                const closingRef = new RegExp(
+                  `\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\\s+(?:#|https://github\\.com/${owner}/${repo}/issues/)(\\d+)`,
+                  'gi',
+                );
+                const bodyRefs = new Set(
+                  [...bodyWithoutCode.matchAll(closingRef)].map(m => parseInt(m[1], 10))
+                );
+
+                for (const number of bodyRefs) {
+                  if (linkedIssues.some(i => i.number === number)) continue;
+                  try {
+                    const { data: issue } = await github.rest.issues.get({ owner, repo, issue_number: number });
+                    if (issue.pull_request) continue;
+                    linkedIssues.push({
+                      number: issue.number,
+                      createdAt: issue.created_at,
+                      labels: { nodes: issue.labels.map(l => ({ name: typeof l === 'string' ? l : l.name })) },
+                      assignees: { nodes: (issue.assignees || []).map(a => ({ login: a.login })) },
+                    });
+                  } catch (err) {
+                    // A reference to a non-existent issue does not count as a link
+                    if (err.status !== 404) throw err;
+                  }
+                }
               } catch (err) {
                 // Skip the issue-based checks rather than closing a PR on a transient API error
+                linkedIssues = null;
                 console.log(`Could not fetch linked issues: ${err.message}`);
               }
 
