@@ -5,6 +5,7 @@ import time
 from os import getenv
 from typing import Any, Dict, List, Optional
 
+import httpx
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
@@ -14,6 +15,15 @@ LARK_BASE_URL = "https://open.larksuite.com"
 
 # Refresh the tenant access token this many seconds before Feishu says it expires.
 _TOKEN_REFRESH_MARGIN_SECONDS = 60
+
+
+class FeishuAPIError(Exception):
+    """Feishu returned a business error (``code != 0``) in an otherwise successful HTTP response."""
+
+    def __init__(self, code: Any, msg: Any):
+        self.code = code
+        self.msg = msg
+        super().__init__(f"Feishu API error {code}: {msg}")
 
 
 class FeishuTools(Toolkit):
@@ -92,9 +102,25 @@ class FeishuTools(Toolkit):
         """Return a cached tenant access token, fetching a new one when missing or about to expire."""
         if self._tenant_access_token and time.time() < self._token_refresh_at:
             return self._tenant_access_token
-        # TODO: POST /open-apis/auth/v3/tenant_access_token/internal with app_id/app_secret,
-        # store `tenant_access_token` and set `_token_refresh_at = now + expire - margin`.
-        raise NotImplementedError("tenant_access_token fetch not implemented yet")
+
+        response = httpx.post(
+            f"{self.base_url}/open-apis/auth/v3/tenant_access_token/internal",
+            json={"app_id": self.app_id, "app_secret": self.app_secret},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        # Unlike the business APIs, the token endpoint puts its fields at the top level, not under "data".
+        if payload.get("code") != 0:
+            raise FeishuAPIError(payload.get("code"), payload.get("msg"))
+        token = payload.get("tenant_access_token")
+        if not token:
+            raise FeishuAPIError(payload.get("code"), "response did not include tenant_access_token")
+
+        expire = int(payload.get("expire") or 0)
+        self._tenant_access_token = token
+        self._token_refresh_at = time.time() + max(expire - _TOKEN_REFRESH_MARGIN_SECONDS, 0)
+        return token
 
     def _request(
         self,
@@ -107,9 +133,21 @@ class FeishuTools(Toolkit):
 
         Raises on HTTP errors and on Feishu business errors (``code != 0``).
         """
-        # TODO: build URL from base_url + path, add Authorization header, use self.timeout,
-        # raise_for_status(), then check payload["code"] == 0 and return payload.get("data", {}).
-        raise NotImplementedError("_request not implemented yet")
+        token = self._get_tenant_access_token()
+        response = httpx.request(
+            method,
+            f"{self.base_url}{path}",
+            params=params,
+            json=json_body,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=utf-8"},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("code") != 0:
+            raise FeishuAPIError(payload.get("code"), payload.get("msg"))
+        data = payload.get("data")
+        return data if isinstance(data, dict) else {}
 
     @staticmethod
     def _error(message: str) -> str:
@@ -131,7 +169,15 @@ class FeishuTools(Toolkit):
             JSON string with status and message_id.
         """
         try:
-            raise NotImplementedError("send_message not implemented yet")
+            data = self._request(
+                method="POST",
+                path="/open-apis/im/v1/messages",
+                params={"receive_id_type": receive_id_type or self.receive_id_type},
+                json_body={"receive_id": receive_id, "msg_type": "text", "content": json.dumps({"text": text})},
+            )
+            return json.dumps(
+                {"status": "success", "message_id": data.get("message_id"), "chat_id": data.get("chat_id")}
+            )
         except Exception as e:
             logger.exception("Error sending Feishu message")
             return self._error(str(e))
@@ -147,7 +193,12 @@ class FeishuTools(Toolkit):
             JSON string with status and message_id.
         """
         try:
-            raise NotImplementedError("reply_message not implemented yet")
+            data = self._request(
+                method="POST",
+                path=f"/open-apis/im/v1/messages/{message_id}/reply",
+                json_body={"msg_type": "text", "content": json.dumps({"text": text})},
+            )
+            return json.dumps({"status": "success", "message_id": data.get("message_id")})
         except Exception as e:
             logger.exception("Error replying to Feishu message")
             return self._error(str(e))
@@ -162,7 +213,8 @@ class FeishuTools(Toolkit):
             JSON string with status and deleted flag.
         """
         try:
-            raise NotImplementedError("delete_message not implemented yet")
+            self._request(method="DELETE", path=f"/open-apis/im/v1/messages/{message_id}")
+            return json.dumps({"status": "success", "deleted": True, "message_id": message_id})
         except Exception as e:
             logger.exception("Error deleting Feishu message")
             return self._error(str(e))
@@ -177,7 +229,8 @@ class FeishuTools(Toolkit):
             JSON string with status and chat info.
         """
         try:
-            raise NotImplementedError("get_chat not implemented yet")
+            data = self._request(method="GET", path=f"/open-apis/im/v1/chats/{chat_id}")
+            return json.dumps({"status": "success", **data})
         except Exception as e:
             logger.exception("Error getting Feishu chat")
             return self._error(str(e))
@@ -193,7 +246,17 @@ class FeishuTools(Toolkit):
             JSON string with status, items, has_more and page_token.
         """
         try:
-            raise NotImplementedError("list_chats not implemented yet")
+            data = self._request(
+                method="GET", path="/open-apis/im/v1/chats", params={"page_size": page_size, "page_token": page_token}
+            )
+            return json.dumps(
+                {
+                    "status": "success",
+                    "items": data.get("items"),
+                    "has_more": data.get("has_more"),
+                    "page_token": data.get("page_token"),
+                }
+            )
         except Exception as e:
             logger.exception("Error listing Feishu chats")
             return self._error(str(e))
@@ -209,7 +272,10 @@ class FeishuTools(Toolkit):
             JSON string with status and user info.
         """
         try:
-            raise NotImplementedError("get_user not implemented yet")
+            data = self._request(
+                method="GET", path=f"/open-apis/contact/v3/users/{user_id}", params={"user_id_type": user_id_type}
+            )
+            return json.dumps({"status": "success", "user": data.get("user")})
         except Exception as e:
             logger.exception("Error getting Feishu user")
             return self._error(str(e))
