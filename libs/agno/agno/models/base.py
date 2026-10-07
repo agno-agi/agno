@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from agno.offload.store import ResultStore
 from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, PydanticUserError
 
 from agno.exceptions import (
     AgentRunException,
@@ -467,7 +467,11 @@ class Model(ABC):
         def _cache_default(obj: Any) -> Any:
             if isinstance(obj, type):
                 if issubclass(obj, BaseModel):
-                    return obj.model_json_schema()
+                    try:
+                        return obj.model_json_schema()
+                    except PydanticUserError:
+                        # Some models (e.g. arbitrary types, Callable fields) have no JSON schema
+                        return f"{obj.__module__}.{obj.__qualname__}"
                 return obj.__name__
             if hasattr(obj, "model_dump"):
                 return obj.model_dump()

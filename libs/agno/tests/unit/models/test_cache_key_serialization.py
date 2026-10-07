@@ -8,10 +8,11 @@ Regression test for: https://github.com/agno-agi/agno/issues/7126
 
 import json
 import os
+from typing import Callable
 
 import httpx
 import pytest
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, ConfigDict, create_model
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
@@ -76,6 +77,22 @@ class TestCacheKeySerialization:
         assert self.model._get_model_cache_key(
             self.messages, stream=stream, response_format=first_format
         ) == self.model._get_model_cache_key(self.messages, stream=stream, response_format=equivalent_format)
+
+    def test_response_format_without_json_schema_falls_back_to_qualified_name(self):
+        class Custom:
+            pass
+
+        class CustomOutput(BaseModel):
+            model_config = ConfigDict(arbitrary_types_allowed=True)
+            value: Custom
+
+        class CallableOutput(BaseModel):
+            handler: Callable
+
+        custom_key = self.model._get_model_cache_key(self.messages, stream=False, response_format=CustomOutput)
+        callable_key = self.model._get_model_cache_key(self.messages, stream=False, response_format=CallableOutput)
+
+        assert custom_key != callable_key
 
 
 @pytest.mark.asyncio
