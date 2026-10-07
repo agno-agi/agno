@@ -1,4 +1,5 @@
 import asyncio
+import re
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
@@ -1035,7 +1036,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 else:
                     query["created_at"] = {"$lte": end_timestamp}
             if session_name is not None:
-                query["session_data.session_name"] = {"$regex": session_name, "$options": "i"}
+                query["session_data.session_name"] = {"$regex": re.escape(session_name), "$options": "i"}
 
             # Get total count
             total_count = await collection.count_documents(query)
@@ -1598,7 +1599,7 @@ class AsyncMongoDb(AsyncBaseDb):
             if topics is not None:
                 query["topics"] = {"$in": topics}
             if search_content is not None:
-                query["memory"] = {"$regex": search_content, "$options": "i"}
+                query["memory"] = {"$regex": re.escape(search_content), "$options": "i"}
 
             # Get total count
             total_count = await collection.count_documents(query)
