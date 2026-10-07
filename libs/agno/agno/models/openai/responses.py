@@ -801,7 +801,11 @@ class OpenAIResponses(Model):
             elif message.role == "assistant":
                 # Handle null content by converting to empty string
                 content = message.content if message.content is not None else ""
-                formatted_messages.append({"role": self.role_map[message.role], "content": content})
+                assistant_input: Dict[str, Any] = {"role": self.role_map[message.role], "content": content}
+                # Resend the phase the model assigned to this message
+                if message.provider_data is not None and message.provider_data.get("phase") is not None:
+                    assistant_input["phase"] = message.provider_data["phase"]
+                formatted_messages.append(assistant_input)
 
         return formatted_messages
 
@@ -1348,11 +1352,22 @@ class OpenAIResponses(Model):
         # Add role
         model_response.role = "assistant"
         reasoning_summary: Optional[str] = None
+        message_phase: Optional[str] = None
+        final_answer: Optional[str] = None
 
         for output in response.output:
             # Add content
             if output.type == "message":
                 model_response.content = response.output_text
+
+                # Newer models label each message as "commentary" (a draft or preamble) or "final_answer"
+                phase = getattr(output, "phase", None)
+                if phase is not None:
+                    message_phase = phase
+                    if phase == "final_answer":
+                        text = "".join(content.text for content in output.content if content.type == "output_text")
+                        if text:
+                            final_answer = text
 
                 # Add citations
                 citations = Citations()
@@ -1403,6 +1418,16 @@ class OpenAIResponses(Model):
                             summary_text = getattr(summary, "text", None)
                         if summary_text:
                             reasoning_summary = (reasoning_summary or "") + summary_text
+
+        # Keep commentary out of the content when the response has a final answer,
+        # and store the phase so it is sent back with the assistant message in history
+        if final_answer is not None:
+            model_response.content = final_answer
+            message_phase = "final_answer"
+        if message_phase is not None:
+            if model_response.provider_data is None:
+                model_response.provider_data = {}
+            model_response.provider_data["phase"] = message_phase
 
         # Add reasoning content
         if reasoning_summary is not None:
