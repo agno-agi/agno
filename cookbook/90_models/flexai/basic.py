@@ -1,7 +1,6 @@
 """
 FlexAI Basic
 ============
-
 Cookbook example for FlexAI, OpenAILike model provider.
 """
 
