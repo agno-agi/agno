@@ -4632,6 +4632,47 @@ async def test_the_event_buffer_does_not_advertise_a_cancelled_run_as_paused(tmp
 
 
 @pytest.mark.asyncio
+async def test_a_fork_of_a_paused_object_over_a_cancelled_row_leaves_the_cancelled_run_alone(tmp_path):
+    """The dispatch refuses only when the run it continues is cancelled, so a fork of a
+    paused object forks even when the stored row is cancelled. The fork streams under its
+    own id; the cancelled run's buffer key must never be written."""
+    from agno.os.managers import event_buffer
+
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "cancelled_row_fork.db")
+    session_id = "s-cancelled-row-fork"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+
+    db = SqliteDb(db_file=db_file)
+    _set_stored_team_run_status(db, session_id, run1.run_id, RunStatus.cancelled)
+
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    async for _ in team2.acontinue_run(
+        run_response=run1,
+        session_id=session_id,
+        fork=True,
+        stream=True,
+        stream_events=True,
+        background=True,
+    ):
+        pass
+    await _drain_background_tasks()
+
+    runs = _reload_runs(db_file, session_id)
+    assert [r.status for r in runs if r.run_id == run1.run_id] == [RunStatus.cancelled]
+    forks = [r for r in runs if r.forked_from_run_id == run1.run_id]
+    assert len(forks) == 1, "the continue was expected to fork the paused object"
+    assert event_buffer.get_run_status(run1.run_id) is None, (
+        f"the cancelled run's buffer key was written: {event_buffer.get_run_status(run1.run_id)!r}"
+    )
+    assert event_buffer.get_run_status(forks[0].run_id) is not None
+
+
+@pytest.mark.asyncio
 async def test_a_refusal_over_a_running_run_never_advertises_running(tmp_path):
     """A refusal while another continue holds the run must not record RUNNING
     as the buffer's final status: /resume treats RUNNING as in-flight and waits
@@ -5274,9 +5315,9 @@ async def test_a_background_fork_does_not_restamp_the_original_runs_buffer(tmp_p
     await _drain_background_tasks()
 
     buffer_status = event_buffer.get_run_status(run1.run_id)
-    assert buffer_status == RunStatus.completed, (
-        f"the original completed run's buffer entry took the fork's status: {buffer_status!r}"
-    )
+    assert buffer_status is None, f"the original completed run's buffer entry took the fork's status: {buffer_status!r}"
+    fork = [r for r in _reload_runs(db_file, session_id) if r.forked_from_run_id == run1.run_id][0]
+    assert event_buffer.get_run_status(fork.run_id) == RunStatus.paused
 
 
 @pytest.mark.asyncio
@@ -5311,9 +5352,11 @@ async def test_a_run_id_auto_fork_does_not_restamp_the_original_runs_buffer(tmp_
     await _drain_background_tasks()
 
     buffer_status = event_buffer.get_run_status(run1.run_id)
-    assert buffer_status == RunStatus.completed, (
+    assert buffer_status is None, (
         f"the original completed run's buffer entry took the auto-fork's status: {buffer_status!r}"
     )
+    fork = [r for r in _reload_runs(db_file, session_id) if r.forked_from_run_id == run1.run_id][0]
+    assert event_buffer.get_run_status(fork.run_id) == RunStatus.paused
 
 
 class _BoomModel(_ScriptedModel):
@@ -5892,8 +5935,8 @@ def test_a_reclaimed_paused_buffer_keeps_its_event_index():
 
 @pytest.mark.asyncio
 async def test_a_background_fork_from_a_stale_object_keeps_the_originals_buffer_status(tmp_path):
-    """A fork's bookkeeping under the original run's key reflects the original
-    run's stored status, not the stale caller object's."""
+    """A fork's bookkeeping lives under the fork's own key; the stale caller
+    object never reaches the original run's key."""
     from agno.os.managers import event_buffer
 
     _EXECUTED.clear()
@@ -5924,10 +5967,12 @@ async def test_a_background_fork_from_a_stale_object_keeps_the_originals_buffer_
 
     assert [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0].status == RunStatus.completed
     buffer_status = event_buffer.get_run_status(run1.run_id)
-    assert buffer_status == RunStatus.completed, (
+    assert buffer_status is None, (
         f"the completed original is advertised as {buffer_status!r} because the stale object leaked into "
         "the fork's bookkeeping"
     )
+    fork = [r for r in _reload_runs(db_file, session_id) if r.forked_from_run_id == run1.run_id][0]
+    assert event_buffer.get_run_status(fork.run_id) == RunStatus.paused
 
 
 def test_a_paused_buffer_entry_reused_by_a_continue_is_not_reclaimed():

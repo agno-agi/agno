@@ -96,6 +96,7 @@ from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import TeamRunOutput
+from agno.run.utils import is_forking_continue
 from agno.team.factory import TeamFactory
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
@@ -417,6 +418,7 @@ async def team_continue_response_streamer(
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
     queue_worker: Optional[Any] = None,
+    take_over_in_place: Optional[bool] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     """Continue a paused team run and yield streaming response."""
@@ -449,19 +451,42 @@ async def team_continue_response_streamer(
         # mint a NEW run_id; publishing under the original would corrupt
         # it). fork/regenerate ride **kwargs here - the streamer has no
         # typed params for them (agent-streamer parity gate).
-        _sync_stream = not isinstance(team, RemoteTeam) and not kwargs.get("fork") and not kwargs.get("regenerate")
-        if _sync_stream:
+        # An auto-fork (continuing a COMPLETED run) is invisible to this gate. The
+        # route decides from the stored row (take_over_in_place, as the background
+        # streamer does); with no row read, the opening chunk's run_id decides.
+        _sync_stream = (
+            not isinstance(team, RemoteTeam)
+            and not kwargs.get("fork")
+            and not kwargs.get("regenerate")
+            and take_over_in_place is not False
+        )
+        _stream_opened = False
+        if _sync_stream and take_over_in_place:
             await amark_continue_stream_running(run_id, component=team, session_id=session_id, user_id=user_id)
+            _stream_opened = True
+        _first_chunk_seen = False
         try:
             async for run_response_chunk in continue_response:
                 if _is_run_output_accumulator(run_response_chunk):
                     continue
+                if _sync_stream and not _first_chunk_seen:
+                    _first_chunk_seen = True
+                    _executing_run_id = getattr(run_response_chunk, "run_id", None)
+                    if _executing_run_id and _executing_run_id != run_id:
+                        # The leg executes under another id, so its events must not
+                        # land under the source key.
+                        _sync_stream = False
+                    elif not _stream_opened:
+                        await amark_continue_stream_running(
+                            run_id, component=team, session_id=session_id, user_id=user_id
+                        )
+                        _stream_opened = True
                 if _sync_stream and not isinstance(run_response_chunk, TeamRunOutput):
                     with contextlib.suppress(Exception):
                         await get_event_stream().add_event(run_id, run_response_chunk)
                 yield format_sse_event(run_response_chunk)  # type: ignore
         finally:
-            if _sync_stream:
+            if _stream_opened:
                 # Stream close + paused-ticket settle as one cancellation-
                 # proof unit; under cancellation the final status is KNOWN -
                 # see the agents twin for both hazards
@@ -1483,8 +1508,17 @@ def get_team_router(
         # THAT version, not whatever is published/current now. No stamp
         # (legacy or unpinned runs) keeps today's resolution. Factories build
         # per-request and remote teams resolve remotely, so both are exempt.
+        take_over_in_place: Optional[bool] = None
         if not factory and not isinstance(team, RemoteTeam):
             stamped_run = await team.aget_run_output(run_id, session_id=session_id, user_id=user_id)
+            # The dispatch's own fork rule, from the same row: a forking continue
+            # runs under a new id and a CANCELLED run is refused, so neither owns
+            # this run's id. A missing row is left undecided so the streamer never
+            # registers a key the dispatch is about to refuse.
+            if stamped_run is not None:
+                take_over_in_place = stamped_run.status != RunStatus.cancelled and not is_forking_continue(
+                    stamped_run.status, fork=fork, regenerate=regenerate
+                )
             stamped_version = stamped_component_version(stamped_run)
             if stamped_version is not None:
                 # Re-run the run-start preview gate before trusting the stamp:
@@ -1684,6 +1718,7 @@ def get_team_router(
                     background_tasks=background_tasks,
                     auth_token=auth_token,
                     queue_worker=getattr(request.app.state, "queue_worker", None),
+                    take_over_in_place=take_over_in_place,
                     **kwargs,
                 ),
                 media_type="text/event-stream",
