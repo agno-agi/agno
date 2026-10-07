@@ -342,10 +342,10 @@ jobs:
 
                 comment += '\n\n---\n\n';
                 comment += `**This PR has been automatically closed** because ${joined}. `;
-                comment += 'Once you have addressed the points above, you can reopen this PR. ';
-                comment += `If the linked issue still needs triage, wait until a maintainer marks it \`${READY_LABEL}\`. `;
-                comment += 'Please do not delete or force-push the branch in the meantime, otherwise the PR cannot be reopened. ';
-                comment += 'A maintainer can also reopen it directly.';
+                comment += 'Only a maintainer can reopen it. ';
+                comment += `Once you have addressed the points above (for example, a maintainer has marked the linked issue \`${READY_LABEL}\`), `;
+                comment += 'leave a comment on this PR and a maintainer will review it for reopening. ';
+                comment += 'Please do not delete or force-push the branch in the meantime, otherwise the PR cannot be reopened.';
               }
 
               await github.rest.issues.createComment({
