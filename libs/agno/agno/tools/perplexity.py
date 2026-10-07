@@ -72,6 +72,7 @@ class PerplexitySearch(Toolkit):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "X-Source": "agno",
+            "X-Pplx-Integration": "agno",
         }
 
         body: Dict[str, Any] = {
@@ -131,6 +132,7 @@ class PerplexitySearch(Toolkit):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "X-Source": "agno",
+            "X-Pplx-Integration": "agno",
         }
 
         body: Dict[str, Any] = {

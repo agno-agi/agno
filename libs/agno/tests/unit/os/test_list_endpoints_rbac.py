@@ -38,11 +38,16 @@ def harness(tmp_path, monkeypatch):
         return await call_next(request)
 
     # The caller's scope: registry components visible, db-* components not
-    def scoped_filter(request, resources, resource_type):
+    # The list endpoints await the async twins (the provider's I/O runs off the loop), so those
+    # are what a scoped caller must be simulated on.
+    async def scoped_filter(request, resources, resource_type):
         return [r for r in resources if not str(getattr(r, "id", "")).startswith("db-")]
 
-    monkeypatch.setattr("agno.os.auth.filter_resources_by_access", scoped_filter)
-    monkeypatch.setattr("agno.os.auth.get_accessible_resources", lambda request, kind: {"reg"})
+    async def scoped_ids(request, kind):
+        return {"reg"}
+
+    monkeypatch.setattr("agno.os.auth.afilter_resources_by_access", scoped_filter)
+    monkeypatch.setattr("agno.os.auth.aget_accessible_resources", scoped_ids)
 
     # The DB hands back one out-of-scope component per type
     monkeypatch.setattr(
