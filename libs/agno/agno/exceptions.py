@@ -191,6 +191,35 @@ class ModelProviderError(AgnoError):
 
         return error
 
+    @classmethod
+    def is_retryable(cls, error: "ModelProviderError") -> bool:
+        """Determine if an error is worth retrying.
+
+        Non-retryable errors include:
+        - ContextWindowExceededError (fast path after ModelProviderError.classify)
+        - Client errors (400, 401, 403, 404, 413, 422) that won't change on retry
+        - Context window/token limit patterns in error message (defense-in-depth)
+
+        Retryable errors include:
+        - Rate limit errors (429)
+        - Server errors (500, 502, 503, 504)
+        - Anything else not explicitly non-retryable
+        """
+        # Fast path: already classified by ModelProviderError.classify()
+        if isinstance(error, ContextWindowExceededError):
+            return False
+
+        non_retryable_codes = {400, 401, 403, 404, 413, 422}
+        if error.status_code in non_retryable_codes:
+            return False
+
+        # Defense-in-depth: catch context window errors even if not pre-classified
+        error_msg = str(error.message).lower()
+        if any(pattern in error_msg for pattern in cls.CONTEXT_WINDOW_PATTERNS):
+            return False
+
+        return True
+
 
 class ModelRateLimitError(ModelProviderError):
     """Exception raised when a model provider returns a rate limit error."""

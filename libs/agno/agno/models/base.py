@@ -33,7 +33,6 @@ from pydantic import BaseModel
 
 from agno.exceptions import (
     AgentRunException,
-    ContextWindowExceededError,
     ModelProviderError,
     RetryableModelProviderError,
     RunCancelledException,
@@ -197,32 +196,8 @@ class Model(ABC):
         return self.delay_between_retries
 
     def _is_retryable_error(self, error: ModelProviderError) -> bool:
-        """Determine if an error is worth retrying.
-
-        Non-retryable errors include:
-        - ContextWindowExceededError (fast path after ModelProviderError.classify)
-        - Client errors (400, 401, 403, 404, 413, 422) that won't change on retry
-        - Context window/token limit patterns in error message (defense-in-depth)
-
-        Retryable errors include:
-        - Rate limit errors (429)
-        - Server errors (500, 502, 503, 504)
-        - Anything else not explicitly non-retryable
-        """
-        # Fast path: already classified by ModelProviderError.classify()
-        if isinstance(error, ContextWindowExceededError):
-            return False
-
-        non_retryable_codes = {400, 401, 403, 404, 413, 422}
-        if error.status_code in non_retryable_codes:
-            return False
-
-        # Defense-in-depth: catch context window errors even if not pre-classified
-        error_msg = str(error.message).lower()
-        if any(pattern in error_msg for pattern in ModelProviderError.CONTEXT_WINDOW_PATTERNS):
-            return False
-
-        return True
+        """Determine if an error is worth retrying. See ModelProviderError.is_retryable."""
+        return ModelProviderError.is_retryable(error)
 
     def _invoke_with_retry(self, **kwargs) -> ModelResponse:
         """
