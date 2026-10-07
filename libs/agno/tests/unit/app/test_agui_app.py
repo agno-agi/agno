@@ -1918,7 +1918,7 @@ async def test_state_delta_after_tool_call():
 
     # Verify the delta contains the right operations
     delta_event = events[delta_idx]
-    delta_paths = [op["path"] for op in delta_event.delta]
+    delta_paths = [op["path"] if isinstance(op, dict) else op.path for op in delta_event.delta]
     assert "/counter" in delta_paths
     assert "/status" in delta_paths
 
@@ -1982,7 +1982,8 @@ async def test_a_completion_carries_its_calls_own_result_whether_it_succeeded_or
         EventType.RUN_FINISHED,
     ], [event.type for event in events]
     assert json.loads(events[5].content) == result
-    assert [op["path"] for op in events[6].delta] == ["/counter"], events[6].delta
+    delta_paths = [op["path"] if isinstance(op, dict) else op.path for op in events[6].delta]
+    assert delta_paths == ["/counter"], events[6].delta
 
 
 @pytest.mark.asyncio

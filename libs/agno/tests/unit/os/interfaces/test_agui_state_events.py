@@ -176,7 +176,7 @@ class TestAgentStateSnapshot:
         assert "STATE_DELTA" not in types
         assert "RUN_FINISHED" in types
 
-    def test_no_state_events_when_state_omitted(self, agent_client):
+    def test_no_state_events_without_state(self, agent_client):
         client, agent = agent_client
 
         async def mock_stream() -> AsyncIterator[RunOutputEvent]:
@@ -188,16 +188,7 @@ class TestAgentStateSnapshot:
             "arun",
         ) as mock_arun:
             mock_arun.return_value = mock_stream()
-            # No state field at all
-            body = {
-                "threadId": "test-thread",
-                "runId": "test-run",
-                "messages": [{"id": "msg-1", "role": "user", "content": "Hi"}],
-                "tools": [],
-                "context": [],
-                "forwardedProps": {},
-            }
-            response = client.post("/agui", json=body)
+            response = client.post("/agui", json=make_request_body("Hi", state=None))
 
         events = parse_sse_events(response.text)
         types = get_event_types(events)
