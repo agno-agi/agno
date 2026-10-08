@@ -26,8 +26,8 @@
 
 **Status:** PASS
 
-**Description:** Runs two cases against a booking agent whose tools read `session_state`, with `session_state` and `user_id` set on the agent. The first case asks for open slots in a generated session. The second sets `session_id`, runs the first turn of the conversation in its `setup` hook, picks a slot, and deletes the session in `teardown`. Exercised a full run with `--json-output` and `--name books_the_chosen_slot`.
+**Description:** Runs four cases against a booking agent whose tools read `session_state`. The first passes `session_state` and `user_id` on the case and asks for open slots. The second sets `session_id` and `user_id`, runs the first turn of the conversation in its `setup` hook, picks a slot, and deletes the session in `teardown`. The third passes no run arguments. The fourth gives a `Message` with an image (by URL) as the input, with `session_state` and `user_id`. Exercised a full run with `--json-output` and `--name books_the_chosen_slot`.
 
-**Result:** 2/2 cases passed with exit code 0 (1/1 with `--name books_the_chosen_slot`). The first case kept a generated `eval-offers_open_slots-<hex>` session with `tools_called: ["get_open_slots"]`; the second reported `session_id: "booking-1"` with `tools_called: ["create_appointment"]`.
+**Result:** 4/4 cases passed with exit code 0 (1/1 with `--name books_the_chosen_slot`). The first case reported `tools_called: ["get_open_slots"]` in a generated `eval-offers_open_slots-<hex>` session; the second reported `session_id: "booking-1"` with `tools_called: ["create_appointment"]`; the third offered no slots; the fourth named the Golden Gate Bridge and offered both slots with `tools_called: ["get_open_slots"]`.
 
 ---

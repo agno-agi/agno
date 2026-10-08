@@ -6,7 +6,7 @@ Suite examples run multiple eval cases as one aggregated suite with tag selectio
 
 - `suite_basic.py` - Two cases (judge + reliability checks) run through the built-in `cli()`.
 - `suite_team_scoring.py` - A Team run through the suite (the leader delegates to a calculator member and a writer member); reliability sees the members' tool calls, and every answer is graded by a numeric 1-10 judge.
-- `suite_session.py` - Session state set on the agent, and a case that continues a session (`session_id`) whose earlier turn runs in its `setup` hook, to check a two-turn booking conversation.
+- `suite_session.py` - Cases that pass `session_state` and `user_id` to the run, and a case that continues a session (`session_id`) whose earlier turn runs in its `setup` hook, to check a two-turn booking conversation; the last case sends an image with its turn by giving a `Message` as the input.
 
 ## Usage
 

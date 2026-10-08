@@ -2,8 +2,8 @@
 Eval Suite: Session State and Multi-Turn Cases
 ==============================================
 
-Give the agent its session state, and continue one session across several turns
-to check a multi-turn conversation.
+Pass session_state and user_id to the run, continue one session across several
+turns to check a multi-turn conversation, and send an image with a turn.
 
 python cookbook/09_evals/suite/suite_session.py                 # run all cases
 python cookbook/09_evals/suite/suite_session.py --list          # list cases
@@ -17,6 +17,8 @@ from typing import Any
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.eval import Case, CaseResult, cli
+from agno.media import Image
+from agno.models.message import Message
 from agno.models.openai import OpenAIResponses
 from agno.run import RunContext, RunStatus
 
@@ -51,14 +53,12 @@ def create_appointment(run_context: RunContext, slot: str, name: str) -> str:
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
-# session_state and user_id are set on the agent; the db and history let a turn read earlier turns.
+# The db and add_history_to_context let a turn read the earlier turns of its session.
 agent = Agent(
     id="sales-setter",
     model=OpenAIResponses(id="gpt-5.5"),
     db=InMemoryDb(),
     add_history_to_context=True,
-    session_state={"calendar_id": "cal-1", "timezone": "UTC"},
-    user_id="lead-42",
     tools=[get_open_slots, create_appointment],
     instructions=[
         "You book sales calls. Use get_open_slots to offer times.",
@@ -70,6 +70,7 @@ agent = Agent(
 # Create Hooks
 # ---------------------------------------------------------------------------
 booking_session_id = "booking-1"
+calendar = {"calendar_id": "cal-1", "timezone": "UTC"}
 
 
 async def run_earlier_turns() -> None:
@@ -77,6 +78,9 @@ async def run_earlier_turns() -> None:
     run_output = await agent.arun(
         "Hi, I'm Priya. I'd like to book a call. What times do you have?",
         session_id=booking_session_id,
+        user_id="lead-42",
+        # Copied: the run writes into the session_state it is handed
+        session_state=dict(calendar),
     )
     # A failed run is returned, not raised
     if run_output.status != RunStatus.completed:
@@ -85,13 +89,14 @@ async def run_earlier_turns() -> None:
 
 async def delete_booking_session(context: Any, result: CaseResult) -> None:
     """Remove the session so a db that outlives the process starts the next run clean."""
-    await agent.adelete_session(session_id=booking_session_id)
+    await agent.adelete_session(session_id=booking_session_id, user_id="lead-42")
 
 
 # ---------------------------------------------------------------------------
 # Declare Cases
 # ---------------------------------------------------------------------------
-# The second case continues the session its setup hook started.
+# The second case continues the session its setup hook started. The last case sends an
+# image with its turn by giving a Message as the input.
 CASES = (
     Case(
         name="offers_open_slots",
@@ -99,6 +104,8 @@ CASES = (
         input="Hi, I'm Priya. I'd like to book a call. What times do you have?",
         criteria="Offers Tuesday 10:00 and Wednesday 15:00.",
         expected_tool_calls=("get_open_slots",),
+        user_id="lead-42",
+        session_state=calendar,
     ),
     Case(
         name="books_the_chosen_slot",
@@ -109,6 +116,30 @@ CASES = (
         setup=run_earlier_turns,
         teardown=delete_booking_session,
         session_id=booking_session_id,
+        user_id="lead-42",
+    ),
+    Case(
+        name="no_calendar_no_slots",
+        agent=agent,
+        input="What times do you have for a call?",
+        criteria="Does not offer any specific time slot.",
+    ),
+    Case(
+        name="offers_slots_for_the_pictured_venue",
+        agent=agent,
+        input=Message(
+            role="user",
+            content="I'd like to book a call about a tour of this landmark. Which one is it, and what times do you have?",
+            images=[
+                Image(
+                    url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
+                )
+            ],
+        ),
+        criteria="Names the Golden Gate Bridge and offers Tuesday 10:00 and Wednesday 15:00.",
+        expected_tool_calls=("get_open_slots",),
+        user_id="lead-42",
+        session_state=calendar,
     ),
 )
 

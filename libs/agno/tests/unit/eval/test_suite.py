@@ -50,11 +50,36 @@ class StubAgent:
         self._emit_output = emit_output
         self.run_count = 0
         self.session_ids = []
+        self.inputs = []
+        self.run_arguments = []
         self.loops = []
 
-    async def arun(self, *, input, stream, stream_events, yield_run_output, session_id):
+    async def arun(
+        self,
+        *,
+        input,
+        stream,
+        stream_events,
+        yield_run_output,
+        session_id,
+        user_id,
+        session_state,
+        dependencies,
+        metadata,
+        knowledge_filters,
+    ):
         self.run_count += 1
         self.session_ids.append(session_id)
+        self.inputs.append(input)
+        self.run_arguments.append(
+            {
+                "user_id": user_id,
+                "session_state": session_state,
+                "dependencies": dependencies,
+                "metadata": metadata,
+                "knowledge_filters": knowledge_filters,
+            }
+        )
         self.loops.append(asyncio.get_running_loop())
         if self._error is not None:
             raise self._error
@@ -1779,7 +1804,8 @@ def test_case_positional_construction_unchanged():
     assert case.setup is setup_fn
     assert case.teardown is teardown_fn
     assert case.scorer is None and case.expected is None
-    assert case.session_id is None
+    assert case.session_id is None and case.user_id is None and case.session_state is None
+    assert case.dependencies is None and case.metadata is None and case.knowledge_filters is None
 
 
 def test_case_result_positional_construction_unchanged():
@@ -1818,7 +1844,8 @@ def test_case_and_case_result_type_hints_resolve():
 
 
 # ---------------------------------------------------------------------------
-# Case session (session_id)
+# Run arguments (session_id, user_id, session_state, dependencies, metadata, knowledge_filters)
+# and Message input
 # ---------------------------------------------------------------------------
 
 
@@ -1851,12 +1878,77 @@ def test_cases_sharing_a_session_id_run_in_the_same_session(monkeypatch):
     assert [result.session_id for result in results] == agent.session_ids
 
 
-def test_team_case_runs_in_the_given_session(monkeypatch):
+def test_run_arguments_are_forwarded_to_the_run(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    agent = StubAgent()
+    run_arguments = {
+        "user_id": "lead-42",
+        "session_state": {"calendar_id": "cal-1"},
+        "dependencies": {"plan": "pro"},
+        "metadata": {"source": "eval"},
+        "knowledge_filters": {"team": "alpha"},
+    }
+
+    run_cases([_make_case(agent=agent, **run_arguments)])
+
+    assert agent.run_arguments == [run_arguments]
+
+
+def test_run_arguments_default_to_none(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    agent = StubAgent()
+
+    run_cases([_make_case(agent=agent)])
+
+    assert agent.run_arguments == [
+        dict.fromkeys(("user_id", "session_state", "dependencies", "metadata", "knowledge_filters"))
+    ]
+
+
+def test_session_state_is_copied_for_each_run(monkeypatch):
+    # A run writes into the session_state it is handed; the case keeps its declared
+    # state so a second run of the same case starts from it.
+    _install_fake_evals(monkeypatch)
+
+    class MutatingAgent(StubAgent):
+        async def arun(self, *, session_state, **kwargs):
+            async for event in super().arun(session_state=session_state, **kwargs):
+                yield event
+            session_state["contact"]["booked"] = True
+
+    agent = MutatingAgent()
+    case = _make_case(agent=agent, session_state={"contact": {"id": "c-1"}})
+
+    run_cases([case])
+    run_cases([case])
+
+    assert case.session_state == {"contact": {"id": "c-1"}}
+    assert agent.run_arguments[0]["session_state"] is not agent.run_arguments[1]["session_state"]
+
+
+def test_team_case_forwards_run_arguments(monkeypatch):
     _install_fake_evals(monkeypatch)
     team = StubAgent(id="research-team")
-    case = Case(name="t", team=team, input="q", criteria="c", session_id="booking-1")
+    case = Case(name="t", team=team, input="q", criteria="c", session_id="booking-1", user_id="lead-42")
 
     result = run_cases([case]).results[0]
 
     assert result.session_id == "booking-1"
     assert team.session_ids == ["booking-1"]
+    assert team.run_arguments[0]["user_id"] == "lead-42"
+
+
+def test_message_input_is_passed_to_the_run_and_its_text_to_the_judge(monkeypatch):
+    from agno.media import Image
+    from agno.models.message import Message
+
+    judge_instances, _ = _install_fake_evals(monkeypatch)
+    agent = StubAgent()
+    message = Message(
+        role="user", content="What colour is this image?", images=[Image(url="https://example.com/red.png")]
+    )
+
+    run_cases([_make_case(agent=agent, input=message)])
+
+    assert agent.inputs == [message]
+    assert judge_instances[0].input == "What colour is this image?"
