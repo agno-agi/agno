@@ -17,3 +17,11 @@ Use PostgreSQL in production. Transcript storage supports PostgresDb, AsyncPostg
 The fresh `CLAUDE_CONFIG_DIR` also hides local login state. Export `ANTHROPIC_API_KEY` before running the example; both child processes inherit it. Our verification used the API key exported by the repository's `.envrc`, without reading or printing credentials. Remove `AGNO_DEBUG` and `AGNO_MONITOR` for clean logs.
 
 If no API key is available, run `claude setup-token` interactively and export its result as `CLAUDE_CODE_OAUTH_TOKEN`. For file-based login, copy only `~/.claude/.credentials.json` into each fresh config directory. Do not copy project transcripts. macOS Keychain login alone does not authenticate a process using an empty custom config directory.
+
+### Transcript write failures
+
+If the SDK exhausts transcript-store retries, the response remains completed and retains its content.
+`RunOutput.metadata["warnings"]` contains a `transcript_persistence_failed` warning, also saved in run
+history. Streaming callers receive a `CustomEvent` with the same `warning` object. The warning means
+another replica may be unable to recover the complete conversation. The adapter does not reexecute
+completed model work or tool side effects to repair the mirror.

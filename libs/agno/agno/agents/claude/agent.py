@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, List, Optional
 from uuid import uuid4
 
-from agno.agents.base import BaseExternalAgent, ExternalRunResult
+from agno.agents.base import BaseExternalAgent, ExternalRunResult, ExternalRunWarningEvent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.models.response import ToolExecution
 from agno.run.agent import (
@@ -206,6 +206,19 @@ class ClaudeAgent(BaseExternalAgent):
                 resume = None
 
     @staticmethod
+    def _mirror_warning(message: Any) -> Optional[Dict[str, Any]]:
+        if getattr(message, "subtype", None) != "mirror_error":
+            return None
+        warning = {
+            "type": "transcript_persistence_failed",
+            "message": "The response completed, but part of its transcript could not be persisted. "
+            "Resuming on another replica may lose context.",
+            "error": str(getattr(message, "error", "") or (getattr(message, "data", {}) or {}).get("error", "")),
+        }
+        log_warning(warning["message"])
+        return warning
+
+    @staticmethod
     def _check_result_message(sdk: Any, message: Any) -> None:
         """Raise if the SDK reported an error result so the base class can surface it."""
         if not isinstance(message, sdk.ResultMessage):
@@ -228,11 +241,15 @@ class ClaudeAgent(BaseExternalAgent):
         """Non-streaming: collect all messages and return final content."""
         sdk = _sdk()
 
+        warnings: List[Dict[str, Any]] = []
         assistant_text = ""
         final_result = ""
         tools: Dict[str, ToolExecution] = {}
 
         async for message in self._aquery(input, history, streaming=False, **kwargs):
+            warning = self._mirror_warning(message)
+            if warning is not None:
+                warnings.append(warning)
             if isinstance(message, sdk.AssistantMessage):
                 # Accumulate every text block; multiple blocks per message are valid
                 for block in message.content:
@@ -261,7 +278,7 @@ class ClaudeAgent(BaseExternalAgent):
                     final_result = str(message.result)
 
         # Prefer ResultMessage.result, fall back to accumulated assistant text
-        return ExternalRunResult(final_result or assistant_text, list(tools.values()) or None)
+        return ExternalRunResult(final_result or assistant_text, list(tools.values()) or None, warnings or None)
 
     async def _arun_adapter_stream(
         self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
@@ -286,6 +303,9 @@ class ClaudeAgent(BaseExternalAgent):
         tool_info_map: Dict[str, Dict[str, Any]] = {}
 
         async for message in self._aquery(input, history, streaming=True, **kwargs):
+            warning = self._mirror_warning(message)
+            if warning is not None:
+                yield ExternalRunWarningEvent(run_id=run_id, agent_id=self.get_id(), warning=warning)
             if isinstance(message, sdk.StreamEvent):
                 got_stream_events = True
                 event = message.event

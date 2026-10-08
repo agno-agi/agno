@@ -53,3 +53,15 @@
 **Environment:** Python 3.12; claude-agent-sdk 0.2.148; openai-codex 0.162.0; SQLAlchemy 2.0.52, matching the demo environment. Fresh setup resolved SQLAlchemy 2.1.4, which reproduced six unrelated mypy errors on the unchanged base; validation passes with 2.0.52.
 
 ---
+
+### Transcript mirror failure regression (2026-10-08)
+
+**Status:** PASS
+
+**Description:** The installed SDK parser and mirror batcher were driven with synthetic transport
+frames and a transcript store that rejects every append. All three attempts failed. The completed
+response retained its content and exposed `transcript_persistence_failed` in run metadata.
+Streaming/non-streaming unit regressions also verify warning serialization and persisted history.
+
+**Result:** Durability failure is visible without reexecuting completed work. This is a local SDK
+fault-injection test, not a live provider run. Phase 1 agent tests: 78 passed. Format and validation pass.

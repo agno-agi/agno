@@ -10,6 +10,7 @@ from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.run.agent import (
+    CustomEvent,
     RunCompletedEvent,
     RunContentEvent,
     RunErrorEvent,
@@ -31,11 +32,19 @@ if TYPE_CHECKING:
 
 
 @dataclass
+class ExternalRunWarningEvent(CustomEvent):
+    """Nonfatal adapter warning emitted to streaming consumers."""
+
+    warning: Optional[Dict[str, Any]] = None
+
+
+@dataclass
 class ExternalRunResult:
     """Adapter output with tool executions retained for session history."""
 
     content: str
     tools: Optional[List[ToolExecution]] = None
+    warnings: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass
@@ -671,6 +680,8 @@ class BaseExternalAgent:
                 tools=content.tools if isinstance(content, ExternalRunResult) else None,
                 status=RunStatus.completed,
             )
+            if isinstance(content, ExternalRunResult) and content.warnings:
+                run_output.metadata = {"warnings": content.warnings}
         except Exception as e:
             log_exception(f"Error in {self.framework} agent '{self.id}': {e}")
             run_output = self._build_run_output(
@@ -712,6 +723,7 @@ class BaseExternalAgent:
         )
 
         accumulated_content = ""
+        warnings: List[Dict[str, Any]] = []
         accumulated_tools: List[ToolExecution] = []
         run_error: Optional[Exception] = None
 
@@ -722,6 +734,8 @@ class BaseExternalAgent:
             async for event in self._arun_adapter_stream(
                 input, history=history, run_id=run_id, session=session, **kwargs
             ):
+                if isinstance(event, ExternalRunWarningEvent) and event.warning is not None:
+                    warnings.append(event.warning)
                 if isinstance(event, RunContentEvent):
                     accumulated_content += event.content or ""
                 elif isinstance(event, ToolCallStartedEvent) and event.tool:
@@ -756,6 +770,8 @@ class BaseExternalAgent:
                 status=RunStatus.error if run_error is not None else RunStatus.completed,
                 tools=accumulated_tools if accumulated_tools else None,
             )
+            if warnings:
+                run_output.metadata = {"warnings": warnings}
             await self._apersist_run_in_session(session, run_output)
 
         if run_error is not None:

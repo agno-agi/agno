@@ -421,6 +421,7 @@ embedders = [
 
 # All libraries for testing
 tests = [
+    "claude-agent-sdk>=0.2.148",
   "agno[pages]",
     "agno[a2a]",
     "agno[slack]",

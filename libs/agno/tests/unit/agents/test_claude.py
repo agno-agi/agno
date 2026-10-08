@@ -290,3 +290,37 @@ async def test_error_result_on_resume_falls_back_with_store(fake_sdk, tmp_path, 
     assert len(calls) == 2
     assert "session_store" in calls[0][1].extra
     assert "Remember the code bluejay" in calls[1][0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_mirror_failure_is_visible_without_reexecuting(fake_sdk, tmp_db, monkeypatch, stream):
+    from agno.run.agent import CustomEvent
+    from agno.run.base import RunStatus
+
+    sdk = claude_module._sdk()
+    calls = []
+
+    async def query(prompt, options):
+        calls.append(prompt)
+        yield SystemMessage(subtype="init", data={"session_id": "sdk-mirror"})
+        yield AssistantMessage(content=[TextBlock(text="completed side effect")])
+        yield SystemMessage(subtype="mirror_error", data={"error": "storage unavailable"})
+        yield ResultMessage(session_id="sdk-mirror", result="completed side effect")
+
+    monkeypatch.setattr(sdk, "query", query)
+    agent = ClaudeAgent(id="mirror", db=tmp_db)
+    if stream:
+        events = [event async for event in agent.arun("go", session_id="s", stream=True)]
+        warnings = [event for event in events if isinstance(event, CustomEvent)]
+        assert len(warnings) == 1
+        assert warnings[0].to_dict()["warning"]["type"] == "transcript_persistence_failed"
+        result = await agent.aget_run_output(events[0].run_id, "s")
+    else:
+        result = await agent.arun("go", session_id="s")
+    assert result.status == RunStatus.completed
+    assert result.content == "completed side effect"
+    assert result.metadata["warnings"][0]["error"] == "storage unavailable"
+    stored = await agent.aget_run_output(result.run_id, "s")
+    assert stored.metadata == result.metadata
+    assert len(calls) == 1
