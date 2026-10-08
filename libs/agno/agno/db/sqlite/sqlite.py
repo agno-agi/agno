@@ -772,6 +772,14 @@ class SqliteDb(BaseDb):
             )
             return self.service_accounts_table
 
+        elif table_type == "compactions":
+            self.compactions_table = self._get_or_create_table(
+                table_name=self.compactions_table_name,
+                table_type="compactions",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.compactions_table
+
         elif table_type in AUTHZ_TABLE_NAME_ATTRS:
             return self._get_or_create_table(
                 table_name=getattr(self, AUTHZ_TABLE_NAME_ATTRS[table_type]),
@@ -1302,6 +1310,7 @@ class SqliteDb(BaseDb):
             if table is None:
                 return False
             runs_table = self._get_table(table_type="runs")
+            compactions_table = self._get_table(table_type="compactions")
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
@@ -1315,6 +1324,11 @@ class SqliteDb(BaseDb):
                 # Also delete the runs belonging to the session
                 if runs_table is not None:
                     sess.execute(runs_table.delete().where(runs_table.c.session_id == session_id))
+                # And its compaction records. They hold the folded transcript verbatim, and are
+                # found by session id - left behind, a session recreated under the same id would
+                # inherit the old fold and offer the agent a search over the deleted conversation.
+                if compactions_table is not None:
+                    sess.execute(compactions_table.delete().where(compactions_table.c.session_id == session_id))
 
                 log_debug(f"Successfully deleted session with session_id: {session_id}")
 
@@ -1344,6 +1358,7 @@ class SqliteDb(BaseDb):
             if table is None:
                 return
             runs_table = self._get_table(table_type="runs")
+            compactions_table = self._get_table(table_type="compactions")
 
             with self.Session() as sess, sess.begin():
                 # The ids a user_id-scoped delete is allowed to touch. The
@@ -1369,6 +1384,13 @@ class SqliteDb(BaseDb):
                     if user_id is not None:
                         runs_delete_stmt = runs_delete_stmt.where(runs_table.c.user_id == user_id)
                     sess.execute(runs_delete_stmt)
+
+                # And their compaction records. They hold the folded transcript verbatim, and are
+                # found by session id - left behind, a session recreated under the same id would
+                # inherit the old fold and offer the agent a search over the deleted conversation.
+                # Scoped like the tool-result cascade: only sessions this delete was allowed to remove.
+                if compactions_table is not None:
+                    sess.execute(compactions_table.delete().where(compactions_table.c.session_id.in_(cascade_ids)))
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")
 
@@ -1509,6 +1531,73 @@ class SqliteDb(BaseDb):
         stmt = select(table).where(table.c.expires_at.is_not(None)).where(table.c.expires_at <= now)
         with self.Session() as sess:
             return [dict(row._mapping) for row in sess.execute(stmt).fetchall()]
+
+    # --- Compactions ---
+
+    def upsert_compaction(self, row: Dict[str, Any]) -> None:
+        """Insert one compaction record.
+
+        Records are immutable facts about a single fold, so a conflicting id means
+        the same record is being written twice; the insert is a no-op rather than
+        an update.
+        """
+        table = self._get_table(table_type="compactions", create_table_if_not_found=True)
+        if table is None:
+            raise ValueError(f"Could not create table: {self.compactions_table_name}")
+        from sqlalchemy.dialects.sqlite import insert as _insert
+
+        stmt = _insert(table).values(**row).on_conflict_do_nothing(index_elements=["compaction_id"])
+        with self.Session() as sess, sess.begin():
+            sess.execute(stmt)
+
+    def get_compaction(self, compaction_id: str) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="compactions")
+        if table is None:
+            return None
+        with self.Session() as sess:
+            row = sess.execute(select(table).where(table.c.compaction_id == compaction_id)).fetchone()
+            return dict(row._mapping) if row is not None else None
+
+    def get_compactions_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        table = self._get_table(table_type="compactions")
+        if table is None:
+            return []
+        stmt = select(table).where(table.c.session_id == session_id).order_by(table.c.created_at.desc())
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        with self.Session() as sess:
+            return [dict(r._mapping) for r in sess.execute(stmt).fetchall()]
+
+    def delete_compactions_for_session(self, session_id: str) -> int:
+        table = self._get_table(table_type="compactions")
+        if table is None:
+            return 0
+        with self.Session() as sess, sess.begin():
+            result = sess.execute(table.delete().where(table.c.session_id == session_id))
+            return result.rowcount or 0
+
+    def search_compactions(
+        self, session_id: str, query: Union[str, Sequence[str]], limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Records whose archived transcript contains ``query`` - or any of several terms - newest first.
+
+        A substring match, scoped to one session so a search can never reach another conversation's
+        history. Several terms are one query, so every fold matching any of them is a candidate.
+        """
+        table = self._get_table(table_type="compactions")
+        terms = [query] if isinstance(query, str) else list(query)
+        terms = [term for term in terms if term]
+        if table is None or not terms:
+            return []
+        stmt = (
+            select(table)
+            .where(table.c.session_id == session_id)
+            .where(or_(*(table.c.archived_messages.ilike(f"%{term}%") for term in terms)))
+            .order_by(table.c.created_at.desc())
+            .limit(limit)
+        )
+        with self.Session() as sess:
+            return [dict(r._mapping) for r in sess.execute(stmt).fetchall()]
 
     def get_session(
         self,
