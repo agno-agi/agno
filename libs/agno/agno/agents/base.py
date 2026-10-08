@@ -31,6 +31,14 @@ if TYPE_CHECKING:
 
 
 @dataclass
+class ExternalRunResult:
+    """Adapter output with tool executions retained for session history."""
+
+    content: str
+    tools: Optional[List[ToolExecution]] = None
+
+
+@dataclass
 class BaseExternalAgent:
     """Base class for external framework adapters.
 
@@ -659,7 +667,8 @@ class BaseExternalAgent:
                 session_id=session_id,
                 user_id=user_id,
                 input_text=input,
-                content=content,
+                content=content.content if isinstance(content, ExternalRunResult) else content,
+                tools=content.tools if isinstance(content, ExternalRunResult) else None,
                 status=RunStatus.completed,
             )
         except Exception as e:

@@ -224,3 +224,68 @@ def test_failure_without_resume_is_not_retried(fake_sdk, monkeypatch):
     events = _collect(agent, "hi", session_id="s1")
     assert isinstance(events[-1], RunErrorEvent)
     assert calls == [None]
+
+
+def test_store_support_and_project_key(fake_sdk, tmp_path, monkeypatch):
+    from agno.agents.claude.session_store import AgnoSessionStore
+    from agno.db.base import BaseDb
+    from agno.db.in_memory import InMemoryDb
+
+    agent = ClaudeAgent(id="tenant-agent", cwd="/cwd", db=SqliteDb(db_file=str(tmp_path / "db")))
+    opts = agent._build_options()
+    assert isinstance(opts.extra["session_store"], AgnoSessionStore)
+    assert opts.extra["session_store"].project_key == "tenant-agent"
+    custom = ClaudeAgent(id="a", project_key="tenant", db=agent.db)
+    assert custom._build_options().extra["session_store"].project_key == "tenant"
+    logs = []
+    monkeypatch.setattr(claude_module, "log_debug", logs.append)
+    unsupported = ClaudeAgent(db=InMemoryDb())
+    assert type(unsupported.db).append_transcript_entries is BaseDb.append_transcript_entries
+    assert "session_store" not in unsupported._build_options().extra
+    unsupported._build_options()
+    assert len(logs) == 1
+
+
+@pytest.mark.asyncio
+async def test_nonstream_tools_persist(fake_sdk, tmp_path, monkeypatch):
+    tool = ToolUseBlock()
+    tool.id, tool.name, tool.input = "call", "Read", {"path": "file"}
+    result = ToolResultBlock()
+    result.tool_use_id, result.content = "call", "file contents"
+    user = UserMessage()
+    user.content = [result]
+
+    async def query(**kwargs):
+        yield AssistantMessage([tool])
+        yield user
+        yield ResultMessage("sdk-id", "done")
+
+    monkeypatch.setattr(claude_module._sdk(), "query", query)
+    agent = ClaudeAgent(db=SqliteDb(db_file=str(tmp_path / "db")))
+    run = await agent.arun("read", session_id="session")
+    assert run.tools[0].result == "file contents"
+    loaded = await agent.aget_run_output(run.run_id, "session")
+    assert loaded.tools[0].tool_args == {"path": "file"}
+    assert any(m.role == "tool" and m.content == "file contents" for m in loaded.messages)
+
+
+@pytest.mark.asyncio
+async def test_error_result_on_resume_falls_back_with_store(fake_sdk, tmp_path, monkeypatch):
+    agent = ClaudeAgent(db=SqliteDb(db_file=str(tmp_path / "db")))
+    await agent.arun("Remember the code bluejay", session_id="session")
+    calls = []
+
+    async def query(prompt, options):
+        calls.append((prompt, options))
+        if options.resume:
+            yield SystemMessage("init", {"session_id": options.resume})
+            yield ResultMessage(options.resume, "No conversation found", is_error=True)
+        else:
+            yield ResultMessage("new", "bluejay")
+
+    monkeypatch.setattr(claude_module._sdk(), "query", query)
+    run = await agent.arun("What code?", session_id="session")
+    assert run.content == "bluejay"
+    assert len(calls) == 2
+    assert "session_store" in calls[0][1].extra
+    assert "Remember the code bluejay" in calls[1][0]

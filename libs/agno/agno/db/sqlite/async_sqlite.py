@@ -427,6 +427,13 @@ class AsyncSqliteDb(AsyncBaseDb):
             raise e
 
     async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
+        if table_type == "transcripts":
+            return await self._get_or_create_table(
+                table_name=self.transcripts_table_name,
+                table_type="transcripts",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
         if table_type == "sessions":
             self.session_table = await self._get_or_create_table(
                 table_name=self.session_table_name,
@@ -5287,3 +5294,76 @@ class AsyncSqliteDb(AsyncBaseDb):
         columns = ["actor", "action", "target"]
         table = await self._get_table(table_type=table_type, create_table_if_not_found=True)
         return await authz_sql.acount_events(self.db_engine, table, search, search_columns=columns)
+
+    # --- External agent transcripts ---
+
+    async def append_transcript_entries(
+        self, project_key: str, session_id: str, entries: List[Dict[str, Any]], subpath: Optional[str] = None
+    ) -> None:
+        if not entries:
+            return
+        from sqlalchemy.dialects.sqlite import insert as transcript_insert
+
+        from agno.db.transcripts import transcript_rows
+
+        table = await self._get_table("transcripts", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Could not create transcript table")
+        rows = transcript_rows(project_key, session_id, entries, subpath)
+        stmt = transcript_insert(table).on_conflict_do_nothing(index_elements=["entry_id"])
+        async with self.async_session_factory() as sess, sess.begin():
+            await sess.execute(stmt, rows)
+
+    async def get_transcript_entries(
+        self, project_key: str, session_id: str, subpath: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        import json
+
+        table = await self._get_table("transcripts")
+        if table is None:
+            return []
+        stmt = (
+            select(table.c.entry)
+            .where(table.c.project_key == project_key, table.c.session_id == session_id, table.c.subpath == subpath)
+            .order_by(table.c.position)
+        )
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(stmt)
+            return [json.loads(row[0]) for row in result.fetchall()]
+
+    async def list_transcript_sessions(self, project_key: str) -> List[Dict[str, Any]]:
+        table = await self._get_table("transcripts")
+        if table is None:
+            return []
+        stmt = (
+            select(table.c.session_id, func.max(table.c.created_at).label("mtime"))
+            .where(table.c.project_key == project_key, table.c.subpath.is_(None))
+            .group_by(table.c.session_id)
+        )
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(stmt)
+            return [dict(row._mapping) for row in result.fetchall()]
+
+    async def list_transcript_subpaths(self, project_key: str, session_id: str) -> List[str]:
+        table = await self._get_table("transcripts")
+        if table is None:
+            return []
+        stmt = (
+            select(table.c.subpath)
+            .where(table.c.project_key == project_key, table.c.session_id == session_id, table.c.subpath.is_not(None))
+            .distinct()
+            .order_by(table.c.subpath)
+        )
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(stmt)
+            return [row[0] for row in result.fetchall()]
+
+    async def delete_transcript(self, project_key: str, session_id: str, subpath: Optional[str] = None) -> None:
+        table = await self._get_table("transcripts")
+        if table is None:
+            return
+        stmt = table.delete().where(table.c.project_key == project_key, table.c.session_id == session_id)
+        if subpath is not None:
+            stmt = stmt.where(table.c.subpath == subpath)
+        async with self.async_session_factory() as sess, sess.begin():
+            await sess.execute(stmt)

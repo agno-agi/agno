@@ -356,6 +356,7 @@ class BaseDb(ABC):
         self.job_table_name = job_table or "agno_jobs"
         self.tool_results_table_name = "agno_tool_results"
         self.compactions_table_name = "agno_compactions"
+        self.transcripts_table_name = "agno_transcripts"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
@@ -2313,6 +2314,32 @@ class BaseDb(ABC):
         """Hard-delete a service account by ID. Returns True if deleted."""
         raise NotImplementedError
 
+    # Optional transcript storage for external agents.
+
+    def append_transcript_entries(
+        self, project_key: str, session_id: str, entries: List[Dict[str, Any]], subpath: Optional[str] = None
+    ) -> None:
+        """Append opaque transcript entries in order, ignoring repeated entry UUIDs."""
+        raise NotImplementedError
+
+    def get_transcript_entries(
+        self, project_key: str, session_id: str, subpath: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Read transcript entries in append order."""
+        raise NotImplementedError
+
+    def list_transcript_sessions(self, project_key: str) -> List[Dict[str, Any]]:
+        """List main transcripts with session_id and mtime in epoch milliseconds."""
+        raise NotImplementedError
+
+    def list_transcript_subpaths(self, project_key: str, session_id: str) -> List[str]:
+        """List subagent transcript paths for a session."""
+        raise NotImplementedError
+
+    def delete_transcript(self, project_key: str, session_id: str, subpath: Optional[str] = None) -> None:
+        """Delete one subpath, or the main transcript and all subpaths."""
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -2367,6 +2394,7 @@ class AsyncBaseDb(ABC):
         self.job_table_name = job_table or "agno_jobs"
         self.tool_results_table_name = "agno_tool_results"
         self.compactions_table_name = "agno_compactions"
+        self.transcripts_table_name = "agno_transcripts"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
@@ -3775,4 +3803,30 @@ class AsyncBaseDb(ABC):
 
     async def count_authz_audit_events(self, search: Optional[str] = None, decisions: bool = False) -> int:
         """Total number of audit rows (change or decision trail)."""
+        raise NotImplementedError
+
+    # Optional transcript storage for external agents.
+
+    async def append_transcript_entries(
+        self, project_key: str, session_id: str, entries: List[Dict[str, Any]], subpath: Optional[str] = None
+    ) -> None:
+        """Append opaque transcript entries in order, ignoring repeated entry UUIDs."""
+        raise NotImplementedError
+
+    async def get_transcript_entries(
+        self, project_key: str, session_id: str, subpath: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Read transcript entries in append order."""
+        raise NotImplementedError
+
+    async def list_transcript_sessions(self, project_key: str) -> List[Dict[str, Any]]:
+        """List main transcripts with session_id and mtime in epoch milliseconds."""
+        raise NotImplementedError
+
+    async def list_transcript_subpaths(self, project_key: str, session_id: str) -> List[str]:
+        """List subagent transcript paths for a session."""
+        raise NotImplementedError
+
+    async def delete_transcript(self, project_key: str, session_id: str, subpath: Optional[str] = None) -> None:
+        """Delete one subpath, or the main transcript and all subpaths."""
         raise NotImplementedError

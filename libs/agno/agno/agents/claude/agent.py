@@ -2,7 +2,8 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, List, Optional
 from uuid import uuid4
 
-from agno.agents.base import BaseExternalAgent
+from agno.agents.base import BaseExternalAgent, ExternalRunResult
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.models.response import ToolExecution
 from agno.run.agent import (
     RunContentEvent,
@@ -10,7 +11,7 @@ from agno.run.agent import (
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
-from agno.utils.log import log_warning
+from agno.utils.log import log_debug, log_warning
 
 
 def _sdk() -> Any:
@@ -73,6 +74,8 @@ class ClaudeAgent(BaseExternalAgent):
     max_turns: Optional[int] = None
     max_budget_usd: Optional[float] = None
     cwd: Optional[str] = None
+    project_key: Optional[str] = None
+    _store_warning_logged: bool = field(default=False, init=False, repr=False)
     mcp_servers: Optional[Dict[str, Any]] = None
     options_kwargs: Dict[str, Any] = field(default_factory=dict)
     framework: str = "claude-agent-sdk"
@@ -82,6 +85,11 @@ class ClaudeAgent(BaseExternalAgent):
 
     # Fallback Agno session_id -> SDK session id map, used when no db is configured.
     _sdk_session_ids: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.project_key is None:
+            self.project_key = self.get_id()
 
     def _build_options(self, *, streaming: bool = False, resume: Optional[str] = None) -> Any:
         """Build ClaudeAgentOptions from agent config."""
@@ -116,6 +124,15 @@ class ClaudeAgent(BaseExternalAgent):
             opts["resume"] = resume
 
         opts.update(self.options_kwargs)
+        if self.db is not None:
+            base = AsyncBaseDb if isinstance(self.db, AsyncBaseDb) else BaseDb
+            if type(self.db).append_transcript_entries is not base.append_transcript_entries:
+                from agno.agents.claude.session_store import AgnoSessionStore
+
+                opts["session_store"] = AgnoSessionStore(self.db, self.project_key or self.get_id())
+            elif not self._store_warning_logged:
+                log_debug("Claude SDK transcript storage is unavailable on this database; resume uses local files.")
+                self._store_warning_logged = True
         return sdk.ClaudeAgentOptions(**opts)
 
     # ---------------------------------------------------------------------------
@@ -168,7 +185,10 @@ class ClaudeAgent(BaseExternalAgent):
             received = False
             try:
                 async for message in sdk.query(prompt=prompt, options=options):
-                    received = True
+                    if isinstance(message, sdk.ResultMessage):
+                        self._check_result_message(sdk, message)
+                    if not isinstance(message, sdk.SystemMessage):
+                        received = True
                     if isinstance(message, sdk.SystemMessage) and getattr(message, "subtype", None) == "init":
                         data = getattr(message, "data", {}) or {}
                         self._remember_sdk_session(session, session_id, data.get("session_id"))
@@ -202,12 +222,15 @@ class ClaudeAgent(BaseExternalAgent):
             )
             raise RuntimeError(f"Claude SDK error (is_error={is_error}, subtype={subtype}): {detail}")
 
-    async def _arun_adapter(self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any) -> str:
+    async def _arun_adapter(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> ExternalRunResult:
         """Non-streaming: collect all messages and return final content."""
         sdk = _sdk()
 
         assistant_text = ""
         final_result = ""
+        tools: Dict[str, ToolExecution] = {}
 
         async for message in self._aquery(input, history, streaming=False, **kwargs):
             if isinstance(message, sdk.AssistantMessage):
@@ -215,6 +238,22 @@ class ClaudeAgent(BaseExternalAgent):
                 for block in message.content:
                     if isinstance(block, sdk.TextBlock):
                         assistant_text += block.text
+                    elif isinstance(block, sdk.ToolUseBlock):
+                        tools[block.id] = ToolExecution(
+                            tool_call_id=block.id, tool_name=block.name, tool_args=block.input
+                        )
+
+            elif isinstance(message, sdk.UserMessage) and isinstance(message.content, list):
+                for block in message.content:
+                    if isinstance(block, sdk.ToolResultBlock):
+                        tool = tools.setdefault(block.tool_use_id, ToolExecution(tool_call_id=block.tool_use_id))
+                        result = block.content
+                        tool.result = (
+                            " ".join(getattr(item, "text", str(item)) for item in result)
+                            if isinstance(result, list)
+                            else str(result or "")
+                        )
+                        tool.tool_call_error = bool(getattr(block, "is_error", False))
 
             elif isinstance(message, sdk.ResultMessage):
                 self._check_result_message(sdk, message)
@@ -222,7 +261,7 @@ class ClaudeAgent(BaseExternalAgent):
                     final_result = str(message.result)
 
         # Prefer ResultMessage.result, fall back to accumulated assistant text
-        return final_result or assistant_text
+        return ExternalRunResult(final_result or assistant_text, list(tools.values()) or None)
 
     async def _arun_adapter_stream(
         self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
