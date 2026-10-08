@@ -245,6 +245,7 @@ async def apersist_worker_owned_run(
     run: Any,
     session_id: str,
     user_id: Optional[str] = None,
+    session_data: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Fence a worker-owned run's save through the atomic primitive.
 
@@ -256,6 +257,9 @@ async def apersist_worker_owned_run(
     the row - is refused by the row-locked primitive instead of clobbering
     wholesale through bare ``upsert_run``. This closes the "run's own final
     save is unfenced" gap the module docstring describes.
+
+    When session_data is supplied, the adapter saves it in the same transaction
+    as the fenced run. Callers must not follow this with an unfenced session save.
 
     Returns True when the save was handled here: applied, or finally refused
     by the fence/terminal guard (refusals are dropped by design - retrying
@@ -285,8 +289,12 @@ async def apersist_worker_owned_run(
         expected_attempt=ownership.attempt,
         user_id=user_id,
     )
+    if session_data is not None:
+        kwargs["session_data"] = session_data
     outcome = _coerce_outcome(await _acall_update(method, kwargs), ownership.attempt)
     if outcome is RunPersistOutcome.MISSING:
+        if session_data is not None:
+            raise RuntimeError("Cannot atomically save session metadata without the prepared worker run")
         append = getattr(db, "append_run_to_session_if_absent", None)
         if not callable(append):
             return False
@@ -320,6 +328,7 @@ def persist_worker_owned_run(
     run: Any,
     session_id: str,
     user_id: Optional[str] = None,
+    session_data: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Sync twin of ``apersist_worker_owned_run`` for the sync save helpers.
 
@@ -346,8 +355,12 @@ def persist_worker_owned_run(
         expected_attempt=ownership.attempt,
         user_id=user_id,
     )
+    if session_data is not None:
+        kwargs["session_data"] = session_data
     outcome = _coerce_outcome(method(**kwargs), ownership.attempt)
     if outcome is RunPersistOutcome.MISSING:
+        if session_data is not None:
+            raise RuntimeError("Cannot atomically save session metadata without the prepared worker run")
         append = getattr(db, "append_run_to_session_if_absent", None)
         if not callable(append) or inspect.iscoroutinefunction(append):
             return False

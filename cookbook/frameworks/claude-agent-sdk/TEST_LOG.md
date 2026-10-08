@@ -88,3 +88,16 @@ Streaming/non-streaming unit regressions also verify warning serialization and p
 
 **Result:** Durability failure is visible without reexecuting completed work. This is a local SDK
 fault-injection test, not a live provider run. Phase 1 agent tests: 78 passed. Format and validation pass.
+
+### Lifecycle persistence review regressions (2026-10-09)
+
+**Status:** PASS
+
+**Description:** Injected terminal database failures in sync/async SQLite queue runs, with both
+streaming modes and transient/permanent failures. Tickets retry and do not report success over
+an unfinished run. Real sync/async PostgreSQL tests cover session-identity fencing and rollback
+when session storage fails. In-memory SQLite async polling retains the completed run.
+
+**Result:** 751 unit/regression tests, 12 external-agent PostgreSQL integration tests and 13 existing
+native PostgreSQL tests passed. Format and validation passed. These are persistence fault-injection
+checks; the earlier live provider cancellation runs were not repeated.

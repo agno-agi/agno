@@ -7355,6 +7355,7 @@ class PostgresDb(BaseDb):
         expected_attempt: Optional[int] = None,
         user_id: Optional[str] = None,
         content_if_absent: Optional[str] = None,
+        session_data: Optional[Dict[str, Any]] = None,
     ) -> "RunPersistOutcome":
         """Sync twin of AsyncPostgresDb.update_run_in_session - ported to the
         denormalized runs table (v3.0); see that docstring."""
@@ -7369,6 +7370,11 @@ class PostgresDb(BaseDb):
             runs_table = self._get_table(table_type="runs")
             if runs_table is None:
                 return RunPersistOutcome.MISSING
+            sessions_table = None
+            if session_data is not None:
+                sessions_table = self._get_table(table_type="sessions")
+                if sessions_table is None:
+                    raise RuntimeError("Cannot persist run metadata without its session table")
             with self.Session() as sess, sess.begin():
                 row = sess.execute(
                     select(runs_table.c.run_data, runs_table.c.status)
@@ -7399,6 +7405,16 @@ class PostgresDb(BaseDb):
                 if fields.get("status") is not None:
                     values["status"] = fields["status"]
                 sess.execute(update(runs_table).where(runs_table.c.run_id == run_id).values(**values))
+                if sessions_table is not None:
+                    session_write = sess.execute(
+                        update(sessions_table)
+                        .where(sessions_table.c.session_id == session_id)
+                        .where((sessions_table.c.user_id == user_id) | sessions_table.c.user_id.is_(None))
+                        .values(session_data=sanitize_postgres_strings(session_data), updated_at=int(time.time()))
+                        .returning(sessions_table.c.session_id)
+                    )
+                    if session_write.scalar_one_or_none() is None:
+                        raise RuntimeError("Cannot persist run metadata without its owned session")
                 return RunPersistOutcome.UPDATED
         except Exception as e:
             log_warning(f"Error updating run in runs table: {e}")

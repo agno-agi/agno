@@ -502,3 +502,125 @@ async def test_primary_stream_finishes_before_slow_terminal_coordination():
         release.set()
         await task
         await pump.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("recover", [False, True])
+async def test_queue_terminal_write_failure_is_retried(agent, monkeypatch, stream, recover):
+    from agno.db.schemas.jobs import QueuedJob
+    from agno.job_queue.config import QueueConfig
+    from agno.job_queue.store import InMemoryQueueStore
+    from agno.os.job_queue import QueueWorker
+
+    original = agent.db.upsert_run
+    failures = 0
+
+    def fail(run):
+        nonlocal failures
+        if run.status == RunStatus.completed and (not recover or failures == 0):
+            failures += 1
+            raise ConnectionError("terminal save unavailable")
+
+    if isinstance(agent.db, AsyncSqliteDb):
+
+        async def upsert(run, **kwargs):
+            fail(run)
+            return await original(run=run, **kwargs)
+    else:
+
+        def upsert(run, **kwargs):
+            fail(run)
+            return original(run=run, **kwargs)
+
+    monkeypatch.setattr(agent.db, "upsert_run", upsert)
+    agent.release.set()
+    store = InMemoryQueueStore()
+    worker = QueueWorker(
+        store=store,
+        resolve_component=lambda *_: agent,
+        config=QueueConfig(durable=True, poll_interval=0.01, retry_delay_seconds=0),
+        worker_id="writer",
+    )
+    run_id = str(uuid4())
+    await store.enqueue_job(
+        QueuedJob(
+            id=run_id,
+            component_type="agent",
+            component_id=agent.id,
+            session_id="s",
+            payload={"input": "go", "stream": stream},
+            max_attempts=3,
+        ).to_dict()
+    )
+    await worker.start()
+    try:
+
+        async def settled():
+            while True:
+                job = await store.get_job(run_id)
+                if job["status"] in ("completed", "failed"):
+                    return job
+                await asyncio.sleep(0.01)
+
+        job = await asyncio.wait_for(settled(), 5)
+        assert job["attempt"] == (2 if recover else 3)
+        assert job["status"] == ("completed" if recover else "failed")
+        run = await agent.aget_run_output(run_id, "s")
+        assert run.status == (RunStatus.completed if recover else RunStatus.error)
+        assert run.content
+    finally:
+        await worker.stop()
+
+
+@pytest.mark.asyncio
+async def test_stale_worker_cannot_change_session_identity(agent, monkeypatch):
+    from agno.run.concurrency import worker_managed_execution
+    from agno.run.status_persist import RunPersistOutcome
+
+    winner = agent._create_session("s")
+    winner.session_data = {"claude_sdk_session_id": "winning-claude", "codex_thread_id": "winning-codex"}
+    await agent._apersist_run_in_session(
+        winner,
+        RunOutput(
+            run_id="r",
+            session_id="s",
+            agent_id=agent.id,
+            content="winner",
+            status=RunStatus.completed,
+            queue_attempt=2,
+        ),
+    )
+    stale = agent._create_session("s")
+    stale.session_data = {"claude_sdk_session_id": "stale-claude", "codex_thread_id": "stale-codex"}
+
+    def reject(**kwargs):
+        assert kwargs["session_data"] == stale.session_data
+        return RunPersistOutcome.STALE_ATTEMPT
+
+    monkeypatch.setattr(agent.db, "update_run_in_session", reject, raising=False)
+    with worker_managed_execution("r", "old-worker", 1):
+        await agent._apersist_run_in_session(
+            stale,
+            RunOutput(
+                run_id="r",
+                session_id="s",
+                agent_id=agent.id,
+                content="stale",
+                status=RunStatus.completed,
+            ),
+        )
+    stored = await agent.aget_session("s")
+    assert stored.session_data == winner.session_data
+    assert stored.get_run("r").content == "winner"
+
+
+@pytest.mark.asyncio
+async def test_in_memory_sqlite_async_lookup_preserves_connection():
+    agent = BlockingAgent(id="memory", db=SqliteDb(db_url="sqlite:///:memory:"))
+    agent.release.set()
+    run = await agent.arun("go", session_id="s", user_id="owner")
+    assert agent.get_run_output(run.run_id, "s", "owner").content == "done"
+    assert (await agent.aget_run_output(run.run_id, "s", "owner")).content == "done"
+    assert await agent.aget_session("s", "owner")
+    assert await agent.aget_session("s", "other") is None

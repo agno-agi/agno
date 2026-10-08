@@ -12,8 +12,8 @@ from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.run.agent import (
-    RunCancelledEvent,
     CustomEvent,
+    RunCancelledEvent,
     RunCompletedEvent,
     RunContentEvent,
     RunErrorEvent,
@@ -512,19 +512,26 @@ class BaseExternalAgent:
 
         upsert_session writes only the session row — runs live in their own
         table and must be written via upsert_run, or history is silently lost.
-        Swallows DB failures so the caller still receives the RunOutput.
+        Worker-owned writes propagate failures so the queue cannot settle an unpersisted run.
         """
+        from agno.run.concurrency import get_worker_ownership
+
         session.upsert_run(run=run_output)
+        worker_owned = get_worker_ownership(run_output.run_id or "") is not None
         try:
-            await self.aupsert_session(session)
             if self.db is not None:
                 from agno.run.status_persist import apersist_worker_owned_run
                 from agno.session._utils import resolve_run_index
 
                 if await apersist_worker_owned_run(
-                    self.db, run_output, session.session_id, run_output.user_id or session.user_id
+                    self.db,
+                    run_output,
+                    session.session_id,
+                    run_output.user_id or session.user_id,
+                    session_data=session.session_data or {},
                 ):
                     return
+                await self.aupsert_session(session)
                 run_index = resolve_run_index(session, run_output)
                 user_id = run_output.user_id or session.user_id
                 try:
@@ -541,7 +548,7 @@ class BaseExternalAgent:
                     pass
         except Exception as upsert_err:
             log_warning(f"Failed to persist run for {self.framework} agent '{self.id}': {upsert_err}")
-            if strict:
+            if strict or worker_owned:
                 raise
 
     def get_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
@@ -562,7 +569,8 @@ class BaseExternalAgent:
         if self.db is None:
             return None
         if isinstance(self.db, BaseDb):
-            return await asyncio.to_thread(self.get_session, session_id, user_id)
+            # Match the synchronous persistence path, including thread-local in-memory SQLite.
+            return self.get_session(session_id, user_id)
         session = await self.db.get_session(session_id=session_id, session_type=SessionType.AGENT, user_id=user_id)
         if isinstance(session, dict):
             session = AgentSession.from_dict(session)
