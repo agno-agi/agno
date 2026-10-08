@@ -233,6 +233,7 @@ def test_store_support_and_project_key(fake_sdk, tmp_path, monkeypatch):
 
     agent = ClaudeAgent(id="tenant-agent", cwd="/cwd", db=SqliteDb(db_file=str(tmp_path / "db")))
     opts = agent._build_options()
+    assert agent.project_key == "tenant-agent"
     assert isinstance(opts.extra["session_store"], AgnoSessionStore)
     assert opts.extra["session_store"].project_key == "tenant-agent"
     custom = ClaudeAgent(id="a", project_key="tenant", db=agent.db)
