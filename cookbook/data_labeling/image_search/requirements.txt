@@ -163,7 +163,7 @@ pydantic-settings==2.14.1
     #   fastapi
 pygments==2.20.0
     # via rich
-pyjwt==2.13.0
+pyjwt==2.14.0
     # via agno
 python-dateutil==2.9.0.post0
     # via croniter
