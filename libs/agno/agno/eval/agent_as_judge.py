@@ -705,6 +705,7 @@ class AgentAsJudgeEval(BaseEval):
         with spinner_live(console, self.show_spinner) as live_log:
             evaluator = self.get_evaluator_agent()
 
+            status: Optional[Status] = None
             for i, case in enumerate(cases):
                 status = Status(f"Evaluating {i + 1}/{len(cases)}...", spinner="dots")
                 live_log.update(status)
@@ -716,7 +717,8 @@ class AgentAsJudgeEval(BaseEval):
                     result.results.append(evaluation)
                     result.compute_stats()
 
-            status.stop()
+            if status is not None:
+                status.stop()
 
         # Save result to file
         if self.file_path_to_save_results:
