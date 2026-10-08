@@ -108,8 +108,6 @@ class Knowledge(RemoteKnowledge):
     page_store: Optional[Any] = None
     page_search: Optional[PageSearchConfig] = None
 
-    # Reorders results after the vector db returns them, so a strategy that needs to
-    # compare candidates against each other (diversity, recency) sees a real pool.
     # Rewrites the query before it reaches the vector db, for strategies where the
     # question as asked is not the best thing to search with.
     query_transformer: Optional[QueryTransformer] = None
@@ -160,6 +158,17 @@ class Knowledge(RemoteKnowledge):
         self.page_search = page_search
         self.reranker = reranker
         self.query_transformer = query_transformer
+        if query_transformer is not None and getattr(query_transformer, "include_query", None) is False:
+            # Lexical matching only has the words it is given, and a transformed query
+            # drops the original. Page search is always hybrid; a vector db may be.
+            lexical = page_store is not None or str(getattr(vector_db, "search_type", "")).endswith(
+                ("hybrid", "keyword")
+            )
+            if lexical:
+                log_warning(
+                    "The query transformer replaces the query the keyword half of this store "
+                    "searches with. Set include_query=True to keep the original query in it."
+                )
         if reranker is not None and getattr(vector_db, "reranker", None) is not None:
             log_warning(
                 "A reranker is set on both Knowledge and the vector db. Only the one on "
@@ -239,23 +248,45 @@ class Knowledge(RemoteKnowledge):
         with suppress_reranker():
             yield
 
-    def _transformed_query(self, query: str, model: Optional[Any]) -> str:
+    def _page_search_kwargs(self, query: str, transformed: str, page_limit: int) -> Dict[str, Any]:
+        """Keyword arguments for ``search_pages``, adding the transformed query as an
+        extra phrasing only when it differs.
+
+        Page search ranks each phrasing separately and fuses the results, so the question
+        keeps its own lexical ranking instead of being replaced by a generated passage.
+        """
+        kwargs: Dict[str, Any] = {"limit": self._page_search_limit(page_limit)}
+        if transformed != query:
+            kwargs["alternatives"] = [transformed]
+        return kwargs
+
+    def _skip_transform_for_keyword(self, search_type: Optional[str]) -> bool:
+        """Whether a transformed query would make keyword search worse than no transform.
+
+        Lexical search ANDs the query terms, so a generated passage requires every one of
+        its words in a single document: nothing matches, every row ranks zero, and the
+        store hands back insertion order. The query as asked at least ranks.
+        """
+        effective = search_type or getattr(self.vector_db, "search_type", None)
+        return str(getattr(effective, "value", effective)).lower() == "keyword"
+
+    def _transformed_query(self, query: str, model: Optional[Any], run_response: Optional[Any] = None) -> str:
         """Rewrite the query before searching, leaving it untouched when none is set."""
         if self.query_transformer is None:
             return query
         try:
-            return self.query_transformer.transform(query=query, model=model)
+            return self.query_transformer.transform(query=query, model=model, run_response=run_response)
         except Exception as e:
             # A failed transform degrades the search, it does not break it.
             log_error(f"Error transforming query: {str(e)}")
             return query
 
-    async def _atransformed_query(self, query: str, model: Optional[Any]) -> str:
+    async def _atransformed_query(self, query: str, model: Optional[Any], run_response: Optional[Any] = None) -> str:
         """Async variant of ``_transformed_query``."""
         if self.query_transformer is None:
             return query
         try:
-            return await self.query_transformer.atransform(query=query, model=model)
+            return await self.query_transformer.atransform(query=query, model=model, run_response=run_response)
         except Exception as e:
             log_error(f"Error transforming query: {str(e)}")
             return query
@@ -1161,6 +1192,7 @@ class Knowledge(RemoteKnowledge):
         search_type: Optional[str] = None,
         user_id: Optional[str] = None,
         model: Optional[Any] = None,
+        run_response: Optional[Any] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query.
 
@@ -1174,10 +1206,11 @@ class Knowledge(RemoteKnowledge):
                 raise ValueError("Page knowledge does not support filters")
             page_limit = max_results if max_results is not None else self.max_results
             # The transform applies here too: it is configured on Knowledge, not on a store.
-            page_query = self._transformed_query(query, model)
-            page_documents = self._page_documents(
-                self.search_pages(page_query, limit=self._page_search_limit(page_limit))
-            )
+            # Passed as an alternative phrasing rather than replacing the query, so the
+            # lexical half still ranks the question as asked.
+            transformed = self._transformed_query(query, model, run_response)
+            page_kwargs = self._page_search_kwargs(query, transformed, page_limit)
+            page_documents = self._page_documents(self.search_pages(query, **page_kwargs))
             return self._rerank_documents(query, page_documents, page_limit)
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
@@ -1201,7 +1234,11 @@ class Knowledge(RemoteKnowledge):
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             # The transform changes what is searched for; reranking still scores against
             # the question the caller asked, not an invented stand-in for it.
-            search_query = self._transformed_query(query, model)
+            if self._skip_transform_for_keyword(search_type):
+                log_debug("Keyword search ANDs query terms, so the query transformer is skipped")
+                search_query = query
+            else:
+                search_query = self._transformed_query(query, model, run_response)
             with self._vector_db_reranker_suspended():
                 documents = self.vector_db.search(
                     query=search_query,
@@ -1229,6 +1266,7 @@ class Knowledge(RemoteKnowledge):
         search_type: Optional[str] = None,
         user_id: Optional[str] = None,
         model: Optional[Any] = None,
+        run_response: Optional[Any] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query. See ``search``."""
         if self.page_store is not None:
@@ -1236,10 +1274,10 @@ class Knowledge(RemoteKnowledge):
                 raise ValueError("Page knowledge does not support filters")
             page_limit = max_results if max_results is not None else self.max_results
             # See the matching comment in ``search``.
-            page_query = await self._atransformed_query(query, model)
-            page_documents = self._page_documents(
-                await self.asearch_pages(page_query, limit=self._page_search_limit(page_limit))
-            )
+            # See the matching comment in ``search``.
+            transformed = await self._atransformed_query(query, model, run_response)
+            page_kwargs = self._page_search_kwargs(query, transformed, page_limit)
+            page_documents = self._page_documents(await self.asearch_pages(query, **page_kwargs))
             return await self._arerank_documents(query, page_documents, page_limit)
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
@@ -1262,7 +1300,11 @@ class Knowledge(RemoteKnowledge):
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             search_limit = self._search_limit(_max_results)
             # See the matching comment in ``search``.
-            search_query = await self._atransformed_query(query, model)
+            if self._skip_transform_for_keyword(search_type):
+                log_debug("Keyword search ANDs query terms, so the query transformer is skipped")
+                search_query = query
+            else:
+                search_query = await self._atransformed_query(query, model, run_response)
             with self._vector_db_reranker_suspended():
                 try:
                     documents = await self.vector_db.async_search(
@@ -5465,6 +5507,8 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                     user_id=getattr(run_context, "user_id", None),
                     # Lets a query transformer borrow the caller's model when it has none.
                     model=getattr(agent, "model", None),
+                    # So an LLM call a query transformer makes is counted in run metrics.
+                    run_response=run_response,
                 )
             except Exception as e:
                 retrieval_timer.stop()
@@ -5508,6 +5552,8 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                     user_id=getattr(run_context, "user_id", None),
                     # Lets a query transformer borrow the caller's model when it has none.
                     model=getattr(agent, "model", None),
+                    # So an LLM call a query transformer makes is counted in run metrics.
+                    run_response=run_response,
                 )
             except Exception as e:
                 retrieval_timer.stop()
@@ -5601,6 +5647,8 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                     user_id=getattr(run_context, "user_id", None),
                     # Lets a query transformer borrow the caller's model when it has none.
                     model=getattr(agent, "model", None),
+                    # So an LLM call a query transformer makes is counted in run metrics.
+                    run_response=run_response,
                 )
             except Exception as e:
                 retrieval_timer.stop()
@@ -5666,6 +5714,8 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                     user_id=getattr(run_context, "user_id", None),
                     # Lets a query transformer borrow the caller's model when it has none.
                     model=getattr(agent, "model", None),
+                    # So an LLM call a query transformer makes is counted in run metrics.
+                    run_response=run_response,
                 )
             except Exception as e:
                 retrieval_timer.stop()

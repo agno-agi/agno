@@ -117,10 +117,15 @@ def test_the_caller_model_is_used_when_none_is_configured():
 def test_no_model_anywhere_falls_back_to_the_default_model():
     # Direct knowledge.search() passes no model, so HyDE builds the same default Agent
     # and Team use rather than silently doing nothing.
+    import inspect
+
+    from agno.agent import _init
+
     resolved = HyDE()._resolve_model(None)
 
     assert resolved is not None
-    assert resolved.id == "gpt-5.5"
+    # Asserted against the Agent default rather than a literal, so the two cannot drift.
+    assert f'id="{resolved.id}"' in inspect.getsource(_init.set_default_model)
 
 
 def test_an_unavailable_provider_searches_with_the_query_as_asked(monkeypatch):
@@ -354,3 +359,278 @@ def test_a_custom_prompt_with_the_placeholder_is_accepted():
     transform = HyDE(prompt="Answer this as a document would: {query}")
 
     assert transform.prompt == "Answer this as a document would: {query}"
+
+
+def test_the_run_response_is_forwarded_so_the_llm_call_is_metered():
+    # Model.response only accumulates usage when run_response is passed, so without this
+    # every search adds an LLM call that run metrics never see.
+    seen = {}
+
+    class MeteringModel(StubModel):
+        def response(self, messages, **kwargs):  # type: ignore[override]
+            seen["run_response"] = kwargs.get("run_response")
+            return StubResponse(PASSAGE)
+
+    marker = object()
+    HyDE(model=MeteringModel()).transform("q", run_response=marker)
+
+    assert seen["run_response"] is marker
+
+
+@pytest.mark.asyncio
+async def test_the_run_response_is_forwarded_on_the_async_path():
+    seen = {}
+
+    class MeteringModel(StubModel):
+        async def aresponse(self, messages, **kwargs):  # type: ignore[override]
+            seen["run_response"] = kwargs.get("run_response")
+            return StubResponse(PASSAGE)
+
+    marker = object()
+    await HyDE(model=MeteringModel()).atransform("q", run_response=marker)
+
+    assert seen["run_response"] is marker
+
+
+def test_knowledge_forwards_the_run_response_to_the_transformer():
+    seen = {}
+
+    class Recorder(QueryTransformer):
+        def transform(self, query: str, model=None, run_response=None) -> str:
+            seen["run_response"] = run_response
+            return query
+
+    marker = object()
+    knowledge = Knowledge(vector_db=RecordingVectorDb(), query_transformer=Recorder())
+
+    knowledge.search("q", max_results=3, run_response=marker)
+
+    assert seen["run_response"] is marker
+
+
+def test_the_default_model_is_built_once_per_instance():
+    # Each model carries an HTTP client, and this resolves on every search.
+    transform = HyDE()
+
+    first = transform._resolve_model(None)
+    second = transform._resolve_model(None)
+
+    assert first is second
+
+
+def test_caching_the_default_does_not_shadow_a_supplied_model():
+    transform = HyDE()
+    transform._resolve_model(None)  # populate the cache
+
+    caller_model = StubModel()
+
+    assert transform._resolve_model(caller_model) is caller_model
+
+
+def test_a_prompt_with_other_braces_does_not_raise():
+    # str.format treats any brace as a field, so a JSON example in the prompt used to
+    # raise KeyError and get swallowed as a generation failure.
+    transform = HyDE(prompt='Answer {query}. Reply as {"answer": "..."}')
+
+    content = transform._messages("why did revenue drop?")[0].content
+
+    assert "why did revenue drop?" in content
+    assert '{"answer": "..."}' in content
+
+
+def test_every_placeholder_occurrence_is_substituted():
+    transform = HyDE(prompt="{query} -- restated: {query}")
+
+    content = transform._messages("why?")[0].content
+
+    assert content == "why? -- restated: why?"
+
+
+def test_truncation_prefers_a_sentence_boundary():
+    # A fragment left mid-word goes straight into the text being embedded.
+    passage = "Revenue declined because enterprise renewals slipped. Churn also rose sharply."
+
+    result = HyDE(max_characters=60)._combine("q", passage)
+
+    assert result == "Revenue declined because enterprise renewals slipped."
+
+
+def test_truncation_falls_back_to_a_word_boundary():
+    passage = "Revenue declined because enterprise renewals slipped and churn rose"
+
+    result = HyDE(max_characters=30)._combine("q", passage)
+
+    assert result == "Revenue declined because"
+
+
+def test_a_passage_under_the_limit_is_untouched():
+    assert HyDE(max_characters=500)._combine("q", "Short answer.") == "Short answer."
+
+
+def test_a_passage_with_no_break_is_still_capped():
+    assert HyDE(max_characters=5)._combine("q", "abcdefghij") == "abcde"
+
+
+def test_a_lexical_store_warns_when_the_question_is_dropped(monkeypatch):
+    # The keyword half only has the words it is given, so replacing the query weakens it.
+    import agno.knowledge.knowledge as knowledge_module
+
+    messages: List[str] = []
+    monkeypatch.setattr(knowledge_module, "log_warning", lambda message, *a, **k: messages.append(str(message)))
+
+    from agno.vectordb.search import SearchType
+
+    class HybridStore(RecordingVectorDb):
+        search_type = SearchType.hybrid
+
+    Knowledge(vector_db=HybridStore(), query_transformer=HyDE())
+
+    assert any("keyword half" in message for message in messages)
+
+
+def test_keeping_the_question_does_not_warn(monkeypatch):
+    import agno.knowledge.knowledge as knowledge_module
+
+    messages: List[str] = []
+    monkeypatch.setattr(knowledge_module, "log_warning", lambda message, *a, **k: messages.append(str(message)))
+
+    from agno.vectordb.search import SearchType
+
+    class HybridStore(RecordingVectorDb):
+        search_type = SearchType.hybrid
+
+    Knowledge(vector_db=HybridStore(), query_transformer=HyDE(include_query=True))
+
+    assert not any("keyword half" in message for message in messages)
+
+
+def test_a_vector_only_store_does_not_warn(monkeypatch):
+    import agno.knowledge.knowledge as knowledge_module
+
+    messages: List[str] = []
+    monkeypatch.setattr(knowledge_module, "log_warning", lambda message, *a, **k: messages.append(str(message)))
+
+    from agno.vectordb.search import SearchType
+
+    class VectorStore(RecordingVectorDb):
+        search_type = SearchType.vector
+
+    Knowledge(vector_db=VectorStore(), query_transformer=HyDE())
+
+    assert not any("keyword half" in message for message in messages)
+
+
+def test_keyword_search_is_not_transformed():
+    # Lexical search ANDs the query terms, so a generated passage requires every one of
+    # its words in one document: nothing matches and the store returns insertion order.
+    from agno.vectordb.search import SearchType
+
+    class KeywordStore(RecordingVectorDb):
+        search_type = SearchType.keyword
+
+    db = KeywordStore()
+    knowledge = Knowledge(vector_db=db, query_transformer=HyDE(model=StubModel()))
+
+    knowledge.search("why did revenue drop?", max_results=3)
+
+    assert db.searched_with == "why did revenue drop?"
+
+
+@pytest.mark.asyncio
+async def test_keyword_search_is_not_transformed_async():
+    from agno.vectordb.search import SearchType
+
+    class KeywordStore(RecordingVectorDb):
+        search_type = SearchType.keyword
+
+    db = KeywordStore()
+    knowledge = Knowledge(vector_db=db, query_transformer=HyDE(model=StubModel()))
+
+    await knowledge.asearch("why did revenue drop?", max_results=3)
+
+    assert db.searched_with == "why did revenue drop?"
+
+
+def test_a_per_call_keyword_search_type_also_skips_the_transform():
+    # search(search_type=...) is written onto the store before the check runs, so this
+    # covers the override path end to end rather than the helper's own argument.
+    from agno.vectordb.search import SearchType
+
+    class VectorStore(RecordingVectorDb):
+        search_type = SearchType.vector
+
+    db = VectorStore()
+    knowledge = Knowledge(vector_db=db, query_transformer=HyDE(model=StubModel()))
+
+    knowledge.search("why did revenue drop?", max_results=3, search_type="keyword")
+
+    assert db.searched_with == "why did revenue drop?"
+
+
+def test_hybrid_search_is_still_transformed():
+    from agno.vectordb.search import SearchType
+
+    class HybridStore(RecordingVectorDb):
+        search_type = SearchType.hybrid
+
+    db = HybridStore()
+    knowledge = Knowledge(vector_db=db, query_transformer=HyDE(model=StubModel(), include_query=True))
+
+    knowledge.search("why did revenue drop?", max_results=3)
+
+    assert PASSAGE in (db.searched_with or "")
+
+
+def _page_knowledge(transformer):
+    """Knowledge backed by a stub page store, recording what search_pages received."""
+    from agno.knowledge.page import SearchResult
+
+    recorded: dict = {}
+    knowledge = Knowledge.__new__(Knowledge)
+    knowledge.page_store = object()
+    knowledge.max_results = 10
+    knowledge.reranker = None
+    knowledge.query_transformer = transformer
+
+    def fake_search_pages(query, *, limit=10, **kwargs):
+        recorded["query"] = query
+        # Absent rather than None when there is nothing to add, so the call shape for
+        # callers without a transformer is unchanged.
+        recorded["alternatives"] = kwargs.get("alternatives", "ABSENT")
+        return SearchResult(results=[], partial=False)
+
+    knowledge.search_pages = fake_search_pages  # type: ignore[method-assign]
+    knowledge._page_documents = staticmethod(lambda result: [])  # type: ignore[method-assign]
+    return knowledge, recorded
+
+
+def test_page_search_keeps_the_question_and_adds_the_passage():
+    # Page search ranks each phrasing separately and fuses, so replacing the query would
+    # throw away the lexical ranking of the question as asked.
+    knowledge, recorded = _page_knowledge(HyDE(model=StubModel()))
+
+    knowledge.search("why did revenue drop?", max_results=3)
+
+    assert recorded["query"] == "why did revenue drop?"
+    assert recorded["alternatives"] == [PASSAGE]
+
+
+def test_page_search_sends_no_alternatives_when_the_query_is_unchanged():
+    class Identity(QueryTransformer):
+        def transform(self, query: str, model=None, run_response=None) -> str:
+            return query
+
+    knowledge, recorded = _page_knowledge(Identity())
+
+    knowledge.search("why did revenue drop?", max_results=3)
+
+    assert recorded["alternatives"] == "ABSENT"
+
+
+def test_page_search_without_a_transformer_sends_no_alternatives():
+    knowledge, recorded = _page_knowledge(None)
+
+    knowledge.search("why did revenue drop?", max_results=3)
+
+    assert recorded["query"] == "why did revenue drop?"
+    assert recorded["alternatives"] == "ABSENT"
