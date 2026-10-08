@@ -13,6 +13,7 @@ from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.run.agent import (
     RunCancelledEvent,
+    CustomEvent,
     RunCompletedEvent,
     RunContentEvent,
     RunErrorEvent,
@@ -56,11 +57,19 @@ _live_handles: Dict[str, _LiveHandle] = {}
 
 
 @dataclass
+class ExternalRunWarningEvent(CustomEvent):
+    """Nonfatal adapter warning emitted to streaming consumers."""
+
+    warning: Optional[Dict[str, Any]] = None
+
+
+@dataclass
 class ExternalRunResult:
     """Adapter output with tool executions retained for session history."""
 
     content: str
     tools: Optional[List[ToolExecution]] = None
+    warnings: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass
@@ -930,6 +939,8 @@ class BaseExternalAgent:
                 RunStatus.completed,
                 tools=content.tools if isinstance(content, ExternalRunResult) else None,
             )
+            if isinstance(content, ExternalRunResult) and content.warnings:
+                run_output.metadata = {"warnings": content.warnings}
         except RunCancelledException:
             run_output = self._build_run_output(
                 run_id, session_id, user_id, input, "Run cancelled", RunStatus.cancelled
@@ -951,6 +962,7 @@ class BaseExternalAgent:
         history = self._get_history_from_session(session, exclude_run_id=run_id) if session else None
         yield RunStartedEvent(run_id=run_id, agent_id=self.get_id(), agent_name=self.name or "", session_id=session_id)
         accumulated_content = ""
+        warnings: List[Dict[str, Any]] = []
         tools: Dict[str, ToolExecution] = {}
         status = RunStatus.completed
         run_error: Optional[Exception] = None
@@ -959,6 +971,8 @@ class BaseExternalAgent:
                 async for event in self._arun_adapter_stream(
                     input, history=history, run_id=run_id, session=session, **kwargs
                 ):
+                    if isinstance(event, ExternalRunWarningEvent) and event.warning is not None:
+                        warnings.append(event.warning)
                     if isinstance(event, RunContentEvent):
                         accumulated_content += event.content or ""
                     elif isinstance(event, (ToolCallStartedEvent, ToolCallCompletedEvent)) and event.tool:
@@ -984,6 +998,8 @@ class BaseExternalAgent:
             status,
             list(tools.values()) or None,
         )
+        if warnings:
+            run.metadata = {"warnings": warnings}
         if session is not None:
             await self._apersist_run_in_session(session, run)
         fields: Dict[str, Any] = dict(

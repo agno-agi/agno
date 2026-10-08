@@ -23,3 +23,12 @@ If no API key is available, run `claude setup-token` interactively and export it
 `background_cancel.py` serves the agent through AgentOS. Submit runs with `background=true`, poll the run endpoint, or use `stream=true` for indexed SSE. Runs continue after disconnects; the resume endpoint reads the configured event stream. Cancel through the run cancellation endpoint.
 
 Run `background_cancel.py --verify` to start a real streamed turn, cancel after its first content event, and verify CANCELLED in the database. Multi-replica resume and cancellation require shared event-stream and cancellation-manager backends. Stored-event replay after the event-stream TTL is a follow-up.
+
+
+### Transcript write failures
+
+If the SDK exhausts transcript-store retries, the response remains completed and retains its content.
+`RunOutput.metadata["warnings"]` contains a `transcript_persistence_failed` warning, also saved in run
+history. Streaming callers receive a `CustomEvent` with the same `warning` object. The warning means
+another replica may be unable to recover the complete conversation. The adapter does not reexecute
+completed model work or tool side effects to repair the mirror.
