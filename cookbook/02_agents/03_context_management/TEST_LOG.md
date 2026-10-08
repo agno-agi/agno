@@ -158,3 +158,19 @@ markdown instead of into the database.
 **Result:** Completed successfully in 11s.
 
 ---
+
+### compaction/compaction_token_counter.py
+
+**Status:** PASS
+**Description:** Compares three token counters on the same two messages, then runs an agent with `Compaction(compact_at_tokens=1_500, uncompacted_runs=1, use_model_token_count=True)` on `gpt-5.6-luna` over five detailed questions.
+**Result:** Every threshold check counted with the model's own `count_tokens` (4995, 8768, 13104, 12119 tokens) with no fallback. The fold happened on the fourth run: `Folded 4 messages (13072 -> 5404 tokens)`. Earlier runs declined because the fold was still under 2x the one-run tail. `compact_at_tokens=1_500` sits below the size after a fold, so compaction warns that the next run will fold again - expected for a threshold this low.
+
+---
+
+### compaction/compaction_async_token_counter.py
+
+**Status:** PASS
+**Description:** Runs an agent with `arun`, `num_history_runs=10` and `Compaction(compact_at_tokens=2_800, uncompacted_runs=1, token_counter=count_with_margin)`, where `count_with_margin` is an async function returning the model's `acount_tokens` plus 10%, on `gpt-5.6-luna`. Each of five turns shares a fixed ~700-token document and asks for a one-word reply, on a fresh session per run.
+**Result:** Deterministic across two runs - every size check awaited the async counter with the same counts (716 -> 787, 1430 -> 1573, 2144 -> 2358, 2858 -> 3143). The fifth run crossed the threshold and folded both times: `Folded 6 messages (2816 -> 1070 tokens)` and `(2816 -> 1147 tokens)`; only the summary's length varies. Completed in 18s.
+
+---

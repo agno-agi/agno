@@ -830,7 +830,9 @@ class TestFailingOverflowRecovery:
 
         with patch.object(primary, "response_stream", side_effect=stream):
             with pytest.raises(ContextWindowExceededError):
-                list(call_model_stream_with_fallback(primary, None, recover_from_overflow=self._broken_hook, messages=[]))
+                list(
+                    call_model_stream_with_fallback(primary, None, recover_from_overflow=self._broken_hook, messages=[])
+                )
         with patch.object(primary, "aresponse", side_effect=aresponse):
             with pytest.raises(ContextWindowExceededError):
                 asyncio.run(

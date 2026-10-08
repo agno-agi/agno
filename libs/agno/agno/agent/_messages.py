@@ -106,9 +106,15 @@ def _estimated_context_tokens(
     plus background and compaction model calls, so it can be much larger than any single request
     the provider had to fit. ``compact_at_tokens`` is a context-size threshold, so use the current
     message view instead.
+
+    Counted by the model or ``Compaction.token_counter`` when one is chosen, and locally otherwise.
     """
+    from agno.compaction._tokens import count_request
     from agno.utils.tokens import count_tokens
 
+    counted = count_request(_sync_counter(agent), messages, tools)
+    if counted is not None:
+        return counted
     model_id = getattr(agent.model, "id", None) or "gpt-4o"
     try:
         return count_tokens(messages, tools=tools, model_id=model_id)
@@ -126,7 +132,65 @@ def _compaction_inputs(
     }
 
 
-def _log_compaction(record: Any, inputs: Dict[str, Any]) -> None:
+async def _acompaction_inputs(
+    agent: "Agent", messages: Optional[List[Message]] = None, tools: Optional[List[Any]] = None
+) -> Dict[str, Any]:
+    """``_compaction_inputs`` for async runs, counting without blocking the event loop."""
+    if messages is None:
+        return _compaction_inputs(agent, messages, tools)
+    counted = await _acount(agent, messages, tools)
+    return {
+        "context_tokens": counted if counted is not None else _estimated_context_tokens(agent, messages, tools),
+        "model": agent.model,
+    }
+
+
+def _sync_counter(agent: "Agent") -> Any:
+    """What counts a request in a sync run: the model's own count_tokens when use_model_token_count
+    is set, else the token_counter, else nothing - the local estimate."""
+    compaction = agent.compaction
+    if getattr(compaction, "use_model_token_count", False) and agent.model is not None:
+        return agent.model.count_tokens
+    return getattr(compaction, "token_counter", None)
+
+
+async def _acount(agent: "Agent", messages: List[Message], tools: Optional[List[Any]]) -> Optional[int]:
+    """A request's count in an async run, or None to use the local estimate.
+
+    The model's own count is awaited through acount_tokens. An async token_counter is awaited too;
+    a sync one is usually a network call, so it runs in a worker thread rather than blocking the
+    event loop.
+    """
+    from agno.compaction._tokens import acount_request
+
+    compaction = agent.compaction
+    if getattr(compaction, "use_model_token_count", False) and agent.model is not None:
+        try:
+            return int(await agent.model.acount_tokens(messages, tools))
+        except Exception as e:  # noqa: BLE001 - counting is never worth failing a run
+            log_warning(f"Compaction: the model's token count failed, using the local estimate instead: {e}")
+            return None
+    return await acount_request(getattr(compaction, "token_counter", None), messages, tools)
+
+
+def _request_tokens(agent: "Agent", messages: List[Message], tools: Optional[List[Any]]) -> int:
+    """A request's size for overflow recovery, counted the way the trigger counts it, so before and
+    after are comparable."""
+    from agno.compaction._tokens import count_request, estimate_tokens
+
+    counted = count_request(_sync_counter(agent), messages, tools)
+    return counted if counted is not None else estimate_tokens(messages, tools)
+
+
+async def _arequest_tokens(agent: "Agent", messages: List[Message], tools: Optional[List[Any]]) -> int:
+    """``_request_tokens`` for async runs."""
+    from agno.compaction._tokens import estimate_tokens
+
+    counted = await _acount(agent, messages, tools)
+    return counted if counted is not None else estimate_tokens(messages, tools)
+
+
+def _log_compaction(record: Any) -> None:
     """Report what one fold achieved. Sizes were measured when the record was built."""
     detail = f"Compacted {record.messages_compacted} messages"
     if record.tokens_before and record.tokens_after:
@@ -301,7 +365,6 @@ def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -
         return CompactionResult(status=status, message=reason)
 
     log_info("Compacting conversation history")
-    inputs = _compaction_inputs(agent, history)
     # No run to add the summarizer's usage to, so it is collected here and returned.
     run_metrics = RunMetrics()
     new_record = compaction.compact(
@@ -311,7 +374,6 @@ def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -
         user_id=session.user_id,
         previous=record,
         run_metrics=run_metrics,
-        tokens_before=inputs["context_tokens"],
     )
     metrics = run_metrics if run_metrics.details else None
     if new_record is None:
@@ -320,7 +382,7 @@ def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -
             message="The summarizer returned nothing, so history was left unchanged.",
             metrics=metrics,
         )
-    _log_compaction(new_record, inputs)
+    _log_compaction(new_record)
     return _compaction_result(new_record, metrics)
 
 
@@ -339,7 +401,6 @@ async def acompact_now(agent: "Agent", session: AgentSession, history: List[Mess
         return CompactionResult(status=status, message=reason)
 
     log_info("Compacting conversation history")
-    inputs = _compaction_inputs(agent, history)
     # No run to add the summarizer's usage to, so it is collected here and returned.
     run_metrics = RunMetrics()
     new_record = await compaction.acompact(
@@ -349,7 +410,6 @@ async def acompact_now(agent: "Agent", session: AgentSession, history: List[Mess
         user_id=session.user_id,
         previous=record,
         run_metrics=run_metrics,
-        tokens_before=inputs["context_tokens"],
     )
     metrics = run_metrics if run_metrics.details else None
     if new_record is None:
@@ -358,7 +418,7 @@ async def acompact_now(agent: "Agent", session: AgentSession, history: List[Mess
             message="The summarizer returned nothing, so history was left unchanged.",
             metrics=metrics,
         )
-    _log_compaction(new_record, inputs)
+    _log_compaction(new_record)
     return _compaction_result(new_record, metrics)
 
 
@@ -473,21 +533,14 @@ def _plan_overflow_fold(agent: "Agent", run_messages: Any) -> Optional[Tuple[Any
 
 
 def _finish_overflow_fold(
-    compaction: Any,
     messages: List[Message],
     record: Any,
+    compacted: List[Message],
     before: int,
-    tools: Optional[List[Any]],
+    after: int,
     run_response: Optional[RunOutput],
 ) -> bool:
     """Apply a fold made after a rejection to the list the model call holds. True if it shrank."""
-    from agno.compaction._tokens import estimate_tokens
-
-    if record is None:
-        return False
-
-    compacted = compaction.apply_record(messages, record)
-    after = estimate_tokens(compacted, tools)
     if after >= before:
         # A summary has a floor cost, so a fold that reclaims nothing leaves the request no
         # more sendable than it was. Retrying an identical payload just fails twice.
@@ -546,19 +599,21 @@ def _recompact_after_overflow(
     """
     from dataclasses import replace
 
-    from agno.compaction._tokens import estimate_tokens
-
     plan = _plan_overflow_fold(agent, run_messages)
     if plan is None:
         return False
     compaction, folder, messages = plan
-    before = estimate_tokens(messages, tools)
+    before = _request_tokens(agent, messages, tools)
     # min_fold_ratio is the run-start question - is this fold worth paying for. Here the request
     # has already been rejected, so any fold that shrinks it is worth making.
     record = replace(folder, min_fold_ratio=0, stats=compaction.stats).compact(
         messages, **_overflow_fold_kwargs(agent, session, run_response, before)
     )
-    return _finish_overflow_fold(compaction, messages, record, before, tools, run_response)
+    if record is None:
+        return False
+    compacted = compaction.apply_record(messages, record)
+    after = _request_tokens(agent, compacted, tools)
+    return _finish_overflow_fold(messages, record, compacted, before, after, run_response)
 
 
 async def _arecompact_after_overflow(
@@ -572,17 +627,19 @@ async def _arecompact_after_overflow(
     on the async path does not block the event loop for the length of a model call."""
     from dataclasses import replace
 
-    from agno.compaction._tokens import estimate_tokens
-
     plan = _plan_overflow_fold(agent, run_messages)
     if plan is None:
         return False
     compaction, folder, messages = plan
-    before = estimate_tokens(messages, tools)
+    before = await _arequest_tokens(agent, messages, tools)
     record = await replace(folder, min_fold_ratio=0, stats=compaction.stats).acompact(
         messages, **_overflow_fold_kwargs(agent, session, run_response, before)
     )
-    return _finish_overflow_fold(compaction, messages, record, before, tools, run_response)
+    if record is None:
+        return False
+    compacted = compaction.apply_record(messages, record)
+    after = await _arequest_tokens(agent, compacted, tools)
+    return _finish_overflow_fold(messages, record, compacted, before, after, run_response)
 
 
 def apply_compaction(
@@ -612,6 +669,10 @@ def apply_compaction(
     in_context = _replayed_view(compaction, history, record, replay_ids)
 
     prefix = context_prefix or []
+    # Size is the only automatic trigger. Without a threshold nothing would read a count, so none
+    # is taken - whatever does the counting, and the model's own count is a network call.
+    if compaction.compact_at_tokens is None:
+        return in_context
     inputs = _compaction_inputs(agent, prefix + in_context, tools)
     if not compaction.should_compact(in_context, **inputs):
         return in_context
@@ -646,7 +707,7 @@ def apply_compaction(
 
     compacted = compaction.apply_record(history, new_record)
     # Measure before storing, so the persisted record carries the real sizes.
-    _log_compaction(new_record, inputs)
+    _log_compaction(new_record)
     # Surface it on the run, so `run.compaction` reports what happened here.
     if run_response is not None:
         run_response.compaction = new_record
@@ -673,7 +734,11 @@ async def aapply_compaction(
     in_context = _replayed_view(compaction, history, record, replay_ids)
 
     prefix = context_prefix or []
-    inputs = _compaction_inputs(agent, prefix + in_context, tools)
+    # Size is the only automatic trigger. Without a threshold nothing would read a count, so none
+    # is taken - whatever does the counting, and the model's own count is a network call.
+    if compaction.compact_at_tokens is None:
+        return in_context
+    inputs = await _acompaction_inputs(agent, prefix + in_context, tools)
     if not compaction.should_compact(in_context, **inputs):
         return in_context
 
@@ -705,7 +770,7 @@ async def aapply_compaction(
 
     compacted = compaction.apply_record(history, new_record)
     # Measure before storing, so the persisted record carries the real sizes.
-    _log_compaction(new_record, inputs)
+    _log_compaction(new_record)
     # Surface it on the run, so `run.compaction` reports what happened here.
     if run_response is not None:
         run_response.compaction = new_record

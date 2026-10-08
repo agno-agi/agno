@@ -974,6 +974,512 @@ def test_a_user_scoped_bulk_delete_leaves_other_users_records_alone():
     assert len(db.get_compactions_for_session("bob-session")) == 1
 
 
+# --- token_counter -------------------------------------------------------------
+
+
+def test_token_counter_decides_the_threshold():
+    """compact_at_tokens is measured with the configured counter, not the local estimate."""
+    from agno.agent import Agent
+    from agno.agent._messages import _estimated_context_tokens
+
+    seen = {}
+
+    def counter(messages, tools):
+        seen["messages"], seen["tools"] = len(messages), tools
+        return 12_345
+
+    agent = Agent(compaction=Compaction(token_counter=counter))
+    tools = [{"type": "function", "function": {"name": "t"}}]
+
+    assert _estimated_context_tokens(agent, _transcript(), tools) == 12_345
+    assert seen == {"messages": len(_transcript()), "tools": tools}
+
+
+def test_a_failing_token_counter_falls_back_to_the_local_estimate(caplog):
+    """A counter is often a network call or third-party code; it must never fail a run."""
+    from agno.agent import Agent
+    from agno.agent._messages import _estimated_context_tokens
+
+    def broken(messages, tools):
+        raise ConnectionError("count endpoint down")
+
+    local = _estimated_context_tokens(Agent(compaction=Compaction()), _transcript())
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        counted = _estimated_context_tokens(Agent(compaction=Compaction(token_counter=broken)), _transcript())
+
+    assert counted == local
+    assert any("token_counter failed" in r.message for r in caplog.records)
+
+
+def test_token_counter_must_be_a_function():
+    with pytest.raises(TypeError, match="token_counter"):
+        Compaction(token_counter=1_000)  # type: ignore[arg-type]
+
+
+def test_a_models_own_count_tokens_is_a_valid_counter():
+    """Model.count_tokens already takes (messages, tools), so no adapter or provider mapping is needed."""
+    from agno.agent import Agent
+    from agno.agent._messages import _estimated_context_tokens
+    from agno.models.openai import OpenAIResponses
+
+    class _Counting(OpenAIResponses):
+        def count_tokens(self, messages, tools=None, output_schema=None):
+            return 777
+
+    agent = Agent(compaction=Compaction(token_counter=_Counting(id="gpt-5-mini").count_tokens))
+
+    assert _estimated_context_tokens(agent, _transcript()) == 777
+
+
+def test_async_runs_count_with_the_token_counter_off_the_event_loop():
+    import asyncio
+    import threading
+
+    from agno.agent import Agent
+    from agno.agent._messages import _acompaction_inputs
+
+    threads = []
+
+    def counter(messages, tools):
+        threads.append(threading.current_thread())
+        return 42
+
+    agent = Agent(compaction=Compaction(token_counter=counter))
+    inputs = asyncio.run(_acompaction_inputs(agent, _transcript()))
+
+    assert inputs["context_tokens"] == 42
+    assert threads and threads[0] is not threading.main_thread()
+
+
+def test_overflow_recovery_sizes_the_request_with_the_token_counter(caplog):
+    """The before/after sizes in the recovery log come from the same counter as the threshold."""
+    from agno.agent import Agent
+    from agno.agent._messages import _recompact_after_overflow
+    from agno.session.agent import AgentSession
+
+    class _RunMessages:
+        def __init__(self, messages):
+            self.messages = messages
+
+    messages = [Message(role="system", content="sys", id="s0")]
+    messages += [
+        m
+        for i in range(30)
+        for m in (
+            Message(role="user", content=f"q{i} " * 30, id=f"u{i}"),
+            Message(role="assistant", content=f"a{i} " * 800, id=f"a{i}"),
+        )
+    ]
+    run_messages = _RunMessages(messages)
+    agent = Agent(
+        num_history_runs=50,
+        compaction=Compaction(
+            uncompacted_runs=5,
+            store_compacted_messages=False,
+            model=_StubModel(),
+            on_context_overflow=True,
+            token_counter=lambda msgs, tools: 1_000 * len(msgs),
+        ),
+    )
+
+    with caplog.at_level(logging.INFO, logger="agno"):
+        assert _recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages, None)
+    assert any(f"(61000 -> {1_000 * len(run_messages.messages)} tokens)" in r.message for r in caplog.records)
+
+
+def test_async_overflow_recovery_counts_with_the_token_counter_off_the_event_loop(caplog):
+    """The async recovery sizes the request with the same counter, run in a worker thread - a
+    counter is usually a network call, and the event loop must not wait on it."""
+    import asyncio
+    import threading
+
+    from agno.agent import Agent
+    from agno.agent._messages import _arecompact_after_overflow
+    from agno.session.agent import AgentSession
+
+    class _RunMessages:
+        def __init__(self, messages):
+            self.messages = messages
+
+    class _AsyncStub(_StubModel):
+        async def aresponse(self, messages, **kwargs):
+            return self.response(messages)
+
+    counted_on = []
+
+    def counter(msgs, tools):
+        counted_on.append(threading.current_thread())
+        return 1_000 * len(msgs)
+
+    messages = [Message(role="system", content="sys", id="s0")]
+    messages += [
+        m
+        for i in range(30)
+        for m in (
+            Message(role="user", content=f"q{i} " * 30, id=f"u{i}"),
+            Message(role="assistant", content=f"a{i} " * 800, id=f"a{i}"),
+        )
+    ]
+    run_messages = _RunMessages(messages)
+    agent = Agent(
+        num_history_runs=50,
+        compaction=Compaction(
+            uncompacted_runs=5,
+            store_compacted_messages=False,
+            model=_AsyncStub(),
+            on_context_overflow=True,
+            token_counter=counter,
+        ),
+    )
+
+    async def recover():
+        return await _arecompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages, None)
+
+    with caplog.at_level(logging.INFO, logger="agno"):
+        assert asyncio.run(recover())
+    assert any(f"(61000 -> {1_000 * len(run_messages.messages)} tokens)" in r.message for r in caplog.records)
+    assert counted_on and all(thread is not threading.main_thread() for thread in counted_on)
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_the_token_counter_is_only_called_when_its_count_is_used(use_async):
+    """A token_counter is usually a network call. Without compact_at_tokens the trigger has nothing
+    to compare against, and a manual compact sizes its record with measure(), so neither may call
+    it - both used to, and threw the count away."""
+    import asyncio
+
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+
+    class _AsyncStub(_StubModel):
+        async def aresponse(self, messages, **kwargs):
+            return self.response(messages)
+
+    calls = []
+
+    def counter(messages, tools):
+        calls.append(len(messages))
+        return 10 * len(messages)
+
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=InMemoryDb(),
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(
+            compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, token_counter=counter, model=_AsyncStub()
+        ),
+    )
+
+    async def scenario():
+        for i in range(4):
+            await agent.arun(f"question number {i}")
+        return await agent.acompact(session_id="s")
+
+    if use_async:
+        result = asyncio.run(scenario())
+    else:
+        for i in range(4):
+            agent.run(f"question number {i}")
+        result = agent.compact(session_id="s")
+
+    assert result.compacted
+    assert result.record.tokens_before  # still sized, by measure()
+    assert calls == []
+
+
+def _model_that_counts(calls):
+    """A recording model whose own token counts are recorded, sync and async separately."""
+    import threading
+
+    model = _RecordingModel.build()
+
+    def count_tokens(messages, tools=None, output_schema=None):
+        calls.append(("sync", threading.current_thread()))
+        return 10 * len(messages)
+
+    async def acount_tokens(messages, tools=None, output_schema=None):
+        calls.append(("async", threading.current_thread()))
+        return 10 * len(messages)
+
+    model.count_tokens = count_tokens  # type: ignore[method-assign]
+    model.acount_tokens = acount_tokens  # type: ignore[method-assign]
+    return model
+
+
+def _agent_counting_with_its_model(calls):
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+
+    return Agent(
+        model=_model_that_counts(calls),
+        db=InMemoryDb(),
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=10_000, use_model_token_count=True, model=_StubModel()),
+    )
+
+
+def test_use_model_token_count_counts_with_count_tokens_in_sync_runs():
+    """The model the request goes to counts it - users never pass, or need to know, count_tokens."""
+    calls = []
+    agent = _agent_counting_with_its_model(calls)
+    for i in range(3):
+        agent.run(f"question number {i}")
+
+    assert [kind for kind, _ in calls] == ["sync", "sync"]  # every run with history to measure
+
+
+def test_use_model_token_count_awaits_acount_tokens_in_async_runs():
+    """Async runs await the model's async count on the event loop: no worker thread, and never the
+    sync count_tokens, which would block the loop for a network call."""
+    import asyncio
+    import threading
+
+    calls = []
+    agent = _agent_counting_with_its_model(calls)
+
+    async def scenario():
+        for i in range(3):
+            await agent.arun(f"question number {i}")
+
+    asyncio.run(scenario())
+
+    assert [kind for kind, _ in calls] == ["async", "async"]
+    assert all(thread is threading.main_thread() for _, thread in calls)
+
+
+def test_a_failing_model_count_falls_back_to_the_local_estimate(caplog):
+    import asyncio
+
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+
+    model = _RecordingModel.build()
+
+    async def broken(messages, tools=None, output_schema=None):
+        raise RuntimeError("count endpoint down")
+
+    model.acount_tokens = broken  # type: ignore[method-assign]
+    agent = Agent(
+        model=model,
+        db=InMemoryDb(),
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=10_000, use_model_token_count=True, model=_StubModel()),
+    )
+
+    async def scenario():
+        await agent.arun("question number 0")
+        return await agent.arun("question number 1")
+
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        run = asyncio.run(scenario())
+
+    assert run.content == "ok"
+    assert any("model's token count failed" in r.message for r in caplog.records)
+
+
+def test_use_model_token_count_and_token_counter_cannot_both_be_set():
+    with pytest.raises(ValueError, match="cannot both be set"):
+        Compaction(use_model_token_count=True, token_counter=lambda messages, tools: 1)
+
+
+def _async_counters():
+    import functools
+
+    from agno.models.openai import OpenAIResponses
+
+    async def count(messages, tools):
+        return 1
+
+    class _AsyncCall:
+        async def __call__(self, messages, tools):
+            return 1
+
+    return {
+        "model.acount_tokens": OpenAIResponses(id="gpt-5.6-luna").acount_tokens,
+        "async def": count,
+        "partial of async": functools.partial(count),
+        "async __call__": _AsyncCall(),
+    }
+
+
+@pytest.mark.parametrize("name", list(_async_counters()))
+def test_every_form_of_async_token_counter_is_accepted_and_recognised(name):
+    """callable() alone cannot tell an async counter from a sync one, so each form has to be
+    recognised: async runs await it, sync runs refuse it."""
+    from agno.compaction._tokens import is_async_callable
+
+    counter = _async_counters()[name]
+    assert Compaction(token_counter=counter).token_counter is counter
+    assert is_async_callable(counter)
+
+
+def _agent_with_async_counter(seen):
+    import threading
+
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+
+    async def counter(messages, tools):
+        seen.append(threading.current_thread())
+        return 10 * len(messages)
+
+    return Agent(
+        model=_RecordingModel.build(),
+        db=InMemoryDb(),
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=10_000, token_counter=counter, model=_StubModel()),
+    )
+
+
+def test_async_runs_await_an_async_token_counter_on_the_event_loop():
+    import asyncio
+    import threading
+
+    seen = []
+    agent = _agent_with_async_counter(seen)
+
+    async def scenario():
+        for i in range(3):
+            await agent.arun(f"question number {i}")
+
+    asyncio.run(scenario())
+
+    assert len(seen) == 2  # every run with history to measure
+    assert all(thread is threading.main_thread() for thread in seen)
+
+
+def test_a_sync_run_refuses_an_async_token_counter():
+    """A sync run has nothing to await an async counter with. Falling back to the local estimate
+    would quietly ignore what the user configured, so the run fails and says what to do instead."""
+    from agno.run.base import RunStatus
+
+    seen = []
+    agent = _agent_with_async_counter(seen)
+    agent.run("question number 0")
+    run = agent.run("question number 1")
+
+    assert run.status == RunStatus.error
+    assert "only count in async runs" in run.content
+    assert seen == []
+
+
+def test_a_sync_counter_that_returns_a_coroutine_falls_back_without_leaking_it(caplog):
+    """A lambda around an async call looks sync but hands back a coroutine. It is closed - not left to
+    warn "never awaited" - and the local estimate is used."""
+    import warnings
+
+    from agno.compaction._tokens import count_request
+
+    async def count(messages, tools):
+        return 1
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            assert count_request(lambda m, t: count(m, t), [Message(role="user", content="hi")]) is None
+    assert any("returned a coroutine" in r.message for r in caplog.records)
+
+
+def test_async_overflow_recovery_awaits_an_async_token_counter(caplog):
+    import asyncio
+
+    from agno.agent import Agent
+    from agno.agent._messages import _arecompact_after_overflow
+    from agno.session.agent import AgentSession
+
+    class _RunMessages:
+        def __init__(self, messages):
+            self.messages = messages
+
+    class _AsyncStub(_StubModel):
+        async def aresponse(self, messages, **kwargs):
+            return self.response(messages)
+
+    async def counter(msgs, tools):
+        return 1_000 * len(msgs)
+
+    messages = [Message(role="system", content="sys", id="s0")]
+    messages += [
+        m
+        for i in range(30)
+        for m in (
+            Message(role="user", content=f"q{i} " * 30, id=f"u{i}"),
+            Message(role="assistant", content=f"a{i} " * 800, id=f"a{i}"),
+        )
+    ]
+    run_messages = _RunMessages(messages)
+    agent = Agent(
+        num_history_runs=50,
+        compaction=Compaction(
+            uncompacted_runs=5,
+            store_compacted_messages=False,
+            model=_AsyncStub(),
+            on_context_overflow=True,
+            token_counter=counter,
+        ),
+    )
+
+    with caplog.at_level(logging.INFO, logger="agno"):
+        assert asyncio.run(
+            _arecompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages, None)
+        )
+    assert any(f"(61000 -> {1_000 * len(run_messages.messages)} tokens)" in r.message for r in caplog.records)
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_overflow_recovery_sizes_the_request_with_the_models_own_count(use_async, caplog):
+    import asyncio
+
+    from agno.agent import Agent
+    from agno.agent._messages import _arecompact_after_overflow, _recompact_after_overflow
+    from agno.session.agent import AgentSession
+
+    class _RunMessages:
+        def __init__(self, messages):
+            self.messages = messages
+
+    class _AsyncStub(_StubModel):
+        async def aresponse(self, messages, **kwargs):
+            return self.response(messages)
+
+    messages = [Message(role="system", content="sys", id="s0")]
+    messages += [
+        m
+        for i in range(30)
+        for m in (
+            Message(role="user", content=f"q{i} " * 30, id=f"u{i}"),
+            Message(role="assistant", content=f"a{i} " * 800, id=f"a{i}"),
+        )
+    ]
+    run_messages = _RunMessages(messages)
+    calls = []
+    agent = Agent(
+        model=_model_that_counts(calls),
+        num_history_runs=50,
+        compaction=Compaction(
+            uncompacted_runs=5,
+            store_compacted_messages=False,
+            model=_AsyncStub(),
+            on_context_overflow=True,
+            use_model_token_count=True,
+        ),
+    )
+    session = AgentSession(session_id="s1", runs=[])
+
+    with caplog.at_level(logging.INFO, logger="agno"):
+        if use_async:
+            assert asyncio.run(_arecompact_after_overflow(agent, session, run_messages, None))
+        else:
+            assert _recompact_after_overflow(agent, session, run_messages, None)
+
+    assert any(f"(610 -> {10 * len(run_messages.messages)} tokens)" in r.message for r in caplog.records)
+    assert {kind for kind, _ in calls} == {"async" if use_async else "sync"}
+
+
 def test_uncompacted_runs_and_uncompacted_tokens_are_mutually_exclusive():
     """Two settings claiming the same tail is a configuration nobody can reason about.
 
