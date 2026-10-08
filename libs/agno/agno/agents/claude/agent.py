@@ -10,6 +10,7 @@ from agno.run.agent import (
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
+from agno.utils.log import log_warning
 
 
 def _sdk() -> Any:
@@ -76,10 +77,13 @@ class ClaudeAgent(BaseExternalAgent):
     options_kwargs: Dict[str, Any] = field(default_factory=dict)
     framework: str = "claude-agent-sdk"
 
-    # Maps Agno session_id -> SDK session id. Keyed per session to avoid cross-session bleed.
+    # Key under which the SDK session id is stored in the Agno session's session_data.
+    _SESSION_KEY = "claude_sdk_session_id"
+
+    # Fallback Agno session_id -> SDK session id map, used when no db is configured.
     _sdk_session_ids: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
-    def _build_options(self, *, streaming: bool = False, **kwargs: Any) -> Any:
+    def _build_options(self, *, streaming: bool = False, resume: Optional[str] = None) -> Any:
         """Build ClaudeAgentOptions from agent config."""
         sdk = _sdk()
 
@@ -108,15 +112,78 @@ class ClaudeAgent(BaseExternalAgent):
         if streaming:
             opts["include_partial_messages"] = True
 
-        # Resume only the SDK session tied to this Agno session_id.
-        session_id = kwargs.get("session_id")
-        if session_id:
-            sdk_session_id = self._sdk_session_ids.get(session_id)
-            if sdk_session_id:
-                opts["resume"] = sdk_session_id
+        if resume:
+            opts["resume"] = resume
 
         opts.update(self.options_kwargs)
         return sdk.ClaudeAgentOptions(**opts)
+
+    # ---------------------------------------------------------------------------
+    # Agno session <-> SDK session mapping
+    # ---------------------------------------------------------------------------
+
+    def _get_sdk_session_id(self, session: Any, session_id: Optional[str]) -> Optional[str]:
+        if session is not None and session.session_data:
+            sdk_session_id = session.session_data.get(self._SESSION_KEY)
+            if sdk_session_id:
+                return str(sdk_session_id)
+        if session_id:
+            return self._sdk_session_ids.get(session_id)
+        return None
+
+    def _remember_sdk_session(self, session: Any, session_id: Optional[str], sdk_session_id: Optional[str]) -> None:
+        """Stash the SDK session id on the session (persisted by the base class) and in memory."""
+        if not sdk_session_id:
+            return
+        if session is not None:
+            if session.session_data is None:
+                session.session_data = {}
+            session.session_data[self._SESSION_KEY] = sdk_session_id
+        if session_id:
+            self._sdk_session_ids[session_id] = sdk_session_id
+
+    def _forget_sdk_session(self, session: Any, session_id: Optional[str]) -> None:
+        if session is not None and session.session_data:
+            session.session_data.pop(self._SESSION_KEY, None)
+        if session_id:
+            self._sdk_session_ids.pop(session_id, None)
+
+    async def _aquery(
+        self, input: Any, history: Optional[List[Dict[str, Any]]], *, streaming: bool, **kwargs: Any
+    ) -> AsyncIterator[Any]:
+        """Run sdk.query() against the SDK session tied to this Agno session, recording its id.
+
+        The SDK transcript lives on local disk under the agent's cwd, so a stored id may not
+        be resumable (another host, changed cwd, deleted transcript). If the resume fails
+        before any message arrives, start a fresh SDK session seeded with the Agno history.
+        """
+        sdk = _sdk()
+        session = kwargs.get("session")
+        session_id = kwargs.get("session_id")
+        resume = self._get_sdk_session_id(session, session_id)
+
+        while True:
+            options = self._build_options(streaming=streaming, resume=resume)
+            prompt = self._build_prompt(input, history, resumed=resume is not None)
+            received = False
+            try:
+                async for message in sdk.query(prompt=prompt, options=options):
+                    received = True
+                    if isinstance(message, sdk.SystemMessage) and getattr(message, "subtype", None) == "init":
+                        data = getattr(message, "data", {}) or {}
+                        self._remember_sdk_session(session, session_id, data.get("session_id"))
+                    elif isinstance(message, sdk.ResultMessage):
+                        self._remember_sdk_session(session, session_id, getattr(message, "session_id", None))
+                    yield message
+                return
+            except Exception as e:
+                if resume is None or received:
+                    raise
+                log_warning(
+                    f"Claude SDK: could not resume session {resume} for session {session_id}: {e}. Starting a new one."
+                )
+                self._forget_sdk_session(session, session_id)
+                resume = None
 
     @staticmethod
     def _check_result_message(sdk: Any, message: Any) -> None:
@@ -139,20 +206,11 @@ class ClaudeAgent(BaseExternalAgent):
         """Non-streaming: collect all messages and return final content."""
         sdk = _sdk()
 
-        options = self._build_options(**kwargs)
-        agno_session_id = kwargs.get("session_id")
         assistant_text = ""
         final_result = ""
 
-        async for message in sdk.query(prompt=str(input), options=options):
-            if isinstance(message, sdk.SystemMessage):
-                if hasattr(message, "subtype") and message.subtype == "init":
-                    data = getattr(message, "data", {}) or {}
-                    sdk_session_id = data.get("session_id")
-                    if sdk_session_id and agno_session_id:
-                        self._sdk_session_ids[agno_session_id] = sdk_session_id
-
-            elif isinstance(message, sdk.AssistantMessage):
+        async for message in self._aquery(input, history, streaming=False, **kwargs):
+            if isinstance(message, sdk.AssistantMessage):
                 # Accumulate every text block; multiple blocks per message are valid
                 for block in message.content:
                     if isinstance(block, sdk.TextBlock):
@@ -160,8 +218,6 @@ class ClaudeAgent(BaseExternalAgent):
 
             elif isinstance(message, sdk.ResultMessage):
                 self._check_result_message(sdk, message)
-                if hasattr(message, "session_id") and message.session_id and agno_session_id:
-                    self._sdk_session_ids[agno_session_id] = message.session_id
                 if hasattr(message, "result") and message.result:
                     final_result = str(message.result)
 
@@ -182,8 +238,6 @@ class ClaudeAgent(BaseExternalAgent):
         sdk = _sdk()
 
         run_id = kwargs.get("run_id", str(uuid4()))
-        agno_session_id = kwargs.get("session_id")
-        options = self._build_options(streaming=True, **kwargs)
 
         # Track whether we got any StreamEvents (token-level streaming)
         got_stream_events = False
@@ -192,7 +246,7 @@ class ClaudeAgent(BaseExternalAgent):
         # Map tool_use_id -> (tool_name, tool_args) for carrying forward to ToolCallCompleted
         tool_info_map: Dict[str, Dict[str, Any]] = {}
 
-        async for message in sdk.query(prompt=str(input), options=options):
+        async for message in self._aquery(input, history, streaming=True, **kwargs):
             if isinstance(message, sdk.StreamEvent):
                 got_stream_events = True
                 event = message.event
@@ -212,13 +266,6 @@ class ClaudeAgent(BaseExternalAgent):
                                 agent_name=self.name or "",
                                 content=text,
                             )
-
-            elif isinstance(message, sdk.SystemMessage):
-                if hasattr(message, "subtype") and message.subtype == "init":
-                    data = getattr(message, "data", {}) or {}
-                    sdk_session_id = data.get("session_id")
-                    if sdk_session_id and agno_session_id:
-                        self._sdk_session_ids[agno_session_id] = sdk_session_id
 
             elif isinstance(message, sdk.AssistantMessage):
                 # Always extract tool calls from complete AssistantMessage
@@ -279,5 +326,3 @@ class ClaudeAgent(BaseExternalAgent):
 
             elif isinstance(message, sdk.ResultMessage):
                 self._check_result_message(sdk, message)
-                if hasattr(message, "session_id") and message.session_id and agno_session_id:
-                    self._sdk_session_ids[agno_session_id] = message.session_id

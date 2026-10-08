@@ -297,24 +297,6 @@ class CodexAgent(BaseExternalAgent):
         self._remember_thread(session, session_id, getattr(thread, "id", None))
         return thread, False
 
-    @staticmethod
-    def _build_prompt(input: Any, history: Optional[List[Dict[str, Any]]], resumed: bool) -> str:
-        """Plain prompt when the Codex thread carries its own context; otherwise
-        prepend the persisted chat history so a fresh thread does not lose it."""
-        text = str(input)
-        if resumed or not history:
-            return text
-        lines = ["Previous conversation (for context, do not repeat it):"]
-        for message in history:
-            role = message.get("role")
-            content = message.get("content")
-            if role in ("user", "assistant") and content:
-                lines.append(f"{role}: {content}")
-        if len(lines) == 1:
-            return text
-        lines.extend(["", "Current message:", text])
-        return "\n".join(lines)
-
     # ---------------------------------------------------------------------------
     # Adapter hooks
     # ---------------------------------------------------------------------------
