@@ -1491,6 +1491,8 @@ def get_agent_by_id(
         The agent instance (shared or fresh copy based on create_fresh)
 
     Raises:
+        FactoryContextRequired: If the matched entry is an AgentFactory and no
+            RequestContext was passed
         ComponentRehydrationError: If strict and a db-backed agent's references
             cannot be resolved
     """
@@ -1554,7 +1556,14 @@ async def get_agent_by_id_async(
     strict: bool = True,
     published_only: bool = True,
 ) -> Optional[Union[Agent, RemoteAgent, AgentProtocol]]:
-    """Async variant of get_agent_by_id that supports async factories."""
+    """Async variant of get_agent_by_id that supports async factories.
+
+    Raises:
+        FactoryContextRequired: If the matched entry is an AgentFactory and no
+            RequestContext was passed
+        ComponentRehydrationError: If strict and a db-backed agent's references
+            cannot be resolved
+    """
     if agent_id is None:
         return None
 
@@ -1635,6 +1644,8 @@ def get_team_by_id(
         The team instance (shared or fresh copy based on create_fresh)
 
     Raises:
+        FactoryContextRequired: If the matched entry is a TeamFactory and no
+            RequestContext was passed
         ComponentRehydrationError: If strict and a db-backed team's members or
             references cannot be resolved
     """
@@ -1691,7 +1702,14 @@ async def get_team_by_id_async(
     strict: bool = True,
     published_only: bool = True,
 ) -> Optional[Union[Team, RemoteTeam]]:
-    """Async variant of get_team_by_id that supports async factories."""
+    """Async variant of get_team_by_id that supports async factories.
+
+    Raises:
+        FactoryContextRequired: If the matched entry is a TeamFactory and no
+            RequestContext was passed
+        ComponentRehydrationError: If strict and a db-backed team's members or
+            references cannot be resolved
+    """
     if team_id is None:
         return None
 
@@ -1769,6 +1787,8 @@ def get_workflow_by_id(
         The workflow instance (shared or fresh copy based on create_fresh)
 
     Raises:
+        FactoryContextRequired: If the matched entry is a WorkflowFactory and no
+            RequestContext was passed
         ComponentRehydrationError: If strict and a db-backed workflow's
             references cannot be resolved
     """
@@ -1827,7 +1847,14 @@ async def get_workflow_by_id_async(
     strict: bool = True,
     published_only: bool = True,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
-    """Async variant of get_workflow_by_id that supports async factories."""
+    """Async variant of get_workflow_by_id that supports async factories.
+
+    Raises:
+        FactoryContextRequired: If the matched entry is a WorkflowFactory and no
+            RequestContext was passed
+        ComponentRehydrationError: If strict and a db-backed workflow's
+            references cannot be resolved
+    """
     if workflow_id is None:
         return None
 
