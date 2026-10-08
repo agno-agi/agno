@@ -42,8 +42,8 @@ from agno.utils.agent import (
     execute_system_message,
 )
 from agno.utils.common import is_typed_dict
-from agno.utils.knowledge import get_user_id_kwarg
 from agno.utils.log import log_debug, log_info, log_warning
+from agno.utils.knowledge import get_run_response_kwarg, get_user_id_kwarg
 from agno.utils.message import copy_history_message, filter_tool_calls, get_text_from_message, render_instructions
 from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
 from agno.utils.timer import Timer
@@ -1584,7 +1584,12 @@ def get_user_message(
                     retrieval_timer = Timer()
                     retrieval_timer.start()
                     docs_from_knowledge = get_relevant_docs_from_knowledge(
-                        agent, query=user_msg_content, filters=knowledge_filters, run_context=run_context, **kwargs
+                        agent,
+                        query=user_msg_content,
+                        filters=knowledge_filters,
+                        run_context=run_context,
+                        run_response=run_response,
+                        **kwargs,
                     )
                     if docs_from_knowledge is not None:
                         references = MessageReferences(
@@ -1749,7 +1754,12 @@ async def aget_user_message(
                     retrieval_timer = Timer()
                     retrieval_timer.start()
                     docs_from_knowledge = await aget_relevant_docs_from_knowledge(
-                        agent, query=user_msg_content, filters=knowledge_filters, run_context=run_context, **kwargs
+                        agent,
+                        query=user_msg_content,
+                        filters=knowledge_filters,
+                        run_context=run_context,
+                        run_response=run_response,
+                        **kwargs,
                     )
                     if docs_from_knowledge is not None:
                         references = MessageReferences(
@@ -2473,6 +2483,7 @@ def get_relevant_docs_from_knowledge(
     filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     validate_filters: bool = False,
     run_context: Optional[RunContext] = None,
+    run_response: Optional[RunOutput] = None,
     **kwargs: Any,
 ) -> Optional[List[Union[Dict[str, Any], str]]]:
     """Get relevant docs from the knowledge base to answer a query.
@@ -2484,6 +2495,7 @@ def get_relevant_docs_from_knowledge(
         filters (Optional[Dict[str, Any]]): Filters to apply to the search.
         validate_filters (bool): Whether to validate the filters against known valid filter keys.
         run_context (Optional[RunContext]): Runtime context containing dependencies and other context.
+        run_response (Optional[RunOutput]): Run a query transformer's model call is billed to.
         **kwargs: Additional keyword arguments.
 
     Returns:
@@ -2573,6 +2585,8 @@ def get_relevant_docs_from_knowledge(
             "filters": filters,
         }
         retrieve_kwargs.update(get_user_id_kwarg(retrieve_fn, run_context.user_id if run_context else agent.user_id))
+        # Bills an LLM call a query transformer makes to this run.
+        retrieve_kwargs.update(get_run_response_kwarg(retrieve_fn, run_response))
         relevant_docs: List[Document] = retrieve_fn(**retrieve_kwargs)
 
         if not relevant_docs or len(relevant_docs) == 0:
@@ -2592,6 +2606,7 @@ async def aget_relevant_docs_from_knowledge(
     filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     validate_filters: bool = False,
     run_context: Optional[RunContext] = None,
+    run_response: Optional[RunOutput] = None,
     **kwargs: Any,
 ) -> Optional[List[Union[Dict[str, Any], str]]]:
     """Get relevant documents from knowledge base asynchronously."""
@@ -2687,11 +2702,14 @@ async def aget_relevant_docs_from_knowledge(
             "filters": filters,
         }
 
+        # Bills an LLM call a query transformer makes to this run.
         if callable(aretrieve_fn):
             retrieve_kwargs.update(get_user_id_kwarg(aretrieve_fn, scope_user_id))
+            retrieve_kwargs.update(get_run_response_kwarg(aretrieve_fn, run_response))
             relevant_docs: List[Document] = await aretrieve_fn(**retrieve_kwargs)
         elif callable(retrieve_fn):
             retrieve_kwargs.update(get_user_id_kwarg(retrieve_fn, scope_user_id))
+            retrieve_kwargs.update(get_run_response_kwarg(retrieve_fn, run_response))
             relevant_docs = retrieve_fn(**retrieve_kwargs)
         else:
             return None
