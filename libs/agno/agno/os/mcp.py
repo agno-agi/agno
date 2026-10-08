@@ -1825,7 +1825,10 @@ _DbId = Annotated[Optional[str], Field(description="Only when get_agentos_config
 _ReadSessionType = Annotated[
     Optional[Literal["agent", "team", "workflow"]], Field(description="Auto-detected when omitted.")
 ]
-_OwnerId = Annotated[Optional[str], Field(description="Set exactly one of agent_id, team_id, workflow_id.")]
+_OWNER_ID_RULE = "Set exactly one of agent_id, team_id, workflow_id."
+_AgentOwnerId = Annotated[Optional[str], Field(description=f"The agent that owns this run. {_OWNER_ID_RULE}")]
+_TeamOwnerId = Annotated[Optional[str], Field(description=f"The team that owns this run. {_OWNER_ID_RULE}")]
+_WorkflowOwnerId = Annotated[Optional[str], Field(description=f"The workflow that owns this run. {_OWNER_ID_RULE}")]
 
 
 def _make_exposed_run_tool(
@@ -2799,9 +2802,9 @@ def build_mcp_server(
         run_id: Annotated[str, Field(description="run_id from the PAUSED result.")],
         session_id: Annotated[str, Field(description="session_id from the PAUSED result.")],
         ctx: Context,
-        agent_id: _OwnerId = None,
-        team_id: _OwnerId = None,
-        workflow_id: _OwnerId = None,
+        agent_id: _AgentOwnerId = None,
+        team_id: _TeamOwnerId = None,
+        workflow_id: _WorkflowOwnerId = None,
         requirements: Annotated[
             Optional[List[Dict[str, Any]]],
             Field(
@@ -2878,9 +2881,9 @@ def build_mcp_server(
         session_id: Annotated[
             Optional[str], Field(description="Session the run belongs to. Pass it when you have it.")
         ] = None,
-        agent_id: _OwnerId = None,
-        team_id: _OwnerId = None,
-        workflow_id: _OwnerId = None,
+        agent_id: _AgentOwnerId = None,
+        team_id: _TeamOwnerId = None,
+        workflow_id: _WorkflowOwnerId = None,
     ) -> str:
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
         _require_published_component("cancel_run", component_type, component_id)
