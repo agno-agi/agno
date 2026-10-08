@@ -339,3 +339,18 @@ def test_kwargs_alone_is_not_consent_to_receive_a_model():
 
     assert get_model_kwarg(variadic_only, StubModel()) == {}
     assert get_model_kwarg(declares_model, StubModel()) != {}
+
+
+def test_a_custom_prompt_must_contain_the_query_placeholder():
+    # A custom prompt replaces the default, so without the placeholder the model is asked
+    # to answer a question it was never shown.
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        HyDE(prompt="Write a short passage.")
+
+
+def test_a_custom_prompt_with_the_placeholder_is_accepted():
+    transform = HyDE(prompt="Answer this as a document would: {query}")
+
+    assert transform.prompt == "Answer this as a document would: {query}"

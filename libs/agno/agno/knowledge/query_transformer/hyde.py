@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from agno.knowledge.query_transformer.base import QueryTransformer
 from agno.models.base import Model
@@ -32,11 +32,21 @@ class HyDE(QueryTransformer):
     # that triggered the search, then to a default, so this only needs setting to pick a
     # cheaper or faster one.
     model: Optional[Model] = None
+    # Replaces DEFAULT_PROMPT rather than adding to it, so a custom prompt carries its own
+    # instruction not to hedge. Must contain {query}.
     prompt: str = DEFAULT_PROMPT
     # Search with the question and the hypothetical answer together.
     include_query: bool = False
     # Ceiling on the generated passage, so a verbose model cannot blow up the embedding input.
     max_characters: int = Field(default=2000, gt=0)
+
+    @field_validator("prompt")
+    @classmethod
+    def _require_query_placeholder(cls, value: str) -> str:
+        # Without it the model is asked to answer a question it was never shown.
+        if "{query}" not in value:
+            raise ValueError("prompt must contain the {query} placeholder")
+        return value
 
     def _messages(self, query: str) -> List[Message]:
         return [Message(role="user", content=self.prompt.format(query=query))]
