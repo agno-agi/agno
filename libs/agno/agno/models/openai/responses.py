@@ -107,7 +107,7 @@ class OpenAIResponses(Model):
 
     def _using_reasoning_model(self) -> bool:
         """Return True if the contextual used model is a known reasoning model."""
-        return self.id.startswith("o3") or self.id.startswith("o4-mini") or self.id.startswith("gpt-5")
+        return self.id.startswith(("o3", "o4-mini", "gpt-5", "gpt-6"))
 
     def _effective_store(self) -> Optional[bool]:
         """The store value sent on the wire. Background mode requires provider storage."""
@@ -1543,6 +1543,7 @@ class OpenAIResponses(Model):
 
         if input_tokens_details := response_usage.input_tokens_details:
             metrics.cache_read_tokens = input_tokens_details.cached_tokens
+            metrics.cache_write_tokens = getattr(input_tokens_details, "cache_write_tokens", 0) or 0
 
         if output_tokens_details := response_usage.output_tokens_details:
             metrics.reasoning_tokens = output_tokens_details.reasoning_tokens
