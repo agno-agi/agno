@@ -512,8 +512,6 @@ def test_the_default_model_is_built_once_per_instance():
 
 
 def test_the_cached_default_is_a_public_field():
-    # Kept on a public field rather than a PrivateAttr, so it serialises with the rest of
-    # the config and can be inspected or pre-set like any other model field.
     transform = HyDE()
 
     assert "default_model" in type(transform).model_fields
