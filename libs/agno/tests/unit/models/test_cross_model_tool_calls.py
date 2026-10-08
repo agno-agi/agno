@@ -296,6 +296,24 @@ class TestClaudeFormatMessages:
         tool_result = formatted[2]["content"][0]
         assert tool_result["tool_use_id"] == "fc_abc"
 
+    def test_ids_invalid_for_claude_are_remapped(self):
+        """IDs Anthropic rejects (e.g. Kimi-host "query:2") are remapped on both sides of the pair."""
+        from agno.utils.models.claude import format_messages
+
+        msgs = [
+            Message(role="user", content="Hello"),
+            _assistant_msg([_make_tool_call("query:2", name="query")]),
+            _tool_msg("query:2", tool_name="query", content="Result"),
+        ]
+        formatted, _ = format_messages(msgs)
+
+        tool_use_id = formatted[1]["content"][-1].id
+        assert tool_use_id.startswith("toolu_")
+        assert formatted[2]["content"][0]["tool_use_id"] == tool_use_id
+        # Stored session messages are untouched
+        assert msgs[1].tool_calls[0]["id"] == "query:2"
+        assert msgs[2].tool_call_id == "query:2"
+
     def test_tool_result_followed_by_user_message_merged(self):
         """A tool result (mapped to user) followed by a user message should merge into one."""
         from agno.utils.models.claude import format_messages

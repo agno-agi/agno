@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
@@ -9,6 +10,8 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 if TYPE_CHECKING:
     from agno.models.anthropic.claude import SystemPromptBlock
 
+# Anthropic's constraint on tool_use.id / tool_result.tool_use_id.
+_ANTHROPIC_TOOL_ID = re.compile(r"[a-zA-Z0-9_-]+")
 
 # Models that support assistant message prefill. This is a closed set —
 # prefill was deprecated starting with Claude 4.6 and all future models
@@ -567,10 +570,21 @@ def format_messages(
     Returns:
         Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
     """
-    from agno.utils.message import normalize_tool_messages
+    from agno.utils.message import normalize_tool_messages, reformat_tool_call_ids
 
     # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
     messages = normalize_tool_messages(messages)
+
+    # Valid foreign IDs (call_*, fc_*) pass through as-is. Anthropic rejects IDs outside
+    # ^[a-zA-Z0-9_-]+$ (e.g. "query:2" from some Kimi hosts), so remap only when one is present.
+    if any(
+        _ANTHROPIC_TOOL_ID.fullmatch(str(tc.get("id"))) is None
+        for m in messages
+        if m.role == "assistant"
+        for tc in m.tool_calls or []
+        if isinstance(tc, dict) and tc.get("id")
+    ):
+        messages = reformat_tool_call_ids(messages, provider="claude")
 
     chat_messages: List[Dict[str, Union[str, list]]] = []
     system_messages: List[str] = []
