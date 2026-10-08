@@ -2877,9 +2877,7 @@ def build_mcp_server(
         run_id: Annotated[str, Field(description="Run to cancel.")],
         # Mandatory for a caller scoped by user isolation (ownership is proven through the
         # session); an admin's cancel is keyed on run_id alone.
-        session_id: Annotated[
-            Optional[str], Field(description="Session the run belongs to. Pass it when you have it.")
-        ] = None,
+        session_id: Annotated[Optional[str], Field(description="Session the run belongs to.")] = None,
         agent_id: _AgentOwnerId = None,
         team_id: _TeamOwnerId = None,
         workflow_id: _WorkflowOwnerId = None,
