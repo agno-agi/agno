@@ -666,7 +666,6 @@ class AgentOSClient:
             agent_id: ID of the agent
             run_id: ID of the run to continue
             tools: List of ToolExecution objects with tool results
-            stream: Whether to stream the response
             session_id: Optional session ID
             user_id: Optional user ID
             headers: HTTP headers to include in the request (optional)
