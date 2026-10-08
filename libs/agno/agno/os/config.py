@@ -1,8 +1,9 @@
 """Schemas related to the AgentOS configuration"""
 
+import re
 from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Set, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Tags carried by the built-in MCP tools, exposed here so callers (and the IDE) can see
 # the valid values for ``MCPConfig.include_tags`` / ``exclude_tags`` without reading
@@ -410,6 +411,33 @@ MCPServerConfig = MCPConfig
 # the rejection so the error says where they went instead of a bare "extra inputs are not
 # permitted".
 _AUTHZ_FIELDS_MOVED_TO_AUTHORIZATION = ("issuer", "authorization_provider", "audit", "role_store")
+
+
+class CORSConfig(BaseModel):
+    """Browser origin policy for AgentOS, passed as ``AgentOS(cors=CORSConfig(...))``.
+
+    The same policy answers CORS preflights, adds CORS headers to auth errors, and is
+    what ``PublicSurface(enforce_browser_origins=True)`` admits.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Exact browser origins. None uses the settings defaults; [] allows no exact origins.
+    origins: Optional[List[str]] = None
+    # Additional origins, matched against the whole Origin value.
+    origin_regex: Optional[str] = None
+    # Keep CORS origins and patterns already configured on a base_app.
+    merge_base_app: bool = True
+
+    @field_validator("origin_regex")
+    @classmethod
+    def _compile_origin_regex(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None:
+            try:
+                re.compile(value)
+            except re.error as exc:
+                raise ValueError(f"origin_regex is not a valid regular expression: {exc}") from exc
+        return value
 
 
 class AuthorizationConfig(BaseModel):
