@@ -5785,6 +5785,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
         model: Optional[Any] = None,
+        run_response: Optional[Any] = None,
         **kwargs,
     ) -> List[Document]:
         """Retrieve documents for context injection.
@@ -5798,12 +5799,20 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             filters: Filters to apply.
             user_id: Owner scope forwarded to ``search``. ``None`` returns everything.
             model: Offered to ``query_transformer`` when it needs a model and has none.
+            run_response: Run the transformer's model call is billed to, when it makes one.
             **kwargs: Additional parameters.
 
         Returns:
             List of Document objects.
         """
-        return self.search(query=query, max_results=max_results, filters=filters, user_id=user_id, model=model)
+        return self.search(
+            query=query,
+            max_results=max_results,
+            filters=filters,
+            user_id=user_id,
+            model=model,
+            run_response=run_response,
+        )
 
     async def aretrieve(
         self,
@@ -5812,7 +5821,15 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
         model: Optional[Any] = None,
+        run_response: Optional[Any] = None,
         **kwargs,
     ) -> List[Document]:
         """Async version of retrieve. See ``retrieve``."""
-        return await self.asearch(query=query, max_results=max_results, filters=filters, user_id=user_id, model=model)
+        return await self.asearch(
+            query=query,
+            max_results=max_results,
+            filters=filters,
+            user_id=user_id,
+            model=model,
+            run_response=run_response,
+        )

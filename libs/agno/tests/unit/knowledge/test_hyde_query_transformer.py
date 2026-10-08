@@ -408,6 +408,99 @@ def test_knowledge_forwards_the_run_response_to_the_transformer():
     assert seen["run_response"] is marker
 
 
+def test_retrieve_forwards_the_run_response_to_the_transformer():
+    # The add_knowledge_to_context path goes through retrieve(), so a run_response that
+    # stops here leaves HyDE's tokens out of the run's metrics.
+    seen = {}
+
+    class Recorder(QueryTransformer):
+        def transform(self, query: str, model=None, run_response=None) -> str:
+            seen["run_response"] = run_response
+            return query
+
+    marker = object()
+    knowledge = Knowledge(vector_db=RecordingVectorDb(), query_transformer=Recorder())
+
+    knowledge.retrieve("q", max_results=3, run_response=marker)
+
+    assert seen["run_response"] is marker
+
+
+@pytest.mark.asyncio
+async def test_aretrieve_forwards_the_run_response_to_the_transformer():
+    seen = {}
+
+    class Recorder(QueryTransformer):
+        async def atransform(self, query: str, model=None, run_response=None) -> str:
+            seen["run_response"] = run_response
+            return query
+
+    marker = object()
+    knowledge = Knowledge(vector_db=RecordingVectorDb(), query_transformer=Recorder())
+
+    await knowledge.aretrieve("q", max_results=3, run_response=marker)
+
+    assert seen["run_response"] is marker
+
+
+def test_the_retrieval_paths_offer_the_run_response():
+    # Mirrors the model wiring: a Knowledge that declares run_response must be offered the
+    # caller's run, on both the Agent and Team paths.
+    from agno.utils.knowledge import get_run_response_kwarg
+
+    marker = object()
+    knowledge = Knowledge(vector_db=RecordingVectorDb(), query_transformer=HyDE())
+
+    assert get_run_response_kwarg(knowledge.retrieve, marker) == {"run_response": marker}
+    assert get_run_response_kwarg(knowledge.aretrieve, marker) == {"run_response": marker}
+
+
+def test_a_retriever_that_cannot_take_a_run_response_is_left_alone():
+    # A legacy retriever forwarding **kwargs to a narrower search would raise on a kwarg
+    # it never declared, and losing metrics attribution is the lesser cost.
+    from agno.utils.knowledge import get_run_response_kwarg
+
+    def legacy_retriever(query, max_results=None, filters=None):
+        return []
+
+    def variadic_only(query, **kwargs):
+        return []
+
+    assert get_run_response_kwarg(legacy_retriever, object()) == {}
+    assert get_run_response_kwarg(variadic_only, object()) == {}
+
+
+def test_every_retrieval_call_site_offers_the_run_response():
+    # Guards against wiring one caller and missing its twin, as happened with the Team
+    # paths after the Agent ones were done.
+    import inspect
+
+    from agno.agent import _messages
+    from agno.team import _default_tools
+
+    for module in (_messages, _default_tools):
+        source = inspect.getsource(module)
+        calls = source.count("retrieve_fn(**retrieve_kwargs)")
+        offers = source.count("get_run_response_kwarg(")
+        assert offers >= calls, f"{module.__name__} retrieves {calls} times but offers a run {offers} times"
+
+
+def test_every_knowledge_search_tool_passes_the_run_response():
+    # The search tool closures are the path an agent actually takes; each call into
+    # get_relevant_docs_from_knowledge has to carry the run it belongs to.
+    import inspect
+
+    from agno.agent import _default_tools as agent_default_tools
+    from agno.team import _default_tools as team_default_tools
+
+    for module in (agent_default_tools, team_default_tools):
+        source = inspect.getsource(module.create_knowledge_search_tool)
+        # "docs = " anchors on the call itself, not the docstring that names the function.
+        calls = source.count("docs = ")
+        passes = source.count("run_response=run_response")
+        assert passes == calls, f"{module.__name__} retrieves {calls} times but passes the run {passes} times"
+
+
 def test_the_default_model_is_built_once_per_instance():
     # Each model carries an HTTP client, and this resolves on every search.
     transform = HyDE()
@@ -416,6 +509,24 @@ def test_the_default_model_is_built_once_per_instance():
     second = transform._resolve_model(None)
 
     assert first is second
+
+
+def test_the_cached_default_is_a_public_field():
+    # Kept on a public field rather than a PrivateAttr, so it serialises with the rest of
+    # the config and can be inspected or pre-set like any other model field.
+    transform = HyDE()
+
+    assert "default_model" in type(transform).model_fields
+    resolved = transform._resolve_model(None)
+
+    assert transform.default_model is resolved
+
+
+def test_a_preset_default_model_is_used_without_building_one():
+    preset = StubModel()
+    transform = HyDE(default_model=preset)
+
+    assert transform._resolve_model(None) is preset
 
 
 def test_caching_the_default_does_not_shadow_a_supplied_model():

@@ -69,7 +69,12 @@ from agno.run.team import (
 )
 from agno.session import TeamSession
 from agno.tools.function import Function
-from agno.utils.knowledge import get_agentic_or_user_search_filters, get_model_kwarg, get_user_id_kwarg
+from agno.utils.knowledge import (
+    get_agentic_or_user_search_filters,
+    get_model_kwarg,
+    get_run_response_kwarg,
+    get_user_id_kwarg,
+)
 from agno.utils.log import (
     log_debug,
     log_info,
@@ -1650,6 +1655,7 @@ def create_knowledge_search_tool(
                     filters=_resolve_filters(filters),
                     validate_filters=True,
                     run_context=run_context,
+                    run_response=run_response,
                 )
             except Exception as e:
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -1680,6 +1686,7 @@ def create_knowledge_search_tool(
                     filters=_resolve_filters(filters),
                     validate_filters=True,
                     run_context=run_context,
+                    run_response=run_response,
                 )
             except Exception as e:
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -1712,6 +1719,7 @@ def create_knowledge_search_tool(
                     query=query,
                     filters=knowledge_filters,
                     run_context=run_context,
+                    run_response=run_response,
                 )
             except Exception as e:
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -1738,6 +1746,7 @@ def create_knowledge_search_tool(
                     query=query,
                     filters=knowledge_filters,
                     run_context=run_context,
+                    run_response=run_response,
                 )
             except Exception as e:
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -1759,6 +1768,7 @@ def get_relevant_docs_from_knowledge(
     filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     validate_filters: bool = False,
     run_context: Optional[RunContext] = None,
+    run_response: Optional[TeamRunOutput] = None,
     **kwargs,
 ) -> Optional[List[Union[Dict[str, Any], str]]]:
     """Return a list of references from the knowledge base"""
@@ -1840,8 +1850,10 @@ def get_relevant_docs_from_knowledge(
             "filters": filters,
         }
         retrieve_kwargs.update(get_user_id_kwarg(retrieve_fn, run_context.user_id if run_context else team.user_id))
-        # Lets a query transformer borrow the team's model when it has none of its own.
+        # Lets a query transformer borrow the team's model when it has none of its own,
+        # and bills the tokens it spends to this run.
         retrieve_kwargs.update(get_model_kwarg(retrieve_fn, getattr(team, "model", None)))
+        retrieve_kwargs.update(get_run_response_kwarg(retrieve_fn, run_response))
         relevant_docs: List[Document] = retrieve_fn(**retrieve_kwargs)
 
         if not relevant_docs or len(relevant_docs) == 0:
@@ -1861,6 +1873,7 @@ async def aget_relevant_docs_from_knowledge(
     filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     validate_filters: bool = False,
     run_context: Optional[RunContext] = None,
+    run_response: Optional[TeamRunOutput] = None,
     **kwargs,
 ) -> Optional[List[Union[Dict[str, Any], str]]]:
     """Get relevant documents from knowledge base asynchronously."""
@@ -1953,15 +1966,18 @@ async def aget_relevant_docs_from_knowledge(
             "filters": filters,
         }
 
-        # Lets a query transformer borrow the team's model when it has none of its own.
+        # Lets a query transformer borrow the team's model when it has none of its own,
+        # and bills the tokens it spends to this run.
         team_model = getattr(team, "model", None)
         if callable(aretrieve_fn):
             retrieve_kwargs.update(get_user_id_kwarg(aretrieve_fn, scope_user_id))
             retrieve_kwargs.update(get_model_kwarg(aretrieve_fn, team_model))
+            retrieve_kwargs.update(get_run_response_kwarg(aretrieve_fn, run_response))
             relevant_docs: List[Document] = await aretrieve_fn(**retrieve_kwargs)
         elif callable(retrieve_fn):
             retrieve_kwargs.update(get_user_id_kwarg(retrieve_fn, scope_user_id))
             retrieve_kwargs.update(get_model_kwarg(retrieve_fn, team_model))
+            retrieve_kwargs.update(get_run_response_kwarg(retrieve_fn, run_response))
             relevant_docs = retrieve_fn(**retrieve_kwargs)
         else:
             return None

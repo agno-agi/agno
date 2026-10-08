@@ -1,6 +1,6 @@
 from typing import Any, List, Optional
 
-from pydantic import Field, PrivateAttr, field_validator
+from pydantic import Field, field_validator
 
 from agno.knowledge.query_transformer.base import QueryTransformer
 from agno.models.base import Model
@@ -40,8 +40,8 @@ class HyDE(QueryTransformer):
     # Ceiling on the generated passage, so a verbose model cannot blow up the embedding input.
     max_characters: int = Field(default=2000, gt=0)
 
-    # Built once on first use when nothing else supplied a model.
-    _default_model: Optional[Model] = PrivateAttr(default=None)
+    # Set on first use when nothing else supplied a model, so searches share one client.
+    default_model: Optional[Model] = None
 
     @field_validator("prompt")
     @classmethod
@@ -89,8 +89,8 @@ class HyDE(QueryTransformer):
             return self.model
         if model is not None:
             return model
-        if self._default_model is not None:
-            return self._default_model
+        if self.default_model is not None:
+            return self.default_model
         try:
             from agno.models.openai import OpenAIResponses
         except ModuleNotFoundError:
@@ -104,8 +104,8 @@ class HyDE(QueryTransformer):
 
         log_debug("HyDE setting default model to OpenAI Responses")
         # Cached: each instance carries an HTTP client, and this runs on every search.
-        self._default_model = OpenAIResponses(id="gpt-5.4")
-        return self._default_model
+        self.default_model = OpenAIResponses(id="gpt-5.4")
+        return self.default_model
 
     def transform(self, query: str, model: Optional[Model] = None, run_response: Optional[Any] = None) -> str:
         resolved = self._resolve_model(model)

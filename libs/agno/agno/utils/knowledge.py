@@ -165,3 +165,30 @@ def get_model_kwarg(fn: Any, model: Optional[Any]) -> Dict[str, Any]:
     if "model" in parameters:
         return {"model": model}
     return {}
+
+
+def get_run_response_kwarg(fn: Any, run_response: Optional[Any]) -> Dict[str, Any]:
+    """``{"run_response": ...}`` only when the callee accepts it.
+
+    A query transformer that calls an LLM should bill those tokens to the run that
+    triggered the search, so the agent offers its run on retrieval. Dropped silently for a
+    callee that does not name it, for the reason given in :func:`get_model_kwarg`.
+
+    Args:
+        fn: The callable the kwarg will be passed to.
+        run_response: The run to attribute the transformer's model call to.
+
+    Returns:
+        Dict[str, Any]: {"run_response": run_response} when accepted, empty otherwise.
+    """
+    import inspect
+
+    if run_response is None:
+        return {}
+    try:
+        parameters = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return {}
+    if "run_response" in parameters:
+        return {"run_response": run_response}
+    return {}
