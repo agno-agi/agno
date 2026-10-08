@@ -200,6 +200,19 @@ PROVIDER_TOOL_ID_CONFIG: Dict[str, Dict[str, Union[str, int, None]]] = {
 }
 
 
+def _has_claude_stored_blocks(message: "Message") -> bool:
+    """Return True if a message already carries Claude's stored content blocks.
+
+    Such messages reference their tool call IDs from those verbatim blocks, so their
+    tool call IDs must not be remapped: ``_anthropic_stored_assistant_blocks`` matches
+    stored ``tool_use`` blocks against the (post-remap) tool call IDs, and remapping
+    would desync and drop the stored blocks. Their IDs are Claude-assigned and already
+    valid, so leaving them untouched is both safe and correct.
+    """
+    provider_data = getattr(message, "provider_data", None)
+    return bool(provider_data) and bool(provider_data.get("content_blocks"))
+
+
 def reformat_tool_call_ids(messages: List[Message], provider: str) -> List[Message]:
     """
     Reformat tool call IDs to match a provider's requirements.
@@ -235,6 +248,10 @@ def reformat_tool_call_ids(messages: List[Message], provider: str) -> List[Messa
     call_id_map: Dict[str, str] = {}
     counter = 0
     for msg in messages:
+        # Messages with Claude's stored content blocks reference their tool call IDs from
+        # those verbatim blocks; skip them so remapping never desyncs the stored blocks.
+        if _has_claude_stored_blocks(msg):
+            continue
         if msg.role == "assistant" and msg.tool_calls:
             for tc in msg.tool_calls:
                 old_id = tc.get("id")
@@ -281,16 +298,29 @@ def reformat_tool_call_ids(messages: List[Message], provider: str) -> List[Messa
     # Apply the mapping
     result: List[Message] = []
     for msg in messages:
+        # Leave Claude-stored-block messages untouched for the same desync reason as above.
+        if _has_claude_stored_blocks(msg):
+            result.append(msg)
+            continue
         if msg.role == "assistant" and msg.tool_calls:
-            msg_copy = msg.model_copy(deep=True)
-            if msg_copy.tool_calls:
-                for tc in msg_copy.tool_calls:
-                    old_id = tc.get("id")
-                    if old_id and old_id in id_map:
-                        tc["id"] = id_map[old_id]
-                        if call_id_prefix:
-                            tc["call_id"] = call_id_map.get(old_id, id_map[old_id])
-            result.append(msg_copy)
+            # Only deep-copy when at least one tool call ID actually needs remapping.
+            # Messages that carry stored provider blocks (e.g. Claude thinking/reasoning)
+            # must be left untouched so a needless copy never drops their provider_data.
+            needs_copy = any(
+                isinstance(tc, dict) and tc.get("id") in id_map for tc in msg.tool_calls
+            )
+            if needs_copy:
+                msg_copy = msg.model_copy(deep=True)
+                if msg_copy.tool_calls:
+                    for tc in msg_copy.tool_calls:
+                        old_id = tc.get("id")
+                        if old_id and old_id in id_map:
+                            tc["id"] = id_map[old_id]
+                            if call_id_prefix:
+                                tc["call_id"] = call_id_map.get(old_id, id_map[old_id])
+                result.append(msg_copy)
+            else:
+                result.append(msg)
         elif msg.role == "tool" and msg.tool_call_id and msg.tool_call_id in id_map:
             msg_copy = msg.model_copy(deep=True)
             msg_copy.tool_call_id = id_map[msg.tool_call_id]
