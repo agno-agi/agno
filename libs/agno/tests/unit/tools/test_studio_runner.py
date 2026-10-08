@@ -3639,6 +3639,25 @@ class TestAllowlistedMemberRehydration:
         error = _loads(StudioRunnerTools(db=db).run_team("crew", "hi", _agno_run_context=_context()))["error"]
         assert "researcher" in error and "include_agents" in error and "registry" in error
 
+    def test_stored_member_is_still_checked_when_also_allowlisted(self, db):
+        # from_dict reads the db before the registry, so a member stored under
+        # an allowlisted id rebuilds from its stored config and must still be
+        # guarded: its knowledge reference needs the absent registry.
+        self._store_team(db)
+        db.upsert_component(component_id="researcher", component_type="agent", name="Researcher")
+        db.upsert_config(
+            component_id="researcher",
+            stage="published",
+            config={
+                "id": "researcher",
+                "model": {"id": "gpt-5.4", "provider": "OpenAI"},
+                "knowledge": {"name": "handbook"},
+            },
+        )
+        runner = StudioRunnerTools(db=db, include_agents=[self._researcher()])
+        error = _loads(runner.run_team("crew", "hi", _agno_run_context=_context()))["error"]
+        assert "knowledge" in error and "registry" in error
+
     def test_registry_member_still_resolves_without_allowlist(self, db, registry):
         self._store_team(db)
         registry.agents = [self._researcher()]

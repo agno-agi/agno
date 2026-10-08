@@ -1148,14 +1148,14 @@ class StudioRunnerTools(Toolkit):
         for ref_type, ref_id in _component_references(component_type, config):
             versions = pinned_versions.get(ref_id) or {None}
             for ref_version in sorted(versions, key=lambda v: (v is None, v)):
-                if self._is_allowlisted(ref_type, ref_id):
-                    # Supplied through include_*: code-defined, so there is no
-                    # stored config to descend into.
-                    continue
                 ref_loaded = self._load_config_row_from_db(
                     ref_id, version=ref_version, component_type=ComponentType(ref_type)
                 )
                 if ref_loaded is None:
+                    # from_dict reads the db before the registry, so only a
+                    # member missing from the db falls back to include_*.
+                    if self._is_allowlisted(ref_type, ref_id):
+                        continue
                     raise ComponentNeedsRegistryError(
                         f"{component_type.capitalize()} '{component_id}' references {ref_type} '{ref_id}', "
                         "which is not stored in the database (a code-defined component); "
