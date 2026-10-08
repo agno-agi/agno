@@ -812,7 +812,9 @@ def test_instructions_add_to_the_default_prompt():
 
     system = Compaction(instructions="Keep every ticket id.")._summary_messages(_transcript(), previous=None)[0].content
 
-    assert system.startswith(DEFAULT_COMPACTION_PROMPT.format(budget_tokens=2_000))
+    assert system.startswith(
+        DEFAULT_COMPACTION_PROMPT.format(budget_tokens=2_000, budget_words=1_500, budget_characters=8_000)
+    )
     assert system.endswith("Additional instructions:\nKeep every ticket id.")
 
 
@@ -2770,3 +2772,154 @@ def test_archive_tools_absent_when_not_searchable():
 
 def test_not_searchable_by_default():
     assert Compaction().tools_for("s", _db()) is None
+
+
+# --- holding the summary to its budget --------------------------------------
+
+
+_OVER_BUDGET = """## Goal
+Ship the billing migration.
+
+## In progress / next steps
+- Canary at 5% on staging.
+
+## Critical context
+- Ticket OPS-4821, config /srv/billing/config/prod.yaml
+
+## Constraints & preferences
+- Never restart billing during business hours.
+
+## Key decisions & facts
+- Chose Postgres over MySQL for the ledger.
+
+## Errors & fixes
+- BILLING_E512 fixed by raising the pool.
+
+## Completed
+""" + "\n".join(f"- finished step {i} with detail {i * 7}" for i in range(60))
+
+
+class _Verbose:
+    """A summarizer that ignores its budget, as models do."""
+
+    id = "gpt-4o"
+
+    def __init__(self, summary):
+        self.summary = summary
+
+    def response(self, messages, **kwargs):
+        from agno.models.response import ModelResponse
+
+        self.system = messages[0].content
+        return ModelResponse(content=self.summary)
+
+
+def _fold(summary, **compaction_kwargs):
+    compaction = Compaction(uncompacted_runs=1, min_fold_ratio=0, model=_Verbose(summary), **compaction_kwargs)
+    return compaction.compact(_transcript(6), session_id="s")
+
+
+def test_the_prompt_orders_sections_most_important_first():
+    """The cut takes the end of the summary, so the end is where finished history goes."""
+    from agno.compaction.prompts import DEFAULT_COMPACTION_PROMPT
+
+    order = [
+        "## Goal",
+        "## In progress / next steps",
+        "## Critical context",
+        "## Constraints & preferences",
+        "## Key decisions & facts",
+        "## Errors & fixes",
+        "## Completed",
+    ]
+    positions = [DEFAULT_COMPACTION_PROMPT.index(heading) for heading in order]
+    assert positions == sorted(positions)
+
+
+def test_the_budget_is_stated_in_tokens_words_and_characters():
+    model = _Verbose("## Goal\nShip it.")
+    Compaction(uncompacted_runs=1, min_fold_ratio=0, compacted_token_budget=800, model=model).compact(
+        _transcript(6), session_id="s"
+    )
+
+    assert "800 tokens (roughly 600 words, 3200 characters)" in model.system
+
+
+def test_an_over_budget_summary_is_cut_from_the_end_at_a_line_break():
+    """A model cannot count its tokens, so the cap is held here: whole lines from the top, which the
+    prompt orders most important first, and a note in place of what was cut."""
+    from agno.compaction.prompts import SUMMARY_CUT_NOTE
+    from agno.utils.tokens import count_text_tokens
+
+    record = _fold(_OVER_BUDGET, compacted_token_budget=120)
+
+    assert count_text_tokens(record.summary, "gpt-4o") <= 120
+    lines = record.summary.splitlines()
+    assert lines[-1] == SUMMARY_CUT_NOTE
+    original = set(_OVER_BUDGET.splitlines())
+    # Whole lines, then whole words of the next one: never half a word or identifier.
+    *whole, partial = [line for line in lines[:-1] if line.strip()]
+    assert all(line in original for line in whole)
+    assert partial in original or (partial.endswith(" ...") and any(o.startswith(partial[:-4]) for o in original))
+    assert "Ship the billing migration." in record.summary and "OPS-4821" in record.summary
+    assert "finished step 59" not in record.summary
+
+
+def test_a_cut_never_leaves_a_heading_with_nothing_under_it():
+    from agno.compaction.prompts import SUMMARY_CUT_NOTE
+
+    record = _fold(_OVER_BUDGET, compacted_token_budget=60)
+
+    lines = [line for line in record.summary.splitlines() if line.strip()]
+    assert not lines[-2].startswith("#")
+    assert lines[-1] == SUMMARY_CUT_NOTE
+
+
+def test_the_cut_note_points_at_search_when_the_agent_can_search():
+    from agno.compaction.prompts import SUMMARY_CUT_NOTE_SEARCHABLE
+
+    record = Compaction(
+        uncompacted_runs=1, min_fold_ratio=0, compacted_token_budget=120, model=_Verbose(_OVER_BUDGET)
+    ).compact(_transcript(6), session_id="s", db=_db())
+
+    assert record.summary.endswith(SUMMARY_CUT_NOTE_SEARCHABLE)
+
+
+def test_a_summary_within_budget_is_left_alone():
+    record = _fold("## Goal\nShip it.", compacted_token_budget=2_000)
+
+    assert record.summary == "## Goal\nShip it."
+
+
+def test_without_enforcement_the_budget_is_only_a_target():
+    record = _fold(_OVER_BUDGET, compacted_token_budget=120, enforce_token_budget=False)
+
+    assert record.summary == _OVER_BUDGET
+
+
+def test_a_long_line_fills_the_room_left_with_whole_words():
+    """A paragraph-style section is one long line. Dropping it whole wasted most of the budget - found
+    live, a summary kept 129 of 500 tokens - so as many of its words as fit are kept."""
+    from agno.utils.tokens import count_text_tokens
+
+    paragraph = " ".join(f"OPS-{1000 + i}," for i in range(400))
+    record = _fold(f"## Goal\nShip it.\n\n## Critical context\n{paragraph}", compacted_token_budget=200)
+
+    assert 150 <= count_text_tokens(record.summary, "gpt-4o") <= 200
+    partial = [line for line in record.summary.splitlines() if line.startswith("OPS-")][0]
+    assert partial.endswith(" ...")
+    assert all(word.startswith("OPS-") and word[4:].rstrip(",").isdigit() for word in partial[:-4].split(" "))
+
+
+def test_the_cap_holds_even_below_the_notes_own_size():
+    from agno.utils.tokens import count_text_tokens
+
+    for budget in (20, 5, 1):
+        record = _fold(_OVER_BUDGET, compacted_token_budget=budget)
+        assert record.summary
+        assert count_text_tokens(record.summary, "gpt-4o") <= budget
+
+
+def test_the_summary_budget_must_be_positive():
+    with pytest.raises(ValueError, match="compacted_token_budget"):
+        Compaction(compacted_token_budget=0)
