@@ -2103,6 +2103,7 @@ def get_team_router(
                 team_id,
                 os.teams,
                 factory.db,
+                request=request,
                 session_id=session_id,
                 published_only=False,
             )
@@ -2204,6 +2205,7 @@ def get_team_router(
                 team_id,
                 os.teams,
                 factory.db,
+                request=request,
                 session_id=session_id,
                 published_only=False,
             )
@@ -2275,6 +2277,7 @@ def get_team_router(
                 team_id,
                 os.teams,
                 factory.db,
+                request=request,
                 session_id=session_id,
                 published_only=False,
             )
@@ -2346,6 +2349,7 @@ def get_team_router(
                 team_id,
                 os.teams,
                 factory.db,
+                request=request,
                 session_id=session_id,
                 published_only=False,
             )
