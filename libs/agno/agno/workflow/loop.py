@@ -596,8 +596,17 @@ class Loop:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        resume_from_iteration: int = 0,
+        previous_iteration_results: Optional[List[List[StepOutput]]] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
-        """Execute loop steps with streaming support - mirrors workflow execution logic"""
+        """Execute loop steps with streaming support - mirrors workflow execution logic.
+
+        Args:
+            resume_from_iteration: Skip iterations before this number when resuming
+                after a per-iteration review pause.
+            previous_iteration_results: Results from already-completed iterations
+                to preserve when resuming.
+        """
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
 
         # Prepare steps first
@@ -619,8 +628,8 @@ class Loop:
                 parent_step_id=parent_step_id,
             )
 
-        all_results = []
-        iteration = 0
+        all_results: List[List[StepOutput]] = list(previous_iteration_results) if previous_iteration_results else []
+        iteration = resume_from_iteration
         early_termination = False
 
         while iteration < self.max_iterations:
@@ -993,8 +1002,17 @@ class Loop:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        resume_from_iteration: int = 0,
+        previous_iteration_results: Optional[List[List[StepOutput]]] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
-        """Execute loop steps with async streaming support - mirrors workflow execution logic"""
+        """Execute loop steps with async streaming support - mirrors workflow execution logic.
+
+        Args:
+            resume_from_iteration: Skip iterations before this number when resuming
+                after a per-iteration review pause.
+            previous_iteration_results: Results from already-completed iterations
+                to preserve when resuming.
+        """
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
 
         loop_step_id = str(uuid4())
@@ -1016,8 +1034,8 @@ class Loop:
                 parent_step_id=parent_step_id,
             )
 
-        all_results = []
-        iteration = 0
+        all_results: List[List[StepOutput]] = list(previous_iteration_results) if previous_iteration_results else []
+        iteration = resume_from_iteration
         early_termination = False
 
         while iteration < self.max_iterations:
