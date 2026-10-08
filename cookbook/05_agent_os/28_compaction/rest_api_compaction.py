@@ -14,7 +14,7 @@ replaces, so folding a span smaller than that would leave the context BIGGER - w
 is why the server declines instead of obeying:
 
     compacted         the fold happened; "record" carries the token counts
-    not_worth_it      the span is too small to pay for the summary replacing it
+    not_worth_it      with enforce_min_fold_ratio=True: the span is too small to pay for its summary
     nothing_to_fold   the kept tail covers the whole conversation
     already_compacted a previous fold already covers everything foldable
     no_history        the session exists but has no stored history yet
@@ -42,9 +42,8 @@ BASE_URL = os.getenv("AGENT_OS_BASE_URL", "http://localhost:7777")
 # for. Point this at "compaction-agent" instead to watch the two paths interleave.
 AGENT_ID = "manual-compaction-agent"
 
-# Enough turns that the fold clears min_fold_ratio: the folded span has to be at
-# least twice the tail that is kept, so a handful of long answers is the minimum
-# that can demonstrate anything. Asking for detail is what makes them long.
+# Enough long answers that there is a real span to fold in front of the kept tail.
+# Asking for detail is what makes them long.
 QUESTIONS = [
     "Explain database indexing in detail, with worked examples.",
     "Explain B-tree indexes in depth and when they are the right choice.",
@@ -117,9 +116,8 @@ def main() -> None:
         print("Compacting a session that does not exist yet:")
         show(compact(client, session_id))
 
-        # 2. Build up a conversation worth folding. Compacting mid-loop would only
-        #    return not_worth_it until enough turns accumulate in front of the tail,
-        #    so the questions all run first.
+        # 2. Build up a conversation worth folding. The questions all run first, so
+        #    there is one sizeable span to fold rather than a small fold per turn.
         print("\nAsking questions...")
         for question in QUESTIONS:
             print(f"  - {question}")

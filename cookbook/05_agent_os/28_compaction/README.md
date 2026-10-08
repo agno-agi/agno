@@ -31,7 +31,7 @@ would leave the context bigger. Branch on `compacted`, and show `message` verbat
 | status | meaning |
 |---|---|
 | `compacted` | the fold happened; `record` carries the token counts |
-| `not_worth_it` | the span is too small to pay for the summary replacing it |
+| `not_worth_it` | with `enforce_min_fold_ratio=True`: the span is too small to pay for its summary |
 | `nothing_to_fold` | the kept tail covers the whole conversation |
 | `already_compacted` | a previous fold already covers everything foldable |
 | `no_history` | the session exists but has no stored history yet |

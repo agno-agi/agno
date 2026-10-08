@@ -1842,8 +1842,8 @@ def get_agent_router(
             "A compaction can legitimately decline, which is reported rather than raised. Check "
             "``compacted``, and show ``message`` to the user:\n"
             "- ``compacted`` - the fold happened; ``record`` carries the token counts\n"
-            "- ``not_worth_it`` - the span is too small to pay for the summary replacing it, so "
-            "folding would leave the context bigger\n"
+            "- ``not_worth_it`` - with ``enforce_min_fold_ratio``, the span is too small to pay for "
+            "the summary replacing it, so folding would leave the context bigger\n"
             "- ``nothing_to_fold`` - the kept tail covers the whole conversation\n"
             "- ``already_compacted`` - a previous fold already covers everything up to the only "
             "safe cut point\n"
@@ -1875,9 +1875,11 @@ def get_agent_router(
                                 "value": {
                                     "status": "not_worth_it",
                                     "message": (
-                                        "This fold would cost more in summary than it reclaims, so "
-                                        "the context would not shrink. Lower min_fold_ratio or "
-                                        "uncompacted_runs to fold sooner."
+                                        "This fold would replace 1200 tokens against a 900-token tail "
+                                        "(ratio 1.33, needs 2.0), so the context would not shrink. "
+                                        "Continue the conversation, or lower uncompacted_runs or "
+                                        "min_fold_ratio, or set enforce_min_fold_ratio=False, to fold "
+                                        "sooner."
                                     ),
                                     "compacted": False,
                                     "record": None,

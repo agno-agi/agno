@@ -6,15 +6,21 @@ Bounding The Kept Tail By Size
 are - and compaction only folds what sits in FRONT of the kept tail, so a verbose
 turn landing inside the tail is one it can never bring back down.
 
-`uncompacted_tokens` bounds the tail's size instead. On five detailed turns of roughly
-4,700 tokens each:
+`uncompacted_tokens` bounds the tail's size instead. On detailed turns of roughly 4,700
+tokens each, with `compact_at_tokens=8_000`:
 
-    uncompacted_runs=2      fold 14,178  tail 9,452   ratio 1.50  -> declined
-    uncompacted_tokens=2000 fold 18,929  tail 4,701   ratio 4.03  -> folds
+    uncompacted_runs=2      asks for two turns -> ~9,400 tokens, more than the threshold itself
+    uncompacted_tokens=2000 keeps one turn     -> ~4,700 tokens, well under it
 
-Both kept "the recent conversation". The run count kept two enormous turns, which left
-too little in front of them for the fold to pay for its summary - so nothing happened
-and all 23,630 tokens stayed. The token budget kept one, and the fold went through.
+Both mean "keep the recent conversation", but two turns this size could never be folded
+back under the threshold - with everything in front of them folded, the context would
+still be over. So compaction overrides the run count and keeps one turn, logging that it
+did. A run count is a setting the model's answer lengths can overrule; a token budget says
+the size you actually want, and with it how much room each fold leaves under the threshold.
+
+With `enforce_min_fold_ratio=True` (off by default), a large tail also blocks the fold
+itself: the fold must be at least `min_fold_ratio` times the tail, and two big turns
+leave too little in front of them to pass.
 
 The two are mutually exclusive - they describe the same tail in different units, so
 setting both raises rather than silently picking a winner.
@@ -63,10 +69,8 @@ agent = Agent(
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Short questions, then one that asks for far more - the shape a run count
-    # cannot bound, because the large turn lands inside the tail.
-    # Every turn is substantial. Short early turns would leave nothing worth folding -
-    # the fold has to be large enough to pay for the summary replacing it.
+    # Every turn is long - the shape a run count cannot bound, because however many turns
+    # it keeps, their size is up to the model.
     questions = [
         "Explain how B-tree indexes work, in full detail, with worked examples.",
         "Explain hash indexes and how they differ, in full detail.",

@@ -6,13 +6,12 @@ Manual Compaction
 `compact_at_tokens`. Useful at a natural seam: the end of a topic, or before handing
 the agent a long task.
 
-Compaction can legitimately decline, so this returns a result rather than raising.
-A summary costs a few hundred tokens whatever it replaces, so folding a span smaller
-than that would leave the context BIGGER - declining is the correct outcome, and the
-status says which case you hit:
+Compaction can legitimately decline - there may be nothing in front of the kept tail
+to fold yet - so this returns a result rather than raising, and the status says which
+case you hit:
 
 - `compacted`         - the fold happened; `record` carries the token counts
-- `not_worth_it`      - the span is too small to pay for the summary replacing it
+- `not_worth_it`      - with `enforce_min_fold_ratio=True`: the span is too small to pay for its summary
 - `nothing_to_fold`   - the kept tail covers the whole conversation
 - `already_compacted` - a previous fold already covers everything foldable
 - `no_history`        - the session has no stored history yet
@@ -43,10 +42,8 @@ agent = Agent(
     db=db,
     session_id="compaction_manual",
     add_history_to_context=True,
-    # No automatic trigger at all: this session folds only when asked to.
-    # uncompacted_runs=1 because a fold still has to clear min_fold_ratio - calling
-    # compact() does not override that, and a 2-turn tail would need twice as much
-    # conversation in front of it before any fold could pay for itself.
+    # No automatic trigger at all: this session folds only when asked to, keeping the
+    # latest turn verbatim.
     compaction=Compaction(compact_at_tokens=None, uncompacted_runs=1),
 )
 

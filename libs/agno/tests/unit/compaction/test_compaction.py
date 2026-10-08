@@ -554,7 +554,9 @@ def test_manual_compact_still_honours_the_ratio_guard():
             Message(role="assistant", content=f"a{i}", id=f"a{i}"),
         )
     ]
-    compaction = Compaction(uncompacted_runs=2, store_compacted_messages=False, model=_StubModel())
+    compaction = Compaction(
+        enforce_min_fold_ratio=True, uncompacted_runs=2, store_compacted_messages=False, model=_StubModel()
+    )
     agent = Agent(compaction=compaction)
 
     result = compact_now(agent, AgentSession(session_id="s1", runs=[]), history)
@@ -563,6 +565,28 @@ def test_manual_compact_still_honours_the_ratio_guard():
     assert result.record is None
     assert result.status is CompactionStatus.NOT_WORTH_IT
     assert "would not shrink" in result.message or "reclaims" in result.message
+
+
+def test_the_fold_ratio_guard_is_opt_in():
+    """The guard is Agno's own idea, so it is off unless asked for: by default every fold the
+    threshold or a manual compact asks for happens, even one the ratio would decline."""
+    from agno.agent import Agent
+
+    def compact_with(**kwargs):
+        agent = Agent(
+            model=_RecordingModel.build(),
+            db=_db(),
+            session_id="s",
+            add_history_to_context=True,
+            compaction=Compaction(uncompacted_runs=2, store_compacted_messages=False, model=_StubModel(), **kwargs),
+        )
+        for i in range(3):
+            agent.run(f"question number {i}")
+        return agent.compact(session_id="s")
+
+    assert Compaction().enforce_min_fold_ratio is False
+    assert compact_with().status is CompactionStatus.COMPACTED
+    assert compact_with(enforce_min_fold_ratio=True).status is CompactionStatus.NOT_WORTH_IT
 
 
 def test_not_worth_it_message_carries_the_numbers():
@@ -584,7 +608,11 @@ def test_not_worth_it_message_carries_the_numbers():
             Message(role="assistant", content="a " * 600, id=f"a{i}"),
         )
     ]
-    agent = Agent(compaction=Compaction(uncompacted_runs=2, store_compacted_messages=False, model=_StubModel()))
+    agent = Agent(
+        compaction=Compaction(
+            enforce_min_fold_ratio=True, uncompacted_runs=2, store_compacted_messages=False, model=_StubModel()
+        )
+    )
 
     result = compact_now(agent, AgentSession(session_id="s1", runs=[]), history)
 
@@ -620,7 +648,11 @@ def test_declines_are_reported_not_raised():
     from agno.agent._messages import compact_now
     from agno.session.agent import AgentSession
 
-    agent = Agent(compaction=Compaction(uncompacted_runs=2, store_compacted_messages=False, model=_StubModel()))
+    agent = Agent(
+        compaction=Compaction(
+            enforce_min_fold_ratio=True, uncompacted_runs=2, store_compacted_messages=False, model=_StubModel()
+        )
+    )
     session = AgentSession(session_id="s1", runs=[])
 
     for history, expected in (
@@ -711,8 +743,10 @@ def _runs_of(n, answer_words=450):
 def test_the_tail_limit_follows_the_threshold_and_ratio():
     """compact_at_tokens / (1 + min_fold_ratio) is the largest tail a fold can pass the ratio against
     at the moment the threshold fires. Without a threshold there is nothing to derive it from."""
-    assert Compaction(compact_at_tokens=3_000)._tail_limit == 1_000
-    assert Compaction(compact_at_tokens=3_000, min_fold_ratio=0.5)._tail_limit == 2_000
+    # Without an enforced ratio, the only limit is the threshold itself.
+    assert Compaction(compact_at_tokens=3_000)._tail_limit == 3_000
+    assert Compaction(enforce_min_fold_ratio=True, compact_at_tokens=3_000)._tail_limit == 1_000
+    assert Compaction(enforce_min_fold_ratio=True, compact_at_tokens=3_000, min_fold_ratio=0.5)._tail_limit == 2_000
     assert Compaction(compact_at_tokens=None)._tail_limit is None
     assert Compaction(on_context_overflow=True)._tail_limit is None
 
@@ -727,14 +761,14 @@ def test_a_token_tail_that_delays_the_first_fold_is_warned_about(caplog):
     """Above the limit the threshold fires and the ratio declines, run after run, until the context
     reaches the tail times (1 + min_fold_ratio). An explicit size is the user's call, so it is kept."""
     with caplog.at_level(logging.WARNING, logger="agno"):
-        compaction = Compaction(compact_at_tokens=2_000, uncompacted_tokens=1_500)
+        compaction = Compaction(enforce_min_fold_ratio=True, compact_at_tokens=2_000, uncompacted_tokens=1_500)
     text = " ".join(r.message for r in caplog.records)
     assert "at most 666" in text and "4500" in text
     assert compaction.uncompacted_tokens == 1_500
 
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger="agno"):
-        Compaction(compact_at_tokens=2_000, uncompacted_tokens=400)
+        Compaction(enforce_min_fold_ratio=True, compact_at_tokens=2_000, uncompacted_tokens=400)
     assert not caplog.records
 
 
@@ -775,7 +809,11 @@ def test_cutting_a_chosen_run_count_is_logged_at_info(caplog):
 
     with caplog.at_level(logging.DEBUG, logger="agno"):
         Compaction(
-            compact_at_tokens=2_000, uncompacted_runs=4, model=_StubModel(), store_compacted_messages=False
+            enforce_min_fold_ratio=True,
+            compact_at_tokens=2_000,
+            uncompacted_runs=4,
+            model=_StubModel(),
+            store_compacted_messages=False,
         ).compact(messages, session_id="s")
     chosen = [r for r in caplog.records if "tail limit" in r.message]
     assert chosen and chosen[0].levelno == logging.INFO
@@ -783,9 +821,9 @@ def test_cutting_a_chosen_run_count_is_logged_at_info(caplog):
     # log_debug only emits in debug mode, so the default leaves nothing at info level or above.
     caplog.clear()
     with caplog.at_level(logging.DEBUG, logger="agno"):
-        Compaction(compact_at_tokens=2_000, model=_StubModel(), store_compacted_messages=False).compact(
-            messages, session_id="s"
-        )
+        Compaction(
+            enforce_min_fold_ratio=True, compact_at_tokens=2_000, model=_StubModel(), store_compacted_messages=False
+        ).compact(messages, session_id="s")
     assert not [r for r in caplog.records if "tail limit" in r.message and r.levelno >= logging.INFO]
 
 
@@ -1509,7 +1547,7 @@ def test_a_decline_does_not_suggest_a_knob_that_cannot_help(caplog):
         for _ in range(2)
         for m in (Message(role="user", content="q " * 12), Message(role="assistant", content="w " * 2468))
     ]
-    c = Compaction(uncompacted_tokens=2_000)
+    c = Compaction(enforce_min_fold_ratio=True, uncompacted_tokens=2_000)
 
     with caplog.at_level(logging.INFO, logger="agno"):
         c._worth_compacting(head, one_turn)
@@ -1530,10 +1568,10 @@ def test_a_decline_names_continuing_first(caplog):
     tail = [Message(role="user", content="q " * 12), Message(role="assistant", content="w " * 4936)]
 
     with caplog.at_level(logging.INFO, logger="agno"):
-        Compaction(uncompacted_tokens=2_000)._worth_compacting(head, tail)
+        Compaction(enforce_min_fold_ratio=True, uncompacted_tokens=2_000)._worth_compacting(head, tail)
 
     message = " ".join(r.message for r in caplog.records)
-    assert message.index("Continue the conversation") < message.index("min_fold_ratio to fold sooner")
+    assert message.index("Continue the conversation") < message.index("lower min_fold_ratio")
 
 
 def test_declines_name_the_tail_setting_actually_in_force(caplog):

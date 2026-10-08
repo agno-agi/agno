@@ -163,7 +163,7 @@ markdown instead of into the database.
 
 **Status:** PASS
 **Description:** Compares three token counters on the same two messages, then runs an agent with `Compaction(compact_at_tokens=1_500, uncompacted_runs=1, use_model_token_count=True)` on `gpt-5.6-luna` over five detailed questions.
-**Result:** Every threshold check counted with the model's own `count_tokens` (4995, 8768, 13104, 12119 tokens) with no fallback. The fold happened on the fourth run: `Folded 4 messages (13072 -> 5404 tokens)`. Earlier runs declined because the fold was still under 2x the one-run tail. `compact_at_tokens=1_500` sits below the size after a fold, so compaction warns that the next run will fold again - expected for a threshold this low.
+**Result:** Every threshold check counted with the model's own `count_tokens` (4995, 8768, 13104, 12119 tokens) with no fallback. The fold happened on the fourth run: `Folded 4 messages (13072 -> 5404 tokens)`. Earlier runs declined because the fold was still under 2x the one-run tail (the fold ratio guard was then on by default; it is now opt-in via `enforce_min_fold_ratio`). `compact_at_tokens=1_500` sits below the size after a fold, so compaction warns that the next run will fold again - expected for a threshold this low.
 
 ---
 

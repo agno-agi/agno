@@ -34,7 +34,8 @@ class CompactionStatus(str, Enum):
     NOTHING_TO_FOLD = "nothing_to_fold"
     # A previous fold already covers everything up to the only safe cut point.
     ALREADY_COMPACTED = "already_compacted"
-    # Folding this span would cost more in summary than it reclaims.
+    # Folding this span would cost more in summary than it reclaims. Only with
+    # enforce_min_fold_ratio=True.
     NOT_WORTH_IT = "not_worth_it"
     # The summarizer returned nothing.
     SUMMARY_FAILED = "summary_failed"

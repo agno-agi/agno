@@ -141,7 +141,11 @@ class Compaction:
 
     # Also fold and retry when the provider rejects a request as too long. compaction=True turns it on.
     on_context_overflow: bool = False
-    # Skip a fold smaller than this many times the kept tail - a summary costs a few hundred tokens.
+    # Skip a fold that would not shrink the context. A summary costs a few hundred tokens whatever it
+    # replaces, so folding a span not much bigger than the tail it keeps can leave the context larger.
+    # Off by default: every fold the threshold asks for happens.
+    enforce_min_fold_ratio: bool = False
+    # With enforce_min_fold_ratio, the folded span must be at least this many times the kept tail.
     min_fold_ratio: float = 2.0
 
     stats: CompactionStats = field(default_factory=CompactionStats)
@@ -297,9 +301,9 @@ class Compaction:
 
         ``uncompacted_runs`` names a position, so this returns one. The boundary walk then only
         snaps it earlier for safety - it never moves later, so the cut itself never keeps fewer
-        runs than asked. The tail limit can still keep fewer: when the requested runs exceed
-        compact_at_tokens / (1 + min_fold_ratio), the tail is cut to that size (never inside the
-        newest exchange), since a tail that large could never pass the fold ratio.
+        runs than asked. The tail limit can still keep fewer: when the requested runs exceed it, the
+        tail is cut to that size (never inside the newest exchange), since a tail that large would
+        leave too little in front of it to fold.
         """
         keep_runs = self.uncompacted_runs or 0
         if keep_runs <= 0:
@@ -317,16 +321,22 @@ class Compaction:
         return user_indexes[-keep_runs]
 
     @property
+    def _fold_ratio(self) -> float:
+        """The ratio a fold must pass: min_fold_ratio when it is enforced, else none."""
+        return self.min_fold_ratio if self.enforce_min_fold_ratio else 0.0
+
+    @property
     def _tail_limit(self) -> Optional[int]:
-        """The largest tail a fold can keep and still pass min_fold_ratio at the threshold.
+        """The largest tail a fold can keep at the threshold.
 
         When compact_at_tokens is reached, the history is about that size. A tail of at most
-        compact_at_tokens / (1 + min_fold_ratio) leaves at least min_fold_ratio times as much in
-        front of it, so the fold the threshold asks for is one the ratio accepts.
+        compact_at_tokens / (1 + ratio) leaves at least ratio times as much in front of it, so the
+        fold the threshold asks for is one the ratio accepts. Without an enforced ratio the limit
+        is compact_at_tokens itself: a tail that size would leave nothing to fold.
         """
         if self.compact_at_tokens is None:
             return None
-        return int(self.compact_at_tokens / (1 + self.min_fold_ratio))
+        return int(self.compact_at_tokens / (1 + self._fold_ratio))
 
     def _check_token_tail(self) -> None:
         """An explicit token tail has to leave room to fold at the threshold."""
@@ -343,7 +353,7 @@ class Compaction:
                 f"Compaction: uncompacted_tokens={self.uncompacted_tokens} is too large to fold at "
                 f"compact_at_tokens={self.compact_at_tokens} with min_fold_ratio={self.min_fold_ratio} - "
                 f"the tail can be at most {limit}. Nothing will fold until the context reaches about "
-                f"{int(self.uncompacted_tokens * (1 + self.min_fold_ratio))} tokens."
+                f"{int(self.uncompacted_tokens * (1 + self._fold_ratio))} tokens."
             )
 
     def boundary_for(self, messages: List[Message], min_index: int = 0) -> Optional[int]:
@@ -398,7 +408,7 @@ class Compaction:
             return
         message = (
             f"Compaction: the last {self.uncompacted_runs} runs exceed the {self._tail_limit}-token tail "
-            f"limit (compact_at_tokens / (1 + min_fold_ratio)), so the kept tail was cut to that size."
+            f"limit, so the kept tail was cut to that size."
         )
         if isinstance(self.uncompacted_runs, _Unset):
             log_debug(message)
@@ -746,12 +756,12 @@ class Compaction:
         their cost is not something folding could ever reclaim. Counting them would let a single
         envelope make every subsequent fold look worthless and stall compaction entirely.
         """
-        if self.min_fold_ratio <= 0:
+        if self._fold_ratio <= 0:
             return True
         fold_tokens = estimate_tokens([m for m in to_compact if not is_offload_envelope(m)])
         keep_tokens = max(estimate_tokens([m for m in kept if not is_offload_envelope(m)]), 1)
         ratio = fold_tokens / keep_tokens
-        if ratio < self.min_fold_ratio:
+        if ratio < self._fold_ratio:
             # log_info, not debug: a threshold was crossed and the user was told so. Going
             # quiet after that reads as a bug. Say what was declined and why.
             #
@@ -765,7 +775,8 @@ class Compaction:
                 f"{fold_tokens} tokens with a summary while keeping a {keep_tokens}-token tail "
                 f"(ratio {ratio:.2f} < min_fold_ratio {self.min_fold_ratio}), which would not "
                 f"shrink the context. Continue the conversation - the fold grows while the tail "
-                f"does not - or lower min_fold_ratio{self._tail_advice_for(kept)} to fold sooner."
+                f"does not - or lower min_fold_ratio{self._tail_advice_for(kept)}, or set "
+                f"enforce_min_fold_ratio=False, to fold sooner."
             )
             return False
         return True
@@ -818,7 +829,7 @@ class Compaction:
                 f"(ratio {fold_tokens / keep_tokens:.2f}, needs {self.min_fold_ratio}), so the "
                 f"context would not shrink. Continue the conversation, or lower "
                 f"{self._tail_setting} or "
-                f"min_fold_ratio to fold sooner.",
+                f"min_fold_ratio, or set enforce_min_fold_ratio=False, to fold sooner.",
             )
         return boundary, CompactionStatus.COMPACTED, "Ready to compact."
 

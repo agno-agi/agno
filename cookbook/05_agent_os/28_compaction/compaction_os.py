@@ -61,9 +61,7 @@ research_agent = Agent(
         # question-plus-answer runs to ~10k tokens. A threshold under that is crossed
         # on turn one and re-evaluates every turn, mostly to decline.
         compact_at_tokens=25_000,
-        # A fold has to be at least min_fold_ratio (2x) the tail it keeps, or it cannot
-        # pay for the summary. A 1-turn tail reaches that after a few turns; a larger
-        # one needs proportionally more conversation in front of it first.
+        # Keep the latest turn verbatim; everything older folds into the summary.
         uncompacted_runs=1,
         search_compacted_messages=True,
     ),

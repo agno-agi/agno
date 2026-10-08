@@ -25,6 +25,12 @@ The kept tail is set one of two ways, and they cannot both be used:
 Reach for `uncompacted_tokens` when turns vary a lot in length, which is most
 tool-calling agents.
 
+By default every fold the threshold asks for happens. `enforce_min_fold_ratio=True`
+skips one that would not shrink the context: the folded span must be at least
+`min_fold_ratio` (2.0) times the kept tail. A summary costs a few hundred tokens
+whatever it replaces, so folding a span not much bigger than the tail can leave the
+context larger. A skipped fold is retried as the conversation grows.
+
 A cheaper model can do the summarizing, which is usually the right call: the
 work is mechanical and the main model never sees the transcript being condensed.
 """
@@ -43,6 +49,8 @@ compaction = Compaction(
     compact_at_tokens=1_000,
     # Keep the last turn verbatim; everything older folds into the summary.
     uncompacted_runs=1,
+    # Skip folds too small to shrink the context (off by default):
+    # enforce_min_fold_ratio=True,
 )
 
 # ---------------------------------------------------------------------------
