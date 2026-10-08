@@ -19,6 +19,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from agno.os.auth import require_verified_public_workflow, verify_internal_service_request
+from agno.os.middleware.cors import OriginPolicy
 from agno.os.public import _client_id
 from agno.os.public._policy import RUN_ROUTE, PublicRoutePolicy
 from agno.utils.bounded import BoundedWorkers
@@ -42,9 +43,20 @@ def _uuid(value: str) -> None:
 
 
 class PublicMiddleware:
-    def __init__(self, app: Any, *, surface: Any, agent_os: Any, policy: Optional[PublicRoutePolicy] = None):
+    def __init__(
+        self,
+        app: Any,
+        *,
+        surface: Any,
+        agent_os: Any,
+        policy: Optional[PublicRoutePolicy] = None,
+        origin_policy: Optional[OriginPolicy] = None,
+    ):
         self.app, self.surface, self.agent_os = app, surface, agent_os
         self.policy = policy or PublicRoutePolicy(surface, agent_os)
+        self.origin_policy = origin_policy
+        if getattr(surface, "enforce_browser_origins", False) and origin_policy is None:
+            raise ValueError("Browser origin enforcement requires an AgentOS origin policy")
         self.active_runs = self.active_mcp = 0
         self.pending_websockets = 0
         self.selected = self.policy.selected
@@ -53,6 +65,13 @@ class PublicMiddleware:
         }
         self.oauth_paths = self.policy.oauth_paths
         self.interface_routes = set(getattr(agent_os, "_public_interface_routes", []))
+
+    def _check_origin(self, request: Request) -> None:
+        if not getattr(self.surface, "enforce_browser_origins", False):
+            return
+        origins = request.headers.getlist("origin")
+        if origins and (len(origins) != 1 or self.origin_policy is None or not self.origin_policy.allows(origins[0])):
+            raise Rejected(403, "origin_not_allowed")
 
     async def _identity(self, request: Request) -> str:
         if self.surface.client_id is not None:
@@ -180,6 +199,7 @@ class PublicMiddleware:
                 # Preserve the Request contract of application-owned identity callbacks
                 # while resolving the identity of the HTTP upgrade request.
                 request = Request({**scope, "type": "http", "method": "GET"})
+                self._check_origin(request)
                 identity = await asyncio.wait_for(self._identity(request), timeout=3)
                 decision = await self.surface.limiter.aconsume("socket", client_id=identity)
             except Exception:
@@ -340,6 +360,8 @@ class PublicMiddleware:
             await send(message)
 
         try:
+            if method == "POST" and RUN_ROUTE.fullmatch(path):
+                self._check_origin(request)
             if len(request.headers.getlist("authorization")) > 1:
                 raise Rejected(401, "ambiguous_authorization")
             internal = verify_internal_service_request(request)
