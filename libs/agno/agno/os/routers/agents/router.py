@@ -1,7 +1,7 @@
 import asyncio
 import contextlib
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Literal, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Literal, Optional, Tuple, Union, cast
 from uuid import uuid4
 
 from fastapi import (
@@ -69,8 +69,10 @@ from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
+    PaginatedResponse,
     UnauthenticatedResponse,
     ValidationErrorResponse,
+    paginate_list,
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
@@ -1831,7 +1833,7 @@ def get_agent_router(
 
     @router.get(
         "/agents",
-        response_model=List[AgentResponse],
+        response_model=Union[List[AgentResponse], PaginatedResponse[AgentResponse]],
         response_model_exclude_none=True,
         tags=["Agents"],
         operation_id="get_agents",
@@ -1843,7 +1845,9 @@ def get_agent_router(
             "- Model configuration and capabilities\n"
             "- Available tools and their configurations\n"
             "- Session, knowledge, memory, and reasoning settings\n"
-            "- Only meaningful (non-default) configurations are included"
+            "- Only meaningful (non-default) configurations are included\n\n"
+            "**Pagination (opt-in):** pass `page` and/or `limit` to get a `PaginatedResponse` "
+            "(`{data, meta}`). Without them the full list is returned as a plain array."
         ),
         responses={
             200: {
@@ -1867,7 +1871,11 @@ def get_agent_router(
             }
         },
     )
-    async def get_agents(request: Request) -> List[AgentResponse]:
+    async def get_agents(
+        request: Request,
+        page: Optional[int] = Query(default=None, ge=1, description="Page number (1-indexed). Opt-in pagination."),
+        limit: Optional[int] = Query(default=None, ge=1, le=100, description="Agents per page. Opt-in pagination."),
+    ) -> Union[List[AgentResponse], PaginatedResponse[AgentResponse]]:
         """Return the list of all Agents present in the contextual OS"""
         # Filter agents based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
@@ -1891,32 +1899,9 @@ def get_agent_router(
         else:
             accessible_agents = os.agents or []
 
-        agents: List[AgentResponse] = []
-        if accessible_agents:
-            for agent in accessible_agents:
-                if isinstance(agent, Agent):
-                    agents.append(await AgentResponse.from_agent(agent=agent, is_component=False))
-                elif isinstance(agent, AgentFactory):
-                    agents.append(AgentResponse.from_factory(agent))
-                elif isinstance(agent, RemoteAgent):
-                    agents.append(await agent.get_agent_config())
-                else:
-                    # External framework adapter: build a minimal response
-                    agent_db = getattr(agent, "db", None)
-                    session_table = (
-                        agent_db.session_table_name if agent_db and hasattr(agent_db, "session_table_name") else None
-                    )
-                    sessions = {"session_table": session_table} if session_table else None
-                    agents.append(
-                        AgentResponse(
-                            id=agent.id,
-                            name=agent.name,
-                            description=getattr(agent, "description", None),
-                            db_id=agent_db.id if agent_db else None,
-                            sessions=sessions,
-                            metadata={"framework": getattr(agent, "framework", "external")},
-                        )
-                    )
+        # Code agents first, then stored ones: one ordered list so a page never
+        # overlaps or skips across the two sources.
+        entries: List[Tuple[Any, bool]] = [(agent, False) for agent in accessible_agents]
 
         if os.db and isinstance(os.db, BaseDb):
             from agno.agent.agent import get_agents
@@ -1936,11 +1921,44 @@ def get_agent_router(
                 # Apply the same RBAC filtering to DB-loaded agents
                 if getattr(request.state, "authorization_enabled", False):
                     db_agents = await afilter_resources_by_access(request, db_agents, "agents")
-                for db_agent in db_agents:
-                    agent_response = await AgentResponse.from_agent(agent=db_agent, is_component=True)
-                    agents.append(agent_response)
+                entries.extend((db_agent, True) for db_agent in db_agents)
 
-        return agents
+        # Slice before building responses: from_agent is async and a RemoteAgent
+        # fetches its config over the network.
+        page_entries, meta = paginate_list(entries, page, limit)
+
+        agents: List[AgentResponse] = []
+        for agent, is_component in page_entries:
+            if is_component:
+                agents.append(await AgentResponse.from_agent(agent=agent, is_component=True))
+                continue
+            if isinstance(agent, Agent):
+                agents.append(await AgentResponse.from_agent(agent=agent, is_component=False))
+            elif isinstance(agent, AgentFactory):
+                agents.append(AgentResponse.from_factory(agent))
+            elif isinstance(agent, RemoteAgent):
+                agents.append(await agent.get_agent_config())
+            else:
+                # External framework adapter: build a minimal response
+                agent_db = getattr(agent, "db", None)
+                session_table = (
+                    agent_db.session_table_name if agent_db and hasattr(agent_db, "session_table_name") else None
+                )
+                sessions = {"session_table": session_table} if session_table else None
+                agents.append(
+                    AgentResponse(
+                        id=agent.id,
+                        name=agent.name,
+                        description=getattr(agent, "description", None),
+                        db_id=agent_db.id if agent_db else None,
+                        sessions=sessions,
+                        metadata={"framework": getattr(agent, "framework", "external")},
+                    )
+                )
+
+        if meta is None:
+            return agents
+        return PaginatedResponse(data=agents, meta=meta)
 
     @router.get(
         "/agents/{agent_id}",
