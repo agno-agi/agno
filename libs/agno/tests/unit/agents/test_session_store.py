@@ -82,6 +82,8 @@ async def test_order_across_fast_batches_and_reopen(db_factory, monkeypatch):
     key = {"project_key": "cwd", "session_id": "session"}
     entries = [{"uuid": str(i), "type": "entry", "n": i} for i in range(1002)]
     await store.append(key, entries)
+    # A restarted process has no in-memory position counter.
+    monkeypatch.setattr(transcripts, "_last_position", 0)
     await store.append(key, [{"type": "last"}])
     reopened = AgnoSessionStore(db, "project")
     assert await reopened.load(key) == entries + [{"type": "last"}]
@@ -99,3 +101,15 @@ async def test_sync_db_is_offloaded(db_factory):
     db.append_transcript_entries = lambda **kwargs: called.append(threading.get_ident())
     await AgnoSessionStore(db, "p").append({"session_id": "s"}, [{"type": "x"}])
     assert called and called[0] != caller
+
+
+@pytest.mark.asyncio
+async def test_empty_database_optional_operations(db_factory):
+    store = AgnoSessionStore(db_factory(), "project")
+    key = {"session_id": "missing", "project_key": "cwd"}
+    assert await store.load(key) is None
+    assert await store.list_sessions("cwd") == []
+    assert await store.list_subkeys(key) == []
+    await store.delete(key)
+    await store.append(key, [])
+    assert await store.load(key) is None

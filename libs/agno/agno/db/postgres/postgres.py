@@ -8740,14 +8740,20 @@ class PostgresDb(BaseDb):
             return
         from sqlalchemy.dialects.postgresql import insert as transcript_insert
 
-        from agno.db.transcripts import transcript_rows
+        from agno.db.transcripts import transcript_lock_id, transcript_rows
 
         table = self._get_table("transcripts", create_table_if_not_found=True)
         if table is None:
             raise RuntimeError("Could not create transcript table")
-        rows = transcript_rows(project_key, session_id, entries, subpath)
         stmt = transcript_insert(table).on_conflict_do_nothing(index_elements=["entry_id"])
         with self.Session() as sess, sess.begin():
+            sess.execute(select(func.pg_advisory_xact_lock(transcript_lock_id(project_key, session_id, subpath))))
+            previous = sess.execute(
+                select(func.max(table.c.position)).where(
+                    table.c.project_key == project_key, table.c.session_id == session_id, table.c.subpath == subpath
+                )
+            )
+            rows = transcript_rows(project_key, session_id, entries, subpath, position_after=previous.scalar() or 0)
             sess.execute(stmt, rows)
 
     def get_transcript_entries(

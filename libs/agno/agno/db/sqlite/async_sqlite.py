@@ -5309,9 +5309,15 @@ class AsyncSqliteDb(AsyncBaseDb):
         table = await self._get_table("transcripts", create_table_if_not_found=True)
         if table is None:
             raise RuntimeError("Could not create transcript table")
-        rows = transcript_rows(project_key, session_id, entries, subpath)
         stmt = transcript_insert(table).on_conflict_do_nothing(index_elements=["entry_id"])
         async with self.async_session_factory() as sess, sess.begin():
+            await sess.execute(text("BEGIN IMMEDIATE"))
+            previous = await sess.execute(
+                select(func.max(table.c.position)).where(
+                    table.c.project_key == project_key, table.c.session_id == session_id, table.c.subpath == subpath
+                )
+            )
+            rows = transcript_rows(project_key, session_id, entries, subpath, position_after=previous.scalar() or 0)
             await sess.execute(stmt, rows)
 
     async def get_transcript_entries(
