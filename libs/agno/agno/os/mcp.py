@@ -1825,10 +1825,11 @@ _DbId = Annotated[Optional[str], Field(description="Only when get_agentos_config
 _ReadSessionType = Annotated[
     Optional[Literal["agent", "team", "workflow"]], Field(description="Auto-detected when omitted.")
 ]
+# The rule binding these three lives in each tool's description, not repeated on every field.
 _OWNER_ID_RULE = "Set exactly one of agent_id, team_id, workflow_id."
-_AgentOwnerId = Annotated[Optional[str], Field(description=f"The agent that owns this run. {_OWNER_ID_RULE}")]
-_TeamOwnerId = Annotated[Optional[str], Field(description=f"The team that owns this run. {_OWNER_ID_RULE}")]
-_WorkflowOwnerId = Annotated[Optional[str], Field(description=f"The workflow that owns this run. {_OWNER_ID_RULE}")]
+_AgentOwnerId = Annotated[Optional[str], Field(description="The agent that owns this run.")]
+_TeamOwnerId = Annotated[Optional[str], Field(description="The team that owns this run.")]
+_WorkflowOwnerId = Annotated[Optional[str], Field(description="The workflow that owns this run.")]
 
 
 def _make_exposed_run_tool(
@@ -2793,7 +2794,7 @@ def build_mcp_server(
         description=(
             "Resume a PAUSED run after resolving its requirements (human-in-the-loop). The paused "
             "result's structuredContent carries the run_id, session_id, owning component id, and the "
-            "unresolved requirements."
+            f"unresolved requirements. {_OWNER_ID_RULE}"
         ),
         tags={"core", "lifecycle"},
         annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
@@ -2869,7 +2870,7 @@ def build_mcp_server(
         title="Cancel Run",
         description=(
             "Request cancellation of a running run. Irreversible: the run stops and is marked CANCELLED "
-            "(if it has not started yet, the intent is recorded and applied when it does)."
+            f"(if it has not started yet, the intent is recorded and applied when it does). {_OWNER_ID_RULE}"
         ),
         tags={"core", "lifecycle"},
         annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
