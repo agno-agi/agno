@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union, cast
 from uuid import uuid4
 
 from agno.compaction._cut import choose_boundary, is_offload_envelope
-from agno.compaction._tokens import TokenCounter, count_request, estimate_tokens
+from agno.compaction._tokens import TokenCounter, count_request, estimate_tokens, is_async_callable
 from agno.compaction._view import build_view
 from agno.compaction.archive import CompactionArchive, render_message, render_messages, search_terms
 from agno.compaction.prompts import (
@@ -99,9 +99,14 @@ class Compaction:
     # -- when to compact ------------------------------------------------
     # Fold when the context reaches this many tokens. None folds only on agent.compact() or overflow.
     compact_at_tokens: Optional[int] = _COMPACT_AT_TOKENS_UNSET
-    # Counts a request's tokens for compact_at_tokens and overflow recovery: a function taking
-    # (messages, tools) and returning an int. Defaults to a local tiktoken estimate. Pass
-    # model.count_tokens for the provider's own count - a network call on each check.
+    # How a request's tokens are counted, for compact_at_tokens and overflow recovery. Unset, a local
+    # tiktoken estimate. Set one of these two to count differently:
+    # - use_model_token_count: the model the request goes to counts it - count_tokens in sync runs,
+    #   acount_tokens in async ones. Exact, but a network call on each check for most providers.
+    use_model_token_count: bool = False
+    # - token_counter: your own function taking (messages, tools) and returning an int, such as a
+    #   Hugging Face tokenizer for an open-weight model. An async one is awaited in async runs and
+    #   fails a sync run, which has nothing to await it with.
     token_counter: Optional[TokenCounter] = None
 
     # -- what to keep ---------------------------------------------------
@@ -154,6 +159,12 @@ class Compaction:
                 f"token_counter must be a function taking (messages, tools) and returning an int, "
                 f"got {type(self.token_counter).__name__}"
             )
+        if self.use_model_token_count and self.token_counter is not None:
+            raise ValueError(
+                "use_model_token_count and token_counter cannot both be set - each chooses how tokens are "
+                "counted. Use use_model_token_count=True for the model's own count, or token_counter for "
+                "a function of your own."
+            )
         if self.compact_at_tokens is not None and self.compact_at_tokens <= 0:
             raise ValueError(f"compact_at_tokens must be a positive integer, got {self.compact_at_tokens}")
         if self.uncompacted_runs is not None and self.uncompacted_runs < 0:
@@ -202,9 +213,13 @@ class Compaction:
         """
         if context_tokens is not None:
             return context_tokens
-        counted = count_request(self.token_counter, messages, tools)
-        if counted is not None:
-            return counted
+        counter = model.count_tokens if self.use_model_token_count and model is not None else self.token_counter
+        # Reached only when the caller did not count. An async counter cannot be awaited here, so it
+        # is left out rather than raising; the local estimate below stands in.
+        if not is_async_callable(counter):
+            counted = count_request(counter, messages, tools)
+            if counted is not None:
+                return counted
         try:
             model_id = getattr(model, "id", None) or "gpt-4o"
             from agno.utils.tokens import count_tokens

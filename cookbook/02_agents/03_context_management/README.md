@@ -6,7 +6,8 @@ Examples for instructions, system messages, introduction messages, and context s
 - `compaction/compaction.py` - Keep a long session in the context window with `compaction=True`.
 - `compaction/compaction_thresholds.py` - Tune when compaction fires and how much it keeps.
 - `compaction/compaction_manual.py` - Fold now with `agent.compact()`, and read the status when it declines.
-- `compaction/compaction_token_counter.py` - Choose how tokens are counted: the local default, the provider's own `count_tokens`, or any tokenizer such as Hugging Face.
+- `compaction/compaction_token_counter.py` - Choose how tokens are counted: the local default, the model's own count with `use_model_token_count=True`, or any tokenizer such as Hugging Face.
+- `compaction/compaction_async_token_counter.py` - Count tokens on the async path: an async `token_counter` awaited in `arun`, here the model's count plus a safety margin.
 - `compaction/compaction_tail_budget.py` - Bound the kept tail by size with `uncompacted_tokens`, for agents whose turns vary in length.
 - `compaction/compaction_searchable_archive.py` - Let the agent search history that was compacted away.
 - `compaction/compaction_events.py` - Stream `CompactionStarted` / `CompactionCompleted` and show what was reclaimed.

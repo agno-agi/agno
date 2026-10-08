@@ -107,12 +107,12 @@ def _estimated_context_tokens(
     the provider had to fit. ``compact_at_tokens`` is a context-size threshold, so use the current
     message view instead.
 
-    Counted by ``Compaction.token_counter`` when one is set, and locally otherwise.
+    Counted by the model or ``Compaction.token_counter`` when one is chosen, and locally otherwise.
     """
     from agno.compaction._tokens import count_request
     from agno.utils.tokens import count_tokens
 
-    counted = count_request(getattr(agent.compaction, "token_counter", None), messages, tools)
+    counted = count_request(_sync_counter(agent), messages, tools)
     if counted is not None:
         return counted
     model_id = getattr(agent.model, "id", None) or "gpt-4o"
@@ -135,35 +135,59 @@ def _compaction_inputs(
 async def _acompaction_inputs(
     agent: "Agent", messages: Optional[List[Message]] = None, tools: Optional[List[Any]] = None
 ) -> Dict[str, Any]:
-    """``_compaction_inputs`` for async runs. A token_counter is usually a network call, so it runs
-    in a worker thread rather than blocking the event loop."""
-    if messages is None or getattr(agent.compaction, "token_counter", None) is None:
+    """``_compaction_inputs`` for async runs, counting without blocking the event loop."""
+    if messages is None:
         return _compaction_inputs(agent, messages, tools)
-    import asyncio
-
+    counted = await _acount(agent, messages, tools)
     return {
-        "context_tokens": await asyncio.to_thread(_estimated_context_tokens, agent, messages, tools),
+        "context_tokens": counted if counted is not None else _estimated_context_tokens(agent, messages, tools),
         "model": agent.model,
     }
 
 
-def _request_tokens(compaction: Any, messages: List[Message], tools: Optional[List[Any]]) -> int:
-    """A request's size for overflow recovery: the token_counter's count when one is set, else the
-    local estimate - the same counting the trigger uses, so before and after are comparable."""
+def _sync_counter(agent: "Agent") -> Any:
+    """What counts a request in a sync run: the model's own count_tokens when use_model_token_count
+    is set, else the token_counter, else nothing - the local estimate."""
+    compaction = agent.compaction
+    if getattr(compaction, "use_model_token_count", False) and agent.model is not None:
+        return agent.model.count_tokens
+    return getattr(compaction, "token_counter", None)
+
+
+async def _acount(agent: "Agent", messages: List[Message], tools: Optional[List[Any]]) -> Optional[int]:
+    """A request's count in an async run, or None to use the local estimate.
+
+    The model's own count is awaited through acount_tokens. An async token_counter is awaited too;
+    a sync one is usually a network call, so it runs in a worker thread rather than blocking the
+    event loop.
+    """
+    from agno.compaction._tokens import acount_request
+
+    compaction = agent.compaction
+    if getattr(compaction, "use_model_token_count", False) and agent.model is not None:
+        try:
+            return int(await agent.model.acount_tokens(messages, tools))
+        except Exception as e:  # noqa: BLE001 - counting is never worth failing a run
+            log_warning(f"Compaction: the model's token count failed, using the local estimate instead: {e}")
+            return None
+    return await acount_request(getattr(compaction, "token_counter", None), messages, tools)
+
+
+def _request_tokens(agent: "Agent", messages: List[Message], tools: Optional[List[Any]]) -> int:
+    """A request's size for overflow recovery, counted the way the trigger counts it, so before and
+    after are comparable."""
     from agno.compaction._tokens import count_request, estimate_tokens
 
-    counted = count_request(getattr(compaction, "token_counter", None), messages, tools)
+    counted = count_request(_sync_counter(agent), messages, tools)
     return counted if counted is not None else estimate_tokens(messages, tools)
 
 
-async def _arequest_tokens(compaction: Any, messages: List[Message], tools: Optional[List[Any]]) -> int:
-    """``_request_tokens`` for async runs. A token_counter is usually a network call, so it runs in
-    a worker thread rather than blocking the event loop."""
-    if getattr(compaction, "token_counter", None) is None:
-        return _request_tokens(compaction, messages, tools)
-    import asyncio
+async def _arequest_tokens(agent: "Agent", messages: List[Message], tools: Optional[List[Any]]) -> int:
+    """``_request_tokens`` for async runs."""
+    from agno.compaction._tokens import estimate_tokens
 
-    return await asyncio.to_thread(_request_tokens, compaction, messages, tools)
+    counted = await _acount(agent, messages, tools)
+    return counted if counted is not None else estimate_tokens(messages, tools)
 
 
 def _log_compaction(record: Any) -> None:
@@ -579,7 +603,7 @@ def _recompact_after_overflow(
     if plan is None:
         return False
     compaction, folder, messages = plan
-    before = _request_tokens(compaction, messages, tools)
+    before = _request_tokens(agent, messages, tools)
     # min_fold_ratio is the run-start question - is this fold worth paying for. Here the request
     # has already been rejected, so any fold that shrinks it is worth making.
     record = replace(folder, min_fold_ratio=0, stats=compaction.stats).compact(
@@ -588,7 +612,7 @@ def _recompact_after_overflow(
     if record is None:
         return False
     compacted = compaction.apply_record(messages, record)
-    after = _request_tokens(compaction, compacted, tools)
+    after = _request_tokens(agent, compacted, tools)
     return _finish_overflow_fold(messages, record, compacted, before, after, run_response)
 
 
@@ -607,14 +631,14 @@ async def _arecompact_after_overflow(
     if plan is None:
         return False
     compaction, folder, messages = plan
-    before = await _arequest_tokens(compaction, messages, tools)
+    before = await _arequest_tokens(agent, messages, tools)
     record = await replace(folder, min_fold_ratio=0, stats=compaction.stats).acompact(
         messages, **_overflow_fold_kwargs(agent, session, run_response, before)
     )
     if record is None:
         return False
     compacted = compaction.apply_record(messages, record)
-    after = await _arequest_tokens(compaction, compacted, tools)
+    after = await _arequest_tokens(agent, compacted, tools)
     return _finish_overflow_fold(messages, record, compacted, before, after, run_response)
 
 
@@ -646,7 +670,7 @@ def apply_compaction(
 
     prefix = context_prefix or []
     # Size is the only automatic trigger. Without a threshold nothing would read a count, so none
-    # is taken - whatever does the counting, and some token_counters are a network call.
+    # is taken - whatever does the counting, and the model's own count is a network call.
     if compaction.compact_at_tokens is None:
         return in_context
     inputs = _compaction_inputs(agent, prefix + in_context, tools)
@@ -711,7 +735,7 @@ async def aapply_compaction(
 
     prefix = context_prefix or []
     # Size is the only automatic trigger. Without a threshold nothing would read a count, so none
-    # is taken - whatever does the counting, and some token_counters are a network call.
+    # is taken - whatever does the counting, and the model's own count is a network call.
     if compaction.compact_at_tokens is None:
         return in_context
     inputs = await _acompaction_inputs(agent, prefix + in_context, tools)

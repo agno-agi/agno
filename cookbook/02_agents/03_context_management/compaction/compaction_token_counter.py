@@ -6,19 +6,18 @@ Compaction Token Counter
 compaction uses a local tiktoken estimate: in-process, a few milliseconds, and a few percent
 off for models that do not use OpenAI's tokenizer.
 
-`token_counter` replaces it with any function that takes `(messages, tools)` and returns an
-int. Three common choices:
+Three ways to count:
 
 - Nothing (the default): the local tiktoken estimate.
-- `model.count_tokens`: the provider's own count. `Model.count_tokens` already has this
-  shape, so it can be passed as is. It is exact, but for Claude, OpenAI Responses, Gemini and
+- `use_model_token_count=True`: the model the request goes to counts it - `count_tokens` in
+  sync runs, `acount_tokens` in async ones. Exact, but for Claude, OpenAI Responses, Gemini and
   Bedrock it is a network call on every size check (roughly 350-700 ms).
-- Any tokenizer you have, such as a Hugging Face tokenizer for an open-weight model - wrapped
-  in a small function, as below.
+- `token_counter=`: any function that takes `(messages, tools)` and returns an int, such as a
+  Hugging Face tokenizer for an open-weight model - wrapped in a small function, as below.
 
-The counter decides when `compact_at_tokens` is reached and sizes the request during
-overflow recovery. If it raises, compaction logs a warning and falls back to the local
-estimate, so a counter can never fail a run.
+The count decides when `compact_at_tokens` is reached and sizes the request during overflow
+recovery. If counting fails, compaction logs a warning and falls back to the local estimate,
+so it can never fail a run.
 """
 
 import json
@@ -65,8 +64,9 @@ agent = Agent(
         # Low enough that this short demo reaches it; the default is 150k.
         compact_at_tokens=1_500,
         uncompacted_runs=1,
-        # The provider's own count. Swap in llama3_counter, or any function of your own.
-        token_counter=model.count_tokens,
+        # The model counts its own requests. Or count with your own function instead:
+        # token_counter=llama3_counter
+        use_model_token_count=True,
     ),
 )
 
