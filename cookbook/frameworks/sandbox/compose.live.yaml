@@ -1,0 +1,10 @@
+# Optional real-Claude overlay. Credentials are inherited from the invoking shell.
+services:
+  api-a: &live
+    environment:
+      AGNO_SANDBOX_TEST_HARNESS: '0'
+      AGNO_SANDBOX_IDLE_TIMEOUT: '120'
+      AGNO_SANDBOX_MAX_ATTEMPTS: '1'
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?Export ANTHROPIC_API_KEY for live tests}
+  api-b:
+    <<: *live

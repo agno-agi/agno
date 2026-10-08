@@ -357,6 +357,7 @@ class BaseDb(ABC):
         self.tool_results_table_name = "agno_tool_results"
         self.compactions_table_name = "agno_compactions"
         self.transcripts_table_name = "agno_transcripts"
+        self.sandboxes_table_name = "agno_sandboxes"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
@@ -2314,6 +2315,27 @@ class BaseDb(ABC):
         """Hard-delete a service account by ID. Returns True if deleted."""
         raise NotImplementedError
 
+    # Optional session sandbox registry. Updates require optimistic concurrency.
+    def upsert_sandbox(self, record: Dict[str, Any], expected_revision: Optional[int] = None) -> bool:
+        """Insert a new binding or replace one only at the expected revision."""
+        raise NotImplementedError
+
+    def get_sandbox(
+        self, sandbox_id: Optional[str] = None, session_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Read a binding by id or session, including database time as db_now."""
+        raise NotImplementedError
+
+    def list_sandboxes(
+        self, agent_id: Optional[str] = None, user_id: Optional[str] = None, status: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """List bindings filtered by agent, owner and lifecycle status."""
+        raise NotImplementedError
+
+    def delete_sandbox(self, sandbox_id: str, expected_revision: int) -> bool:
+        """Remove a destroyed, inactive binding at the expected revision."""
+        raise NotImplementedError
+
     # Optional transcript storage for external agents.
 
     def append_transcript_entries(
@@ -2395,6 +2417,7 @@ class AsyncBaseDb(ABC):
         self.tool_results_table_name = "agno_tool_results"
         self.compactions_table_name = "agno_compactions"
         self.transcripts_table_name = "agno_transcripts"
+        self.sandboxes_table_name = "agno_sandboxes"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
@@ -3803,6 +3826,27 @@ class AsyncBaseDb(ABC):
 
     async def count_authz_audit_events(self, search: Optional[str] = None, decisions: bool = False) -> int:
         """Total number of audit rows (change or decision trail)."""
+        raise NotImplementedError
+
+    # Optional session sandbox registry. Updates require optimistic concurrency.
+    async def upsert_sandbox(self, record: Dict[str, Any], expected_revision: Optional[int] = None) -> bool:
+        """Insert a new binding or replace one only at the expected revision."""
+        raise NotImplementedError
+
+    async def get_sandbox(
+        self, sandbox_id: Optional[str] = None, session_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Read a binding by id or session, including database time as db_now."""
+        raise NotImplementedError
+
+    async def list_sandboxes(
+        self, agent_id: Optional[str] = None, user_id: Optional[str] = None, status: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """List bindings filtered by agent, owner and lifecycle status."""
+        raise NotImplementedError
+
+    async def delete_sandbox(self, sandbox_id: str, expected_revision: int) -> bool:
+        """Remove a destroyed, inactive binding at the expected revision."""
         raise NotImplementedError
 
     # Optional transcript storage for external agents.

@@ -2027,7 +2027,15 @@ def get_agent_router(
                             description=getattr(agent, "description", None),
                             db_id=agent_db.id if agent_db else None,
                             sessions=sessions,
-                            metadata={"framework": getattr(agent, "framework", "external")},
+                            metadata={
+                                "framework": getattr(agent, "framework", "external"),
+                                **(
+                                    {"sandbox": getattr(agent, "provider").name}
+                                    if getattr(agent, "provider", None) is not None
+                                    and hasattr(agent, "adispatch_claimed_job")
+                                    else {}
+                                ),
+                            },
                         )
                     )
 
@@ -2130,7 +2138,14 @@ def get_agent_router(
                 id=agent.id,
                 name=agent.name,
                 description=getattr(agent, "description", None),
-                metadata={"framework": getattr(agent, "framework", "external")},
+                metadata={
+                    "framework": getattr(agent, "framework", "external"),
+                    **(
+                        {"sandbox": getattr(agent, "provider").name}
+                        if getattr(agent, "provider", None) is not None and hasattr(agent, "adispatch_claimed_job")
+                        else {}
+                    ),
+                },
             )
 
     @router.get(

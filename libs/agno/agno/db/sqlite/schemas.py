@@ -4,6 +4,7 @@ from typing import Any
 
 from agno.db.schemas.authz import AUTHZ_TABLE_SCHEMAS
 from agno.db.schemas.mcp_oauth import MCP_OAUTH_TABLE_SCHEMAS
+from agno.db.schemas.sandboxes import sandbox_table_schema
 
 try:
     from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String
@@ -503,6 +504,7 @@ def get_table_schema_definition(
         "tool_results": TOOL_RESULTS_TABLE_SCHEMA,
         "compactions": COMPACTIONS_TABLE_SCHEMA,
         "transcripts": TRANSCRIPTS_TABLE_SCHEMA,
+        "sandboxes": sandbox_table_schema(JSON),
         "approvals": APPROVAL_TABLE_SCHEMA,
         "auth_tokens": AUTH_TOKEN_TABLE_SCHEMA,
         "service_accounts": SERVICE_ACCOUNT_TABLE_SCHEMA,

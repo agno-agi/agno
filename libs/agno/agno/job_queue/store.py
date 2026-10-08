@@ -92,6 +92,20 @@ class InMemoryQueueStore:
             )
             return dict(job)
 
+    async def handoff_job(self, job_id: str, worker_id: str, attempt: int, executor_id: str) -> bool:
+        """Transfer a live claim to a remote executor without consuming another attempt."""
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if (
+                job is None
+                or job.get("locked_by") != worker_id
+                or job.get("attempt") != attempt
+                or job.get("status") != "running"
+            ):
+                return False
+            job.update(locked_by=executor_id, locked_at=int(time.time()), updated_at=int(time.time()))
+            return True
+
     async def heartbeat_jobs(self, worker_id: str, job_ids: List[str]) -> int:
         async with self._lock:
             now = int(time.time())

@@ -602,6 +602,13 @@ class PostgresDb(BaseDb):
         return table_map.get(logical_name, logical_name)
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
+        if table_type == "sandboxes":
+            return self._get_or_create_table(
+                table_name=self.sandboxes_table_name,
+                table_type="sandboxes",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
         if table_type == "transcripts":
             return self._get_or_create_table(
                 table_name=self.transcripts_table_name,
@@ -8825,3 +8832,67 @@ class PostgresDb(BaseDb):
             stmt = stmt.where(table.c.subpath == subpath)
         with self.Session() as sess, sess.begin():
             sess.execute(stmt)
+
+    def upsert_sandbox(self, record: Dict[str, Any], expected_revision: Optional[int] = None) -> bool:
+        from agno.db.sql.sandboxes import write_statement
+
+        table = self._get_table("sandboxes", create_table_if_not_found=True)
+        stmt = write_statement(table, "postgresql", record, expected_revision)
+        with self.db_engine.begin() as conn:
+            return conn.execute(stmt).first() is not None
+
+    def get_sandbox(
+        self, sandbox_id: Optional[str] = None, session_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.sql.sandboxes import read_statement
+
+        if sandbox_id is None and session_id is None:
+            raise ValueError("sandbox_id or session_id is required")
+        table = self._get_table("sandboxes", create_table_if_not_found=True)
+        with self.db_engine.connect() as conn:
+            row = (
+                conn.execute(read_statement(table, "postgresql", sandbox_id=sandbox_id, session_id=session_id))
+                .mappings()
+                .first()
+            )
+            return dict(row) if row is not None else None
+
+    def list_sandboxes(
+        self, agent_id: Optional[str] = None, user_id: Optional[str] = None, status: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        from agno.db.sql.sandboxes import read_statement
+
+        table = self._get_table("sandboxes", create_table_if_not_found=True)
+        with self.db_engine.connect() as conn:
+            rows = (
+                conn.execute(read_statement(table, "postgresql", agent_id=agent_id, user_id=user_id, status=status))
+                .mappings()
+                .all()
+            )
+            return [dict(row) for row in rows]
+
+    def delete_sandbox(self, sandbox_id: str, expected_revision: int) -> bool:
+        from agno.db.sql.sandboxes import delete_statement
+
+        table = self._get_table("sandboxes", create_table_if_not_found=True)
+        with self.db_engine.begin() as conn:
+            return conn.execute(delete_statement(table, sandbox_id, expected_revision)).first() is not None
+
+    def handoff_job(self, job_id: str, worker_id: str, attempt: int, executor_id: str) -> bool:
+        """Transfer a live queue claim without incrementing its execution attempt."""
+        table = self._get_table("jobs")
+        if table is None:
+            return False
+        stmt = (
+            update(table)
+            .where(
+                table.c.id == job_id,
+                table.c.locked_by == worker_id,
+                table.c.attempt == attempt,
+                table.c.status == "running",
+            )
+            .values(locked_by=executor_id, locked_at=_db_epoch(), updated_at=_db_epoch())
+            .returning(table.c.id)
+        )
+        with self.Session() as sess, sess.begin():
+            return sess.execute(stmt).first() is not None
