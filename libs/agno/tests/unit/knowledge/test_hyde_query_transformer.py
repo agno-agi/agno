@@ -501,6 +501,107 @@ def test_every_knowledge_search_tool_passes_the_run_response():
         assert passes == calls, f"{module.__name__} retrieves {calls} times but passes the run {passes} times"
 
 
+def _knowledge_recording_the_run(seen):
+    class Recorder(QueryTransformer):
+        def transform(self, query: str, model=None, run_response=None) -> str:
+            seen["run_response"] = run_response
+            return query
+
+        async def atransform(self, query: str, model=None, run_response=None) -> str:
+            seen["run_response"] = run_response
+            return query
+
+    return Knowledge(vector_db=RecordingVectorDb(), query_transformer=Recorder())
+
+
+def test_the_agent_context_path_bills_the_transform_to_its_run():
+    # add_knowledge_to_context retrieves while building the user message, a different call
+    # site from the search tool. Source-counting tests miss it, so drive it for real.
+    from agno.agent import Agent, _messages
+    from agno.run.agent import RunOutput
+
+    seen = {}
+    agent = Agent(
+        model="openai:gpt-5.4",
+        knowledge=_knowledge_recording_the_run(seen),
+        add_knowledge_to_context=True,
+    )
+    run_response = RunOutput(run_id="r1")
+
+    _messages.get_user_message(agent, run_response=run_response, input="why did revenue drop?")
+
+    assert seen["run_response"] is run_response
+
+
+@pytest.mark.asyncio
+async def test_the_async_agent_context_path_bills_the_transform_to_its_run():
+    from agno.agent import Agent, _messages
+    from agno.run.agent import RunOutput
+
+    seen = {}
+    agent = Agent(
+        model="openai:gpt-5.4",
+        knowledge=_knowledge_recording_the_run(seen),
+        add_knowledge_to_context=True,
+    )
+    run_response = RunOutput(run_id="r1")
+
+    await _messages.aget_user_message(agent, run_response=run_response, input="why did revenue drop?")
+
+    assert seen["run_response"] is run_response
+
+
+def test_the_team_context_path_bills_the_transform_to_its_run():
+    from agno.agent import Agent
+    from agno.run.base import RunContext
+    from agno.run.team import TeamRunOutput
+    from agno.team import Team, _messages
+
+    seen = {}
+    team = Team(
+        members=[Agent(name="m", model="openai:gpt-5.4")],
+        model="openai:gpt-5.4",
+        knowledge=_knowledge_recording_the_run(seen),
+        add_knowledge_to_context=True,
+    )
+    run_response = TeamRunOutput(run_id="r1")
+
+    _messages._get_user_message(
+        team,
+        run_response=run_response,
+        run_context=RunContext(run_id="r1", session_id="s1"),
+        input_message="why did revenue drop?",
+    )
+
+    assert seen["run_response"] is run_response
+
+
+@pytest.mark.asyncio
+async def test_the_async_team_context_path_bills_the_transform_to_its_run():
+    from agno.agent import Agent
+    from agno.run.base import RunContext
+    from agno.run.team import TeamRunOutput
+    from agno.team import Team, _messages
+
+    seen = {}
+    team = Team(
+        members=[Agent(name="m", model="openai:gpt-5.4")],
+        model="openai:gpt-5.4",
+        knowledge=_knowledge_recording_the_run(seen),
+        add_knowledge_to_context=True,
+    )
+    run_response = TeamRunOutput(run_id="r1")
+
+    await _messages._aget_user_message(
+        team,
+        run_response=run_response,
+        run_context=RunContext(run_id="r1", session_id="s1"),
+        input_message="why did revenue drop?",
+    )
+
+    assert seen["run_response"] is run_response
+
+
 def test_the_default_model_is_built_once_per_instance():
     # Each model carries an HTTP client, and this resolves on every search.
     transform = HyDE()
