@@ -112,6 +112,18 @@ def test_batch_mode():
         assert isinstance(eval_result.passed, bool)
 
 
+def test_batch_mode_empty_cases():
+    """run(cases=[]) returns an empty result instead of raising, like arun (#10879)."""
+    eval = AgentAsJudgeEval(criteria="Response must be helpful", telemetry=False)
+    evaluator = _mock_evaluator_binary(eval)
+
+    result = eval.run(cases=[], print_results=False, print_summary=False)
+
+    assert result is not None
+    assert result.results == []
+    evaluator.run.assert_not_called()
+
+
 def test_additional_guidelines():
     """Test evaluation with additional guidelines."""
     eval = AgentAsJudgeEval(
