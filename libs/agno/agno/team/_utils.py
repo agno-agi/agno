@@ -123,10 +123,16 @@ def deep_copy(team: Team, *, update: Optional[Dict[str, Any]] = None) -> Team:
         Team: A new Team instance with copied state.
     """
     from dataclasses import fields
-    from inspect import signature
+
+    from agno.team.team import Team
+    from agno.utils.rebuild import forwards_init_kwargs, init_parameter_names, rebuild_through_base_init
+
+    # A subclass that forwards **kwargs is rebuilt through Team.__init__, since its
+    # own signature does not name the fields it accepts
+    bypass_subclass_init = forwards_init_kwargs(team.__class__, Team)
 
     # Get the set of valid __init__ parameter names
-    init_params = set(signature(team.__class__.__init__).parameters.keys()) - {"self"}
+    init_params = init_parameter_names(Team if bypass_subclass_init else team.__class__)
 
     # Extract the fields to set for the new Team
     fields_for_new_team: Dict[str, Any] = {}
@@ -151,7 +157,12 @@ def deep_copy(team: Team, *, update: Optional[Dict[str, Any]] = None) -> Team:
 
     # Create a new Team
     try:
-        new_team = team.__class__(**fields_for_new_team)
+        if bypass_subclass_init:
+            new_team = rebuild_through_base_init(
+                team, Team, fields_for_new_team, lambda name, value: _deep_copy_field(team, name, value)
+            )
+        else:
+            new_team = team.__class__(**fields_for_new_team)
         log_debug(f"Created new {team.__class__.__name__}")
         return new_team
     except Exception as e:

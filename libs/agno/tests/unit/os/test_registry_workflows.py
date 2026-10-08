@@ -309,16 +309,19 @@ class TestNestedWorkflowSteps:
         assert step.workflow is not None
         assert step.workflow.steps == []
 
-    def test_a_kwargs_swallowing_workflow_subclass_is_refused_strictly(self):
+    def test_a_workflow_subclass_that_drops_undeclared_fields_is_refused_strictly(self):
         from agno.exceptions import ComponentRehydrationError
 
-        class SwallowingWorkflow(Workflow):
-            def __init__(self, tenant="default", **kwargs):
+        class TenantWorkflow(Workflow):
+            def __init__(self, tenant="default"):
                 self.tenant = tenant
-                super().__init__(**kwargs)
+                super().__init__()
 
         agent = Agent(id="swallowed-agent", name="A", model=_model())
-        wf = SwallowingWorkflow(tenant="t", id="swallowed-wf", name="Swallowed", steps=[Step(name="s1", agent=agent)])
+        wf = TenantWorkflow(tenant="t")
+        wf.id = "swallowed-wf"
+        wf.name = "Swallowed"
+        wf.steps = [Step(name="s1", agent=agent)]
         registry = Registry(name="R", workflows=[wf])
 
         with pytest.raises(ComponentRehydrationError, match="diverges from the original on: id, name, steps"):
@@ -329,11 +332,13 @@ class TestNestedWorkflowSteps:
         from agno.exceptions import ComponentRehydrationError
 
         class TopicAgent(Agent):
-            def __init__(self, topic="general", **kwargs):
+            def __init__(self, topic="general", name=None, model=None):
                 self.topic = topic
-                super().__init__(**kwargs)
+                super().__init__(name=name, model=model)
 
-        agent = TopicAgent(topic="x", id="topic-agent", name="A", model=_model(), instructions="follow the policy")
+        agent = TopicAgent(topic="x", name="A", model=_model())
+        agent.id = "topic-agent"
+        agent.instructions = "follow the policy"
         wf = Workflow(id="lossy-child", name="Child", steps=[Step(name="s1", agent=agent)])
         registry = Registry(name="R", workflows=[wf])
 
