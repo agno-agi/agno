@@ -148,6 +148,7 @@ def create_knowledge_search_tool(
                     filters=_resolve_filters(filters),
                     validate_filters=True,
                     run_context=run_context,
+                    run_response=run_response,
                 )
             except Exception as e:
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -180,6 +181,7 @@ def create_knowledge_search_tool(
                     filters=_resolve_filters(filters),
                     validate_filters=True,
                     run_context=run_context,
+                    run_response=run_response,
                 )
             except Exception as e:
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -214,6 +216,7 @@ def create_knowledge_search_tool(
                     query=query,
                     filters=knowledge_filters,
                     run_context=run_context,
+                    run_response=run_response,
                 )
             except Exception as e:
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -242,6 +245,7 @@ def create_knowledge_search_tool(
                     query=query,
                     filters=knowledge_filters,
                     run_context=run_context,
+                    run_response=run_response,
                 )
             except Exception as e:
                 log_warning(f"Knowledge search failed: {str(e)}")
