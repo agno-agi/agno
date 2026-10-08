@@ -1,6 +1,8 @@
 import asyncio
 from copy import deepcopy
 from dataclasses import dataclass, fields
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from os import getenv
 from time import perf_counter, sleep
 from typing import Any, Awaitable, Callable, ClassVar, Dict, List, Mapping, Optional, TypeVar, Union
@@ -238,15 +240,27 @@ class DecisionModel:
         return headers
 
     def _handle_response(self, response: httpx.Response) -> Dict[str, Any]:
+        request_id = _request_id(response)
         if response.is_success:
             try:
-                return response.json()
+                raw = response.json()
             except ValueError as e:
                 raise self._provider_error(f"Response is not JSON: {response.text[:500]}") from e
+            if request_id and isinstance(raw, dict):
+                # Headers do not survive the JSON body; `_finish` moves this onto the result
+                raw["_request_id"] = request_id
+            return raw
         message = _error_message(response)
+        error: Exception
         if response.status_code in (401, 403):
-            raise ModelAuthenticationError(message=message, status_code=response.status_code, model_name=self.name)
-        raise self._provider_error(message, status_code=response.status_code)
+            error = ModelAuthenticationError(message=message, status_code=response.status_code, model_name=self.name)
+        else:
+            error = self._provider_error(message, status_code=response.status_code)
+        # The id lets a failed request be traced with the provider; retry_after is the wait the
+        # provider asked for, which the retry loop prefers over its own delay
+        setattr(error, "request_id", request_id)
+        setattr(error, "retry_after", _retry_after_seconds(response))
+        raise error
 
     def _provider_error(self, message: str, status_code: int = 502) -> ModelProviderError:
         return ModelProviderError.classify(
@@ -272,13 +286,18 @@ class DecisionModel:
     def _finish(
         self, raw: Dict[str, Any], questions: Dict[str, Union[BinaryQuestion, Choice, Score]], start: float
     ) -> DecisionResult:
+        request_id = raw.pop("_request_id", None) if isinstance(raw, dict) else None
         result = self._parse_response(raw, questions)
         result.raw = raw
+        result.request_id = request_id
         if result.metrics is not None:
             result.metrics.duration = perf_counter() - start
         return result
 
-    def _get_retry_delay(self, attempt: int) -> float:
+    def _get_retry_delay(self, attempt: int, error: Optional[BaseException] = None) -> float:
+        retry_after = getattr(error, "retry_after", None)
+        if retry_after is not None:
+            return max(float(retry_after), 0.0)
         if self.exponential_backoff:
             return self.delay_between_retries * (2**attempt)
         return self.delay_between_retries
@@ -294,7 +313,7 @@ class DecisionModel:
                     if last_error is e:
                         raise
                     raise last_error from e
-                delay = self._get_retry_delay(attempt)
+                delay = self._get_retry_delay(attempt, e)
                 log_warning(f"{self.get_provider()} error (attempt {attempt + 1}): {e}. Retrying in {delay}s")
                 sleep(delay)
         raise last_error  # type: ignore[misc]
@@ -310,7 +329,7 @@ class DecisionModel:
                     if last_error is e:
                         raise
                     raise last_error from e
-                delay = self._get_retry_delay(attempt)
+                delay = self._get_retry_delay(attempt, e)
                 log_warning(f"{self.get_provider()} error (attempt {attempt + 1}): {e}. Retrying in {delay}s")
                 await asyncio.sleep(delay)
         raise last_error  # type: ignore[misc]
@@ -327,6 +346,32 @@ def _score_answer(
         probabilities=dict(zip(labels, probabilities)),
         confidence=confidence,
     )
+
+
+def _request_id(response: httpx.Response) -> Optional[str]:
+    for header in ("x-request-id", "x-typesafe-request-id", "request-id"):
+        value = response.headers.get(header)
+        if value:
+            return value
+    return None
+
+
+def _retry_after_seconds(response: httpx.Response) -> Optional[float]:
+    """The wait a `Retry-After` header asks for, in seconds: a delay, or an HTTP date."""
+    value = response.headers.get("retry-after")
+    if not value:
+        return None
+    try:
+        return max(float(value), 0.0)
+    except ValueError:
+        pass
+    try:
+        until = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=timezone.utc)
+    return max((until - datetime.now(timezone.utc)).total_seconds(), 0.0)
 
 
 def _error_message(response: httpx.Response) -> str:
