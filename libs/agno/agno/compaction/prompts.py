@@ -6,6 +6,18 @@ SUMMARY_CUT_NOTE_SEARCHABLE = (
     "(The rest of this summary was cut to fit its length budget - search the stored messages for it.)"
 )
 
+# The length rule in the summarization prompt. With a budget the model is given the number three
+# ways, since it cannot count tokens but can estimate words and characters. Without one it is asked
+# to stay compact, which leaves the length to the model and the summary uncut.
+LENGTH_RULE_BUDGET = (
+    "- Hard length budget: {budget_tokens} tokens (roughly {budget_words} words, {budget_characters} characters).\n"
+    "  Compress prose before dropping facts."
+)
+LENGTH_RULE_COMPACT = (
+    "- Keep the summary compact: compress prose before dropping facts, and do not pad a section to\n"
+    "  make it look complete. An empty section is one line."
+)
+
 # Marker line that opens the summary message injected into model input.
 # Fixed so injected summaries are identifiable (and skippable) across builds.
 SUMMARY_PREFIX = "Summary of earlier conversation (compacted):\n\n"
@@ -26,8 +38,8 @@ updated summary with exactly these sections, in this order:
 ## Errors & fixes
 ## Completed
 
-The order is by importance, most important first. A summary over its length budget may be cut from
-the end, so what the agent needs to carry on comes first and finished history last.
+The order is by importance, most important first. A summary that runs too long may be cut from the
+end, so what the agent needs to carry on comes first and finished history last.
 
 Section guidance:
 - Goal: what the user is ultimately trying to achieve. Rarely changes.
@@ -46,8 +58,7 @@ Rules:
 - Move items that the new segment shows are finished into Completed.
 - Do not continue the conversation, answer questions, or add commentary.
 - Output only the summary, starting at "## Goal".
-- Hard length budget: {budget_tokens} tokens (roughly {budget_words} words, {budget_characters} characters).
-  Compress prose before dropping facts.
+{length_rule}
 
 Durable state (offloaded tool results, defined variables, files on disk) outlives this summary and is
 listed separately for the agent; you do not need to reproduce its contents, only reference identifiers

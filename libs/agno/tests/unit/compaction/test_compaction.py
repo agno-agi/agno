@@ -808,13 +808,11 @@ def test_instructions_add_to_the_default_prompt():
     """instructions is guidance on top of the default prompt, as everywhere else in Agno. Replacing
     the prompt with it dropped the structure that carries earlier summaries and identifiers
     forward, so a one-line "keep ticket ids" cost far more than it asked for."""
-    from agno.compaction.prompts import DEFAULT_COMPACTION_PROMPT
+    from agno.compaction.prompts import DEFAULT_COMPACTION_PROMPT, LENGTH_RULE_COMPACT
 
     system = Compaction(instructions="Keep every ticket id.")._summary_messages(_transcript(), previous=None)[0].content
 
-    assert system.startswith(
-        DEFAULT_COMPACTION_PROMPT.format(budget_tokens=2_000, budget_words=1_500, budget_characters=8_000)
-    )
+    assert system.startswith(DEFAULT_COMPACTION_PROMPT.format(length_rule=LENGTH_RULE_COMPACT))
     assert system.endswith("Additional instructions:\nKeep every ticket id.")
 
 
@@ -3340,6 +3338,31 @@ def test_the_prompt_orders_sections_most_important_first():
     ]
     positions = [DEFAULT_COMPACTION_PROMPT.index(heading) for heading in order]
     assert positions == sorted(positions)
+
+
+def test_no_budget_by_default_asks_for_a_compact_summary_without_a_number():
+    """A model cannot count the tokens it writes, and a reasoning model spends part of any output
+    cap on thinking, so no fixed number is a budget it can meet. The default names none."""
+    assert Compaction().compacted_token_budget is None
+
+    model = _Verbose("## Goal\nShip it.")
+    Compaction(uncompacted_runs=1, min_fold_ratio=0, model=model).compact(_transcript(6), session_id="s")
+
+    assert "Keep the summary compact" in model.system
+    assert "length budget" not in model.system
+    assert "tokens (roughly" not in model.system
+
+
+def test_without_a_budget_the_summary_is_never_cut():
+    record = _fold(_OVER_BUDGET)
+
+    assert record.summary == _OVER_BUDGET
+
+
+def test_without_a_budget_enforcement_has_nothing_to_hold():
+    record = _fold(_OVER_BUDGET, enforce_token_budget=True)
+
+    assert record.summary == _OVER_BUDGET
 
 
 def test_the_budget_is_stated_in_tokens_words_and_characters():

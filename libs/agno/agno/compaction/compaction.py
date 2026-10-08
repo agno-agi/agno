@@ -14,6 +14,8 @@ from agno.compaction.prompts import (
     ARCHIVE_AWARE_PROMPT,
     ARCHIVE_LOOKUP_INSTRUCTION,
     DEFAULT_COMPACTION_PROMPT,
+    LENGTH_RULE_BUDGET,
+    LENGTH_RULE_COMPACT,
     SUMMARY_CUT_NOTE,
     SUMMARY_CUT_NOTE_SEARCHABLE,
 )
@@ -95,12 +97,15 @@ class Compaction:
     model: Optional[Union[Model, str]] = None
     # Extra guidance for the summarizer, added to the default prompt - e.g. "Keep every ticket id".
     instructions: Optional[str] = None
-    # Length budget for the summary, stated in the prompt in tokens, words and characters.
-    compacted_token_budget: int = 2_000
-    # Hold the summary to compacted_token_budget. A model cannot count the tokens it writes, so
-    # one that runs over is cut from the end, at a line break. The prompt orders the summary most
-    # important first, so the cut drops finished history before what the agent needs to carry
-    # on. False keeps the budget a target the model is asked to meet.
+    # Length budget for the summary, stated in the prompt in tokens, words and characters. None
+    # asks the model for a compact summary without naming a size and never cuts it: a model cannot
+    # count the tokens it writes, so any fixed number is a target it will miss, and a reasoning
+    # model spends part of any output cap on thinking before the summary starts.
+    compacted_token_budget: Optional[int] = None
+    # Hold the summary to compacted_token_budget when one is set. A summary that runs over is cut
+    # from the end, at a line break. The prompt orders the summary most important first, so the
+    # cut drops finished history before what the agent needs to carry on. False keeps the budget a
+    # target the model is asked to meet. Has no effect without a budget.
     enforce_token_budget: bool = True
 
     # -- when to compact ------------------------------------------------
@@ -178,7 +183,7 @@ class Compaction:
             raise ValueError(f"uncompacted_runs must be zero or a positive integer, got {self.uncompacted_runs}")
         if self.uncompacted_tokens is not None and self.uncompacted_tokens <= 0:
             raise ValueError(f"uncompacted_tokens must be a positive integer, got {self.uncompacted_tokens}")
-        if self.compacted_token_budget <= 0:
+        if self.compacted_token_budget is not None and self.compacted_token_budget <= 0:
             raise ValueError(f"compacted_token_budget must be a positive integer, got {self.compacted_token_budget}")
         # The tail limit divides by 1 + min_fold_ratio, so a negative ratio would divide by zero or
         # flip the limit's sign.
@@ -443,11 +448,15 @@ class Compaction:
                 f"Summary of the conversation before this point:\n{previous}\n\nConversation since then:\n{transcript}"
             )
         budget = self.compacted_token_budget
-        # The model cannot count tokens, but words and characters it can estimate - stating all
-        # three gives it more than one way to land near the budget.
-        prompt = DEFAULT_COMPACTION_PROMPT.format(
-            budget_tokens=budget, budget_words=round(budget * 0.75), budget_characters=budget * 4
-        )
+        if budget is None:
+            length_rule = LENGTH_RULE_COMPACT
+        else:
+            # The model cannot count tokens, but words and characters it can estimate - stating
+            # all three gives it more than one way to land near the budget.
+            length_rule = LENGTH_RULE_BUDGET.format(
+                budget_tokens=budget, budget_words=round(budget * 0.75), budget_characters=budget * 4
+            )
+        prompt = DEFAULT_COMPACTION_PROMPT.format(length_rule=length_rule)
         if self.instructions:
             # Added to, not instead of, the prompt: guidance like "keep ticket ids" must not cost
             # the structure that carries earlier summaries forward.
@@ -463,18 +472,22 @@ class Compaction:
         ]
 
     def _fit_to_budget(self, summary: str, searchable: bool) -> str:
-        """The summary, cut from the end to compacted_token_budget when enforcement is on.
+        """The summary, cut from the end to compacted_token_budget when one is set and enforced.
 
-        The cut keeps whole lines - never half an identifier that would read as real data - and
-        drops a heading left with nothing under it. A note replaces what was cut, so the agent
-        knows the summary is incomplete rather than trusting it.
+        Without a budget the summary is returned as written. The cut keeps whole lines - never
+        half an identifier that would read as real data - and drops a heading left with nothing
+        under it. A note replaces what was cut, so the agent knows the summary is incomplete
+        rather than trusting it.
         """
+        budget = self.compacted_token_budget
+        if budget is None or not self.enforce_token_budget:
+            return summary
+
         from agno.utils.tokens import count_text_tokens
 
         model_id = getattr(self.model, "id", None) or "gpt-4o"
-        budget = self.compacted_token_budget
         before = count_text_tokens(summary, model_id)
-        if not self.enforce_token_budget or before <= budget:
+        if before <= budget:
             return summary
 
         note = SUMMARY_CUT_NOTE_SEARCHABLE if searchable else SUMMARY_CUT_NOTE
