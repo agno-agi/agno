@@ -68,6 +68,20 @@ def search_terms(pattern: str) -> List[str]:
     return [term.strip() for term in pattern.split("|") if term.strip()][:MAX_SEARCH_TERMS]
 
 
+def stores_compaction_records(db: Any) -> bool:
+    """Whether ``db`` can store compaction records - SqliteDb and PostgresDb.
+
+    The sync BaseDb declares the record methods as stubs that raise, so only a db that overrides
+    them stores rows; async dbs do not declare them at all.
+    """
+    method = getattr(type(db), "upsert_compaction", None)
+    if method is None:
+        return False
+    from agno.db.base import BaseDb
+
+    return method is not getattr(BaseDb, "upsert_compaction", None)
+
+
 class CompactionArchive:
     """Reads and writes one session's compaction records."""
 

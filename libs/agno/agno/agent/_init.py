@@ -197,6 +197,25 @@ def set_compression_manager(agent: Agent) -> None:
         agent.compress_tool_results = True
 
 
+def disable_compaction_without_records(agent: Agent) -> None:
+    """Turn compaction off, with a warning, when the db cannot store compaction records.
+
+    A fold lasts only as long as its record: without one, every run starts from the full history
+    and pays for another summary of all of it. Only SqliteDb and PostgresDb store records. Checked
+    when the agent is built, and again at run start for a db assigned afterwards.
+    """
+    if not agent.compaction or agent.db is None:
+        return
+    from agno.compaction.archive import stores_compaction_records
+
+    if not stores_compaction_records(agent.db):
+        log_warning(
+            f"Compaction is only supported with SqliteDb and PostgresDb; {type(agent.db).__name__} cannot "
+            "store compaction records, so compaction is turned off. Use SqliteDb or PostgresDb to enable it."
+        )
+        agent.compaction = None
+
+
 def set_compaction(agent: Agent) -> None:
     """Resolve ``agent.compaction`` into the Compaction the run uses.
 
@@ -218,6 +237,8 @@ def set_compaction(agent: Agent) -> None:
         agent.compaction = Compaction(compact_at_tokens=None, on_context_overflow=True)
     elif agent.compaction is False:
         agent.compaction = None
+
+    disable_compaction_without_records(agent)
 
     if isinstance(agent.compaction, Compaction) and agent.compaction.model is None:
         agent.compaction.model = agent.model

@@ -323,10 +323,9 @@ class _RecordingModel:
 
 def _requests_over(runs, **agent_kwargs):
     from agno.agent import Agent
-    from agno.db.in_memory import InMemoryDb
 
     model = _RecordingModel.build()
-    agent = Agent(model=model, db=InMemoryDb(), session_id="s", add_history_to_context=True, **agent_kwargs)
+    agent = Agent(model=model, db=_db(), session_id="s", add_history_to_context=True, **agent_kwargs)
     for i in range(runs):
         agent.run(f"question number {i}")
     return model.requests
@@ -357,11 +356,10 @@ def test_async_runs_do_not_widen_what_a_run_replays():
     import asyncio
 
     from agno.agent import Agent
-    from agno.db.in_memory import InMemoryDb
 
     async def requests_over(runs, **agent_kwargs):
         model = _RecordingModel.build()
-        agent = Agent(model=model, db=InMemoryDb(), session_id="s", add_history_to_context=True, **agent_kwargs)
+        agent = Agent(model=model, db=_db(), session_id="s", add_history_to_context=True, **agent_kwargs)
         for i in range(runs):
             await agent.arun(f"question number {i}")
         return [len(r) for r in model.requests]
@@ -457,25 +455,53 @@ def test_async_dbs_declare_no_compaction_contract():
         assert not hasattr(AsyncBaseDb, name)
 
 
-def test_compaction_on_an_async_db_is_unsupported_like_any_other_db(caplog):
-    """An async db takes the same path as a sync db without compaction records: the fold still
-    applies to its run, the run completes, and the warning says the fold was not stored."""
+@pytest.mark.parametrize("compaction", [True, "object"])
+def test_the_unsupported_db_warning_comes_when_the_agent_is_built(compaction, caplog):
+    """The warning comes at construction, not at the first run - so it shows even when the first
+    call fails for another reason, such as a sync method on an async db."""
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        agent = Agent(db=InMemoryDb(), compaction=Compaction() if compaction == "object" else True)
+
+    assert agent.compaction is None
+    assert any("only supported with SqliteDb and PostgresDb" in r.message for r in caplog.records)
+    # A db that stores records keeps compaction on, silently.
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        assert Agent(db=_db(), compaction=True).compaction is True
+    assert not caplog.records
+
+
+@pytest.mark.parametrize("db_kind", ["async sqlite", "in memory"])
+def test_compaction_is_turned_off_on_a_db_that_cannot_store_records(db_kind, caplog):
+    """Only SqliteDb and PostgresDb store compaction records. Without one a fold lasts a single run:
+    the next starts from the full history and pays for another summary of all of it. So on any
+    other db compaction is turned off at setup, with a warning naming the dbs that work."""
     import asyncio
 
     from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
     from agno.db.sqlite import AsyncSqliteDb
-    from agno.models.response import ModelResponse
 
-    class _AsyncStub(_StubModel):
+    class _CountingStub(_StubModel):
+        calls = 0
+
+        def response(self, messages, **kwargs):
+            _CountingStub.calls += 1
+            return super().response(messages, **kwargs)
+
         async def aresponse(self, messages, **kwargs):
-            return ModelResponse(content="SUMMARY")
+            return self.response(messages)
 
+    db = AsyncSqliteDb(db_file=str(Path(tempfile.mkdtemp()) / "a.db")) if db_kind == "async sqlite" else InMemoryDb()
     agent = Agent(
         model=_RecordingModel.build(),
-        db=AsyncSqliteDb(db_file=str(Path(tempfile.mkdtemp()) / "a.db")),
+        db=db,
         session_id="s",
         add_history_to_context=True,
-        compaction=Compaction(compact_at_tokens=5, uncompacted_runs=1, min_fold_ratio=0, model=_AsyncStub()),
+        compaction=Compaction(compact_at_tokens=5, uncompacted_runs=1, model=_CountingStub()),
     )
 
     async def runs():
@@ -485,8 +511,11 @@ def test_compaction_on_an_async_db_is_unsupported_like_any_other_db(caplog):
         results = asyncio.run(runs())
 
     assert all(r.status.value == "COMPLETED" for r in results)
-    assert results[-1].compaction is not None
-    assert any("does not implement compaction records" in r.message for r in caplog.records)
+    assert all(r.compaction is None for r in results)
+    assert _CountingStub.calls == 0
+    assert agent.compaction is None
+    warnings = [r.message for r in caplog.records if "only supported with SqliteDb and PostgresDb" in r.message]
+    assert len(warnings) == 1 and type(db).__name__ in warnings[0]
 
 
 def test_history_window_untouched_without_compaction():
@@ -862,12 +891,11 @@ def test_a_fork_and_its_source_are_replayed_as_without_compaction(num_history_ru
 
     def sent_after_a_fork(compaction):
         from agno.agent import Agent
-        from agno.db.in_memory import InMemoryDb
 
         model = _RecordingModel.build()
         agent = Agent(
             model=model,
-            db=InMemoryDb(),
+            db=_db(),
             session_id="s",
             add_history_to_context=True,
             num_history_runs=num_history_runs,
@@ -1187,7 +1215,6 @@ def test_the_token_counter_is_only_called_when_its_count_is_used(use_async):
     import asyncio
 
     from agno.agent import Agent
-    from agno.db.in_memory import InMemoryDb
 
     class _AsyncStub(_StubModel):
         async def aresponse(self, messages, **kwargs):
@@ -1201,7 +1228,7 @@ def test_the_token_counter_is_only_called_when_its_count_is_used(use_async):
 
     agent = Agent(
         model=_RecordingModel.build(),
-        db=InMemoryDb(),
+        db=_db(),
         session_id="s",
         add_history_to_context=True,
         compaction=Compaction(
@@ -1247,11 +1274,10 @@ def _model_that_counts(calls):
 
 def _agent_counting_with_its_model(calls):
     from agno.agent import Agent
-    from agno.db.in_memory import InMemoryDb
 
     return Agent(
         model=_model_that_counts(calls),
-        db=InMemoryDb(),
+        db=_db(),
         session_id="s",
         add_history_to_context=True,
         compaction=Compaction(compact_at_tokens=10_000, use_model_token_count=True, model=_StubModel()),
@@ -1291,7 +1317,6 @@ def test_a_failing_model_count_falls_back_to_the_local_estimate(caplog):
     import asyncio
 
     from agno.agent import Agent
-    from agno.db.in_memory import InMemoryDb
 
     model = _RecordingModel.build()
 
@@ -1301,7 +1326,7 @@ def test_a_failing_model_count_falls_back_to_the_local_estimate(caplog):
     model.acount_tokens = broken  # type: ignore[method-assign]
     agent = Agent(
         model=model,
-        db=InMemoryDb(),
+        db=_db(),
         session_id="s",
         add_history_to_context=True,
         compaction=Compaction(compact_at_tokens=10_000, use_model_token_count=True, model=_StubModel()),
@@ -1358,7 +1383,6 @@ def _agent_with_async_counter(seen):
     import threading
 
     from agno.agent import Agent
-    from agno.db.in_memory import InMemoryDb
 
     async def counter(messages, tools):
         seen.append(threading.current_thread())
@@ -1366,7 +1390,7 @@ def _agent_with_async_counter(seen):
 
     return Agent(
         model=_RecordingModel.build(),
-        db=InMemoryDb(),
+        db=_db(),
         session_id="s",
         add_history_to_context=True,
         compaction=Compaction(compact_at_tokens=10_000, token_counter=counter, model=_StubModel()),
@@ -1815,7 +1839,6 @@ def test_async_overflow_recovery_does_not_block_the_event_loop(stream):
     import time
 
     from agno.agent import Agent
-    from agno.db.in_memory import InMemoryDb
     from agno.exceptions import ContextWindowExceededError
     from agno.models.response import ModelResponse
 
@@ -1856,7 +1879,7 @@ def test_async_overflow_recovery_does_not_block_the_event_loop(stream):
     model.ainvoke, model.ainvoke_stream = ainvoke, ainvoke_stream
     agent = Agent(
         model=model,
-        db=InMemoryDb(),
+        db=_db(),
         session_id="s",
         add_history_to_context=True,
         compaction=Compaction(
@@ -1979,7 +2002,6 @@ def test_overflow_recovery_counts_the_summarizer_in_run_metrics(use_async):
     import asyncio
 
     from agno.agent import Agent
-    from agno.db.in_memory import InMemoryDb
     from agno.exceptions import ContextWindowExceededError
 
     model = _RecordingModel.build()
@@ -2006,11 +2028,17 @@ def test_overflow_recovery_counts_the_summarizer_in_run_metrics(use_async):
         model.invoke = reject_sixth
     agent = Agent(
         model=model,
-        db=InMemoryDb(),
+        db=_db(),
         session_id="s",
         add_history_to_context=True,
         compaction=Compaction(
-            compact_at_tokens=None, on_context_overflow=True, uncompacted_runs=1, model=_MeteredSummarizer()
+            compact_at_tokens=None,
+            on_context_overflow=True,
+            uncompacted_runs=1,
+            # These messages are tiny: the search instruction that comes with stored messages would
+            # outweigh what the fold reclaims, and recovery rightly refuses a retry that does not shrink.
+            store_compacted_messages=False,
+            model=_MeteredSummarizer(),
         ),
     )
 
@@ -2057,11 +2085,10 @@ def test_a_threshold_fold_counts_the_summarizer_in_run_metrics(use_async):
     import asyncio
 
     from agno.agent import Agent
-    from agno.db.in_memory import InMemoryDb
 
     agent = Agent(
         model=_RecordingModel.build(),
-        db=InMemoryDb(),
+        db=_db(),
         session_id="s",
         add_history_to_context=True,
         compaction=Compaction(compact_at_tokens=40, uncompacted_runs=1, min_fold_ratio=0, model=_MeteredSummarizer()),
@@ -2086,11 +2113,10 @@ def test_manual_compact_reports_the_summarizer_usage(use_async):
     import asyncio
 
     from agno.agent import Agent
-    from agno.db.in_memory import InMemoryDb
 
     agent = Agent(
         model=_RecordingModel.build(),
-        db=InMemoryDb(),
+        db=_db(),
         session_id="s",
         add_history_to_context=True,
         compaction=Compaction(compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, model=_MeteredSummarizer()),
@@ -2167,11 +2193,10 @@ def test_manual_compact_is_added_to_the_session_metrics(use_async):
 def test_a_declined_manual_compact_reports_no_usage():
     """No summarizer call was made, so there is nothing to report."""
     from agno.agent import Agent
-    from agno.db.in_memory import InMemoryDb
 
     agent = Agent(
         model=_RecordingModel.build(),
-        db=InMemoryDb(),
+        db=_db(),
         session_id="s",
         add_history_to_context=True,
         compaction=Compaction(compact_at_tokens=None, uncompacted_runs=10, model=_MeteredSummarizer()),

@@ -733,6 +733,7 @@ class Agent:
         self._callable_knowledge_cache: Dict[str, Any] = {}
 
         _init.get_models(self)
+        _init.disable_compaction_without_records(self)
 
     # ---------------------------------------------------------------
     # Properties
