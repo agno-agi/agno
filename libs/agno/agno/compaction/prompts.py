@@ -1,5 +1,23 @@
 """Prompt constants for conversation compaction."""
 
+# Appended in place of what was cut when a summary over its budget is shortened to fit.
+SUMMARY_CUT_NOTE = "(The rest of this summary was cut to fit its length budget.)"
+SUMMARY_CUT_NOTE_SEARCHABLE = (
+    "(The rest of this summary was cut to fit its length budget - search the stored messages for it.)"
+)
+
+# The length rule in the summarization prompt. With a budget the model is given the number three
+# ways, since it cannot count tokens but can estimate words and characters. Without one it is asked
+# to stay compact, which leaves the length to the model and the summary uncut.
+LENGTH_RULE_BUDGET = (
+    "- Hard length budget: {budget_tokens} tokens (roughly {budget_words} words, {budget_characters} characters).\n"
+    "  Compress prose before dropping facts."
+)
+LENGTH_RULE_COMPACT = (
+    "- Keep the summary compact: compress prose before dropping facts, and do not pad a section to\n"
+    "  make it look complete. An empty section is one line."
+)
+
 # Marker line that opens the summary message injected into model input.
 # Fixed so injected summaries are identifiable (and skippable) across builds.
 SUMMARY_PREFIX = "Summary of earlier conversation (compacted):\n\n"
@@ -10,34 +28,37 @@ the summary you produce. Your summary is the ONLY memory of the folded conversat
 is lost to the agent.
 
 You are given the previous summary (if one exists) and a transcript segment to fold into it. Produce an
-updated summary with exactly these sections:
+updated summary with exactly these sections, in this order:
 
 ## Goal
-## Constraints & preferences
-## Completed
-## Key decisions & facts
 ## In progress / next steps
-## Errors & fixes
 ## Critical context
+## Constraints & preferences
+## Key decisions & facts
+## Errors & fixes
+## Completed
+
+The order is by importance, most important first. A summary that runs too long may be cut from the
+end, so what the agent needs to carry on comes first and finished history last.
 
 Section guidance:
 - Goal: what the user is ultimately trying to achieve. Rarely changes.
-- Constraints & preferences: standing user constraints and instructions that remain in force — coding
+- In progress / next steps: what is underway and what comes next.
+- Critical context: exact file paths, identifiers, result_ids, URLs, error messages, and numbers -
+  verbatim. Never paraphrase these.
+- Constraints & preferences: standing user constraints and instructions that remain in force - coding
   rules, limits, style and process preferences. These are easy to lose; keep every one that has not been
   explicitly lifted.
-- Completed: finished work, stated compactly.
 - Key decisions & facts: decisions made and why, plus durable facts established in conversation.
-- In progress / next steps: what is underway and what comes next.
 - Errors & fixes: errors encountered and how they were resolved (or that they remain open).
-- Critical context: exact file paths, identifiers, result_ids, URLs, error messages, and numbers —
-  verbatim. Never paraphrase these.
+- Completed: finished work, stated compactly.
 
 Rules:
 - Preserve everything from the previous summary unless the new segment supersedes it.
 - Move items that the new segment shows are finished into Completed.
 - Do not continue the conversation, answer questions, or add commentary.
 - Output only the summary, starting at "## Goal".
-- Hard length budget: {budget_tokens} tokens. Compress prose before dropping facts.
+{length_rule}
 
 Durable state (offloaded tool results, defined variables, files on disk) outlives this summary and is
 listed separately for the agent; you do not need to reproduce its contents, only reference identifiers
@@ -51,9 +72,9 @@ in Critical context when they matter."""
 ARCHIVE_AWARE_PROMPT = """
 
 The full transcript of the folded segment remains available to the agent.
-End the summary with one line beginning "Not covered here:" naming the kinds of detail a reader
-would have to look up - for example bulk tabular data, long tool output, or full error
-text. Omit the line only if the summary genuinely preserves every specific in the segment."""
+Directly under the Goal section, add one line beginning "Not covered here:" naming the kinds of detail
+a reader would have to look up - for example bulk tabular data, long tool output, or full error text.
+Omit the line only if the summary genuinely preserves every specific in the segment."""
 
 # Appended to the injected summary message when the archive is readable by the agent. States the
 # rule rather than suggesting it: a model told to "search if needed" will usually judge the

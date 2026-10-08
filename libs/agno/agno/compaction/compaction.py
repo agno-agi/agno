@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple, Union, cast
 from uuid import uuid4
 
 from agno.compaction._cut import choose_boundary, is_offload_envelope
@@ -14,6 +14,10 @@ from agno.compaction.prompts import (
     ARCHIVE_AWARE_PROMPT,
     ARCHIVE_LOOKUP_INSTRUCTION,
     DEFAULT_COMPACTION_PROMPT,
+    LENGTH_RULE_BUDGET,
+    LENGTH_RULE_COMPACT,
+    SUMMARY_CUT_NOTE,
+    SUMMARY_CUT_NOTE_SEARCHABLE,
 )
 from agno.compaction.types import CompactionRecord, CompactionStats, CompactionStatus
 from agno.models.base import Model
@@ -24,6 +28,10 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
 
+
+# Model id the local token counts fall back to when no model carries one. It is the Agent and
+# Team default, so compaction has no second opinion about which model is current.
+DEFAULT_TOKENIZER_MODEL_ID = "gpt-5.4"
 
 # Summarizing an enormous transcript in one call is unreliable and can itself
 # overflow. Trim what the summarizer reads, oldest first, to this budget - about
@@ -93,8 +101,16 @@ class Compaction:
     model: Optional[Union[Model, str]] = None
     # Extra guidance for the summarizer, added to the default prompt - e.g. "Keep every ticket id".
     instructions: Optional[str] = None
-    # Soft length target for the summary, stated in the prompt.
-    compacted_token_budget: int = 2_000
+    # Length budget for the summary, stated in the prompt in tokens, words and characters. None
+    # asks the model for a compact summary without naming a size and never cuts it: a model cannot
+    # count the tokens it writes, so any fixed number is a target it will miss, and a reasoning
+    # model spends part of any output cap on thinking before the summary starts.
+    compacted_token_budget: Optional[int] = None
+    # Hold the summary to compacted_token_budget when one is set. A summary that runs over is cut
+    # from the end, at a line break. The prompt orders the summary most important first, so the
+    # cut drops finished history before what the agent needs to carry on. False keeps the budget a
+    # target the model is asked to meet. Has no effect without a budget.
+    enforce_token_budget: bool = True
 
     # -- when to compact ------------------------------------------------
     # Fold when the context reaches this many tokens. None folds only on agent.compact() or overflow.
@@ -171,6 +187,8 @@ class Compaction:
             raise ValueError(f"uncompacted_runs must be zero or a positive integer, got {self.uncompacted_runs}")
         if self.uncompacted_tokens is not None and self.uncompacted_tokens <= 0:
             raise ValueError(f"uncompacted_tokens must be a positive integer, got {self.uncompacted_tokens}")
+        if self.compacted_token_budget is not None and self.compacted_token_budget <= 0:
+            raise ValueError(f"compacted_token_budget must be a positive integer, got {self.compacted_token_budget}")
         # The tail limit divides by 1 + min_fold_ratio, so a negative ratio would divide by zero or
         # flip the limit's sign.
         if self.min_fold_ratio < 0:
@@ -221,10 +239,9 @@ class Compaction:
             if counted is not None:
                 return counted
         try:
-            model_id = getattr(model, "id", None) or "gpt-4o"
             from agno.utils.tokens import count_tokens
 
-            return count_tokens(messages, tools=tools, model_id=model_id)
+            return count_tokens(messages, tools=tools, model_id=self._tokenizer_model_id(model))
         except Exception as e:
             log_warning(f"Could not estimate tokens for compaction: {e}")
             return None
@@ -433,7 +450,16 @@ class Compaction:
             transcript = (
                 f"Summary of the conversation before this point:\n{previous}\n\nConversation since then:\n{transcript}"
             )
-        prompt = DEFAULT_COMPACTION_PROMPT.format(budget_tokens=self.compacted_token_budget)
+        budget = self.compacted_token_budget
+        if budget is None:
+            length_rule = LENGTH_RULE_COMPACT
+        else:
+            # The model cannot count tokens, but words and characters it can estimate - stating
+            # all three gives it more than one way to land near the budget.
+            length_rule = LENGTH_RULE_BUDGET.format(
+                budget_tokens=budget, budget_words=round(budget * 0.75), budget_characters=budget * 4
+            )
+        prompt = DEFAULT_COMPACTION_PROMPT.format(length_rule=length_rule)
         if self.instructions:
             # Added to, not instead of, the prompt: guidance like "keep ticket ids" must not cost
             # the structure that carries earlier summaries forward.
@@ -447,6 +473,68 @@ class Compaction:
             Message(role="system", content=prompt),
             Message(role="user", content=transcript),
         ]
+
+    def _fit_to_budget(self, summary: str, searchable: bool) -> str:
+        """The summary, cut from the end to compacted_token_budget when one is set and enforced.
+
+        Without a budget the summary is returned as written. The cut keeps whole lines - never
+        half an identifier that would read as real data - and drops a heading left with nothing
+        under it. A note replaces what was cut, so the agent knows the summary is incomplete
+        rather than trusting it.
+        """
+        budget = self.compacted_token_budget
+        if budget is None or not self.enforce_token_budget:
+            return summary
+
+        from agno.utils.tokens import count_text_tokens
+
+        model_id = self._tokenizer_model_id()
+        before = count_text_tokens(summary, model_id)
+        if before <= budget:
+            return summary
+
+        note = SUMMARY_CUT_NOTE_SEARCHABLE if searchable else SUMMARY_CUT_NOTE
+
+        def with_note(kept: List[str]) -> str:
+            # A heading with nothing under it says nothing; drop it with what was cut.
+            while kept and (not kept[-1].strip() or kept[-1].lstrip().startswith("#")):
+                kept = kept[:-1]
+            return "\n".join(kept + ["", note]) if kept else note
+
+        def fits(text: str) -> bool:
+            return count_text_tokens(text, model_id) <= budget
+
+        def longest(count: int, fits_with: "Callable[[int], bool]") -> int:
+            # The most leading items that fit. Longer prefixes only grow, so search for it.
+            low, high = 0, count
+            while low < high:
+                middle = (low + high + 1) // 2
+                if fits_with(middle):
+                    low = middle
+                else:
+                    high = middle - 1
+            return low
+
+        lines = summary.splitlines()
+        kept = longest(len(lines), lambda n: fits(with_note(lines[:n])))
+        fitted = with_note(lines[:kept])
+        # Fill the room left with whole words of the next line, so one long line - a paragraph-style
+        # section - does not waste the rest of the budget. Words stay whole, so no identifier is cut.
+        if kept < len(lines) and lines[kept].strip() and not lines[kept].lstrip().startswith("#"):
+            words = lines[kept].split(" ")
+            taken = longest(len(words), lambda n: fits(with_note(lines[:kept] + [" ".join(words[:n]) + " ..."])))
+            if taken:
+                fitted = with_note(lines[:kept] + [" ".join(words[:taken]) + " ..."])
+        if not fits(fitted):
+            # A budget smaller than the note itself: no room to say what was cut, so keep as many
+            # leading words as fit and nothing else.
+            words = summary.split()
+            fitted = " ".join(words[: longest(len(words), lambda n: fits(" ".join(words[:n])))])
+        log_info(
+            f"Compaction: the summary was {before} tokens against a {budget}-token budget, so it was cut to "
+            f"{count_text_tokens(fitted, model_id)} tokens."
+        )
+        return fitted
 
     def _summarize(
         self,
@@ -489,6 +577,19 @@ class Compaction:
     def _summary_model(self) -> Optional[Model]:
         # __post_init__ resolved any string, so this is a Model or None.
         return cast(Optional[Model], self.model)
+
+    def _tokenizer_model_id(self, model: Optional[Any] = None) -> str:
+        """The model id the local token count is keyed on: the given model's, then the summarizer's.
+
+        Only an encoding is chosen by it. Ids the tokenizer does not know map to the encoding
+        current OpenAI models use, so the fallback is the framework's default model id rather
+        than any particular one it recognises.
+        """
+        for candidate in (model, self.model):
+            model_id = getattr(candidate, "id", None)
+            if model_id:
+                return cast(str, model_id)
+        return DEFAULT_TOKENIZER_MODEL_ID
 
     def _accumulate(self, response: Any, run_metrics: Optional["RunMetrics"]) -> None:
         model = self._summary_model()
@@ -579,7 +680,7 @@ class Compaction:
         """
         from agno.utils.tokens import count_tokens
 
-        model_id = getattr(self.model, "id", None) or "gpt-4o"
+        model_id = self._tokenizer_model_id()
         try:
             record.tokens_before = count_tokens(before, model_id=model_id)
             record.tokens_after = count_tokens(after, model_id=model_id)
@@ -758,6 +859,7 @@ class Compaction:
         )
         if not summary:
             return None
+        summary = self._fit_to_budget(summary, searchable=bool(self.search_compacted_messages and archive is not None))
 
         record = self.build_record(
             messages, summary, messages[boundary].id, len(to_compact), tokens_before, run_id=run_id
@@ -806,6 +908,7 @@ class Compaction:
         )
         if not summary:
             return None
+        summary = self._fit_to_budget(summary, searchable=bool(self.search_compacted_messages and archive is not None))
 
         record = self.build_record(
             messages, summary, messages[boundary].id, len(to_compact), tokens_before, run_id=run_id
