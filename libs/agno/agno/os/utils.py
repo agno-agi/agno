@@ -2071,38 +2071,56 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
     return blank
 
 
-def update_cors_middleware(app: FastAPI, new_origins: list):
-    existing_origins: List[str] = []
+def _is_cors_middleware(middleware: Any) -> bool:
+    return isinstance(middleware.cls, type) and issubclass(middleware.cls, CORSMiddleware)
 
-    # TODO: Allow more options where CORS is properly merged and user can disable this behaviour
 
-    # Extract existing origins from current CORS middleware
-    for middleware in app.user_middleware:
-        if middleware.cls == CORSMiddleware:
-            if hasattr(middleware, "kwargs"):
-                origins_value = middleware.kwargs.get("allow_origins", [])
-                if isinstance(origins_value, list):
-                    existing_origins = origins_value
-                else:
-                    existing_origins = []
-            break
-    # Merge origins
-    merged_origins = list(set(new_origins + existing_origins))
-    final_origins = [origin for origin in merged_origins if origin != "*"]
+def update_cors_middleware(
+    app: FastAPI, new_origins: list, *, origin_regex: Optional[str] = None, merge_existing: bool = True
+):
+    from agno.os.middleware.cors import OriginPolicy, OriginPolicyCORSMiddleware
 
-    # Remove existing CORS
-    app.user_middleware = [m for m in app.user_middleware if m.cls != CORSMiddleware]
+    origins = list(new_origins)
+    patterns = [origin_regex] if origin_regex is not None else []
+    if merge_existing:
+        for middleware in app.user_middleware:
+            if not _is_cors_middleware(middleware):
+                continue
+            existing_policy = middleware.kwargs.get("origin_policy")
+            if isinstance(existing_policy, OriginPolicy):
+                origins.extend(existing_policy.origins)
+                patterns.extend(existing_policy.patterns)
+                continue
+            existing_origins = middleware.kwargs.get("allow_origins", [])
+            if isinstance(existing_origins, (list, tuple)):
+                origins.extend(existing_origins)
+            existing_pattern = middleware.kwargs.get("allow_origin_regex")
+            if isinstance(existing_pattern, str):
+                patterns.append(existing_pattern)
+    final_origins = list(dict.fromkeys(origin for origin in origins if origin != "*"))
+    policy = OriginPolicy(final_origins, list(dict.fromkeys(patterns)))
+    app.user_middleware = [m for m in app.user_middleware if not _is_cors_middleware(m)]
     app.middleware_stack = None
-
-    # Add updated CORS
-    app.add_middleware(
-        CORSMiddleware,  # type: ignore
-        allow_origins=final_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["*"],
-    )
+    if len(policy.patterns) > 1:
+        app.add_middleware(
+            OriginPolicyCORSMiddleware,
+            origin_policy=policy,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+            expose_headers=["*"],
+        )
+    else:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=final_origins,
+            allow_origin_regex=policy.patterns[0] if policy.patterns else None,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+            expose_headers=["*"],
+        )
+    return policy
 
 
 def flatten_routes(routes: Sequence[Any]) -> List[Any]:
