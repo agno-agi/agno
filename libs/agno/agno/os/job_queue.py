@@ -1158,6 +1158,24 @@ class QueueWorker:
 
         component_type = job["component_type"]
         if component_type == "agent":
+            from agno.agents.base import BaseExternalAgent
+
+            if isinstance(component, BaseExternalAgent):
+                external_error_run = await component.aget_run_output(
+                    job["id"], job["session_id"], user_id=job.get("user_id")
+                )
+                if external_error_run is not None and external_error_run.status not in (
+                    RunStatus.completed,
+                    RunStatus.cancelled,
+                ):
+                    external_error_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
+                    external_error_run.content = external_error_run.content or error
+                    if cancellation_stage is not None:
+                        external_error_run.cancellation_stage = cancellation_stage
+                    await component.apersist_run_status_fallback(
+                        job["session_id"], external_error_run, job.get("user_id")
+                    )
+                return RunPersistOutcome.UPDATED
             from agno.agent._session import asave_run, asave_session
             from agno.agent._storage import aread_or_create_session
             from agno.run.agent import RunOutput
@@ -1660,6 +1678,21 @@ class QueueWorker:
                         f"Job queue: RUNNING stamp failed for job {job_id} (worker={self.worker_id}, "
                         f"attempt={attempt}): {e}"
                     )
+                if stamp_outcome in (_RPO.MISSING, _RPO.UNAVAILABLE):
+                    from agno.agents.base import BaseExternalAgent
+
+                    if isinstance(component, BaseExternalAgent):
+                        external_run = await component.aget_run_output(
+                            job_id, job["session_id"], user_id=job.get("user_id")
+                        )
+                        if external_run is not None:
+                            if external_run.status in (_RS.completed, _RS.cancelled):
+                                await self._ahonor_terminal_row(component, job)
+                                return
+                            external_run.status = _RS.running
+                            await component.apersist_run_status_fallback(
+                                job["session_id"], external_run, job.get("user_id")
+                            )
                 if stamp_outcome is _RPO.TERMINAL_REFUSED:
                     # The run row is already COMPLETED/CANCELLED (the guard's
                     # exact terminal set - ERROR rows pass, so operator
@@ -2164,6 +2197,11 @@ async def aprepare_queued_run(
     from agno.run.base import RunStatus
 
     if component_type == "agent":
+        from agno.agents.base import BaseExternalAgent
+
+        if isinstance(component, BaseExternalAgent):
+            await component.aprepare_pending_run(run_id, session_id, user_id, input)
+            return
         from agno.agent._session import asave_run, asave_session
         from agno.agent._storage import aread_or_create_session, update_metadata
         from agno.run.agent import RunInput, RunOutput

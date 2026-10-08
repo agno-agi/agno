@@ -173,6 +173,11 @@ async def apersist_run_transition(
     # concurrent-write window - see module docstring). This path writes the whole run, so its
     # media is offloaded first.
     if component_type == "agent":
+        from agno.agents.base import BaseExternalAgent
+
+        if isinstance(component, BaseExternalAgent):
+            await component.apersist_run_status_fallback(session_id, run_response, user_id)
+            return
         from agno.agent._session import asave_run, asave_session
         from agno.agent._storage import aread_or_create_session
         from agno.utils.agent import abuild_offloaded_storage_copy

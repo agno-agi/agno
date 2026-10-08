@@ -1,15 +1,18 @@
 import asyncio
 import json
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from time import time
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Union
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+from agno.exceptions import RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.run.agent import (
+    RunCancelledEvent,
     RunCompletedEvent,
     RunContentEvent,
     RunErrorEvent,
@@ -28,6 +31,28 @@ from agno.utils.log import log_exception, log_warning
 
 if TYPE_CHECKING:
     from agno.tools.component import ComponentTool
+
+
+def _sync_await(coro: Any) -> Any:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
+@dataclass
+class _LiveHandle:
+    agent: "BaseExternalAgent"
+    handle: Any
+    loop: asyncio.AbstractEventLoop
+    interrupted: bool = False
+
+
+_live_handles: Dict[str, _LiveHandle] = {}
 
 
 @dataclass
@@ -54,7 +79,7 @@ class BaseExternalAgent:
     - Session persistence via Agno's DB (when db is configured)
 
     Subclasses must implement:
-    - _arun_adapter(input, **kwargs) -> str  (non-streaming)
+    - _arun_adapter(input, **kwargs) -> str | ExternalRunResult  (non-streaming)
     - _arun_adapter_stream(input, **kwargs) -> AsyncIterator[RunOutputEvent]  (streaming)
     """
 
@@ -113,23 +138,23 @@ class BaseExternalAgent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream_events: Optional[bool] = None,
+        background: bool = False,
+        run_id: Optional[str] = None,
+        yield_run_output: bool = False,
         **kwargs: Any,
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
+        run_id = run_id or str(uuid4())
+        session_id = session_id or str(uuid4())
+        kwargs.update(run_id=run_id, session_id=session_id, user_id=user_id)
+        if background:
+            if self.db is None:
+                raise ValueError("Background execution requires a database")
+            if stream:
+                return self._arun_background_stream(input, yield_run_output=yield_run_output, **kwargs)
+            return self._astart_background(input, stream=False, yield_run_output=yield_run_output, **kwargs)  # type: ignore[return-value]
         if stream:
-            return self._arun_stream(
-                input,
-                session_id=session_id,
-                user_id=user_id,
-                **kwargs,
-            )
-        else:
-            # Returns a coroutine that the caller (router) awaits
-            return self._arun_non_stream(  # type: ignore[return-value]
-                input,
-                session_id=session_id,
-                user_id=user_id,
-                **kwargs,
-            )
+            return self._arun_stream(input, yield_run_output=yield_run_output, **kwargs)
+        return self._arun_non_stream(input, **kwargs)  # type: ignore[return-value]
 
     # ---------------------------------------------------------------------------
     # Public sync API (convenience wrappers)
@@ -145,6 +170,8 @@ class BaseExternalAgent:
         **kwargs: Any,
     ) -> Union[RunOutput, Iterator[RunOutputEvent]]:
         """Synchronous run. Dispatches to the async internals."""
+        if kwargs.pop("background", False):
+            raise ValueError("Use arun(background=True) on a persistent event loop")
         if stream:
             return self._run_stream(input, session_id=session_id, user_id=user_id, **kwargs)
         else:
@@ -469,20 +496,27 @@ class BaseExternalAgent:
         elif isinstance(self.db, BaseDb):
             self.db.upsert_session(session)
 
-    async def _apersist_run_in_session(self, session: AgentSession, run_output: RunOutput) -> None:
+    async def _apersist_run_in_session(
+        self, session: AgentSession, run_output: RunOutput, *, strict: bool = False
+    ) -> None:
         """Append the run to the session and persist both (v3 denormalized storage).
 
         upsert_session writes only the session row — runs live in their own
         table and must be written via upsert_run, or history is silently lost.
         Swallows DB failures so the caller still receives the RunOutput.
         """
-        if session.runs is None:
-            session.runs = []
-        session.runs.append(run_output)
+        session.upsert_run(run=run_output)
         try:
             await self.aupsert_session(session)
             if self.db is not None:
-                run_index = len(session.runs) - 1
+                from agno.run.status_persist import apersist_worker_owned_run
+                from agno.session._utils import resolve_run_index
+
+                if await apersist_worker_owned_run(
+                    self.db, run_output, session.session_id, run_output.user_id or session.user_id
+                ):
+                    return
+                run_index = resolve_run_index(session, run_output)
                 user_id = run_output.user_id or session.user_id
                 try:
                     if isinstance(self.db, AsyncBaseDb):
@@ -498,6 +532,229 @@ class BaseExternalAgent:
                     pass
         except Exception as upsert_err:
             log_warning(f"Failed to persist run for {self.framework} agent '{self.id}': {upsert_err}")
+            if strict:
+                raise
+
+    def get_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
+        """Read a session scoped to this agent and, when supplied, its user."""
+        if self.db is None:
+            return None
+        if isinstance(self.db, AsyncBaseDb):
+            raise ValueError("Use aget_session with an async database")
+        session = self.db.get_session(session_id=session_id, session_type=SessionType.AGENT, user_id=user_id)
+        if isinstance(session, dict):
+            session = AgentSession.from_dict(session)
+        if not isinstance(session, AgentSession) or session.agent_id != self.get_id():
+            return None
+        return session
+
+    async def aget_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
+        """Read a persisted session without creating a missing session."""
+        if self.db is None:
+            return None
+        if isinstance(self.db, BaseDb):
+            return await asyncio.to_thread(self.get_session, session_id, user_id)
+        session = await self.db.get_session(session_id=session_id, session_type=SessionType.AGENT, user_id=user_id)
+        if isinstance(session, dict):
+            session = AgentSession.from_dict(session)
+        if not isinstance(session, AgentSession) or session.agent_id != self.get_id():
+            return None
+        return session
+
+    def cancel_run(self, run_id: str) -> bool:
+        """Store cancellation intent and interrupt a live local SDK handle."""
+        from agno.run.cancel import cancel_run
+
+        registered = cancel_run(run_id)
+        live = _live_handles.get(run_id)
+        if live is not None and not live.loop.is_closed():
+            asyncio.run_coroutine_threadsafe(live.agent._ainterrupt_live_handle(run_id), live.loop)
+        return registered
+
+    async def acancel_run(self, run_id: str) -> bool:
+        """Store cancellation intent and interrupt the owning process's handle."""
+        from agno.run.cancel import acancel_run
+
+        registered = await acancel_run(run_id)
+        live = _live_handles.get(run_id)
+        if live is not None and not live.loop.is_closed():
+            if live.loop is asyncio.get_running_loop():
+                await live.agent._ainterrupt_live_handle(run_id)
+            else:
+                await asyncio.wrap_future(
+                    asyncio.run_coroutine_threadsafe(live.agent._ainterrupt_live_handle(run_id), live.loop)
+                )
+        return registered
+
+    def _set_run_handle(self, run_id: str, handle: Any) -> None:
+        _live_handles[run_id] = _LiveHandle(self, handle, asyncio.get_running_loop())
+
+    def _clear_run_handle(self, run_id: str) -> None:
+        _live_handles.pop(run_id, None)
+
+    async def _ainterrupt_run(self, handle: Any) -> None:
+        """Interrupt an adapter's active SDK handle."""
+        raise NotImplementedError
+
+    async def _ainterrupt_live_handle(self, run_id: str) -> None:
+        live = _live_handles.get(run_id)
+        if live is None or live.interrupted:
+            return
+        live.interrupted = True
+        try:
+            await live.agent._ainterrupt_run(live.handle)
+        except Exception as error:
+            live.interrupted = False
+            log_warning(f"Could not interrupt external run {run_id}: {error}")
+
+    @asynccontextmanager
+    async def _run_cancellation(self, run_id: str) -> AsyncIterator[None]:
+        from agno.run.cancel import acleanup_run, ais_cancelled, araise_if_cancelled, aregister_run
+
+        await aregister_run(run_id)
+
+        async def watch() -> None:
+            while True:
+                try:
+                    if await ais_cancelled(run_id):
+                        await self._ainterrupt_live_handle(run_id)
+                except Exception as error:
+                    log_warning(f"Cancellation check failed for external run {run_id}: {error}")
+                await asyncio.sleep(0.5)
+
+        watcher = asyncio.create_task(watch())
+        try:
+            await araise_if_cancelled(run_id)
+            yield
+            await araise_if_cancelled(run_id)
+        except Exception:
+            await araise_if_cancelled(run_id)
+            raise
+        finally:
+            watcher.cancel()
+            with suppress(asyncio.CancelledError):
+                await watcher
+            self._clear_run_handle(run_id)
+            await acleanup_run(run_id)
+
+    def prepare_pending_run(self, run_id: str, session_id: str, user_id: Optional[str], input: Any) -> RunOutput:
+        """Persist a PENDING run before background or queued execution."""
+        return _sync_await(self.aprepare_pending_run(run_id, session_id, user_id, input))
+
+    async def aprepare_pending_run(self, run_id: str, session_id: str, user_id: Optional[str], input: Any) -> RunOutput:
+        """Create an idempotent PENDING row using atomic inserts when available."""
+        from agno.os.job_queue import _ainsert_session_if_absent, _atomic_append_run
+
+        run = RunOutput(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            agent_id=self.get_id(),
+            agent_name=self.name,
+            input=RunInput(input_content=input),
+            status=RunStatus.pending,
+        )
+        if await _atomic_append_run(self, session_id, run.to_dict(), user_id) is not None:
+            return run
+        session = await self.aread_or_create_session(session_id, user_id)
+        if await _ainsert_session_if_absent(self, session) is not None:
+            if await _atomic_append_run(self, session_id, run.to_dict(), user_id) is not None:
+                return run
+        if session.get_run(run_id) is None:
+            await self._apersist_run_in_session(session, run, strict=True)
+        return run
+
+    def persist_run_status_fallback(
+        self, session_id: str, run_response: RunOutput, user_id: Optional[str] = None
+    ) -> None:
+        """Persist a run transition on a database without the atomic primitive."""
+        _sync_await(self.apersist_run_status_fallback(session_id, run_response, user_id))
+
+    async def apersist_run_status_fallback(
+        self, session_id: str, run_response: RunOutput, user_id: Optional[str] = None
+    ) -> None:
+        """Re-read the session and persist only the changed run."""
+        session = await self.aread_or_create_session(session_id, user_id)
+        existing = session.get_run(run_response.run_id or "")
+        if existing is not None and existing.status in (RunStatus.completed, RunStatus.cancelled):
+            return
+        await self._apersist_run_in_session(session, run_response, strict=True)
+
+    async def _astart_background(
+        self,
+        input: Any,
+        *,
+        run_id: str,
+        session_id: str,
+        user_id: Optional[str],
+        stream: bool,
+        yield_run_output: bool,
+        **kwargs: Any,
+    ) -> Any:
+        from agno.run.background import _BackgroundStream, _execute_background, _spawn_background
+        from agno.run.cancel import aregister_run
+        from agno.run.status_persist import apersist_run_transition
+
+        run = await self.aprepare_pending_run(run_id, session_id, user_id, input)
+        await aregister_run(run_id)
+        transport = _BackgroundStream(run, yield_run_output=yield_run_output) if stream else None
+        if transport is not None:
+            await transport.register()
+
+        async def transition(full_run: bool) -> None:
+            await apersist_run_transition(self, "agent", session_id, run, user_id=user_id, full_run=full_run)
+
+        async def execute() -> None:
+            if transport is None:
+                result = await self._arun_non_stream(
+                    input, run_id=run_id, session_id=session_id, user_id=user_id, **kwargs
+                )
+                run.__dict__.update(result.__dict__)
+            else:
+                async for event in self._arun_stream(
+                    input, run_id=run_id, session_id=session_id, user_id=user_id, yield_run_output=True, **kwargs
+                ):
+                    if isinstance(event, RunOutput):
+                        run.__dict__.update(event.__dict__)
+                    else:
+                        await transport.publish(event)
+            await transition(True)
+
+        async def failure() -> None:
+            if transport is not None:
+                if run.status == RunStatus.cancelled:
+                    event: RunOutputEvent = RunCancelledEvent(
+                        run_id=run_id, session_id=session_id, agent_id=self.get_id(), reason="Run cancelled"
+                    )
+                else:
+                    event = RunErrorEvent(
+                        run_id=run_id,
+                        session_id=session_id,
+                        agent_id=self.get_id(),
+                        content=str(run.content or "Background run failed"),
+                    )
+                await transport.publish(event)
+
+        _spawn_background(
+            _execute_background(
+                run,
+                execute,
+                transition,
+                on_running=transport.running if transport else None,
+                on_terminal=transport.complete if transport else None,
+                on_failure=failure,
+            )
+        )
+        return transport if transport is not None else run
+
+    async def _arun_background_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        transport = await self._astart_background(input, stream=True, **kwargs)
+        pump = transport.pump()
+        try:
+            async for item in pump:
+                yield item
+        finally:
+            await pump.aclose()
 
     # Run inspection (used by AgentOS /agents/{id}/runs/{run_id} for external agents)
 
@@ -507,19 +764,23 @@ class BaseExternalAgent:
         run = session.get_run(run_id)
         return run if isinstance(run, RunOutput) else None
 
-    def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
+    def get_run_output(
+        self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> Optional[RunOutput]:
         """Get a persisted RunOutput for this adapter."""
         if not session_id:
             return None
-        session = self.read_or_create_session(session_id)
-        return self._find_run_in_session(session, run_id)
+        session = self.get_session(session_id, user_id)
+        return self._find_run_in_session(session, run_id) if session else None
 
-    async def aget_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
+    async def aget_run_output(
+        self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> Optional[RunOutput]:
         """Get a persisted RunOutput for this adapter."""
         if not session_id:
             return None
-        session = await self.aread_or_create_session(session_id)
-        return self._find_run_in_session(session, run_id)
+        session = await self.aget_session(session_id, user_id)
+        return self._find_run_in_session(session, run_id) if session else None
 
     def _build_run_output(
         self,
@@ -586,7 +847,9 @@ class BaseExternalAgent:
             created_at=now,
         )
 
-    def _get_history_from_session(self, session: AgentSession) -> List[Dict[str, Any]]:
+    def _get_history_from_session(
+        self, session: AgentSession, exclude_run_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """Extract conversation history from session runs for adapters to use.
 
         Includes user, assistant, and tool messages so adapters have full
@@ -602,7 +865,7 @@ class BaseExternalAgent:
         if not session.runs:
             return history
         for run in session.runs:
-            if not isinstance(run, RunOutput) or not run.messages:
+            if not isinstance(run, RunOutput) or not run.messages or run.run_id == exclude_run_id:
                 continue
             for msg in run.messages:
                 if msg.role == "assistant" and msg.tool_calls:
@@ -649,132 +912,97 @@ class BaseExternalAgent:
     # ---------------------------------------------------------------------------
 
     async def _arun_non_stream(self, input: Any, **kwargs: Any) -> RunOutput:
-        run_id = str(uuid4())
+        run_id = kwargs.pop("run_id", None) or str(uuid4())
         session_id = kwargs.get("session_id") or str(uuid4())
+        kwargs["session_id"] = session_id
         user_id = kwargs.get("user_id")
-
-        # Load session and extract history for the adapter
-        session = None
-        history: Optional[List[Dict[str, Any]]] = None
-        if self.db is not None:
-            session = await self.aread_or_create_session(session_id, user_id)
-            history = self._get_history_from_session(session)
-
+        session = await self.aread_or_create_session(session_id, user_id) if self.db else None
+        history = self._get_history_from_session(session, exclude_run_id=run_id) if session else None
         try:
-            content = await self._arun_adapter(input, history=history, run_id=run_id, session=session, **kwargs)
+            async with self._run_cancellation(run_id):
+                content = await self._arun_adapter(input, history=history, run_id=run_id, session=session, **kwargs)
             run_output = self._build_run_output(
-                run_id=run_id,
-                session_id=session_id,
-                user_id=user_id,
-                input_text=input,
-                content=content.content if isinstance(content, ExternalRunResult) else content,
+                run_id,
+                session_id,
+                user_id,
+                input,
+                content.content if isinstance(content, ExternalRunResult) else content,
+                RunStatus.completed,
                 tools=content.tools if isinstance(content, ExternalRunResult) else None,
-                status=RunStatus.completed,
             )
-        except Exception as e:
-            log_exception(f"Error in {self.framework} agent '{self.id}': {e}")
+        except RunCancelledException:
             run_output = self._build_run_output(
-                run_id=run_id,
-                session_id=session_id,
-                user_id=user_id,
-                input_text=input,
-                content=str(e),
-                status=RunStatus.error,
+                run_id, session_id, user_id, input, "Run cancelled", RunStatus.cancelled
             )
-
-        # Persist the session row and the run row (v3 denormalized storage)
+        except Exception as error:
+            log_exception(f"Error in {self.framework} agent '{self.id}': {error}")
+            run_output = self._build_run_output(run_id, session_id, user_id, input, str(error), RunStatus.error)
         if session is not None:
             await self._apersist_run_in_session(session, run_output)
-
         return run_output
 
-    # ---------------------------------------------------------------------------
-    # Internal: streaming
-    # ---------------------------------------------------------------------------
-
-    async def _arun_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
-        run_id = str(uuid4())
+    async def _arun_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        run_id = kwargs.pop("run_id", None) or str(uuid4())
         session_id = kwargs.get("session_id") or str(uuid4())
+        kwargs["session_id"] = session_id
         user_id = kwargs.get("user_id")
-
-        # Load session and extract history for the adapter
-        session = None
-        history: Optional[List[Dict[str, Any]]] = None
-        if self.db is not None:
-            session = await self.aread_or_create_session(session_id, user_id)
-            history = self._get_history_from_session(session)
-
-        yield RunStartedEvent(
+        yield_run_output = kwargs.pop("yield_run_output", False)
+        session = await self.aread_or_create_session(session_id, user_id) if self.db else None
+        history = self._get_history_from_session(session, exclude_run_id=run_id) if session else None
+        yield RunStartedEvent(run_id=run_id, agent_id=self.get_id(), agent_name=self.name or "", session_id=session_id)
+        accumulated_content = ""
+        tools: Dict[str, ToolExecution] = {}
+        status = RunStatus.completed
+        run_error: Optional[Exception] = None
+        try:
+            async with self._run_cancellation(run_id):
+                async for event in self._arun_adapter_stream(
+                    input, history=history, run_id=run_id, session=session, **kwargs
+                ):
+                    if isinstance(event, RunContentEvent):
+                        accumulated_content += event.content or ""
+                    elif isinstance(event, (ToolCallStartedEvent, ToolCallCompletedEvent)) and event.tool:
+                        key = event.tool.tool_call_id or str(uuid4())
+                        if key not in tools:
+                            tools[key] = event.tool
+                        elif isinstance(event, ToolCallCompletedEvent):
+                            tools[key].result = event.tool.result
+                            tools[key].tool_call_error = event.tool.tool_call_error
+                    yield event
+        except RunCancelledException:
+            status = RunStatus.cancelled
+        except Exception as error:
+            log_exception(f"Error in {self.framework} agent '{self.id}': {error}")
+            run_error = error
+            status = RunStatus.error
+        run = self._build_run_output(
+            run_id,
+            session_id,
+            user_id,
+            input,
+            str(run_error) if run_error else accumulated_content,
+            status,
+            list(tools.values()) or None,
+        )
+        if session is not None:
+            await self._apersist_run_in_session(session, run)
+        fields: Dict[str, Any] = dict(
             run_id=run_id,
+            session_id=session_id,
             agent_id=self.get_id(),
             agent_name=self.name or "",
-            session_id=session_id,
+            content=run.content,
         )
-
-        accumulated_content = ""
-        accumulated_tools: List[ToolExecution] = []
-        run_error: Optional[Exception] = None
-
-        try:
-            # Map tool_call_id -> ToolExecution for merging started+completed
-            tool_map: Dict[str, ToolExecution] = {}
-
-            async for event in self._arun_adapter_stream(
-                input, history=history, run_id=run_id, session=session, **kwargs
-            ):
-                if isinstance(event, RunContentEvent):
-                    accumulated_content += event.content or ""
-                elif isinstance(event, ToolCallStartedEvent) and event.tool:
-                    tool = ToolExecution(
-                        tool_call_id=event.tool.tool_call_id,
-                        tool_name=event.tool.tool_name,
-                        tool_args=event.tool.tool_args,
-                    )
-                    tool_map[event.tool.tool_call_id or ""] = tool
-                    accumulated_tools.append(tool)
-                elif isinstance(event, ToolCallCompletedEvent) and event.tool:
-                    # Merge result into the existing tool entry
-                    existing = tool_map.get(event.tool.tool_call_id or "")
-                    if existing:
-                        existing.result = event.tool.result
-                    else:
-                        accumulated_tools.append(event.tool)
-                yield event
-        except Exception as e:
-            log_exception(f"Error in {self.framework} agent '{self.id}': {e}")
-            run_error = e
-
-        # Persist the run to the session. Swallow DB failures so the consumer
-        # still receives the terminal RunCompletedEvent / RunErrorEvent below.
-        if session is not None:
-            run_output = self._build_run_output(
-                run_id=run_id,
-                session_id=session_id,
-                user_id=user_id,
-                input_text=input,
-                content=str(run_error) if run_error is not None else accumulated_content,
-                status=RunStatus.error if run_error is not None else RunStatus.completed,
-                tools=accumulated_tools if accumulated_tools else None,
+        if status == RunStatus.cancelled:
+            yield RunCancelledEvent(
+                run_id=run_id, session_id=session_id, agent_id=self.get_id(), reason="Run cancelled"
             )
-            await self._apersist_run_in_session(session, run_output)
-
-        if run_error is not None:
-            yield RunErrorEvent(
-                run_id=run_id,
-                agent_id=self.get_id(),
-                agent_name=self.name or "",
-                session_id=session_id,
-                content=str(run_error),
-                error_type=error_type_of(run_error),
-            )
+        elif run_error is not None:
+            yield RunErrorEvent(**fields, error_type=error_type_of(run_error))
         else:
-            yield RunCompletedEvent(
-                run_id=run_id,
-                agent_id=self.get_id(),
-                agent_name=self.name or "",
-                session_id=session_id,
-                content=accumulated_content,
-            )
+            yield RunCompletedEvent(**fields)
+        if yield_run_output:
+            yield run
 
     def _run_stream(self, input: Any, **kwargs: Any) -> Iterator[RunOutputEvent]:
         """Sync streaming wrapper. Runs the async stream on a background thread."""
@@ -816,8 +1044,10 @@ class BaseExternalAgent:
     # Subclass hooks (must be implemented by adapters)
     # ---------------------------------------------------------------------------
 
-    async def _arun_adapter(self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any) -> Any:
-        """Non-streaming execution. Return the response content.
+    async def _arun_adapter(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> Union[str, ExternalRunResult]:
+        """Non-streaming execution. Return content and optional tool executions.
 
         kwargs includes `session` (the loaded AgentSession, or None if no db).
         Mutate `session.session_data` in place to persist adapter-specific
