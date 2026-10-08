@@ -15,8 +15,8 @@ the user wanted rather than on a stand-in for it.
 Costs one LLM call per search. If that call fails the original query is used, so a
 provider outage degrades results rather than breaking search.
 
-model defaults to the agent's own model, so it only needs setting to use a cheaper or
-faster one for the generation step.
+model defaults to the same model Agent and Team default to, so it only needs setting to
+use a cheaper or faster one for the generation step.
 
 Setup:
     ./cookbook/scripts/run_pgvector.sh

@@ -270,23 +270,23 @@ class Knowledge(RemoteKnowledge):
         effective = search_type or getattr(self.vector_db, "search_type", None)
         return str(getattr(effective, "value", effective)).lower() == "keyword"
 
-    def _transformed_query(self, query: str, model: Optional[Any], run_response: Optional[Any] = None) -> str:
+    def _transformed_query(self, query: str, run_response: Optional[Any] = None) -> str:
         """Rewrite the query before searching, leaving it untouched when none is set."""
         if self.query_transformer is None:
             return query
         try:
-            return self.query_transformer.transform(query=query, model=model, run_response=run_response)
+            return self.query_transformer.transform(query=query, run_response=run_response)
         except Exception as e:
             # A failed transform degrades the search, it does not break it.
             log_error(f"Error transforming query: {str(e)}")
             return query
 
-    async def _atransformed_query(self, query: str, model: Optional[Any], run_response: Optional[Any] = None) -> str:
+    async def _atransformed_query(self, query: str, run_response: Optional[Any] = None) -> str:
         """Async variant of ``_transformed_query``."""
         if self.query_transformer is None:
             return query
         try:
-            return await self.query_transformer.atransform(query=query, model=model, run_response=run_response)
+            return await self.query_transformer.atransform(query=query, run_response=run_response)
         except Exception as e:
             log_error(f"Error transforming query: {str(e)}")
             return query
@@ -1191,7 +1191,6 @@ class Knowledge(RemoteKnowledge):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         search_type: Optional[str] = None,
         user_id: Optional[str] = None,
-        model: Optional[Any] = None,
         run_response: Optional[Any] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query.
@@ -1208,7 +1207,7 @@ class Knowledge(RemoteKnowledge):
             # The transform applies here too: it is configured on Knowledge, not on a store.
             # Passed as an alternative phrasing rather than replacing the query, so the
             # lexical half still ranks the question as asked.
-            transformed = self._transformed_query(query, model, run_response)
+            transformed = self._transformed_query(query, run_response)
             page_kwargs = self._page_search_kwargs(query, transformed, page_limit)
             page_documents = self._page_documents(self.search_pages(query, **page_kwargs))
             return self._rerank_documents(query, page_documents, page_limit)
@@ -1238,7 +1237,7 @@ class Knowledge(RemoteKnowledge):
                 log_debug("Keyword search ANDs query terms, so the query transformer is skipped")
                 search_query = query
             else:
-                search_query = self._transformed_query(query, model, run_response)
+                search_query = self._transformed_query(query, run_response)
             with self._vector_db_reranker_suspended():
                 documents = self.vector_db.search(
                     query=search_query,
@@ -1265,7 +1264,6 @@ class Knowledge(RemoteKnowledge):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         search_type: Optional[str] = None,
         user_id: Optional[str] = None,
-        model: Optional[Any] = None,
         run_response: Optional[Any] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query. See ``search``."""
@@ -1275,7 +1273,7 @@ class Knowledge(RemoteKnowledge):
             page_limit = max_results if max_results is not None else self.max_results
             # See the matching comment in ``search``.
             # See the matching comment in ``search``.
-            transformed = await self._atransformed_query(query, model, run_response)
+            transformed = await self._atransformed_query(query, run_response)
             page_kwargs = self._page_search_kwargs(query, transformed, page_limit)
             page_documents = self._page_documents(await self.asearch_pages(query, **page_kwargs))
             return await self._arerank_documents(query, page_documents, page_limit)
@@ -1304,7 +1302,7 @@ class Knowledge(RemoteKnowledge):
                 log_debug("Keyword search ANDs query terms, so the query transformer is skipped")
                 search_query = query
             else:
-                search_query = await self._atransformed_query(query, model, run_response)
+                search_query = await self._atransformed_query(query, run_response)
             with self._vector_db_reranker_suspended():
                 try:
                     documents = await self.vector_db.async_search(
@@ -5505,8 +5503,6 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                     query=query,
                     filters=knowledge_filters,
                     user_id=getattr(run_context, "user_id", None),
-                    # Lets a query transformer borrow the caller's model when it has none.
-                    model=getattr(agent, "model", None),
                     # So an LLM call a query transformer makes is counted in run metrics.
                     run_response=run_response,
                 )
@@ -5550,8 +5546,6 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                     query=query,
                     filters=knowledge_filters,
                     user_id=getattr(run_context, "user_id", None),
-                    # Lets a query transformer borrow the caller's model when it has none.
-                    model=getattr(agent, "model", None),
                     # So an LLM call a query transformer makes is counted in run metrics.
                     run_response=run_response,
                 )
@@ -5645,8 +5639,6 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                     query=query,
                     filters=search_filters,
                     user_id=getattr(run_context, "user_id", None),
-                    # Lets a query transformer borrow the caller's model when it has none.
-                    model=getattr(agent, "model", None),
                     # So an LLM call a query transformer makes is counted in run metrics.
                     run_response=run_response,
                 )
@@ -5712,8 +5704,6 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                     query=query,
                     filters=search_filters,
                     user_id=getattr(run_context, "user_id", None),
-                    # Lets a query transformer borrow the caller's model when it has none.
-                    model=getattr(agent, "model", None),
                     # So an LLM call a query transformer makes is counted in run metrics.
                     run_response=run_response,
                 )
@@ -5784,7 +5774,6 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         max_results: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
-        model: Optional[Any] = None,
         run_response: Optional[Any] = None,
         **kwargs,
     ) -> List[Document]:
@@ -5798,7 +5787,6 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             max_results: Maximum number of results.
             filters: Filters to apply.
             user_id: Owner scope forwarded to ``search``. ``None`` returns everything.
-            model: Offered to ``query_transformer`` when it needs a model and has none.
             run_response: Run the transformer's model call is billed to, when it makes one.
             **kwargs: Additional parameters.
 
@@ -5810,7 +5798,6 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             max_results=max_results,
             filters=filters,
             user_id=user_id,
-            model=model,
             run_response=run_response,
         )
 
@@ -5820,7 +5807,6 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         max_results: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
-        model: Optional[Any] = None,
         run_response: Optional[Any] = None,
         **kwargs,
     ) -> List[Document]:
@@ -5830,6 +5816,5 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             max_results=max_results,
             filters=filters,
             user_id=user_id,
-            model=model,
             run_response=run_response,
         )

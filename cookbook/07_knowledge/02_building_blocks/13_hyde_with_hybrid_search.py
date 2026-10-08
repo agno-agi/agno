@@ -110,9 +110,7 @@ if __name__ == "__main__":
 
         # The search string itself is what the flag changes, so print it: the ranking
         # above may well be identical on a corpus this small.
-        transformed = await knowledge.query_transformer.atransform(
-            QUERY, model=agent.model
-        )
+        transformed = await knowledge.query_transformer.atransform(QUERY)
         print("Searched with:")
         print(f"  {' '.join(transformed.split())[:150]}...\n")
 

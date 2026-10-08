@@ -39,7 +39,7 @@ from agno.utils.agent import (
     execute_system_message,
 )
 from agno.utils.common import is_typed_dict
-from agno.utils.knowledge import get_model_kwarg, get_run_response_kwarg, get_user_id_kwarg
+from agno.utils.knowledge import get_run_response_kwarg, get_user_id_kwarg
 from agno.utils.log import log_debug, log_warning
 from agno.utils.message import copy_history_message, filter_tool_calls, get_text_from_message, render_instructions
 from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
@@ -1832,9 +1832,7 @@ def get_relevant_docs_from_knowledge(
             "filters": filters,
         }
         retrieve_kwargs.update(get_user_id_kwarg(retrieve_fn, run_context.user_id if run_context else agent.user_id))
-        # Lets a query transformer borrow the agent's model when it has none of its own,
-        # and bills the tokens it spends to this run.
-        retrieve_kwargs.update(get_model_kwarg(retrieve_fn, getattr(agent, "model", None)))
+        # Bills an LLM call a query transformer makes to this run.
         retrieve_kwargs.update(get_run_response_kwarg(retrieve_fn, run_response))
         relevant_docs: List[Document] = retrieve_fn(**retrieve_kwargs)
 
@@ -1951,17 +1949,13 @@ async def aget_relevant_docs_from_knowledge(
             "filters": filters,
         }
 
-        # Lets a query transformer borrow the agent's model when it has none of its own,
-        # and bills the tokens it spends to this run.
-        agent_model = getattr(agent, "model", None)
+        # Bills an LLM call a query transformer makes to this run.
         if callable(aretrieve_fn):
             retrieve_kwargs.update(get_user_id_kwarg(aretrieve_fn, scope_user_id))
-            retrieve_kwargs.update(get_model_kwarg(aretrieve_fn, agent_model))
             retrieve_kwargs.update(get_run_response_kwarg(aretrieve_fn, run_response))
             relevant_docs: List[Document] = await aretrieve_fn(**retrieve_kwargs)
         elif callable(retrieve_fn):
             retrieve_kwargs.update(get_user_id_kwarg(retrieve_fn, scope_user_id))
-            retrieve_kwargs.update(get_model_kwarg(retrieve_fn, agent_model))
             retrieve_kwargs.update(get_run_response_kwarg(retrieve_fn, run_response))
             relevant_docs = retrieve_fn(**retrieve_kwargs)
         else:

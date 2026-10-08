@@ -100,36 +100,36 @@ def test_include_query_keeps_the_question_alongside_the_passage():
     assert PASSAGE in result
 
 
-def test_a_configured_model_wins_over_the_caller_model():
+def test_a_configured_model_is_the_one_used():
     own = StubModel("own model passage")
-    caller = StubModel("caller model passage")
 
-    assert HyDE(model=own).transform("q", model=caller) == "own model passage"
-    assert not caller.prompts
-
-
-def test_the_caller_model_is_used_when_none_is_configured():
-    caller = StubModel()
-
-    assert HyDE().transform("q", model=caller) == PASSAGE
+    assert HyDE(model=own).transform("q") == "own model passage"
+    assert own.prompts
 
 
-def test_no_model_anywhere_falls_back_to_the_default_model():
-    # Direct knowledge.search() passes no model, so HyDE builds the same default Agent
-    # and Team use rather than silently doing nothing.
+def test_no_model_resolves_the_default_at_init():
+    # One model field, populated at construction, so there is no second place a model can
+    # come from and no per-search resolution.
     import inspect
 
     from agno.agent import _init
 
-    resolved = HyDE()._resolve_model(None)
+    transform = HyDE()
 
-    assert resolved is not None
+    assert transform.model is not None
     # Asserted against the Agent default rather than a literal, so the two cannot drift.
-    assert f'id="{resolved.id}"' in inspect.getsource(_init.set_default_model)
+    assert f'id="{transform.model.id}"' in inspect.getsource(_init.set_default_model)
 
 
-def test_an_unavailable_provider_searches_with_the_query_as_asked(monkeypatch):
-    # Without openai installed a transform degrades, where an agent would refuse to run.
+def test_the_default_is_resolved_once_not_per_search():
+    transform = HyDE()
+
+    assert transform.model is transform.model
+
+
+def test_an_unavailable_provider_raises_at_construction(monkeypatch):
+    # Mirrors Agent: a missing default provider is a configuration error, surfaced where
+    # it can be fixed rather than per search.
     import builtins
 
     real_import = builtins.__import__
@@ -141,7 +141,24 @@ def test_an_unavailable_provider_searches_with_the_query_as_asked(monkeypatch):
 
     monkeypatch.setattr(builtins, "__import__", no_openai)
 
-    assert HyDE().transform("why did revenue drop?") == "why did revenue drop?"
+    with pytest.raises(Exception, match="openai"):
+        HyDE()
+
+
+def test_an_explicit_model_needs_no_default_provider(monkeypatch):
+    # A user who supplied a model should not need openai installed at all.
+    import builtins
+
+    real_import = builtins.__import__
+
+    def no_openai(name, *args, **kwargs):
+        if name == "agno.models.openai":
+            raise ModuleNotFoundError("No module named 'openai'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_openai)
+
+    assert HyDE(model=StubModel()).transform("q") == PASSAGE
 
 
 def test_a_provider_failure_falls_back_to_the_query():
@@ -229,7 +246,7 @@ def test_the_reranker_scores_against_the_original_question():
 
 def test_a_failing_transform_does_not_break_search():
     class BrokenTransform(QueryTransformer):
-        def transform(self, query: str, model: Optional[Any] = None) -> str:
+        def transform(self, query: str, run_response: Optional[Any] = None) -> str:
             raise RuntimeError("transform exploded")
 
     db = RecordingVectorDb()
@@ -239,111 +256,6 @@ def test_a_failing_transform_does_not_break_search():
 
     assert db.searched_with == "why did revenue drop?"
     assert len(results) == 3
-
-
-def test_retrieve_offers_the_model_to_the_transform():
-    # The agent's search tool goes through retrieve(), not search(), so the model has to
-    # reach the transform there too or HyDE silently builds its own default.
-    db = RecordingVectorDb()
-    knowledge = Knowledge(vector_db=db, query_transformer=HyDE())
-    model = StubModel()
-
-    knowledge.retrieve("why did revenue drop?", max_results=3, model=model)
-
-    assert db.searched_with == PASSAGE
-    assert model.prompts
-
-
-@pytest.mark.asyncio
-async def test_aretrieve_offers_the_model_to_the_transform():
-    db = RecordingVectorDb()
-    knowledge = Knowledge(vector_db=db, query_transformer=HyDE())
-    model = StubModel()
-
-    await knowledge.aretrieve("why did revenue drop?", max_results=3, model=model)
-
-    assert db.searched_with == PASSAGE
-
-
-def test_the_agent_retrieval_path_passes_its_model():
-    # Guards the wiring in agent/_messages.py: a Knowledge that accepts `model` must be
-    # offered the agent's, or HyDE through an Agent never borrows it.
-    from agno.utils.knowledge import get_model_kwarg
-
-    model = StubModel()
-    knowledge = Knowledge(vector_db=RecordingVectorDb(), query_transformer=HyDE())
-
-    assert get_model_kwarg(knowledge.retrieve, model) == {"model": model}
-    assert get_model_kwarg(knowledge.aretrieve, model) == {"model": model}
-
-
-def test_a_retriever_that_cannot_take_a_model_is_left_alone():
-    from agno.utils.knowledge import get_model_kwarg
-
-    def legacy_retriever(query, max_results=None, filters=None):
-        return []
-
-    assert get_model_kwarg(legacy_retriever, StubModel()) == {}
-
-
-def test_the_team_retrieval_path_passes_its_model():
-    # Teams retrieve through their own code path, so wiring the Agent one is not enough:
-    # a query transformer under a Team would otherwise build its own default model.
-    from agno.utils.knowledge import get_model_kwarg
-
-    model = StubModel()
-    knowledge = Knowledge(vector_db=RecordingVectorDb(), query_transformer=HyDE())
-
-    assert get_model_kwarg(knowledge.retrieve, model) == {"model": model}
-    assert get_model_kwarg(knowledge.aretrieve, model) == {"model": model}
-
-
-def test_every_retrieval_call_site_offers_the_model():
-    # Guards against wiring one caller and missing its twin, which is what happened with
-    # the Team paths after the Agent ones were done.
-    import inspect
-
-    from agno.agent import _messages
-    from agno.team import _default_tools
-
-    for module in (_messages, _default_tools):
-        source = inspect.getsource(module)
-        calls = source.count("retrieve_fn(**retrieve_kwargs)")
-        offers = source.count("get_model_kwarg(")
-        assert offers >= calls, f"{module.__name__} retrieves {calls} times but offers a model {offers} times"
-
-
-def test_a_legacy_knowledge_that_forwards_kwargs_is_not_broken():
-    # A custom Knowledge predating `model` often forwards **kwargs to a narrower search.
-    # Offering it a model it never declared would raise on every retrieval.
-    from agno.utils.knowledge import get_model_kwarg
-
-    class LegacyKnowledge:
-        def search(self, query: str, max_results=None, filters=None, user_id=None):
-            return []
-
-        def retrieve(self, query: str, **kwargs):
-            return self.search(query=query, **kwargs)
-
-    knowledge = LegacyKnowledge()
-    kwargs = get_model_kwarg(knowledge.retrieve, StubModel())
-
-    assert kwargs == {}
-    # The call the agent would make must still work.
-    assert knowledge.retrieve("q", **kwargs) == []
-
-
-def test_kwargs_alone_is_not_consent_to_receive_a_model():
-    from agno.utils.knowledge import get_model_kwarg
-
-    def variadic_only(query, **kwargs):
-        return []
-
-    def declares_model(query, model=None, **kwargs):
-        return []
-
-    assert get_model_kwarg(variadic_only, StubModel()) == {}
-    assert get_model_kwarg(declares_model, StubModel()) != {}
 
 
 def test_a_custom_prompt_must_contain_the_query_placeholder():
@@ -396,7 +308,7 @@ def test_knowledge_forwards_the_run_response_to_the_transformer():
     seen = {}
 
     class Recorder(QueryTransformer):
-        def transform(self, query: str, model=None, run_response=None) -> str:
+        def transform(self, query: str, run_response=None) -> str:
             seen["run_response"] = run_response
             return query
 
@@ -414,7 +326,7 @@ def test_retrieve_forwards_the_run_response_to_the_transformer():
     seen = {}
 
     class Recorder(QueryTransformer):
-        def transform(self, query: str, model=None, run_response=None) -> str:
+        def transform(self, query: str, run_response=None) -> str:
             seen["run_response"] = run_response
             return query
 
@@ -431,7 +343,7 @@ async def test_aretrieve_forwards_the_run_response_to_the_transformer():
     seen = {}
 
     class Recorder(QueryTransformer):
-        async def atransform(self, query: str, model=None, run_response=None) -> str:
+        async def atransform(self, query: str, run_response=None) -> str:
             seen["run_response"] = run_response
             return query
 
@@ -503,11 +415,11 @@ def test_every_knowledge_search_tool_passes_the_run_response():
 
 def _knowledge_recording_the_run(seen):
     class Recorder(QueryTransformer):
-        def transform(self, query: str, model=None, run_response=None) -> str:
+        def transform(self, query: str, run_response=None) -> str:
             seen["run_response"] = run_response
             return query
 
-        async def atransform(self, query: str, model=None, run_response=None) -> str:
+        async def atransform(self, query: str, run_response=None) -> str:
             seen["run_response"] = run_response
             return query
 
@@ -600,41 +512,6 @@ async def test_the_async_team_context_path_bills_the_transform_to_its_run():
     )
 
     assert seen["run_response"] is run_response
-
-
-def test_the_default_model_is_built_once_per_instance():
-    # Each model carries an HTTP client, and this resolves on every search.
-    transform = HyDE()
-
-    first = transform._resolve_model(None)
-    second = transform._resolve_model(None)
-
-    assert first is second
-
-
-def test_the_cached_default_is_a_public_field():
-    transform = HyDE()
-
-    assert "default_model" in type(transform).model_fields
-    resolved = transform._resolve_model(None)
-
-    assert transform.default_model is resolved
-
-
-def test_a_preset_default_model_is_used_without_building_one():
-    preset = StubModel()
-    transform = HyDE(default_model=preset)
-
-    assert transform._resolve_model(None) is preset
-
-
-def test_caching_the_default_does_not_shadow_a_supplied_model():
-    transform = HyDE()
-    transform._resolve_model(None)  # populate the cache
-
-    caller_model = StubModel()
-
-    assert transform._resolve_model(caller_model) is caller_model
 
 
 def test_a_prompt_with_other_braces_does_not_raise():
@@ -827,7 +704,7 @@ def test_page_search_keeps_the_question_and_adds_the_passage():
 
 def test_page_search_sends_no_alternatives_when_the_query_is_unchanged():
     class Identity(QueryTransformer):
-        def transform(self, query: str, model=None, run_response=None) -> str:
+        def transform(self, query: str, run_response=None) -> str:
             return query
 
     knowledge, recorded = _page_knowledge(Identity())

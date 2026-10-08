@@ -1,11 +1,11 @@
 from typing import Any, List, Optional
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from agno.knowledge.query_transformer.base import QueryTransformer
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_debug, log_info, log_warning
 
 DEFAULT_PROMPT = (
     "Write a short passage that answers the question below, as it might appear in a "
@@ -28,9 +28,8 @@ class HyDE(QueryTransformer):
     provider outage degrades results rather than breaking search.
     """
 
-    # Model used to write the hypothetical answer. Falls back to the model of the agent
-    # that triggered the search, then to the same default Agent and Team use, so this only
-    # needs setting to pick a cheaper or faster one.
+    # Model used to write the hypothetical answer. Defaults at init to the same model Agent
+    # and Team default to, so this only needs setting to pick a cheaper or faster one.
     model: Optional[Model] = None
     # Replaces DEFAULT_PROMPT rather than adding to it, so a custom prompt carries its own
     # instruction not to hedge. Must contain {query}.
@@ -39,9 +38,6 @@ class HyDE(QueryTransformer):
     include_query: bool = False
     # Ceiling on the generated passage, so a verbose model cannot blow up the embedding input.
     max_characters: int = Field(default=2000, gt=0)
-
-    # Set on first use when nothing else supplied a model, so searches share one client.
-    default_model: Optional[Model] = None
 
     @field_validator("prompt")
     @classmethod
@@ -78,53 +74,34 @@ class HyDE(QueryTransformer):
         log_debug(f"HyDE generated a hypothetical answer of {len(passage)} characters")
         return f"{query}\n\n{passage}" if self.include_query else passage
 
-    def _resolve_model(self, model: Optional[Model]) -> Optional[Model]:
-        """Own model, then the caller's, then a default.
+    @model_validator(mode="after")
+    def _set_default_model(self) -> "HyDE":
+        # Resolved once here rather than per search, so there is one model field with no
+        # second place a model can come from. Mirrors Agent and Team.
+        if self.model is None:
+            try:
+                from agno.models.openai import OpenAIResponses
+            except ModuleNotFoundError as e:
+                raise ImportError(
+                    "HyDE uses `openai` as the default model provider. Please provide a `model` or install `openai`."
+                ) from e
 
-        The default is only reached when Knowledge is searched directly, since an agent
-        offers its own model. It is the same default Agent and Team fall back to, so this
-        does not introduce a second opinion about which model to use.
-        """
-        if self.model is not None:
-            return self.model
-        if model is not None:
-            return model
-        if self.default_model is not None:
-            return self.default_model
+            log_info("HyDE setting default model to OpenAI Responses")
+            self.model = OpenAIResponses(id="gpt-5.4")
+        return self
+
+    def transform(self, query: str, run_response: Optional[Any] = None) -> str:
         try:
-            from agno.models.openai import OpenAIResponses
-        except ModuleNotFoundError:
-            # Unlike an agent, a query transformer is an enhancement: searching with the
-            # query as asked beats refusing to search at all.
-            log_warning(
-                "HyDE needs a model to generate a hypothetical answer. Provide a `model` "
-                "or install `openai`. Searching with the query as asked."
-            )
-            return None
-
-        log_debug("HyDE setting default model to OpenAI Responses")
-        # Cached: each instance carries an HTTP client, and this runs on every search.
-        self.default_model = OpenAIResponses(id="gpt-5.4")
-        return self.default_model
-
-    def transform(self, query: str, model: Optional[Model] = None, run_response: Optional[Any] = None) -> str:
-        resolved = self._resolve_model(model)
-        if resolved is None:
-            return query
-        try:
-            response = resolved.response(messages=self._messages(query), run_response=run_response)
+            response = self.model.response(messages=self._messages(query), run_response=run_response)  # type: ignore[union-attr]
         except Exception as e:
             # A degraded search beats no search, as with a failing reranker.
             log_warning(f"HyDE could not generate a hypothetical answer, using the query as asked: {e}")
             return query
         return self._combine(query, response.content or "")
 
-    async def atransform(self, query: str, model: Optional[Model] = None, run_response: Optional[Any] = None) -> str:
-        resolved = self._resolve_model(model)
-        if resolved is None:
-            return query
+    async def atransform(self, query: str, run_response: Optional[Any] = None) -> str:
         try:
-            response = await resolved.aresponse(messages=self._messages(query), run_response=run_response)
+            response = await self.model.aresponse(messages=self._messages(query), run_response=run_response)  # type: ignore[union-attr]
         except Exception as e:
             log_warning(f"HyDE could not generate a hypothetical answer, using the query as asked: {e}")
             return query

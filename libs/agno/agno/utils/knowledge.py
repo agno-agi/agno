@@ -137,42 +137,15 @@ def strict_user_id_kwarg(fn: Any, user_id: Optional[str]) -> Dict[str, Any]:
     )
 
 
-def get_model_kwarg(fn: Any, model: Optional[Any]) -> Dict[str, Any]:
-    """``{"model": ...}`` only when the callee accepts it.
-
-    A query transformer that needs an LLM borrows the caller's model, so the agent offers
-    its own on retrieval. Only a callee that names ``model`` is offered one: unlike
-    :func:`get_user_id_kwarg`, where a dropped owner leaks data across users and
-    ``**kwargs`` is worth the risk, this is an enhancement. A legacy
-    ``retrieve(query, **kwargs)`` that forwards to a narrower search would raise on an
-    argument it never asked for, and losing the transform is the lesser cost.
-
-    Args:
-        fn: The callable the kwarg will be passed to.
-        model: The model to offer.
-
-    Returns:
-        Dict[str, Any]: {"model": model} when the callee accepts it, empty otherwise.
-    """
-    import inspect
-
-    if model is None:
-        return {}
-    try:
-        parameters = inspect.signature(fn).parameters
-    except (TypeError, ValueError):
-        return {}
-    if "model" in parameters:
-        return {"model": model}
-    return {}
-
-
 def get_run_response_kwarg(fn: Any, run_response: Optional[Any]) -> Dict[str, Any]:
     """``{"run_response": ...}`` only when the callee accepts it.
 
     A query transformer that calls an LLM should bill those tokens to the run that
-    triggered the search, so the agent offers its run on retrieval. Dropped silently for a
-    callee that does not name it, for the reason given in :func:`get_model_kwarg`.
+    triggered the search, so the agent offers its run on retrieval. Only a callee that
+    names ``run_response`` is offered one: unlike :func:`get_user_id_kwarg`, where a
+    dropped owner leaks data across users, this is an enhancement. A legacy
+    ``retrieve(query, **kwargs)`` that forwards to a narrower search would raise on an
+    argument it never asked for, and losing metrics attribution is the lesser cost.
 
     Args:
         fn: The callable the kwarg will be passed to.

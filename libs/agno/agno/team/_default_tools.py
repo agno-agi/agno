@@ -71,7 +71,6 @@ from agno.session import TeamSession
 from agno.tools.function import Function
 from agno.utils.knowledge import (
     get_agentic_or_user_search_filters,
-    get_model_kwarg,
     get_run_response_kwarg,
     get_user_id_kwarg,
 )
@@ -1850,9 +1849,7 @@ def get_relevant_docs_from_knowledge(
             "filters": filters,
         }
         retrieve_kwargs.update(get_user_id_kwarg(retrieve_fn, run_context.user_id if run_context else team.user_id))
-        # Lets a query transformer borrow the team's model when it has none of its own,
-        # and bills the tokens it spends to this run.
-        retrieve_kwargs.update(get_model_kwarg(retrieve_fn, getattr(team, "model", None)))
+        # Bills an LLM call a query transformer makes to this run.
         retrieve_kwargs.update(get_run_response_kwarg(retrieve_fn, run_response))
         relevant_docs: List[Document] = retrieve_fn(**retrieve_kwargs)
 
@@ -1966,17 +1963,13 @@ async def aget_relevant_docs_from_knowledge(
             "filters": filters,
         }
 
-        # Lets a query transformer borrow the team's model when it has none of its own,
-        # and bills the tokens it spends to this run.
-        team_model = getattr(team, "model", None)
+        # Bills an LLM call a query transformer makes to this run.
         if callable(aretrieve_fn):
             retrieve_kwargs.update(get_user_id_kwarg(aretrieve_fn, scope_user_id))
-            retrieve_kwargs.update(get_model_kwarg(aretrieve_fn, team_model))
             retrieve_kwargs.update(get_run_response_kwarg(aretrieve_fn, run_response))
             relevant_docs: List[Document] = await aretrieve_fn(**retrieve_kwargs)
         elif callable(retrieve_fn):
             retrieve_kwargs.update(get_user_id_kwarg(retrieve_fn, scope_user_id))
-            retrieve_kwargs.update(get_model_kwarg(retrieve_fn, team_model))
             retrieve_kwargs.update(get_run_response_kwarg(retrieve_fn, run_response))
             relevant_docs = retrieve_fn(**retrieve_kwargs)
         else:
