@@ -734,6 +734,9 @@ def apply_compaction(
         run_id=run_response.run_id if run_response is not None else None,
         context_prefix=prefix,
         overhead_tokens=overhead,
+        # Once a fold exists the model is sent the summary and the anchor onward, not every turn the
+        # planner reads, so that is what "before" measures.
+        sent_messages=in_context,
     )
     if new_record is None:
         return in_context
@@ -802,6 +805,9 @@ async def aapply_compaction(
         run_id=run_response.run_id if run_response is not None else None,
         context_prefix=prefix,
         overhead_tokens=overhead,
+        # Once a fold exists the model is sent the summary and the anchor onward, not every turn the
+        # planner reads, so that is what "before" measures.
+        sent_messages=in_context,
     )
     if new_record is None:
         return in_context

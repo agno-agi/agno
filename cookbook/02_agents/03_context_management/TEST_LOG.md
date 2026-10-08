@@ -174,3 +174,11 @@ markdown instead of into the database.
 **Result:** Deterministic across two runs - every size check awaited the async counter with the same counts (716 -> 787, 1430 -> 1573, 2144 -> 2358, 2858 -> 3143). The fifth run crossed the threshold and folded both times: `Folded 6 messages (2816 -> 1070 tokens)` and `(2816 -> 1147 tokens)`; only the summary's length varies. Completed in 18s.
 
 ---
+
+### compaction/compaction_threshold_room.py
+
+**Status:** PASS
+**Description:** The same six ~700-token turns twice on `gpt-5.6-luna`, with `uncompacted_runs=1` and `compacted_token_budget=300`: first at `compact_at_tokens=1_200`, then at `3_000`.
+**Result:** At 1,200 every run folded from run 3 (846-1,010 tokens left after each fold) and compaction warned on each fold that the threshold leaves too little room after the system prompt, tools and summary. At 3,000 the first fold came on run 6 (979 tokens left), with no warning. Completed in 55s.
+
+---

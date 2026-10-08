@@ -3719,3 +3719,26 @@ def test_a_threshold_too_small_for_the_latest_turn_is_warned_about(caplog):
     with caplog.at_level(logging.WARNING, logger="agno"):
         _fold_runs(runs=6, compact_at_tokens=1_200, uncompacted_runs=1)
     assert not any("not enough to keep the latest turn" in r.message for r in caplog.records)
+
+
+def test_a_later_folds_before_is_what_was_sent_not_the_whole_session():
+    """Once a fold exists, the model is sent the summary and the anchor onward. A later fold's
+    "before" used to count every turn the planner read - turns folded runs ago included."""
+    from agno.agent import Agent
+    from agno.utils.tokens import count_tokens
+
+    model = _RecordingModel.build()
+    agent = Agent(
+        model=model,
+        db=_db(),
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=1_200, uncompacted_runs=1, model=_StubModel()),
+    )
+    records = [r.compaction for r in (agent.run(f"question {i} " + "word " * 480) for i in range(6)) if r.compaction]
+    session = agent.get_session(session_id="s")
+    whole_session = count_tokens([m for run in session.runs for m in run.messages or [] if m.role != "system"])
+
+    assert len(records) >= 2
+    later = records[-1]
+    assert later.tokens_before < whole_session * 0.75  # was the whole session, folded turns included
