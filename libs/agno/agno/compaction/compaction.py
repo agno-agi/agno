@@ -344,7 +344,8 @@ class Compaction:
         return int(self.compact_at_tokens / (1 + self._fold_ratio))
 
     def _check_token_tail(self) -> None:
-        """An explicit token tail has to leave room to fold at the threshold."""
+        """An explicit token tail has to leave room to fold at the threshold; over the limit it is
+        capped, and this says so once, when the Compaction is built."""
         limit = self._tail_limit
         if limit is None or self.uncompacted_tokens is None or self.compact_at_tokens is None:
             return
@@ -355,13 +356,45 @@ class Compaction:
             )
         if self.uncompacted_tokens > limit:
             log_warning(
-                f"Compaction: uncompacted_tokens={self.uncompacted_tokens} is too large to fold at "
-                f"compact_at_tokens={self.compact_at_tokens} with min_fold_ratio={self.min_fold_ratio} - "
-                f"the tail can be at most {limit}. Nothing will fold until the context reaches about "
-                f"{int(self.uncompacted_tokens * (1 + self._fold_ratio))} tokens."
+                f"Compaction: uncompacted_tokens={self.uncompacted_tokens} is more than the {limit}-token "
+                f"tail limit for compact_at_tokens={self.compact_at_tokens}, so the kept tail is capped at "
+                f"{limit} - the same as a run tail that large."
             )
 
-    def boundary_for(self, messages: List[Message], min_index: int = 0) -> Optional[int]:
+    def _tail_limit_after(self, overhead_tokens: int = 0) -> Optional[int]:
+        """The tail limit once what the tail shares the threshold with is counted.
+
+        After a fold the context is the system prompt and tools, the summary and the kept tail -
+        ``overhead_tokens`` is the first two. A limit that ignores them lets a fold land just under
+        the threshold, so the next turn crosses it again. The tail gets half of what is left - the
+        other half stays free for new turns - and never more than the limit above.
+        """
+        limit = self._tail_limit
+        if limit is None or self.compact_at_tokens is None:
+            return None
+        room = self.compact_at_tokens - overhead_tokens
+        return max(0, min(limit, room // 2))
+
+    def _summary_allowance(self, previous: Optional[CompactionRecord]) -> int:
+        """The room a fold's summary will take: its budget when one is set, else the size of the
+        previous summary - the next one folds that one in, so it is at least about that large."""
+        if self.compacted_token_budget is not None:
+            return self.compacted_token_budget
+        if previous is not None and previous.summary:
+            from agno.utils.tokens import count_text_tokens
+
+            return count_text_tokens(previous.summary)
+        return 0
+
+    @property
+    def _token_tail(self) -> Optional[int]:
+        """uncompacted_tokens, capped at the tail limit - one rule for a token tail and a run tail."""
+        if self.uncompacted_tokens is None:
+            return None
+        limit = self._tail_limit
+        return self.uncompacted_tokens if limit is None else min(self.uncompacted_tokens, limit)
+
+    def boundary_for(self, messages: List[Message], min_index: int = 0, overhead_tokens: int = 0) -> Optional[int]:
         """Index of the first message kept verbatim, or None when no safe cut exists.
 
         Delegates to ``choose_boundary``, which snaps the requested tail to a boundary that is
@@ -373,9 +406,11 @@ class Compaction:
             # A size budget names no position, so the walk finds one: it accumulates backward
             # from the newest message and stops once the budget is spent, then snaps to a
             # pair-safe turn boundary like any other cut.
-            cut = choose_boundary(messages, keep_tokens=self.uncompacted_tokens, min_index=min_index)
+            limit = self._tail_limit_after(overhead_tokens)
+            budget = self.uncompacted_tokens if limit is None else min(self.uncompacted_tokens, limit)
+            cut = choose_boundary(messages, keep_tokens=budget, min_index=min_index)
             return self._outside_newest_exchange(messages, cut, min_index)
-        return self._run_tail_boundary(messages, min_index)[0]
+        return self._run_tail_boundary(messages, min_index, overhead_tokens)[0]
 
     @staticmethod
     def _outside_newest_exchange(messages: List[Message], cut: Optional[int], min_index: int) -> Optional[int]:
@@ -390,7 +425,9 @@ class Compaction:
             return choose_boundary(messages, keep_from_index=newest, min_index=min_index)
         return cut
 
-    def _run_tail_boundary(self, messages: List[Message], min_index: int = 0) -> Tuple[Optional[int], bool]:
+    def _run_tail_boundary(
+        self, messages: List[Message], min_index: int = 0, overhead_tokens: int = 0
+    ) -> Tuple[Optional[int], bool]:
         """The cut for a run-count tail, and whether the tail limit had to shorten it.
 
         A run count says how many turns survive, not how large they are, so a few long turns can
@@ -403,7 +440,7 @@ class Compaction:
         boundary = (
             None if keep_from is None else choose_boundary(messages, keep_from_index=keep_from, min_index=min_index)
         )
-        limit = self._tail_limit
+        limit = self._tail_limit_after(overhead_tokens)
         if limit is None:
             return boundary, False
         tail_start = min_index if boundary is None else boundary
@@ -416,22 +453,46 @@ class Compaction:
             return boundary, False
         return cut, True
 
-    def _log_tail_limit(self, messages: List[Message], min_index: int) -> None:
+    def _log_tail_limit(self, messages: List[Message], min_index: int, overhead_tokens: int = 0) -> None:
         """Say when the tail limit kept fewer runs than uncompacted_runs asks for.
 
         At info level when the run count was chosen, since that setting is then being overridden;
         at debug level for the default, which nobody picked.
         """
-        if self.uncompacted_tokens is not None or not self._run_tail_boundary(messages, min_index)[1]:
+        if self.uncompacted_tokens is not None or not self._run_tail_boundary(messages, min_index, overhead_tokens)[1]:
             return
         message = (
-            f"Compaction: the last {self.uncompacted_runs} runs exceed the {self._tail_limit}-token tail "
+            f"Compaction: the last {self.uncompacted_runs} runs exceed the {self._tail_limit_after(overhead_tokens)}-token tail "
             f"limit, so the kept tail was cut to that size."
         )
         if isinstance(self.uncompacted_runs, _Unset):
             log_debug(message)
         else:
             log_info(message)
+
+    def _warn_if_no_room(self, messages: List[Message], overhead_tokens: int) -> None:
+        """Warn when the threshold leaves no room for a fold to land well under it.
+
+        The newest exchange is never folded. When it alone is more than the tail's share of what
+        the system prompt, tools and summary leave, every fold lands near the threshold and fires
+        again within a run or two - no cut can help, only the settings.
+        """
+        if self.compact_at_tokens is None:
+            return
+        newest = max((i for i, m in enumerate(messages) if m.role == "user"), default=None)
+        if newest is None:
+            return
+        # Compared with the overhead's share alone: a tighter limit from enforce_min_fold_ratio is
+        # a choice, not a sign the threshold is too small.
+        room = self.compact_at_tokens - overhead_tokens
+        if estimate_tokens(messages[newest:]) <= max(room // 2, 0):
+            return
+        log_warning(
+            f"Compaction: compact_at_tokens={self.compact_at_tokens} leaves {max(room, 0)} tokens after the "
+            f"system prompt, tools and summary ({overhead_tokens}) - not enough to keep the latest turn and "
+            f"still fold well under the threshold, so folds will come every run or two. Raise "
+            f"compact_at_tokens, or lower compacted_token_budget."
+        )
 
     def _warn_if_still_over(self, record: CompactionRecord) -> None:
         """A fold that leaves the context at or over the threshold will fold again next run."""
@@ -799,7 +860,9 @@ class Compaction:
             return False
         return True
 
-    def plan(self, messages: List[Message], previous: Optional[CompactionRecord] = None) -> Optional[int]:
+    def plan(
+        self, messages: List[Message], previous: Optional[CompactionRecord] = None, overhead_tokens: int = 0
+    ) -> Optional[int]:
         """The boundary this compaction would use, or None if it should not run.
 
         Callers announce a compaction (log line, CompactionStarted) only once
@@ -807,11 +870,11 @@ class Compaction:
         compactions that never happen - which is what a bare "should_compact"
         does, since it cannot see the pair-safe boundary or the size floor.
         """
-        boundary, _, _ = self.plan_with_reason(messages, previous)
+        boundary, _, _ = self.plan_with_reason(messages, previous, overhead_tokens)
         return boundary
 
     def plan_with_reason(
-        self, messages: List[Message], previous: Optional[CompactionRecord] = None
+        self, messages: List[Message], previous: Optional[CompactionRecord] = None, overhead_tokens: int = 0
     ) -> Tuple[Optional[int], "CompactionStatus", str]:
         """``plan``, plus why it decided that.
 
@@ -822,7 +885,8 @@ class Compaction:
         from agno.compaction.types import CompactionStatus
 
         already = self._resolved_boundary(messages, previous)
-        boundary = self.boundary_for(messages, min_index=already)
+        overhead_tokens += self._summary_allowance(previous)
+        boundary = self.boundary_for(messages, min_index=already, overhead_tokens=overhead_tokens)
         if boundary is None or boundary <= already:
             if previous is None:
                 reason = (
@@ -864,6 +928,7 @@ class Compaction:
         context_prefix: Optional[List[Message]] = None,
         user_id: Optional[str] = None,
         sent_messages: Optional[List[Message]] = None,
+        overhead_tokens: Optional[int] = None,
     ) -> Optional[CompactionRecord]:
         """Archive and summarize the head of ``messages``.
 
@@ -873,7 +938,11 @@ class Compaction:
         # Only the span not already covered by the previous compaction is new.
         # Re-archiving and re-summarizing what a previous run handled would
         # duplicate the archive and pay for the same tokens twice.
-        boundary = self.plan(messages, previous)
+        # What the kept tail shares the threshold with: the system prompt and tools in front of the
+        # history, measured from context_prefix when the caller has not counted them.
+        if overhead_tokens is None:
+            overhead_tokens = estimate_tokens(context_prefix) if context_prefix else 0
+        boundary = self.plan(messages, previous, overhead_tokens)
         if boundary is None:
             return None
 
@@ -901,7 +970,9 @@ class Compaction:
         # fold without a threshold folds past the replay window the model saw.
         before = sent_messages if sent_messages is not None else messages
         self.measure(record, prefix + before, prefix + self.apply_record(messages, record))
-        self._log_tail_limit(messages, already)
+        full_overhead = overhead_tokens + self._summary_allowance(previous)
+        self._log_tail_limit(messages, already, full_overhead)
+        self._warn_if_no_room(messages, full_overhead)
         self._warn_if_still_over(record)
         if archive is not None:
             # The record is stored either way; the transcript only when archiving is on.
@@ -923,10 +994,15 @@ class Compaction:
         context_prefix: Optional[List[Message]] = None,
         user_id: Optional[str] = None,
         sent_messages: Optional[List[Message]] = None,
+        overhead_tokens: Optional[int] = None,
     ) -> Optional[CompactionRecord]:
         # See the sync path: only the span the previous compaction did not
         # already cover is new.
-        boundary = self.plan(messages, previous)
+        # What the kept tail shares the threshold with: the system prompt and tools in front of the
+        # history, measured from context_prefix when the caller has not counted them.
+        if overhead_tokens is None:
+            overhead_tokens = estimate_tokens(context_prefix) if context_prefix else 0
+        boundary = self.plan(messages, previous, overhead_tokens)
         if boundary is None:
             return None
 
@@ -954,7 +1030,9 @@ class Compaction:
         # fold without a threshold folds past the replay window the model saw.
         before = sent_messages if sent_messages is not None else messages
         self.measure(record, prefix + before, prefix + self.apply_record(messages, record))
-        self._log_tail_limit(messages, already)
+        full_overhead = overhead_tokens + self._summary_allowance(previous)
+        self._log_tail_limit(messages, already, full_overhead)
+        self._warn_if_no_room(messages, full_overhead)
         self._warn_if_still_over(record)
         if archive is not None:
             # The record is stored either way; the transcript only when archiving is on.

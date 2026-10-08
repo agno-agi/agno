@@ -530,7 +530,7 @@ def _plan_overflow_fold(agent: "Agent", run_messages: Any) -> Optional[Tuple[Any
             candidate = compaction
         else:
             candidate = replace(compaction, uncompacted_runs=keep, stats=compaction.stats)
-        boundary = candidate.boundary_for(messages, min_index=lead)
+        boundary = candidate.boundary_for(messages, min_index=lead, overhead_tokens=estimate_tokens(messages[:lead]))
         if boundary is None or boundary <= lead:
             continue
         folder, chosen_keep = candidate, keep
@@ -586,8 +586,11 @@ def _finish_overflow_fold(
 
 
 def _overflow_fold_kwargs(
-    agent: "Agent", session: AgentSession, run_response: Optional[RunOutput], before: int
+    agent: "Agent", session: AgentSession, run_response: Optional[RunOutput], before: int, messages: List[Message]
 ) -> Dict[str, Any]:
+    from agno.compaction._cut import leading_system_count
+    from agno.compaction._tokens import estimate_tokens
+
     return dict(
         session_id=session.session_id,
         db=agent.db,
@@ -596,6 +599,9 @@ def _overflow_fold_kwargs(
         run_id=run_response.run_id if run_response is not None else None,
         run_metrics=run_response.metrics if run_response is not None else None,
         tokens_before=before,
+        # The leading system messages are part of the list being folded; counting them keeps the
+        # cut the same as the one the overflow planner chose.
+        overhead_tokens=estimate_tokens(messages[: leading_system_count(messages)]),
     )
 
 
@@ -629,7 +635,7 @@ def _recompact_after_overflow(
     # min_fold_ratio is the run-start question - is this fold worth paying for. Here the request
     # has already been rejected, so any fold that shrinks it is worth making.
     record = replace(folder, min_fold_ratio=0, stats=compaction.stats).compact(
-        messages, **_overflow_fold_kwargs(agent, session, run_response, before)
+        messages, **_overflow_fold_kwargs(agent, session, run_response, before, messages)
     )
     if record is None:
         return False
@@ -655,7 +661,7 @@ async def _arecompact_after_overflow(
     compaction, folder, messages = plan
     before = await _arequest_tokens(agent, messages, tools)
     record = await replace(folder, min_fold_ratio=0, stats=compaction.stats).acompact(
-        messages, **_overflow_fold_kwargs(agent, session, run_response, before)
+        messages, **_overflow_fold_kwargs(agent, session, run_response, before, messages)
     )
     if record is None:
         return False
@@ -702,7 +708,11 @@ def apply_compaction(
     # Announce only once the guards have passed. should_compact cannot see the
     # pair-safe boundary or the size floor, so announcing on it alone reports
     # compactions that then never happen.
-    if compaction.plan(history, record) is None:
+    # The system prompt and tools share the threshold with whatever the fold keeps.
+    from agno.compaction._tokens import estimate_tokens
+
+    overhead = estimate_tokens(prefix, tools) if (prefix or tools) else 0
+    if compaction.plan(history, record, overhead) is None:
         return in_context
 
     log_info("Auto-compacting conversation history")
@@ -723,6 +733,7 @@ def apply_compaction(
         tokens_before=inputs["context_tokens"],
         run_id=run_response.run_id if run_response is not None else None,
         context_prefix=prefix,
+        overhead_tokens=overhead,
     )
     if new_record is None:
         return in_context
@@ -767,7 +778,11 @@ async def aapply_compaction(
     # Announce only once the guards have passed. should_compact cannot see the
     # pair-safe boundary or the size floor, so announcing on it alone reports
     # compactions that then never happen.
-    if compaction.plan(history, record) is None:
+    # The system prompt and tools share the threshold with whatever the fold keeps.
+    from agno.compaction._tokens import estimate_tokens
+
+    overhead = estimate_tokens(prefix, tools) if (prefix or tools) else 0
+    if compaction.plan(history, record, overhead) is None:
         return in_context
 
     log_info("Auto-compacting conversation history")
@@ -786,6 +801,7 @@ async def aapply_compaction(
         tokens_before=inputs["context_tokens"],
         run_id=run_response.run_id if run_response is not None else None,
         context_prefix=prefix,
+        overhead_tokens=overhead,
     )
     if new_record is None:
         return in_context

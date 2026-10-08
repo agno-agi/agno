@@ -803,19 +803,39 @@ def test_a_token_tail_as_large_as_the_threshold_is_rejected():
     Compaction(compact_at_tokens=None, uncompacted_tokens=50_000)  # no threshold, nothing to compare
 
 
-def test_a_token_tail_that_delays_the_first_fold_is_warned_about(caplog):
-    """Above the limit the threshold fires and the ratio declines, run after run, until the context
-    reaches the tail times (1 + min_fold_ratio). An explicit size is the user's call, so it is kept."""
+def test_a_token_tail_over_the_limit_is_capped_like_a_run_tail(caplog):
+    """A run tail too big for the threshold is cut to the tail limit. A token tail used to be warned
+    about and kept, so it first folded runs later; now it is capped too, with a warning."""
     with caplog.at_level(logging.WARNING, logger="agno"):
         compaction = Compaction(enforce_min_fold_ratio=True, compact_at_tokens=2_000, uncompacted_tokens=1_500)
     text = " ".join(r.message for r in caplog.records)
-    assert "at most 666" in text and "4500" in text
-    assert compaction.uncompacted_tokens == 1_500
+    assert "capped at 666" in text
+    assert compaction.uncompacted_tokens == 1_500  # the setting is kept; the tail it yields is capped
+    assert compaction._token_tail == 666
 
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger="agno"):
-        Compaction(enforce_min_fold_ratio=True, compact_at_tokens=2_000, uncompacted_tokens=400)
+        assert (
+            Compaction(enforce_min_fold_ratio=True, compact_at_tokens=2_000, uncompacted_tokens=400)._token_tail == 400
+        )
     assert not caplog.records
+
+
+def test_a_token_tail_and_a_run_tail_fold_on_the_same_runs():
+    """One rule for both: ~500-token runs, a tail of three runs or of 1,500 tokens, folded at 2,000."""
+    from agno.agent import Agent
+
+    def fold_runs(**tail):
+        agent = Agent(
+            model=_RecordingModel.build(),
+            db=_db(),
+            session_id="s",
+            add_history_to_context=True,
+            compaction=Compaction(enforce_min_fold_ratio=True, compact_at_tokens=2_000, model=_StubModel(), **tail),
+        )
+        return [i for i in range(12) if agent.run(f"question {i} " + "word " * 480).compaction is not None]
+
+    assert fold_runs(uncompacted_tokens=1_500) == fold_runs(uncompacted_runs=3)
 
 
 def test_a_run_count_tail_past_the_limit_folds_when_the_threshold_fires():
@@ -3646,3 +3666,56 @@ def test_a_folds_recorded_size_is_what_the_model_was_sent():
     record = agent.compact(session_id="s").record
 
     assert record.tokens_before == count_tokens(sent_history)
+
+
+# --- a fold leaves room under the threshold ---------------------------------
+
+
+def _fold_runs(runs=14, **compaction_kwargs):
+    from agno.agent import Agent
+
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=_db(),
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(model=_StubModel(), **compaction_kwargs),
+    )
+    return [i + 1 for i in range(runs) if agent.run(f"question {i} " + "word " * 480).compaction is not None]
+
+
+def test_a_fold_leaves_room_instead_of_folding_every_run():
+    """The tail limit ignored the system prompt, tools and summary, so a fold landed just under the
+    threshold and every following run folded again - a summarizer call each time. Counting them, a
+    fold leaves room for the next turns. ~500-token runs, folding at 2,000."""
+    for tail in ({"uncompacted_runs": 3}, {"uncompacted_tokens": 1_500}):
+        folds = _fold_runs(compact_at_tokens=2_000, **tail)
+        assert folds, tail
+        assert len(folds) < len(range(folds[0], 15)), (tail, folds)  # not every run from the first fold
+
+
+def test_the_tail_shares_the_threshold_with_the_prompt_tools_and_summary():
+    compaction = Compaction(compact_at_tokens=2_000)
+
+    assert compaction._tail_limit_after(0) == 1_000  # half the room, half left for new turns
+    assert compaction._tail_limit_after(800) == 600
+    assert compaction._tail_limit_after(5_000) == 0  # no room: only the newest exchange is kept
+
+    # The summary's room: its budget when set, else the previous summary's size.
+    assert Compaction(compacted_token_budget=300)._summary_allowance(None) == 300
+    previous = CompactionRecord(messages_compacted=1, summary="word " * 100, first_kept_message_id="m")
+    assert 90 <= Compaction()._summary_allowance(previous) <= 110
+    assert Compaction()._summary_allowance(None) == 0
+
+
+def test_a_threshold_too_small_for_the_latest_turn_is_warned_about(caplog):
+    """When the newest exchange - never folded - is more than the tail's share of the room, every
+    fold lands near the threshold and no cut can help; only the settings can."""
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        _fold_runs(runs=6, compact_at_tokens=900, uncompacted_runs=1)
+    assert any("not enough to keep the latest turn" in r.message for r in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        _fold_runs(runs=6, compact_at_tokens=1_200, uncompacted_runs=1)
+    assert not any("not enough to keep the latest turn" in r.message for r in caplog.records)
