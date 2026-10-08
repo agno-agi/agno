@@ -119,15 +119,15 @@ def create_paused_run_output_panel(run_output: Union[RunPausedEvent, RunOutput])
 
 def get_paused_content(run_output: RunOutput) -> str:
     paused_content = ""
+    # Aggregate pending requirements across all visible tools.
+    confirmation_required = False
+    user_input_required = False
+    external_execution_required = False
+
     for tool in run_output.tools or []:
         # Skip silent tools - they don't produce verbose paused messages
         if tool.external_execution_silent:
             continue
-
-        # Initialize flags for each tool
-        confirmation_required = False
-        user_input_required = False
-        external_execution_required = False
 
         if tool.requires_confirmation is not None and tool.requires_confirmation is True and not tool.confirmed:
             confirmation_required = True
@@ -136,18 +136,18 @@ def get_paused_content(run_output: RunOutput) -> str:
         if tool.external_execution_required is not None and tool.external_execution_required is True:
             external_execution_required = True
 
-        if confirmation_required and user_input_required and external_execution_required:
-            paused_content = "I have tools to execute, but I need confirmation, user input, or external execution."
-        elif confirmation_required and user_input_required:
-            paused_content = "I have tools to execute, but I need confirmation or user input."
-        elif confirmation_required and external_execution_required:
-            paused_content = "I have tools to execute, but I need confirmation or external execution."
-        elif user_input_required and external_execution_required:
-            paused_content = "I have tools to execute, but I need user input or external execution."
-        elif confirmation_required:
-            paused_content = "I have tools to execute, but I need confirmation."
-        elif user_input_required:
-            paused_content = "I have tools to execute, but I need user input."
-        elif external_execution_required:
-            paused_content = "I have tools to execute, but it needs external execution."
+    if confirmation_required and user_input_required and external_execution_required:
+        paused_content = "I have tools to execute, but I need confirmation, user input, or external execution."
+    elif confirmation_required and user_input_required:
+        paused_content = "I have tools to execute, but I need confirmation or user input."
+    elif confirmation_required and external_execution_required:
+        paused_content = "I have tools to execute, but I need confirmation or external execution."
+    elif user_input_required and external_execution_required:
+        paused_content = "I have tools to execute, but I need user input or external execution."
+    elif confirmation_required:
+        paused_content = "I have tools to execute, but I need confirmation."
+    elif user_input_required:
+        paused_content = "I have tools to execute, but I need user input."
+    elif external_execution_required:
+        paused_content = "I have tools to execute, but it needs external execution."
     return paused_content
