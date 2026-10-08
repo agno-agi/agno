@@ -292,6 +292,9 @@ def test_the_approval_gate_lets_a_run_continue_on_a_database_with_no_approvals_t
 
 def test_error_responses_do_not_reflect_an_origin_without_an_allow_list():
     middleware = AuthMiddleware.__new__(AuthMiddleware)
+    # Built without __init__, so set the shared browser policy explicitly: None
+    # exercises the per-call allow-list fallback this test is about.
+    middleware.cors_origin_policy = None
     resp = AuthMiddleware._create_error_response(
         middleware, 401, "no", origin="https://evil.example", cors_allowed_origins=None
     )
