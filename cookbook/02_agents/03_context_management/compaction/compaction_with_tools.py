@@ -36,8 +36,8 @@ compaction = Compaction(
     # Low enough that a short demo trips the automatic path; the default is 150k.
     # Tool-calling turns are short - a calculation and a paragraph, not an essay -
     # so this sits well under what a prose-heavy agent would need.
-    compact_at_tokens=1_000,
-    uncompacted_runs=1,
+    compact_at_tokens=2_000,
+    uncompacted_runs=2,
 )
 
 agent = Agent(

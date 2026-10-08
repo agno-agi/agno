@@ -67,7 +67,6 @@ agent = Agent(
     db=db,
     session_id="compaction_thresholds",
     add_history_to_context=True,
-    num_history_runs=100,
     compaction=compaction,
 )
 

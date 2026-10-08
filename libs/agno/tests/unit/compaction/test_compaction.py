@@ -335,15 +335,15 @@ def _requests_over(runs, **agent_kwargs):
     "agent_kwargs",
     [
         {"compaction": True},
-        {"compaction": Compaction()},
         {"compaction": True, "num_history_runs": 3},
+        {"compaction": Compaction(compact_at_tokens=None)},
     ],
 )
-def test_compaction_does_not_widen_what_a_run_replays(agent_kwargs):
-    """The planner reads past num_history_runs; the model must not.
+def test_without_a_threshold_compaction_does_not_widen_what_a_run_replays(agent_kwargs):
+    """The planner reads past num_history_runs; without a threshold the model must not.
 
-    Replaying the planner's window would send the whole session every run until something folds -
-    and with compaction=True nothing folds until the provider rejects a request.
+    Nothing would stop the replay growing: with compaction=True nothing folds until the provider
+    rejects a request, so replaying the planner's window would send the whole session every run.
     """
     baseline = [len(r) for r in _requests_over(10)]
     with_compaction = [len(r) for r in _requests_over(10, **agent_kwargs)]
@@ -352,7 +352,21 @@ def test_compaction_does_not_widen_what_a_run_replays(agent_kwargs):
     assert with_compaction[-1] == with_compaction[-4]  # bounded, not growing
 
 
-def test_async_runs_do_not_widen_what_a_run_replays():
+@pytest.mark.parametrize(
+    "agent_kwargs", [{"compaction": Compaction()}, {"compaction": Compaction(compact_at_tokens=50_000)}]
+)
+def test_with_a_threshold_compaction_replays_every_turn_since_the_last_fold(agent_kwargs):
+    """A threshold is the limit, so compaction owns the window. Replaying only num_history_runs
+    meant a threshold above a few turns never fired, older turns fell out unsummarized, and the fold
+    measured a list the model was never sent."""
+    baseline = [len(r) for r in _requests_over(10)]
+    with_compaction = [len(r) for r in _requests_over(10, **agent_kwargs)]
+
+    assert with_compaction == sorted(set(with_compaction))  # grows every run until a fold
+    assert with_compaction[-1] > baseline[-1]
+
+
+def test_async_runs_replay_the_same_window():
     import asyncio
 
     from agno.agent import Agent
@@ -364,7 +378,7 @@ def test_async_runs_do_not_widen_what_a_run_replays():
             await agent.arun(f"question number {i}")
         return [len(r) for r in model.requests]
 
-    assert asyncio.run(requests_over(10, compaction=True)) == asyncio.run(requests_over(10))
+    assert asyncio.run(requests_over(10, compaction=True)) == [len(r) for r in _requests_over(10, compaction=True)]
 
 
 def test_a_fold_replays_its_summary_and_everything_from_the_anchor():
@@ -437,12 +451,15 @@ def test_the_summary_survives_its_anchor_leaving_the_window(window, tail):
     assert asked == list(range(asked[0], 11)) and asked[0] <= 4
 
 
-def test_num_history_messages_still_bounds_what_is_sent_before_a_fold():
-    """Compaction reads past the message limit; the model does not, until a fold exists."""
+def test_num_history_messages_bounds_the_replay_only_without_a_threshold():
+    """The message limit is a window too: it bounds what is sent before a fold when there is no
+    threshold, and gives way to the threshold when there is one."""
     baseline = [len(r) for r in _requests_over(8, num_history_messages=4)]
-    with_compaction = [len(r) for r in _requests_over(8, num_history_messages=4, compaction=True)]
+    no_threshold = [len(r) for r in _requests_over(8, num_history_messages=4, compaction=True)]
+    threshold = [len(r) for r in _requests_over(8, num_history_messages=4, compaction=Compaction())]
 
-    assert with_compaction == baseline
+    assert no_threshold == baseline
+    assert threshold[-1] > baseline[-1]
 
 
 def test_async_dbs_declare_no_compaction_contract():
@@ -883,11 +900,9 @@ def test_instructions_add_to_the_default_prompt():
     assert system.endswith("Additional instructions:\nKeep every ticket id.")
 
 
-@pytest.mark.parametrize("num_history_runs", [1, 3])
-def test_a_fork_and_its_source_are_replayed_as_without_compaction(num_history_runs):
-    """A continue_run fork copies its source run's messages with the same ids. With only the fork
-    in the window, filtering by id let the source's copies in too and sent those turns twice; with
-    both in the window, both are history and both are sent. Either way, as without compaction."""
+def test_a_fork_and_its_source_are_replayed_as_without_compaction():
+    """A continue_run fork copies its source run's messages with the same ids. Both runs are
+    history, so both are sent - the same as without compaction when both are in its window."""
 
     def sent_after_a_fork(compaction):
         from agno.agent import Agent
@@ -898,7 +913,7 @@ def test_a_fork_and_its_source_are_replayed_as_without_compaction(num_history_ru
             db=_db(),
             session_id="s",
             add_history_to_context=True,
-            num_history_runs=num_history_runs,
+            num_history_runs=10,
             compaction=compaction,
         )
         agent.run("q0")
@@ -911,7 +926,7 @@ def test_a_fork_and_its_source_are_replayed_as_without_compaction(num_history_ru
     with_compaction = sent_after_a_fork(Compaction(compact_at_tokens=None, model=_StubModel()))
 
     assert with_compaction == plain
-    assert plain.count("q1 source") == (1 if num_history_runs == 1 else 2)
+    assert plain.count("q1 source") == 2
 
 
 # --- continue_run ----------------------------------------------------------------
@@ -3586,3 +3601,48 @@ def test_overflow_recovery_with_a_token_tail_keeps_the_current_run(use_async):
     assert folded  # the history in front of the current run still folds
     assert "current" in ids
     assert [i for i in ids if str(i).startswith("result")] == ["result0", "result1", "result2"]
+
+
+# --- compaction owns the replay window --------------------------------------
+
+
+def test_a_threshold_above_three_turns_fires():
+    """Replaying only num_history_runs (3) capped every request below a 2,000-token threshold for
+    ~500-token turns, so it never fired and older turns fell out unsummarized."""
+    from agno.agent import Agent
+
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=_db(),
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=2_000, model=_StubModel()),
+    )
+    folds = sum(agent.run(f"question {i} " + "word " * 480).compaction is not None for i in range(14))
+
+    assert folds > 0
+
+
+def test_a_folds_recorded_size_is_what_the_model_was_sent():
+    """A manual fold without a threshold folds everything the planner reads, but its recorded
+    "before" is what the model was sent - it used to be the planner's 500-run read."""
+    from agno.agent import Agent
+    from agno.utils.tokens import count_tokens
+
+    model = _RecordingModel.build()
+    agent = Agent(
+        model=model,
+        db=_db(),
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=None, model=_StubModel()),
+    )
+    for i in range(30):
+        agent.run(f"question {i} " + "word " * 15)
+    # The history the last run was sent: without a threshold, the num_history_runs window - far
+    # less than the 30 runs the fold reads.
+    sent_history = [m for m in model.requests[-1] if m.role != "system"][:-1]
+
+    record = agent.compact(session_id="s").record
+
+    assert record.tokens_before == count_tokens(sent_history)

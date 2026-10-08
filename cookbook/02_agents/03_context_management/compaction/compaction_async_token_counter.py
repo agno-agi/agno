@@ -34,8 +34,6 @@ agent = Agent(
     db=SqliteDb(db_file="tmp/compaction_async_token_counter.db"),
     session_id=f"compaction_async_token_counter_{uuid4().hex[:8]}",
     add_history_to_context=True,
-    # Replay every turn until the first fold, so the count grows with each one.
-    num_history_runs=10,
     compaction=Compaction(
         # Four ~700-token turns plus the margin cross this; three do not.
         compact_at_tokens=2_800,

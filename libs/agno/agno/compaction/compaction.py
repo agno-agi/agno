@@ -85,6 +85,11 @@ class Compaction:
     Only the message list sent to the model is rewritten. What the session
     persists is untouched, so compaction can never corrupt the record of what
     actually happened.
+
+    With ``compact_at_tokens`` set, compaction owns the replay window: every turn
+    since the last fold is sent, and the threshold is the limit, so
+    ``num_history_runs`` and ``num_history_messages`` do not apply. Without a
+    threshold they still bound what is sent before the first fold.
     """
 
     # Unique identifier for this manager. Auto-generated if not provided.
@@ -858,6 +863,7 @@ class Compaction:
         run_id: Optional[str] = None,
         context_prefix: Optional[List[Message]] = None,
         user_id: Optional[str] = None,
+        sent_messages: Optional[List[Message]] = None,
     ) -> Optional[CompactionRecord]:
         """Archive and summarize the head of ``messages``.
 
@@ -891,7 +897,10 @@ class Compaction:
         # Size the fold before persisting: the row is written once and never updated, so a
         # measurement taken afterwards would never reach it.
         prefix = context_prefix or []
-        self.measure(record, prefix + messages, prefix + self.apply_record(messages, record))
+        # "Before" is what the model was sent, which can be less than what was folded - a manual
+        # fold without a threshold folds past the replay window the model saw.
+        before = sent_messages if sent_messages is not None else messages
+        self.measure(record, prefix + before, prefix + self.apply_record(messages, record))
         self._log_tail_limit(messages, already)
         self._warn_if_still_over(record)
         if archive is not None:
@@ -913,6 +922,7 @@ class Compaction:
         run_id: Optional[str] = None,
         context_prefix: Optional[List[Message]] = None,
         user_id: Optional[str] = None,
+        sent_messages: Optional[List[Message]] = None,
     ) -> Optional[CompactionRecord]:
         # See the sync path: only the span the previous compaction did not
         # already cover is new.
@@ -940,7 +950,10 @@ class Compaction:
         # Size the fold before persisting: the row is written once and never updated, so a
         # measurement taken afterwards would never reach it.
         prefix = context_prefix or []
-        self.measure(record, prefix + messages, prefix + self.apply_record(messages, record))
+        # "Before" is what the model was sent, which can be less than what was folded - a manual
+        # fold without a threshold folds past the replay window the model saw.
+        before = sent_messages if sent_messages is not None else messages
+        self.measure(record, prefix + before, prefix + self.apply_record(messages, record))
         self._log_tail_limit(messages, already)
         self._warn_if_still_over(record)
         if archive is not None:

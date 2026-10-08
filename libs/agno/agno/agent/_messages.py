@@ -235,9 +235,7 @@ def _compaction_history_runs(agent: "Agent") -> Optional[int]:
     silently along with the turns it replaced.
 
     So the planner reads its own window. Bounded, not unlimited: capped so a long session costs
-    no more than a short one. Never narrower than num_history_runs, though - what a run sends is
-    selected from what the planner reads. Reading wider changes nothing the model is sent, so a
-    window the user chose needs no special case.
+    no more than a short one. Never narrower than num_history_runs, though.
     """
     if agent_compaction(agent) is None:
         return agent.num_history_runs
@@ -247,16 +245,18 @@ def _compaction_history_runs(agent: "Agent") -> Optional[int]:
 def _history_for_run(
     agent: "Agent", session: AgentSession, run_response: Optional[RunOutput], skip_role: Optional[str]
 ) -> Tuple[List[Message], Any, Optional[Counter[str]]]:
-    """The history a run works from, the fold in force for it, and the ids of the messages
-    num_history_runs and num_history_messages replay, counted - a fork copies its source run's
+    """The history a run works from, the fold in force for it, and the ids of the messages a run
+    replays before the first fold - or None when it replays all of ``history``.
+
+    With a compact_at_tokens threshold, compaction owns the window: everything since the last fold
+    is replayed, so the trigger, the fold and its metrics measure what the model is sent. Without
+    one, num_history_runs and num_history_messages still bound the replay before the first fold,
+    since nothing else would stop it growing. The ids are counted - a fork copies its source run's
     messages with the same ids, so one id can stand for more than one message.
 
-    Both of those are replay settings: they bound what a run sends before the first fold, not
-    what compaction may read. The planner reads a wider window, and once a fold exists its anchor
-    has to be in what is read, however old it is - the view replays the summary and everything
-    from the anchor onward, and an anchor that is not found drops the summary along with the
-    turns it replaced. Only the part from the anchor onward is kept - what sits in front of it is
-    already folded.
+    Once a fold exists its anchor has to be in what is read, however old it is - the view replays
+    the summary and everything from the anchor onward, and an anchor that is not found drops the
+    summary along with the turns it replaced. What sits in front of it is already folded.
     """
 
     def fetch(last_n_runs: Optional[int], limit: Optional[int]) -> List[Message]:
@@ -267,7 +267,8 @@ def _history_for_run(
             agent_id=agent.id if agent.team_id is not None else None,
         )
 
-    if agent_compaction(agent) is None:
+    compaction = agent_compaction(agent)
+    if compaction is None:
         return fetch(agent.num_history_runs, agent.num_history_messages), None, None
 
     history = fetch(_compaction_history_runs(agent), None)
@@ -279,6 +280,13 @@ def _history_for_run(
         if start is not None:
             history = everything[start:]
 
+    if compaction.compact_at_tokens is not None:
+        # A threshold is the limit, so compaction owns the window: everything since the last fold
+        # is replayed. Capping it at num_history_runs meant a threshold above a few turns never
+        # fired, older turns fell out unsummarized, and the fold measured a list never sent.
+        return history, record, None
+    # No threshold - compaction=True, or manual folds only - so nothing would stop the replay
+    # growing until the provider rejects a request. Keep num_history_runs until the first fold.
     replay = fetch(agent.num_history_runs, agent.num_history_messages)
     return history, record, Counter(m.id for m in replay if m.id is not None)
 
@@ -289,8 +297,8 @@ def _replayed_view(
     """What a run sends from ``history``.
 
     Once a fold exists, the summary and everything from its anchor onward - the anchor has to be
-    replayed, or the summary is dropped along with the turns it replaced. Before that, the
-    num_history_runs window, exactly as without compaction.
+    replayed, or the summary is dropped along with the turns it replaced. Before that, the replay
+    window when there is one, else all of ``history``.
     """
     if record is not None and record.summary and record.first_kept_message_id:
         if any(m.id == record.first_kept_message_id for m in history):
@@ -338,6 +346,18 @@ def _compaction_result(new_record: Any, metrics: Optional[RunMetrics] = None) ->
     )
 
 
+def _last_sent(agent: "Agent", session: AgentSession, compaction: Any) -> List[Message]:
+    """The history the model was last sent, which is what a fold's "before" size measures.
+
+    A manual fold folds everything the planner reads, but without a threshold the model was only
+    sent the num_history_runs window - recording the planner's read would overstate what the fold
+    reclaimed from the context.
+    """
+    skip_role = agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
+    history, record, replay_ids = _history_for_run(agent, session, None, skip_role)
+    return _replayed_view(compaction, history, record, replay_ids)
+
+
 def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -> Any:
     """Fold ``history`` now, without waiting for the size trigger.
 
@@ -374,6 +394,7 @@ def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -
         user_id=session.user_id,
         previous=record,
         run_metrics=run_metrics,
+        sent_messages=_last_sent(agent, session, compaction),
     )
     metrics = run_metrics if run_metrics.details else None
     if new_record is None:
@@ -410,6 +431,7 @@ async def acompact_now(agent: "Agent", session: AgentSession, history: List[Mess
         user_id=session.user_id,
         previous=record,
         run_metrics=run_metrics,
+        sent_messages=_last_sent(agent, session, compaction),
     )
     metrics = run_metrics if run_metrics.details else None
     if new_record is None:
