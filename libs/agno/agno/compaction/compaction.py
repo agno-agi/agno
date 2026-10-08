@@ -29,6 +29,10 @@ if TYPE_CHECKING:
     from agno.metrics import RunMetrics
 
 
+# Model id the local token counts fall back to when no model carries one. It is the Agent and
+# Team default, so compaction has no second opinion about which model is current.
+DEFAULT_TOKENIZER_MODEL_ID = "gpt-5.4"
+
 # Summarizing an enormous transcript in one call is unreliable and can itself
 # overflow. Trim what the summarizer reads, oldest first, to this budget - about
 # 100k tokens, so a fold at the default compact_at_tokens fits in one call.
@@ -235,10 +239,9 @@ class Compaction:
             if counted is not None:
                 return counted
         try:
-            model_id = getattr(model, "id", None) or "gpt-4o"
             from agno.utils.tokens import count_tokens
 
-            return count_tokens(messages, tools=tools, model_id=model_id)
+            return count_tokens(messages, tools=tools, model_id=self._tokenizer_model_id(model))
         except Exception as e:
             log_warning(f"Could not estimate tokens for compaction: {e}")
             return None
@@ -485,7 +488,7 @@ class Compaction:
 
         from agno.utils.tokens import count_text_tokens
 
-        model_id = getattr(self.model, "id", None) or "gpt-4o"
+        model_id = self._tokenizer_model_id()
         before = count_text_tokens(summary, model_id)
         if before <= budget:
             return summary
@@ -574,6 +577,19 @@ class Compaction:
     def _summary_model(self) -> Optional[Model]:
         # __post_init__ resolved any string, so this is a Model or None.
         return cast(Optional[Model], self.model)
+
+    def _tokenizer_model_id(self, model: Optional[Any] = None) -> str:
+        """The model id the local token count is keyed on: the given model's, then the summarizer's.
+
+        Only an encoding is chosen by it. Ids the tokenizer does not know map to the encoding
+        current OpenAI models use, so the fallback is the framework's default model id rather
+        than any particular one it recognises.
+        """
+        for candidate in (model, self.model):
+            model_id = getattr(candidate, "id", None)
+            if model_id:
+                return cast(str, model_id)
+        return DEFAULT_TOKENIZER_MODEL_ID
 
     def _accumulate(self, response: Any, run_metrics: Optional["RunMetrics"]) -> None:
         model = self._summary_model()
@@ -664,7 +680,7 @@ class Compaction:
         """
         from agno.utils.tokens import count_tokens
 
-        model_id = getattr(self.model, "id", None) or "gpt-4o"
+        model_id = self._tokenizer_model_id()
         try:
             record.tokens_before = count_tokens(before, model_id=model_id)
             record.tokens_after = count_tokens(after, model_id=model_id)
