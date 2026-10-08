@@ -401,6 +401,36 @@ class StudioRunnerTools(Toolkit):
     def db(self, value: Optional["BaseDb"]) -> None:
         self._db = value
 
+    def _rehydration_registry(self) -> Optional["Registry"]:
+        """The registry stored components rehydrate against.
+
+        An explicit ``include_agents`` / ``include_teams`` / ``include_workflows``
+        is a supply channel as much as a dispatch allowlist: a stored team that
+        names an allowlisted code-defined member must resolve that member the
+        way ``run_agent`` does. The allowlisted instances are layered over the
+        registry (first, so they win a shared id) without touching the caller's
+        registry. With no allowlist this is the registry itself, which keeps
+        ``None`` meaning "no registry" for the absent-registry guards."""
+        if self.include_agents is None and self.include_teams is None and self.include_workflows is None:
+            return self.registry
+        import copy
+
+        from agno.registry.registry import Registry
+
+        base = self.registry
+        overlay = copy.copy(base) if base is not None else Registry()
+        overlay.agents = list(self.include_agents or []) + list(getattr(base, "agents", None) or [])
+        overlay.teams = list(self.include_teams or []) + list(getattr(base, "teams", None) or [])
+        overlay.workflows = list(self.include_workflows or []) + list(getattr(base, "workflows", None) or [])
+        return overlay
+
+    def _is_allowlisted(self, ref_type: str, ref_id: str) -> bool:
+        """Whether the explicit allowlist supplies this member reference."""
+        allowlist = {"agent": self.include_agents, "team": self.include_teams, "workflow": self.include_workflows}.get(
+            ref_type
+        )
+        return any(getattr(instance, "id", None) == ref_id for instance in allowlist or [])
+
     def _iter_agents(self, for_dispatch: bool = False) -> List["Agent"]:
         """Code-defined agents: passed-in list, else registry.
 
@@ -1118,6 +1148,10 @@ class StudioRunnerTools(Toolkit):
         for ref_type, ref_id in _component_references(component_type, config):
             versions = pinned_versions.get(ref_id) or {None}
             for ref_version in sorted(versions, key=lambda v: (v is None, v)):
+                if self._is_allowlisted(ref_type, ref_id):
+                    # Supplied through include_*: code-defined, so there is no
+                    # stored config to descend into.
+                    continue
                 ref_loaded = self._load_config_row_from_db(
                     ref_id, version=ref_version, component_type=ComponentType(ref_type)
                 )
@@ -1125,7 +1159,8 @@ class StudioRunnerTools(Toolkit):
                     raise ComponentNeedsRegistryError(
                         f"{component_type.capitalize()} '{component_id}' references {ref_type} '{ref_id}', "
                         "which is not stored in the database (a code-defined component); "
-                        "construct StudioRunnerTools with the registry to run it."
+                        "construct StudioRunnerTools with the registry holding it, or pass it in "
+                        f"include_{ref_type}s, to run it."
                     )
                 ref_config, ref_resolved_version = ref_loaded
                 self._require_registry_for(ref_type, ref_id, ref_config, _seen, version=ref_resolved_version)
@@ -1801,7 +1836,10 @@ class StudioRunnerTools(Toolkit):
         # references, and a stored parent already dispatches a registry-only
         # agent under that flag. Routing this through the dispatch lookup would
         # split the two apart.
-        nested = [wid for wid in nested if self.registry is None or self.registry.get_workflow(wid) is None]
+        rehydration_registry = self._rehydration_registry()
+        nested = [
+            wid for wid in nested if rehydration_registry is None or rehydration_registry.get_workflow(wid) is None
+        ]
         if nested:
             raise ComponentNotDispatchableError(
                 f"Workflow '{workflow_id}' has a step targeting workflow '{', '.join(sorted(set(nested)))}', "
@@ -1840,9 +1878,10 @@ class StudioRunnerTools(Toolkit):
 
     def _registry_instances(self) -> List[Any]:
         """The shared singletons a rebuild can hand back instead of a copy."""
-        if self.registry is None:
+        registry = self._rehydration_registry()
+        if registry is None:
             return []
-        return list(self.registry.agents or []) + list(self.registry.teams or []) + list(self.registry.workflows or [])
+        return list(registry.agents or []) + list(registry.teams or []) + list(registry.workflows or [])
 
     @staticmethod
     def _shared_registry_instance(node: Any, shared: List[Any], depth: int = 0) -> Optional[Any]:
@@ -1996,7 +2035,7 @@ class StudioRunnerTools(Toolkit):
         from agno.agent.agent import Agent
 
         try:
-            agent = Agent.from_dict(config, registry=self.registry, strict=for_dispatch)
+            agent = Agent.from_dict(config, registry=self._rehydration_registry(), strict=for_dispatch)
             agent.id = agent_id
             # The catalog db is a fallback only: a config-declared db (resolved
             # by from_dict, possibly with table overrides) must keep winning.
@@ -2019,7 +2058,7 @@ class StudioRunnerTools(Toolkit):
                 config,
                 "agent",
                 agent_id,
-                lambda: Agent.from_dict(config, registry=self.registry, strict=False),
+                lambda: Agent.from_dict(config, registry=self._rehydration_registry(), strict=False),
                 version=resolved_version,
             ) from rehydration_error
         except Exception:
@@ -2049,7 +2088,9 @@ class StudioRunnerTools(Toolkit):
 
         links = self._load_links_from_db(team_id, version=resolved_version)
         try:
-            team = Team.from_dict(config, db=self.db, registry=self.registry, links=links, strict=for_dispatch)
+            team = Team.from_dict(
+                config, db=self.db, registry=self._rehydration_registry(), links=links, strict=for_dispatch
+            )
             team.id = team_id
             # The catalog db is a fallback only; a config-declared db wins.
             if getattr(team, "db", None) is None:
@@ -2071,7 +2112,9 @@ class StudioRunnerTools(Toolkit):
                 config,
                 "team",
                 team_id,
-                lambda: Team.from_dict(config, db=self.db, registry=self.registry, links=links, strict=False),
+                lambda: Team.from_dict(
+                    config, db=self.db, registry=self._rehydration_registry(), links=links, strict=False
+                ),
                 version=resolved_version,
             ) from rehydration_error
         except Exception:
@@ -2105,7 +2148,9 @@ class StudioRunnerTools(Toolkit):
 
         links = self._load_links_from_db(workflow_id, version=resolved_version)
         try:
-            wf = Workflow.from_dict(config, db=self.db, registry=self.registry, links=links, strict=for_dispatch)
+            wf = Workflow.from_dict(
+                config, db=self.db, registry=self._rehydration_registry(), links=links, strict=for_dispatch
+            )
             wf.id = workflow_id
             # The catalog db is a fallback only; a config-declared db wins.
             if getattr(wf, "db", None) is None:
@@ -2127,7 +2172,9 @@ class StudioRunnerTools(Toolkit):
                 config,
                 "workflow",
                 workflow_id,
-                lambda: Workflow.from_dict(config, db=self.db, registry=self.registry, links=links, strict=False),
+                lambda: Workflow.from_dict(
+                    config, db=self.db, registry=self._rehydration_registry(), links=links, strict=False
+                ),
                 version=resolved_version,
             ) from rehydration_error
         except Exception:
