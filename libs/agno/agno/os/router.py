@@ -284,8 +284,6 @@ def get_info_router(os: "AgentOS") -> APIRouter:
         # serves -- a client builds the card and tool-runner URLs from it.
         mcp_config = getattr(os, "mcp_config", None)
         mcp_path = (mcp_config.path if mcp_config is not None else None) or "/mcp"
-        # The runner is served only when the MCP server is on AND it is not switched off.
-        mcp_tool_run_api = mcp_enabled and (mcp_config is None or mcp_config.tool_run_api)
         return InfoResponse(
             os_id=os.id or "Unnamed OS",
             name=os.name,
@@ -298,7 +296,6 @@ def get_info_router(os: "AgentOS") -> APIRouter:
                 enabled=mcp_enabled,
                 path=mcp_path if mcp_enabled else None,
                 oauth=mcp_oauth,
-                tool_run_api=mcp_tool_run_api,
             ),
             auth_mode=get_effective_auth_mode(
                 settings=os.settings,

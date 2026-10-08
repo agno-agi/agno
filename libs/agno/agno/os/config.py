@@ -87,15 +87,11 @@ class MCPConfig(BaseModel):
     # host would otherwise be echoed into a publicly cacheable document.
     server_card_url: Optional[str] = None
 
-    # Run one published tool over plain HTTP at ``/mcp/server/tools/{name}/run``, so an operator UI
-    # can test a tool without implementing an MCP client. The tools themselves are read from
-    # the Server Card, which already publishes each one's input schema.
-    tool_run_api: bool = True
-
-    # How long a single ``/mcp/server/tools/{name}/run`` call may take before it is abandoned with a
-    # 408. A run tool drives a model, so this is generous; it exists so a hung tool cannot hold
-    # a connection open indefinitely. The MCP transport has no such limit -- a protocol client
-    # manages its own.
+    # How long a single ``/mcp/server/tools/{name}/run`` call -- the plain-HTTP runner an
+    # operator UI uses to test a published tool -- may take before it is abandoned with a
+    # 504. A run tool drives a model, so this is generous; it exists so a hung tool cannot
+    # hold a connection open indefinitely. The MCP transport has no such limit -- a protocol
+    # client manages its own.
     tool_run_timeout_seconds: float = Field(default=120.0, gt=0)
 
     # External transport path and optional legacy aliases. Policies use one native MCP route.

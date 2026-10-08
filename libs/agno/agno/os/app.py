@@ -2015,6 +2015,16 @@ class AgentOS:
             from agno.os.mcp_auth import mcp_auth_route_paths
 
             mcp_auth_paths = mcp_auth_route_paths(mcp_auth_provider)
+            # The tool runner is part of that surface, so it is exempted on the same
+            # terms: a client holding a provider-issued token would otherwise have it
+            # decoded as an agno JWT here and rejected before reaching the route. The
+            # route is not left open -- fastmcp verifies the token and the handler
+            # refuses anything without a verified principal. Only under mcp_auth: with
+            # no provider this middleware is the only credential check on that path.
+            if self.mcp:
+                from agno.os.config import MCP_SERVER_TOOLS_PATH
+
+                mcp_auth_paths.append(f"{MCP_SERVER_TOOLS_PATH}/*")
         # The Server Card is discovery before authentication: public by design, no secrets.
         server_card_paths: List[str] = []
         if self.mcp and (self.mcp_config is None or self.mcp_config.server_card):

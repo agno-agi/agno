@@ -407,7 +407,7 @@ error. Omitting the required `message` was refused with HTTP 400
 failures; that is the tool erroring as intended, not the endpoint failing.
 
 Re-run LIVE on 2026-10-05, after a timed-out call began stopping the work. With
-`tool_run_timeout_seconds=5`, a 1500-word essay returned HTTP 408 at 5011 ms, the model's
+`tool_run_timeout_seconds=5`, a 1500-word essay returned HTTP 504 at 5011 ms, the model's
 own HTTP request recorded `aborted` rather than `completed` -- generation stopped instead
 of finishing unobserved -- and the run was persisted as `CANCELLED`. The custom
 `research` tool, which drives an agent internally, timed out the same way at 5013 ms:

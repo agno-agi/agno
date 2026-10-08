@@ -2074,10 +2074,6 @@ def _server_card_enabled(mcp_config: "Optional[MCPConfig]") -> bool:
 _DEFAULT_TOOL_RUN_TIMEOUT_SECONDS = 120.0
 
 
-def _tool_run_api_enabled(mcp_config: "Optional[MCPConfig]") -> bool:
-    return mcp_config is None or mcp_config.tool_run_api
-
-
 def _card_name(hostname: str, server_name: str) -> str:
     """The card's reverse-DNS name: the request host reversed, a slash, the server name as a slug.
 
@@ -2294,7 +2290,7 @@ def _register_tool_run_api(
         request, so generation ends rather than finishing unobserved.
 
         A tool that blocks rather than awaits (``time.sleep``, a synchronous driver) is run
-        in fastmcp's threadpool, so the event loop keeps serving other requests and the 408
+        in fastmcp's threadpool, so the event loop keeps serving other requests and the 504
         still lands on time. Only that worker thread runs on: Python cannot interrupt a
         thread mid-call, so a sync tool that routinely outlives the budget ties up a thread
         each time. Prefer ``async def`` for anything long-running.
@@ -2307,8 +2303,17 @@ def _register_tool_run_api(
                 return work.result()
             # Nobody is waiting for this result any more; stop producing it.
             work.cancel()
-            with suppress(asyncio.CancelledError, Exception):
+            try:
                 await work
+            except asyncio.CancelledError:
+                # Ours if the task we just cancelled is the one that stopped. If THIS
+                # handler was cancelled instead (a server shutting down), re-raise:
+                # swallowing it would report a timeout and keep the shutdown waiting.
+                if not work.cancelled():
+                    raise
+            except Exception:
+                # The tool's own error, superseded by the timeout we are reporting.
+                pass
             raise asyncio.TimeoutError()
         finally:
             timer.cancel()
@@ -2345,10 +2350,10 @@ def _register_tool_run_api(
     def _denied(request: Request) -> Optional[Response]:
         """401 unless this request carries a VERIFIED identity that ``authorize`` accepts.
 
-        Neither of the server's own gates covers this route: fastmcp wraps only the ``/mcp``
-        transport route in its ``RequireAuthMiddleware``, and under ``mcp_auth`` the
-        ``authorize`` gate is registered with ``only_path="/mcp"``, an exact match. So both
-        checks are made here.
+        Under ``mcp_auth`` the ``authorize`` gate is registered with ``only_path="/mcp"``,
+        an exact match that never covers this route, so the predicate is applied here. In
+        every other mode that middleware is installed unscoped and already gates this route
+        -- calling it again would double-count an ``authorize`` that audits or rate-limits.
 
         Only a token the server itself verified counts. ``request.state.user_id`` is NOT
         evidence: with ``user_isolation`` and no REST auth, ``NoAuthIdentityMiddleware``
@@ -2371,8 +2376,9 @@ def _register_tool_run_api(
 
         # The operator's per-call predicate, which the transport applies at /mcp and which
         # must not be weaker here. user_id is only trusted once the checks above pass.
+        # Only under mcp_auth: otherwise _MCPAuthorizeMiddleware is unscoped and has run.
         authorize = mcp_config.authorize if mcp_config is not None else None
-        if authorize is not None:
+        if authorize is not None and _mcp_auth_enabled(request):
             user_id = getattr(request.state, "user_id", None) or state.get("user_id")
             if not authorize(user_id):
                 return _failed("unauthorized", "Not authorized for the MCP server.", 401)
@@ -2418,7 +2424,10 @@ def _register_tool_run_api(
             return _failed(
                 "timeout",
                 f"Tool {tool_name!r} did not finish within {timeout_seconds:g}s.",
-                408,
+                # 504, not 408: 408 means the CLIENT was too slow sending its request, and
+                # some clients and proxies retry it automatically -- which would re-run a
+                # tool that already had side effects. Nothing implicitly retries a 504.
+                504,
                 started=started,
             )
         except NotFoundError as exc:
@@ -2520,15 +2529,14 @@ def build_mcp_server(
             allowed_hosts=(mcp_config.allowed_hosts if mcp_config is not None else None),
         )
 
-    if _tool_run_api_enabled(mcp_config):
-        _register_tool_run_api(
-            mcp,
-            os,
-            timeout_seconds=(
-                mcp_config.tool_run_timeout_seconds if mcp_config is not None else _DEFAULT_TOOL_RUN_TIMEOUT_SECONDS
-            ),
-            mcp_config=mcp_config,
-        )
+    _register_tool_run_api(
+        mcp,
+        os,
+        timeout_seconds=(
+            mcp_config.tool_run_timeout_seconds if mcp_config is not None else _DEFAULT_TOOL_RUN_TIMEOUT_SECONDS
+        ),
+        mcp_config=mcp_config,
+    )
 
     # Classify the tool surface up front: the enabled default-tool tags depend on
     # whether components are exposed (lifecycle_tools=True adds their lifecycle pair).

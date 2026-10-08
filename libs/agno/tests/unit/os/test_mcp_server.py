@@ -2311,15 +2311,8 @@ async def test_tool_run_api_times_out_a_tool_that_does_not_finish():
     async with _mcp_client(app, base_url="http://localhost") as client:
         response = await client.post("/mcp/server/tools/_sleep/run", json={"arguments": {}})
 
-    assert response.status_code == 408
+    assert response.status_code == 504
     assert response.json()["error"] == "timeout"
-
-
-async def test_tool_run_api_can_be_turned_off_without_affecting_the_card():
-    app = get_mcp_server(_docs_os(tool_run_api=False))
-    async with _mcp_client(app) as client:
-        assert (await client.post("/mcp/server/tools/get_agentos_config/run", json={})).status_code == 404
-        assert (await client.get("/mcp/server-card")).status_code == 200
 
 
 async def test_tool_run_api_does_not_claim_a_sibling_path():
@@ -2367,6 +2360,82 @@ async def test_tool_run_api_refuses_an_unverified_bearer_token():
         assert response.status_code == 401, response.text
         assert response.json()["error"] == "unauthorized"
         assert "ran" not in response.text
+
+
+async def test_tool_run_api_accepts_an_mcp_auth_token_through_the_full_app():
+    """A provider token that works on /mcp must work on the runner too.
+
+    Exercised through ``get_app()`` rather than the MCP sub-app: the parent AuthMiddleware
+    only exists on the full app, and it is what used to decode a provider-issued (RS256)
+    token as an agno JWT (HS256) and reject it before the handler ran. A test built on the
+    sub-app alone passes while the real deployment returns 401.
+    """
+    import time
+
+    import jwt
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from fastmcp.server.auth.providers.jwt import JWTVerifier
+
+    from agno.os.config import AuthorizationConfig
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    ).decode()
+    public_pem = (
+        key.public_key()
+        .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        .decode()
+    )
+    issuer, audience = "https://issuer.example", "test-aud"
+
+    def _token(**overrides) -> str:
+        claims = {
+            "sub": "alice",
+            "iss": issuer,
+            "aud": audience,
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 3600,
+        }
+        claims.update(overrides)
+        return jwt.encode(claims, private_pem, algorithm="RS256")
+
+    def _ran() -> str:
+        """Returns a marker."""
+        return "ran"
+
+    os = AgentOS(
+        agents=[_agent()],
+        mcp=MCPConfig(tools=[_ran]),
+        mcp_auth=JWTVerifier(public_key=public_pem, issuer=issuer, audience=audience),
+        # The REST plane runs its own JWT scheme alongside the provider: this is the
+        # combination that used to 401.
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=["x" * 40], algorithm="HS256"),
+    )
+    app = os.get_app()
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as client:
+
+            async def _run(headers):
+                return await client.post("/mcp/server/tools/_ran/run", json={"arguments": {}}, headers=headers)
+
+            accepted = await _run({"Authorization": f"Bearer {_token()}"})
+            forged = await _run({"Authorization": "Bearer not-a-token"})
+            expired = await _run(
+                {"Authorization": f"Bearer {_token(iat=int(time.time()) - 7200, exp=int(time.time()) - 3600)}"}
+            )
+            anonymous = await _run({})
+
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["isError"] is False
+    assert "ran" in accepted.text
+    # Exempting the path from the parent middleware must not leave it open.
+    for refused in (forged, expired, anonymous):
+        assert refused.status_code == 401, refused.text
+        assert "ran" not in refused.text
 
 
 async def test_tool_run_api_accepts_a_valid_mcp_auth_token():
@@ -2473,6 +2542,40 @@ async def test_tool_run_api_refuses_a_self_asserted_query_string_identity():
     assert response.status_code == 401, response.text
     assert response.json()["error"] == "unauthorized"
     assert "ran" not in response.text
+
+
+async def test_tool_run_api_does_not_double_apply_authorize():
+    """``authorize`` must run once per request.
+
+    Without ``mcp_auth`` the gate middleware is installed unscoped and already covers this
+    route, so applying the predicate in the handler too would double-count an ``authorize``
+    that audits or rate-limits.
+    """
+    calls: list = []
+
+    def _authorize(user_id):
+        calls.append(user_id)
+        return True
+
+    def _ran() -> str:
+        """Returns a marker."""
+        return "ran"
+
+    os = AgentOS(
+        agents=[_agent()],
+        mcp=MCPConfig(tools=[_ran], authorize=_authorize),
+        settings=AgnoAPISettings(os_security_key="k"),
+    )
+    app = os.get_app()
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as client:
+            response = await client.post(
+                "/mcp/server/tools/_ran/run", json={"arguments": {}}, headers={"Authorization": "Bearer k"}
+            )
+
+    assert response.status_code == 200, response.text
+    assert len(calls) == 1, f"authorize ran {len(calls)} times"
 
 
 async def test_tool_run_api_applies_the_authorize_predicate():

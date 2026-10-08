@@ -378,15 +378,6 @@ class McpInfo(BaseModel):
     oauth: Optional[McpOAuthInfo] = Field(
         None, description="OAuth discovery details when the MCP endpoint is OAuth-protected, null otherwise"
     )
-    tool_run_api: bool = Field(
-        False,
-        description=(
-            "Whether this deployment serves the plain-HTTP tool runner at "
-            "`{path}/server/tools/{tool_name}/run`. False both when the MCP server is off and "
-            "when it is on with `MCPConfig(tool_run_api=False)`, so a client can tell upfront "
-            "whether running a tool is possible instead of discovering it on the call."
-        ),
-    )
 
 
 class InfoResponse(BaseModel):
