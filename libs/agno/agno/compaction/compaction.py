@@ -368,8 +368,22 @@ class Compaction:
             # A size budget names no position, so the walk finds one: it accumulates backward
             # from the newest message and stops once the budget is spent, then snaps to a
             # pair-safe turn boundary like any other cut.
-            return choose_boundary(messages, keep_tokens=self.uncompacted_tokens, min_index=min_index)
+            cut = choose_boundary(messages, keep_tokens=self.uncompacted_tokens, min_index=min_index)
+            return self._outside_newest_exchange(messages, cut, min_index)
         return self._run_tail_boundary(messages, min_index)[0]
+
+    @staticmethod
+    def _outside_newest_exchange(messages: List[Message], cut: Optional[int], min_index: int) -> Optional[int]:
+        """``cut``, moved back to the newest user message when it would fold inside that exchange.
+
+        Folding the question the model is answering would leave it replying to a summary of what
+        it was just asked. On overflow recovery it is worse: the list being folded is the current
+        run's own, so its question and tool results would be dropped from the stored run too.
+        """
+        newest = max((i for i, m in enumerate(messages) if m.role == "user"), default=None)
+        if cut is not None and newest is not None and cut > newest:
+            return choose_boundary(messages, keep_from_index=newest, min_index=min_index)
+        return cut
 
     def _run_tail_boundary(self, messages: List[Message], min_index: int = 0) -> Tuple[Optional[int], bool]:
         """The cut for a run-count tail, and whether the tail limit had to shorten it.
@@ -390,10 +404,9 @@ class Compaction:
         tail_start = min_index if boundary is None else boundary
         if estimate_tokens(messages[tail_start:]) <= limit:
             return boundary, False
-        cut = choose_boundary(messages, keep_tokens=limit, min_index=min_index)
-        newest = max((i for i, m in enumerate(messages) if m.role == "user"), default=None)
-        if cut is not None and newest is not None and cut > newest:
-            cut = choose_boundary(messages, keep_from_index=newest, min_index=min_index)
+        cut = self._outside_newest_exchange(
+            messages, choose_boundary(messages, keep_tokens=limit, min_index=min_index), min_index
+        )
         if cut is None or cut <= tail_start:
             return boundary, False
         return cut, True

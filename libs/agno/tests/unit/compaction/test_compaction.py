@@ -3490,3 +3490,74 @@ def test_the_cap_holds_even_below_the_notes_own_size():
 def test_the_summary_budget_must_be_positive():
     with pytest.raises(ValueError, match="compacted_token_budget"):
         Compaction(compacted_token_budget=0)
+
+
+# --- the newest exchange is never folded -----------------------------------
+
+
+def _history_then_a_tool_loop():
+    """Four answered turns, then the current question and a three-call tool loop."""
+    messages = [Message(role="system", content="sys", id="s0")]
+    for i in range(4):
+        messages += [
+            Message(role="user", content=f"old question {i} " * 40, id=f"hu{i}"),
+            Message(role="assistant", content=f"old answer {i} " * 300, id=f"ha{i}"),
+        ]
+    messages.append(Message(role="user", content="CURRENT QUESTION", id="current"))
+    for c in range(3):
+        call = {"id": f"call_{c}", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}
+        messages.append(Message(role="assistant", content=None, tool_calls=[call], id=f"call{c}"))
+        messages.append(
+            Message(
+                role="tool", tool_call_id=f"call_{c}", tool_name="lookup", content=f"result {c} " * 400, id=f"result{c}"
+            )
+        )
+    return messages
+
+
+def test_a_token_tail_never_cuts_inside_the_newest_exchange():
+    """A token budget smaller than the newest exchange used to cut inside it. The run-count path
+    never did; the token path now has the same guard."""
+    messages = _history_then_a_tool_loop()
+    current = next(i for i, m in enumerate(messages) if m.id == "current")
+
+    boundary = Compaction(uncompacted_tokens=500).boundary_for(messages, min_index=1)
+
+    assert boundary is not None and boundary <= current
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_overflow_recovery_with_a_token_tail_keeps_the_current_run(use_async):
+    """Overflow recovery folds the list the current run is built from. Cutting inside the run
+    dropped its question and tool results from the stored run, not just from the request."""
+    import asyncio
+
+    from agno.agent import Agent
+    from agno.agent._messages import _arecompact_after_overflow, _recompact_after_overflow
+    from agno.session.agent import AgentSession
+
+    class _RunMessages:
+        def __init__(self, messages):
+            self.messages = messages
+
+    class _AsyncStub(_StubModel):
+        async def aresponse(self, messages, **kwargs):
+            return self.response(messages)
+
+    run_messages = _RunMessages(_history_then_a_tool_loop())
+    agent = Agent(
+        compaction=Compaction(
+            uncompacted_tokens=500, on_context_overflow=True, store_compacted_messages=False, model=_AsyncStub()
+        )
+    )
+    session = AgentSession(session_id="s", runs=[])
+
+    if use_async:
+        folded = asyncio.run(_arecompact_after_overflow(agent, session, run_messages, None))
+    else:
+        folded = _recompact_after_overflow(agent, session, run_messages, None)
+
+    ids = [m.id for m in run_messages.messages]
+    assert folded  # the history in front of the current run still folds
+    assert "current" in ids
+    assert [i for i in ids if str(i).startswith("result")] == ["result0", "result1", "result2"]
