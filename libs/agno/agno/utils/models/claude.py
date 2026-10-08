@@ -567,10 +567,15 @@ def format_messages(
     Returns:
         Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
     """
-    from agno.utils.message import normalize_tool_messages
+    from agno.utils.message import normalize_tool_messages, reformat_tool_call_ids
 
     # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
     messages = normalize_tool_messages(messages)
+    # Anthropic rejects any tool_use.id outside ^[a-zA-Z0-9_-]+$ (and count_tokens
+    # fails too). History replayed from another provider can carry foreign IDs
+    # (e.g. some OpenAI-compatible hosts emit "query:2"); remap them to the
+    # toolu_ prefix like the openai_chat/openai_responses/mistral formatters do.
+    messages = reformat_tool_call_ids(messages, provider="claude")
 
     chat_messages: List[Dict[str, Union[str, list]]] = []
     system_messages: List[str] = []
