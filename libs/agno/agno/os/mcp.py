@@ -2965,6 +2965,7 @@ def build_mcp_server(
         session_name: Annotated[
             Optional[str], Field(description="Only return sessions whose name matches this value.")
         ] = None,
+        db_id: _DbId = None,
         limit: Annotated[int, Field(ge=1, description="Maximum number of sessions to return per page.")] = 20,
         page: Annotated[int, Field(ge=1, description="One-based page number to return.")] = 1,
         # An unknown column is ignored by the DB layer (results come back unsorted), so the
@@ -2975,7 +2976,6 @@ def build_mcp_server(
         sort_order: Annotated[
             Literal["asc", "desc"], Field(description="Sort in ascending (asc) or descending (desc) order.")
         ] = "desc",
-        db_id: _DbId = None,
     ) -> Dict[str, Any]:
         await _require_tool_scopes("GET", "/sessions")
         user_id = _scoped_read_user_id(user_id)
