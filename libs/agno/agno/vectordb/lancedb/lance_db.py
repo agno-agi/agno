@@ -702,6 +702,16 @@ class LanceDb(VectorDb):
         # Wrap sync search method to avoid sync/async table synchronization issues
         return self.search(query=query, limit=limit, filters=filters, user_id=user_id)
 
+    def _lancedb_metric(self) -> str:
+        """Map the Distance enum to the metric string LanceDB expects.
+
+        LanceDB uses ``"dot"`` for maximum-inner-product; the Agno Distance enum
+        uses ``"max_inner_product"``.  All other values match directly.
+        """
+        if self.distance == Distance.max_inner_product:
+            return "dot"
+        return self.distance.value
+
     def vector_search(
         self,
         query: str,
@@ -721,7 +731,7 @@ class LanceDb(VectorDb):
         results = self.table.search(
             query=query_embedding,
             vector_column_name=self._vector_col,
-        ).limit(limit)
+        ).metric(self._lancedb_metric()).limit(limit)
 
         # ``prefilter=True`` runs the predicate before the ANN top-K; post-filtering
         # would silently truncate results.
@@ -761,6 +771,7 @@ class LanceDb(VectorDb):
             )
             .vector(query_embedding)
             .text(query)
+            .metric(self._lancedb_metric())
             .limit(limit)
         )
 
