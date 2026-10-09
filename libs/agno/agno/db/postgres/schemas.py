@@ -483,15 +483,18 @@ SERVICE_ACCOUNT_TABLE_SCHEMA = {
 
 
 TRANSCRIPTS_TABLE_SCHEMA = {
-    "entry_id": {"type": String, "primary_key": True, "nullable": False},
-    "project_key": {"type": String, "nullable": False},
-    "session_id": {"type": String, "nullable": False},
-    "subpath": {"type": String, "nullable": True},
-    "position": {"type": BigInteger, "nullable": False},
+    "framework": {"type": String, "primary_key": True, "nullable": False},
+    "project_key": {"type": String, "primary_key": True, "nullable": False},
+    "session_id": {"type": String, "primary_key": True, "nullable": False},
+    # Empty for the main transcript, so the unique constraint below also covers it.
+    "subpath": {"type": String, "primary_key": True, "nullable": False},
+    "position": {"type": BigInteger, "primary_key": True, "nullable": False},
+    "entry_uuid": {"type": String, "nullable": True},
     "entry": {"type": String, "nullable": False},
+    "agno_session_id": {"type": String, "nullable": False, "index": True},
     "created_at": {"type": BigInteger, "nullable": False},
-    "__composite_indexes__": [
-        {"name": "transcripts_session_position", "columns": ["project_key", "session_id", "subpath", "position"]},
+    "_unique_constraints": [
+        {"name": "uq_entry_uuid", "columns": ["framework", "project_key", "session_id", "subpath", "entry_uuid"]},
     ],
 }
 

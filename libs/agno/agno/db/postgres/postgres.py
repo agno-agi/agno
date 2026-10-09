@@ -8734,7 +8734,13 @@ class PostgresDb(BaseDb):
     # --- External agent transcripts ---
 
     def append_transcript_entries(
-        self, project_key: str, session_id: str, entries: List[Dict[str, Any]], subpath: Optional[str] = None
+        self,
+        framework: str,
+        project_key: str,
+        session_id: str,
+        entries: List[Dict[str, Any]],
+        agno_session_id: str,
+        subpath: Optional[str] = None,
     ) -> None:
         if not entries:
             return
@@ -8745,19 +8751,28 @@ class PostgresDb(BaseDb):
         table = self._get_table("transcripts", create_table_if_not_found=True)
         if table is None:
             raise RuntimeError("Could not create transcript table")
-        stmt = transcript_insert(table).on_conflict_do_nothing(index_elements=["entry_id"])
+        stmt = transcript_insert(table).on_conflict_do_nothing(
+            index_elements=["framework", "project_key", "session_id", "subpath", "entry_uuid"]
+        )
         with self.Session() as sess, sess.begin():
-            sess.execute(select(func.pg_advisory_xact_lock(transcript_lock_id(project_key, session_id, subpath))))
+            sess.execute(
+                select(func.pg_advisory_xact_lock(transcript_lock_id(framework, project_key, session_id, subpath)))
+            )
             previous = sess.execute(
                 select(func.max(table.c.position)).where(
-                    table.c.project_key == project_key, table.c.session_id == session_id, table.c.subpath == subpath
+                    table.c.framework == framework,
+                    table.c.project_key == project_key,
+                    table.c.session_id == session_id,
+                    table.c.subpath == (subpath or ""),
                 )
             )
-            rows = transcript_rows(project_key, session_id, entries, subpath, position_after=previous.scalar() or 0)
+            rows = transcript_rows(
+                framework, project_key, session_id, subpath, agno_session_id, entries, previous.scalar() or 0
+            )
             sess.execute(stmt, rows)
 
     def get_transcript_entries(
-        self, project_key: str, session_id: str, subpath: Optional[str] = None
+        self, framework: str, project_key: str, session_id: str, subpath: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         import json
 
@@ -8766,33 +8781,43 @@ class PostgresDb(BaseDb):
             return []
         stmt = (
             select(table.c.entry)
-            .where(table.c.project_key == project_key, table.c.session_id == session_id, table.c.subpath == subpath)
+            .where(
+                table.c.framework == framework,
+                table.c.project_key == project_key,
+                table.c.session_id == session_id,
+                table.c.subpath == (subpath or ""),
+            )
             .order_by(table.c.position)
         )
         with self.Session() as sess:
             result = sess.execute(stmt)
             return [json.loads(row[0]) for row in result.fetchall()]
 
-    def list_transcript_sessions(self, project_key: str) -> List[Dict[str, Any]]:
+    def list_transcript_sessions(self, framework: str, project_key: str) -> List[Dict[str, Any]]:
         table = self._get_table("transcripts")
         if table is None:
             return []
         stmt = (
             select(table.c.session_id, func.max(table.c.created_at).label("mtime"))
-            .where(table.c.project_key == project_key, table.c.subpath.is_(None))
+            .where(table.c.framework == framework, table.c.project_key == project_key, table.c.subpath == "")
             .group_by(table.c.session_id)
         )
         with self.Session() as sess:
             result = sess.execute(stmt)
             return [dict(row._mapping) for row in result.fetchall()]
 
-    def list_transcript_subpaths(self, project_key: str, session_id: str) -> List[str]:
+    def list_transcript_subpaths(self, framework: str, project_key: str, session_id: str) -> List[str]:
         table = self._get_table("transcripts")
         if table is None:
             return []
         stmt = (
             select(table.c.subpath)
-            .where(table.c.project_key == project_key, table.c.session_id == session_id, table.c.subpath.is_not(None))
+            .where(
+                table.c.framework == framework,
+                table.c.project_key == project_key,
+                table.c.session_id == session_id,
+                table.c.subpath != "",
+            )
             .distinct()
             .order_by(table.c.subpath)
         )
@@ -8800,11 +8825,15 @@ class PostgresDb(BaseDb):
             result = sess.execute(stmt)
             return [row[0] for row in result.fetchall()]
 
-    def delete_transcript(self, project_key: str, session_id: str, subpath: Optional[str] = None) -> None:
+    def delete_transcript(
+        self, framework: str, project_key: str, session_id: str, subpath: Optional[str] = None
+    ) -> None:
         table = self._get_table("transcripts")
         if table is None:
             return
-        stmt = table.delete().where(table.c.project_key == project_key, table.c.session_id == session_id)
+        stmt = table.delete().where(
+            table.c.framework == framework, table.c.project_key == project_key, table.c.session_id == session_id
+        )
         if subpath is not None:
             stmt = stmt.where(table.c.subpath == subpath)
         with self.Session() as sess, sess.begin():

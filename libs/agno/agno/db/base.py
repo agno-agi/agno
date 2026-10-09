@@ -2317,26 +2317,34 @@ class BaseDb(ABC):
     # Optional transcript storage for external agents.
 
     def append_transcript_entries(
-        self, project_key: str, session_id: str, entries: List[Dict[str, Any]], subpath: Optional[str] = None
+        self,
+        framework: str,
+        project_key: str,
+        session_id: str,
+        entries: List[Dict[str, Any]],
+        agno_session_id: str,
+        subpath: Optional[str] = None,
     ) -> None:
-        """Append opaque transcript entries in order, ignoring repeated entry UUIDs."""
+        """Append opaque transcript entries in order, ignoring entry UUIDs already in the transcript."""
         raise NotImplementedError
 
     def get_transcript_entries(
-        self, project_key: str, session_id: str, subpath: Optional[str] = None
+        self, framework: str, project_key: str, session_id: str, subpath: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Read transcript entries in append order."""
         raise NotImplementedError
 
-    def list_transcript_sessions(self, project_key: str) -> List[Dict[str, Any]]:
+    def list_transcript_sessions(self, framework: str, project_key: str) -> List[Dict[str, Any]]:
         """List main transcripts with session_id and mtime in epoch milliseconds."""
         raise NotImplementedError
 
-    def list_transcript_subpaths(self, project_key: str, session_id: str) -> List[str]:
+    def list_transcript_subpaths(self, framework: str, project_key: str, session_id: str) -> List[str]:
         """List subagent transcript paths for a session."""
         raise NotImplementedError
 
-    def delete_transcript(self, project_key: str, session_id: str, subpath: Optional[str] = None) -> None:
+    def delete_transcript(
+        self, framework: str, project_key: str, session_id: str, subpath: Optional[str] = None
+    ) -> None:
         """Delete one subpath, or the main transcript and all subpaths."""
         raise NotImplementedError
 
@@ -3808,25 +3816,33 @@ class AsyncBaseDb(ABC):
     # Optional transcript storage for external agents.
 
     async def append_transcript_entries(
-        self, project_key: str, session_id: str, entries: List[Dict[str, Any]], subpath: Optional[str] = None
+        self,
+        framework: str,
+        project_key: str,
+        session_id: str,
+        entries: List[Dict[str, Any]],
+        agno_session_id: str,
+        subpath: Optional[str] = None,
     ) -> None:
-        """Append opaque transcript entries in order, ignoring repeated entry UUIDs."""
+        """Append opaque transcript entries in order, ignoring entry UUIDs already in the transcript."""
         raise NotImplementedError
 
     async def get_transcript_entries(
-        self, project_key: str, session_id: str, subpath: Optional[str] = None
+        self, framework: str, project_key: str, session_id: str, subpath: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Read transcript entries in append order."""
         raise NotImplementedError
 
-    async def list_transcript_sessions(self, project_key: str) -> List[Dict[str, Any]]:
+    async def list_transcript_sessions(self, framework: str, project_key: str) -> List[Dict[str, Any]]:
         """List main transcripts with session_id and mtime in epoch milliseconds."""
         raise NotImplementedError
 
-    async def list_transcript_subpaths(self, project_key: str, session_id: str) -> List[str]:
+    async def list_transcript_subpaths(self, framework: str, project_key: str, session_id: str) -> List[str]:
         """List subagent transcript paths for a session."""
         raise NotImplementedError
 
-    async def delete_transcript(self, project_key: str, session_id: str, subpath: Optional[str] = None) -> None:
+    async def delete_transcript(
+        self, framework: str, project_key: str, session_id: str, subpath: Optional[str] = None
+    ) -> None:
         """Delete one subpath, or the main transcript and all subpaths."""
         raise NotImplementedError

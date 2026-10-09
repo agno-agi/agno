@@ -65,3 +65,13 @@ Streaming/non-streaming unit regressions also verify warning serialization and p
 
 **Result:** Durability failure is visible without reexecuting completed work. This is a local SDK
 fault-injection test, not a live provider run. Phase 1 agent tests: 78 passed. Format and validation pass.
+
+---
+
+### session_store.py (transcript schema revision)
+
+**Status:** PASS
+
+**Description:** Reran the two-process verification after scoping transcript rows by framework, project, session and subpath, numbering positions per transcript and recording the owning Agno session. Used claude-agent-sdk 0.2.95 from the demo environment, the `ANTHROPIC_API_KEY` from `.envrc` and empty config directories.
+
+**Result:** Process A replied `OK`; process B, with its Agno run deleted, replied `cobalt orchard 742`. The PostgreSQL contract test (PostgresDb and AsyncPostgresDb) passed against PostgreSQL 14.

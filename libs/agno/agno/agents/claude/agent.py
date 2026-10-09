@@ -94,7 +94,9 @@ class ClaudeAgent(BaseExternalAgent):
         if self.project_key is None:
             self.project_key = self.get_id()
 
-    def _build_options(self, *, streaming: bool = False, resume: Optional[str] = None) -> Any:
+    def _build_options(
+        self, *, streaming: bool = False, resume: Optional[str] = None, agno_session_id: Optional[str] = None
+    ) -> Any:
         """Build ClaudeAgentOptions from agent config."""
         sdk = _sdk()
 
@@ -127,12 +129,12 @@ class ClaudeAgent(BaseExternalAgent):
             opts["resume"] = resume
 
         opts.update(self.options_kwargs)
-        if self.db is not None:
+        if self.db is not None and agno_session_id is not None:
             base = AsyncBaseDb if isinstance(self.db, AsyncBaseDb) else BaseDb
             if type(self.db).append_transcript_entries is not base.append_transcript_entries:
                 from agno.agents.claude.session_store import AgnoSessionStore
 
-                opts["session_store"] = AgnoSessionStore(self.db, self.project_key or self.get_id())
+                opts["session_store"] = AgnoSessionStore(self.db, self.project_key or self.get_id(), agno_session_id)
                 if self._warn_unstable_project_key:
                     log_warning(
                         f"ClaudeAgent has no id, name or project_key; transcripts are stored under the generated key "
@@ -189,7 +191,11 @@ class ClaudeAgent(BaseExternalAgent):
         resume = self._get_sdk_session_id(session, session_id)
 
         while True:
-            options = self._build_options(streaming=streaming, resume=resume)
+            options = self._build_options(
+                streaming=streaming,
+                resume=resume,
+                agno_session_id=session.session_id if session is not None else None,
+            )
             prompt = self._build_prompt(input, history, resumed=resume is not None)
             received = False
             try:

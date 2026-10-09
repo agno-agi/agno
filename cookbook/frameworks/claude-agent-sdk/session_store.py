@@ -57,15 +57,13 @@ def main():
     if args.turn == "remember":
         session = agent.get_run_output(result.run_id, args.session)
         assert session is not None
-        stored = agent.db.list_transcript_sessions(agent.get_id())
+        stored = agent.db.list_transcript_sessions(agent.framework, agent.get_id())
         assert stored, "The SDK did not mirror a transcript"
         # Remove Agno conversation history so the second process must use the SDK transcript.
         agent.db.delete_run(result.run_id)
     else:
         assert "cobalt orchard 742" in result.content.lower(), result.content
-        print(
-            "PASS: recalled the stored transcript from a fresh process and empty config directory"
-        )
+        print("PASS: recalled the stored transcript from a fresh process and empty config directory")
 
 
 if __name__ == "__main__":

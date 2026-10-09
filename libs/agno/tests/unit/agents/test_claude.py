@@ -232,18 +232,18 @@ def test_store_support_and_project_key(fake_sdk, tmp_path, monkeypatch):
     from agno.db.in_memory import InMemoryDb
 
     agent = ClaudeAgent(id="tenant-agent", cwd="/cwd", db=SqliteDb(db_file=str(tmp_path / "db")))
-    opts = agent._build_options()
+    opts = agent._build_options(agno_session_id="agno-session")
     assert agent.project_key == "tenant-agent"
     assert isinstance(opts.extra["session_store"], AgnoSessionStore)
     assert opts.extra["session_store"].project_key == "tenant-agent"
     custom = ClaudeAgent(id="a", project_key="tenant", db=agent.db)
-    assert custom._build_options().extra["session_store"].project_key == "tenant"
+    assert custom._build_options(agno_session_id="agno-session").extra["session_store"].project_key == "tenant"
     logs = []
     monkeypatch.setattr(claude_module, "log_debug", logs.append)
     unsupported = ClaudeAgent(db=InMemoryDb())
     assert type(unsupported.db).append_transcript_entries is BaseDb.append_transcript_entries
-    assert "session_store" not in unsupported._build_options().extra
-    unsupported._build_options()
+    assert "session_store" not in unsupported._build_options(agno_session_id="agno-session").extra
+    unsupported._build_options(agno_session_id="agno-session")
     assert len(logs) == 1
 
 
@@ -252,12 +252,12 @@ def test_generated_project_key_warns_once(fake_sdk, tmp_path, monkeypatch):
     monkeypatch.setattr(claude_module, "log_warning", warnings.append)
     db = SqliteDb(db_file=str(tmp_path / "db"))
     for stable in (ClaudeAgent(id="a", db=db), ClaudeAgent(name="Named", db=db), ClaudeAgent(project_key="p", db=db)):
-        stable._build_options()
-    ClaudeAgent()._build_options()
+        stable._build_options(agno_session_id="agno-session")
+    ClaudeAgent()._build_options(agno_session_id="agno-session")
     assert warnings == []
     generated = ClaudeAgent(db=db)
-    generated._build_options()
-    generated._build_options()
+    generated._build_options(agno_session_id="agno-session")
+    generated._build_options(agno_session_id="agno-session")
     assert len(warnings) == 1
     assert generated.project_key in warnings[0]
 
