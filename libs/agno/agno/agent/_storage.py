@@ -1003,7 +1003,7 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
             if type(agent.skills.executor) is not LocalSkillExecutor:
                 config["skills"]["requires_executor"] = True
         else:
-            log_warning("Agent skills hold no skills to reference; skills will not be saved.")
+            log_debug("Agent skills hold no skills to reference; skills will not be saved.")
 
     # --- Tools ---
     # Serialize tools to their dictionary representations (skip callable factories)

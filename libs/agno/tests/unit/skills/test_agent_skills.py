@@ -1,6 +1,7 @@
 """Unit tests for Skills orchestrator class."""
 
 import json
+import logging
 from pathlib import Path
 from typing import ClassVar, List, Optional
 
@@ -1164,3 +1165,29 @@ def test_skill_script_execute_path_traversal_blocked(mock_loader: MockSkillLoade
 
     assert "error" in result
     assert "not found" in result["error"].lower()
+
+
+# ============================================================================
+# SAVE-TIME WARNINGS
+# ============================================================================
+
+
+def test_get_skills_from_db_warns_once_per_instance_naming_the_skipped_skills(
+    mock_loader_multiple: MockSkillLoader, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Every save and to_dict serializes through here, so skills that cannot be persisted
+    are reported once per instance, naming each skipped skill and how to persist it."""
+    skills = Skills(loaders=[mock_loader_multiple])
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(3):
+            assert skills.get_skills_from_db() == []
+    warnings = [record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING]
+    assert len(warnings) == 1, warnings
+    assert "test-skill" in warnings[0] and "minimal-skill" in warnings[0]
+    assert "publish" in warnings[0]
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        Skills(loaders=[mock_loader_multiple]).get_skills_from_db()
+    assert len([record for record in caplog.records if record.levelno >= logging.WARNING]) == 1

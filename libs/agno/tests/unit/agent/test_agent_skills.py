@@ -14,6 +14,7 @@ so both variants are asserted.
 """
 
 import json
+import logging
 from typing import List
 from unittest.mock import MagicMock
 
@@ -271,7 +272,7 @@ def test_from_dict_without_db_drops_skills_with_warning(tmp_path, monkeypatch):
     assert any("release-notes" in w for w in warnings)
 
 
-def test_to_dict_with_no_loaded_skills_warns_and_omits_key(tmp_path, monkeypatch):
+def test_to_dict_with_no_loaded_skills_omits_key_with_a_trace(tmp_path, monkeypatch):
     """A failed or empty skills load is not persisted as an empty reference list.
 
     Persisting {"names": []} would silently erase the skills from the stored
@@ -289,12 +290,12 @@ def test_to_dict_with_no_loaded_skills_warns_and_omits_key(tmp_path, monkeypatch
     agent = Agent(name="test-agent", db=db, skills=Skills(loaders=[DbSkills(db)]))
     db.get_skills_with_content = original
 
-    warnings: List[str] = []
-    monkeypatch.setattr("agno.agent._storage.log_warning", warnings.append)
+    messages: List[str] = []
+    monkeypatch.setattr("agno.agent._storage.log_debug", messages.append)
     config = agent.to_dict()
 
     assert "skills" not in config
-    assert any("will not be saved" in w for w in warnings)
+    assert any("will not be saved" in m for m in messages)
 
 
 def test_get_agent_by_id_resolves_skills(tmp_path):
@@ -503,16 +504,45 @@ def test_resave_after_successful_empty_load_omits_skills(tmp_path):
     assert "skills" not in db.get_config(component_id="empty-agent")["config"]
 
 
-def test_to_dict_with_empty_skills_warns_and_omits_key(monkeypatch):
+def test_to_dict_with_empty_skills_omits_key_with_a_trace(monkeypatch):
     """A genuinely empty Skills — nothing configured, nothing loaded — is not persisted."""
     agent = Agent(name="test-agent", skills=Skills(loaders=[]))
 
-    warnings: List[str] = []
-    monkeypatch.setattr("agno.agent._storage.log_warning", warnings.append)
+    messages: List[str] = []
+    monkeypatch.setattr("agno.agent._storage.log_debug", messages.append)
     config = agent.to_dict()
 
     assert "skills" not in config
-    assert any("will not be saved" in w for w in warnings)
+    assert any("will not be saved" in m for m in messages)
+
+
+def test_local_only_agent_warns_once_across_saves(tmp_path, caplog):
+    """Two saves and a to_dict of an agent with only local skills log one warning, not one
+    per skill per call; it names the skills and says how to persist them."""
+    db = _make_db(tmp_path)
+    agent = Agent(name="local-only", id="local-only", db=db, skills=_make_skills())
+    assert agent.skills.get_skill_names()
+
+    with caplog.at_level(logging.WARNING):
+        agent.save()
+        agent.save()
+        agent.to_dict()
+    warnings = [record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING]
+    assert len(warnings) == 1, warnings
+    assert all(name in warnings[0] for name in agent.skills.get_skill_names())
+    assert "publish" in warnings[0]
+
+
+def test_database_backed_agent_warns_zero_times_on_save(tmp_path, caplog):
+    db = _make_db(tmp_path)
+    _create_skill_row(db)
+    agent = Agent(name="db-backed", id="db-backed", db=db, skills=Skills(loaders=[DbSkills(db)]))
+
+    with caplog.at_level(logging.WARNING):
+        agent.save()
+        agent.save()
+        agent.to_dict()
+    assert [record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING] == []
 
 
 def test_studio_load_resolves_skills(tmp_path):

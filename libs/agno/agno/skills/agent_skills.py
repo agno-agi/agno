@@ -53,6 +53,7 @@ class Skills:
         # from here; a failed refresh falls back to it.
         self._loader_results: Dict[int, List[Skill]] = {}
         self._refresh_lock: Optional[asyncio.Lock] = None  # Lazily created lock for the async refresh
+        self._warned_unsaved_skills = False
         self._load_skills()
 
     def _load_skills(self) -> None:
@@ -218,8 +219,9 @@ class Skills:
         """Get the skill names a stored agent or team saves to re-resolve this object.
 
         Only DbSkills-produced skills are saved (other sources would resolve to the wrong
-        row or nothing; they are skipped with a warning), plus each database loader's
-        configured names, so a save during an outage preserves them instead of erasing.
+        row or nothing; they are skipped, with one warning per instance naming them), plus
+        each database loader's configured names, so a save during an outage preserves them
+        instead of erasing.
 
         Returns:
             A list of skill names, loaded first, without duplicates.
@@ -234,14 +236,20 @@ class Skills:
                 source[skill.name] = loader
 
         names = []
+        skipped = []
         for name in self._skills:
             if isinstance(source.get(name), DbSkills):
                 names.append(name)
             else:
-                log_warning(
-                    f"Skill '{name}' did not come from the skills table and will not be saved; "
-                    "publish it to the table to persist it."
-                )
+                skipped.append(name)
+        # Once per instance: every save and to_dict comes through here, and an agent with
+        # only local skills would otherwise repeat this on each.
+        if skipped and not self._warned_unsaved_skills:
+            self._warned_unsaved_skills = True
+            log_warning(
+                f"Skills {skipped} did not come from the skills table and will not be saved; "
+                "publish them to the table to persist them."
+            )
         seen = set(names)
         for loader in self.loaders:
             if isinstance(loader, DbSkills) and loader.names:

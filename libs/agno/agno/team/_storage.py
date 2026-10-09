@@ -676,7 +676,7 @@ def to_dict(team: "Team") -> Dict[str, Any]:
             if type(team.skills.executor) is not LocalSkillExecutor:
                 config["skills"]["requires_executor"] = True
         else:
-            log_warning("Team skills hold no skills to reference; skills will not be saved.")
+            log_debug("Team skills hold no skills to reference; skills will not be saved.")
 
     # --- Tools ---
     if team.tools and isinstance(team.tools, list):
