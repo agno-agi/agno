@@ -56,6 +56,7 @@ Use `AGENT_OS_PORT` to move the server from port `7777` and
 `rest_api.py` serves an AgentOS whose agent carries a SQLite database, which
 is what exposes the `/skills` management endpoints, plus a `DbSkills` loader
 so the agent resolves its skills from the same table the API manages.
+Database-backed skills and the `/skills` endpoints need a Postgres or SQLite database.
 No API key is needed: the endpoints never invoke the model.
 
 Start the server:

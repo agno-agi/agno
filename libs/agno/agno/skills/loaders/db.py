@@ -42,7 +42,8 @@ class DbSkills(SkillLoader):
     """Loads skills from the database's skills table.
 
     The database-backed sibling of LocalSkills: rows are read in one batched query
-    and each becomes a content-carrying Skill via skill_from_row().
+    and each becomes a content-carrying Skill via skill_from_row(). Postgres and SQLite
+    (sync and async) implement the table; other backends raise NotImplementedError.
 
     Args:
         db: Database with the skills methods. A sync backend serves both load()
