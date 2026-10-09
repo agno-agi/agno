@@ -228,3 +228,21 @@ in memory and invoked its printer. No source defaults were changed.
 These results verify the current Claude cookbook flows. They do not establish
 live history/resume, compaction, disconnect survival, durable retries,
 multi-replica recovery, skill/plugin execution or sandbox isolation.
+
+
+### Claude streamed tools through print_response — 2026-10-09
+
+**Status:** PASS
+
+**Description:** Simplified `claude/tools.py` to
+`result = agent.print_response(prompt, stream=True)`. The live test executes
+its actual main block, checks the Tool Calls panel, and reads the returned
+RunOutput to verify successful tool results contain both fixture files.
+
+**Result:** 1 passed, 8 deselected in 6.71s, without retries, using
+`AGNO_TEST_CLAUDE_SDK=1` and `-k 'claude and tools'`. Claude returned COMPLETED,
+two successful Read results and correct shipping fees. Fixture hashes remained
+unchanged. Tested `e1d1f5a48c` plus this update in the normal checkout, with the
+same SDK/model environment as the preceding live acceptance run. Required
+format/validation scripts and the provider pattern check passed. Raw evidence
+is retained under `.context/claude-tools-printer/`.

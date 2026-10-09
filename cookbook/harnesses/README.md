@@ -31,7 +31,7 @@ interpreter for installation, examples and tests.
 |---|---|---|
 | 1. First run | `basic.py` | An answer, Agno run ID and terminal status |
 | 2. Compare the SDK | `native_sdk.py` | The same prompt/model through the native SDK, with its own session/thread ID |
-| 3. Inspect code | `tools.py` | Text deltas, tool start/end events and actual file contents in tool results |
+| 3. Inspect code | `tools.py` | Streaming responses, visible tool calls and actual file contents in tool results |
 | 4. Serve it | `agent_os.py` | HTTP/SSE responses and a persisted run retrieved by run/session ID |
 
 Start with `python cookbook/harnesses/claude/basic.py` or

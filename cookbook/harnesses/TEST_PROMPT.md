@@ -38,7 +38,8 @@ individually. Check:
 
 - Basic and SDK examples both answer the inclusive threshold question with zero shipping.
 - Native and wrapped examples use the same prompt/model; compare their result objects and IDs.
-- Tools emit started/completed events and include real fixture contents.
+- Claude displays a Tool Calls panel; its returned `result.tools` contains real
+  fixture contents. Codex prints tool start/end events and returned contents.
 - The final explanation covers `small=8`, `boundary=0` and `large=0`.
 - All runs complete successfully and the fixture is unchanged.
 - An invalid model makes the script exit unsuccessfully, not print a false pass.

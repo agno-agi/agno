@@ -60,10 +60,11 @@ python cookbook/harnesses/claude/tools.py
 ```
 
 This time the policy is not supplied in the prompt: the harness must read
-`shipping.py` and `orders.json`. Observe text deltas and tool start/end events,
-including the returned file contents. Expect fees of 8, 0 and 0 dollars.
-The script checks that at least one tool succeeded; the live test also checks
-fixture contents in the output. Inspect the final explanation yourself.
+`shipping.py` and `orders.json`. `print_response(..., stream=True)` displays
+streaming text and a Tool Calls panel. Expect fees of 8, 0 and 0 dollars.
+The returned `result.tools` retains the full tool results; the live test checks
+those results contain the fixture data, rather than trusting the explanation.
+Use `agent.run(..., stream=True)` when you need to handle individual events.
 
 Only the SDK's `Read` tool is exposed, and `dontAsk` denies permission
 requests instead of waiting for unattended approval. `allowed_tools` alone

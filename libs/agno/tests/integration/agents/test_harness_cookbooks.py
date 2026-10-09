@@ -44,8 +44,22 @@ def _fixture_digest():
 def test_live_harness_script(provider, example, tmp_path):
     _require_live(provider)
     before = _fixture_digest()
+    command = [sys.executable, "-u", str(COOKBOOK / provider / example)]
+    tool_result_path = tmp_path / "run.json"
+    if provider == "claude" and example == "tools.py":
+        # Execute the actual main block and inspect the printer's returned result.
+        command = [
+            sys.executable,
+            "-u",
+            "-c",
+            "import runpy, sys; from pathlib import Path; "
+            "example = runpy.run_path(sys.argv[1], run_name='__main__'); "
+            "Path(sys.argv[2]).write_text(example['result'].to_json())",
+            str(COOKBOOK / provider / example),
+            str(tool_result_path),
+        ]
     result = subprocess.run(
-        [sys.executable, "-u", str(COOKBOOK / provider / example)],
+        command,
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -54,7 +68,14 @@ def test_live_harness_script(provider, example, tmp_path):
     (tmp_path / "output.log").write_text(result.stdout + result.stderr)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Status:" in result.stdout
-    if example == "tools.py":
+    if provider == "claude" and example == "tools.py":
+        assert "Tool Calls" in result.stdout and "Read(" in result.stdout
+        run = json.loads(tool_result_path.read_text())
+        assert run["status"] == "COMPLETED" and run["content"], run
+        results = [str(tool.get("result", "")) for tool in run["tools"] if not tool.get("tool_call_error")]
+        assert any("def shipping_fee" in value for value in results), results
+        assert any("subtotal" in value and "boundary" in value for value in results), results
+    elif example == "tools.py":
         assert "ToolCallStarted:" in result.stdout
         assert "ToolCallCompleted:" in result.stdout
         # The returned tool data must contain fixture content, not just a claimed read.
