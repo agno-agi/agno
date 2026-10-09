@@ -2,14 +2,14 @@
 
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from uuid import uuid4
 
 from sqlalchemy import Engine
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from agno.db.postgres.schemas import get_table_schema_definition
-from agno.db.utils import OS_METRICS_FIXED_KEYS
+from agno.db.utils import OS_METRICS_FIXED_KEYS, os_metrics_nested_run_ids
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
@@ -564,6 +564,19 @@ def build_os_metrics_run(row: Any) -> Dict[str, Any]:
         "member_responses": run.pop("member_responses"),
     }
     return run
+
+
+def build_os_metrics_runs(rows: Sequence[Any]) -> Tuple[List[Dict[str, Any]], Set[str]]:
+    """Build the runs of a day in their stored shape from the rows of the OS metrics runs query.
+
+    Args:
+        rows (Sequence[Any]): The rows of build_os_metrics_runs_query.
+
+    Returns:
+        Tuple[List[Dict[str, Any]], Set[str]]: The runs, and the ids of every run nested inside them.
+    """
+    runs = [build_os_metrics_run(row) for row in rows]
+    return runs, os_metrics_nested_run_ids(runs)
 
 
 def build_os_metrics_total_dates_query(

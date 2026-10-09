@@ -1,5 +1,6 @@
 """Integration tests for the OS Metrics related methods of the AsyncPostgresDb class"""
 
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 
@@ -8,7 +9,12 @@ import pytest_asyncio
 from sqlalchemy import inspect, select, text
 
 from agno.db.postgres import AsyncPostgresDb
-from agno.db.utils import merge_os_metrics_totals, resolve_os_metrics_fields, total_os_metrics_records
+from agno.db.utils import (
+    calculate_date_os_metrics,
+    merge_os_metrics_totals,
+    resolve_os_metrics_fields,
+    total_os_metrics_records,
+)
 from agno.metrics import MessageMetrics, ModelMetrics, RunMetrics
 from agno.models.message import Message
 from agno.run.agent import RunOutput
@@ -1328,3 +1334,24 @@ async def test_calculate_os_metrics_reads_nested_run_ids_in_chunks(
     assert stored_rows[(yesterday, "bob", "agent-2", "", "")]["token_metrics"]["input_tokens"] == 50
     total_row = (await _stored_total_rows(async_postgres_db_real))[(yesterday, "daily_total", "", "", "", "")]
     assert total_row["token_metrics"]["input_tokens"] == 50
+
+
+@pytest.mark.asyncio
+async def test_calculate_os_metrics_calculates_in_a_thread(
+    async_postgres_db_real: AsyncPostgresDb, sample_sessions_for_os_metrics, monkeypatch
+):
+    """Ensure a day is calculated in a thread, so a rebuild never blocks the event loop"""
+    for session in sample_sessions_for_os_metrics:
+        await _persist(async_postgres_db_real, session)
+    calculation_threads = []
+
+    def _calculate(*args):
+        calculation_threads.append(threading.current_thread())
+        return calculate_date_os_metrics(*args)
+
+    monkeypatch.setattr("agno.db.postgres.async_postgres.calculate_date_os_metrics", _calculate)
+
+    await async_postgres_db_real.calculate_os_metrics()
+
+    assert calculation_threads
+    assert threading.main_thread() not in calculation_threads

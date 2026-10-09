@@ -1,3 +1,4 @@
+import asyncio
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, cast
@@ -19,7 +20,7 @@ from agno.db.postgres.utils import (
     ais_table_available,
     ais_valid_table,
     apply_sorting,
-    build_os_metrics_run,
+    build_os_metrics_runs,
     build_os_metrics_runs_query,
     build_os_metrics_total_dates_query,
     build_os_metrics_totals,
@@ -64,7 +65,6 @@ from agno.db.utils import (
     os_metrics_dates_to_read,
     os_metrics_full_months,
     os_metrics_month_end,
-    os_metrics_nested_run_ids,
     os_metrics_rows_to_write,
     resolve_os_metrics_fields,
     table_schema_mismatch_error,
@@ -2573,16 +2573,17 @@ class AsyncPostgresDb(AsyncBaseDb):
                     sessions_result = await sess.execute(sessions_stmt)
                     sessions = [dict(record._mapping) for record in sessions_result.fetchall()]
 
-                    runs = []
+                    runs: List[Dict[str, Any]] = []
                     stored_run_ids: Set[str] = set()
                     if runs_table is not None:
                         runs_result = await sess.execute(
                             build_os_metrics_runs_query(runs_table, start_timestamp, end_timestamp)
                         )
-                        runs = [build_os_metrics_run(record) for record in runs_result.fetchall()]
+                        # Calculation steps run in a thread so they never block the event loop
+                        runs, nested_run_ids = await asyncio.to_thread(build_os_metrics_runs, runs_result.fetchall())
 
                         # A nested run also stored as a run of its own is counted from that row, whatever day it is on
-                        run_ids = sorted(os_metrics_nested_run_ids(runs))
+                        run_ids = sorted(nested_run_ids)
                         for start in range(0, len(run_ids), OS_METRICS_IN_LIST_LIMIT):
                             stored_stmt = select(runs_table.c.run_id).where(
                                 runs_table.c.run_id.in_(run_ids[start : start + OS_METRICS_IN_LIST_LIMIT])
@@ -2590,7 +2591,9 @@ class AsyncPostgresDb(AsyncBaseDb):
                             stored_ids_result = await sess.execute(stored_stmt)
                             stored_run_ids.update(record.run_id for record in stored_ids_result.fetchall())
 
-                    records = calculate_date_os_metrics(date_to_process, sessions, runs, stored_run_ids)
+                    records = await asyncio.to_thread(
+                        calculate_date_os_metrics, date_to_process, sessions, runs, stored_run_ids
+                    )
                     # A month row is dated the first day of its month, and is no row of that day
                     stored_rows_result = await sess.execute(
                         select(table).where(

@@ -29,7 +29,7 @@ from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
     OS_METRICS_IN_LIST_LIMIT,
     apply_sorting,
-    build_os_metrics_run,
+    build_os_metrics_runs,
     build_os_metrics_runs_query,
     build_os_metrics_total_dates_query,
     build_os_metrics_totals,
@@ -88,7 +88,6 @@ from agno.db.utils import (
     os_metrics_dates_to_read,
     os_metrics_full_months,
     os_metrics_month_end,
-    os_metrics_nested_run_ids,
     os_metrics_rows_to_write,
     resolve_os_metrics_fields,
     table_schema_mismatch_error,
@@ -3143,16 +3142,16 @@ class PostgresDb(BaseDb):
                     result = sess.execute(sessions_stmt).fetchall()
                     sessions = [dict(record._mapping) for record in result]
 
-                    runs = []
+                    runs: List[Dict[str, Any]] = []
                     stored_run_ids: Set[str] = set()
                     if runs_table is not None:
                         result = sess.execute(
                             build_os_metrics_runs_query(runs_table, start_timestamp, end_timestamp)
                         ).fetchall()
-                        runs = [build_os_metrics_run(record) for record in result]
+                        runs, nested_run_ids = build_os_metrics_runs(result)
 
                         # A nested run also stored as a run of its own is counted from that row, whatever day it is on
-                        run_ids = sorted(os_metrics_nested_run_ids(runs))
+                        run_ids = sorted(nested_run_ids)
                         for start in range(0, len(run_ids), OS_METRICS_IN_LIST_LIMIT):
                             stored_stmt = select(runs_table.c.run_id).where(
                                 runs_table.c.run_id.in_(run_ids[start : start + OS_METRICS_IN_LIST_LIMIT])
