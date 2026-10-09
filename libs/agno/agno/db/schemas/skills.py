@@ -82,6 +82,21 @@ class SkillRow:
         filtered = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**filtered)
 
+    def frontmatter(self) -> Dict[str, Any]:
+        """The row's descriptive fields shaped like SKILL.md frontmatter, for the skills validator.
+
+        Unset optionals are omitted rather than passed as None: the validator checks presence.
+        """
+        fields = {
+            "name": self.name,
+            "description": self.description,
+            "license": self.license,
+            "compatibility": self.compatibility,
+            "allowed-tools": self.allowed_tools,
+            "metadata": self.metadata,
+        }
+        return {key: value for key, value in fields.items() if value is not None}
+
     def content_errors(self) -> List[str]:
         """List what stops this row's content from becoming a Skill; empty means valid.
 

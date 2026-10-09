@@ -9,8 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agno.db.schemas.skills import SkillRow
 from agno.db.sqlite.schemas import SKILLS_TABLE_SCHEMA
-from agno.skills.errors import SkillError
-from agno.skills.loaders.db import skill_from_row
+from agno.skills.errors import SkillError, SkillValidationError
+from agno.skills.loaders.db import DbSkills, skill_from_row
+from agno.skills.validator import validate_metadata
 from agno.skills.loaders.local import LocalSkills
 
 # ============================================================================
@@ -434,6 +435,20 @@ def test_skill_row_from_dict_ignores_unknown_keys(skill_data):
     assert not hasattr(row, "not_a_column")
 
 
+def test_skill_row_frontmatter_is_what_the_validator_reads(skill_data):
+    """The row's descriptive fields, shaped like SKILL.md frontmatter: unset optionals are
+    omitted rather than passed as None, because the validator checks presence."""
+    row = SkillRow.from_dict({**skill_data, "id": "row-1", "license": None, "allowed_tools": None})
+
+    frontmatter = row.frontmatter()
+
+    assert frontmatter["name"] == skill_data["name"]
+    assert frontmatter["description"] == skill_data["description"]
+    assert "license" not in frontmatter and "allowed-tools" not in frontmatter
+    assert validate_metadata(frontmatter) == []
+    assert validate_metadata(SkillRow.from_dict({**skill_data, "id": "row-2", "name": "Bad/Name"}).frontmatter())
+
+
 def test_skill_from_row_passes_empty_dicts_through_verbatim():
     # {} is a valid content-carrying shape (a skill with no files). Collapsing it to
     # None would make the Skill look path-backed-without-a-path and fail validation.
@@ -553,6 +568,45 @@ def test_content_type_validation_allows_valid_shapes(sqlite_db, skill_data):
     assert updated["version"] == 2
     _, total = sqlite_db.get_skills()
     assert total == 2
+
+
+def test_create_skill_rejects_an_invalid_name_before_writing(sqlite_db, skill_data):
+    """Name and metadata are checked at the write boundary like content shape is, so a row
+    the loader would refuse never reaches the table."""
+    for _ in range(2):
+        with pytest.raises(SkillValidationError, match="Bad/Name"):
+            sqlite_db.create_skill({**skill_data, "name": "Bad/Name"})
+        assert sqlite_db.get_skill("Bad/Name") is None
+
+
+def test_update_skill_rejects_a_merged_row_that_would_be_invalid(sqlite_db, skill_data):
+    """The row as it would be after the patch is validated, and a rejected patch leaves
+    the stored row and its version untouched."""
+    sqlite_db.create_skill(skill_data)
+    for _ in range(2):
+        with pytest.raises(SkillValidationError, match="description"):
+            sqlite_db.update_skill(skill_data["name"], 1, description="")
+        row = sqlite_db.get_skill(skill_data["name"])
+        assert row["version"] == 1
+        assert row["description"] == skill_data["description"]
+
+
+def test_valid_create_and_update_pass_write_validation(sqlite_db, skill_data):
+    """A patch is validated as the merged row, so a description-only update is not refused
+    for lacking the name it never carried."""
+    created = sqlite_db.create_skill(skill_data)
+    updated = sqlite_db.update_skill(skill_data["name"], created["version"], description="Updated description")
+    assert updated["description"] == "Updated description"
+    assert updated["version"] == 2
+
+
+def test_rejected_create_leaves_the_loader_working(sqlite_db, skill_data):
+    """One stored bad name would make every unscoped DbSkills(db) raise at construction."""
+    sqlite_db.create_skill(skill_data)
+    for _ in range(2):
+        with pytest.raises(SkillValidationError):
+            sqlite_db.create_skill({**skill_data, "name": "Bad/Name"})
+        assert [skill.name for skill in DbSkills(sqlite_db).load()] == [skill_data["name"]]
 
 
 def test_stored_row_reads_back_as_content_carrying_skill(sqlite_db, skill_folder):
@@ -909,6 +963,40 @@ async def test_async_rejects_non_string_content(async_sqlite_db, skill_data):
         await async_sqlite_db.update_skill("release-notes", 1, scripts={"bad.sh": 1})
     stored = await async_sqlite_db.get_skill("release-notes")
     assert stored["version"] == 1 and stored["scripts"] == skill_data["scripts"]
+
+
+async def test_async_create_skill_rejects_an_invalid_name_before_writing(async_sqlite_db, skill_data):
+    for _ in range(2):
+        with pytest.raises(SkillValidationError, match="Bad/Name"):
+            await async_sqlite_db.create_skill({**skill_data, "name": "Bad/Name"})
+        assert await async_sqlite_db.get_skill("Bad/Name") is None
+
+
+async def test_async_update_skill_rejects_a_merged_row_that_would_be_invalid(async_sqlite_db, skill_data):
+    await async_sqlite_db.create_skill(skill_data)
+    for _ in range(2):
+        with pytest.raises(SkillValidationError, match="description"):
+            await async_sqlite_db.update_skill(skill_data["name"], 1, description="")
+        row = await async_sqlite_db.get_skill(skill_data["name"])
+        assert row["version"] == 1
+        assert row["description"] == skill_data["description"]
+
+
+async def test_async_valid_create_and_update_pass_write_validation(async_sqlite_db, skill_data):
+    created = await async_sqlite_db.create_skill(skill_data)
+    updated = await async_sqlite_db.update_skill(
+        skill_data["name"], created["version"], description="Updated description"
+    )
+    assert updated["description"] == "Updated description"
+    assert updated["version"] == 2
+
+
+async def test_async_rejected_create_leaves_the_loader_working(async_sqlite_db, skill_data):
+    await async_sqlite_db.create_skill(skill_data)
+    for _ in range(2):
+        with pytest.raises(SkillValidationError):
+            await async_sqlite_db.create_skill({**skill_data, "name": "Bad/Name"})
+        assert [skill.name for skill in await DbSkills(async_sqlite_db).aload()] == [skill_data["name"]]
 
 
 async def test_async_same_name_different_user_rejected(async_sqlite_db, skill_data):

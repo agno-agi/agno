@@ -59,6 +59,7 @@ from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.skills.errors import SkillError, SkillValidationError
+from agno.skills.validator import validate_metadata
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import sanitize_postgres_string, sanitize_postgres_strings
 
@@ -6197,6 +6198,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             content_errors = row.content_errors()
             if content_errors:
                 raise SkillValidationError(f"Skill '{row.name}' has non-string content", errors=content_errors)
+            metadata_errors = validate_metadata(row.frontmatter())
+            if metadata_errors:
+                raise SkillValidationError(f"Skill validation failed for '{row.name}'", errors=metadata_errors)
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     await sess.execute(table.insert().values(**row.to_dict()))
@@ -6228,6 +6232,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             content_errors = updated_row.content_errors()
             if content_errors:
                 raise SkillValidationError(f"Skill '{updated_row.name}' has non-string content", errors=content_errors)
+            metadata_errors = validate_metadata(updated_row.frontmatter())
+            if metadata_errors:
+                raise SkillValidationError(f"Skill validation failed for '{updated_row.name}'", errors=metadata_errors)
             # One atomic statement: the version check and the bump succeed or fail together.
             # A stale expected_version matches no row and overwrites nothing.
             values = {**kwargs, "updated_at": int(time.time()), "version": expected_version + 1}

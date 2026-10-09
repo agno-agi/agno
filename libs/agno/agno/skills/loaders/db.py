@@ -118,7 +118,7 @@ class DbSkills(SkillLoader):
         for row_data in rows:
             row = SkillRow.from_dict(row_data)
             if self.validate:
-                errors = validate_metadata(self._row_metadata(row))
+                errors = validate_metadata(row.frontmatter())
                 if errors:
                     raise SkillValidationError(
                         f"Skill validation failed for '{row.name}'",
@@ -132,16 +132,3 @@ class DbSkills(SkillLoader):
 
         log_debug(f"Loaded {len(skills)} skills from the database")
         return skills
-
-    def _row_metadata(self, row: "SkillRow") -> Dict[str, Any]:
-        """Shape a row's descriptive fields like SKILL.md frontmatter for validate_metadata."""
-        fields = {
-            "name": row.name,
-            "description": row.description,
-            "license": row.license,
-            "compatibility": row.compatibility,
-            "allowed-tools": row.allowed_tools,
-            "metadata": row.metadata,
-        }
-        # Unset optionals are omitted, not passed as None: the validator checks presence.
-        return {key: value for key, value in fields.items() if value is not None}

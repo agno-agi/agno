@@ -138,9 +138,15 @@ def test_load_missing_name_warns_and_loads_rest(sqlite_db, skill_data, monkeypat
 
 
 def test_validate_rejects_invalid_stored_name(sqlite_db, skill_data) -> None:
-    """Test that validation catches a stored skill the write path did not spec-check."""
-    # create_skill validates content shape, not name format, so this row can exist.
-    sqlite_db.create_skill({**skill_data, "name": "Invalid_Name"})
+    """Test that validation catches a stored skill that got past the write path's checks."""
+    from agno.db.schemas.skills import SkillRow
+
+    # create_skill refuses the name, so the row goes in underneath it, the way a
+    # migration or a hand-written insert would put it there.
+    table = sqlite_db._get_table(table_type="skills", create_table_if_not_found=True)
+    row = SkillRow.from_dict({**skill_data, "id": "invalid-row", "name": "Invalid_Name"})
+    with sqlite_db.Session() as sess, sess.begin():
+        sess.execute(table.insert().values(**row.to_dict()))
 
     with pytest.raises(SkillValidationError, match="Invalid_Name"):
         DbSkills(sqlite_db).load()
