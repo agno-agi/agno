@@ -155,3 +155,20 @@ no provider): `note-taker` stored `learning: True`, rehydrated through
 live pass.
 
 ---
+
+### registry_discover.py
+
+**Status:** PASS
+
+**Test mode:** LOCAL (no model call)
+
+**Description:** Served an internal agent carrying `run_sql` and `send_email`
+and read `GET /registry` with `Registry(discover=True)`, `discover=False`, and
+`discover={"model"}`. Run on 2026-10-07 with `.venvs/demo/bin/python` and
+`PYTHONPATH` set to this worktree's `libs/agno`.
+
+**Result:** Default listed `calculator`, `run_sql`, `send_email` and the
+internal agent; `False` listed only `calculator` and no agents; `{"model"}`
+listed only `calculator` among tools and discovered `gpt-5.6-luna`.
+
+---

@@ -24,7 +24,7 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
-from agno.registry import Registry, ToolSource
+from agno.registry import Registry, ResourceSource
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
@@ -2333,7 +2333,7 @@ def _collect_fallback_models(owner: Any, registry: Registry) -> None:
     if isinstance(fallback_models, list):
         for fallback_model in fallback_models:
             # May contain plain string ids; Registry.add_model ignores non-Model values
-            registry.add_model(fallback_model)
+            registry.add_model(fallback_model, source=ResourceSource.DISCOVERED)
 
     fallback_config = getattr(owner, "fallback_config", None)
     if fallback_config is not None:
@@ -2341,7 +2341,7 @@ def _collect_fallback_models(owner: Any, registry: Registry) -> None:
             models = getattr(fallback_config, attr, None)
             if isinstance(models, list):
                 for fallback_model in models:
-                    registry.add_model(fallback_model)
+                    registry.add_model(fallback_model, source=ResourceSource.DISCOVERED)
 
 
 def _collect_components_from_knowledge(knowledge: Any, registry: Registry) -> None:
@@ -2354,8 +2354,8 @@ def _collect_components_from_knowledge(knowledge: Any, registry: Registry) -> No
     if knowledge is None:
         return
     registry.add_knowledge(knowledge, mirrored=True)
-    registry.add_vector_db(getattr(knowledge, "vector_db", None))
-    registry.add_db(getattr(knowledge, "contents_db", None))
+    registry.add_vector_db(getattr(knowledge, "vector_db", None), source=ResourceSource.DISCOVERED)
+    registry.add_db(getattr(knowledge, "contents_db", None), source=ResourceSource.DISCOVERED)
 
 
 def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[int]) -> None:
@@ -2368,29 +2368,29 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
         return
     visited.add(id(agent))
 
-    registry.add_model(getattr(agent, "model", None))
-    registry.add_model(getattr(agent, "reasoning_model", None))
-    registry.add_model(getattr(agent, "parser_model", None))
-    registry.add_model(getattr(agent, "output_model", None))
+    registry.add_model(getattr(agent, "model", None), source=ResourceSource.DISCOVERED)
+    registry.add_model(getattr(agent, "reasoning_model", None), source=ResourceSource.DISCOVERED)
+    registry.add_model(getattr(agent, "parser_model", None), source=ResourceSource.DISCOVERED)
+    registry.add_model(getattr(agent, "output_model", None), source=ResourceSource.DISCOVERED)
     _collect_fallback_models(agent, registry)
 
     tools = getattr(agent, "tools", None)
     if isinstance(tools, list):
         for tool in tools:
-            registry.add_tool(tool, source=ToolSource.DISCOVERED)
+            registry.add_tool(tool, source=ResourceSource.DISCOVERED)
 
-    registry.add_schema(getattr(agent, "input_schema", None))
-    registry.add_schema(getattr(agent, "output_schema", None))
-    registry.add_db(getattr(agent, "db", None))
+    registry.add_schema(getattr(agent, "input_schema", None), source=ResourceSource.DISCOVERED)
+    registry.add_schema(getattr(agent, "output_schema", None), source=ResourceSource.DISCOVERED)
+    registry.add_db(getattr(agent, "db", None), source=ResourceSource.DISCOVERED)
     for filesystem, _read_only in getattr(agent, "filesystems", []):
         filesystem_backend = getattr(filesystem, "backend", None)
-        registry.add_db(getattr(filesystem_backend, "db", None))
+        registry.add_db(getattr(filesystem_backend, "db", None), source=ResourceSource.DISCOVERED)
     _collect_components_from_knowledge(getattr(agent, "knowledge", None), registry)
     # A named LearningMachine on a code-defined component is a registry
     # resource: its stored config references it by name, so the registry the
     # AgentOS resolves through must hold it. add_learning ignores True, None
     # and unnamed (inline) machines.
-    registry.add_learning(getattr(agent, "learning", None))
+    registry.add_learning(getattr(agent, "learning", None), source=ResourceSource.DISCOVERED)
 
 
 def collect_components_from_team(team: Any, registry: Registry, visited: Set[int]) -> None:
@@ -2399,22 +2399,22 @@ def collect_components_from_team(team: Any, registry: Registry, visited: Set[int
         return
     visited.add(id(team))
 
-    registry.add_model(getattr(team, "model", None))
-    registry.add_model(getattr(team, "reasoning_model", None))
-    registry.add_model(getattr(team, "parser_model", None))
-    registry.add_model(getattr(team, "output_model", None))
+    registry.add_model(getattr(team, "model", None), source=ResourceSource.DISCOVERED)
+    registry.add_model(getattr(team, "reasoning_model", None), source=ResourceSource.DISCOVERED)
+    registry.add_model(getattr(team, "parser_model", None), source=ResourceSource.DISCOVERED)
+    registry.add_model(getattr(team, "output_model", None), source=ResourceSource.DISCOVERED)
     _collect_fallback_models(team, registry)
 
     tools = getattr(team, "tools", None)
     if isinstance(tools, list):
         for tool in tools:
-            registry.add_tool(tool, source=ToolSource.DISCOVERED)
+            registry.add_tool(tool, source=ResourceSource.DISCOVERED)
 
-    registry.add_schema(getattr(team, "input_schema", None))
-    registry.add_schema(getattr(team, "output_schema", None))
-    registry.add_db(getattr(team, "db", None))
+    registry.add_schema(getattr(team, "input_schema", None), source=ResourceSource.DISCOVERED)
+    registry.add_schema(getattr(team, "output_schema", None), source=ResourceSource.DISCOVERED)
+    registry.add_db(getattr(team, "db", None), source=ResourceSource.DISCOVERED)
     _collect_components_from_knowledge(getattr(team, "knowledge", None), registry)
-    registry.add_learning(getattr(team, "learning", None))
+    registry.add_learning(getattr(team, "learning", None), source=ResourceSource.DISCOVERED)
 
     members = getattr(team, "members", None)
     if isinstance(members, list):
@@ -2431,8 +2431,8 @@ def collect_components_from_workflow(workflow: Any, registry: Registry, visited:
         return
     visited.add(id(workflow))
 
-    registry.add_schema(getattr(workflow, "input_schema", None))
-    registry.add_db(getattr(workflow, "db", None))
+    registry.add_schema(getattr(workflow, "input_schema", None), source=ResourceSource.DISCOVERED)
+    registry.add_db(getattr(workflow, "db", None), source=ResourceSource.DISCOVERED)
 
     # Agentic workflow coordinator (WorkflowAgent is an Agent subclass)
     workflow_agent = getattr(workflow, "agent", None)
@@ -2480,7 +2480,7 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
         if nested_workflow is not None:
             collect_components_from_workflow(nested_workflow, registry, visited)
         if callable(getattr(step, "executor", None)):
-            registry.add_function(step.executor)
+            registry.add_function(step.executor, source=ResourceSource.DISCOVERED)
 
     elif isinstance(step, Agent):
         collect_components_from_agent(step, registry, visited)
@@ -2494,11 +2494,11 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
     elif isinstance(step, (Steps, Loop, Parallel, Condition, Router)):
         # Container-level callable refs resolve by function name at rehydration.
         if isinstance(step, Condition) and callable(getattr(step, "evaluator", None)):
-            registry.add_function(step.evaluator)
+            registry.add_function(step.evaluator, source=ResourceSource.DISCOVERED)
         if isinstance(step, Router) and callable(getattr(step, "selector", None)):
-            registry.add_function(step.selector)
+            registry.add_function(step.selector, source=ResourceSource.DISCOVERED)
         if isinstance(step, Loop) and callable(getattr(step, "end_condition", None)):
-            registry.add_function(step.end_condition)
+            registry.add_function(step.end_condition, source=ResourceSource.DISCOVERED)
         # Walk every sub-step container: `steps` (all), `else_steps` (Condition)
         # and `choices` (Router, before it is prepared into `steps`).
         for attr in ("steps", "else_steps", "choices"):
@@ -2509,7 +2509,7 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
 
     elif callable(step):
         # A bare callable used directly as a step serializes as an executor ref.
-        registry.add_function(step)
+        registry.add_function(step, source=ResourceSource.DISCOVERED)
 
 
 def collect_components_from_os(

@@ -463,6 +463,101 @@ class TestPopulateRegistryComponentsNested:
         assert ("openai", "route-model") in keys
 
 
+class TestRegistryDiscover:
+    """AgentOS honors the registry's discover setting across the whole served tree."""
+
+    @staticmethod
+    def _served_tree(tmp_path):
+        def agent_tool(x: str) -> str:
+            """Echo."""
+            return x
+
+        def member_tool(x: str) -> str:
+            """Echo."""
+            return x
+
+        def step_tool(x: str) -> str:
+            """Echo."""
+            return x
+
+        kb = Knowledge(name="KB", contents_db=SqliteDb(db_file=str(tmp_path / "kb.db")))
+        agent = Agent(
+            name="A1",
+            id="a1",
+            model=_model("agent-model"),
+            tools=[agent_tool],
+            knowledge=kb,
+            memory_manager=MemoryManager(id="mm-1"),
+            db=SqliteDb(db_file=str(tmp_path / "agent.db"), id="agent-db"),
+            telemetry=False,
+        )
+        member = Agent(name="M", id="m", model=_model("member-model"), tools=[member_tool], telemetry=False)
+        team = Team(name="T", id="t", members=[member], model=_model("team-model"), telemetry=False)
+        step_agent = Agent(name="S", id="s", model=_model("step-model"), tools=[step_tool], telemetry=False)
+        workflow = Workflow(name="WF", id="wf", steps=[Step(name="s", agent=step_agent)])
+        return agent, team, workflow
+
+    def test_default_discovers_everything(self, tmp_path):
+        agent, team, workflow = self._served_tree(tmp_path)
+
+        os = AgentOS(agents=[agent], teams=[team], workflows=[workflow], telemetry=False)
+
+        assert {"agent_tool", "member_tool", "step_tool"} <= _tool_names(os.registry)
+        assert os.registry.get_agent("a1") is agent
+        assert os.registry.get_team("t") is team
+        assert os.registry.get_workflow("wf") is workflow
+
+    def test_false_keeps_only_declared_resources(self, tmp_path):
+        agent, team, workflow = self._served_tree(tmp_path)
+        os_db = SqliteDb(db_file=str(tmp_path / "os.db"), id="os-db")
+
+        def declared_tool(x: str) -> str:
+            """Echo."""
+            return x
+
+        declared_model = _model("declared-model")
+        registry = Registry(tools=[declared_tool], models=[declared_model], discover=False)
+
+        os = AgentOS(agents=[agent], teams=[team], workflows=[workflow], db=os_db, registry=registry, telemetry=False)
+
+        assert _tool_names(os.registry) == {"declared_tool"}
+        assert os.registry.models == [declared_model]
+        assert os.registry.dbs == [os_db]
+        assert os.registry.knowledge == []
+        assert os.registry.memory_managers == []
+        assert os.registry.agents == []
+        assert os.registry.teams == []
+        assert os.registry.workflows == []
+
+    def test_collection_discovers_only_listed_kinds(self, tmp_path):
+        agent, team, workflow = self._served_tree(tmp_path)
+
+        os = AgentOS(
+            agents=[agent],
+            teams=[team],
+            workflows=[workflow],
+            registry=Registry(discover={"model", "agent"}),
+            telemetry=False,
+        )
+
+        assert os.registry.tools == []
+        assert {"agent-model", "member-model", "step-model", "team-model"} <= {m.id for m in os.registry.models}
+        assert os.registry.get_agent("a1") is agent
+        assert os.registry.teams == []
+        assert os.registry.workflows == []
+
+    def test_setting_survives_resync(self, tmp_path):
+        agent, team, workflow = self._served_tree(tmp_path)
+
+        os = AgentOS(
+            agents=[agent], teams=[team], workflows=[workflow], registry=Registry(discover=False), telemetry=False
+        )
+        os.resync(app=os.get_app())
+
+        assert os.registry.tools == []
+        assert os.registry.agents == []
+
+
 class TestPopulateRegistryComponentsSafety:
     """The walk degrades gracefully and never breaks construction."""
 

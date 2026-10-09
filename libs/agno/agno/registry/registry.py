@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Type, Union
+from typing import TYPE_CHECKING, Any, Callable, Collection, Dict, Iterator, List, Optional, Set, Tuple, Type, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
@@ -26,17 +26,39 @@ EntrypointKey = Union[str, Tuple[str, str]]
 EntrypointSource = Union[Function, Callable]
 
 
-class ToolSource(str, Enum):
-    """How a tool entered the registry.
+class RegistryResourceType(str, Enum):
+    """Kinds of resources a registry holds."""
 
-    DECLARED tools were registered directly on the registry and are buildable
-    from Studio. DISCOVERED tools were found on a registered component's own
-    tool list: they stay resolvable at rehydration, but Studio's palette policy
-    refuses to wire them into new components unless explicitly allow-listed.
+    TOOL = "tool"
+    MODEL = "model"
+    DB = "db"
+    VECTOR_DB = "vector_db"
+    SCHEMA = "schema"
+    FUNCTION = "function"
+    AGENT = "agent"
+    TEAM = "team"
+    WORKFLOW = "workflow"
+    KNOWLEDGE = "knowledge"
+    MEMORY_MANAGER = "memory_manager"
+    SESSION_SUMMARY_MANAGER = "session_summary_manager"
+    LEARNING = "learning"
+
+
+class ResourceSource(str, Enum):
+    """How a resource entered the registry.
+
+    DECLARED resources were registered directly on the registry. DISCOVERED
+    resources were found on a component an AgentOS serves; the registry's
+    ``discover`` setting decides which kinds are accepted. A discovered tool
+    stays resolvable at rehydration, but Studio's palette policy refuses to
+    wire it into new components unless explicitly allow-listed.
     """
 
     DECLARED = "declared"
     DISCOVERED = "discovered"
+
+
+ToolSource = ResourceSource
 
 
 def _model_identity(model: Model) -> tuple:
@@ -76,6 +98,17 @@ class Registry:
     """
     Registry is used to manage non serializable objects like tools, models, databases, vector databases,
     agents, teams, and workflows.
+
+    An AgentOS adds what it finds on the components it serves (their tools,
+    models, dbs, and the components themselves) to the registry it holds, so
+    stored components and Studio can resolve them. ``discover`` controls that:
+    True (the default) accepts every kind, False accepts none so the registry
+    holds only what is declared on it, and a collection of
+    ``RegistryResourceType`` values (or their strings, e.g. ``{"model", "db"}``)
+    accepts only those kinds. A stored component referencing an undiscovered
+    resource cannot resolve it: an undiscovered tool loads without an
+    entrypoint, and an undiscovered agent or team cannot be a member or step of
+    a stored team or workflow.
     """
 
     name: Optional[str] = None
@@ -122,6 +155,32 @@ class Registry:
     # has no db that can serve the catalog.
     component_db: Optional[BaseDb] = field(default=None, init=False, repr=False)
     component_db_declared: bool = field(default=False, init=False, repr=False)
+    discover: Union[bool, Collection[Union[RegistryResourceType, str]]] = True
+
+    def __post_init__(self) -> None:
+        if isinstance(self.discover, bool):
+            return
+        if isinstance(self.discover, str):
+            raise ValueError("Registry(discover=...) takes a collection of resource types, not a single string.")
+        kinds = set()
+        for kind in self.discover:
+            try:
+                kinds.add(RegistryResourceType(kind))
+            except ValueError:
+                valid = ", ".join(k.value for k in RegistryResourceType)
+                raise ValueError(
+                    f"Registry(discover=...) got unknown resource type {kind!r}; expected one of: {valid}."
+                ) from None
+        self.discover = frozenset(kinds)
+
+    def discovers(self, kind: Union[RegistryResourceType, str]) -> bool:
+        """Whether resources of this kind found on served components are added to the registry."""
+        if isinstance(self.discover, bool):
+            return self.discover
+        return RegistryResourceType(kind) in self.discover
+
+    def _refuses(self, kind: RegistryResourceType, source: Union[ResourceSource, str]) -> bool:
+        return source == ResourceSource.DISCOVERED and not self.discovers(kind)
 
     @cached_property
     def _entrypoint_lookup(self) -> Dict[EntrypointKey, EntrypointSource]:
@@ -395,7 +454,7 @@ class Registry:
             )
         return func
 
-    def add_model(self, model: Any) -> None:
+    def add_model(self, model: Any, source: Union[ResourceSource, str] = ResourceSource.DECLARED) -> None:
         """Add a model unless an equivalent one (same provider class and id) is already present.
 
         Models of the same class that share an id are interchangeable catalog entries, so
@@ -404,7 +463,7 @@ class Registry:
         (both report provider "OpenAI") or the three distinct Azure model classes (all report
         provider "Azure"). Non-Model values (e.g. plain string ids) are ignored.
         """
-        if not isinstance(model, Model):
+        if not isinstance(model, Model) or self._refuses(RegistryResourceType.MODEL, source):
             return
         key = _model_identity(model)
         for existing in self.models:
@@ -414,7 +473,7 @@ class Registry:
                 return
         self.models.append(model)
 
-    def add_tool(self, tool: Any, source: Union[ToolSource, str] = ToolSource.DECLARED) -> None:
+    def add_tool(self, tool: Any, source: Union[ResourceSource, str] = ResourceSource.DECLARED) -> None:
         """Add a tool unless an equivalent one is already present.
 
         ``source`` says how the tool arrived: ``ToolSource.DECLARED`` (the
@@ -463,13 +522,15 @@ class Registry:
         """
         if not (isinstance(tool, (Toolkit, Function)) or callable(tool)):
             return
+        if self._refuses(RegistryResourceType.TOOL, source):
+            return
 
         name = _tool_resource_name(tool)
         # Read before the add, so the tool being added never counts as its own
         # claim: this asks whether some *other* tool already owns the name.
         # Only a fold consults it, so the scan is skipped on declarations.
         name_already_claimed = (
-            source == ToolSource.DISCOVERED
+            source == ResourceSource.DISCOVERED
             and name is not None
             and any(_tool_resource_name(t) == name for t in self.tools)
         )
@@ -480,7 +541,7 @@ class Registry:
 
         if name is None:
             return
-        if source == ToolSource.DISCOVERED:
+        if source == ResourceSource.DISCOVERED:
             # Discovery makes every registered agent's own tools resolvable at
             # rehydration; resolvable is not the same as buildable. A name a
             # declaration already claims stays buildable: two toolkits can
@@ -488,7 +549,7 @@ class Registry:
             # second must not take the declared one out of the palette.
             if not name_already_claimed:
                 self.undeclared_tool_names.add(name)
-        elif source == ToolSource.DECLARED:
+        elif source == ResourceSource.DECLARED:
             # Declaring is the deployer putting the name in the palette, even
             # when the discovery got there first and even when this instance
             # dedupes against the discovered one.
@@ -556,13 +617,13 @@ class Registry:
             return self.component_db
         return self.dbs[0] if self.dbs else None
 
-    def add_db(self, db: Any) -> None:
+    def add_db(self, db: Any, source: Union[ResourceSource, str] = ResourceSource.DECLARED) -> None:
         """Add a database unless one with the same id (or the same instance) is already present.
 
         Only synchronous ``BaseDb`` instances are tracked, matching the registry's
         db rehydration which is synchronous (see ``get_db``).
         """
-        if not isinstance(db, BaseDb):
+        if not isinstance(db, BaseDb) or self._refuses(RegistryResourceType.DB, source):
             return
         db_id = getattr(db, "id", None)
         if db_id is not None:
@@ -579,9 +640,9 @@ class Registry:
             return
         self.dbs.append(db)
 
-    def add_vector_db(self, vector_db: Any) -> None:
+    def add_vector_db(self, vector_db: Any, source: Union[ResourceSource, str] = ResourceSource.DECLARED) -> None:
         """Add a vector db unless one with the same id/name (or the same instance) is already present."""
-        if not isinstance(vector_db, VectorDb):
+        if not isinstance(vector_db, VectorDb) or self._refuses(RegistryResourceType.VECTOR_DB, source):
             return
         key = getattr(vector_db, "id", None) or getattr(vector_db, "name", None)
         if key is not None:
@@ -598,7 +659,7 @@ class Registry:
             return
         self.vector_dbs.append(vector_db)
 
-    def add_function(self, func: Any) -> None:
+    def add_function(self, func: Any, source: Union[ResourceSource, str] = ResourceSource.DECLARED) -> None:
         """Add a plain callable unless one with the same name is already present.
 
         Workflow step executors, evaluators, selectors and end conditions
@@ -607,6 +668,8 @@ class Registry:
         be shadowed.
         """
         if not callable(func) or not getattr(func, "__name__", None):
+            return
+        if self._refuses(RegistryResourceType.FUNCTION, source):
             return
         existing = self.get_function(func.__name__)
         if existing is not None:
@@ -635,6 +698,8 @@ class Registry:
         name = getattr(knowledge, "name", None)
         if knowledge is None or name is None:
             return
+        if mirrored and not self.discovers(RegistryResourceType.KNOWLEDGE):
+            return
         existing = self.get_knowledge(name)
         if existing is not None:
             if existing is not knowledge:
@@ -655,7 +720,7 @@ class Registry:
         """Whether ``knowledge`` is in the registry only because a sync mirrored it."""
         return any(knowledge is kb for kb in self._mirrored_knowledge)
 
-    def add_learning(self, machine: Any) -> None:
+    def add_learning(self, machine: Any, source: Union[ResourceSource, str] = ResourceSource.DECLARED) -> None:
         """Add a LearningMachine unless one with the same name is already present.
 
         A machine resolves by name at rehydration, so only named machines are
@@ -664,6 +729,8 @@ class Registry:
         """
         name = getattr(machine, "name", None)
         if machine is None or not isinstance(name, str) or not name:
+            return
+        if self._refuses(RegistryResourceType.LEARNING, source):
             return
         existing = self.get_learning(name)
         if existing is not None:
@@ -677,13 +744,15 @@ class Registry:
             return
         self.learning.append(machine)
 
-    def add_schema(self, schema: Any) -> None:
+    def add_schema(self, schema: Any, source: Union[ResourceSource, str] = ResourceSource.DECLARED) -> None:
         """Add an input/output schema class unless one with the same name is already present.
 
         Schemas resolve by class name at rehydration. Inline dict schemas are
         not registrable and ride through serialization on their own.
         """
         if not (isinstance(schema, type) and issubclass(schema, BaseModel)):
+            return
+        if self._refuses(RegistryResourceType.SCHEMA, source):
             return
         existing = self.get_schema(schema.__name__)
         if existing is not None:
