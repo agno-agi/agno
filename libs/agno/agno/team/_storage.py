@@ -1321,9 +1321,8 @@ def from_dict(
     # Name references, re-resolved from the skills table like members by id.
     if "skills" in config and isinstance(config["skills"], dict):
         skill_names = config["skills"].get("names")
-        # config["db"] is already live from the block above and owns the team's skill rows,
-        # custom skills_table included; the caller's db only covers a config that carried
-        # none, which is how Studio and AgentOS load one saved without its own.
+        # config["db"] is already live from the block above and owns this team's skill rows,
+        # custom skills_table included; the caller's db covers only a config saved without one.
         skills_db = config.get("db") if config.get("db") is not None else db
         if skill_names and skills_db is not None:
             from agno.skills import DbSkills, Skills

@@ -344,12 +344,12 @@ def test_resave_during_outage_preserves_skill_names(tmp_path, monkeypatch):
 
     # On the class: the load resolves skills through the db it reconstructs from the
     # config, a different instance from the one this test holds.
-    monkeypatch.setattr(SqliteDb, "get_skills_with_content", boom)
-    loaded = get_team_by_id(db, team.id)
-    assert loaded is not None and loaded.skills is not None
-    assert loaded.skills.get_skill_names() == []
-    loaded.save()
-    monkeypatch.undo()
+    with monkeypatch.context() as patched:
+        patched.setattr(SqliteDb, "get_skills_with_content", boom)
+        loaded = get_team_by_id(db, team.id)
+        assert loaded is not None and loaded.skills is not None
+        assert loaded.skills.get_skill_names() == []
+        loaded.save()
 
     assert db.get_config(component_id=team.id)["config"]["skills"] == {"names": ["release-notes"]}
     recovered = get_team_by_id(db, team.id)

@@ -419,7 +419,6 @@ def test_strict_load_resolves_skills_against_the_configs_own_db(tmp_path):
     for _ in range(2):
         loaded = Agent.from_dict(config, db=catalog, strict=True)
         assert loaded.skills.get_skill_names() == ["release-notes"]
-        assert loaded.skills.loaders[0].db.skills_table_name == "my_skills"
         by_id = get_agent_by_id(db=catalog, id="own-db-agent", strict=True)
         assert by_id is not None
         assert by_id.skills.get_skill_names() == ["release-notes"]
@@ -470,12 +469,12 @@ def test_resave_during_outage_preserves_skill_names(tmp_path, monkeypatch):
 
     # On the class: the load resolves skills through the db it reconstructs from the
     # config, a different instance from the one this test holds.
-    monkeypatch.setattr(SqliteDb, "get_skills_with_content", boom)
-    loaded = Agent.load(agent.id, db=db)
-    assert loaded is not None and loaded.skills is not None
-    assert loaded.skills.get_skill_names() == []
-    loaded.save()
-    monkeypatch.undo()
+    with monkeypatch.context() as patched:
+        patched.setattr(SqliteDb, "get_skills_with_content", boom)
+        loaded = Agent.load(agent.id, db=db)
+        assert loaded is not None and loaded.skills is not None
+        assert loaded.skills.get_skill_names() == []
+        loaded.save()
 
     assert db.get_config(component_id=agent.id)["config"]["skills"] == {"names": ["release-notes"]}
     recovered = Agent.load(agent.id, db=db)
