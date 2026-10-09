@@ -718,10 +718,14 @@ class LanceDb(VectorDb):
             log_error("Table not initialized. Please create the table first")
             return None  # type: ignore
 
-        results = self.table.search(
-            query=query_embedding,
-            vector_column_name=self._vector_col,
-        ).limit(limit)
+        results = (
+            self.table.search(
+                query=query_embedding,
+                vector_column_name=self._vector_col,
+            )
+            .distance_type("dot" if self.distance == Distance.max_inner_product else self.distance.value)
+            .limit(limit)
+        )
 
         # ``prefilter=True`` runs the predicate before the ANN top-K; post-filtering
         # would silently truncate results.
@@ -761,6 +765,7 @@ class LanceDb(VectorDb):
             )
             .vector(query_embedding)
             .text(query)
+            .distance_type("dot" if self.distance == Distance.max_inner_product else self.distance.value)
             .limit(limit)
         )
 
