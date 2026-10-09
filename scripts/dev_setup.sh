@@ -5,15 +5,15 @@
 #    Agno Development Setup
 #
 #    Creates .venv with agnoctl and agno installed in editable mode,
-#    with everything the core dev loop needs: unit + integration tests,
-#    ./scripts/format.sh and ./scripts/validate.sh.
+#    with the same dependencies as the demo environment for local
+#    development and cookbooks, including tests, formatting and validation.
 #    Provider-SDK test dependencies live in ./scripts/test_setup.sh.
 #
 #    Usage: ./scripts/dev_setup.sh
 #
 ############################################################################
 
-set -e
+set -euo pipefail
 
 CURR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "${CURR_DIR}")"
@@ -42,7 +42,7 @@ echo -e "    ${DIM}Development Setup${NC}"
 echo ""
 
 # Preflight
-if [[ -n "$VIRTUAL_ENV" ]]; then
+if [[ -n "${VIRTUAL_ENV:-}" ]]; then
     echo "    Deactivate your current venv first."
     exit 1
 fi
@@ -65,26 +65,28 @@ uv venv "${VENV_DIR}" --python 3.12 --quiet
 # One resolve for both editables: the local agnoctl satisfies agno's
 # agnoctl dependency, so nothing is pulled from PyPI for it.
 echo ""
-echo -e "    ${DIM}Installing agnoctl[dev] and agno[dev] in editable mode...${NC}"
-echo -e "    ${DIM}> uv pip install -e libs/agnoctl[dev] -e libs/agno[dev]${NC}"
-VIRTUAL_ENV="${VENV_DIR}" uv pip install -e "${AGNOCTL_DIR}[dev]" -e "${AGNO_DIR}[dev]" --quiet
+echo -e "    ${DIM}Installing agnoctl[dev] and agno[demo] in editable mode...${NC}"
+echo -e "    ${DIM}> uv pip install -e libs/agnoctl[dev] -e libs/agno[demo]${NC}"
+uv pip install --python "${VENV_DIR}/bin/python" -e "${AGNOCTL_DIR}[dev]" -e "${AGNO_DIR}[demo]" --quiet
 
-# Copy activation command to clipboard
-ACTIVATE_CMD="source .venv/bin/activate"
+# Use an absolute, shell-escaped path so activation works from any directory.
+printf -v ACTIVATE_CMD 'source %q' "${VENV_DIR}/bin/activate"
+CLIPBOARD_MSG=""
 if command -v pbcopy &> /dev/null; then
-    echo -n "${ACTIVATE_CMD}" | pbcopy
-    CLIPBOARD_MSG="(Copied to clipboard. Just paste and hit enter.)"
+    if printf '%s' "${ACTIVATE_CMD}" | pbcopy 2>/dev/null; then
+        CLIPBOARD_MSG="(Copied to clipboard. Just paste and hit enter.)"
+    fi
 elif command -v xclip &> /dev/null; then
-    echo -n "${ACTIVATE_CMD}" | xclip -selection clipboard
-    CLIPBOARD_MSG="(Copied to clipboard. Just paste and hit enter.)"
-else
-    CLIPBOARD_MSG=""
+    if printf '%s' "${ACTIVATE_CMD}" | xclip -selection clipboard 2>/dev/null; then
+        CLIPBOARD_MSG="(Copied to clipboard. Just paste and hit enter.)"
+    fi
 fi
 
 echo ""
 echo -e "    ${BOLD}Done.${NC}"
 echo ""
 echo -e "    ${DIM}Activate:${NC}  ${ACTIVATE_CMD}"
+echo -e "    ${DIM}Cookbook:${NC}  python cookbook/<folder>/<file>.py"
 echo -e "    ${DIM}Test:${NC}      pytest libs/agno/tests/unit"
 echo -e "    ${DIM}Validate:${NC}  ./scripts/format.sh && ./scripts/validate.sh"
 echo ""
