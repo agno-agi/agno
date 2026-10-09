@@ -1,9 +1,11 @@
+import asyncio
 from unittest.mock import patch
 
 import httpx
 import pytest
 
 from agno.knowledge.chunking.fixed import FixedSizeChunking
+from agno.knowledge.chunking.strategy import ChunkingStrategy
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.utils.url_validation import is_host_allowed
 from agno.knowledge.reader.website_reader import WebsiteReader
@@ -217,32 +219,51 @@ async def test_async_read_basic(mock_html_content):
 
 
 @pytest.mark.asyncio
-async def test_async_read_with_chunking(mock_html_content):
-    reader = WebsiteReader(max_depth=1, max_links=1)
-    reader.chunk = True
+async def test_async_read_with_chunking():
+    reader = WebsiteReader(chunking_strategy=FixedSizeChunking(chunk_size=4, overlap=0))
+    crawler_result = {"https://example.com": "abcdefgh"}
 
-    # Create a simple crawler result to return
-    crawler_result = {"https://example.com": "This is the main content"}
-
-    # Create real Document objects instead of Mock
-    def mock_chunk_document(doc):
-        return [
-            doc,  # Original document
-            Document(
-                name=f"{doc.name}_chunk", id=f"{doc.id}_chunk", content="Chunked content", meta_data=doc.meta_data
-            ),
-        ]
-
-    # Mock the chunk_document method with our implementation
-    reader.chunk_document = mock_chunk_document
-
-    # Mock async_crawl to return a controlled result
     with patch.object(reader, "async_crawl", return_value=crawler_result):
         documents = await reader.async_read("https://example.com")
 
-        assert len(documents) == 2
-        assert documents[0].name == "https://example.com"
-        assert documents[1].name == "https://example.com_chunk"
+    assert [doc.content for doc in documents] == ["abcd", "efgh"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("chunk", [True, False])
+@pytest.mark.parametrize("name", [None, "Website"])
+async def test_async_read_respects_async_chunking(chunk, name):
+    class AsyncOnlyChunker(ChunkingStrategy):
+        def chunk(self, document):
+            raise AssertionError("The synchronous chunking method must not be used")
+
+        async def achunk(self, document):
+            await asyncio.sleep(0)
+            return [
+                Document(name=document.name, id=document.id, content=part, meta_data=document.meta_data)
+                for part in document.content.split("|")
+            ]
+
+    reader = WebsiteReader(chunking_strategy=AsyncOnlyChunker(), chunk=chunk)
+    crawler_result = {
+        "https://example.com": "first|second",
+        "https://example.com/page2": "third|fourth",
+    }
+
+    with patch.object(reader, "async_crawl", return_value=crawler_result):
+        documents = await reader.async_read("https://example.com", name=name)
+
+    assert [doc.content for doc in documents] == (
+        ["first", "second", "third", "fourth"] if chunk else ["first|second", "third|fourth"]
+    )
+    expected_urls = (
+        ["https://example.com", "https://example.com", "https://example.com/page2", "https://example.com/page2"]
+        if chunk
+        else ["https://example.com", "https://example.com/page2"]
+    )
+    assert [doc.id for doc in documents] == expected_urls
+    assert [doc.meta_data for doc in documents] == [{"url": url} for url in expected_urls]
+    assert [doc.name for doc in documents] == [name or "https://example.com"] * len(expected_urls)
 
 
 @pytest.mark.asyncio
