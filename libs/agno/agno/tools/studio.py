@@ -5091,6 +5091,7 @@ class StudioTools(Toolkit):
         "input_schema",
         "output_schema",
         "knowledge",
+        "skills",
         "memory_manager",
         "learning",
         "reasoning_model",

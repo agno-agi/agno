@@ -3773,6 +3773,28 @@ def test_studio_loads_component_with_broken_refs_for_repair(tmp_path):
     assert loaded.id == "repair-agent"
 
 
+def test_studio_dispatch_resolves_db_skills_for_an_agent_saved_without_its_own_db(tmp_path):
+    """An agent saved without a db of its own carries no db key, so the catalog db
+    is the only source for its saved skill names, on dispatch and read loads alike."""
+    from agno.agent._messages import get_system_message
+    from agno.skills import DbSkills, Skills
+    from agno.tools.studio_runner import StudioRunnerTools
+
+    db = SqliteDb(db_file=str(tmp_path / "studio_skills.db"))
+    db.create_skill({"name": "release-notes", "description": "Draft release notes", "instructions": "i"})
+    agent = Agent(id="skills-agent", name="S", model=OpenAIResponses(id="gpt-5.5"), skills=Skills([DbSkills(db)]))
+    version = agent.save(db=db)
+    assert "db" not in db.get_config(component_id="skills-agent", version=version)["config"]
+
+    runner = StudioRunnerTools(registry=Registry(), db=db)
+    for _ in range(2):
+        for for_dispatch in (True, False):
+            loaded = runner._load_agent_from_db("skills-agent", for_dispatch=for_dispatch)
+            assert loaded is not None and loaded.skills is not None, for_dispatch
+            assert loaded.skills.get_skill_names() == ["release-notes"]
+            assert "release-notes" in get_system_message(loaded, AgentSession(session_id="s")).content
+
+
 def _edit_version(out: Dict[str, Any]) -> int:
     """The version an edit produced, draft or published."""
     data = out["data"]
@@ -3823,6 +3845,41 @@ class TestEditPreservation:
         row = db.get_config(component_id="mm-agent", version=_edit_version(out))
         assert row["config"]["memory_manager"] == {"registry_id": "mm-stable"}
         assert row["config"]["knowledge"] == {"name": "handbook"}
+
+    def test_description_edit_preserves_skills(self, tmp_path):
+        from agno.skills import DbSkills, Skills
+
+        db = SqliteDb(db_file=str(tmp_path / "preserve_skills.db"))
+        db.create_skill({"name": "release-notes", "description": "Draft release notes", "instructions": "i"})
+        Agent(id="skills-agent", name="S", model=OpenAIResponses(id="gpt-5.5"), skills=Skills([DbSkills(db)])).save(
+            db=db
+        )
+
+        studio = StudioTools(registry=Registry(), db=db)
+        for round_number in (1, 2):
+            out = _loads(studio.edit_agent("skills-agent", description=f"edited {round_number}"))
+            assert out.get("status") == "edited"
+
+            row = db.get_config(component_id="skills-agent", version=_edit_version(out))
+            assert row["config"]["skills"] == {"names": ["release-notes"]}
+            assert row["config"]["description"] == f"edited {round_number}"
+
+    def test_preserve_step_restores_a_skills_block_the_lenient_load_dropped(self, tmp_path):
+        """A skills block is a reference the lenient load can drop, so the preserve
+        step copies it back from the stored config like the other reference keys."""
+        from agno.skills import DbSkills, Skills
+
+        db = SqliteDb(db_file=str(tmp_path / "preserve_skills_step.db"))
+        db.create_skill({"name": "release-notes", "description": "Draft release notes", "instructions": "i"})
+        Agent(id="skills-agent", name="S", model=OpenAIResponses(id="gpt-5.5"), skills=Skills([DbSkills(db)])).save(
+            db=db
+        )
+
+        studio = StudioTools(registry=Registry(), db=db)
+        config: Dict[str, Any] = {"id": "skills-agent", "name": "S"}
+        for _ in range(2):
+            studio._preserve_unresolved_keys("skills-agent", config, replaced_keys=set())
+            assert config["skills"] == {"names": ["release-notes"]}
 
     @pytest.mark.asyncio
     async def test_async_description_edit_preserves_unresolved_memory_manager(self, tmp_path):

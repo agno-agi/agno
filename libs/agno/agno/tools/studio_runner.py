@@ -1996,7 +1996,7 @@ class StudioRunnerTools(Toolkit):
         from agno.agent.agent import Agent
 
         try:
-            agent = Agent.from_dict(config, registry=self.registry, strict=for_dispatch)
+            agent = Agent.from_dict(config, registry=self.registry, strict=for_dispatch, db=self.db)
             agent.id = agent_id
             # The catalog db is a fallback only: a config-declared db (resolved
             # by from_dict, possibly with table overrides) must keep winning.
@@ -2019,7 +2019,7 @@ class StudioRunnerTools(Toolkit):
                 config,
                 "agent",
                 agent_id,
-                lambda: Agent.from_dict(config, registry=self.registry, strict=False),
+                lambda: Agent.from_dict(config, registry=self.registry, strict=False, db=self.db),
                 version=resolved_version,
             ) from rehydration_error
         except Exception:
