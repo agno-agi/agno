@@ -1,0 +1,89 @@
+# Test log
+
+## 2026-10-09
+
+### transcript_store.py
+
+**Status:** PASS
+
+**Description:** Replaces `session_store.py`. Runs replica A (first turn, stores a fact) and replica B (second agent instance, different working directory) against one database in a single process, printing the `agno_transcripts` rows after each step. Ran with the demo environment, claude-agent-sdk 0.2.110, Claude Code 2.1.250 and macOS Keychain login, both without flags (SQLite) and with `--postgres` (pgvector container).
+
+**Result:** On this branch's schema (positions numbered from 1, `framework` and `agno_session_id` columns): SQLite: replica A mirrored rows 1 to 12; replica B replied with the stored password, kept the same Claude session id, and appended rows 13 to 21. Postgres: same, 12 rows then 9 new. A Postgres table left over from the earlier branch schema raised a schema mismatch and had to be dropped first; it is recreated on first use. No API key or custom `CLAUDE_CONFIG_DIR` was needed because the SDK copies credentials into the temporary config directory it uses for a store-backed resume.
+
+---
+
+## 2026-10-08
+
+### session_store.py
+
+**Status:** FAIL
+
+**Description:** Launched the real two-process verification with claude-agent-sdk 0.2.148 using the shared demo environment and this worktree on PYTHONPATH. Both processes use fresh config directories.
+
+**Result:** Process A reached Claude but returned `Not logged in`. Authentication for an empty config directory is not configured. Cross-process transcript resume remains unverified; this is not a passing integration run.
+
+---
+
+### Transcript and adapter unit tests
+
+**Status:** PASS
+
+**Description:** 70 agent tests passed, including SDK store conformance through one bound store per project, SQLite/AsyncSQLite persistence, key rewriting, retries, tools, and resume fallback. The optional summary contract is not implemented.
+
+**Result:** Unit coverage passes; real SDK verification is separate.
+
+---
+
+### session_store.py (authenticated rerun)
+
+**Status:** PASS
+
+**Description:** Used the existing `ANTHROPIC_API_KEY` exported by `.envrc`, inherited by both child processes. No credential values were read or printed. Ran the demo environment with this worktree's `libs/agno` on PYTHONPATH and debug/monitor flags unset.
+
+**Result:** Process A replied `OK` and stored the SDK transcript. Its Agno run history was deleted. Process B, with a separate empty config directory, replied `cobalt orchard 742`. Verified with the per-run ClaudeSDKClient implementation.
+
+---
+
+### PostgreSQL transcript conformance
+
+**Status:** PASS
+
+**Description:** Executed the SDK store contracts on PostgresDb and AsyncPostgresDb against disposable schemas in PostgreSQL 18. SQLite and AsyncSQLite also pass. The optional summary contract is not implemented. Tests use one bound store per project to reconcile the SDK suite's caller-selected project keys with this adapter's binding.
+
+**Result:** Both PostgreSQL variants pass. A database transaction serializes position allocation across processes; the SQLite restart test resets the in-memory counter while holding time constant and verifies append order.
+
+---
+
+### Exact phase 1 source verification
+
+**Status:** PASS
+
+**Description:** Checked the committed phase 1 source independently of phase 2 in an isolated archive. Verified the imported Agno path before testing.
+
+**Result:** 72 phase 1 agent tests passed and the original query-based adapter passed the real two-process resume test. Four additional missing-table/empty-batch tests cover every transcript DB adapter. Guard mutation checks all failed their named tests when the guard was removed and passed after restoration.
+
+**Environment:** Python 3.12; claude-agent-sdk 0.2.148; openai-codex 0.162.0; SQLAlchemy 2.0.52, matching the demo environment. Fresh setup resolved SQLAlchemy 2.1.4, which reproduced six unrelated mypy errors on the unchanged base; validation passes with 2.0.52.
+
+---
+
+### Transcript mirror failure regression (2026-10-08)
+
+**Status:** PASS
+
+**Description:** The installed SDK parser and mirror batcher were driven with synthetic transport
+frames and a transcript store that rejects every append. All three attempts failed. The completed
+response retained its content and exposed `transcript_persistence_failed` in run metadata.
+Streaming/non-streaming unit regressions also verify warning serialization and persisted history.
+
+**Result:** Durability failure is visible without reexecuting completed work. This is a local SDK
+fault-injection test, not a live provider run. Phase 1 agent tests: 78 passed. Format and validation pass.
+
+---
+
+### session_store.py (transcript schema revision)
+
+**Status:** PASS
+
+**Description:** Reran the two-process verification after scoping transcript rows by framework, project, session and subpath, numbering positions per transcript and recording the owning Agno session. Used claude-agent-sdk 0.2.95 from the demo environment, the `ANTHROPIC_API_KEY` from `.envrc` and empty config directories.
+
+**Result:** Process A replied `OK`; process B, with its Agno run deleted, replied `cobalt orchard 742`. The PostgreSQL contract test (PostgresDb and AsyncPostgresDb) passed against PostgreSQL 14.

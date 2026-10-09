@@ -10,6 +10,7 @@ from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.run.agent import (
+    CustomEvent,
     RunCompletedEvent,
     RunContentEvent,
     RunErrorEvent,
@@ -28,6 +29,30 @@ from agno.utils.log import log_exception, log_warning
 
 if TYPE_CHECKING:
     from agno.tools.component import ComponentTool
+
+# Limits for the history replayed into a fresh harness session when the framework's own
+# session cannot be resumed. Each tool result keeps its start and its end, where shell
+# output carries the exit status, and the whole replay is bounded by dropping the oldest
+# entries first.
+_HISTORY_TOOL_RESULT_MAX_CHARS = 2000
+_HISTORY_TOOL_RESULT_TAIL_CHARS = 400
+_HISTORY_MAX_CHARS = 24000
+
+
+@dataclass
+class ExternalRunWarningEvent(CustomEvent):
+    """Nonfatal adapter warning emitted to streaming consumers."""
+
+    warning: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class ExternalRunResult:
+    """Adapter output with tool executions retained for session history."""
+
+    content: str
+    tools: Optional[List[ToolExecution]] = None
+    warnings: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass
@@ -618,6 +643,68 @@ class BaseExternalAgent:
                     history.append({"role": msg.role, "content": str(msg.content)})
         return history
 
+    @staticmethod
+    def _truncate_tool_result(result: str) -> str:
+        """Shorten a replayed tool result but keep its end, where the exit status lives."""
+        if len(result) <= _HISTORY_TOOL_RESULT_MAX_CHARS:
+            return result
+        head = result[: _HISTORY_TOOL_RESULT_MAX_CHARS - _HISTORY_TOOL_RESULT_TAIL_CHARS]
+        tail = result[-_HISTORY_TOOL_RESULT_TAIL_CHARS:]
+        omitted = len(result) - len(head) - len(tail)
+        return f"{head}\n[... {omitted} characters truncated ...]\n{tail}"
+
+    @staticmethod
+    def _history_lines(message: Dict[str, Any]) -> List[str]:
+        """Render one history entry: text, tool calls with their arguments, or a tool result."""
+        role = message.get("role")
+        content = message.get("content")
+        lines: List[str] = []
+        if role == "assistant" and message.get("tool_calls"):
+            if content:
+                lines.append(f"assistant: {content}")
+            for tool_call in message["tool_calls"]:
+                function = tool_call.get("function") or {}
+                lines.append(f"assistant called {function.get('name') or 'tool'}({function.get('arguments') or ''})")
+        elif role == "tool" and content:
+            lines.append(f"tool result: {BaseExternalAgent._truncate_tool_result(str(content))}")
+        elif role in ("user", "assistant") and content:
+            lines.append(f"{role}: {content}")
+        return lines
+
+    @staticmethod
+    def _build_prompt(input: Any, history: Optional[List[Dict[str, Any]]], resumed: bool) -> str:
+        """Plain prompt when the framework's own session carries the context; otherwise
+        prepend the persisted chat history so a fresh session does not lose it.
+
+        Tool calls and results are replayed too, since for a coding harness they are most of
+        what happened. The replay is bounded: long tool results are shortened and, past a
+        total budget, the oldest entries are dropped.
+        """
+        text = str(input)
+        if resumed or not history:
+            return text
+        rendered = [BaseExternalAgent._history_lines(message) for message in history]
+        kept: List[List[str]] = []
+        budget = _HISTORY_MAX_CHARS
+        for lines in reversed(rendered):
+            if not lines:
+                continue
+            size = sum(len(line) + 1 for line in lines)
+            if size > budget:
+                break
+            budget -= size
+            kept.append(lines)
+        if not kept:
+            return text
+        kept.reverse()
+        prompt_lines = ["Previous conversation (for context, do not repeat it):"]
+        if len(kept) < sum(1 for lines in rendered if lines):
+            prompt_lines.append("[earlier history omitted]")
+        for lines in kept:
+            prompt_lines.extend(lines)
+        prompt_lines.extend(["", "Current message:", text])
+        return "\n".join(prompt_lines)
+
     # ---------------------------------------------------------------------------
     # Internal: non-streaming
     # ---------------------------------------------------------------------------
@@ -641,9 +728,12 @@ class BaseExternalAgent:
                 session_id=session_id,
                 user_id=user_id,
                 input_text=input,
-                content=content,
+                content=content.content if isinstance(content, ExternalRunResult) else content,
+                tools=content.tools if isinstance(content, ExternalRunResult) else None,
                 status=RunStatus.completed,
             )
+            if isinstance(content, ExternalRunResult) and content.warnings:
+                run_output.metadata = {"warnings": content.warnings}
         except Exception as e:
             log_exception(f"Error in {self.framework} agent '{self.id}': {e}")
             run_output = self._build_run_output(
@@ -685,6 +775,7 @@ class BaseExternalAgent:
         )
 
         accumulated_content = ""
+        warnings: List[Dict[str, Any]] = []
         accumulated_tools: List[ToolExecution] = []
         run_error: Optional[Exception] = None
 
@@ -695,6 +786,8 @@ class BaseExternalAgent:
             async for event in self._arun_adapter_stream(
                 input, history=history, run_id=run_id, session=session, **kwargs
             ):
+                if isinstance(event, ExternalRunWarningEvent) and event.warning is not None:
+                    warnings.append(event.warning)
                 if isinstance(event, RunContentEvent):
                     accumulated_content += event.content or ""
                 elif isinstance(event, ToolCallStartedEvent) and event.tool:
@@ -729,6 +822,8 @@ class BaseExternalAgent:
                 status=RunStatus.error if run_error is not None else RunStatus.completed,
                 tools=accumulated_tools if accumulated_tools else None,
             )
+            if warnings:
+                run_output.metadata = {"warnings": warnings}
             await self._apersist_run_in_session(session, run_output)
 
         if run_error is not None:
