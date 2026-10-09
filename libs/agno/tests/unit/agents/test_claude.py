@@ -17,6 +17,7 @@ from agno.agents.claude import ClaudeAgent
 from agno.agents.claude import agent as claude_module
 from agno.db.sqlite import SqliteDb
 from agno.run.agent import RunCompletedEvent, RunContentEvent, RunErrorEvent
+from agno.run.base import RunStatus
 
 # ---------------------------------------------------------------------------
 # Fake claude_agent_sdk
@@ -76,6 +77,10 @@ class ToolResultBlock:
 
 
 class ProcessError(Exception):
+    pass
+
+
+class ResultError(ProcessError):
     pass
 
 
@@ -139,6 +144,8 @@ def fake_sdk(monkeypatch) -> FakeState:
         UserMessage,
         ToolUseBlock,
         ToolResultBlock,
+        ProcessError,
+        ResultError,
     ):
         setattr(module, cls.__name__, cls)
     module.query = query  # type: ignore[attr-defined]
@@ -211,6 +218,43 @@ def test_unresumable_session_starts_fresh_with_history(fake_sdk, tmp_db):
     assert session.session_data["claude_sdk_session_id"] == "sdk-2"
 
 
+@pytest.mark.parametrize("failure", ["error_result", "result_error"])
+def test_api_error_on_resume_keeps_sdk_session(fake_sdk, tmp_db, monkeypatch, failure):
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db)
+    agent.run("first", session_id="s1")
+    resumes = []
+
+    async def overloaded(prompt, options):
+        resumes.append(options.resume)
+        if failure == "result_error":
+            raise ResultError("Claude Code returned an error result: API Error: 529 Overloaded")
+        yield SystemMessage("init", {"session_id": options.resume})
+        yield ResultMessage(options.resume, "API Error: 529 Overloaded", subtype="success", is_error=True)
+
+    monkeypatch.setattr(claude_module._sdk(), "query", overloaded)
+    assert agent.run("second", session_id="s1").status == RunStatus.error
+    assert resumes == ["sdk-1"]
+    assert agent.read_or_create_session("s1").session_data["claude_sdk_session_id"] == "sdk-1"
+
+
+def test_missing_session_result_error_starts_fresh(fake_sdk, tmp_db, monkeypatch):
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db)
+    agent.run("first", session_id="s1")
+    resumes = []
+
+    async def missing(prompt, options):
+        resumes.append(options.resume)
+        if options.resume:
+            raise ResultError("Claude Code returned an error result: No conversation found with session ID: sdk-1")
+        yield SystemMessage("init", {"session_id": "sdk-2"})
+        yield ResultMessage("sdk-2", "ok")
+
+    monkeypatch.setattr(claude_module._sdk(), "query", missing)
+    assert agent.run("second", session_id="s1").status == RunStatus.completed
+    assert resumes == ["sdk-1", None]
+    assert agent.read_or_create_session("s1").session_data["claude_sdk_session_id"] == "sdk-2"
+
+
 def test_in_memory_mapping_without_db(fake_sdk):
     agent = ClaudeAgent(name="Claude", id="claude")
 
@@ -254,19 +298,54 @@ def test_store_support_and_project_key(fake_sdk, tmp_path, monkeypatch):
     from agno.db.in_memory import InMemoryDb
 
     agent = ClaudeAgent(id="tenant-agent", cwd="/cwd", db=SqliteDb(db_file=str(tmp_path / "db")))
-    opts = agent._build_options()
+    opts = agent._build_options(agno_session_id="agno-session")
     assert agent.project_key == "tenant-agent"
     assert isinstance(opts.extra["session_store"], AgnoSessionStore)
     assert opts.extra["session_store"].project_key == "tenant-agent"
     custom = ClaudeAgent(id="a", project_key="tenant", db=agent.db)
-    assert custom._build_options().extra["session_store"].project_key == "tenant"
+    assert custom._build_options(agno_session_id="agno-session").extra["session_store"].project_key == "tenant"
     logs = []
-    monkeypatch.setattr(claude_module, "log_debug", logs.append)
+    monkeypatch.setattr(claude_module, "log_warning", logs.append)
     unsupported = ClaudeAgent(db=InMemoryDb())
     assert type(unsupported.db).append_transcript_entries is BaseDb.append_transcript_entries
-    assert "session_store" not in unsupported._build_options().extra
-    unsupported._build_options()
-    assert len(logs) == 1
+    assert "session_store" not in unsupported._build_options(agno_session_id="agno-session").extra
+    unsupported._build_options(agno_session_id="agno-session")
+    assert len(logs) == 1, "warn once that this database keeps transcripts on local disk"
+    assert "InMemoryDb" in logs[0] and "PostgresDb" in logs[0] and "SqliteDb" in logs[0]
+
+
+def test_generated_project_key_warns_once(fake_sdk, tmp_path, monkeypatch):
+    warnings = []
+    monkeypatch.setattr(claude_module, "log_warning", warnings.append)
+    db = SqliteDb(db_file=str(tmp_path / "db"))
+    for stable in (ClaudeAgent(id="a", db=db), ClaudeAgent(name="Named", db=db), ClaudeAgent(project_key="p", db=db)):
+        stable._build_options(agno_session_id="agno-session")
+    ClaudeAgent()._build_options(agno_session_id="agno-session")
+    assert warnings == []
+    generated = ClaudeAgent(db=db)
+    generated._build_options(agno_session_id="agno-session")
+    generated._build_options(agno_session_id="agno-session")
+    assert len(warnings) == 1
+    assert generated.project_key in warnings[0]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_store_records_the_runs_agno_session(fake_sdk, tmp_path, monkeypatch, stream):
+    stores = []
+    sdk = claude_module._sdk()
+    original = sdk.query
+
+    def query(prompt, options):
+        stores.append(options.extra["session_store"])
+        return original(prompt=prompt, options=options)
+
+    monkeypatch.setattr(sdk, "query", query)
+    agent = ClaudeAgent(id="a", db=SqliteDb(db_file=str(tmp_path / "db")))
+    if stream:
+        session_id = [e for e in agent.run("hi", stream=True)][-1].session_id
+    else:
+        session_id = agent.run("hi").session_id
+    assert session_id and [store.agno_session_id for store in stores] == [session_id]
 
 
 @pytest.mark.asyncio
@@ -386,6 +465,23 @@ async def test_mirror_failure_is_visible_without_reexecuting(fake_sdk, tmp_db, m
     stored = await agent.aget_run_output(result.run_id, "s")
     assert stored.metadata == result.metadata
     assert len(calls) == 1
+
+
+def test_user_session_store_and_file_checkpointing_disable_injection(fake_sdk, tmp_path, monkeypatch):
+    warnings = []
+    monkeypatch.setattr(claude_module, "log_warning", warnings.append)
+    db = SqliteDb(db_file=str(tmp_path / "db"))
+    own_store = object()
+    custom = ClaudeAgent(id="a", db=db, options_kwargs={"session_store": own_store})
+    assert custom._build_options(agno_session_id="agno-session").extra["session_store"] is own_store
+
+    checkpointing = ClaudeAgent(id="a", db=db, options_kwargs={"enable_file_checkpointing": True})
+    opts = checkpointing._build_options(agno_session_id="agno-session")
+    assert "session_store" not in opts.extra
+    assert opts.extra["enable_file_checkpointing"] is True
+    checkpointing._build_options(agno_session_id="agno-session")
+    assert len(warnings) == 1
+    assert "enable_file_checkpointing" in warnings[0]
 
 
 # ---------------------------------------------------------------------------
@@ -528,10 +624,11 @@ async def test_replaying_a_turn_resends_its_prompt_from_before_it(scripted, tmp_
     agent = ClaudeAgent(db=tmp_db)
     source = await agent.arun("go", session_id="s")
     tmp_db.append_transcript_entries(
+        framework="claude-agent-sdk",
         project_key=agent.project_key,
         session_id="sdk-1",
-        subpath=None,
         entries=[{"type": "user", "uuid": "u-prompt", "parentUuid": parent}],
+        agno_session_id="s",
     )
     replay = await agent.acontinue_run(run_id=source.run_id, session_id="s", continue_from="last_user", fork=True)
     assert calls[1]["prompt"] == "go"
