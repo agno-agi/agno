@@ -917,6 +917,24 @@ def _dbs_client(os_db, *other_dbs):
     return TestClient(app)
 
 
+def _same_id_client(support_table, sales_table, *other_dbs):
+    """A test client for two databases registered under one id, each with the given OS metrics table."""
+    support_db, sales_db = _db("db-1", _today_row()), _db("db-1", _today_row())
+    support_db.os_metrics_table_name, sales_db.os_metrics_table_name = support_table, sales_table
+    for db in (support_db, sales_db):
+        db.refresh_os_metrics = MagicMock(return_value=(UPDATED_AT, UPDATED_AT, False))
+    app = FastAPI()
+    with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
+        app.include_router(
+            get_metrics_router(
+                dbs={"db-1": [support_db, sales_db], **{db.id: [db] for db in other_dbs}},
+                settings=AgnoAPISettings(),
+                os_db=support_db,
+            )
+        )
+    return TestClient(app), support_db, sales_db
+
+
 class TestDatabases:
     def test_databases_are_added_up(self):
         """Two databases hold today's row each, and one also yesterday's: every number is the sum."""
@@ -1044,6 +1062,58 @@ class TestDatabases:
 
         assert db.get_os_metrics.call_count == 1
         assert body["total_sessions"] == 3
+
+    def test_databases_with_one_id_and_their_own_tables_are_added_up(self):
+        """Two databases registered under one id keep their OS metrics in different tables: both are read."""
+        client, support_db, sales_db = _same_id_client("support_os_metrics", "sales_os_metrics")
+        sales_db.get_os_metrics.side_effect = lambda **kwargs: ([_row(_day(0), sessions_count=4)], UPDATED_AT + 60)
+        with _scope(None):
+            sessions = client.get(f"/os/metrics/sessions?{_last(1)}").json()
+            models = client.get(f"/os/metrics/models?{_last(1)}&db_id=db-1").json()
+
+        assert support_db.get_os_metrics.call_count == 1
+        assert sales_db.get_os_metrics.call_count == 1
+        assert sessions["total_sessions"] == 7
+        # One entry for the id, with the newest update of its databases
+        assert sessions["db_ids"] == {"db-1": "2027-01-15T08:01:00Z"}
+        assert sessions["updated_at"] == "2027-01-15T08:01:00Z"
+        assert models["total_model_runs"] == 8
+
+    def test_databases_with_one_id_that_share_a_table_are_read_once(self):
+        """Reading both would count the rows of the shared table twice."""
+        client, support_db, sales_db = _same_id_client("agno_os_metrics", "agno_os_metrics")
+        with _scope(None):
+            body = client.get(f"/os/metrics/sessions?{_last(1)}").json()
+            refresh = client.post("/os/metrics/refresh").json()
+
+        assert support_db.get_os_metrics.call_count == 1
+        sales_db.get_os_metrics.assert_not_called()
+        assert body["total_sessions"] == 3
+        support_db.refresh_os_metrics.assert_called_once_with()
+        sales_db.refresh_os_metrics.assert_not_called()
+        assert refresh["db_ids"] == {"db-1": UPDATED_AT_ISO}
+
+    def test_one_database_of_an_id_skipped_still_counts_the_other(self):
+        """The database that did answer is counted, and its id is named with the reason the other was left out."""
+        client, _, sales_db = _same_id_client("support_os_metrics", "sales_os_metrics")
+        sales_db.get_os_metrics.side_effect = RuntimeError("boom")
+        with _scope(None):
+            body = client.get(f"/os/metrics/sessions?{_last(1)}").json()
+
+        assert body["total_sessions"] == 3
+        assert body["db_ids"] == {"db-1": UPDATED_AT_ISO}
+        assert body["skipped_db_ids"] == {"db-1": "failed"}
+
+    def test_every_database_of_an_id_is_refreshed(self):
+        client, support_db, sales_db = _same_id_client("support_os_metrics", "sales_os_metrics")
+        sales_db.refresh_os_metrics.return_value = (UPDATED_AT, UPDATED_AT + 60, True)
+        with _scope(None):
+            body = client.post("/os/metrics/refresh").json()
+
+        support_db.refresh_os_metrics.assert_called_once_with()
+        sales_db.refresh_os_metrics.assert_called_once_with()
+        assert body["changed"] is True
+        assert body["db_ids"] == {"db-1": "2027-01-15T08:01:00Z"}
 
     def test_read_that_timed_out_is_left_to_finish(self):
         """A read may have started a rebuild: the route stops waiting for it, and never cancels it."""

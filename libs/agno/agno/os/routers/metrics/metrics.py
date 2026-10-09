@@ -79,6 +79,22 @@ def _window(starting_date: Optional[date], ending_date: Optional[date]) -> Tuple
     return starting_date, ending_date
 
 
+def _registered_os_dbs(
+    os_db: Union[BaseDb, AsyncBaseDb],
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+) -> Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]]:
+    """Collect every database of the AgentOS by id, each once."""
+    registered_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]] = {str(os_db.id): [os_db]}
+    for registered_db_id, db_list in dbs.items():
+        for db in db_list:
+            os_metrics_dbs = registered_dbs.setdefault(registered_db_id, [])
+            # Databases with the same id that share an OS metrics table hold the same rows, so only one is read
+            table_names = [getattr(os_metrics_db, "os_metrics_table_name", None) for os_metrics_db in os_metrics_dbs]
+            if getattr(db, "os_metrics_table_name", None) not in table_names:
+                os_metrics_dbs.append(db)
+    return registered_dbs
+
+
 def get_metrics_router(
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -469,12 +485,9 @@ def attach_routes(
         scoped_user_id = get_scoped_user_id(request)
         return scoped_user_id if scoped_user_id is not None else user_id
 
-    def _os_dbs(db_ids: Optional[List[str]]) -> Dict[str, Union[BaseDb, AsyncBaseDb, RemoteDb]]:
+    def _os_dbs(db_ids: Optional[List[str]]) -> Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]]:
         """The databases a read covers, by id: the requested ones, else every database of the AgentOS, each once."""
-        registered_dbs: Dict[str, Union[BaseDb, AsyncBaseDb, RemoteDb]] = {str(_require_os_db().id): _require_os_db()}
-        for registered_db_id, db_list in dbs.items():
-            if db_list:
-                registered_dbs.setdefault(registered_db_id, db_list[0])
+        registered_dbs = _registered_os_dbs(_require_os_db(), dbs)
         if not db_ids:
             return registered_dbs
         os_dbs = {}
@@ -538,7 +551,7 @@ def attach_routes(
             return merge_os_metrics_totals(totals, fields), latest_updated_at
 
     async def _read_os_dbs(
-        os_dbs: Dict[str, Union[BaseDb, AsyncBaseDb, RemoteDb]],
+        os_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
         read: Callable[[Union[BaseDb, AsyncBaseDb]], Awaitable[Tuple[Any, Optional[int]]]],
     ) -> Tuple[List[Any], Dict[str, Any]]:
         """Read every database at the same time, at most _MAX_CONCURRENT_OS_METRICS_READS at once."""
@@ -558,22 +571,25 @@ def attach_routes(
         results: List[Any] = []
         db_ids: Dict[str, Optional[datetime]] = {}
         skipped_db_ids: Dict[str, str] = {}
-        sources = list(os_dbs.items())
+        sources = [(db_id, db) for db_id, db_list in os_dbs.items() for db in db_list]
         for start in range(0, len(sources), _MAX_CONCURRENT_OS_METRICS_READS):
             batch = sources[start : start + _MAX_CONCURRENT_OS_METRICS_READS]
             outcomes = await asyncio.gather(*(_read_one(db) for _, db in batch), return_exceptions=True)
             for (db_id, _), outcome in zip(batch, outcomes):
                 if isinstance(outcome, NotImplementedError):
-                    skipped_db_ids[db_id] = "unsupported"
+                    skipped_db_ids.setdefault(db_id, "unsupported")
                 elif isinstance(outcome, asyncio.TimeoutError):
-                    skipped_db_ids[db_id] = "timeout"
+                    skipped_db_ids.setdefault(db_id, "timeout")
                 elif isinstance(outcome, BaseException):
                     log_warning(f"Could not read OS metrics from database '{db_id}': {str(outcome)}")
-                    skipped_db_ids[db_id] = "failed"
+                    skipped_db_ids.setdefault(db_id, "failed")
                 else:
                     result, latest_updated_at = outcome
                     results.append(result)
-                    db_ids[db_id] = to_utc_datetime(latest_updated_at)
+                    updated_at = to_utc_datetime(latest_updated_at)
+                    current_updated_at = db_ids.get(db_id)
+                    if current_updated_at is None or (updated_at is not None and updated_at > current_updated_at):
+                        db_ids[db_id] = updated_at
 
         # A response from no database at all would read as a window without traffic
         if not db_ids:
@@ -587,7 +603,7 @@ def attach_routes(
         }
 
     async def _os_metrics(
-        os_dbs: Dict[str, Union[BaseDb, AsyncBaseDb, RemoteDb]],
+        os_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
         effective_user_id: Optional[str],
         starting_date: date,
         ending_date: date,
@@ -608,7 +624,7 @@ def attach_routes(
         ], databases
 
     async def _os_metrics_by_day(
-        os_dbs: Dict[str, Union[BaseDb, AsyncBaseDb, RemoteDb]],
+        os_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
         effective_user_id: Optional[str],
         starting_date: date,
         ending_date: date,
@@ -619,7 +635,7 @@ def attach_routes(
         return {day_totals["date"]: day_totals for day_totals in totals}, databases
 
     async def _os_metrics_totals(
-        os_dbs: Dict[str, Union[BaseDb, AsyncBaseDb, RemoteDb]],
+        os_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
         effective_user_id: Optional[str],
         starting_date: date,
         ending_date: date,
@@ -1318,7 +1334,7 @@ def attach_routes(
                 await run_in_threadpool(db.calculate_os_metrics)
             return None, None, True
 
-    async def _refresh_os_dbs(os_dbs: Dict[str, Union[BaseDb, AsyncBaseDb, RemoteDb]]) -> Dict[str, Any]:
+    async def _refresh_os_dbs(os_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> Dict[str, Any]:
         """Rebuild every database at the same time, at most _MAX_CONCURRENT_OS_METRICS_READS at once.
 
         Returns what a refresh says about its databases: the updated_at of each, the newest of them before and
@@ -1335,20 +1351,23 @@ def attach_routes(
         changed = False
         skipped_db_ids: Dict[str, str] = {}
         errors: List[str] = []
-        sources = list(os_dbs.items())
+        sources = [(db_id, db) for db_id, db_list in os_dbs.items() for db in db_list]
         for start in range(0, len(sources), _MAX_CONCURRENT_OS_METRICS_READS):
             batch = sources[start : start + _MAX_CONCURRENT_OS_METRICS_READS]
             outcomes = await asyncio.gather(*(_refresh_one(db) for _, db in batch), return_exceptions=True)
             for (db_id, _), outcome in zip(batch, outcomes):
                 if isinstance(outcome, NotImplementedError):
-                    skipped_db_ids[db_id] = "unsupported"
+                    skipped_db_ids.setdefault(db_id, "unsupported")
                 elif isinstance(outcome, BaseException):
                     # An exception with no message is recorded by its type
                     errors.append(str(outcome) or type(outcome).__name__)
-                    skipped_db_ids[db_id] = "failed"
+                    skipped_db_ids.setdefault(db_id, "failed")
                 else:
                     previous_updated_at, latest_updated_at, db_changed = outcome
-                    db_ids[db_id] = to_utc_datetime(latest_updated_at)
+                    updated_at = to_utc_datetime(latest_updated_at)
+                    current_updated_at = db_ids.get(db_id)
+                    if current_updated_at is None or (updated_at is not None and updated_at > current_updated_at):
+                        db_ids[db_id] = updated_at
                     if previous_updated_at is not None:
                         previous_updated_ats.append(to_utc_datetime(previous_updated_at))  # type: ignore[arg-type]
                     changed = changed or db_changed
@@ -1367,7 +1386,7 @@ def attach_routes(
             "skipped_db_ids": skipped_db_ids,
         }
 
-    async def _do_os_refresh(os_dbs: Dict[str, Union[BaseDb, AsyncBaseDb, RemoteDb]], refresh_key: str) -> None:
+    async def _do_os_refresh(os_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]], refresh_key: str) -> None:
         try:
             await _refresh_os_dbs(os_dbs)
         except Exception as e:
@@ -1445,7 +1464,9 @@ def attach_routes(
             # and from an OS metrics refresh of other databases
             refresh_key = f"os_metrics:{','.join(sorted(os_dbs))}"
             # Refused before anything runs, so an AgentOS without the table is never told "started"
-            if not any(not isinstance(os_db, RemoteDb) and _stores_os_metrics(os_db) for os_db in os_dbs.values()):
+            if not any(
+                not isinstance(db, RemoteDb) and _stores_os_metrics(db) for db_list in os_dbs.values() for db in db_list
+            ):
                 raise HTTPException(status_code=501, detail="OS metrics not supported by the configured database")
 
             if background:
