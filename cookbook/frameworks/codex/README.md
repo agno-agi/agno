@@ -1,5 +1,10 @@
 # Codex
 
+Start with the [Codex harness walkthrough](../../harnesses/codex/README.md) for
+the refreshed basics, native SDK comparison, tools and AgentOS examples.
+Advanced examples below retain their paths during this migration. Historical
+test logs refer to original filenames and are not new verification evidence.
+
 Examples for running [OpenAI Codex](https://developers.openai.com/codex) as an Agno agent.
 
 `CodexAgent` wraps the official [Codex Python SDK](https://github.com/openai/codex/tree/main/sdk/python)
@@ -28,12 +33,12 @@ CodexAgent(name="Codex").login_api_key("sk-...")
 
 ## Files
 
-- `codex_basic.py` — minimal standalone run with `.print_response()`
-- `codex_tools.py` — shell commands in a read-only sandbox, surfaced as Agno tool calls
+- [`basic.py`](../../harnesses/codex/basic.py) — standalone run with checked terminal status
+- [`tools.py`](../../harnesses/codex/tools.py) — read the shipping fixture and inspect streamed tools
 - `codex_session.py` — multi-turn session; the Codex thread is resumed across turns via Agno's DB
 - `codex_mcp_tools.py` — connect Codex to an MCP server through `config` overrides
 - `codex_structured_output.py` — constrain the final answer with a JSON Schema
-- `codex_agentos.py` — serve Codex through AgentOS
+- [`agent_os.py`](../../harnesses/codex/agent_os.py) — serve the shipping reviewer through AgentOS
 - `codex_session_agentos.py` — same with SQLite-backed sessions
 
 ## How sessions work

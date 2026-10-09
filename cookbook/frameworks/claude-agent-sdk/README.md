@@ -1,5 +1,10 @@
 # Claude Agent SDK
 
+New to this integration? Start with the [Claude harness walkthrough](../../harnesses/claude/README.md).
+The basic, tools and AgentOS examples moved there as `basic.py`, `tools.py` and
+`agent_os.py`. Advanced examples below retain their paths; historical test logs
+refer to their original filenames and are not new verification evidence.
+
 Use `ClaudeAgent` to run Claude Code through Agno and AgentOS. Install `claude-agent-sdk` and configure Claude authentication in your environment.
 
 ## Durable transcripts
