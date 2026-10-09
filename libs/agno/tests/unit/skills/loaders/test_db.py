@@ -13,7 +13,9 @@ from agno.skills.agent_skills import Skills
 from agno.skills.errors import SkillError, SkillValidationError
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.loaders.db import DbSkills
+from agno.run.base import RunContext
 from agno.skills.loaders.local import LocalSkills
+from agno.tools.function import FunctionCall
 
 # ============================================================================
 # FIXTURES
@@ -401,6 +403,52 @@ async def test_async_load_scoped_to_a_user(async_sqlite_db) -> None:
 
     other = await skills.aget_system_prompt_snippet(user_id="bob")
     assert "alice-private" not in other
+
+
+async def _seed_async_owned_skills(db) -> None:
+    await db.create_skill({"name": "alice-private", "description": "A", "instructions": "i", "user_id": "alice"})
+    await db.create_skill({"name": "shared-skill", "description": "S", "instructions": "i"})
+
+
+def _skill_instructions(skills: Skills, user_id: str, skill_name: str) -> dict:
+    """Call the tool the way a run does: the run context is injected, never an argument."""
+    tool = next(f for f in skills.get_tools() if f.name == "get_skill_instructions")
+    tool._run_context = RunContext(run_id="run", session_id="session", user_id=user_id)
+    call = FunctionCall(function=tool, arguments={"skill_name": skill_name})
+    assert call.execute().status == "success"
+    return json.loads(call.result)
+
+
+async def test_a_users_async_refresh_fills_the_shared_mapping_once(async_sqlite_db) -> None:
+    """The eager load cannot await an async database, so a service whose every request carries
+    a user would otherwise never load the shared rows: the loader would count as never loaded
+    and a save would write no names."""
+    await _seed_async_owned_skills(async_sqlite_db)
+    skills = Skills(loaders=[DbSkills(async_sqlite_db)])
+    assert skills.has_unloaded_loaders()
+
+    for user in ("alice", "bob"):
+        assert "shared-skill" in await skills.aget_system_prompt_snippet(user_id=user)
+        assert not skills.has_unloaded_loaders()
+        assert skills.get_skill_names() == ["shared-skill"]
+        assert skills.get_skills_from_db() == ["shared-skill"]
+
+
+async def test_a_tool_call_without_a_view_on_an_async_database_sees_the_shared_rows(async_sqlite_db) -> None:
+    """The tools are sync, so a user with no view yet (a run resumed in a new process) cannot be
+    resolved against an async database: the call answers from the shared mapping, and that user's
+    own skill appears once their prompt has been built."""
+    await _seed_async_owned_skills(async_sqlite_db)
+    await async_sqlite_db.create_skill({"name": "carol-private", "description": "C", "instructions": "i", "user_id": "carol"})
+    skills = Skills(loaders=[DbSkills(async_sqlite_db)])
+    await skills.aget_system_prompt_snippet(user_id="bob")
+
+    for user in ("alice", "carol"):
+        before = _skill_instructions(skills, user, f"{user}-private")
+        assert "not found" in before["error"]
+        assert before["available_skills"] == "shared-skill"
+        assert f"{user}-private" in await skills.aget_system_prompt_snippet(user_id=user)
+        assert _skill_instructions(skills, user, f"{user}-private")["skill_name"] == f"{user}-private"
 
 
 def test_a_loader_without_owner_scoping_is_called_untouched(tmp_path, sqlite_db) -> None:

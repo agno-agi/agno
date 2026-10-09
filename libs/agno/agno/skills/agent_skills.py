@@ -107,13 +107,19 @@ class Skills:
         Any failure keeps the previous state, so a request mid-outage serves the last loaded skills.
         """
         results = dict(self._loader_results)
+        # The shared rows of a loader the shared mapping never loaded, read alongside the
+        # user's: the eager load cannot await an async database, and under user-only
+        # traffic nothing else would fill what saves and strict loads read.
+        shared: Dict[int, List[Skill]] = {}
         changed = False
         for index, loader in enumerate(self.loaders):
             if not loader.refresh_per_request:
                 continue
             try:
-                # Only owner-scoped loaders receive the user; the rest are called as before.
+                # Only owner-scoped loaders receive the user; the rest are called with no user.
                 results[index] = loader.load(user_id=user_id) if loader.owner_scoped else loader.load()
+                if user_id is not None and index not in self._loader_results:
+                    shared[index] = loader.load() if loader.owner_scoped else results[index]
                 changed = True
             except Exception as e:
                 log_warning(f"Error refreshing skills from {loader}, keeping the last loaded skills: {str(e)}")
@@ -125,16 +131,24 @@ class Skills:
         except SkillError as e:
             log_warning(f"Error refreshing skills, keeping the last loaded skills: {str(e)}")
             return
-        self._commit_refresh(user_id, results, merged)
+        self._commit_refresh(user_id, results, merged, shared)
 
     def _commit_refresh(
-        self, user_id: Optional[str], results: Dict[int, List[Skill]], merged: Dict[str, Skill]
+        self,
+        user_id: Optional[str],
+        results: Dict[int, List[Skill]],
+        merged: Dict[str, Skill],
+        shared: Dict[int, List[Skill]],
     ) -> None:
         """Store a refresh: the shared mapping without a user, else that user's view alone."""
         if user_id is None:
             self._loader_results = results
             self._skills = merged
             return
+        if shared:
+            # A subset of what merged above, so this cannot newly collide.
+            self._loader_results = {**self._loader_results, **shared}
+            self._skills = self._merge_loader_results(self._loader_results)
         self._user_skills[user_id] = merged
         self._user_skills.move_to_end(user_id)
         while len(self._user_skills) > _USER_VIEWS_KEPT:
@@ -149,7 +163,9 @@ class Skills:
     def _view_for_call(self, run_context: Optional[RunContext]) -> Dict[str, Skill]:
         """The mapping a tool call reads, resolved first when its user has no view yet.
 
-        A resumed run or a dropped entry reaches a tool with no view behind it.
+        A resumed run or a dropped entry reaches a tool with no view behind it. The tools
+        are sync, so an async database cannot be read here: the call answers from the
+        shared mapping until that user's prompt is built.
         """
         user_id = run_context.user_id if run_context is not None else None
         if user_id is not None and user_id not in self._user_skills:
@@ -170,6 +186,7 @@ class Skills:
         # and committing a pre-await snapshot would roll that fresher state back.
         async with self._async_refresh_lock:
             results = dict(self._loader_results)
+            shared: Dict[int, List[Skill]] = {}
             changed = False
             for index, loader in enumerate(self.loaders):
                 if not loader.refresh_per_request:
@@ -178,6 +195,8 @@ class Skills:
                     results[index] = (
                         await loader.aload(user_id=user_id) if loader.owner_scoped else await loader.aload()
                     )
+                    if user_id is not None and index not in self._loader_results:
+                        shared[index] = await loader.aload() if loader.owner_scoped else results[index]
                     changed = True
                 except Exception as e:
                     log_warning(f"Error refreshing skills from {loader}, keeping the last loaded skills: {str(e)}")
@@ -189,7 +208,7 @@ class Skills:
             except SkillError as e:
                 log_warning(f"Error refreshing skills, keeping the last loaded skills: {str(e)}")
                 return
-            self._commit_refresh(user_id, results, merged)
+            self._commit_refresh(user_id, results, merged, shared)
 
     def reload(self) -> None:
         """Reload skills from all loaders, replacing the existing skills.
