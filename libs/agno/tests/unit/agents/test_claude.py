@@ -584,14 +584,15 @@ async def test_fork_from_tool_result_branches_the_sdk_transcript(scripted, tmp_d
     assert branch.run_id != source.run_id
     assert (branch.forked_from_run_id, branch.forked_from_message_index) == (source.run_id, 3)
     assert [m.role for m in branch.messages] == ["user", "assistant", "tool", "user", "assistant"]
-    assert _ref(branch.messages[3]) == {"session_id": "fork-1", "uuid": "v-prompt"}
+    assert _ref(branch.messages[3]) == {"session_id": "fork-1", "uuid": "v-prompt", "position": 0}
     assert [t.tool_call_id for t in branch.tools] == ["call-1"]
     assert len((await agent.aget_run_output(source.run_id, "s")).messages) == 4
     assert len((await agent.aget_session("s")).runs) == 2
     assert (await agent.aget_session("s")).session_data["claude_sdk_session_id"] == "fork-1"
 
 
-def test_in_place_continue_keeps_run_id_and_lineage(scripted, tmp_db):
+def test_continuing_a_finished_run_without_fork_still_forks(scripted, tmp_db):
+    """Like native agents: a completed run is never rewritten in place, whatever fork is set to."""
     turns, calls, forks = scripted
     turns.append(_tool_turn("go"))
     turns.append(
@@ -606,13 +607,15 @@ def test_in_place_continue_keeps_run_id_and_lineage(scripted, tmp_db):
     agent = ClaudeAgent(db=tmp_db)
     source = agent.run("go", session_id="s")
     branch = agent.continue_run(run_id=source.run_id, session_id="s", continue_from=3, fork=True, input="next")
-    continued = agent.continue_run(run_id=branch.run_id, session_id="s")
+    continued = agent.continue_run(run_id=branch.run_id, session_id="s", fork=False)
     assert calls[2]["prompt"] == ClaudeAgent._CONTINUE_PROMPT
     assert forks[-1] == {"session_id": "fork-1", "up_to": "v-final"}
-    assert continued.run_id == branch.run_id
-    assert continued.forked_from_run_id == source.run_id
+    assert continued.run_id != branch.run_id
+    assert continued.forked_from_run_id == branch.run_id
+    assert continued.forked_from_message_index == len(branch.messages)
     assert continued.content == "more"
-    assert len(agent.get_session("s").runs) == 2
+    assert len(agent.get_session("s").runs) == 3
+    assert agent.get_run_output(branch.run_id, "s").content == "branched", "the source run is untouched"
 
 
 @pytest.mark.asyncio
@@ -692,3 +695,154 @@ async def test_prompt_echo_does_not_block_resume_fallback(fake_sdk, tmp_path, mo
     run = await agent.arun("What code?", session_id="session")
     assert run.content == "bluejay"
     assert calls == ["sdk-1", None]
+
+
+def _recorded(role: str, uuid: str, position: int, content: Any = None, **kwargs: Any) -> Any:
+    from agno.models.message import Message
+
+    return Message(
+        role=role,
+        content=content,
+        provider_data={"claude_sdk": {"session_id": "sdk-1", "uuid": uuid, "position": position}},
+        **kwargs,
+    )
+
+
+def _recorded_run(messages: List[Any], status: Any = None) -> Any:
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunInput, RunOutput
+    from agno.run.base import RunStatus
+
+    return RunOutput(
+        run_id="source",
+        session_id="s",
+        status=status or RunStatus.completed,
+        input=RunInput(input_content="go"),
+        messages=messages,
+        tools=[ToolExecution(tool_call_id=m.tool_call_id, tool_name="Bash") for m in messages if m.role == "tool"],
+    )
+
+
+def test_cancelled_runs_cannot_be_continued(fake_sdk, tmp_db):
+    from agno.exceptions import RunNotContinuableError
+    from agno.run.base import RunStatus
+
+    run = _recorded_run([_recorded("user", "u-prompt", 0, "go")], status=RunStatus.cancelled)
+    with pytest.raises(RunNotContinuableError, match="cancelled"):
+        ClaudeAgent(db=tmp_db)._build_continuation(run, continue_from="end", fork=True, input="next")
+
+
+@pytest.mark.asyncio
+async def test_continue_from_zero_starts_a_branch_before_the_prompt(scripted, tmp_db):
+    turns, calls, forks = scripted
+    turns.append(_tool_turn("go"))
+    turns.append(
+        [SystemMessage("init", {"session_id": "sdk-2"}), _user("w-prompt", "fresh"), ResultMessage("sdk-2", "ok")]
+    )
+    agent = ClaudeAgent(db=tmp_db)
+    source = await agent.arun("go", session_id="s")
+    tmp_db.append_transcript_entries(
+        framework="claude-agent-sdk",
+        project_key=agent.project_key,
+        session_id="sdk-1",
+        entries=[{"type": "user", "uuid": "u-prompt", "parentUuid": None}],
+        agno_session_id="s",
+    )
+    with pytest.raises(ValueError, match="continue_from=0"):
+        await agent.acontinue_run(run_id=source.run_id, session_id="s", continue_from=0, fork=True)
+    branch = await agent.acontinue_run(run_id=source.run_id, session_id="s", continue_from=0, fork=True, input="fresh")
+    assert forks == [] and calls[1]["resume"] is None and calls[1]["prompt"] == "fresh"
+    assert [m.role for m in branch.messages] == ["user", "assistant"] and branch.messages[0].content == "fresh"
+    assert branch.forked_from_message_index == 0
+
+
+def test_last_user_replays_the_selected_user_turn_not_only_the_first(fake_sdk, tmp_db):
+    messages = [
+        _recorded("user", "u1", 0, "first"),
+        _recorded("assistant", "a1", 1, "reply one"),
+        _recorded("user", "u2", 2, "second"),
+        _recorded("assistant", "a2", 3, "reply two"),
+    ]
+    prompt, _, continuation = ClaudeAgent(db=tmp_db)._build_continuation(
+        _recorded_run(messages), continue_from="last_user", fork=True, input=None
+    )
+    assert prompt == "second"
+    assert [m.content for m in continuation.messages] == ["first", "reply one"]
+    assert continuation.anchor == {"session_id": "sdk-1", "uuid": "u2", "before": True}
+    assert continuation.record_input == "second"
+
+
+def test_parallel_tool_batch_has_one_checkpoint_and_forks_whole(fake_sdk, tmp_db):
+    # Transcript order: prompt 0, call1 1, call2 2, result2 3, result1 4, final 5; Agno lists result1 first.
+    messages = [
+        _recorded("user", "u", 0, "go"),
+        _recorded(
+            "assistant",
+            "c1",
+            1,
+            tool_calls=[{"id": "call-1", "type": "function", "function": {"name": "Bash", "arguments": "{}"}}],
+        ),
+        _recorded("tool", "r1", 4, "alpha", tool_call_id="call-1"),
+        _recorded(
+            "assistant",
+            "c2",
+            2,
+            tool_calls=[{"id": "call-2", "type": "function", "function": {"name": "Bash", "arguments": "{}"}}],
+        ),
+        _recorded("tool", "r2", 3, "beta", tool_call_id="call-2"),
+        _recorded("assistant", "f", 5, "done"),
+    ]
+    agent = ClaudeAgent(db=tmp_db)
+    assert agent._checkpoint_indexes(messages) == [4], "only the end of the batch is a checkpoint"
+    _, _, continuation = agent._build_continuation(_recorded_run(messages), continue_from=3, fork=True, input="next")
+    assert continuation.forked_from_message_index == 5, "a boundary inside the batch moves to its end"
+    assert continuation.anchor["uuid"] == "r1", "the fork keeps up to the transcript-latest result of the batch"
+    assert [m.role for m in continuation.messages] == ["user", "assistant", "tool", "assistant", "tool"]
+    assert sorted(t.tool_call_id for t in continuation.tools) == ["call-1", "call-2"]
+
+
+@pytest.mark.asyncio
+async def test_finished_run_continues_in_the_background_as_a_fork(scripted, tmp_db):
+    import asyncio
+
+    turns, _, _ = scripted
+    turns.append(_tool_turn("go"))
+    turns.append([SystemMessage("init", {"session_id": "fork-1"}), ResultMessage("fork-1", "more")])
+    agent = ClaudeAgent(db=tmp_db)
+    source = await agent.arun("go", session_id="s")
+    accepted = await agent.acontinue_run(run_response=source, fork=False, background=True, input="more")
+    assert accepted.run_id != source.run_id, "background continuation of a finished run must be a new run"
+    for _ in range(100):
+        stored = await agent.aget_run_output(accepted.run_id, "s")
+        if stored is not None and getattr(stored.status, "value", stored.status) == "COMPLETED":
+            break
+        await asyncio.sleep(0.02)
+    assert stored is not None and stored.content == "more"
+    assert stored.forked_from_run_id == source.run_id
+    assert (await agent.aget_run_output(source.run_id, "s")).content == "done", "the source run is untouched"
+
+
+def test_sequential_tool_calls_keep_a_checkpoint_per_step(fake_sdk, tmp_db):
+    # Transcript order follows Agno order: each call is issued after the previous result arrived.
+    messages = [
+        _recorded("user", "u", 0, "go"),
+        _recorded(
+            "assistant",
+            "c1",
+            1,
+            tool_calls=[{"id": "call-1", "type": "function", "function": {"name": "Bash", "arguments": "{}"}}],
+        ),
+        _recorded("tool", "r1", 2, "alpha", tool_call_id="call-1"),
+        _recorded(
+            "assistant",
+            "c2",
+            3,
+            tool_calls=[{"id": "call-2", "type": "function", "function": {"name": "Bash", "arguments": "{}"}}],
+        ),
+        _recorded("tool", "r2", 4, "beta", tool_call_id="call-2"),
+        _recorded("assistant", "f", 5, "done"),
+    ]
+    agent = ClaudeAgent(db=tmp_db)
+    assert agent._checkpoint_indexes(messages) == [2, 4]
+    _, _, continuation = agent._build_continuation(_recorded_run(messages), continue_from=3, fork=True, input="next")
+    assert continuation.forked_from_message_index == 3 and continuation.anchor["uuid"] == "r1"

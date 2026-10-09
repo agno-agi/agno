@@ -5,6 +5,8 @@ from uuid import uuid4
 
 from agno.agents.base import BaseExternalAgent, ExternalContinuation, ExternalRunResult, ExternalRunWarningEvent
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.exceptions import RunNotContinuableError
+from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.run.agent import (
     RunContentEvent,
@@ -312,6 +314,10 @@ class ClaudeAgent(BaseExternalAgent):
         uuid = getattr(message, "uuid", None)
         if run_state is None or not uuid or getattr(message, "parent_tool_use_id", None):
             return
+        # Transcript order: parallel tool results can arrive in a different order than their calls.
+        order = run_state.setdefault("order", {})
+        if uuid not in order:
+            order[uuid] = len(order)
         if isinstance(message, sdk.AssistantMessage):
             run_state["final"] = uuid
             for block in message.content:
@@ -325,10 +331,18 @@ class ClaudeAgent(BaseExternalAgent):
                 run_state.setdefault("prompt", uuid)
 
     def _annotate_run_output(self, run: RunOutput, run_state: Dict[str, Any]) -> None:
-        """Store each message's transcript position and mark tool results as checkpoints."""
+        """Store each message's transcript position and mark the end of each tool batch as a checkpoint.
+
+        A fork keeps every transcript entry up to a position. Tool results from one batch of
+        parallel calls can sit in the transcript in a different order than Agno lists them, so a
+        checkpoint is only exposed where the kept messages and the kept transcript agree: at a
+        tool result that is later in the transcript than every tool result before it and earlier
+        than every tool result after it.
+        """
         sdk_session_id = run_state.get("session_id")
         if not sdk_session_id or not run.messages:
             return
+        order: Dict[str, int] = run_state.get("order") or {}
         last = len(run.messages) - 1
         for index, message in enumerate(run.messages):
             if (message.provider_data or {}).get(self._MESSAGE_REF_KEY):
@@ -346,11 +360,77 @@ class ClaudeAgent(BaseExternalAgent):
             uuid = run_state.get(key)
             if uuid is None:
                 continue
-            ref = {"session_id": sdk_session_id, "uuid": uuid}
+            ref: Dict[str, Any] = {"session_id": sdk_session_id, "uuid": uuid}
+            if uuid in order:
+                ref["position"] = order[uuid]
             message.provider_data = {**(message.provider_data or {}), self._MESSAGE_REF_KEY: ref}
+        for index in self._checkpoint_indexes(run.messages):
+            message = run.messages[index]
+            message.checkpoint_status = RunStatus.running.value
+            message.checkpoint_created_at = message.created_at
+
+    def _ref(self, message: Message) -> Optional[Dict[str, Any]]:
+        return (message.provider_data or {}).get(self._MESSAGE_REF_KEY)
+
+    @staticmethod
+    def _tool_batches(messages: List[Message]) -> List[List[int]]:
+        """Zero-based indexes of tool results, grouped into batches issued before the next reply.
+
+        Parallel calls produce one batch; a fork can only keep a batch whole, because its results
+        may sit in the transcript in a different order than Agno lists them.
+        """
+        batches: List[List[int]] = []
+        current: List[int] = []
+        last_result_position: Optional[int] = None
+        for index, message in enumerate(messages):
             if message.role == "tool":
-                message.checkpoint_status = RunStatus.running.value
-                message.checkpoint_created_at = message.created_at
+                current.append(index)
+                position = ((message.provider_data or {}).get("claude_sdk") or {}).get("position")
+                if position is not None:
+                    last_result_position = max(last_result_position or -1, position)
+            elif message.role == "assistant" and message.tool_calls:
+                # A call issued before the previous result arrived belongs to the same parallel batch;
+                # a call issued after it starts a new, sequential step.
+                position = ((message.provider_data or {}).get("claude_sdk") or {}).get("position")
+                parallel = (
+                    current
+                    and position is not None
+                    and last_result_position is not None
+                    and position < last_result_position
+                )
+                if current and not parallel:
+                    batches.append(current)
+                    current = []
+                    last_result_position = None
+            else:
+                if current:
+                    batches.append(current)
+                current = []
+                last_result_position = None
+        if current:
+            batches.append(current)
+        return batches
+
+    def _checkpoint_indexes(self, messages: List[Message]) -> List[int]:
+        """Zero-based indexes of the last tool result of each batch: the only places a fork is exact."""
+        return [batch[-1] for batch in self._tool_batches(messages)]
+
+    def _batch_end(self, messages: List[Message], index: int) -> int:
+        """Move a boundary inside a batch of tool results to the end of that batch."""
+        if index <= 0 or index > len(messages) or messages[index - 1].role != "tool":
+            return index
+        for batch in self._tool_batches(messages):
+            if index - 1 in batch:
+                return batch[-1] + 1
+        return index
+
+    def _batch_anchor(self, messages: List[Message], index: int) -> Optional[Dict[str, Any]]:
+        """The transcript entry a fork must keep up to so the whole batch ending at index is kept."""
+        for batch in self._tool_batches(messages):
+            if index - 1 in batch:
+                refs = [self._ref(messages[i]) or {} for i in batch]
+                return max(refs, key=lambda r: r.get("position", -1)) or None
+        return self._ref(messages[index - 1])
 
     async def _afork_sdk_session(self, anchor: Dict[str, Any], store: Any) -> Optional[str]:
         """Fork the stored SDK transcript at the anchor; None starts a fresh SDK session."""
@@ -383,37 +463,63 @@ class ClaudeAgent(BaseExternalAgent):
         from agno.agent._run import _resolve_continue_from
         from agno.utils.message import safe_truncation_index
 
+        status = getattr(source.status, "value", source.status)
+        if status == RunStatus.cancelled.value:
+            raise RunNotContinuableError(f"Cannot continue run {source.run_id}: run is cancelled")
+        if not fork and status == RunStatus.completed.value:
+            # Like native agents: a finished run is never rewritten in place. Its continuation is a
+            # new sibling run with fork lineage, which also keeps the background path's PENDING row new.
+            fork = True
         messages = source.messages or []
-        index = safe_truncation_index(messages, _resolve_continue_from(source, continue_from=continue_from))
-        if not 1 <= index <= len(messages):
-            raise ValueError(f"continue_from must resolve to a message boundary between 1 and {len(messages)}")
-        ref = (messages[index - 1].provider_data or {}).get(self._MESSAGE_REF_KEY)
+        if not messages:
+            raise ValueError("The run has no messages to continue from")
+        requested = _resolve_continue_from(source, continue_from=continue_from)
+        index = 0 if requested == 0 else safe_truncation_index(messages, requested)
+        if not 0 <= index <= len(messages):
+            raise ValueError(f"continue_from must resolve to a message boundary between 0 and {len(messages)}")
+        index = self._batch_end(messages, index)
+        # The boundary message decides the mode: a user message without new input is replayed from
+        # just before it; index 0 drops everything and needs new input; anything else continues after.
+        boundary = messages[index - 1] if index > 0 else messages[0]
+        ref = self._batch_anchor(messages, index) if boundary.role == "tool" else self._ref(boundary)
         if not ref:
             raise ValueError(
                 "This run has no Claude SDK transcript position at that boundary; "
                 "only runs recorded with transcript storage can be continued"
             )
-        # Replaying the whole turn re-sends the original prompt from just before it.
-        restart = index == 1 and input is None and messages[0].role == "user"
-        if restart:
-            prompt = source.input.input_content if source.input is not None else None
-            if prompt is None:
-                raise ValueError("The run has no stored input to replay")
+        replay = index > 0 and input is None and boundary.role == "user"
+        if index == 0:
+            if input is None:
+                raise ValueError("continue_from=0 drops the whole transcript; provide input to start the branch")
+            prompt: Any = input
             kept: List[Any] = []
             tools = None
-            record_input: Any = prompt
+            record_input: Any = input
+            before = True
+        elif replay:
+            prompt = boundary.content if boundary.content else None
+            if prompt is None and index == 1 and source.input is not None:
+                prompt = source.input.input_content
+            if prompt is None:
+                raise ValueError("The selected user message has no content to replay")
+            kept = copy.deepcopy(messages[: index - 1])
+            call_ids = {message.tool_call_id for message in kept if message.tool_call_id}
+            tools = [copy.deepcopy(tool) for tool in source.tools or [] if tool.tool_call_id in call_ids] or None
+            record_input = prompt
+            before = True
         else:
             prompt = input or self._CONTINUE_PROMPT
             kept = copy.deepcopy(messages[:index])
             call_ids = {message.tool_call_id for message in kept if message.tool_call_id}
             tools = [copy.deepcopy(tool) for tool in source.tools or [] if tool.tool_call_id in call_ids] or None
             record_input = input
+            before = False
         continuation = ExternalContinuation(
             messages=kept,
             tools=tools,
             source_input=copy.deepcopy(source.input),
             record_input=record_input,
-            anchor={"session_id": ref["session_id"], "uuid": ref["uuid"], "before": restart},
+            anchor={"session_id": ref["session_id"], "uuid": ref["uuid"], "before": before},
             forked_from_run_id=source.run_id if fork else source.forked_from_run_id,
             forked_from_message_index=index if fork else source.forked_from_message_index,
         )
@@ -453,7 +559,8 @@ class ClaudeAgent(BaseExternalAgent):
         """Continue a stored run from a message boundary by forking its SDK transcript there.
 
         continue_from accepts "end", "last_user" or a message index. With fork=True the replay is a new
-        sibling run; otherwise it replaces the source run. Files the agent changed are not rewound.
+        sibling run. A finished run is always continued as a new sibling run with fork lineage, as native
+        agents do, whatever fork is set to. Files the agent changed are not rewound.
         """
         self._check_continue_args(requirements, updated_tools, regenerate, replace_original, additional_instructions)
         source = run_response or self.get_run_output(run_id or "", session_id, user_id)

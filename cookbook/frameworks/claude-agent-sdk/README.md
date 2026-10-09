@@ -21,13 +21,13 @@ The `agno_transcripts` table is created on first use. A development database tha
 
 ## Continue from a step
 
-`continue_from.py` runs a two-step Bash task, lists its checkpoints, then continues from the first tool result and replays the whole turn.
+The `continue_from/` folder has one cookbook per scenario: continue a finished run with a new instruction, fork from a tool checkpoint, replay or rewrite the prompt, continue in the background, and the same flow over the AgentOS API. See `continue_from/README.md`.
 
 ```bash
-PYTHONPATH=libs/agno .venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/continue_from.py
+.venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/continue_from/01_continue_finished_run.py
 ```
 
-`ClaudeAgent.continue_run` / `acontinue_run` take the same `continue_from` and `fork` arguments as `Agent.continue_run`, and AgentOS serves them through `/agents/{id}/runs/{run_id}/continue` and `/checkpoints`. Each tool result is a checkpoint. Continuing forks the Claude SDK transcript at that message, so the model only remembers what happened up to it; `continue_from="last_user"` without `input` re-sends the original prompt. `fork=True` adds a sibling run with `forked_from_run_id`; otherwise the source run is replaced in place. Later turns in the session continue from the replayed branch.
+`ClaudeAgent.continue_run` / `acontinue_run` take the same `continue_from` and `fork` arguments as `Agent.continue_run`, and AgentOS serves them through `/agents/{id}/runs/{run_id}/continue` and `/checkpoints`. Each tool result is a checkpoint. Continuing forks the Claude SDK transcript at that message, so the model only remembers what happened up to it; `continue_from="last_user"` without `input` re-sends the original prompt. A finished run is never rewritten in place: like native agents, its continuation is a new sibling run with `forked_from_run_id`, whatever `fork` is set to. Later turns in the session continue from the newest branch.
 
 Requires a database with transcript storage, and only runs recorded with it can be continued. Files the agent changed after the checkpoint are not rewound. `regenerate` and HITL `requirements` are not supported.
 

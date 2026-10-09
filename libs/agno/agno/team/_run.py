@@ -53,6 +53,11 @@ from agno.run.agent import (
     RunOutput,
     RunOutputEvent,
 )
+
+# Strong references to background tasks so they aren't garbage-collected mid-execution.
+# See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+# One registry for every detached run, shared with agents, so AgentOS shutdown drains one set.
+from agno.run.background import _background_tasks  # noqa: E402
 from agno.run.cancel import (
     acancel_run as acancel_run_global,
 )
@@ -127,11 +132,6 @@ from agno.utils.log import (
     log_info,
     log_warning,
 )
-
-# Strong references to background tasks so they aren't garbage-collected mid-execution.
-# See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
-# One registry for every detached run, shared with agents, so AgentOS shutdown drains one set.
-from agno.run.background import _background_tasks  # noqa: E402
 
 # Cancel raises immediately on every event. Only terminal events bypass so the
 # member's own cancel handler can yield them to the stream. RunError is excluded —

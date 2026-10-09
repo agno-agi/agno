@@ -27,13 +27,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 from uuid import uuid4
 
-from sqlalchemy import text
-
 from agno.agents.claude import ClaudeAgent
 from agno.db.base import BaseDb
 from agno.db.postgres import PostgresDb
 from agno.db.sqlite import SqliteDb
 from agno.run.base import RunStatus
+from sqlalchemy import text
 
 AGENT_ID = "transcript-store-demo"
 SECRET = "cobalt-orchard-742"

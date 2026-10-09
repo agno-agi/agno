@@ -2,6 +2,27 @@
 
 ## 2026-10-09
 
+### continue_from.py (finished runs always fork)
+
+**Status:** PASS
+
+**Description:** Reran after `continue_run(fork=False)` on a completed run was changed to behave like native agents: the continuation becomes a new sibling run with fork lineage instead of rewriting the source run. Also exercised live with `background=True` on a completed run (ALPHA -> BETA -> GAMMA, three runs in the session, source run untouched).
+
+**Result:** Checkpoints listed at 3, 5 and 6; branch from step 3 kept only `echo alpha`; replayed turn returned DONE. The in-place-with-background ValueError is gone.
+
+---
+
+### continue_from.py (review fixes)
+
+**Status:** PASS
+
+**Description:** Reran after the review fixes: checkpoints are exposed per tool batch (one per sequential step, one per parallel batch, anchored at the batch's last transcript entry), `continue_from=0` starts a branch before the prompt, `continue_from="last_user"` replays the selected user turn rather than only the first, cancelled runs are rejected, and in-place continuation refuses `background=True`. The cookbook now asserts on the tool results the branch carries instead of on the model's wording, so a run where Claude batches both commands still passes.
+
+**Result:** Sequential run: checkpoints at messages 3, 5 and the end; the branch from step 3 carried only the first result and answered with the first command. Replay of the whole turn completed. A separate parallel run exposed a single checkpoint at the batch end.
+
+---
+## 2026-10-09
+
 ### transcript_store.py
 
 **Status:** PASS
