@@ -185,6 +185,9 @@ class Agent:
     # --- Skills ---
     # Skills provide structured instructions, reference docs, and scripts for agents
     skills: Optional[Skills] = None
+    # Set to True to enable lazy loading of skill tools via activate_skill/deactivate_skill meta-tools.
+    # When enabled, only meta-tools are exposed initially; full skill tools are injected after activation.
+    lazy_load_skills: bool = False
 
     # --- Agent Tools ---
     # A list of tools provided to the Model.
@@ -453,6 +456,7 @@ class Agent:
         knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
         skills: Optional[Skills] = None,
+        lazy_load_skills: bool = False,
         metadata: Optional[Dict[str, Any]] = None,
         tools: Optional[Union[Sequence[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
         tool_call_limit: Optional[int] = None,
@@ -605,6 +609,7 @@ class Agent:
         self.references_format = references_format
 
         self.skills = skills
+        self.lazy_load_skills = lazy_load_skills
 
         self.metadata = metadata
 
