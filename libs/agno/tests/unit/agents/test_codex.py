@@ -474,6 +474,33 @@ def test_unresumable_thread_starts_fresh_with_history(fake_sdk, tmp_db):
     assert session.session_data["codex_thread_id"] == "thread-2"
 
 
+def test_history_prompt_includes_tool_calls_and_truncated_results():
+    long_output = "x" * (codex_module._HISTORY_TOOL_RESULT_MAX_CHARS + 500)
+    history = [
+        {"role": "user", "content": "list the files"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "shell", "arguments": '{"command": "ls"}'}}
+            ],
+        },
+        {"role": "tool", "content": long_output, "tool_call_id": "c1"},
+        {"role": "assistant", "content": "There are many files."},
+    ]
+
+    prompt = CodexAgent._build_prompt("next", history, resumed=False)
+
+    assert "user: list the files" in prompt
+    assert 'assistant called shell({"command": "ls"})' in prompt
+    assert "tool result: " + "x" * codex_module._HISTORY_TOOL_RESULT_MAX_CHARS + " [truncated]" in prompt
+    assert long_output not in prompt
+    assert "assistant: There are many files." in prompt
+    assert prompt.endswith("Current message:\nnext")
+    # Resumed threads carry their own context, so history is not replayed
+    assert CodexAgent._build_prompt("next", history, resumed=True) == "next"
+
+
 def test_in_memory_thread_mapping_without_db(fake_sdk):
     fake_sdk.notifications = [_delta("m1", "ok"), _turn_completed()]
     agent = CodexAgent(name="Codex", id="codex")

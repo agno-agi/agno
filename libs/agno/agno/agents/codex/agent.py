@@ -38,6 +38,10 @@ _SANDBOX_ALIASES: Dict[str, str] = {
 # thread_start-only options that thread_resume does not accept.
 _START_ONLY_KEYS = {"ephemeral", "service_name", "session_start_source", "thread_source"}
 
+# Cap on each tool result replayed into a fresh thread. Shell output can be very
+# large, and the new thread only needs to know what happened, not the full dump.
+_HISTORY_TOOL_RESULT_MAX_CHARS = 2000
+
 
 def _item_root(item: Any) -> Any:
     """Unwrap a pydantic RootModel (ThreadItem) to the concrete item."""
@@ -300,7 +304,8 @@ class CodexAgent(BaseExternalAgent):
     @staticmethod
     def _build_prompt(input: Any, history: Optional[List[Dict[str, Any]]], resumed: bool) -> str:
         """Plain prompt when the Codex thread carries its own context; otherwise
-        prepend the persisted chat history so a fresh thread does not lose it."""
+        prepend the persisted chat history so a fresh thread does not lose it.
+        Tool calls are replayed with their results, truncated to keep the prompt bounded."""
         text = str(input)
         if resumed or not history:
             return text
@@ -308,7 +313,20 @@ class CodexAgent(BaseExternalAgent):
         for message in history:
             role = message.get("role")
             content = message.get("content")
-            if role in ("user", "assistant") and content:
+            if role == "assistant" and message.get("tool_calls"):
+                if content:
+                    lines.append(f"assistant: {content}")
+                for tool_call in message["tool_calls"]:
+                    function = tool_call.get("function") or {}
+                    lines.append(
+                        f"assistant called {function.get('name') or 'tool'}({function.get('arguments') or ''})"
+                    )
+            elif role == "tool" and content:
+                result = str(content)
+                if len(result) > _HISTORY_TOOL_RESULT_MAX_CHARS:
+                    result = result[:_HISTORY_TOOL_RESULT_MAX_CHARS] + " [truncated]"
+                lines.append(f"tool result: {result}")
+            elif role in ("user", "assistant") and content:
                 lines.append(f"{role}: {content}")
         if len(lines) == 1:
             return text
