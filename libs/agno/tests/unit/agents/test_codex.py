@@ -25,6 +25,7 @@ from agno.run.agent import (
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
+from agno.run.base import RunStatus
 
 # ---------------------------------------------------------------------------
 # Fake openai_codex SDK
@@ -472,6 +473,26 @@ def test_unresumable_thread_starts_fresh_with_history(fake_sdk, tmp_db):
 
     session = agent.read_or_create_session("s1")
     assert session.session_data["codex_thread_id"] == "thread-2"
+
+
+def test_transient_resume_failure_keeps_thread(fake_sdk, tmp_db, monkeypatch):
+    """A resume that fails for any reason other than a missing thread must keep the stored id."""
+    fake_sdk.notifications = [_delta("m1", "ok"), _turn_completed()]
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db)
+    agent.run("first", session_id="s1", user_id="u1")
+    assert agent.read_or_create_session("s1").session_data["codex_thread_id"] == "thread-1"
+
+    async def busy_resume(self, thread_id: str, **kwargs: Any) -> FakeThread:
+        fake_sdk.calls.append({"op": "thread_resume", "thread_id": thread_id, "kwargs": kwargs})
+        raise RuntimeError("server busy: retry limit exceeded")
+
+    monkeypatch.setattr(FakeAsyncCodex, "thread_resume", busy_resume)
+    run_output = agent.run("second", session_id="s1", user_id="u1")
+
+    assert run_output.status == RunStatus.error
+    ops = [c["op"] for c in fake_sdk.calls if c["op"] in ("thread_start", "thread_resume")]
+    assert ops == ["thread_start", "thread_resume"], "an unrelated failure must not start a new thread"
+    assert agent.read_or_create_session("s1").session_data["codex_thread_id"] == "thread-1"
 
 
 def test_in_memory_thread_mapping_without_db(fake_sdk):
