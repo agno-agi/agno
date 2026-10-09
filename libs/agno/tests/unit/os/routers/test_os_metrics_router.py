@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.utils import merge_os_metrics_totals, resolve_os_metrics_fields
-from agno.os.routers.metrics.metrics import MAX_WINDOW_DAYS, get_metrics_router
+from agno.os.routers.metrics.metrics import get_metrics_router
 from agno.os.settings import AgnoAPISettings
 from agno.remote.base import RemoteDb
 
@@ -1051,21 +1051,12 @@ class TestWindow:
         assert response.status_code == 400
         mock_db.get_os_metrics.assert_not_called()
 
-    def test_window_may_cover_the_maximum_number_of_days(self, client):
+    def test_window_may_cover_more_than_a_year(self, client):
         with _scope(None):
-            response = client.get(f"/os/metrics/sessions?{_last(MAX_WINDOW_DAYS)}")
+            response = client.get(f"/os/metrics/sessions?{_last(730)}")
 
         assert response.status_code == 200
-        assert len(response.json()["metrics"]) == MAX_WINDOW_DAYS
-
-    @pytest.mark.parametrize("route", READ_ROUTES)
-    def test_window_of_one_day_more_is_refused(self, client, mock_db, route):
-        with _scope(None):
-            response = client.get(f"/os/metrics/{route}?{_last(MAX_WINDOW_DAYS + 1)}")
-
-        assert response.status_code == 400
-        assert str(MAX_WINDOW_DAYS) in response.json()["detail"]
-        mock_db.get_os_metrics.assert_not_called()
+        assert len(response.json()["metrics"]) == 730
 
     def test_single_day_is_a_window(self, client, mock_db):
         today = _day(0)

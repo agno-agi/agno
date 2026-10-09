@@ -61,7 +61,6 @@ logger = logging.getLogger(__name__)
 # Without bounds a route covers the last 30 days. Both days are inclusive, so a starting_date
 # equal to the ending_date covers that one day.
 DEFAULT_WINDOW_DAYS = 30
-MAX_WINDOW_DAYS = 365
 
 # The /os/metrics routes read every database of the AgentOS at the same time, this many at once. A database
 # that has not answered within the timeout is left out of the response and named in skipped_db_ids.
@@ -70,19 +69,13 @@ _OS_METRICS_READ_TIMEOUT_SECONDS = 30.0
 
 
 def _window(starting_date: Optional[date], ending_date: Optional[date]) -> Tuple[date, date]:
-    """The UTC days a route covers, with the same bounds GET /metrics takes.
-
-    Without an end the window ends today, without a start it covers the last
-    DEFAULT_WINDOW_DAYS days.
-    """
+    """Resolve the UTC days a route covers, ending today and covering DEFAULT_WINDOW_DAYS days by default."""
     if ending_date is None:
         ending_date = datetime.now(timezone.utc).date()
     if starting_date is None:
         starting_date = ending_date - timedelta(days=DEFAULT_WINDOW_DAYS - 1)
     if starting_date > ending_date:
-        raise HTTPException(status_code=400, detail="starting_date must not be after ending_date")
-    if (ending_date - starting_date).days >= MAX_WINDOW_DAYS:
-        raise HTTPException(status_code=400, detail=f"The window must not cover more than {MAX_WINDOW_DAYS} days")
+        raise HTTPException(status_code=400, detail="starting_date must be on or before ending_date")
     return starting_date, ending_date
 
 
@@ -116,7 +109,6 @@ def attach_routes(
     role_store: "Optional[Authorization]" = None,
     auth_enabled: bool = True,
 ) -> APIRouter:
-    # GET /os/metrics/users answers to the same admin gate as the /users API
     require_user_admin = _make_require_admin(role_store, auth_enabled=auth_enabled)
 
     @router.get(
@@ -549,11 +541,7 @@ def attach_routes(
         os_dbs: Dict[str, Union[BaseDb, AsyncBaseDb, RemoteDb]],
         read: Callable[[Union[BaseDb, AsyncBaseDb]], Awaitable[Tuple[Any, Optional[int]]]],
     ) -> Tuple[List[Any], Dict[str, Any]]:
-        """Read every database at the same time, at most _MAX_CONCURRENT_OS_METRICS_READS at once.
-
-        Returns what each database that answered read, and what a response says about its databases: the
-        updated_at of each, the newest of them, and why any other database was skipped.
-        """
+        """Read every database at the same time, at most _MAX_CONCURRENT_OS_METRICS_READS at once."""
 
         async def _read_one(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> Any:
             if isinstance(db, RemoteDb):
@@ -643,10 +631,7 @@ def attach_routes(
         return [starting_date + timedelta(days=offset) for offset in range((ending_date - starting_date).days + 1)]
 
     def _previous_starting_date(starting_date: date, ending_date: date) -> date:
-        """The first day of the window of the same length that ends the day before this one starts.
-
-        Both windows then come from one read.
-        """
+        """The first day of the window of the same length that ends the day before this one starts."""
         return starting_date - timedelta(days=(ending_date - starting_date).days + 1)
 
     def _change_percent(total: int, previous_total: int) -> Optional[float]:
@@ -714,10 +699,14 @@ def attach_routes(
                             "change_percent": 24.2,
                             "window_days": 30,
                             "updated_at": "2025-07-31T12:49:01Z",
+                            "db_ids": {"agno-db": "2025-07-31T12:49:01Z"},
+                            "skipped_db_ids": {},
                         }
                     }
                 },
             },
+            400: {"description": "Invalid date range parameters", "model": BadRequestResponse},
+            404: {"description": "Database not found", "model": NotFoundResponse},
             500: {"description": "Failed to get OS session metrics", "model": InternalServerErrorResponse},
             503: {
                 "description": "No AgentOS database configured, or no database answered",
@@ -794,21 +783,20 @@ def attach_routes(
                 "content": {
                     "application/json": {
                         "example": {
-                            "metrics": [
-                                {
-                                    "date": "2025-07-31T00:00:00Z",
-                                    "tokens_count": 5962,
-                                }
-                            ],
+                            "metrics": [{"date": "2025-07-31T00:00:00Z", "tokens_count": 5962}],
                             "total_tokens": 184500,
                             "previous_total_tokens": 150000,
                             "change_percent": 23.0,
                             "window_days": 30,
                             "updated_at": "2025-07-31T12:49:01Z",
+                            "db_ids": {"agno-db": "2025-07-31T12:49:01Z"},
+                            "skipped_db_ids": {},
                         }
                     }
                 },
             },
+            400: {"description": "Invalid date range parameters", "model": BadRequestResponse},
+            404: {"description": "Database not found", "model": NotFoundResponse},
             500: {"description": "Failed to get OS token metrics", "model": InternalServerErrorResponse},
             503: {
                 "description": "No AgentOS database configured, or no database answered",
@@ -967,7 +955,7 @@ def attach_routes(
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
-            logger.exception("GET /os/metrics/users failed")
+            log_error(f"Error getting OS user metrics: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error getting OS user metrics: {str(e)}")
 
     @router.get(
@@ -997,10 +985,14 @@ def attach_routes(
                             "total_model_runs": 120,
                             "window_days": 30,
                             "updated_at": "2025-07-31T12:49:01Z",
+                            "db_ids": {"agno-db": "2025-07-31T12:49:01Z"},
+                            "skipped_db_ids": {},
                         }
                     }
                 },
             },
+            400: {"description": "Invalid date range parameters", "model": BadRequestResponse},
+            404: {"description": "Database not found", "model": NotFoundResponse},
             500: {"description": "Failed to get OS model metrics", "model": InternalServerErrorResponse},
             503: {
                 "description": "No AgentOS database configured, or no database answered",
@@ -1071,9 +1063,8 @@ def attach_routes(
         operation_id="get_os_run_metrics",
         summary="Get OS Run Metrics",
         description=(
-            "Retrieve the runs started on each day of a date range by status, their total, the share of "
-            "finished runs that completed, and how the total compares with the date range of the same length "
-            "before it. A team member's run counts as a run of its own, beside the team's run. "
+            "Retrieve the runs started on each day of a date range by status, their total and success rate, and "
+            "how that total compares with the date range of the same length before it. "
             "If no date range is specified, covers the last 30 days."
         ),
         responses={
@@ -1096,10 +1087,14 @@ def attach_routes(
                             "change_percent": 18.3,
                             "window_days": 30,
                             "updated_at": "2025-07-31T12:49:01Z",
+                            "db_ids": {"agno-db": "2025-07-31T12:49:01Z"},
+                            "skipped_db_ids": {},
                         }
                     }
                 },
             },
+            400: {"description": "Invalid date range parameters", "model": BadRequestResponse},
+            404: {"description": "Database not found", "model": NotFoundResponse},
             500: {"description": "Failed to get OS run metrics", "model": InternalServerErrorResponse},
             503: {
                 "description": "No AgentOS database configured, or no database answered",
@@ -1183,9 +1178,8 @@ def attach_routes(
         operation_id="get_os_latency_metrics",
         summary="Get OS Latency Metrics",
         description=(
-            "Retrieve how long completed runs and their model calls took on each day of a date range and "
-            "across the whole range: the average, median, 95th percentile and slowest run duration, time to "
-            "the first token and model call. Medians and percentiles are approximate. "
+            "Retrieve the average, median, p95 and slowest duration, time to the first token and model call of the "
+            "completed runs on each day of a date range and across it. Medians and percentiles are approximate. "
             "If no date range is specified, covers the last 30 days."
         ),
         responses={
@@ -1227,10 +1221,14 @@ def attach_routes(
                             "max_model_call_ms": 6100,
                             "window_days": 30,
                             "updated_at": "2025-07-31T12:49:01Z",
+                            "db_ids": {"agno-db": "2025-07-31T12:49:01Z"},
+                            "skipped_db_ids": {},
                         }
                     }
                 },
             },
+            400: {"description": "Invalid date range parameters", "model": BadRequestResponse},
+            404: {"description": "Database not found", "model": NotFoundResponse},
             500: {"description": "Failed to get OS latency metrics", "model": InternalServerErrorResponse},
             503: {
                 "description": "No AgentOS database configured, or no database answered",
@@ -1414,6 +1412,7 @@ def attach_routes(
                     }
                 },
             },
+            404: {"description": "Database not found", "model": NotFoundResponse},
             500: {"description": "Failed to refresh OS metrics", "model": InternalServerErrorResponse},
             501: {"description": "OS metrics not supported by the configured database"},
             503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
@@ -1423,12 +1422,12 @@ def attach_routes(
         request: Request,
         response: Response,
         background_tasks: BackgroundTasks,
-        background: bool = Query(
-            default=False, description="Run the refresh in the background and return 202 immediately"
-        ),
         db_id: Optional[List[str]] = Query(
             default=None,
             description="Database ID to refresh OS metrics for. Repeat it to refresh several. Defaults to every database",
+        ),
+        background: bool = Query(
+            default=False, description="Run the refresh in the background and return 202 immediately"
         ),
     ) -> Union[OSMetricsRefreshResponse, MetricsRefreshResponse]:
         try:
@@ -1490,8 +1489,17 @@ def attach_routes(
         responses={
             200: {
                 "description": "Current OS metrics refresh status",
-                "content": {"application/json": {"example": {"updated_at": "2025-08-12T08:01:49Z"}}},
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "updated_at": "2025-08-12T08:01:49Z",
+                            "db_ids": {"agno-db": "2025-08-12T08:01:49Z"},
+                            "skipped_db_ids": {},
+                        }
+                    }
+                },
             },
+            404: {"description": "Database not found", "model": NotFoundResponse},
             500: {"description": "Failed to get OS metrics refresh status", "model": InternalServerErrorResponse},
             503: {
                 "description": "No AgentOS database configured, or no database answered",

@@ -186,7 +186,7 @@ class DayRunMetrics(BaseModel):
 
 class OSRunMetricsResponse(BaseModel):
     metrics: List[DayRunMetrics] = Field(..., description="Daily run counts across the window, oldest first")
-    total_runs: int = Field(..., description="Runs started in the window", ge=0)
+    total_runs: int = Field(..., description="Runs started in the window, team member runs included", ge=0)
     status_metrics: Dict[str, int] = Field(..., description="Runs started in the window by their current status")
     success_rate: Optional[float] = Field(
         None,

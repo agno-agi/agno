@@ -158,11 +158,11 @@ class TestAccess:
 
         assert resp.status_code == 503
 
-    def test_window_longer_than_a_year_is_refused(self, client, user_store):
+    def test_window_may_cover_more_than_a_year(self, client):
         resp = client.get(f"/os/metrics/users?{_last(400)}")
 
-        assert resp.status_code == 400
-        user_store.acreated_by_day.assert_not_awaited()
+        assert resp.status_code == 200
+        assert len(resp.json()["metrics"]) == 400
 
 
 class TestAccessOnAnAgentOS:
