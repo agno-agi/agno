@@ -11,7 +11,7 @@ from agno.metrics import RunMetrics
 from agno.models.message import Citations, Message
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
-from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
+from agno.run.base import BaseRunOutputEvent, CancellationStage, MessageReferences, RunStatus
 from agno.run.requirement import RunRequirement
 from agno.utils.log import log_error
 from agno.utils.media import (
@@ -23,6 +23,7 @@ from agno.utils.media import (
 )
 
 if TYPE_CHECKING:
+    from agno.compaction.types import CompactionRecord
     from agno.session.summary import SessionSummary
 
 
@@ -187,6 +188,9 @@ class RunEvent(str, Enum):
 
     compression_started = "CompressionStarted"
     compression_completed = "CompressionCompleted"
+
+    compaction_started = "CompactionStarted"
+    compaction_completed = "CompactionCompleted"
 
     followups_started = "FollowupsStarted"
     followups_completed = "FollowupsCompleted"
@@ -500,6 +504,24 @@ class CompressionCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class CompactionStartedEvent(BaseAgentRunEvent):
+    """Event sent when conversation compaction is about to start"""
+
+    event: str = RunEvent.compaction_started.value
+
+
+@dataclass
+class CompactionCompletedEvent(BaseAgentRunEvent):
+    """Event sent when conversation compaction has completed"""
+
+    event: str = RunEvent.compaction_completed.value
+    messages_compacted: Optional[int] = None
+    tokens_before: Optional[int] = None
+    tokens_after: Optional[int] = None
+    archived: Optional[bool] = None
+
+
+@dataclass
 class FollowupsStartedEvent(BaseAgentRunEvent):
     event: str = RunEvent.followups_started.value
 
@@ -555,6 +577,8 @@ RunOutputEvent = Union[
     ModelRequestCompletedEvent,
     CompressionStartedEvent,
     CompressionCompletedEvent,
+    CompactionStartedEvent,
+    CompactionCompletedEvent,
     FollowupsStartedEvent,
     FollowupsCompletedEvent,
     CustomEvent,
@@ -600,6 +624,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.model_request_completed.value: ModelRequestCompletedEvent,
     RunEvent.compression_started.value: CompressionStartedEvent,
     RunEvent.compression_completed.value: CompressionCompletedEvent,
+    RunEvent.compaction_started.value: CompactionStartedEvent,
+    RunEvent.compaction_completed.value: CompactionCompletedEvent,
     RunEvent.followups_started.value: FollowupsStartedEvent,
     RunEvent.followups_completed.value: FollowupsCompletedEvent,
     RunEvent.custom_event.value: CustomEvent,
@@ -642,6 +668,8 @@ class RunOutput:
     model_provider: Optional[str] = None
     messages: Optional[List[Message]] = None
     metrics: Optional[RunMetrics] = None
+    # What compaction did to this run's context, when it ran.
+    compaction: Optional["CompactionRecord"] = None
     additional_input: Optional[List[Message]] = None
 
     tools: Optional[List[ToolExecution]] = None
@@ -670,6 +698,10 @@ class RunOutput:
     # against a NEWER stored value, so a presumed-dead attempt's late write
     # cannot clobber its successor. None outside durable-queue execution.
     queue_attempt: Optional[int] = None
+    # For a CANCELLED run, where it was when cancelled (see CancellationStage).
+    # None on runs written before the field existed and on shutdown
+    # interrupts: consumers treat None as unknown.
+    cancellation_stage: Optional[CancellationStage] = None
 
     # User control flow (HITL) requirements to continue a run when paused, in order of arrival
     requirements: Optional[list[RunRequirement]] = None
@@ -727,6 +759,7 @@ class RunOutput:
     _HAND_SERIALIZED_FIELDS = (
         "messages",
         "metrics",
+        "compaction",
         "tools",
         "metadata",
         "images",
@@ -761,11 +794,17 @@ class RunOutput:
         if self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, RunMetrics) else self.metrics
 
+        if self.compaction is not None:
+            _dict["compaction"] = self.compaction.to_dict() if hasattr(self.compaction, "to_dict") else self.compaction
+
         if self.events is not None:
             _dict["events"] = [e.to_dict() for e in self.events]
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
+
+        if self.cancellation_stage is not None:
+            _dict["cancellation_stage"] = getattr(self.cancellation_stage, "value", self.cancellation_stage)
 
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
@@ -919,6 +958,12 @@ class RunOutput:
         if metrics:
             metrics = RunMetrics.from_dict(metrics)
 
+        compaction = data.pop("compaction", None)
+        if compaction:
+            from agno.compaction.types import CompactionRecord
+
+            compaction = CompactionRecord.from_dict(compaction)
+
         additional_input = data.pop("additional_input", None)
 
         if additional_input is not None:
@@ -939,12 +984,16 @@ class RunOutput:
         # Filter data to only include fields that are actually defined in the RunOutput dataclass
         from dataclasses import fields
 
+        if "cancellation_stage" in data:
+            data["cancellation_stage"] = CancellationStage.coerce(data["cancellation_stage"])
+
         supported_fields = {f.name for f in fields(cls)}
         filtered_data = {k: v for k, v in data.items() if k in supported_fields}
 
         return cls(
             messages=messages,
             metrics=metrics,
+            compaction=compaction,
             citations=citations,
             tools=tools,
             images=images,

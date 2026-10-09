@@ -618,6 +618,24 @@ class BaseExternalAgent:
                     history.append({"role": msg.role, "content": str(msg.content)})
         return history
 
+    @staticmethod
+    def _build_prompt(input: Any, history: Optional[List[Dict[str, Any]]], resumed: bool) -> str:
+        """Plain prompt when the framework's own session carries the context; otherwise
+        prepend the persisted chat history so a fresh session does not lose it."""
+        text = str(input)
+        if resumed or not history:
+            return text
+        lines = ["Previous conversation (for context, do not repeat it):"]
+        for message in history:
+            role = message.get("role")
+            content = message.get("content")
+            if role in ("user", "assistant") and content:
+                lines.append(f"{role}: {content}")
+        if len(lines) == 1:
+            return text
+        lines.extend(["", "Current message:", text])
+        return "\n".join(lines)
+
     # ---------------------------------------------------------------------------
     # Internal: non-streaming
     # ---------------------------------------------------------------------------

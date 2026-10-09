@@ -1,4 +1,5 @@
-from dataclasses import dataclass, field as dc_field
+from dataclasses import dataclass
+from dataclasses import field as dc_field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -536,6 +537,14 @@ class StepInput:
             audio=audio,
             files=files,
         )
+
+
+@dataclass
+class StepProgress:
+    """A function executor's observer update; never a separate executor run."""
+
+    content: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
 
 
 @dataclass

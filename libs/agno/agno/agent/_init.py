@@ -2,22 +2,27 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from os import getenv
 from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
     Dict,
+    List,
     Literal,
     Optional,
     Sequence,
+    Tuple,
     Union,
     cast,
 )
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
+    from agno.fs import FileSystem
 
+from agno.agent.followup import FollowupConfig
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb
 from agno.memory import MemoryManager
@@ -192,6 +197,70 @@ def set_compression_manager(agent: Agent) -> None:
         agent.compress_tool_results = True
 
 
+def disable_compaction_without_records(agent: Agent) -> None:
+    """Turn compaction off, with a warning, when the db cannot store compaction records.
+
+    A fold lasts only as long as its record: without one, every run starts from the full history
+    and pays for another summary of all of it. Only SqliteDb and PostgresDb store records. Checked
+    when the agent is built, and again at run start for a db assigned afterwards.
+    """
+    if not agent.compaction or agent.db is None:
+        return
+    from agno.compaction.archive import stores_compaction_records
+
+    if not stores_compaction_records(agent.db):
+        log_warning(
+            f"Compaction is only supported with SqliteDb and PostgresDb; {type(agent.db).__name__} cannot "
+            "store compaction records, so compaction is turned off. Use SqliteDb or PostgresDb to enable it."
+        )
+        agent.compaction = None
+
+
+def set_compaction(agent: Agent) -> None:
+    """Resolve ``agent.compaction`` into the Compaction the run uses.
+
+    ``True`` folds only when the provider rejects a request as too long. A proactive threshold
+    is a guess about a number nobody can look up - no provider exposes its context window, and
+    the same model id has different limits across deployments - so 150k is wrong for a 32k
+    model and pointless for a 1M one. The rejection is the one signal that is always right, at
+    the cost of a single failed request before the first fold.
+
+    Pass a ``Compaction`` object to opt into the proactive threshold, which defaults to 150k
+    there because someone configuring it has a size in mind.
+
+    The model defaults to the agent's either way, so a bare ``compaction=True`` is still the
+    cheapest correct configuration.
+    """
+    from agno.compaction.compaction import Compaction
+
+    if agent.compaction is True:
+        agent.compaction = Compaction(compact_at_tokens=None, on_context_overflow=True)
+    elif agent.compaction is False:
+        agent.compaction = None
+
+    disable_compaction_without_records(agent)
+
+    if isinstance(agent.compaction, Compaction) and agent.compaction.model is None:
+        agent.compaction.model = agent.model
+
+    if isinstance(agent.compaction, Compaction):
+        # Compaction folds the history a run replays. Without replayed history a size threshold
+        # has nothing to measure and a fold is never sent. Overflow recovery still acts within a
+        # run, so a bare compaction=True - which has no threshold - is not a mistake here.
+        if not agent.add_history_to_context and agent.compaction.compact_at_tokens is not None:
+            log_warning(
+                "compaction is set but add_history_to_context is False, so no history is replayed: "
+                "compact_at_tokens never fires and a fold is never sent. Set add_history_to_context=True."
+            )
+        # Both put a summary of the same history into the context, so the model reads it twice.
+        if agent.add_session_summary_to_context:
+            log_warning(
+                "compaction and session summaries are both enabled, so the context carries two summaries "
+                "of the same history. Compaction already replaces old turns with its own summary; "
+                "consider add_session_summary_to_context=False."
+            )
+
+
 def set_result_store(agent: Agent) -> None:
     """Resolve ``agent.offload_tool_results`` into the store the run uses.
 
@@ -229,6 +298,112 @@ def set_result_store(agent: Agent) -> None:
         setting=agent.offload_tool_results, db=agent.db, owner=agent, owner_kind="agent"
     )
     agent._result_store_setting = agent.offload_tool_results
+
+
+def set_filesystem(agent: Agent) -> None:
+    """Resolve the filesystem shorthand or attach an explicitly provided instance."""
+    if (
+        agent.filesystem is None
+        or agent.filesystem is False
+        or (isinstance(agent.filesystem, list) and not agent.filesystem)
+    ):
+        agent._filesystem = None
+        return
+    if agent._filesystem is not None:
+        return
+
+    from agno.fs import FileSystem
+    from agno.fs.toolkit import FileSystemTools
+
+    stores: List[Any] = list(agent.filesystem) if isinstance(agent.filesystem, list) else [agent.filesystem]
+    if any(isinstance(store, FileSystemTools) for store in stores):
+        # Access is configured on the FileSystem itself; a toolkit here is the old spelling.
+        raise TypeError(
+            "filesystem takes FileSystem instances, not toolkits. Set the tool options on the "
+            "FileSystem instead, e.g. FileSystem(db, namespace=..., read_only=True)."
+        )
+
+    if _manual_filesystem_tools(agent):
+        # Every FileSystemTools registers the same tool names, and the resolver keeps
+        # only the first registration per name, so a second toolkit would be dropped.
+        raise ValueError(
+            "filesystem manages its own FileSystemTools. Remove the manually configured "
+            "FileSystemTools or disable the filesystem setting."
+        )
+
+    if isinstance(agent.filesystem, list):
+        if any(not isinstance(store, FileSystem) for store in agent.filesystem):
+            raise TypeError("filesystem lists must contain only FileSystem instances")
+        agent._filesystem = agent.filesystem[0]
+    elif isinstance(agent.filesystem, FileSystem):
+        agent._filesystem = agent.filesystem
+    elif agent.filesystem is True:
+        if agent.db is None:
+            raise ValueError("filesystem=True requires a database on the agent or AgentOS")
+        if isinstance(agent.db, AsyncBaseDb):
+            raise ValueError("filesystem=True currently requires a synchronous database")
+        if not agent.id:
+            raise ValueError("filesystem=True requires the agent to have a stable id")
+        # One namespace per agent; each run acts in its user's partition of it.
+        agent._filesystem = FileSystem(agent.db, namespace="{agent_id}").resolve(agent_id=agent.id)
+        log_debug(f"Filesystem enabled: files are stored in namespace {agent._filesystem.namespace!r}")
+    else:
+        raise TypeError("filesystem must be a bool, a FileSystem, or a list of FileSystem instances")
+
+
+def apply_filesystem_user_isolation(agent: Agent, enabled: bool) -> None:
+    """Set ``user_scoped`` from the AgentOS ``user_isolation`` setting on stores that left it unset.
+
+    Isolation on the OS then partitions every agent filesystem by the run's user;
+    off, the stores stay shared. A store that chose ``user_scoped`` itself keeps
+    its choice. The stores are resolved to apply it, and a store that cannot be
+    built is reported here and left for the run to fail on.
+    """
+    try:
+        filesystems = get_filesystems(agent)
+    except Exception as e:
+        log_warning(f"Agent {agent.id or agent.name!r}: filesystem could not be resolved ({e})")
+        return
+    for filesystem, _ in filesystems:
+        if filesystem.user_scoped is None:
+            filesystem.user_scoped = bool(enabled)
+
+
+def _manual_filesystem_tools(agent: Agent) -> List[Any]:
+    """FileSystemTools the developer attached through ``tools=[...]``."""
+    if not isinstance(agent.tools, list):
+        return []
+
+    from agno.fs.toolkit import FileSystemTools
+
+    return [tool for tool in agent.tools if isinstance(tool, FileSystemTools)]
+
+
+def has_filesystem(agent: Agent) -> bool:
+    """Whether the agent holds any filesystem, through the setting or its tools. Never builds one."""
+    return bool(agent.filesystem) or bool(_manual_filesystem_tools(agent))
+
+
+def get_filesystems(agent: Agent) -> List[Tuple["FileSystem", bool]]:
+    """Every filesystem this agent holds, as ``(filesystem, read_only)`` pairs.
+
+    Covers the ``filesystem`` setting and any FileSystemTools attached through
+    ``tools=[...]``, so an agent that only reads another agent's namespace is
+    still discoverable. The setting comes first. Namespace templates are left
+    unresolved for the caller to bind. ``read_only`` follows the tools the agent
+    actually gets: a store narrowed to read tools by ``include_tools`` or
+    ``exclude_tools`` counts as read-only too.
+    """
+    filesystems: List[Tuple["FileSystem", bool]] = []
+    managed = agent.filesystem_instance
+    if isinstance(agent.filesystem, list):
+        for store in agent.filesystem:
+            filesystems.append((store, not store.tools().can_write))
+    elif managed is not None:
+        filesystems.append((managed, not managed.tools().can_write))
+    for toolkit in _manual_filesystem_tools(agent):
+        filesystems.append((toolkit.fs, not toolkit.can_write))
+    return filesystems
 
 
 def _initialize_session_state(
@@ -277,11 +452,25 @@ def get_models(agent: Agent) -> None:
         if agent.output_model is not None:
             agent.output_model.model_type = ModelType.OUTPUT_MODEL
 
+    # Follow-up slots resolve strings like the siblings but keep the instance's
+    # model_type: follow-up metrics are attributed explicitly at the call site, and
+    # the same instance may also serve as the main model.
+    if agent.followup_model is not None:
+        agent.followup_model = get_model(agent.followup_model)
+    if isinstance(agent.followups, FollowupConfig) and isinstance(agent.followups.model, str):
+        # Resolve on a copy: one config object may be shared across components.
+        agent.followups = replace(agent.followups, model=get_model(agent.followups.model))
+
     if agent.fallback_config is not None:
         agent.fallback_config.resolve_models()
 
     if agent.compression_manager is not None and agent.compression_manager.model is None:
         agent.compression_manager.model = agent.model
+
+    from agno.compaction.compaction import Compaction as _Compaction
+
+    if isinstance(agent.compaction, _Compaction) and agent.compaction.model is None:
+        agent.compaction.model = agent.model
 
 
 def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
@@ -290,12 +479,16 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
     set_id(agent)
     set_telemetry(agent)
     set_checkpoint(agent)
+    if agent.filesystem or agent._filesystem is not None:
+        set_filesystem(agent)
     if agent.update_memory_on_run or agent.enable_agentic_memory or agent.memory_manager is not None:
         set_memory_manager(agent)
     if agent.enable_session_summaries or agent.session_summary_manager is not None:
         set_session_summary_manager(agent)
     if agent.compress_tool_results or agent.compression_manager is not None:
         set_compression_manager(agent)
+    if agent.compaction is not None:
+        set_compaction(agent)
     # Resolved when a setting is present or when a store exists.
     if agent.offload_tool_results or agent._result_store is not None:
         set_result_store(agent)

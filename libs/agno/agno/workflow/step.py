@@ -5,7 +5,21 @@ import contextvars
 import inspect
 from copy import copy, deepcopy
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Dict,
+    Generator,
+    Iterator,
+    List,
+    Optional,
+    Union,
+    cast,
+)
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -34,7 +48,7 @@ from agno.run.agent import (
     RunErrorEvent as AgentRunErrorEvent,
 )
 from agno.run.base import BaseRunOutputEvent, RunStatus
-from agno.run.cancel import aregister_member_run, register_member_run
+from agno.run.cancel import araise_if_cancelled, aregister_member_run, raise_if_cancelled, register_member_run
 from agno.run.team import (
     RunCancelledEvent as TeamRunCancelledEvent,
 )
@@ -52,6 +66,7 @@ from agno.run.team import (
 )
 from agno.run.workflow import (
     StepCompletedEvent,
+    StepProgressEvent,
     StepStartedEvent,
     WorkflowRunOutput,
     WorkflowRunOutputEvent,
@@ -69,6 +84,7 @@ from agno.workflow.types import (
     OnReject,
     StepInput,
     StepOutput,
+    StepProgress,
     StepRequirement,
     StepType,
     UserInputField,
@@ -106,6 +122,7 @@ StepExecutor = Callable[
         StepOutput,
         RunOutput,
         TeamRunOutput,
+        StepProgress,
         Iterator[StepOutput],
         Iterator[Any],
         Awaitable[StepOutput],
@@ -1400,6 +1417,37 @@ class Step:
         else:
             return await func(step_input, **kwargs)
 
+    def _function_events(
+        self, iterator: Generator[Any, None, None], workflow_run_response: Optional["WorkflowRunOutput"]
+    ) -> Iterator[Any]:
+        """Iterate a function executor's generator, stopping at the workflow's cancellation.
+
+        The run is checked between items, so a cancelled workflow stops the function at its
+        next yield instead of draining it, and the generator is closed so its cleanup runs
+        before the workflow reports the cancellation.
+        """
+        run_id = workflow_run_response.run_id if workflow_run_response else None
+        try:
+            for item in iterator:
+                yield item
+                if run_id:
+                    raise_if_cancelled(run_id)
+        finally:
+            iterator.close()
+
+    async def _afunction_events(
+        self, iterator: AsyncGenerator[Any, None], workflow_run_response: Optional["WorkflowRunOutput"]
+    ) -> AsyncIterator[Any]:
+        """Async twin of _function_events."""
+        run_id = workflow_run_response.run_id if workflow_run_response else None
+        try:
+            async for item in iterator:
+                yield item
+                if run_id:
+                    await araise_if_cancelled(run_id)
+        finally:
+            await iterator.aclose()
+
     def execute(
         self,
         step_input: StepInput,
@@ -1450,12 +1498,15 @@ class Step:
                         content = ""
                         final_response = None
                         try:
-                            for chunk in self._call_custom_function(
+                            iterator = self._call_custom_function(
                                 self.active_executor,
                                 step_input,
                                 run_context,
-                            ):  # type: ignore
-                                if isinstance(chunk, (BaseRunOutputEvent)):
+                            )
+                            for chunk in self._function_events(iterator, workflow_run_response):  # type: ignore
+                                if isinstance(chunk, StepProgress):
+                                    continue
+                                elif isinstance(chunk, (BaseRunOutputEvent)):
                                     if (
                                         isinstance(chunk, (RunContentEvent, TeamRunContentEvent))
                                         and chunk.content is not None
@@ -1807,8 +1858,23 @@ class Step:
                                 step_input,
                                 run_context,
                             )
-                            for event in iterator:  # type: ignore
-                                if isinstance(event, (BaseRunOutputEvent)):
+                            for event in self._function_events(iterator, workflow_run_response):  # type: ignore
+                                if isinstance(event, StepProgress):
+                                    if stream_events and workflow_run_response:
+                                        yield StepProgressEvent(
+                                            run_id=workflow_run_response.run_id,
+                                            workflow_id=workflow_run_response.workflow_id,
+                                            workflow_name=workflow_run_response.workflow_name,
+                                            session_id=workflow_run_response.session_id,
+                                            step_name=self.name,
+                                            step_id=self.step_id,
+                                            parent_step_id=parent_step_id,
+                                            step_index=step_index,
+                                            attempt=attempt + 1,
+                                            content=event.content,
+                                            data=event.data,
+                                        )
+                                elif isinstance(event, (BaseRunOutputEvent)):
                                     if (
                                         isinstance(event, (RunContentEvent, TeamRunContentEvent))
                                         and event.content is not None
@@ -2149,8 +2215,10 @@ class Step:
                                     step_input,
                                     run_context,
                                 )
-                                for chunk in iterator:  # type: ignore
-                                    if isinstance(chunk, (BaseRunOutputEvent)):
+                                for chunk in self._function_events(iterator, workflow_run_response):  # type: ignore
+                                    if isinstance(chunk, StepProgress):
+                                        continue
+                                    elif isinstance(chunk, (BaseRunOutputEvent)):
                                         if (
                                             isinstance(chunk, (RunContentEvent, TeamRunContentEvent))
                                             and chunk.content is not None
@@ -2177,8 +2245,10 @@ class Step:
                                         step_input,
                                         run_context,
                                     )
-                                    async for chunk in iterator:  # type: ignore
-                                        if isinstance(chunk, (BaseRunOutputEvent)):
+                                    async for chunk in self._afunction_events(iterator, workflow_run_response):  # type: ignore
+                                        if isinstance(chunk, StepProgress):
+                                            continue
+                                        elif isinstance(chunk, (BaseRunOutputEvent)):
                                             if (
                                                 isinstance(chunk, (RunContentEvent, TeamRunContentEvent))
                                                 and chunk.content is not None
@@ -2478,8 +2548,23 @@ class Step:
                             step_input,
                             run_context,
                         )
-                        async for event in iterator:  # type: ignore
-                            if isinstance(event, (BaseRunOutputEvent)):
+                        async for event in self._afunction_events(iterator, workflow_run_response):  # type: ignore
+                            if isinstance(event, StepProgress):
+                                if stream_events and workflow_run_response:
+                                    yield StepProgressEvent(
+                                        run_id=workflow_run_response.run_id,
+                                        workflow_id=workflow_run_response.workflow_id,
+                                        workflow_name=workflow_run_response.workflow_name,
+                                        session_id=workflow_run_response.session_id,
+                                        step_name=self.name,
+                                        step_id=self.step_id,
+                                        parent_step_id=parent_step_id,
+                                        step_index=step_index,
+                                        attempt=attempt + 1,
+                                        content=event.content,
+                                        data=event.data,
+                                    )
+                            elif isinstance(event, (BaseRunOutputEvent)):
                                 if (
                                     isinstance(event, (RunContentEvent, TeamRunContentEvent))
                                     and event.content is not None
@@ -2534,8 +2619,23 @@ class Step:
                             step_input,
                             run_context,
                         )
-                        for event in iterator:  # type: ignore
-                            if isinstance(event, (BaseRunOutputEvent)):
+                        for event in self._function_events(iterator, workflow_run_response):  # type: ignore
+                            if isinstance(event, StepProgress):
+                                if stream_events and workflow_run_response:
+                                    yield StepProgressEvent(
+                                        run_id=workflow_run_response.run_id,
+                                        workflow_id=workflow_run_response.workflow_id,
+                                        workflow_name=workflow_run_response.workflow_name,
+                                        session_id=workflow_run_response.session_id,
+                                        step_name=self.name,
+                                        step_id=self.step_id,
+                                        parent_step_id=parent_step_id,
+                                        step_index=step_index,
+                                        attempt=attempt + 1,
+                                        content=event.content,
+                                        data=event.data,
+                                    )
+                            elif isinstance(event, (BaseRunOutputEvent)):
                                 if (
                                     isinstance(event, (RunContentEvent, TeamRunContentEvent))
                                     and event.content is not None
