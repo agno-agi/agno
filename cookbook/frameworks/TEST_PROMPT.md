@@ -49,8 +49,8 @@ Follow the provider README, then run its `<provider>_basic.py`,
 
 - Basic and SDK examples both answer the inclusive threshold question with zero shipping.
 - Native and wrapped examples use the same prompt/model; compare their result objects and IDs.
-- Claude displays a Tool Calls panel; its returned `result.tools` contains real
-  fixture contents. Codex prints tool start/end events and returned contents.
+- Both providers display a Tool Calls panel; their returned `result.tools`
+  contains real fixture contents.
 - The final explanation covers `small=8`, `boundary=0` and `large=0`.
 - All runs complete successfully and the fixture is unchanged.
 - An invalid model makes the script exit unsuccessfully, not print a false pass.
@@ -78,8 +78,9 @@ AGNO_TEST_CODEX_SDK=1 python -m pytest \
 ```
 
 Each provider has three script cases and an HTTP case with two model runs.
-Claude also has a case that reuses the native SDK options directly in Agno.
-Enable both flags to run all nine cases. Allow several minutes;
+Both providers also have a native-options case. Codex checks named override
+precedence and ephemeral thread bookkeeping with a native `CodexConfig`.
+Enable both flags to run all ten cases. Allow several minutes;
 a script exceeding 180 seconds or HTTP read exceeding 120 seconds fails.
 The native examples also enforce a 120-second total wait.
 

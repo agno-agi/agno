@@ -6,6 +6,7 @@ from typing_extensions import assert_type
 
 from agno.agent.protocol import AgentProtocol
 from agno.agents.claude import ClaudeAgent
+from agno.agents.codex import CodexAgent, ThreadOptions, TurnOptions
 from agno.run.agent import RunOutput, RunOutputEvent
 
 if TYPE_CHECKING:
@@ -29,3 +30,8 @@ if TYPE_CHECKING:
         protocol.arun("hello"),
         Union[Coroutine[Any, Any, RunOutput], AsyncIterator[Union[RunOutputEvent, RunOutput, str]]],
     )
+
+    thread_options: ThreadOptions = {"ephemeral": True, "sandbox": "read-only"}
+    turn_options: TurnOptions = {"effort": "low"}
+    codex = CodexAgent(thread_options=thread_options, turn_options=turn_options)
+    assert_type(codex.run("hello"), RunOutput)

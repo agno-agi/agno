@@ -292,3 +292,25 @@ retired cookbook directory. Advanced examples were preserved, not rerun.
 Existing CLI authentication was used without logging credentials. Raw evidence
 is retained locally in `.context/frameworks-consolidation/`. The earlier limits
 on recovery, compaction, skills/plugins and deployment validation still apply.
+
+
+## Codex configuration DX — 2026-10-09
+
+**Status:** PASS
+
+**Description:** Added native client options, typed thread/turn options, consistent
+named-setting precedence and ephemeral session bookkeeping, explicit unsupported
+input errors, top-level MCP configuration and the shared Codex tools printer.
+
+**Result:** 280 combined regression cases pass (37 Codex cases, 15 new). Python 3.9
+passes 90 Codex/shared-DX cases with two SDK/mypy-dependent skips. All five Codex
+live acceptance cases pass in 40.98s without retries or skips; Claude was deselected.
+The updated MCP example also completes against the real Agno docs server.
+Full format/validation, compile, whitespace and eight starting-example pattern
+checks pass. All ten live cases skip without opt-in flags. Detailed commands,
+versions, results and limits are in [Codex TEST_LOG](codex/TEST_LOG.md#codex-configuration-dx--2026-10-09).
+
+Tested from `42e8d4191d` plus the Codex update in the normal checkout, using
+Python 3.12.8, openai-codex / CLI 0.162.1 and `gpt-5.6-luna`. Evidence is retained
+locally in `.context/codex-dx/`. Previous Claude results remain above; the prior
+limits on recovery, durability and deployment claims still apply.

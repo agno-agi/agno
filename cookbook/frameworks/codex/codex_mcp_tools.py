@@ -1,8 +1,8 @@
 """
 Codex with MCP tools, wrapped in Agno's CodexAgent.
 
-Codex connects to MCP servers through its config. Pass `config` overrides to
-CodexAgent and they apply to every thread the agent starts, the same way an
+Pass `mcp_servers` directly to CodexAgent to configure tools for each thread,
+the same way an
 `mcp_servers` table in ~/.codex/config.toml would.
 
 MCP tool calls are surfaced as Agno tool call events named
@@ -22,11 +22,7 @@ agent = CodexAgent(
     name="Codex Docs Agent",
     model="gpt-5.6-luna",
     sandbox="read-only",
-    config={
-        "mcp_servers": {
-            "agno_docs": {"url": "https://docs.agno.com/mcp"},
-        }
-    },
+    mcp_servers={"agno_docs": {"url": "https://docs.agno.com/mcp"}},
 )
 
 agent.print_response(

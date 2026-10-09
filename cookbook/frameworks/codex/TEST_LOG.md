@@ -236,3 +236,70 @@ Source was `1d91efd765` plus the path consolidation in the normal checkout;
 SDK/model versions are unchanged from the preceding runs. See the
 [root log](../TEST_LOG.md#consolidated-framework-paths--2026-10-09) for complete
 evidence and limits. This does not rerun this directory's advanced examples.
+
+
+## Codex configuration DX — 2026-10-09
+
+### Codex adapter regression suite
+
+**Status:** PASS
+
+**Description:** Native `client_options`, typed `thread_options` / `turn_options`,
+common named settings, explicit override precedence, non-mutating option copies,
+start/resume filtering, ephemeral thread bookkeeping and string-input validation.
+
+**Result:** 37 Codex unit cases pass, including 15 new cases. The combined external
+agent and selected AgentOS regression suite passes all 280 cases, including static
+return-type and typed-options checks. Python 3.9 passes 90 Codex/shared-DX cases;
+two checks skip because that environment has neither the native SDK nor mypy.
+The SDK signature check verifies the typed option keys against installed 0.162.1.
+Full `./scripts/format.sh` and `./scripts/validate.sh` pass (1114 Agno and 21 agnoctl
+files); unrelated formatter changes were restored. Eight starting-example pattern
+checks, compileall and whitespace checks pass. All ten live cases skip without
+opt-in flags.
+
+### codex_native_sdk.py, codex_basic.py, codex_tools.py, codex_agentos.py
+
+**Status:** PASS
+
+**Description:** Real SDK and wrapper scripts, shared streaming response printer,
+HTTP/SSE tool execution and saved results, plus native client configuration with
+named model overrides and ephemeral sessions.
+
+**Result:** All five Codex live acceptance cases pass in 40.98s with no retries
+or skips (the five Claude cases were deselected). This includes three scripts,
+two AgentOS HTTP/SSE model calls and one native-options call. The tools printer
+returns completed output with actual shipping.py and orders.json contents;
+HTTP runs persist tool results. Read-only fixture hashes are unchanged. The
+native-options case overrides deliberately invalid model values and verifies
+that no ephemeral thread ID is saved to either memory or SQLite.
+
+### codex_mcp_tools.py
+
+**Status:** PASS
+
+**Description:** Ran the updated top-level `mcp_servers` example against the real
+Agno documentation MCP server using the native SDK.
+
+**Result:** Exit 0, COMPLETED status, `mcp__agno_docs__search_docs` in the Tool Calls
+panel, and an answer explaining AgentOS with a documentation citation.
+
+**Source/environment:** `42e8d4191d` plus this Codex update in the normal checkout
+`/Users/ab/code/agno`; Python 3.12.8; editable Agno; openai-codex / bundled CLI
+0.162.1; `gpt-5.6-luna`; existing local CLI authentication. Commands:
+
+```bash
+python -m pytest libs/agno/tests/unit/agents \
+  libs/agno/tests/unit/os/test_schemas.py \
+  libs/agno/tests/unit/os/test_external_agent_background_stream.py \
+  libs/agno/tests/unit/os/interfaces/test_a2a.py -q
+AGNO_TEST_CODEX_SDK=1 python -m pytest \
+  libs/agno/tests/integration/agents/test_harness_cookbooks.py -k codex -q
+python cookbook/frameworks/codex/codex_mcp_tools.py
+```
+
+Raw logs and returned-run evidence are retained locally in `.context/codex-dx/`.
+Claude was not rerun for this Codex-only implementation change; its previous live
+results remain above. Native input objects are explicitly unsupported, not new
+multimodal support. These tests do not establish disconnect recovery, durability,
+multi-replica execution, retries or deployment readiness.

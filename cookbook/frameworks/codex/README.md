@@ -55,6 +55,54 @@ one-shot scripts do not configure an Agno database or establish durable resume.
 
 Official reference: [Codex Python SDK](https://learn.chatgpt.com/docs/codex-sdk#python-library).
 
+## Configure the adapter and native SDK
+
+Use named settings for common configuration, including `mcp_servers`,
+`model_provider` and `service_tier`. Advanced settings have three distinct scopes:
+
+```python
+from openai_codex import CodexConfig
+from agno.agents.codex import CodexAgent, ThreadOptions, TurnOptions
+
+thread_options: ThreadOptions = {"ephemeral": True}
+turn_options: TurnOptions = {"effort": "low"}
+
+agent = CodexAgent(
+    model="gpt-5.6-luna",
+    sandbox="read-only",
+    approval_mode="deny_all",
+    client_options=CodexConfig(client_name="shipping_review"),
+    thread_options=thread_options,
+    turn_options=turn_options,
+)
+agent.print_response("Explain when a shipping fee should be waived.")
+```
+
+- `client_options` accepts the native `CodexConfig`: executable, process environment,
+  launch arguments and client identity. Named `codex_bin` and `env` override it.
+- `thread_options` configures thread creation/resume. Agno filters start-only and
+  resume-only keys for the relevant operation. Ephemeral threads are never saved
+  as resumable, including when configured through this dictionary.
+- `turn_options` configures each turn. Both option dictionaries expose typed keys
+  for editor completion; they use native SDK parameter names.
+- `config` remains the native **thread** configuration dictionary. `mcp_servers`
+  replaces its `mcp_servers` entry; use `mcp_servers={}` to clear that entry.
+
+Explicit non-`None` named settings win over matching thread and turn options,
+including empty strings, empty dictionaries and `False`. `None` inherits the
+option/SDK default. Options are copied before use; the adapter does not mutate
+caller-owned dictionaries or `CodexConfig`.
+
+`thread_kwargs` and `turn_kwargs` are deprecated aliases. Rename them to
+`thread_options` and `turn_options`; do not pass both forms. Named settings now
+win over aliases too, which changes calls that previously supplied conflicting
+values. Unknown option keys fail clearly.
+
+Agno currently accepts **string prompts** for Codex. Native `TextInput`, image,
+skill, mention and external-message objects are rejected instead of being silently
+stringified. Use the native SDK for those input types. This restriction applies
+to both streaming and non-streaming, sync and async runs.
+
 ## 3. Watch actual tools
 
 ```bash
@@ -62,10 +110,10 @@ python cookbook/frameworks/codex/codex_tools.py
 ```
 
 This time the policy is not supplied in the prompt: the harness must read
-`shipping.py` and `orders.json`. Observe text deltas and tool start/end events,
-including the returned file contents. Expect fees of 8, 0 and 0 dollars.
+`shipping.py` and `orders.json`. The script uses `print_response(..., stream=True)` to render the answer and
+Tool Calls panel, and returns the final `RunOutput` with tool results. Expect fees of 8, 0 and 0 dollars.
 The script checks that at least one tool succeeded; the live test also checks
-fixture contents in the output. Inspect the final explanation yourself.
+fixture contents in the returned tool results. Inspect the final explanation yourself.
 
 The thread uses `sandbox="read-only"` and `approval_mode="deny_all"`.
 Shell reads are translated into Agno tool events. Codex can inherit other local

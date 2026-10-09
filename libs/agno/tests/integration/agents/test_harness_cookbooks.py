@@ -51,7 +51,7 @@ def test_live_harness_script(provider, example, tmp_path):
     before = _fixture_digest()
     command = [sys.executable, "-u", str(_example_path(provider, example))]
     tool_result_path = tmp_path / "run.json"
-    if provider == "claude" and example == "tools":
+    if example == "tools":
         # Execute the actual main block and inspect the printer's returned result.
         command = [
             sys.executable,
@@ -73,18 +73,14 @@ def test_live_harness_script(provider, example, tmp_path):
     (tmp_path / "output.log").write_text(result.stdout + result.stderr)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Status:" in result.stdout
-    if provider == "claude" and example == "tools":
-        assert "Tool Calls" in result.stdout and "Read(" in result.stdout
+    if example == "tools":
+        assert "Tool Calls" in result.stdout
+        assert ("Read(" if provider == "claude" else "shell(") in result.stdout
         run = json.loads(tool_result_path.read_text())
         assert run["status"] == "COMPLETED" and run["content"], run
         results = [str(tool.get("result", "")) for tool in run["tools"] if not tool.get("tool_call_error")]
         assert any("def shipping_fee" in value for value in results), results
         assert any("subtotal" in value and "boundary" in value for value in results), results
-    elif example == "tools":
-        assert "ToolCallStarted:" in result.stdout
-        assert "ToolCallCompleted:" in result.stdout
-        # The returned tool data must contain fixture content, not just a claimed read.
-        assert "subtotal" in result.stdout and "boundary" in result.stdout
     assert _fixture_digest() == before, "The read-only exercise modified its fixture"
 
 
@@ -199,3 +195,38 @@ async def test_live_claude_native_options():
     assert result.status == RunStatus.completed, result.content
     assert result.content
     assert (options.resume, options.include_partial_messages, options.tools) == original
+
+
+@pytest.mark.asyncio
+async def test_live_codex_native_options(tmp_path):
+    """Native process options and named overrides work with an actual app-server."""
+    _require_live("codex")
+    from openai_codex import CodexConfig
+
+    from agno.agents.codex import CodexAgent
+    from agno.db.sqlite import SqliteDb
+    from agno.run.base import RunStatus
+
+    client_options = CodexConfig(client_name="agno_codex_dx", client_title="Agno Codex DX")
+    agent = CodexAgent(
+        id="codex-native-options",
+        client_options=client_options,
+        model=os.getenv("CODEX_MODEL", "gpt-5.6-luna"),
+        sandbox="read-only",
+        approval_mode="deny_all",
+        reasoning_effort="low",
+        thread_options={"model": "invalid-model-overridden-by-named-setting", "ephemeral": True},
+        turn_options={"model": "invalid-model-overridden-by-named-setting", "effort": "high"},
+        db=SqliteDb(db_file=str(tmp_path / "options.db")),
+    )
+    result = await asyncio.wait_for(
+        agent.arun("Reply with exactly CODEX_OPTIONS_OK", session_id="options"), timeout=120
+    )
+    (tmp_path / "run.json").write_text(result.to_json())
+    assert result.status == RunStatus.completed, result.content
+    assert "CODEX_OPTIONS_OK" in result.content
+    assert agent._thread_ids == {}
+    session = agent.db.get_session(session_id="options")
+    assert "codex_thread_id" not in (session.session_data or {})
+    assert client_options.client_name == "agno_codex_dx" and client_options.env is None
+    assert agent.turn_options["effort"] == "high"

@@ -14,7 +14,6 @@ import os
 from pathlib import Path
 
 from agno.agents.codex import CodexAgent
-from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 
 # ---------------------------------------------------------------------------
@@ -39,20 +38,8 @@ agent = CodexAgent(
 # Run the Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    result = None
-    for event in agent.run(prompt, stream=True, yield_run_output=True):
-        if isinstance(event, RunOutput):
-            result = event
-        elif event.event == "RunContent":
-            print(event.content or "", end="", flush=True)
-        elif event.event in ("ToolCallStarted", "ToolCallCompleted"):
-            print(f"\n{event.event}: {event.tool.tool_name}")
-            if event.event == "ToolCallCompleted":
-                print(event.tool.result)
-        elif event.event == "RunError":
-            raise RuntimeError(event.content)
+    result = agent.print_response(prompt, stream=True)
 
-    assert result is not None, "No terminal RunOutput received"
     assert result.status == RunStatus.completed, result.content
     assert result.content, "The harness completed without an answer"
     assert result.tools, "Expected the harness to inspect the fixture using tools"

@@ -101,7 +101,7 @@ These are follow-up topics, not guarantees made by this first set.
 
 Configure built-in adapters with keywords, for example `ClaudeAgent(name="Reviewer",
 model="claude-sonnet-5-5")`. Positional constructor arguments are no longer accepted.
-Related fields are grouped in the constructor signature; keyword calls keep their meaning.
+Related fields are grouped in the constructor signature.
 This applies to Claude, Codex, LangGraph, DSPy and Antigravity. Python 3.9 remains
 supported by the adapter layer; each native SDK has its own Python requirements.
 
@@ -131,3 +131,11 @@ Separate `images`, `audio`, `videos` and `files` inputs are rejected by the curr
 adapters before work starts. Empty collections are accepted. This does not restrict
 file reads through the harness's native tools; it prevents uploaded inputs from
 being silently discarded. Media support needs an explicit adapter implementation.
+
+Codex now accepts native `client_options` plus typed `thread_options` and
+`turn_options`. The old `thread_kwargs` / `turn_kwargs` names are deprecated.
+Explicit named settings take precedence over either form, including empty values
+and `False`; callers that relied on conflicting raw overrides must update them.
+Use `mcp_servers` for native MCP configuration. Codex input must be a string;
+unsupported native input objects fail explicitly. See the
+[Codex configuration guide](codex/README.md#configure-the-adapter-and-native-sdk).
