@@ -262,10 +262,10 @@ async def test_queue_running_fallback_and_cancel(agent):
 async def test_pending_prepare_preserves_existing_terminal(agent):
     agent.release.set()
     run = await agent.arun("go", session_id="s")
-    await agent.aprepare_pending_run(run.run_id, "s", None, "duplicate")
+    await agent._aprepare_pending_run(run.run_id, "s", None, "duplicate")
     assert (await agent.aget_run_output(run.run_id, "s")).status == RunStatus.completed
     stale = RunOutput(run_id=run.run_id, session_id="s", status=RunStatus.error)
-    await agent.apersist_run_status_fallback("s", stale)
+    await agent._apersist_run_fallback("s", stale)
     assert (await agent.aget_run_output(run.run_id, "s")).status == RunStatus.completed
 
 
@@ -294,7 +294,7 @@ async def test_status_refusal_never_uses_fallback(agent, monkeypatch):
     from agno.run.status_persist import RunPersistOutcome, apersist_run_transition
 
     fallback = AsyncMock()
-    monkeypatch.setattr(agent, "apersist_run_status_fallback", fallback)
+    monkeypatch.setattr(agent, "_apersist_run_fallback", fallback)
     for outcome in (RunPersistOutcome.STALE_ATTEMPT, RunPersistOutcome.TERMINAL_REFUSED):
         monkeypatch.setattr("agno.run.status_persist.apersist_run_status", AsyncMock(return_value=outcome))
         await apersist_run_transition(agent, "agent", "s", RunOutput(run_id="r", status=RunStatus.error))
@@ -376,14 +376,14 @@ async def test_queue_cancelled_ticket_and_drained_error_fallback(agent):
     job = QueuedJob(
         id=run_id, component_type="agent", component_id=agent.id, session_id="s", payload={"input": "go"}
     ).to_dict()
-    await agent.aprepare_pending_run(run_id, "s", None, "go")
+    await agent._aprepare_pending_run(run_id, "s", None, "go")
     await store.enqueue_job(job)
     assert await worker.acancel_queued(run_id)
     assert (await store.get_job(run_id))["status"] == "cancelled"
     assert (await agent.aget_run_output(run_id, "s")).status == RunStatus.cancelled
     assert not agent.calls
     second = {**job, "id": str(uuid4())}
-    await agent.aprepare_pending_run(second["id"], "s", None, "go")
+    await agent._aprepare_pending_run(second["id"], "s", None, "go")
     await worker._persist_run_error(second, "interrupted by worker shutdown")
     assert (await agent.aget_run_output(second["id"], "s")).status == RunStatus.error
 
@@ -452,9 +452,9 @@ async def test_queue_terminal_row_survives_cancel_crash_window(agent):
         worker_id="worker",
     )
     run_id = str(uuid4())
-    pending = await agent.aprepare_pending_run(run_id, "s", None, "go")
+    pending = await agent._aprepare_pending_run(run_id, "s", None, "go")
     pending.status = RunStatus.cancelled
-    await agent.apersist_run_status_fallback("s", pending)
+    await agent._apersist_run_fallback("s", pending)
     await store.enqueue_job(
         QueuedJob(
             id=run_id, component_type="agent", component_id=agent.id, session_id="s", payload={"input": "go"}
@@ -624,3 +624,141 @@ async def test_in_memory_sqlite_async_lookup_preserves_connection():
     assert (await agent.aget_run_output(run.run_id, "s", "owner")).content == "done"
     assert await agent.aget_session("s", "owner")
     assert await agent.aget_session("s", "other") is None
+
+
+@pytest.mark.asyncio
+async def test_queue_running_fallback_failure_does_not_fail_job(agent, monkeypatch):
+    from agno.db.schemas.jobs import QueuedJob
+    from agno.job_queue.config import QueueConfig
+    from agno.job_queue.store import InMemoryQueueStore
+    from agno.os.job_queue import QueueWorker
+
+    persist = agent._apersist_run_fallback
+
+    async def locked_on_running(session_id, run, user_id=None):
+        if run.status == RunStatus.running:
+            raise RuntimeError("database is locked")
+        await persist(session_id, run, user_id)
+
+    monkeypatch.setattr(agent, "_apersist_run_fallback", locked_on_running)
+    store = InMemoryQueueStore()
+    worker = QueueWorker(
+        store=store,
+        resolve_component=lambda *_: agent,
+        config=QueueConfig(durable=True, poll_interval=0.01),
+        worker_id="worker",
+    )
+    run_id = str(uuid4())
+    await agent._aprepare_pending_run(run_id, "s", None, "go")
+    await store.enqueue_job(
+        QueuedJob(
+            id=run_id, component_type="agent", component_id=agent.id, session_id="s", payload={"input": "go"}
+        ).to_dict()
+    )
+    agent.release.set()
+    await worker.start()
+    try:
+
+        async def settled():
+            while (await store.get_job(run_id))["status"] not in ("cancelled", "completed", "failed"):
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(settled(), 3)
+        assert (await store.get_job(run_id))["status"] == "completed"
+        assert len(agent.calls) == 1
+        assert (await agent.aget_run_output(run_id, "s")).status == RunStatus.completed
+    finally:
+        await worker.stop()
+
+
+def test_component_hook_ignores_mocks_and_plain_objects(agent):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from agno.run.status_persist import component_hook
+
+    assert component_hook(MagicMock(), "_apersist_run_fallback") is None
+    assert component_hook(SimpleNamespace(_apersist_run_fallback=print), "_apersist_run_fallback") is None
+    assert component_hook(agent, "_apersist_run_fallback") == agent._apersist_run_fallback
+
+
+@pytest.mark.asyncio
+async def test_queue_unreadable_row_is_not_executed(agent, monkeypatch):
+    from agno.db.schemas.jobs import QueuedJob
+    from agno.job_queue.config import QueueConfig
+    from agno.job_queue.store import InMemoryQueueStore
+    from agno.os.job_queue import QueueWorker
+
+    read = agent.aget_run_output
+    reads = []
+
+    async def first_read_fails(*args, **kwargs):
+        reads.append(args)
+        if len(reads) == 1:
+            raise RuntimeError("database is locked")
+        return await read(*args, **kwargs)
+
+    store = InMemoryQueueStore()
+    worker = QueueWorker(
+        store=store,
+        resolve_component=lambda *_: agent,
+        config=QueueConfig(durable=True, poll_interval=0.01),
+        worker_id="worker",
+    )
+    run_id = str(uuid4())
+    await agent._aprepare_pending_run(run_id, "s", None, "go")
+    monkeypatch.setattr(agent, "aget_run_output", first_read_fails)
+    await store.enqueue_job(
+        QueuedJob(
+            id=run_id, component_type="agent", component_id=agent.id, session_id="s", payload={"input": "go"}
+        ).to_dict()
+    )
+    agent.release.set()
+    await worker.start()
+    try:
+
+        async def settled():
+            while (await store.get_job(run_id))["status"] not in ("cancelled", "completed", "failed"):
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(settled(), 3)
+        assert (await store.get_job(run_id))["status"] == "failed"
+        assert not agent.calls
+    finally:
+        await worker.stop()
+
+
+@pytest.mark.asyncio
+async def test_retry_cleanup_keeps_the_newer_attempts_handle():
+    """A same-process retry registers its handle while the first attempt is still unwinding.
+
+    The first attempt's cleanup must not remove the retry's handle, or cancellation would only
+    record intent and the harness would run to completion.
+    """
+    agent = BaseExternalAgent(id="retry")
+    run_id = f"run-{uuid4()}"
+    registered = {"first": asyncio.Event(), "second": asyncio.Event()}
+    proceed = {"first": asyncio.Event(), "second": asyncio.Event()}
+    handles: dict = {}
+
+    async def attempt(name: str) -> None:
+        async with agent._run_cancellation(run_id):
+            handles[name] = object()
+            agent._set_run_handle(run_id, handles[name])
+            registered[name].set()
+            await proceed[name].wait()
+
+    first = asyncio.create_task(attempt("first"))
+    await registered["first"].wait()
+    second = asyncio.create_task(attempt("second"))
+    await registered["second"].wait()
+    assert _live_handles[run_id].handle is handles["second"]
+
+    proceed["first"].set()
+    await first
+    assert run_id in _live_handles, "the first attempt's cleanup removed the retry's handle"
+    assert _live_handles[run_id].handle is handles["second"]
+
+    proceed["second"].set()
+    await second
+    assert run_id not in _live_handles

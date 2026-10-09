@@ -1,6 +1,7 @@
 import asyncio
 import json
 from contextlib import asynccontextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 from time import time
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Union
@@ -42,26 +43,21 @@ _HISTORY_TOOL_RESULT_TAIL_CHARS = 400
 _HISTORY_MAX_CHARS = 24000
 
 
-def _sync_await(coro: Any) -> Any:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    import concurrent.futures
-
-    with concurrent.futures.ThreadPoolExecutor() as pool:
-        return pool.submit(asyncio.run, coro).result()
-
-
 @dataclass
 class _LiveHandle:
     agent: "BaseExternalAgent"
     handle: Any
     loop: asyncio.AbstractEventLoop
+    # The attempt that registered the handle, so a retry's cleanup never removes the
+    # handle a newer attempt registered under the same run id.
+    owner: Optional[object] = None
     interrupted: bool = False
 
 
 _live_handles: Dict[str, _LiveHandle] = {}
+# Identifies the attempt currently inside _run_cancellation on this task, so handle cleanup can
+# tell its own registration from one a retry of the same run id made in the meantime.
+_handle_owner: ContextVar[Optional[object]] = ContextVar("agno_external_handle_owner", default=None)
 
 
 @dataclass
@@ -625,10 +621,14 @@ class BaseExternalAgent:
         return registered
 
     def _set_run_handle(self, run_id: str, handle: Any) -> None:
-        _live_handles[run_id] = _LiveHandle(self, handle, asyncio.get_running_loop())
+        _live_handles[run_id] = _LiveHandle(self, handle, asyncio.get_running_loop(), owner=_handle_owner.get())
 
     def _clear_run_handle(self, run_id: str) -> None:
-        _live_handles.pop(run_id, None)
+        """Drop this attempt's handle. A handle a newer attempt registered for the same run is kept."""
+        live = _live_handles.get(run_id)
+        owner = _handle_owner.get()
+        if live is not None and (owner is None or live.owner is owner):
+            _live_handles.pop(run_id, None)
 
     async def _ainterrupt_run(self, handle: Any) -> None:
         """Interrupt an adapter's active SDK handle."""
@@ -650,6 +650,7 @@ class BaseExternalAgent:
         from agno.run.cancel import acleanup_run, ais_cancelled, araise_if_cancelled, aregister_run
 
         await aregister_run(run_id)
+        owner_token = _handle_owner.set(object())
 
         async def watch() -> None:
             while True:
@@ -673,15 +674,14 @@ class BaseExternalAgent:
             with suppress(asyncio.CancelledError):
                 await watcher
             self._clear_run_handle(run_id)
+            _handle_owner.reset(owner_token)
             await acleanup_run(run_id)
 
-    def prepare_pending_run(self, run_id: str, session_id: str, user_id: Optional[str], input: Any) -> RunOutput:
-        """Persist a PENDING run before background or queued execution."""
-        return _sync_await(self.aprepare_pending_run(run_id, session_id, user_id, input))
-
-    async def aprepare_pending_run(self, run_id: str, session_id: str, user_id: Optional[str], input: Any) -> RunOutput:
-        """Create an idempotent PENDING row using atomic inserts when available."""
-        from agno.os.job_queue import _ainsert_session_if_absent, _atomic_append_run
+    async def _aprepare_pending_run(
+        self, run_id: str, session_id: str, user_id: Optional[str], input: Any
+    ) -> RunOutput:
+        """Persist an idempotent PENDING row before background or queued execution."""
+        from agno.os.job_queue import _aappend_pending_run
 
         run = RunOutput(
             run_id=run_id,
@@ -692,26 +692,17 @@ class BaseExternalAgent:
             input=RunInput(input_content=input),
             status=RunStatus.pending,
         )
-        if await _atomic_append_run(self, session_id, run.to_dict(), user_id) is not None:
-            return run
-        session = await self.aread_or_create_session(session_id, user_id)
-        if await _ainsert_session_if_absent(self, session) is not None:
-            if await _atomic_append_run(self, session_id, run.to_dict(), user_id) is not None:
-                return run
-        if session.get_run(run_id) is None:
+        session = await _aappend_pending_run(
+            self, session_id, run.to_dict(), user_id, lambda: self.aread_or_create_session(session_id, user_id)
+        )
+        if session is not None and session.get_run(run_id) is None:
             await self._apersist_run_in_session(session, run, strict=True)
         return run
 
-    def persist_run_status_fallback(
+    async def _apersist_run_fallback(
         self, session_id: str, run_response: RunOutput, user_id: Optional[str] = None
     ) -> None:
-        """Persist a run transition on a database without the atomic primitive."""
-        _sync_await(self.apersist_run_status_fallback(session_id, run_response, user_id))
-
-    async def apersist_run_status_fallback(
-        self, session_id: str, run_response: RunOutput, user_id: Optional[str] = None
-    ) -> None:
-        """Re-read the session and persist only the changed run."""
+        """Re-read the session and persist one run; completed or cancelled rows win."""
         session = await self.aread_or_create_session(session_id, user_id)
         existing = session.get_run(run_response.run_id or "")
         if existing is not None and existing.status in (RunStatus.completed, RunStatus.cancelled):
@@ -733,7 +724,7 @@ class BaseExternalAgent:
         from agno.run.cancel import aregister_run
         from agno.run.status_persist import apersist_run_transition
 
-        run = await self.aprepare_pending_run(run_id, session_id, user_id, input)
+        run = await self._aprepare_pending_run(run_id, session_id, user_id, input)
         await aregister_run(run_id)
         transport = _BackgroundStream(run, yield_run_output=yield_run_output) if stream else None
         if transport is not None:
