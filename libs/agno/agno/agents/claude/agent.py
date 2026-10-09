@@ -76,6 +76,7 @@ class ClaudeAgent(BaseExternalAgent):
     cwd: Optional[str] = None
     project_key: Optional[str] = None
     _store_warning_logged: bool = field(default=False, init=False, repr=False)
+    _warn_unstable_project_key: bool = field(default=False, init=False, repr=False)
     mcp_servers: Optional[Dict[str, Any]] = None
     options_kwargs: Dict[str, Any] = field(default_factory=dict)
     framework: str = "claude-agent-sdk"
@@ -87,6 +88,8 @@ class ClaudeAgent(BaseExternalAgent):
     _sdk_session_ids: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        # Without id or name, get_id() is random per process, so the default key cannot be shared across replicas.
+        self._warn_unstable_project_key = self.project_key is None and self.id is None and self.name is None
         super().__post_init__()
         if self.project_key is None:
             self.project_key = self.get_id()
@@ -130,6 +133,12 @@ class ClaudeAgent(BaseExternalAgent):
                 from agno.agents.claude.session_store import AgnoSessionStore
 
                 opts["session_store"] = AgnoSessionStore(self.db, self.project_key or self.get_id())
+                if self._warn_unstable_project_key:
+                    log_warning(
+                        f"ClaudeAgent has no id, name or project_key; transcripts are stored under the generated key "
+                        f"'{self.project_key}' and other processes will not resume them. Set id or project_key."
+                    )
+                    self._warn_unstable_project_key = False
             elif not self._store_warning_logged:
                 log_debug("Claude SDK transcript storage is unavailable on this database; resume uses local files.")
                 self._store_warning_logged = True

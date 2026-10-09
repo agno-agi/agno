@@ -247,6 +247,21 @@ def test_store_support_and_project_key(fake_sdk, tmp_path, monkeypatch):
     assert len(logs) == 1
 
 
+def test_generated_project_key_warns_once(fake_sdk, tmp_path, monkeypatch):
+    warnings = []
+    monkeypatch.setattr(claude_module, "log_warning", warnings.append)
+    db = SqliteDb(db_file=str(tmp_path / "db"))
+    for stable in (ClaudeAgent(id="a", db=db), ClaudeAgent(name="Named", db=db), ClaudeAgent(project_key="p", db=db)):
+        stable._build_options()
+    ClaudeAgent()._build_options()
+    assert warnings == []
+    generated = ClaudeAgent(db=db)
+    generated._build_options()
+    generated._build_options()
+    assert len(warnings) == 1
+    assert generated.project_key in warnings[0]
+
+
 @pytest.mark.asyncio
 async def test_nonstream_tools_persist(fake_sdk, tmp_path, monkeypatch):
     tool = ToolUseBlock()
