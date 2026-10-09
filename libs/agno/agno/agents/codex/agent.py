@@ -4,7 +4,7 @@ from importlib import import_module
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Set, Tuple
 from uuid import uuid4
 
-from agno.agents.base import BaseExternalAgent
+from agno.agents.base import BaseExternalAgent, ExternalRunResult
 from agno.models.response import ToolExecution
 from agno.run.agent import (
     RunContentEvent,
@@ -317,7 +317,9 @@ class CodexAgent(BaseExternalAgent):
     # Adapter hooks
     # ---------------------------------------------------------------------------
 
-    async def _arun_adapter(self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any) -> str:
+    async def _arun_adapter(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> ExternalRunResult:
         """Non-streaming: run one turn and return the final answer."""
         sdk = _sdk()
         session = kwargs.get("session")
@@ -328,7 +330,14 @@ class CodexAgent(BaseExternalAgent):
             prompt = self._build_prompt(input, history, resumed)
             result = await thread.run(prompt, **self._turn_kwargs(sdk))
 
-        return self._final_text(result)
+        tools = []
+        for item in getattr(result, "items", None) or []:
+            item = _item_root(item)
+            tool = self._tool_from_item(item)
+            if tool is not None:
+                tool.result = self._tool_result_from_item(item)
+                tools.append(tool)
+        return ExternalRunResult(self._final_text(result), tools or None)
 
     @staticmethod
     def _final_text(result: Any) -> str:

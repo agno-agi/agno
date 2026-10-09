@@ -586,3 +586,22 @@ def test_missing_sdk_raises_helpful_import_error(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", fake_import)
     with pytest.raises(ImportError, match="pip install openai-codex"):
         codex_module._sdk()
+
+
+@pytest.mark.asyncio
+async def test_nonstream_tools_persist(fake_sdk, tmp_db, monkeypatch):
+    async def run(self, prompt, **kwargs):
+        return SimpleNamespace(
+            final_response="done",
+            items=[
+                _item(type="commandExecution", id="call", command="pwd", aggregated_output="/workspace", exit_code=0)
+            ],
+        )
+
+    monkeypatch.setattr(FakeThread, "run", run)
+    agent = CodexAgent(db=tmp_db)
+    result = await agent.arun("where", session_id="session")
+    loaded = await agent.aget_run_output(result.run_id, "session")
+    assert loaded.tools[0].result == "/workspace"
+    assert loaded.tools[0].tool_args == {"command": "pwd"}
+    assert any(m.role == "tool" and m.content == "/workspace" for m in loaded.messages)
