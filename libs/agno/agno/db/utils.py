@@ -1155,7 +1155,8 @@ def calculate_date_os_metrics(
                 bucket["model_counts"][model_key] = bucket["model_counts"].get(model_key, 0) + 1
 
     current_time = int(time.time())
-    completed = date_to_process < datetime.now(timezone.utc).date()
+    # A run can be written again after its day ended, so a day is completed one day later
+    completed = date_to_process < datetime.now(timezone.utc).date() - timedelta(days=1)
 
     records: List[Dict[str, Any]] = []
     for (user_id, agent_id, team_id, workflow_id), bucket in per_owner.items():

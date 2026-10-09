@@ -129,11 +129,11 @@ async def _stored_total_rows(db: AsyncPostgresDb) -> Dict[tuple, Dict]:
 def sample_sessions_for_os_metrics() -> List:
     """Fixture returning the sessions of one past day, plus one of today.
 
-    Yesterday: alice has an agent session with a completed run and an error run, bob has an
+    Two days ago: alice has an agent session with a completed run and an error run, bob has an
     agent session and a team session whose team run has a member run, and one agent session
     has no owner. Today: alice has one more agent session.
     """
-    base_time = _noon_utc(1)
+    base_time = _noon_utc(2)
 
     alice_agent_session = AgentSession(
         session_id="alice_agent_session",
@@ -281,8 +281,8 @@ def sample_sessions_for_os_metrics() -> List:
 COMPLETED = RunStatus.completed.value
 ERROR = RunStatus.error.value
 
-# The rows yesterday's sessions produce, one per owner and component
-YESTERDAY_ROW_KEYS = [
+# The rows the past day's sessions produce, one per owner and component
+PAST_DAY_ROW_KEYS = [
     ("alice", "agent-1", "", ""),
     ("bob", "agent-1", "", ""),
     ("bob", "", "team-1", ""),
@@ -381,7 +381,7 @@ async def test_calculate_os_metrics_skips_a_rebuild_already_running(
     # Nobody holds the lock any more, so the same call rebuilds
     result = await async_postgres_db_real._calculate_os_metrics(wait_for_rebuild=False)
     assert result is not None
-    assert len(await _stored_rows(async_postgres_db_real)) == len(YESTERDAY_ROW_KEYS) + 1
+    assert len(await _stored_rows(async_postgres_db_real)) == len(PAST_DAY_ROW_KEYS) + 1
 
 
 @pytest.mark.asyncio
@@ -406,16 +406,16 @@ async def test_calculate_os_metrics_skips_messages_carried_over_from_history(asy
                     ),
                     _assistant_message(1.2),
                 ],
-                created_at=_noon_utc(1),
+                created_at=_noon_utc(2),
             )
         ],
-        created_at=_noon_utc(1),
+        created_at=_noon_utc(2),
     )
     await _persist(async_postgres_db_real, session)
 
     await async_postgres_db_real.calculate_os_metrics()
 
-    row = (await _stored_rows(async_postgres_db_real))[(_utc_date(1), "alice", "agent-1", "", "")]
+    row = (await _stored_rows(async_postgres_db_real))[(_utc_date(2), "alice", "agent-1", "", "")]
     assert row["duration_metrics"]["model_calls_count"] == 1
     assert row["duration_metrics"]["total_model_call_ms"] == 1200
     assert row["duration_metrics"]["model_call_ms_buckets"] == {"le_1200": 1}
@@ -429,27 +429,27 @@ async def test_calculate_os_metrics(async_postgres_db_real: AsyncPostgresDb, sam
 
     result = await async_postgres_db_real.calculate_os_metrics()
     assert result is not None
-    # Yesterday's rows with its total row, and today's row
-    assert len(result) == len(YESTERDAY_ROW_KEYS) + 2
+    # The past day's rows with its total row, and today's row
+    assert len(result) == len(PAST_DAY_ROW_KEYS) + 2
 
-    yesterday = _utc_date(1)
+    past_day = _utc_date(2)
     today = _utc_date(0)
     stored_rows = await _stored_rows(async_postgres_db_real)
-    assert len(stored_rows) == len(YESTERDAY_ROW_KEYS) + 1
+    assert len(stored_rows) == len(PAST_DAY_ROW_KEYS) + 1
 
     # Rows are unique by day, owner and component, so every row can be found by that key
-    for key in YESTERDAY_ROW_KEYS:
-        assert (yesterday, *key) in stored_rows
+    for key in PAST_DAY_ROW_KEYS:
+        assert (past_day, *key) in stored_rows
     today_row = stored_rows[(today, "alice", "agent-1", "", "")]
 
     # A past day's rows are complete, today's are not
-    assert all(row["completed"] is True for row in stored_rows.values() if row["date"] == yesterday)
+    assert all(row["completed"] is True for row in stored_rows.values() if row["date"] == past_day)
     assert today_row["completed"] is False
     assert today_row["sessions_count"] == 1
     assert today_row["runs_count"] == 1
 
-    alice_row = stored_rows[(yesterday, "alice", "agent-1", "", "")]
-    assert alice_row["date"] == yesterday
+    alice_row = stored_rows[(past_day, "alice", "agent-1", "", "")]
+    assert alice_row["date"] == past_day
     assert alice_row["aggregation_period"] == "daily"
     assert alice_row["user_id"] == "alice"
     assert alice_row["agent_id"] == "agent-1"
@@ -488,16 +488,16 @@ async def test_calculate_os_metrics(async_postgres_db_real: AsyncPostgresDb, sam
     assert alice_row["updated_at"] is not None
 
     # The team run counts under the team, its member's run under the member agent
-    team_row = stored_rows[(yesterday, "bob", "", "team-1", "")]
+    team_row = stored_rows[(past_day, "bob", "", "team-1", "")]
     assert team_row["sessions_count"] == 1
     assert team_row["runs_count"] == 1
     assert team_row["model_metrics"][0]["team_id"] == "team-1"
-    member_row = stored_rows[(yesterday, "bob", "agent-2", "", "")]
+    member_row = stored_rows[(past_day, "bob", "agent-2", "", "")]
     assert member_row["sessions_count"] == 0
     assert member_row["runs_count"] == 1
     assert member_row["token_metrics"] == {"input_tokens": 40, "output_tokens": 10, "total_tokens": 50}
 
-    unowned_row = stored_rows[(yesterday, "", "agent-1", "", "")]
+    unowned_row = stored_rows[(past_day, "", "agent-1", "", "")]
     assert unowned_row["user_id"] == ""
     assert unowned_row["sessions_count"] == 1
     assert unowned_row["runs_count"] == 1
@@ -520,7 +520,7 @@ async def test_calculate_os_metrics_rewrites_only_changed_rows(
     async with async_postgres_db_real.async_session_factory() as sess, sess.begin():
         await sess.execute(table.update().values(updated_at=1))
 
-    # Nothing changed: yesterday is complete so only today is rebuilt, and its row is not written
+    # Nothing changed: the past day is complete so only yesterday and today are rebuilt, and no row is written
     today = _utc_date(0)
     alice_today_row_id = (today, "alice", "agent-1", "", "")
     result = await async_postgres_db_real.calculate_os_metrics()
@@ -594,15 +594,15 @@ async def test_get_os_metrics_by_date(async_postgres_db_real: AsyncPostgresDb, s
         await _persist(async_postgres_db_real, session)
     await async_postgres_db_real.calculate_os_metrics()
 
-    yesterday = _utc_date(1)
+    past_day = _utc_date(2)
     today = _utc_date(0)
 
     # Every owner: one dict per day, oldest first, with every field
-    metrics, latest_updated_at = await async_postgres_db_real.get_os_metrics(starting_date=yesterday, ending_date=today)
+    metrics, latest_updated_at = await async_postgres_db_real.get_os_metrics(starting_date=past_day, ending_date=today)
     assert latest_updated_at is not None
-    assert [m["date"] for m in metrics] == [yesterday, today]
-    yesterday_totals = metrics[0]
-    assert set(yesterday_totals) == {
+    assert [m["date"] for m in metrics] == [past_day, today]
+    past_day_totals = metrics[0]
+    assert set(past_day_totals) == {
         "date",
         "sessions_count",
         "runs_count",
@@ -612,11 +612,11 @@ async def test_get_os_metrics_by_date(async_postgres_db_real: AsyncPostgresDb, s
         "model_metrics",
         "duration_buckets",
     }
-    assert yesterday_totals["sessions_count"] == 4
-    assert yesterday_totals["runs_count"] == 6
-    assert yesterday_totals["status_metrics"] == {COMPLETED: 5, ERROR: 1}
-    assert yesterday_totals["token_metrics"] == {"input_tokens": 385, "output_tokens": 185, "total_tokens": 570}
-    assert yesterday_totals["duration_metrics"] == {
+    assert past_day_totals["sessions_count"] == 4
+    assert past_day_totals["runs_count"] == 6
+    assert past_day_totals["status_metrics"] == {COMPLETED: 5, ERROR: 1}
+    assert past_day_totals["token_metrics"] == {"input_tokens": 385, "output_tokens": 185, "total_tokens": 570}
+    assert past_day_totals["duration_metrics"] == {
         "duration_runs_count": 4,
         "total_duration_ms": 10000,
         "max_duration_ms": 4000,
@@ -629,7 +629,7 @@ async def test_get_os_metrics_by_date(async_postgres_db_real: AsyncPostgresDb, s
     }
     # One entry per model and caller, in no set order
     model_metrics = sorted(
-        yesterday_totals["model_metrics"], key=lambda m: (m.get("agent_id", ""), m.get("team_id", ""))
+        past_day_totals["model_metrics"], key=lambda m: (m.get("agent_id", ""), m.get("team_id", ""))
     )
     assert model_metrics == [
         {
@@ -659,15 +659,15 @@ async def test_get_os_metrics_by_date(async_postgres_db_real: AsyncPostgresDb, s
     assert latest_updated_at == max(row["updated_at"] for row in stored_rows.values())
 
     # One owner: only bob's rows are summed
-    metrics, _ = await async_postgres_db_real.get_os_metrics(starting_date=yesterday, ending_date=today, user_id="bob")
-    assert [m["date"] for m in metrics] == [yesterday]
+    metrics, _ = await async_postgres_db_real.get_os_metrics(starting_date=past_day, ending_date=today, user_id="bob")
+    assert [m["date"] for m in metrics] == [past_day]
     assert metrics[0]["sessions_count"] == 2
     assert metrics[0]["runs_count"] == 3
     assert metrics[0]["token_metrics"] == {"input_tokens": 270, "output_tokens": 130, "total_tokens": 400}
 
     # The empty owner: only the unowned rows
-    metrics, _ = await async_postgres_db_real.get_os_metrics(starting_date=yesterday, ending_date=today, user_id="")
-    assert [m["date"] for m in metrics] == [yesterday]
+    metrics, _ = await async_postgres_db_real.get_os_metrics(starting_date=past_day, ending_date=today, user_id="")
+    assert [m["date"] for m in metrics] == [past_day]
     assert metrics[0]["sessions_count"] == 1
     assert metrics[0]["runs_count"] == 1
     assert metrics[0]["token_metrics"] == {"input_tokens": 5, "output_tokens": 5, "total_tokens": 10}
@@ -680,16 +680,16 @@ async def test_get_os_metrics_fields(async_postgres_db_real: AsyncPostgresDb, sa
         await _persist(async_postgres_db_real, session)
     await async_postgres_db_real.calculate_os_metrics()
 
-    yesterday = _utc_date(1)
+    past_day = _utc_date(2)
 
     metrics, _ = await async_postgres_db_real.get_os_metrics(
-        starting_date=yesterday, ending_date=yesterday, fields=["duration_metrics"]
+        starting_date=past_day, ending_date=past_day, fields=["duration_metrics"]
     )
     assert set(metrics[0]) == {"date", "duration_metrics"}
     assert not any(key.endswith("_buckets") for key in metrics[0]["duration_metrics"])
 
     metrics, _ = await async_postgres_db_real.get_os_metrics(
-        starting_date=yesterday, ending_date=yesterday, fields=["duration_metrics", "duration_buckets"]
+        starting_date=past_day, ending_date=past_day, fields=["duration_metrics", "duration_buckets"]
     )
     assert set(metrics[0]) == {"date", "duration_metrics", "duration_buckets"}
     assert not any(key.endswith("_buckets") for key in metrics[0]["duration_metrics"])
@@ -700,13 +700,13 @@ async def test_get_os_metrics_fields(async_postgres_db_real: AsyncPostgresDb, sa
     }
 
     metrics, _ = await async_postgres_db_real.get_os_metrics(
-        starting_date=yesterday, ending_date=yesterday, fields=["sessions_count", "runs_count"]
+        starting_date=past_day, ending_date=past_day, fields=["sessions_count", "runs_count"]
     )
-    assert metrics == [{"date": yesterday, "sessions_count": 4, "runs_count": 6}]
+    assert metrics == [{"date": past_day, "sessions_count": 4, "runs_count": 6}]
 
     with pytest.raises(ValueError):
         await async_postgres_db_real.get_os_metrics(
-            starting_date=yesterday, ending_date=yesterday, fields=["users_count"]
+            starting_date=past_day, ending_date=past_day, fields=["users_count"]
         )
 
 
@@ -717,23 +717,23 @@ async def test_get_os_metrics_refreshes_rows(async_postgres_db_real: AsyncPostgr
         await _persist(async_postgres_db_real, session)
     assert await _stored_rows(async_postgres_db_real) == {}
 
-    yesterday = _utc_date(1)
+    past_day = _utc_date(2)
     today = _utc_date(0)
     async_postgres_db_real._os_metrics_refreshed_at = 0
     metrics, latest_updated_at = await async_postgres_db_real.get_os_metrics(
-        starting_date=yesterday, ending_date=today, fields=["sessions_count"]
+        starting_date=past_day, ending_date=today, fields=["sessions_count"]
     )
 
     assert latest_updated_at is not None
-    assert metrics == [{"date": yesterday, "sessions_count": 4}, {"date": today, "sessions_count": 1}]
-    assert len(await _stored_rows(async_postgres_db_real)) == len(YESTERDAY_ROW_KEYS) + 1
+    assert metrics == [{"date": past_day, "sessions_count": 4}, {"date": today, "sessions_count": 1}]
+    assert len(await _stored_rows(async_postgres_db_real)) == len(PAST_DAY_ROW_KEYS) + 1
 
 
 @pytest.mark.asyncio
 async def test_get_os_metrics_no_rows(async_postgres_db_real: AsyncPostgresDb):
     """Ensure get_os_metrics returns nothing when there are no sessions"""
     metrics, latest_updated_at = await async_postgres_db_real.get_os_metrics(
-        starting_date=_utc_date(1), ending_date=_utc_date(0)
+        starting_date=_utc_date(2), ending_date=_utc_date(0)
     )
 
     assert metrics == []
@@ -897,12 +897,12 @@ async def test_calculate_os_metrics_writes_a_total_row_for_a_completed_day(
         await _persist(async_postgres_db_real, session)
     await async_postgres_db_real.calculate_os_metrics()
 
-    yesterday = _utc_date(1)
+    past_day = _utc_date(2)
     stored_rows = await _stored_rows(async_postgres_db_real)
     total_rows = await _stored_total_rows(async_postgres_db_real)
-    assert set(total_rows) == {(yesterday, "daily_total", "", "", "", "")}
+    assert set(total_rows) == {(past_day, "daily_total", "", "", "", "")}
 
-    day_row = total_rows[(yesterday, "daily_total", "", "", "", "")]
+    day_row = total_rows[(past_day, "daily_total", "", "", "", "")]
     assert day_row["sessions_count"] == 4
     assert day_row["runs_count"] == 6
     assert day_row["status_metrics"] == {COMPLETED: 5, ERROR: 1}
@@ -919,7 +919,7 @@ async def test_calculate_os_metrics_writes_a_total_row_for_a_completed_day(
     assert sum(model["count"] for model in day_row["model_metrics"]) == 5
     assert day_row["completed"] is True
     # A total row reports when the rows it totals were written
-    assert day_row["updated_at"] == max(row["updated_at"] for row in stored_rows.values() if row["date"] == yesterday)
+    assert day_row["updated_at"] == max(row["updated_at"] for row in stored_rows.values() if row["date"] == past_day)
 
 
 @pytest.mark.asyncio
@@ -931,18 +931,18 @@ async def test_get_os_metrics_reads_a_completed_day_from_its_total_row(
         await _persist(async_postgres_db_real, session)
     await async_postgres_db_real.calculate_os_metrics()
 
-    yesterday = _utc_date(1)
+    past_day = _utc_date(2)
     today = _utc_date(0)
     stored_rows = list((await _stored_rows(async_postgres_db_real)).values())
     fields = resolve_os_metrics_fields(None)
 
     # Every owner, then one owner: the same totals as the rows add up to
-    metrics, latest_updated_at = await async_postgres_db_real.get_os_metrics(starting_date=yesterday, ending_date=today)
+    metrics, latest_updated_at = await async_postgres_db_real.get_os_metrics(starting_date=past_day, ending_date=today)
     expected, expected_updated_at = total_os_metrics_records(stored_rows, fields)
     assert _comparable(metrics) == _comparable(expected)
     assert latest_updated_at == expected_updated_at
     metrics, latest_updated_at = await async_postgres_db_real.get_os_metrics(
-        starting_date=yesterday, ending_date=today, user_id="bob"
+        starting_date=past_day, ending_date=today, user_id="bob"
     )
     expected, expected_updated_at = total_os_metrics_records(
         [row for row in stored_rows if row["user_id"] == "bob"], fields
@@ -950,19 +950,19 @@ async def test_get_os_metrics_reads_a_completed_day_from_its_total_row(
     assert _comparable(metrics) == _comparable(expected)
     assert latest_updated_at == expected_updated_at
 
-    # Change every row: for every owner yesterday is still read from its total row and today from its rows
+    # Change every row: for every owner the past day is still read from its total row and today from its rows
     table = await async_postgres_db_real._get_table("os_metrics", create_table_if_not_found=True)
     async with async_postgres_db_real.async_session_factory() as sess, sess.begin():
         await sess.execute(table.update().where(table.c.aggregation_period == "daily").values(sessions_count=50))
     metrics, _ = await async_postgres_db_real.get_os_metrics(
-        starting_date=yesterday, ending_date=today, fields=["sessions_count"]
+        starting_date=past_day, ending_date=today, fields=["sessions_count"]
     )
-    assert metrics == [{"date": yesterday, "sessions_count": 4}, {"date": today, "sessions_count": 50}]
-    # One owner is read from that owner's rows on every day: bob has three rows yesterday
+    assert metrics == [{"date": past_day, "sessions_count": 4}, {"date": today, "sessions_count": 50}]
+    # One owner is read from that owner's rows on every day: bob has three rows on the past day
     metrics, _ = await async_postgres_db_real.get_os_metrics(
-        starting_date=yesterday, ending_date=today, user_id="bob", fields=["sessions_count"]
+        starting_date=past_day, ending_date=today, user_id="bob", fields=["sessions_count"]
     )
-    assert metrics == [{"date": yesterday, "sessions_count": 150}]
+    assert metrics == [{"date": past_day, "sessions_count": 150}]
 
 
 @pytest.mark.asyncio
@@ -974,16 +974,16 @@ async def test_get_os_metrics_reads_a_day_without_a_total_row_from_its_rows(
         await _persist(async_postgres_db_real, session)
     await async_postgres_db_real.calculate_os_metrics()
 
-    yesterday = _utc_date(1)
+    past_day = _utc_date(2)
     today = _utc_date(0)
     table = await async_postgres_db_real._get_table("os_metrics", create_table_if_not_found=True)
     async with async_postgres_db_real.async_session_factory() as sess, sess.begin():
         await sess.execute(table.delete().where(table.c.aggregation_period == "daily_total"))
 
     metrics, _ = await async_postgres_db_real.get_os_metrics(
-        starting_date=yesterday, ending_date=today, fields=["sessions_count"]
+        starting_date=past_day, ending_date=today, fields=["sessions_count"]
     )
-    assert metrics == [{"date": yesterday, "sessions_count": 4}, {"date": today, "sessions_count": 1}]
+    assert metrics == [{"date": past_day, "sessions_count": 4}, {"date": today, "sessions_count": 1}]
 
 
 @pytest.mark.asyncio
@@ -995,19 +995,19 @@ async def test_get_os_metrics_never_reads_a_total_row_for_one_owner(
         await _persist(async_postgres_db_real, session)
     await async_postgres_db_real.calculate_os_metrics()
 
-    yesterday = _utc_date(1)
+    past_day = _utc_date(2)
     table = await async_postgres_db_real._get_table("os_metrics", create_table_if_not_found=True)
     async with async_postgres_db_real.async_session_factory() as sess, sess.begin():
         await sess.execute(
             table.update().where(table.c.aggregation_period == "daily_total").values(sessions_count=1000)
         )
 
-    assert await _sessions_counts(async_postgres_db_real, yesterday, None) == [1000]
-    assert await _sessions_counts(async_postgres_db_real, yesterday, "alice") == [1]
-    assert await _sessions_counts(async_postgres_db_real, yesterday, "bob") == [2]
+    assert await _sessions_counts(async_postgres_db_real, past_day, None) == [1000]
+    assert await _sessions_counts(async_postgres_db_real, past_day, "alice") == [1]
+    assert await _sessions_counts(async_postgres_db_real, past_day, "bob") == [2]
     # The unowned row, not the total row of every owner, which also has an empty user_id
-    assert await _sessions_counts(async_postgres_db_real, yesterday, "") == [1]
-    assert await _sessions_counts(async_postgres_db_real, yesterday, "carol") == []
+    assert await _sessions_counts(async_postgres_db_real, past_day, "") == [1]
+    assert await _sessions_counts(async_postgres_db_real, past_day, "carol") == []
 
 
 @pytest.mark.asyncio
@@ -1290,7 +1290,7 @@ async def test_calculate_os_metrics_reads_nested_run_ids_in_chunks(
 ):
     """Ensure a day with more nested runs than one statement is given finds every one stored as a run of its own"""
     monkeypatch.setattr("agno.db.postgres.async_postgres.OS_METRICS_IN_LIST_LIMIT", 2)
-    base_time = _noon_utc(1)
+    base_time = _noon_utc(2)
     member_runs = [
         RunOutput(
             run_id=f"member_run_{index}",
@@ -1328,12 +1328,12 @@ async def test_calculate_os_metrics_reads_nested_run_ids_in_chunks(
     await async_postgres_db_real.calculate_os_metrics()
 
     # Every member run is stored as a run of its own, so none is counted again from the team run
-    yesterday = _utc_date(1)
+    past_day = _utc_date(2)
     stored_rows = await _stored_rows(async_postgres_db_real)
-    assert stored_rows[(yesterday, "bob", "", "team-1", "")]["token_metrics"] == {}
-    assert stored_rows[(yesterday, "bob", "agent-2", "", "")]["runs_count"] == 5
-    assert stored_rows[(yesterday, "bob", "agent-2", "", "")]["token_metrics"]["input_tokens"] == 50
-    total_row = (await _stored_total_rows(async_postgres_db_real))[(yesterday, "daily_total", "", "", "", "")]
+    assert stored_rows[(past_day, "bob", "", "team-1", "")]["token_metrics"] == {}
+    assert stored_rows[(past_day, "bob", "agent-2", "", "")]["runs_count"] == 5
+    assert stored_rows[(past_day, "bob", "agent-2", "", "")]["token_metrics"]["input_tokens"] == 50
+    total_row = (await _stored_total_rows(async_postgres_db_real))[(past_day, "daily_total", "", "", "", "")]
     assert total_row["token_metrics"]["input_tokens"] == 50
 
 
@@ -1430,16 +1430,16 @@ async def test_calculate_os_metrics_counts_nested_runs_at_every_depth(async_post
                 metrics=_run_metrics(10, 5, duration=2.0),
                 messages=[_assistant_message(1.2)],
                 member_responses=[member, inner_team],
-                created_at=_noon_utc(1),
+                created_at=_noon_utc(2),
             )
         ],
-        created_at=_noon_utc(1),
+        created_at=_noon_utc(2),
     )
     await _persist(async_postgres_db_real, session)
 
     runs_table = await async_postgres_db_real._get_table("runs")
     async with async_postgres_db_real.async_session_factory() as sess:
-        result = await sess.execute(build_os_metrics_runs_query(runs_table, _noon_utc(1), _noon_utc(1) + 1))
+        result = await sess.execute(build_os_metrics_runs_query(runs_table, _noon_utc(2), _noon_utc(2) + 1))
         (run,) = result.fetchall()
     assert [(nested_run["depth"], nested_run["run_id"]) for nested_run in run.nested_runs] == [
         (1, "nested_member"),
@@ -1451,7 +1451,7 @@ async def test_calculate_os_metrics_counts_nested_runs_at_every_depth(async_post
 
     await async_postgres_db_real.calculate_os_metrics()
 
-    row = (await _stored_rows(async_postgres_db_real))[(_utc_date(1), "alice", "", "team-1", "")]
+    row = (await _stored_rows(async_postgres_db_real))[(_utc_date(2), "alice", "", "team-1", "")]
     assert row["token_metrics"] == {"input_tokens": 19, "output_tokens": 9, "total_tokens": 28}
     assert row["duration_metrics"]["model_calls_count"] == 4
     assert row["duration_metrics"]["total_model_call_ms"] == 2700

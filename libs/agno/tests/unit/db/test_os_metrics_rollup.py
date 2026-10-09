@@ -646,6 +646,14 @@ def test_open_day_has_no_total_row():
     assert _total_row(runs=[_run()], target_date=today) is None
 
 
+def test_yesterday_is_still_open():
+    """A run of yesterday can still be written today, so yesterday is completed a day later."""
+    today = datetime.now(timezone.utc).date()
+
+    assert _total_row(runs=[_run()], target_date=today - timedelta(days=1)) is None
+    assert _total_row(runs=[_run()], target_date=today - timedelta(days=2)) is not None
+
+
 def test_day_without_rows_has_no_total_row():
     assert calculate_date_os_metrics(TARGET_DATE, [], [], set()) == []
 
