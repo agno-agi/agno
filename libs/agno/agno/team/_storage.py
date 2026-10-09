@@ -990,8 +990,8 @@ def from_dict(
             carry the member version pinned at save time; when provided,
             members load at their pinned version instead of the current one,
             matching the component-graph loader's semantics.
-        strict: If True, unresolvable members and registry
-            references raise ComponentRehydrationError instead of being
+        strict: If True, unresolvable members, registry references and
+            saved skill names with no row raise ComponentRehydrationError instead of being
             silently dropped. Pass False to reconstruct as much as possible,
             e.g. for listings that must show degraded components.
 
@@ -1341,9 +1341,27 @@ def from_dict(
                     "Pass skill_executor= to load it; loading without one would run skill scripts "
                     "on the host."
                 )
-            config["skills"] = Skills(loaders=[DbSkills(skills_db, names=skill_names)], executor=skill_executor)
+            skills = Skills(loaders=[DbSkills(skills_db, names=skill_names)], executor=skill_executor)
+            if strict and not skills.has_unloaded_loaders():
+                # The eager load answered with the shared rows, so a name it did not return is
+                # either owned (resolved per request) or gone; one unscoped read tells which.
+                missing = [name for name in skill_names if name not in skills.get_skill_names()]
+                if missing:
+                    stored = {row["name"] for row in skills_db.get_skills_with_content(names=missing)}
+                    missing = [name for name in missing if name not in stored]
+                if missing:
+                    raise ComponentRehydrationError(
+                        f"{component_label} references skills {missing} which were not found in the skills "
+                        "table. Restore the rows, or pass strict=False to load without them."
+                    )
+            config["skills"] = skills
         else:
             if skill_names:
+                if strict:
+                    raise ComponentRehydrationError(
+                        f"{component_label} references skills {skill_names} but has no db to resolve them. "
+                        "Pass db=, or strict=False to load without them."
+                    )
                 log_warning(f"No db provided, skills {skill_names} will not be resolved.")
             del config["skills"]
 
@@ -1707,8 +1725,8 @@ def load(
         id: The id of the team to load.
         db: The database to load the team from.
         label: The label of the team to load.
-        strict: If True, unresolvable members and registry
-            references raise ComponentRehydrationError instead of being
+        strict: If True, unresolvable members, registry references and
+            saved skill names with no row raise ComponentRehydrationError instead of being
             silently dropped.
 
     Returns:

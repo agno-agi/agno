@@ -230,6 +230,58 @@ def test_from_dict_without_db_drops_skills_with_warning(tmp_path, monkeypatch):
     assert any("release-notes" in w for w in warnings)
 
 
+def test_strict_load_raises_when_a_saved_skill_row_is_gone(tmp_path, monkeypatch):
+    """The team twin: a saved skill name with no row is refused under strict, warned once leniently."""
+    from agno.exceptions import ComponentRehydrationError
+
+    db = _make_db(tmp_path)
+    _create_skill_row(db)
+    config = Team(name="test-team", members=[], db=db, skills=Skills(loaders=[DbSkills(db)])).to_dict()
+
+    assert Team.from_dict(config, db=db, strict=True).skills.get_skill_names() == ["release-notes"]
+
+    db.delete_skill("release-notes")
+    warnings: List[str] = []
+    monkeypatch.setattr("agno.team._storage.log_warning", warnings.append)
+    monkeypatch.setattr("agno.skills.loaders.db.log_warning", warnings.append)
+    for _ in range(2):
+        with pytest.raises(ComponentRehydrationError, match="release-notes"):
+            Team.from_dict(config, db=db, strict=True)
+        warnings.clear()
+        lenient = Team.from_dict(config, db=db, strict=False)
+        assert lenient.skills is not None
+        assert lenient.skills.get_skill_names() == []
+        assert len(warnings) == 1 and "release-notes" in warnings[0]
+
+
+def test_strict_load_raises_when_no_db_can_resolve_the_saved_skills(tmp_path):
+    from agno.exceptions import ComponentRehydrationError
+
+    db = _make_db(tmp_path)
+    _create_skill_row(db)
+    config = Team(name="test-team", members=[], skills=Skills(loaders=[DbSkills(db)])).to_dict()
+    assert "db" not in config
+
+    for _ in range(2):
+        with pytest.raises(ComponentRehydrationError, match="release-notes"):
+            Team.from_dict(config, strict=True)
+        assert Team.from_dict(config, strict=False).skills is None
+
+
+def test_strict_load_accepts_a_saved_skill_owned_by_another_user(tmp_path):
+    db = _make_db(tmp_path)
+    db.create_skill({"name": "alice-notes", "description": "d", "instructions": "i", "user_id": "alice"})
+    config = Team(
+        name="test-team", members=[], db=db, skills=Skills(loaders=[DbSkills(db, names=["alice-notes"])])
+    ).to_dict()
+    assert config["skills"] == {"names": ["alice-notes"]}
+
+    for _ in range(2):
+        team = Team.from_dict(config, db=db, strict=True)
+        assert team.skills is not None
+        assert "alice-notes" in team.skills.get_system_prompt_snippet(user_id="alice")
+
+
 def test_resave_during_outage_preserves_skill_names(tmp_path):
     """Data-loss regression, team twin: healthy save, load during an outage, resave, recover.
 

@@ -310,6 +310,56 @@ def test_get_agent_by_id_resolves_skills(tmp_path):
     assert "release-notes" in loaded.skills.get_system_prompt_snippet()
 
 
+def test_strict_load_raises_when_a_saved_skill_row_is_gone(tmp_path, monkeypatch):
+    """Under strict a saved skill name with no row is an unresolvable reference, like a
+    missing knowledge or tool reference; lenient keeps today's single warning and empty set."""
+    db = _make_db(tmp_path)
+    _create_skill_row(db)
+    config = Agent(name="test-agent", db=db, skills=Skills(loaders=[DbSkills(db)])).to_dict()
+
+    assert Agent.from_dict(config, db=db, strict=True).skills.get_skill_names() == ["release-notes"]
+
+    db.delete_skill("release-notes")
+    warnings: List[str] = []
+    monkeypatch.setattr("agno.agent._storage.log_warning", warnings.append)
+    monkeypatch.setattr("agno.skills.loaders.db.log_warning", warnings.append)
+    for _ in range(2):
+        with pytest.raises(ComponentRehydrationError, match="release-notes"):
+            Agent.from_dict(config, db=db, strict=True)
+        warnings.clear()
+        lenient = Agent.from_dict(config, db=db, strict=False)
+        assert lenient.skills is not None
+        assert lenient.skills.get_skill_names() == []
+        assert len(warnings) == 1 and "release-notes" in warnings[0]
+
+
+def test_strict_load_raises_when_no_db_can_resolve_the_saved_skills(tmp_path):
+    """A names block with nothing to resolve it against is dropped leniently and refused strictly."""
+    db = _make_db(tmp_path)
+    _create_skill_row(db)
+    config = Agent(name="test-agent", skills=Skills(loaders=[DbSkills(db)])).to_dict()
+    assert "db" not in config
+
+    for _ in range(2):
+        with pytest.raises(ComponentRehydrationError, match="release-notes"):
+            Agent.from_dict(config, strict=True)
+        assert Agent.from_dict(config, strict=False).skills is None
+
+
+def test_strict_load_accepts_a_saved_skill_owned_by_another_user(tmp_path):
+    """A row that exists but belongs to a user is not missing: the eager load cannot see it,
+    its owner's requests resolve it, so strict must not refuse the agent."""
+    db = _make_db(tmp_path)
+    db.create_skill({"name": "alice-notes", "description": "d", "instructions": "i", "user_id": "alice"})
+    config = Agent(name="test-agent", db=db, skills=Skills(loaders=[DbSkills(db, names=["alice-notes"])])).to_dict()
+    assert config["skills"] == {"names": ["alice-notes"]}
+
+    for _ in range(2):
+        agent = Agent.from_dict(config, db=db, strict=True)
+        assert agent.skills is not None
+        assert "alice-notes" in agent.skills.get_system_prompt_snippet(user_id="alice")
+
+
 def test_resave_during_outage_preserves_skill_names(tmp_path):
     """Data-loss regression: healthy save, load during an outage, resave, recover.
 

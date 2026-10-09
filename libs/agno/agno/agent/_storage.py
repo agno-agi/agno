@@ -1260,12 +1260,12 @@ def from_dict(
         skill_executor: Executor to run skill scripts with. Required when the saved
             config records a non-default executor, since one cannot be serialized.
         registry: Optional registry for rehydrating tools and schemas
-        strict: If True, unresolvable registry references (tools,
-            schemas, knowledge) raise ComponentRehydrationError instead of
-            being silently dropped; an unresolvable serialized db config warns
-            and falls back to the caller's db in both modes. Pass False to
-            reconstruct as much as possible, e.g. for listings that must show
-            degraded components.
+        strict: If True, unresolvable registry references (tools, schemas,
+            knowledge) and saved skill names with no row raise
+            ComponentRehydrationError instead of being silently dropped; an
+            unresolvable serialized db config warns and falls back to the
+            caller's db in both modes. Pass False to reconstruct as much as
+            possible, e.g. for listings that must show degraded components.
 
     Returns:
         Agent: Reconstructed agent instance
@@ -1471,9 +1471,27 @@ def from_dict(
                     "Pass skill_executor= to load it; loading without one would run skill scripts "
                     "on the host."
                 )
-            config["skills"] = Skills(loaders=[DbSkills(skills_db, names=skill_names)], executor=skill_executor)
+            skills = Skills(loaders=[DbSkills(skills_db, names=skill_names)], executor=skill_executor)
+            if strict and not skills.has_unloaded_loaders():
+                # The eager load answered with the shared rows, so a name it did not return is
+                # either owned (resolved per request) or gone; one unscoped read tells which.
+                missing = [name for name in skill_names if name not in skills.get_skill_names()]
+                if missing:
+                    stored = {row["name"] for row in skills_db.get_skills_with_content(names=missing)}
+                    missing = [name for name in missing if name not in stored]
+                if missing:
+                    raise ComponentRehydrationError(
+                        f"{component_label} references skills {missing} which were not found in the skills "
+                        "table. Restore the rows, or pass strict=False to load without them."
+                    )
+            config["skills"] = skills
         else:
             if skill_names:
+                if strict:
+                    raise ComponentRehydrationError(
+                        f"{component_label} references skills {skill_names} but has no db to resolve them. "
+                        "Pass db=, or strict=False to load without them."
+                    )
                 log_warning(f"No db provided, skills {skill_names} will not be resolved.")
             del config["skills"]
 
@@ -1728,8 +1746,9 @@ def load(
         registry: Optional registry for rehydrating tools and schemas.
         label: The label of the agent to load.
         version: The version of the agent to load.
-        strict: If True, unresolvable registry references raise
-            ComponentRehydrationError instead of being silently dropped.
+        strict: If True, unresolvable registry references and saved skill
+            names with no row raise ComponentRehydrationError instead of being
+            silently dropped.
 
     Returns:
         The agent loaded from the database or None if not found.
