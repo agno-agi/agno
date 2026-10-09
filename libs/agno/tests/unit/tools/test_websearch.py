@@ -678,3 +678,85 @@ def test_search_news_empty_results(mock_ddgs):
 
     parsed = json.loads(result)
     assert parsed == []
+
+
+# ============================================================================
+# ZERO RESULTS, MODIFIER, AND ERROR HANDLING TESTS
+# ============================================================================
+
+
+def test_web_search_with_fixed_max_results_zero(mock_ddgs):
+    """Test that fixed_max_results=0 returns an empty list without calling DDGS."""
+    mock_instance, _ = mock_ddgs
+
+    tools = WebSearchTools(fixed_max_results=0)
+    result = tools.web_search("test", max_results=5)
+
+    assert result == "[]"
+    mock_instance.text.assert_not_called()
+
+
+def test_web_search_with_max_results_zero(mock_ddgs):
+    """Test that max_results=0 returns an empty list without calling DDGS."""
+    mock_instance, _ = mock_ddgs
+
+    tools = WebSearchTools()
+    result = tools.web_search("test", max_results=0)
+
+    assert result == "[]"
+    mock_instance.text.assert_not_called()
+
+
+def test_search_news_with_fixed_max_results_zero(mock_ddgs):
+    """Test that search_news with fixed_max_results=0 returns empty list without calling DDGS."""
+    mock_instance, _ = mock_ddgs
+
+    tools = WebSearchTools(fixed_max_results=0)
+    result = tools.search_news("test", max_results=5)
+
+    assert result == "[]"
+    mock_instance.news.assert_not_called()
+
+
+def test_search_news_with_max_results_zero(mock_ddgs):
+    """Test that search_news with max_results=0 returns empty list without calling DDGS."""
+    mock_instance, _ = mock_ddgs
+
+    tools = WebSearchTools()
+    result = tools.search_news("test", max_results=0)
+
+    assert result == "[]"
+    mock_instance.news.assert_not_called()
+
+
+def test_search_news_with_modifier(mock_ddgs):
+    """Test that search_news applies self.modifier to query."""
+    mock_instance, _ = mock_ddgs
+    mock_instance.news.return_value = []
+
+    tools = WebSearchTools(modifier="site:reuters.com")
+    tools.search_news("market")
+
+    mock_instance.news.assert_called_once_with(query="site:reuters.com market", max_results=5, backend="auto")
+
+
+def test_web_search_exception_handling(mock_ddgs):
+    """Test that web_search catches DDGS errors cleanly."""
+    mock_instance, _ = mock_ddgs
+    mock_instance.text.side_effect = Exception("Rate limit reached")
+
+    tools = WebSearchTools()
+    result = tools.web_search("test")
+
+    assert "Error searching the web: Rate limit reached" in result
+
+
+def test_search_news_exception_handling(mock_ddgs):
+    """Test that search_news catches DDGS errors cleanly."""
+    mock_instance, _ = mock_ddgs
+    mock_instance.news.side_effect = Exception("News backend unavailable")
+
+    tools = WebSearchTools()
+    result = tools.search_news("test")
+
+    assert "Error searching news: News backend unavailable" in result
