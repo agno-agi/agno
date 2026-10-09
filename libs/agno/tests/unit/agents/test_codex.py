@@ -495,6 +495,56 @@ def test_transient_resume_failure_keeps_thread(fake_sdk, tmp_db, monkeypatch):
     assert agent.read_or_create_session("s1").session_data["codex_thread_id"] == "thread-1"
 
 
+def _tool_history(result: str, name: str = "shell", arguments: str = '{"command": "ls"}'):
+    return [
+        {"role": "user", "content": "list the files"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "c1", "type": "function", "function": {"name": name, "arguments": arguments}}],
+        },
+        {"role": "tool", "content": result, "tool_call_id": "c1"},
+        {"role": "assistant", "content": "There are many files."},
+    ]
+
+
+def test_history_prompt_includes_tool_calls_and_keeps_the_end_of_truncated_results():
+    from agno.agents import base as base_module
+
+    long_output = "x" * (base_module._HISTORY_TOOL_RESULT_MAX_CHARS + 500) + "\n[exit code 1]"
+    prompt = CodexAgent._build_prompt("next", _tool_history(long_output), resumed=False)
+
+    assert "user: list the files" in prompt
+    assert 'assistant called shell({"command": "ls"})' in prompt
+    assert "tool result: " in prompt
+    assert long_output not in prompt
+    assert "characters truncated" in prompt
+    assert "[exit code 1]" in prompt, "the end of a tool result carries its failure status and must survive truncation"
+    assert "assistant: There are many files." in prompt
+    assert prompt.endswith("Current message:\nnext")
+    # Resumed threads carry their own context, so history is not replayed
+    assert CodexAgent._build_prompt("next", _tool_history(long_output), resumed=True) == "next"
+
+
+def test_history_prompt_is_bounded_and_drops_the_oldest_entries_first():
+    from agno.agents import base as base_module
+
+    history = [{"role": "user", "content": "first question"}, {"role": "assistant", "content": "first answer"}]
+    for index in range(60):
+        history += _tool_history(f"output {index} " + "y" * 900)[1:3]
+    history.append({"role": "user", "content": "latest question"})
+    history.append({"role": "assistant", "content": "latest answer"})
+
+    prompt = CodexAgent._build_prompt("next", history, resumed=False)
+
+    assert len(prompt) <= base_module._HISTORY_MAX_CHARS + 500
+    assert "[earlier history omitted]" in prompt
+    assert "first question" not in prompt and "output 0 " not in prompt
+    assert "output 59 " in prompt
+    assert "user: latest question" in prompt and "assistant: latest answer" in prompt
+    assert prompt.endswith("Current message:\nnext")
+
+
 def test_in_memory_thread_mapping_without_db(fake_sdk):
     fake_sdk.notifications = [_delta("m1", "ok"), _turn_completed()]
     agent = CodexAgent(name="Codex", id="codex")
