@@ -680,3 +680,49 @@ def test_component_hook_ignores_mocks_and_plain_objects(agent):
     assert component_hook(MagicMock(), "_apersist_run_fallback") is None
     assert component_hook(SimpleNamespace(_apersist_run_fallback=print), "_apersist_run_fallback") is None
     assert component_hook(agent, "_apersist_run_fallback") == agent._apersist_run_fallback
+
+
+@pytest.mark.asyncio
+async def test_queue_unreadable_row_is_not_executed(agent, monkeypatch):
+    from agno.db.schemas.jobs import QueuedJob
+    from agno.job_queue.config import QueueConfig
+    from agno.job_queue.store import InMemoryQueueStore
+    from agno.os.job_queue import QueueWorker
+
+    read = agent.aget_run_output
+    reads = []
+
+    async def first_read_fails(*args, **kwargs):
+        reads.append(args)
+        if len(reads) == 1:
+            raise RuntimeError("database is locked")
+        return await read(*args, **kwargs)
+
+    store = InMemoryQueueStore()
+    worker = QueueWorker(
+        store=store,
+        resolve_component=lambda *_: agent,
+        config=QueueConfig(durable=True, poll_interval=0.01),
+        worker_id="worker",
+    )
+    run_id = str(uuid4())
+    await agent._aprepare_pending_run(run_id, "s", None, "go")
+    monkeypatch.setattr(agent, "aget_run_output", first_read_fails)
+    await store.enqueue_job(
+        QueuedJob(
+            id=run_id, component_type="agent", component_id=agent.id, session_id="s", payload={"input": "go"}
+        ).to_dict()
+    )
+    agent.release.set()
+    await worker.start()
+    try:
+
+        async def settled():
+            while (await store.get_job(run_id))["status"] not in ("cancelled", "completed", "failed"):
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(settled(), 3)
+        assert (await store.get_job(run_id))["status"] == "failed"
+        assert not agent.calls
+    finally:
+        await worker.stop()

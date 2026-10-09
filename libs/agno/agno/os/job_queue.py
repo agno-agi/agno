@@ -1672,20 +1672,19 @@ class QueueWorker:
                     )
                 persist_fallback = component_hook(component, "_apersist_run_fallback")
                 if stamp_outcome in (_RPO.MISSING, _RPO.UNAVAILABLE) and persist_fallback is not None:
-                    try:
-                        hook_run = await component.aget_run_output(
-                            job_id, job["session_id"], user_id=job.get("user_id")
-                        )
-                        if hook_run is not None and hook_run.status in (_RS.completed, _RS.cancelled):
-                            stamp_outcome = _RPO.TERMINAL_REFUSED
-                        elif hook_run is not None:
-                            hook_run.status = _RS.running
+                    # The read fails closed: an unreadable row may be a CANCELLED one this ticket must not run.
+                    hook_run = await component.aget_run_output(job_id, job["session_id"], user_id=job.get("user_id"))
+                    if hook_run is not None and hook_run.status in (_RS.completed, _RS.cancelled):
+                        stamp_outcome = _RPO.TERMINAL_REFUSED
+                    elif hook_run is not None:
+                        hook_run.status = _RS.running
+                        try:
                             await persist_fallback(job["session_id"], hook_run, job.get("user_id"))
-                    except Exception as e:
-                        log_warning(
-                            f"Job queue: RUNNING fallback failed for job {job_id} (worker={self.worker_id}, "
-                            f"attempt={attempt}): {e}"
-                        )
+                        except Exception as e:
+                            log_warning(
+                                f"Job queue: RUNNING fallback failed for job {job_id} (worker={self.worker_id}, "
+                                f"attempt={attempt}): {e}"
+                            )
                 if stamp_outcome is _RPO.TERMINAL_REFUSED:
                     # The run row is already COMPLETED/CANCELLED (the guard's
                     # exact terminal set - ERROR rows pass, so operator
