@@ -24,8 +24,6 @@ options = ClaudeAgentOptions(
     tools=[],
     setting_sources=[],
     strict_mcp_config=True,
-    max_turns=2,
-    max_budget_usd=0.5,
 )
 
 

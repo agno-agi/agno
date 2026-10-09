@@ -153,3 +153,15 @@ model only in memory to `invalid-harness-cookbook-model`, and invoked the printe
 **Result:** Both native providers rejected the request. Each wrapper displayed
 `Run failed` and `Status: ERROR`, raised `AgentRunException`, and exited 1.
 No example source or model default was changed, and neither check was retried.
+
+
+### Example configuration cleanup — 2026-10-09
+
+**Status:** PASS
+
+**Description:** Removed explicit turn and dollar limits from all four Claude
+examples and corrected the root README's description. Ran the four-example
+pattern check, compileall and whitespace checks.
+
+**Result:** Static checks pass. No live model calls were rerun for this
+configuration-only cleanup; previous live results describe the earlier limits.

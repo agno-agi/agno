@@ -71,9 +71,8 @@ for local development. Production requires explicit authorization, durable
 storage and an execution/coordination topology appropriate to the product.
 Neither a working directory nor a tool allowlist provides tenant isolation.
 
-Both examples use bounded prompts. Claude additionally has SDK turn and dollar
-budgets; Codex has no equivalent budget configured here. Native scripts time
-out after 120 seconds, and the live test suite bounds subprocess/HTTP waits.
+Both examples use bounded prompts. Native scripts time out after 120 seconds,
+and the live test suite bounds subprocess/HTTP waits.
 Those are test limits, not billing guarantees.
 
 `PORT` changes the local server port. `HARNESS_STATE_DIR` changes the SQLite
