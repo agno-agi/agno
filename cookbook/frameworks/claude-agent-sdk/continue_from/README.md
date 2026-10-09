@@ -4,7 +4,7 @@
 
 ## How it works
 
-Every run stores its messages in Agno, and with transcript storage the Claude conversation itself is mirrored into the `agno_transcripts` table. Each tool result in a run is a checkpoint. Continuing from a checkpoint forks the Claude conversation at that message, so the model only remembers what happened up to it, and the continuation runs as a new turn on that branch.
+Every run stores its messages in Agno, and with transcript storage the Claude conversation itself is mirrored into the `agno_transcripts` table. Each fully recorded top-level tool batch is a checkpoint. Continuing from a checkpoint forks the Claude conversation at that message, so the model only remembers what happened up to it, and the continuation runs as a new turn on that branch.
 
 | Call | Effect |
 |------|--------|
@@ -28,6 +28,8 @@ Each cookbook seeds a temporary workspace with a small realistic task and assert
 | `03_replay_user_turn.py` | List markdown files, add a file, replay the prompt; then rewrite the prompt from message 0. | Replay re-runs tools against the current workspace; `continue_from=0` replaces the prompt. |
 | `04_background_continue.py` | Write a script, then run it in a background continuation with `stream=True`. | Live tool and content events from a background run, the final `RunOutput`, and the stored result. |
 | `05_agentos_api.py` | The CSV scenario over HTTP. `--verify` runs it end to end. | `/checkpoints`, `/continue` with `fork=true`, a streamed follow-up, and the session's run lineage. |
+| `06_recover_failed_tool_run.py` | Record an invoice once, deliberately exhaust the turn limit, then recover from the stored result. | Completed tool results survive a failed run; continuation does not repeat the write. Add `--stream` to test streaming recovery. |
+| `07_subagent_checkpoints.py` | Delegate CSV analysis to a sales analyst subagent, inspect checkpoints, and continue from its parent result. | Internal subagent steps are excluded from checkpoints; the top-level result can be continued. |
 
 A script that consumes a background stream and exits at once can log "Failed to complete event stream": the final output reaches the client before the run finishes its event-stream bookkeeping, and closing the loop cancels that step. `await_background_runs()` from `agno.run.background` waits for it; a server keeps its loop alive and does not need it.
 
@@ -39,6 +41,9 @@ The SDK's default system prompt does not tell the model its working directory, s
 .venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/continue_from/03_replay_user_turn.py
 .venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/continue_from/04_background_continue.py
 .venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/continue_from/05_agentos_api.py --verify
+.venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/continue_from/06_recover_failed_tool_run.py
+.venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/continue_from/06_recover_failed_tool_run.py --stream
+.venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/continue_from/07_subagent_checkpoints.py
 ```
 
 ## Limits
@@ -46,5 +51,6 @@ The SDK's default system prompt does not tell the model its working directory, s
 - Requires a database with transcript storage (SqliteDb, AsyncSqliteDb, PostgresDb, AsyncPostgresDb). Only runs recorded with it can be continued.
 - Files the agent changed after a checkpoint are not rewound; only the conversation is.
 - Cancelled runs cannot be continued.
-- When Claude issues several tool calls in parallel, the batch is a single checkpoint and a branch keeps all of its results.
+- Failed runs retain completed tool results. The error stays in the run's content; it is not treated as an assistant transcript entry when continuing.
+- Only fully recorded top-level tool batches are checkpoints. Subagent tool steps are not checkpoints. When Claude issues several tool calls in parallel, the batch is a single checkpoint and a branch keeps all of its results; an incomplete batch cannot be used as a continuation boundary.
 - `regenerate` and HITL `requirements` are not supported for ClaudeAgent.

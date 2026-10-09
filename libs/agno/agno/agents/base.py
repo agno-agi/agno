@@ -1054,11 +1054,25 @@ class BaseExternalAgent:
                 run_output.metadata = {"warnings": content.warnings}
         except RunCancelledException:
             run_output = self._build_run_output(
-                run_id, session_id, user_id, record_input, "Run cancelled", RunStatus.cancelled
+                run_id,
+                session_id,
+                user_id,
+                record_input,
+                "Run cancelled",
+                RunStatus.cancelled,
+                tools=list(run_state.get("tools", {}).values()) or None,
             )
         except Exception as error:
             log_exception(f"Error in {self.framework} agent '{self.id}': {error}")
-            run_output = self._build_run_output(run_id, session_id, user_id, record_input, str(error), RunStatus.error)
+            run_output = self._build_run_output(
+                run_id,
+                session_id,
+                user_id,
+                record_input,
+                str(error),
+                RunStatus.error,
+                tools=list(run_state.get("tools", {}).values()) or None,
+            )
         self._finish_run_output(run_output, run_state, continuation)
         if session is not None:
             await self._apersist_run_in_session(session, run_output)

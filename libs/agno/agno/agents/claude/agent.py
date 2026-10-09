@@ -320,10 +320,17 @@ class ClaudeAgent(BaseExternalAgent):
             order[uuid] = len(order)
         if isinstance(message, sdk.AssistantMessage):
             run_state["final"] = uuid
+            run_state["last"] = uuid
+            run_state["final_text"] = (
+                "".join(block.text for block in message.content if isinstance(block, sdk.TextBlock))
+                if not any(isinstance(block, sdk.ToolUseBlock) for block in message.content)
+                else None
+            )
             for block in message.content:
                 if isinstance(block, sdk.ToolUseBlock):
                     run_state[f"call:{block.id}"] = uuid
         elif isinstance(message, sdk.UserMessage):
+            run_state["last"] = uuid
             result_ids = self._tool_result_ids(sdk, message)
             for tool_use_id in result_ids:
                 run_state[f"result:{tool_use_id}"] = uuid
@@ -342,6 +349,13 @@ class ClaudeAgent(BaseExternalAgent):
         sdk_session_id = run_state.get("session_id")
         if not sdk_session_id or not run.messages:
             return
+        if run.status in (RunStatus.error, RunStatus.cancelled):
+            # The base class puts the error text in a synthetic assistant
+            # message. It is not a transcript entry; retain the error in
+            # run.content and end the messages at the work actually received.
+            run.messages.pop()
+            if run_state.get("final_text") and run_state.get("last") == run_state.get("final"):
+                run.messages.append(Message(role="assistant", content=run_state["final_text"]))
         order: Dict[str, int] = run_state.get("order") or {}
         last = len(run.messages) - 1
         for index, message in enumerate(run.messages):
@@ -364,6 +378,10 @@ class ClaudeAgent(BaseExternalAgent):
             if uuid in order:
                 ref["position"] = order[uuid]
             message.provider_data = {**(message.provider_data or {}), self._MESSAGE_REF_KEY: ref}
+        for message in run.messages:
+            if message.role == "tool":
+                message.checkpoint_status = None
+                message.checkpoint_created_at = None
         for index in self._checkpoint_indexes(run.messages):
             message = run.messages[index]
             message.checkpoint_status = RunStatus.running.value
@@ -413,7 +431,9 @@ class ClaudeAgent(BaseExternalAgent):
 
     def _checkpoint_indexes(self, messages: List[Message]) -> List[int]:
         """Zero-based indexes of the last tool result of each batch: the only places a fork is exact."""
-        return [batch[-1] for batch in self._tool_batches(messages)]
+        return [
+            batch[-1] for batch in self._tool_batches(messages) if all(self._ref(messages[index]) for index in batch)
+        ]
 
     def _batch_end(self, messages: List[Message], index: int) -> int:
         """Move a boundary inside a batch of tool results to the end of that batch."""
@@ -429,6 +449,8 @@ class ClaudeAgent(BaseExternalAgent):
         for batch in self._tool_batches(messages):
             if index - 1 in batch:
                 refs = [self._ref(messages[i]) or {} for i in batch]
+                if not all(refs):
+                    return None
                 return max(refs, key=lambda r: r.get("position", -1)) or None
         return self._ref(messages[index - 1])
 
@@ -721,6 +743,10 @@ class ClaudeAgent(BaseExternalAgent):
         tools: Dict[str, ToolExecution] = {}
 
         async for message in self._aquery(input, history, streaming=False, **kwargs):
+            # Share the live accumulator so the base class can persist work
+            # already completed if the SDK raises before returning a result.
+            if kwargs.get("run_state") is not None:
+                kwargs["run_state"]["tools"] = tools
             warning = self._mirror_warning(message)
             if warning is not None:
                 warnings.append(warning)

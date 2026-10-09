@@ -55,3 +55,33 @@ Finding while writing these: the SDK's default system prompt does not tell the m
 **Result:** Run replied `rows=5 total=500 max=east`; checkpoints 3, 5, 7, 8; the branch knew the row count and said the total was not computed yet; the streamed follow-up answered `east`; the session listed the source plus two forked runs.
 
 ---
+
+### 06_recover_failed_tool_run.py
+
+**Status:** PASS
+
+**Description:** Runs a script that appends one invoice entry to an audit log, deliberately hits `max_turns=1`, then forks from the failed run's end. Checks the completed tool result survives and that recovery executes no additional tools or invoice writes.
+
+**Result:** Live Claude SDK 0.2.110 with claude-sonnet-4-6 and SQLite: the initial run returned `error_max_turns` after recording invoice-1042. Its stored result reported one audit entry, and continuation answered from that result. The audit log still contained exactly one entry.
+
+---
+
+### 07_subagent_checkpoints.py
+
+**Status:** PASS
+
+**Description:** Delegates CSV analysis to a sales analyst subagent, checks that nested tool results have no checkpoint markers, then forks from the top-level Agent result without re-running the analysis.
+
+**Result:** Live Claude SDK 0.2.110 with claude-sonnet-4-6 and SQLite: the parent result at message 3 was a checkpoint; nested results at messages 5 and 7 were excluded. The branch recalled 3 rows and a total of 400 without new tool calls.
+
+---
+
+### 06_recover_failed_tool_run.py --stream
+
+**Status:** PASS
+
+**Description:** Repeats the invoice-recovery scenario with streamed events and a final `RunOutput`. Checks that the terminal RunError retains the completed tool checkpoint for continuation.
+
+**Result:** Live Claude SDK 0.2.110: streamed run ended with `error_max_turns`, preserved the result at message 3, and recovered successfully. No additional tools ran and the audit log contained exactly one invoice entry.
+
+---

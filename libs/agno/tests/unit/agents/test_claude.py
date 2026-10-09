@@ -936,3 +936,139 @@ async def test_agentos_automatic_fork_does_not_change_source_stream(scripted, tm
         branch_events = await event_stream.replay(branch.run_id)
         assert branch_events and all(event.run_id == branch.run_id for _, event in branch_events)
         assert await event_stream.get_run_status(branch.run_id) == RunStatus.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("failure", ["result", "exception"])
+async def test_failed_run_retains_completed_tool_checkpoint(scripted, tmp_db, monkeypatch, stream, failure):
+    from agno.os.checkpoints import list_run_checkpoints
+
+    turns, _, forks = scripted
+    failed_turn = _tool_turn("go")[:4]
+    if failure == "result":
+        turns.append(failed_turn + [ResultMessage("sdk-1", "provider failed", is_error=True)])
+    else:
+        original_query = claude_module._sdk().query
+
+        async def query(prompt, options):
+            if options.resume is None:
+                for message in failed_turn:
+                    yield message
+                raise ProcessError("provider failed")
+            async for message in original_query(prompt, options):
+                yield message
+
+        monkeypatch.setattr(claude_module._sdk(), "query", query)
+    turns.append(
+        [
+            SystemMessage("init", {"session_id": "fork-1"}),
+            _user("v-prompt", ClaudeAgent._CONTINUE_PROMPT),
+            _msg(AssistantMessage([TextBlock("recovered")]), "v-final"),
+            ResultMessage("fork-1", "recovered"),
+        ]
+    )
+    agent = ClaudeAgent(id="failed-checkpoint", db=tmp_db)
+    if stream:
+        events = [event async for event in agent.arun("go", session_id="s", stream=True)]
+        assert isinstance(events[-1], RunErrorEvent)
+        failed = (await agent.aget_session("s")).runs[0]
+    else:
+        failed = await agent.arun("go", session_id="s")
+    assert failed.status == RunStatus.error and "provider failed" in failed.content
+    assert [message.role for message in failed.messages] == ["user", "assistant", "tool"]
+    assert failed.tools[0].result == "alpha"
+    assert _ref(failed.messages[-1])["uuid"] == "u-result"
+    assert failed.messages[-1].checkpoint_status == RunStatus.running.value
+    assert [checkpoint["message_index"] for checkpoint in list_run_checkpoints(failed)] == [3]
+    # Load from the database, so the assertion also checks serialized recovery.
+    continued = await agent.acontinue_run(run_id=failed.run_id, session_id="s", fork=True)
+    assert forks[-1] == {"session_id": "sdk-1", "up_to": "u-result"}
+    assert continued.status == RunStatus.completed
+    assert continued.tools[0].result == "alpha"
+    assert [tool.tool_call_id for tool in continued.tools] == ["call-1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_failed_run_retains_real_trailing_assistant_text(scripted, tmp_db, stream):
+    turns, _, _ = scripted
+    turns.append(_tool_turn("go")[:-1] + [ResultMessage("sdk-1", "provider failed", is_error=True)])
+    agent = ClaudeAgent(id="failed-text", db=tmp_db)
+    if stream:
+        _ = [event async for event in agent.arun("go", session_id="s", stream=True)]
+        failed = (await agent.aget_session("s")).runs[0]
+    else:
+        failed = await agent.arun("go", session_id="s")
+    assert failed.messages[-1].content == "done"
+    assert "provider failed" in failed.content
+    _, _, continuation = agent._build_continuation(failed, continue_from="end", fork=True, input="next")
+    assert continuation.anchor["uuid"] == "u-final"
+    assert continuation.tools[0].result == "alpha"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_subagent_tools_are_not_exposed_as_checkpoints(scripted, tmp_db, stream):
+    from agno.os.checkpoints import list_run_checkpoints
+
+    turns, _, _ = scripted
+    parent = _tool_turn("go")
+    parent[2].content[0].id = "parent-call"
+    parent[2].content[0].name = "Agent"
+    parent[3].content[0].tool_use_id = "parent-call"
+    child = _tool_turn("child")
+    for message in child[2:4]:
+        message.parent_tool_use_id = "parent-call"
+    turns.append([parent[0], parent[1], parent[2], child[2], child[3], *parent[3:]])
+    agent = ClaudeAgent(id="subagent-checkpoints", db=tmp_db)
+    if stream:
+        _ = [event async for event in agent.arun("go", session_id="s", stream=True)]
+        run = (await agent.aget_session("s")).runs[0]
+    else:
+        run = await agent.arun("go", session_id="s")
+    child_result = next(message for message in run.messages if message.tool_call_id == "call-1")
+    assert child_result.checkpoint_status is None
+    assert _ref(child_result) is None
+    checkpoints = list_run_checkpoints(run)
+    assert [checkpoint["message_index"] for checkpoint in checkpoints] == [3, 6]
+    for checkpoint in checkpoints:
+        _, _, continuation = agent._build_continuation(
+            run, continue_from=checkpoint["message_index"], fork=True, input="next"
+        )
+        assert continuation.anchor["uuid"] in ("u-result", "u-final")
+
+
+def test_incomplete_parallel_batch_is_not_a_checkpoint(fake_sdk, tmp_db):
+    from agno.models.message import Message
+
+    messages = [
+        _recorded("user", "u", 0, "go"),
+        _recorded("assistant", "c1", 1, tool_calls=[{"id": "call-1"}]),
+        _recorded("tool", "r1", 3, "completed", tool_call_id="call-1"),
+        _recorded("assistant", "c2", 2, tool_calls=[{"id": "call-2"}]),
+        Message(role="tool", tool_call_id="call-2", content=""),
+    ]
+    agent = ClaudeAgent(db=tmp_db)
+    assert agent._checkpoint_indexes(messages) == []
+    with pytest.raises(ValueError, match="no Claude SDK transcript position"):
+        agent._build_continuation(_recorded_run(messages), continue_from=3, fork=True, input="next")
+
+
+def test_sync_continue_failed_run_preserves_tool_results(scripted, tmp_db):
+    turns, _, forks = scripted
+    turns.append(_tool_turn("go")[:4] + [ResultMessage("sdk-1", "provider failed", is_error=True)])
+    turns.append(
+        [
+            SystemMessage("init", {"session_id": "fork-1"}),
+            _msg(AssistantMessage([TextBlock("recovered")]), "v-final"),
+            ResultMessage("fork-1", "recovered"),
+        ]
+    )
+    agent = ClaudeAgent(id="sync-recovery", db=tmp_db)
+    failed = agent.run("go", session_id="s")
+    recovered = agent.continue_run(run_id=failed.run_id, session_id="s")
+    assert recovered.run_id == failed.run_id
+    assert recovered.status == RunStatus.completed
+    assert recovered.tools[0].result == "alpha"
+    assert forks == [{"session_id": "sdk-1", "up_to": "u-result"}]
