@@ -1431,12 +1431,12 @@ def attach_routes(
         ),
     ) -> Union[OSMetricsRefreshResponse, MetricsRefreshResponse]:
         try:
-            db = _require_os_db()
             os_dbs = _os_dbs(db_id)
             # Resolved before the background branch so an identity-less token cannot start a refresh.
             get_scoped_user_id(request)
-            # Kept apart from the daily metrics refresh of the same database, which rebuilds another table
-            refresh_key = f"os_metrics:{db.id}"
+            # Kept apart from the daily metrics refresh of the same database, which rebuilds another table,
+            # and from an OS metrics refresh of other databases
+            refresh_key = f"os_metrics:{','.join(sorted(os_dbs))}"
             # Refused before anything runs, so an AgentOS without the table is never told "started"
             if not any(not isinstance(os_db, RemoteDb) and _stores_os_metrics(os_db) for os_db in os_dbs.values()):
                 raise HTTPException(status_code=501, detail="OS metrics not supported by the configured database")
