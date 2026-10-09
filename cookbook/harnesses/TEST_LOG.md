@@ -184,3 +184,47 @@ model only in memory to `invalid-harness-cookbook-model`, and invoked the printe
 **Result:** Both native providers rejected the request. Each wrapper displayed
 `Run failed` and `Status: ERROR`, raised `AgentRunException`, and exited 1.
 No example source or model default was changed, and neither check was retried.
+
+
+## Claude live acceptance without explicit limits — 2026-10-09
+
+### native_sdk.py, basic.py, tools.py, agent_os.py and typed options
+
+**Status:** PASS
+
+**Description:** Ran the five Claude acceptance cases on clean source
+`78f321ba9ddd3d7c32221ced4c8d9df0c61dff96` from `/Users/ab/code/agno`, after
+removing explicit turn and dollar limits. Command:
+
+```bash
+AGNO_TEST_CLAUDE_SDK=1 .venvs/claude-dx-validation/bin/python -m pytest \
+  libs/agno/tests/integration/agents/test_harness_cookbooks.py -k claude -q
+```
+
+**Result:** 5 passed, 4 Codex cases deselected, in 29.47s. No skips or automatic
+retries. This made six successful model calls: three standalone examples, two
+AgentOS HTTP runs (non-streaming and SSE), and native-options reuse. Native and
+wrapped basic answers correctly gave zero shipping at the threshold. The tools
+script and both HTTP outputs correctly gave fees 8, 0, 0; each HTTP run stored
+two Read results and COMPLETED status with no metadata warnings. Fixture hashes
+were unchanged. The input native options retained their original configuration.
+
+**Environment:** Python 3.12.8; editable Agno 3.1.2 imported from this checkout;
+Claude SDK 0.2.165 / CLI 2.1.294; literal model `claude-sonnet-5-5`; SQLAlchemy
+2.0.52; pytest 9.1.1 and pytest-asyncio 1.4.0. Existing local CLI authentication
+was used without reading or logging credentials. Output, HTTP events and stored
+results are retained locally under `.context/claude-live-no-limits/`.
+
+### Live failure behavior
+
+**Status:** PASS
+
+**Description:** Loaded the current basic example, set an invalid model only
+in memory and invoked its printer. No source defaults were changed.
+
+**Result:** Claude rejected the model; the wrapper displayed `Run failed` and
+`Status: ERROR`, raised `AgentRunException` and exited 1. No retry was performed.
+
+These results verify the current Claude cookbook flows. They do not establish
+live history/resume, compaction, disconnect survival, durable retries,
+multi-replica recovery, skill/plugin execution or sandbox isolation.
