@@ -1,7 +1,7 @@
 import asyncio
 import contextlib
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Literal, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Literal, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import (
@@ -54,6 +54,7 @@ from agno.os.job_queue import (
 )
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
+    SESSION_NOT_FOUND,
     assert_session_matches_component,
     assert_session_writable,
     caller_is_admin,
@@ -1828,6 +1829,118 @@ def get_agent_router(
             raise HTTPException(status_code=400, detail=str(e))
 
         return {"session_id": new_session_id, "forked_from_session_id": session_id}
+
+    @router.post(
+        "/agents/{agent_id}/sessions/{session_id}/compact",
+        tags=["Agents"],
+        operation_id="compact_agent_session",
+        summary="Compact Agent Session",
+        description=(
+            "Fold this session's older history into a summary now, without waiting for the "
+            "context to reach ``compact_at_tokens``. The stored transcript is never modified - "
+            "compaction shortens what is sent to the model, not the record.\n\n"
+            "A compaction can legitimately decline, which is reported rather than raised. Check "
+            "``compacted``, and show ``message`` to the user:\n"
+            "- ``compacted`` - the fold happened; ``record`` carries the token counts\n"
+            "- ``not_worth_it`` - with ``enforce_min_fold_ratio``, the span is too small to pay for "
+            "the summary replacing it, so folding would leave the context bigger\n"
+            "- ``nothing_to_fold`` - the kept tail covers the whole conversation\n"
+            "- ``already_compacted`` - a previous fold already covers everything up to the only "
+            "safe cut point\n"
+            "- ``no_history`` - the session exists but has no stored history yet\n"
+            "- ``not_enabled`` - compaction is not configured on this agent\n"
+            "- ``summary_failed`` - the summarizer returned nothing"
+        ),
+        responses={
+            200: {
+                "description": "Compaction attempted; see status for the outcome",
+                "content": {
+                    "application/json": {
+                        "examples": {
+                            "compacted": {
+                                "summary": "The fold happened",
+                                "value": {
+                                    "status": "compacted",
+                                    "message": "Compacted 18 messages (15864 -> 3981 tokens).",
+                                    "compacted": True,
+                                    "record": {
+                                        "messages_compacted": 18,
+                                        "tokens_before": 15864,
+                                        "tokens_after": 3981,
+                                    },
+                                },
+                            },
+                            "declined": {
+                                "summary": "Declined - folding would not help",
+                                "value": {
+                                    "status": "not_worth_it",
+                                    "message": (
+                                        "This fold would replace 1200 tokens against a 900-token tail "
+                                        "(ratio 1.33, needs 2.0), so the context would not shrink. "
+                                        "Continue the conversation, or lower uncompacted_runs or "
+                                        "min_fold_ratio, or set enforce_min_fold_ratio=False, to fold "
+                                        "sooner."
+                                    ),
+                                    "compacted": False,
+                                    "record": None,
+                                },
+                            },
+                        }
+                    }
+                },
+            },
+            404: {"description": "Agent or session not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
+    )
+    async def compact_agent_session(
+        agent_id: str,
+        session_id: str,
+        request: Request,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
+        try:
+            agent = get_agent_by_id(
+                agent_id=agent_id,
+                agents=os.agents,
+                db=os.db,
+                registry=os.registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
+                strict=False,
+                published_only=False,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            log_error(f"Error resolving agent '{agent_id}': {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        # Scope the session read to the caller, so one user cannot compact another's session.
+        scoped_user_id = get_scoped_user_id(request)
+        effective_user_id = scoped_user_id or user_id
+
+        # The session must belong to this agent: the per-resource gate authorised agent_id, not
+        # whichever session id the client named.
+        await verify_run_belongs_to_component(
+            request,
+            getattr(agent, "db", None) or os.db,
+            component_type="agents",
+            component_id=agent_id,
+            session_id=session_id,
+        )
+        # A missing session is a 404, as on the other session routes. no_history is kept for a
+        # session that exists but has nothing to fold yet.
+        if await agent.aget_session(session_id=session_id, user_id=effective_user_id) is None:  # type: ignore[union-attr]
+            raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+
+        result = await agent.acompact(session_id=session_id, user_id=effective_user_id)  # type: ignore[union-attr]
+        return result.to_dict()
 
     @router.get(
         "/agents",

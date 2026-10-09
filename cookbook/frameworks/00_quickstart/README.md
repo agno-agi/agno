@@ -1,6 +1,6 @@
-# Frameworks Quickstart: Agno, Claude Code, LangGraph, DSPy
+# Frameworks Quickstart: Agno, Claude Code, Codex, LangGraph, DSPy
 
-AgentOS supports agents built with **Agno**, the **Claude Agent SDK** (Claude Code), **LangGraph**, and **DSPy** — served through one runtime, one API, and one UI.
+AgentOS supports agents built with **Agno**, the **Claude Agent SDK** (Claude Code), **OpenAI Codex**, **LangGraph**, and **DSPy** — served through one runtime, one API, and one UI.
 
 This quickstart shows each framework on its own and all together.
 
@@ -10,6 +10,7 @@ This quickstart shows each framework on its own and all together.
 |:-----|:--------------|
 | `agno_agent.py` | Native Agno agent with the `Workspace` tool (read/edit/search/shell, with confirmation gates) |
 | `claude_agent.py` | Claude Code agent via the Claude Agent SDK, with `Read`, `Edit`, `Bash` tools |
+| `codex_agent.py` | OpenAI Codex agent via the Codex Python SDK, in a `workspace-write` sandbox |
 | `langgraph_agent.py` | A LangGraph chatbot wrapped for AgentOS |
 | `dspy_agent.py` | A DSPy `ChainOfThought` program wrapped for AgentOS |
 | `multi_framework_agentos.py` | Agno + Claude Code in one AgentOS — the example from the launch blog post |
@@ -65,6 +66,9 @@ Install the dependencies for the framework(s) you want:
 # Claude Agent SDK
 pip install claude-agent-sdk
 
+# Codex (bundles the Codex CLI; then `codex login` or set CODEX_API_KEY)
+pip install openai-codex
+
 # LangGraph
 pip install langgraph langchain-openai
 
@@ -102,10 +106,11 @@ curl -X POST http://localhost:7777/agents/agno-agent/runs \
 ## Where to Go Next
 
 - `../claude-agent-sdk/` — sessions, custom MCP tools, and more Claude SDK patterns
+- `../codex/` — sessions, MCP servers, structured output, sandboxes
 - `../langgraph/` — tool calls, sessions, time travel
 - `../dspy/` — sessions, ReAct with tools
 - [AgentOS docs](https://docs.agno.com/agent-os/introduction)
 
 ## Status
 
-Claude Agent SDK, LangGraph, and DSPy support is in early alpha. Not every feature is wired up yet — please file issues for rough edges.
+Claude Agent SDK, Codex, LangGraph, and DSPy support is in early alpha. Not every feature is wired up yet — please file issues for rough edges.

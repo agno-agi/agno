@@ -401,7 +401,7 @@ def _run(
     """
     from agno.agent._hooks import execute_post_hooks, execute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools
-    from agno.agent._messages import get_run_messages
+    from agno.agent._messages import _recompact_after_overflow, get_run_messages
     from agno.agent._response import (
         convert_response_to_structured_format,
         generate_followups,
@@ -554,6 +554,9 @@ def _run(
                 model_response: ModelResponse = call_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
+                    recover_from_overflow=lambda: _recompact_after_overflow(
+                        agent, agent_session, run_messages, run_response, _tools
+                    ),
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=agent.tool_choice,
@@ -925,6 +928,17 @@ def _run_stream(
                 )
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
+
+                # Events raised while assembling messages (compaction). Assembly
+                # is not a generator, so they are collected there and emitted here.
+                if stream_events:
+                    for assembly_event in run_messages.events:
+                        yield handle_event(  # type: ignore
+                            assembly_event,
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
 
                 # 7. Start memory creation in background thread
                 from agno.agent import _managers
@@ -1533,7 +1547,7 @@ async def _arun(
     """
     from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
-    from agno.agent._messages import aget_run_messages
+    from agno.agent._messages import _arecompact_after_overflow, aget_run_messages
     from agno.agent._response import (
         agenerate_followups,
         agenerate_response_with_output_model,
@@ -1656,7 +1670,6 @@ async def _arun(
                 )
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
-
                 # 7. Start memory creation as a background task (runs concurrently with the main execution)
                 from agno.agent import _managers
 
@@ -1692,6 +1705,9 @@ async def _arun(
                 model_response: ModelResponse = await acall_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
+                    recover_from_overflow=lambda: _arecompact_after_overflow(
+                        agent, agent_session, run_messages, run_response, _tools
+                    ),
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=agent.tool_choice,
@@ -2418,6 +2434,17 @@ async def _arun_stream(
                 )
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
+
+                # Events raised while assembling messages (compaction). Assembly
+                # is not a generator, so they are collected there and emitted here.
+                if stream_events:
+                    for assembly_event in run_messages.events:
+                        yield handle_event(  # type: ignore
+                            assembly_event,
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
 
                 # 7. Start memory creation as a background task (runs concurrently with the main execution)
                 from agno.agent import _managers
@@ -3379,6 +3406,29 @@ def _sync_requirements_with_tools(run_response: RunOutput, updated_tools: List[A
                 req.tool_execution = updated_tools_map[req.tool_execution.tool_call_id]
 
 
+def _apply_requirement_tools(run_response: RunOutput, requirements: List[Any]) -> None:
+    """Set the continue requirements on the run and merge their tool executions into run_response.tools.
+
+    A call that already ran keeps the run's own copy. A requirement can carry an
+    out-of-date copy of that call (confirmed, no result), for example after an
+    earlier pause was resolved from the approvals table; swapping it in would
+    execute the call a second time.
+    """
+    run_response.requirements = requirements
+    updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+    if updated_tools and run_response.tools:
+        # Checked per tool, not per tool_call_id: ids can repeat across turns (some
+        # providers send none and a fallback like call_{i} is used), and a new call
+        # sharing an executed call's id must still take its requirement.
+        updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+        run_response.tools = [
+            updated_tools_map.get(tool.tool_call_id, tool) if tool.result is None else tool
+            for tool in run_response.tools
+        ]
+    else:
+        run_response.tools = updated_tools
+
+
 def continue_run_dispatch(
     agent: Agent,
     run_response: Optional[RunOutput] = None,
@@ -3622,13 +3672,7 @@ def continue_run_dispatch(
 
         # If we have requirements, get the updated tools and set them in the run_response
         if requirements is not None:
-            run_response.requirements = requirements
-            updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
-            if updated_tools and run_response.tools:
-                updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
-            else:
-                run_response.tools = updated_tools
+            _apply_requirement_tools(run_response, requirements)
 
         else:
             # No tools / requirements in the body. Two cases:
@@ -3778,6 +3822,7 @@ def _continue_run(
     # Register run for cancellation tracking
     from agno.agent._hooks import execute_post_hooks
     from agno.agent._init import disconnect_connectable_tools
+    from agno.agent._messages import _recompact_after_overflow
     from agno.agent._response import (
         convert_response_to_structured_format,
         generate_followups,
@@ -3807,6 +3852,9 @@ def _continue_run(
                 model_response: ModelResponse = call_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
+                    recover_from_overflow=lambda: _recompact_after_overflow(
+                        agent, session, run_messages, run_response, tools
+                    ),
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=tools,
@@ -4803,7 +4851,7 @@ async def _acontinue_run(
     """
     from agno.agent._hooks import aexecute_post_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
-    from agno.agent._messages import aget_continue_run_messages
+    from agno.agent._messages import _arecompact_after_overflow, aget_continue_run_messages
     from agno.agent._response import (
         agenerate_followups,
         agenerate_response_with_output_model,
@@ -4958,15 +5006,7 @@ async def _acontinue_run(
 
                     # If we have requirements, get the updated tools and set them in the run_response
                     if requirements is not None:
-                        run_response.requirements = requirements
-                        updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
-                        if updated_tools and run_response.tools:
-                            updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                            run_response.tools = [
-                                updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools
-                            ]
-                        else:
-                            run_response.tools = updated_tools
+                        _apply_requirement_tools(run_response, requirements)
 
                     else:
                         # No tools / requirements in the body. Two cases:
@@ -5054,6 +5094,9 @@ async def _acontinue_run(
                 model_response: ModelResponse = await acall_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
+                    recover_from_overflow=lambda: _arecompact_after_overflow(
+                        agent, agent_session, run_messages, run_response, _tools
+                    ),
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=_tools,
@@ -5482,15 +5525,7 @@ async def _acontinue_run_stream(
 
                     # If we have requirements, get the updated tools and set them in the run_response
                     if requirements is not None:
-                        run_response.requirements = requirements
-                        updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
-                        if updated_tools and run_response.tools:
-                            updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                            run_response.tools = [
-                                updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools
-                            ]
-                        else:
-                            run_response.tools = updated_tools
+                        _apply_requirement_tools(run_response, requirements)
 
                     else:
                         # No tools / requirements in the body. Two cases:

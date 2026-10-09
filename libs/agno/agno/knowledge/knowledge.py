@@ -10,7 +10,21 @@ from enum import Enum
 from io import BytesIO
 from os.path import basename
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union, cast, overload
+from typing import (
+    Any,
+    AsyncIterator,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+    cast,
+    overload,
+)
 
 from httpx import AsyncClient
 
@@ -27,9 +41,11 @@ from agno.knowledge.page import (
     PageSearchConfig,
     PageSourceBinding,
     PageSourceMigration,
+    PageSyncProgress,
     SearchResult,
     SyncReport,
 )
+from agno.knowledge.query_transformer.base import QueryTransformer
 from agno.knowledge.reader import Reader, ReaderFactory
 from agno.knowledge.reader.utils.urls import canonical_page_name, is_sitemap_url
 from agno.knowledge.remote_content.base import BaseStorageConfig
@@ -92,8 +108,9 @@ class Knowledge(RemoteKnowledge):
     page_store: Optional[Any] = None
     page_search: Optional[PageSearchConfig] = None
 
-    # Reorders results after the vector db returns them, so a strategy that needs to
-    # compare candidates against each other (diversity, recency) sees a real pool.
+    # Rewrites the query before it reaches the vector db, for strategies where the
+    # question as asked is not the best thing to search with.
+    query_transformer: Optional[QueryTransformer] = None
     # Applied to the search results. This is where a reranker belongs: setting one on the
     # vector db is deprecated, works only on the adapters that implement it, and cannot
     # widen the candidate pool.
@@ -115,6 +132,7 @@ class Knowledge(RemoteKnowledge):
         max_embedding_retries: int = 0,
         embedding_retry_backoff: float = 1.0,
         reranker: Optional[Reranker] = None,
+        query_transformer: Optional[QueryTransformer] = None,
         contents_db: Optional[Union[BaseDb, AsyncBaseDb]] = cast(Any, _DATABASE_UNSET),
     ):
         """Configure Knowledge using keyword arguments.
@@ -139,6 +157,18 @@ class Knowledge(RemoteKnowledge):
         self.page_store = page_store
         self.page_search = page_search
         self.reranker = reranker
+        self.query_transformer = query_transformer
+        if query_transformer is not None and getattr(query_transformer, "include_query", None) is False:
+            # Lexical matching only has the words it is given, and a transformed query
+            # drops the original. Page search is always hybrid; a vector db may be.
+            lexical = page_store is not None or str(getattr(vector_db, "search_type", "")).endswith(
+                ("hybrid", "keyword")
+            )
+            if lexical:
+                log_warning(
+                    "The query transformer replaces the query the keyword half of this store "
+                    "searches with. Set include_query=True to keep the original query in it."
+                )
         if reranker is not None and getattr(vector_db, "reranker", None) is not None:
             log_warning(
                 "A reranker is set on both Knowledge and the vector db. Only the one on "
@@ -218,6 +248,49 @@ class Knowledge(RemoteKnowledge):
         with suppress_reranker():
             yield
 
+    def _page_search_kwargs(self, query: str, transformed: str, page_limit: int) -> Dict[str, Any]:
+        """Keyword arguments for ``search_pages``, adding the transformed query as an
+        extra phrasing only when it differs.
+
+        Page search ranks each phrasing separately and fuses the results, so the question
+        keeps its own lexical ranking instead of being replaced by a generated passage.
+        """
+        kwargs: Dict[str, Any] = {"limit": self._page_search_limit(page_limit)}
+        if transformed != query:
+            kwargs["alternatives"] = [transformed]
+        return kwargs
+
+    def _skip_transform_for_keyword(self, search_type: Optional[str]) -> bool:
+        """Whether a transformed query would make keyword search worse than no transform.
+
+        Lexical search ANDs the query terms, so a generated passage requires every one of
+        its words in a single document: nothing matches, every row ranks zero, and the
+        store hands back insertion order. The query as asked at least ranks.
+        """
+        effective = search_type or getattr(self.vector_db, "search_type", None)
+        return str(getattr(effective, "value", effective)).lower() == "keyword"
+
+    def _transformed_query(self, query: str, run_response: Optional[Any] = None) -> str:
+        """Rewrite the query before searching, leaving it untouched when none is set."""
+        if self.query_transformer is None:
+            return query
+        try:
+            return self.query_transformer.transform(query=query, run_response=run_response)
+        except Exception as e:
+            # A failed transform degrades the search, it does not break it.
+            log_error(f"Error transforming query: {str(e)}")
+            return query
+
+    async def _atransformed_query(self, query: str, run_response: Optional[Any] = None) -> str:
+        """Async variant of ``_transformed_query``."""
+        if self.query_transformer is None:
+            return query
+        try:
+            return await self.query_transformer.atransform(query=query, run_response=run_response)
+        except Exception as e:
+            log_error(f"Error transforming query: {str(e)}")
+            return query
+
     def _search_limit(self, max_results: int) -> int:
         """Widen the vector db fetch so the reranker has candidates to choose between."""
         if self.reranker is None:
@@ -283,12 +356,15 @@ class Knowledge(RemoteKnowledge):
         index_version: str = "1",
         reindex: bool = False,
         validate_discovery: Optional[Callable[[int, int], None]] = None,
+        on_progress: Optional[Callable[[PageSyncProgress], None]] = None,
     ) -> SyncReport:
         """Reconcile an llms.txt source, publishing each page atomically.
 
         validate_discovery receives (discovered_count, published_count) under the
         namespace sync lock, before fetching or publishing pages. Supply a fast,
         synchronous check that returns None to accept or raises ValueError to abort.
+        on_progress is a short synchronous observer; failures disable observation
+        without failing publication. Use stream_sync_pages for bounded iteration.
         """
         return self._pages().sync(
             url=url,
@@ -297,6 +373,7 @@ class Knowledge(RemoteKnowledge):
             index_version=index_version,
             reindex=reindex,
             validate_discovery=validate_discovery,
+            on_progress=on_progress,
         )
 
     async def async_sync_pages(
@@ -308,6 +385,7 @@ class Knowledge(RemoteKnowledge):
         index_version: str = "1",
         reindex: bool = False,
         validate_discovery: Optional[Callable[[int, int], None]] = None,
+        on_progress: Optional[Callable[[PageSyncProgress], None]] = None,
     ) -> SyncReport:
         """Reconcile pages off the event loop with retained capacity on cancellation.
 
@@ -324,8 +402,38 @@ class Knowledge(RemoteKnowledge):
             index_version=index_version,
             reindex=reindex,
             validate_discovery=validate_discovery,
+            on_progress=on_progress,
             seconds=3900,
         )
+
+    def stream_sync_pages(self, **kwargs: Any) -> Iterator[Union[PageSyncProgress, SyncReport]]:
+        """Sync pages yielding bounded observer snapshots, then one terminal SyncReport.
+
+        Accepts sync_pages arguments except on_progress. Slow consumers may skip
+        intermediate snapshots; absolute counts and the terminal result stay valid.
+        Errors propagate and never masquerade as successful reports. Close the
+        iterator to cancel; worker capacity remains held during resource cleanup.
+        """
+        from agno.knowledge.page._coordinator import SYNC_WORKERS
+
+        if "on_progress" in kwargs:
+            raise ValueError("stream_sync_pages manages its own progress observer")
+        yield from SYNC_WORKERS.stream(self._pages().sync, seconds=3900, **kwargs)
+
+    async def astream_sync_pages(self, **kwargs: Any) -> AsyncIterator[Union[PageSyncProgress, SyncReport]]:
+        """Async stream_sync_pages. To stop early, await the iterator's aclose() in a
+        finally; contextlib.aclosing does the same but only exists on Python 3.10+."""
+        from agno.knowledge.page._coordinator import SYNC_WORKERS
+
+        if "on_progress" in kwargs:
+            raise ValueError("astream_sync_pages manages its own progress observer")
+        events = SYNC_WORKERS.astream(self._pages().sync, seconds=3900, **kwargs)
+        # try/finally rather than contextlib.aclosing, which does not exist on Python 3.9.
+        try:
+            async for event in events:
+                yield event
+        finally:
+            await events.aclose()
 
     def inspect_page_source(self) -> PageSourceBinding:
         """Inspect the namespace's current storage/source binding without mutations."""
@@ -1083,17 +1191,25 @@ class Knowledge(RemoteKnowledge):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         search_type: Optional[str] = None,
         user_id: Optional[str] = None,
+        run_response: Optional[Any] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query.
 
         Args:
             user_id: Owner scope forwarded to ``vector_db.search()``. ``None`` searches everything.
+            model: Model offered to ``query_transformer`` when it needs one and has none of
+                its own. Ignored when no transform is configured.
         """
         if self.page_store is not None:
             if filters:
                 raise ValueError("Page knowledge does not support filters")
             page_limit = max_results if max_results is not None else self.max_results
-            page_documents = self._page_documents(self.search_pages(query, limit=self._page_search_limit(page_limit)))
+            # The transform applies here too: it is configured on Knowledge, not on a store.
+            # Passed as an alternative phrasing rather than replacing the query, so the
+            # lexical half still ranks the question as asked.
+            transformed = self._transformed_query(query, run_response)
+            page_kwargs = self._page_search_kwargs(query, transformed, page_limit)
+            page_documents = self._page_documents(self.search_pages(query, **page_kwargs))
             return self._rerank_documents(query, page_documents, page_limit)
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
@@ -1115,9 +1231,16 @@ class Knowledge(RemoteKnowledge):
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
+            # The transform changes what is searched for; reranking still scores against
+            # the question the caller asked, not an invented stand-in for it.
+            if self._skip_transform_for_keyword(search_type):
+                log_debug("Keyword search ANDs query terms, so the query transformer is skipped")
+                search_query = query
+            else:
+                search_query = self._transformed_query(query, run_response)
             with self._vector_db_reranker_suspended():
                 documents = self.vector_db.search(
-                    query=query,
+                    query=search_query,
                     limit=self._search_limit(_max_results),
                     filters=search_filters,
                     **strict_user_id_kwarg(self.vector_db.search, user_id),
@@ -1141,15 +1264,18 @@ class Knowledge(RemoteKnowledge):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         search_type: Optional[str] = None,
         user_id: Optional[str] = None,
+        run_response: Optional[Any] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query. See ``search``."""
         if self.page_store is not None:
             if filters:
                 raise ValueError("Page knowledge does not support filters")
             page_limit = max_results if max_results is not None else self.max_results
-            page_documents = self._page_documents(
-                await self.asearch_pages(query, limit=self._page_search_limit(page_limit))
-            )
+            # See the matching comment in ``search``.
+            # See the matching comment in ``search``.
+            transformed = await self._atransformed_query(query, run_response)
+            page_kwargs = self._page_search_kwargs(query, transformed, page_limit)
+            page_documents = self._page_documents(await self.asearch_pages(query, **page_kwargs))
             return await self._arerank_documents(query, page_documents, page_limit)
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
@@ -1171,10 +1297,16 @@ class Knowledge(RemoteKnowledge):
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             search_limit = self._search_limit(_max_results)
+            # See the matching comment in ``search``.
+            if self._skip_transform_for_keyword(search_type):
+                log_debug("Keyword search ANDs query terms, so the query transformer is skipped")
+                search_query = query
+            else:
+                search_query = await self._atransformed_query(query, run_response)
             with self._vector_db_reranker_suspended():
                 try:
                     documents = await self.vector_db.async_search(
-                        query=query,
+                        query=search_query,
                         limit=search_limit,
                         filters=search_filters,
                         **strict_user_id_kwarg(self.vector_db.async_search, user_id),
@@ -1182,7 +1314,7 @@ class Knowledge(RemoteKnowledge):
                 except NotImplementedError:
                     log_info("Vector db does not support async search")
                     documents = self.vector_db.search(
-                        query=query,
+                        query=search_query,
                         limit=search_limit,
                         filters=search_filters,
                         **strict_user_id_kwarg(self.vector_db.search, user_id),
@@ -5368,7 +5500,11 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
 
             try:
                 docs = self.search(
-                    query=query, filters=knowledge_filters, user_id=getattr(run_context, "user_id", None)
+                    query=query,
+                    filters=knowledge_filters,
+                    user_id=getattr(run_context, "user_id", None),
+                    # So an LLM call a query transformer makes is counted in run metrics.
+                    run_response=run_response,
                 )
             except Exception as e:
                 retrieval_timer.stop()
@@ -5407,7 +5543,11 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
 
             try:
                 docs = await self.asearch(
-                    query=query, filters=knowledge_filters, user_id=getattr(run_context, "user_id", None)
+                    query=query,
+                    filters=knowledge_filters,
+                    user_id=getattr(run_context, "user_id", None),
+                    # So an LLM call a query transformer makes is counted in run metrics.
+                    run_response=run_response,
                 )
             except Exception as e:
                 retrieval_timer.stop()
@@ -5495,7 +5635,13 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             retrieval_timer.start()
 
             try:
-                docs = self.search(query=query, filters=search_filters, user_id=getattr(run_context, "user_id", None))
+                docs = self.search(
+                    query=query,
+                    filters=search_filters,
+                    user_id=getattr(run_context, "user_id", None),
+                    # So an LLM call a query transformer makes is counted in run metrics.
+                    run_response=run_response,
+                )
             except Exception as e:
                 retrieval_timer.stop()
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -5555,7 +5701,11 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
 
             try:
                 docs = await self.asearch(
-                    query=query, filters=search_filters, user_id=getattr(run_context, "user_id", None)
+                    query=query,
+                    filters=search_filters,
+                    user_id=getattr(run_context, "user_id", None),
+                    # So an LLM call a query transformer makes is counted in run metrics.
+                    run_response=run_response,
                 )
             except Exception as e:
                 retrieval_timer.stop()
@@ -5624,6 +5774,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         max_results: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
+        run_response: Optional[Any] = None,
         **kwargs,
     ) -> List[Document]:
         """Retrieve documents for context injection.
@@ -5636,12 +5787,19 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             max_results: Maximum number of results.
             filters: Filters to apply.
             user_id: Owner scope forwarded to ``search``. ``None`` returns everything.
+            run_response: Run the transformer's model call is billed to, when it makes one.
             **kwargs: Additional parameters.
 
         Returns:
             List of Document objects.
         """
-        return self.search(query=query, max_results=max_results, filters=filters, user_id=user_id)
+        return self.search(
+            query=query,
+            max_results=max_results,
+            filters=filters,
+            user_id=user_id,
+            run_response=run_response,
+        )
 
     async def aretrieve(
         self,
@@ -5649,7 +5807,14 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         max_results: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
+        run_response: Optional[Any] = None,
         **kwargs,
     ) -> List[Document]:
-        """Async version of retrieve."""
-        return await self.asearch(query=query, max_results=max_results, filters=filters, user_id=user_id)
+        """Async version of retrieve. See ``retrieve``."""
+        return await self.asearch(
+            query=query,
+            max_results=max_results,
+            filters=filters,
+            user_id=user_id,
+            run_response=run_response,
+        )
