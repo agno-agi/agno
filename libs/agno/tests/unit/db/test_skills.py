@@ -180,6 +180,193 @@ def test_table_name_plumbing():
     assert adb.skills_table_name == "my_skills"
 
 
+# Constructor parameters before the skills table existed, per class. Appending the
+# new one right after the last table keeps every one of these in its slot.
+_PRE_SKILLS_CONSTRUCTOR_PARAMS = {
+    "BaseDb": (
+        "session_table",
+        "runs_table",
+        "memory_table",
+        "metrics_table",
+        "eval_table",
+        "knowledge_table",
+        "traces_table",
+        "spans_table",
+        "versions_table",
+        "components_table",
+        "component_configs_table",
+        "component_links_table",
+        "learnings_table",
+        "schedules_table",
+        "schedule_runs_table",
+        "job_table",
+        "approvals_table",
+        "auth_tokens_table",
+        "service_accounts_table",
+        "mcp_oauth_clients_table",
+        "mcp_oauth_transactions_table",
+        "mcp_oauth_codes_table",
+        "mcp_oauth_refresh_tokens_table",
+        "mcp_oauth_keys_table",
+        "id",
+    ),
+    "AsyncBaseDb": (
+        "id",
+        "session_table",
+        "runs_table",
+        "memory_table",
+        "metrics_table",
+        "eval_table",
+        "knowledge_table",
+        "traces_table",
+        "spans_table",
+        "versions_table",
+        "components_table",
+        "learnings_table",
+        "schedules_table",
+        "schedule_runs_table",
+        "job_table",
+        "approvals_table",
+        "auth_tokens_table",
+        "service_accounts_table",
+    ),
+    "PostgresDb": (
+        "db_url",
+        "db_engine",
+        "db_schema",
+        "session_table",
+        "runs_table",
+        "memory_table",
+        "metrics_table",
+        "eval_table",
+        "knowledge_table",
+        "traces_table",
+        "spans_table",
+        "versions_table",
+        "components_table",
+        "component_configs_table",
+        "component_links_table",
+        "learnings_table",
+        "schedules_table",
+        "schedule_runs_table",
+        "job_table",
+        "approvals_table",
+        "auth_tokens_table",
+        "service_accounts_table",
+        "mcp_oauth_clients_table",
+        "mcp_oauth_transactions_table",
+        "mcp_oauth_codes_table",
+        "mcp_oauth_refresh_tokens_table",
+        "mcp_oauth_keys_table",
+        "id",
+        "create_schema",
+    ),
+    "AsyncPostgresDb": (
+        "id",
+        "db_url",
+        "db_engine",
+        "db_schema",
+        "session_table",
+        "runs_table",
+        "memory_table",
+        "metrics_table",
+        "eval_table",
+        "knowledge_table",
+        "traces_table",
+        "spans_table",
+        "versions_table",
+        "components_table",
+        "learnings_table",
+        "schedules_table",
+        "schedule_runs_table",
+        "job_table",
+        "approvals_table",
+        "auth_tokens_table",
+        "service_accounts_table",
+        "create_schema",
+    ),
+    "SqliteDb": (
+        "db_file",
+        "db_engine",
+        "db_url",
+        "session_table",
+        "runs_table",
+        "memory_table",
+        "metrics_table",
+        "eval_table",
+        "knowledge_table",
+        "traces_table",
+        "spans_table",
+        "versions_table",
+        "components_table",
+        "component_configs_table",
+        "component_links_table",
+        "learnings_table",
+        "schedules_table",
+        "schedule_runs_table",
+        "approvals_table",
+        "auth_tokens_table",
+        "service_accounts_table",
+        "mcp_oauth_clients_table",
+        "mcp_oauth_transactions_table",
+        "mcp_oauth_codes_table",
+        "mcp_oauth_refresh_tokens_table",
+        "mcp_oauth_keys_table",
+        "id",
+    ),
+    "AsyncSqliteDb": (
+        "db_file",
+        "db_engine",
+        "db_url",
+        "session_table",
+        "runs_table",
+        "memory_table",
+        "metrics_table",
+        "eval_table",
+        "knowledge_table",
+        "traces_table",
+        "spans_table",
+        "versions_table",
+        "components_table",
+        "learnings_table",
+        "schedules_table",
+        "schedule_runs_table",
+        "approvals_table",
+        "auth_tokens_table",
+        "service_accounts_table",
+        "id",
+    ),
+}
+
+
+@pytest.mark.parametrize("class_name", sorted(_PRE_SKILLS_CONSTRUCTOR_PARAMS))
+def test_skills_table_follows_the_last_pre_existing_table_parameter(class_name):
+    """skills_table must not shift any constructor parameter that predates it: it sits
+    right after the last pre-existing *_table parameter, the way main appends its own."""
+    import inspect
+
+    from agno.db.base import AsyncBaseDb, BaseDb
+    from agno.db.postgres.async_postgres import AsyncPostgresDb
+    from agno.db.postgres.postgres import PostgresDb
+    from agno.db.sqlite.async_sqlite import AsyncSqliteDb
+    from agno.db.sqlite.sqlite import SqliteDb
+
+    cls = {
+        "BaseDb": BaseDb,
+        "AsyncBaseDb": AsyncBaseDb,
+        "PostgresDb": PostgresDb,
+        "AsyncPostgresDb": AsyncPostgresDb,
+        "SqliteDb": SqliteDb,
+        "AsyncSqliteDb": AsyncSqliteDb,
+    }[class_name]
+    params = [name for name in inspect.signature(cls.__init__).parameters if name != "self"]
+    expected = _PRE_SKILLS_CONSTRUCTOR_PARAMS[class_name]
+
+    assert tuple(name for name in params if name != "skills_table") == expected
+    last_table = max(index for index, name in enumerate(expected) if name.endswith("_table"))
+    assert params.index("skills_table") == last_table + 1
+
+
 def test_backend_without_skills_support_raises_not_implemented():
     from agno.db.in_memory import InMemoryDb
 

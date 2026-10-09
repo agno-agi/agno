@@ -319,12 +319,12 @@ class BaseDb(ABC):
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
-        skills_table: Optional[str] = None,
         mcp_oauth_clients_table: Optional[str] = None,
         mcp_oauth_transactions_table: Optional[str] = None,
         mcp_oauth_codes_table: Optional[str] = None,
         mcp_oauth_refresh_tokens_table: Optional[str] = None,
         mcp_oauth_keys_table: Optional[str] = None,
+        skills_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
