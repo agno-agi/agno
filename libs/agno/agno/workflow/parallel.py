@@ -765,6 +765,10 @@ class Parallel:
         processed_results_with_indices = []
         modified_session_states = []
         for i, result in enumerate(results_with_indices):
+            if isinstance(result, RunCancelledException):
+                # A cancelled branch must cancel the whole run, matching the
+                # sync path and Steps/Condition/Router.aexecute behaviour.
+                raise result
             if isinstance(result, UnresolvableCallableError):
                 # A placeholder for an unresolved reference can never succeed:
                 # converting it to a failed StepOutput would let the run complete.
