@@ -583,6 +583,16 @@ class LanceDb(VectorDb):
         escaped = user_id.replace("'", "''")
         return f"({self.USER_ID_COL} = '{escaped}' OR {self.USER_ID_COL} IS NULL)"
 
+    def _lancedb_metric(self) -> str:
+        """Map the configured ``Distance`` to the metric name LanceDB accepts.
+
+        LanceDB exposes ``l2``, ``cosine`` and ``dot``; ``max_inner_product``
+        is expressed as ``dot``.
+        """
+        if self.distance == Distance.max_inner_product:
+            return "dot"
+        return self.distance.value
+
     def _owner_where_clause(self, user_id: Optional[str]) -> str:
         """Build the exact-owner ``WHERE`` clause used by writes.
 
@@ -721,7 +731,7 @@ class LanceDb(VectorDb):
         results = self.table.search(
             query=query_embedding,
             vector_column_name=self._vector_col,
-        ).limit(limit)
+        ).metric(self._lancedb_metric()).limit(limit)
 
         # ``prefilter=True`` runs the predicate before the ANN top-K; post-filtering
         # would silently truncate results.
@@ -761,6 +771,7 @@ class LanceDb(VectorDb):
             )
             .vector(query_embedding)
             .text(query)
+            .metric(self._lancedb_metric())
             .limit(limit)
         )
 

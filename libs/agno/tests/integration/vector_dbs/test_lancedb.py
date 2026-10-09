@@ -198,3 +198,43 @@ async def test_lance_db_async_operations():
     # Clean up
     await vector_db.async_drop()
     assert not await vector_db.async_exists()
+
+
+def test_lance_db_honors_distance_metric():
+    """Issue #10883: LanceDb(distance=...) must be applied to vector search.
+
+    With non-unit embeddings, cosine and max-inner-product queries must not
+    silently return the L2 nearest document.
+    """
+    from tempfile import TemporaryDirectory
+
+    from agno.vectordb.distance import Distance
+
+    class FixedEmbedder(Embedder):
+        dimensions: int = 2
+
+        def get_embedding(self, text: str) -> List[float]:
+            return [1.0, 0.0]
+
+    for metric, expected in (
+        (Distance.cosine, "cosine_match"),
+        (Distance.l2, "l2_match"),
+        (Distance.max_inner_product, "dot_match"),
+    ):
+        with TemporaryDirectory() as uri:
+            vector_db = LanceDb(
+                uri=uri,
+                table_name="repro",
+                embedder=FixedEmbedder(dimensions=2),
+                distance=metric,
+            )
+            vector_db.insert(
+                content_hash="repro",
+                documents=[
+                    Document(name="cosine_match", content="first", embedding=[10.0, 0.0]),
+                    Document(name="l2_match", content="second", embedding=[1.0, 1.0]),
+                    Document(name="dot_match", content="third", embedding=[20.0, 20.0]),
+                ],
+            )
+            top = vector_db.search("query", limit=3)[0]
+            assert top.name == expected, f"{metric.value}: got {top.name}, expected {expected}"
