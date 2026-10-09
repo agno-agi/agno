@@ -402,6 +402,29 @@ def test_strict_load_raises_when_a_saved_skill_row_is_gone(tmp_path, monkeypatch
         assert len(warnings) == 1 and "release-notes" in warnings[0]
 
 
+def test_strict_load_resolves_skills_against_the_configs_own_db(tmp_path):
+    """An agent saved with its own db, custom skills table included, keeps resolving its skills
+    there when loaded through a catalog db with the default table, so a strict load does not
+    refuse a valid agent."""
+    from agno.db.sqlite import SqliteDb
+
+    own = SqliteDb(db_file=str(tmp_path / "own.db"), skills_table="my_skills")
+    own.create_skill({"name": "release-notes", "description": "d", "instructions": "i"})
+    catalog = _make_db(tmp_path)
+    agent = Agent(name="test-agent", id="own-db-agent", db=own, skills=Skills(loaders=[DbSkills(own)]))
+    version = agent.save(db=catalog)
+    config = catalog.get_config(component_id="own-db-agent", version=version)["config"]
+    assert config["db"]["skills_table"] == "my_skills"
+
+    for _ in range(2):
+        loaded = Agent.from_dict(config, db=catalog, strict=True)
+        assert loaded.skills.get_skill_names() == ["release-notes"]
+        assert loaded.skills.loaders[0].db.skills_table_name == "my_skills"
+        by_id = get_agent_by_id(db=catalog, id="own-db-agent", strict=True)
+        assert by_id is not None
+        assert by_id.skills.get_skill_names() == ["release-notes"]
+
+
 def test_strict_load_raises_when_no_db_can_resolve_the_saved_skills(tmp_path):
     """A names block with nothing to resolve it against is dropped leniently and refused strictly."""
     db = _make_db(tmp_path)
@@ -429,28 +452,30 @@ def test_strict_load_accepts_a_saved_skill_owned_by_another_user(tmp_path):
         assert "alice-notes" in agent.skills.get_system_prompt_snippet(user_id="alice")
 
 
-def test_resave_during_outage_preserves_skill_names(tmp_path):
+def test_resave_during_outage_preserves_skill_names(tmp_path, monkeypatch):
     """Data-loss regression: healthy save, load during an outage, resave, recover.
 
     The failed load leaves the mapping empty, but the loader still carries its
     configured names, so the resave must write them back instead of deleting them.
     """
+    from agno.db.sqlite import SqliteDb
+
     db = _make_db(tmp_path)
     _create_skill_row(db)
     agent = Agent(name="test-agent", db=db, skills=Skills(loaders=[DbSkills(db)]))
     agent.save()
 
-    original = db.get_skills_with_content
-
     def boom(*args, **kwargs):
         raise RuntimeError("database down")
 
-    db.get_skills_with_content = boom
+    # On the class: the load resolves skills through the db it reconstructs from the
+    # config, a different instance from the one this test holds.
+    monkeypatch.setattr(SqliteDb, "get_skills_with_content", boom)
     loaded = Agent.load(agent.id, db=db)
     assert loaded is not None and loaded.skills is not None
     assert loaded.skills.get_skill_names() == []
     loaded.save()
-    db.get_skills_with_content = original
+    monkeypatch.undo()
 
     assert db.get_config(component_id=agent.id)["config"]["skills"] == {"names": ["release-notes"]}
     recovered = Agent.load(agent.id, db=db)
@@ -854,9 +879,10 @@ def test_from_dict_falls_back_to_the_config_db_when_none_is_passed(tmp_path):
     assert loaded.skills.get_skill_names() == ["release-notes"]
 
 
-def test_an_explicitly_passed_db_still_wins_over_the_config_db(tmp_path):
-    """The explicit argument stays the override. Both databases hold the same skill
-    name, so which one answered is visible in the content that comes back."""
+def test_the_config_db_answers_over_an_explicitly_passed_db(tmp_path):
+    """The agent's own saved database resolves its skills; the caller's is the fallback for a
+    config that carried none. Both databases hold the same skill name, so which one answered
+    is visible in the content that comes back."""
     from agno.db.sqlite import SqliteDb
 
     config_db = _make_db(tmp_path)
@@ -873,8 +899,9 @@ def test_an_explicitly_passed_db_still_wins_over_the_config_db(tmp_path):
 
     config = Agent(name="test-agent", db=config_db, skills=Skills(loaders=[DbSkills(config_db)])).to_dict()
 
-    loaded = Agent.from_dict(config, db=explicit_db)
+    for _ in range(2):
+        loaded = Agent.from_dict(config, db=explicit_db)
 
-    assert loaded.skills is not None
-    instructions = json.loads(loaded.skills._get_skill_instructions("release-notes"))
-    assert instructions["instructions"] == "Instructions from the explicit database."
+        assert loaded.skills is not None
+        instructions = json.loads(loaded.skills._get_skill_instructions("release-notes"))
+        assert instructions["instructions"] == "Instructions for release-notes."

@@ -981,7 +981,8 @@ def from_dict(
 
     Args:
         data: Dictionary containing team configuration
-        db: Optional database for loading agents in members
+        db: Optional database for loading agents in members, and the fallback for
+            resolving skills when the saved config carries none
         registry: Optional registry for rehydrating tools
         links: Optional component links for this team version. Member links
             carry the member version pinned at save time; when provided,
@@ -1320,8 +1321,10 @@ def from_dict(
     # Name references, re-resolved from the skills table like members by id.
     if "skills" in config and isinstance(config["skills"], dict):
         skill_names = config["skills"].get("names")
-        # config["db"] is already live from the block above; an explicit db still wins.
-        skills_db = db if db is not None else config.get("db")
+        # config["db"] is already live from the block above and owns the team's skill rows,
+        # custom skills_table included; the caller's db only covers a config that carried
+        # none, which is how Studio and AgentOS load one saved without its own.
+        skills_db = config.get("db") if config.get("db") is not None else db
         if skill_names and skills_db is not None:
             from agno.skills import DbSkills, Skills
 

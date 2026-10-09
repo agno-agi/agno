@@ -1253,7 +1253,7 @@ def from_dict(
     Args:
         cls: The Agent class (or subclass) to instantiate.
         data: Dictionary containing agent configuration
-        db: Optional database for resolving skills
+        db: Fallback database for resolving skills when the saved config carries none
         skill_executor: Executor to run skill scripts with. Required when the saved
             config records a non-default executor, since one cannot be serialized.
         registry: Optional registry for rehydrating tools and schemas
@@ -1450,8 +1450,10 @@ def from_dict(
     # Name references, re-resolved from the skills table like members by id.
     if "skills" in config and isinstance(config["skills"], dict):
         skill_names = config["skills"].get("names")
-        # config["db"] is already live from the block above; an explicit db still wins.
-        skills_db = db if db is not None else config.get("db")
+        # config["db"] is already live from the block above and owns the agent's skill rows,
+        # custom skills_table included; the caller's db only covers a config that carried
+        # none, which is how Studio and AgentOS load one saved without its own.
+        skills_db = config.get("db") if config.get("db") is not None else db
         if skill_names and skills_db is not None:
             from agno.skills import DbSkills, Skills
 

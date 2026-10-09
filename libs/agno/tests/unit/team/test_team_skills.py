@@ -254,6 +254,50 @@ def test_strict_load_raises_when_a_saved_skill_row_is_gone(tmp_path, monkeypatch
         assert len(warnings) == 1 and "release-notes" in warnings[0]
 
 
+def test_the_config_db_answers_over_an_explicitly_passed_db(tmp_path):
+    """The team's own saved database resolves its skills; the caller's is the fallback for a
+    config that carried none."""
+    from agno.db.sqlite import SqliteDb
+
+    config_db = _make_db(tmp_path)
+    _create_skill_row(config_db)
+    explicit_db = SqliteDb(db_file=str(tmp_path / "explicit.db"))
+    explicit_db.create_skill(
+        {
+            "name": "release-notes",
+            "description": "Skill release-notes",
+            "instructions": "Instructions from the explicit database.",
+        }
+    )
+    config = Team(name="test-team", members=[], db=config_db, skills=Skills(loaders=[DbSkills(config_db)])).to_dict()
+
+    for _ in range(2):
+        loaded = Team.from_dict(config, db=explicit_db)
+
+        assert loaded.skills is not None
+        instructions = json.loads(loaded.skills._get_skill_instructions("release-notes"))
+        assert instructions["instructions"] == "Instructions for release-notes."
+
+
+def test_strict_load_resolves_skills_against_the_configs_own_db(tmp_path):
+    from agno.db.sqlite import SqliteDb
+
+    own = SqliteDb(db_file=str(tmp_path / "own.db"), skills_table="my_skills")
+    own.create_skill({"name": "release-notes", "description": "d", "instructions": "i"})
+    catalog = _make_db(tmp_path)
+    team = Team(name="test-team", id="own-db-team", members=[], db=own, skills=Skills(loaders=[DbSkills(own)]))
+    version = team.save(db=catalog)
+    config = catalog.get_config(component_id="own-db-team", version=version)["config"]
+    assert config["db"]["skills_table"] == "my_skills"
+
+    for _ in range(2):
+        loaded = Team.from_dict(config, db=catalog, strict=True)
+        assert loaded.skills.get_skill_names() == ["release-notes"]
+        by_id = get_team_by_id(db=catalog, id="own-db-team", strict=True)
+        assert by_id is not None
+        assert by_id.skills.get_skill_names() == ["release-notes"]
+
+
 def test_strict_load_raises_when_no_db_can_resolve_the_saved_skills(tmp_path):
     from agno.exceptions import ComponentRehydrationError
 
@@ -282,28 +326,30 @@ def test_strict_load_accepts_a_saved_skill_owned_by_another_user(tmp_path):
         assert "alice-notes" in team.skills.get_system_prompt_snippet(user_id="alice")
 
 
-def test_resave_during_outage_preserves_skill_names(tmp_path):
+def test_resave_during_outage_preserves_skill_names(tmp_path, monkeypatch):
     """Data-loss regression, team twin: healthy save, load during an outage, resave, recover.
 
     The failed load leaves the mapping empty, but the loader still carries its
     configured names, so the resave must write them back instead of deleting them.
     """
+    from agno.db.sqlite import SqliteDb
+
     db = _make_db(tmp_path)
     _create_skill_row(db)
     team = Team(name="test-team", members=[], db=db, skills=Skills(loaders=[DbSkills(db)]))
     team.save()
 
-    original = db.get_skills_with_content
-
     def boom(*args, **kwargs):
         raise RuntimeError("database down")
 
-    db.get_skills_with_content = boom
+    # On the class: the load resolves skills through the db it reconstructs from the
+    # config, a different instance from the one this test holds.
+    monkeypatch.setattr(SqliteDb, "get_skills_with_content", boom)
     loaded = get_team_by_id(db, team.id)
     assert loaded is not None and loaded.skills is not None
     assert loaded.skills.get_skill_names() == []
     loaded.save()
-    db.get_skills_with_content = original
+    monkeypatch.undo()
 
     assert db.get_config(component_id=team.id)["config"]["skills"] == {"names": ["release-notes"]}
     recovered = get_team_by_id(db, team.id)
