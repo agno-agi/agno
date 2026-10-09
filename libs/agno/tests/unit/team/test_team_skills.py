@@ -482,7 +482,11 @@ def test_get_team_by_id_reports_a_missing_executor_as_a_rehydration_error(tmp_pa
     db = SqliteDb(db_file=str(tmp_path / "team_exec_by_id.db"))
     db.create_skill({"name": "greeter", "description": "d", "instructions": "i"})
     Team(
-        name="t", id="t-by-id", members=[], db=db, skills=Skills(loaders=[DbSkills(db)], executor=_TeamSandboxExecutor())
+        name="t",
+        id="t-by-id",
+        members=[],
+        db=db,
+        skills=Skills(loaders=[DbSkills(db)], executor=_TeamSandboxExecutor()),
     ).save(db=db)
 
     for _ in range(2):
@@ -499,7 +503,11 @@ def test_teams_route_answers_a_missing_executor_with_the_rehydration_status(tmp_
     db = SqliteDb(db_file=str(tmp_path / "team_exec_route.db"))
     db.create_skill({"name": "greeter", "description": "d", "instructions": "i"})
     Team(
-        name="t", id="t-route", members=[], db=db, skills=Skills(loaders=[DbSkills(db)], executor=_TeamSandboxExecutor())
+        name="t",
+        id="t-route",
+        members=[],
+        db=db,
+        skills=Skills(loaders=[DbSkills(db)], executor=_TeamSandboxExecutor()),
     ).save(db=db)
     client = TestClient(AgentOS(db=db, teams=[Team(name="placeholder", id="placeholder", members=[], db=db)]).get_app())
 

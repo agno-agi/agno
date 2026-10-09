@@ -26,12 +26,12 @@ from agno.agent.agent import Agent, get_agent_by_id
 from agno.exceptions import ComponentRehydrationError
 from agno.models.base import Function
 from agno.models.openai import OpenAIResponses
-from agno.tools.function import FunctionCall
 from agno.run.agent import RunOutput
 from agno.run.base import RunContext
 from agno.session import AgentSession
 from agno.skills import DbSkills, LocalSkills, Skills
 from agno.skills.executor import LocalSkillExecutor, SkillExecutor
+from agno.tools.function import FunctionCall
 
 SAMPLE_SKILLS_DIR = "cookbook/02_agents/16_skills/sample_skills"
 

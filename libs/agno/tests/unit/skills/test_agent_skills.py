@@ -7,6 +7,7 @@ from typing import ClassVar, Dict, List, Optional
 
 import pytest
 
+from agno.run.base import RunContext
 from agno.skills.agent_skills import Skills
 from agno.skills.errors import SkillError, SkillValidationError
 from agno.skills.executor import LocalSkillExecutor, SkillExecutor
@@ -14,7 +15,6 @@ from agno.skills.loaders.base import SkillLoader
 from agno.skills.loaders.local import LocalSkills
 from agno.skills.skill import Skill
 from agno.skills.utils import ScriptResult
-from agno.run.base import RunContext
 from agno.tools.function import Function, FunctionCall
 
 from .conftest import MockSkillLoader

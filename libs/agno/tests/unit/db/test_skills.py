@@ -11,8 +11,8 @@ from agno.db.schemas.skills import SkillRow
 from agno.db.sqlite.schemas import SKILLS_TABLE_SCHEMA
 from agno.skills.errors import SkillError, SkillValidationError
 from agno.skills.loaders.db import DbSkills, skill_from_row
-from agno.skills.validator import validate_metadata
 from agno.skills.loaders.local import LocalSkills
+from agno.skills.validator import validate_metadata
 
 # ============================================================================
 # FIXTURES
