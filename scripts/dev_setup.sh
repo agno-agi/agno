@@ -69,8 +69,7 @@ echo -e "    ${DIM}Installing agnoctl[dev] and agno[demo] in editable mode...${N
 echo -e "    ${DIM}> uv pip install -e libs/agnoctl[dev] -e libs/agno[demo]${NC}"
 uv pip install --python "${VENV_DIR}/bin/python" -e "${AGNOCTL_DIR}[dev]" -e "${AGNO_DIR}[demo]" --quiet
 
-# Use an absolute, shell-escaped path so activation works from any directory.
-printf -v ACTIVATE_CMD 'source %q' "${VENV_DIR}/bin/activate"
+ACTIVATE_CMD="source .venv/bin/activate"
 CLIPBOARD_MSG=""
 if command -v pbcopy &> /dev/null; then
     if printf '%s' "${ACTIVATE_CMD}" | pbcopy 2>/dev/null; then
