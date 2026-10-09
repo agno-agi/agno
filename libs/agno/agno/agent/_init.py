@@ -197,6 +197,70 @@ def set_compression_manager(agent: Agent) -> None:
         agent.compress_tool_results = True
 
 
+def disable_compaction_without_records(agent: Agent) -> None:
+    """Turn compaction off, with a warning, when the db cannot store compaction records.
+
+    A fold lasts only as long as its record: without one, every run starts from the full history
+    and pays for another summary of all of it. Only SqliteDb and PostgresDb store records. Checked
+    when the agent is built, and again at run start for a db assigned afterwards.
+    """
+    if not agent.compaction or agent.db is None:
+        return
+    from agno.compaction.archive import stores_compaction_records
+
+    if not stores_compaction_records(agent.db):
+        log_warning(
+            f"Compaction is only supported with SqliteDb and PostgresDb; {type(agent.db).__name__} cannot "
+            "store compaction records, so compaction is turned off. Use SqliteDb or PostgresDb to enable it."
+        )
+        agent.compaction = None
+
+
+def set_compaction(agent: Agent) -> None:
+    """Resolve ``agent.compaction`` into the Compaction the run uses.
+
+    ``True`` folds only when the provider rejects a request as too long. A proactive threshold
+    is a guess about a number nobody can look up - no provider exposes its context window, and
+    the same model id has different limits across deployments - so 150k is wrong for a 32k
+    model and pointless for a 1M one. The rejection is the one signal that is always right, at
+    the cost of a single failed request before the first fold.
+
+    Pass a ``Compaction`` object to opt into the proactive threshold, which defaults to 150k
+    there because someone configuring it has a size in mind.
+
+    The model defaults to the agent's either way, so a bare ``compaction=True`` is still the
+    cheapest correct configuration.
+    """
+    from agno.compaction.compaction import Compaction
+
+    if agent.compaction is True:
+        agent.compaction = Compaction(compact_at_tokens=None, on_context_overflow=True)
+    elif agent.compaction is False:
+        agent.compaction = None
+
+    disable_compaction_without_records(agent)
+
+    if isinstance(agent.compaction, Compaction) and agent.compaction.model is None:
+        agent.compaction.model = agent.model
+
+    if isinstance(agent.compaction, Compaction):
+        # Compaction folds the history a run replays. Without replayed history a size threshold
+        # has nothing to measure and a fold is never sent. Overflow recovery still acts within a
+        # run, so a bare compaction=True - which has no threshold - is not a mistake here.
+        if not agent.add_history_to_context and agent.compaction.compact_at_tokens is not None:
+            log_warning(
+                "compaction is set but add_history_to_context is False, so no history is replayed: "
+                "compact_at_tokens never fires and a fold is never sent. Set add_history_to_context=True."
+            )
+        # Both put a summary of the same history into the context, so the model reads it twice.
+        if agent.add_session_summary_to_context:
+            log_warning(
+                "compaction and session summaries are both enabled, so the context carries two summaries "
+                "of the same history. Compaction already replaces old turns with its own summary; "
+                "consider add_session_summary_to_context=False."
+            )
+
+
 def set_result_store(agent: Agent) -> None:
     """Resolve ``agent.offload_tool_results`` into the store the run uses.
 
@@ -403,6 +467,11 @@ def get_models(agent: Agent) -> None:
     if agent.compression_manager is not None and agent.compression_manager.model is None:
         agent.compression_manager.model = agent.model
 
+    from agno.compaction.compaction import Compaction as _Compaction
+
+    if isinstance(agent.compaction, _Compaction) and agent.compaction.model is None:
+        agent.compaction.model = agent.model
+
 
 def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
     set_default_model(agent)
@@ -418,6 +487,8 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
         set_session_summary_manager(agent)
     if agent.compress_tool_results or agent.compression_manager is not None:
         set_compression_manager(agent)
+    if agent.compaction is not None:
+        set_compaction(agent)
     # Resolved when a setting is present or when a store exists.
     if agent.offload_tool_results or agent._result_store is not None:
         set_result_store(agent)

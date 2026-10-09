@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "3.1.1"
+version = "3.1.2"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -490,6 +490,7 @@ demo = [
     "yfinance",
     "youtube-transcript-api",
     "claude-agent-sdk",
+    "openai-codex",
     "langgraph",
     "langchain-openai",
     "dspy",
@@ -632,6 +633,7 @@ module = [
   "newspaper.*",
   "numpy.*",
   "ollama.*",
+  "openai_codex.*",
   "openfga_sdk.*",
   "openpyxl.*",
   "openai.*",

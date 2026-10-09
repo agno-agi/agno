@@ -712,7 +712,12 @@ class OpenAIResponses(Model):
         fc_id_to_call_id = self._build_fc_id_to_call_id_map(messages)
 
         for message in messages_to_format:
-            # Without a response to chain from, replay reasoning before the assistant's text or function calls.
+            # Without a response to chain from, replay reasoning before the assistant's text or
+            # function calls. The chain is absent when the model is configured without it, and
+            # also when it was severed at request time - compaction drops response_id from the
+            # assistant copies it sends, so a fold leaves a reasoning model's function_call with
+            # no server-held reasoning item. Either way the item has to travel with the call, or
+            # the API rejects the pair outright.
             replayed_reasoning = False
             if (
                 previous_response_id is None
@@ -812,6 +817,10 @@ class OpenAIResponses(Model):
         output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
+            # A count covers the whole context. Stored response ids make formatting keep only what
+            # follows the last response - right for a request that chains on it, but this call
+            # carries no previous_response_id, so the input would come out empty.
+            messages = self._without_response_ids(messages)
             formatted_input = self._format_messages(messages, compress_tool_results=True, tools=tools)
             formatted_tools = self._format_tool_params(messages, tools) if tools is not None else None
 
@@ -834,6 +843,10 @@ class OpenAIResponses(Model):
     ) -> int:
         """Async version of count_tokens using the async client."""
         try:
+            # A count covers the whole context. Stored response ids make formatting keep only what
+            # follows the last response - right for a request that chains on it, but this call
+            # carries no previous_response_id, so the input would come out empty.
+            messages = self._without_response_ids(messages)
             formatted_input = self._format_messages(messages, compress_tool_results=True, tools=tools)
             formatted_tools = self._format_tool_params(messages, tools) if tools else None
 
