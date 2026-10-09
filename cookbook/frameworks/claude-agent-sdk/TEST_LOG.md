@@ -1,5 +1,17 @@
 # Test log
 
+## 2026-10-09
+
+### transcript_store.py
+
+**Status:** PASS
+
+**Description:** Replaces `session_store.py`. Runs replica A (first turn, stores a fact) and replica B (second agent instance, different working directory) against one database in a single process, printing the `agno_transcripts` rows after each step. Ran with the demo environment, claude-agent-sdk 0.2.110, Claude Code 2.1.250 and macOS Keychain login, both without flags (SQLite) and with `--postgres` (pgvector container).
+
+**Result:** On this branch's schema (positions numbered from 1, `framework` and `agno_session_id` columns): SQLite: replica A mirrored rows 1 to 12; replica B replied with the stored password, kept the same Claude session id, and appended rows 13 to 21. Postgres: same, 12 rows then 9 new. A Postgres table left over from the earlier branch schema raised a schema mismatch and had to be dropped first; it is recreated on first use. No API key or custom `CLAUDE_CONFIG_DIR` was needed because the SDK copies credentials into the temporary config directory it uses for a store-backed resume.
+
+---
+
 ## 2026-10-08
 
 ### session_store.py
@@ -101,3 +113,15 @@ when session storage fails. In-memory SQLite async polling retains the completed
 **Result:** 751 unit/regression tests, 12 external-agent PostgreSQL integration tests and 13 existing
 native PostgreSQL tests passed. Format and validation passed. These are persistence fault-injection
 checks; the earlier live provider cancellation runs were not repeated.
+
+---
+
+---
+
+### session_store.py (transcript schema revision)
+
+**Status:** PASS
+
+**Description:** Reran the two-process verification after scoping transcript rows by framework, project, session and subpath, numbering positions per transcript and recording the owning Agno session. Used claude-agent-sdk 0.2.95 from the demo environment, the `ANTHROPIC_API_KEY` from `.envrc` and empty config directories.
+
+**Result:** Process A replied `OK`; process B, with its Agno run deleted, replied `cobalt orchard 742`. The PostgreSQL contract test (PostgresDb and AsyncPostgresDb) passed against PostgreSQL 14.
