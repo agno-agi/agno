@@ -18,6 +18,18 @@ The fresh `CLAUDE_CONFIG_DIR` also hides local login state. Export `ANTHROPIC_AP
 
 If no API key is available, run `claude setup-token` interactively and export its result as `CLAUDE_CODE_OAUTH_TOKEN`. For file-based login, copy only `~/.claude/.credentials.json` into each fresh config directory. Do not copy project transcripts. macOS Keychain login alone does not authenticate a process using an empty custom config directory.
 
+## Continue from a step
+
+`continue_from.py` runs a two-step Bash task, lists its checkpoints, then continues from the first tool result and replays the whole turn.
+
+```bash
+PYTHONPATH=libs/agno .venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/continue_from.py
+```
+
+`ClaudeAgent.continue_run` / `acontinue_run` take the same `continue_from` and `fork` arguments as `Agent.continue_run`, and AgentOS serves them through `/agents/{id}/runs/{run_id}/continue` and `/checkpoints`. Each tool result is a checkpoint. Continuing forks the Claude SDK transcript at that message, so the model only remembers what happened up to it; `continue_from="last_user"` without `input` re-sends the original prompt. `fork=True` adds a sibling run with `forked_from_run_id`; otherwise the source run is replaced in place. Later turns in the session continue from the replayed branch.
+
+Requires a database with transcript storage, and only runs recorded with it can be continued. Files the agent changed after the checkpoint are not rewound. `regenerate` and HITL `requirements` are not supported.
+
 ## Background runs and cancellation
 
 `background_cancel.py` serves the agent through AgentOS. Submit runs with `background=true`, poll the run endpoint, or use `stream=true` for indexed SSE. Runs continue after disconnects; the resume endpoint reads the configured event stream. Cancel through the run cancellation endpoint.

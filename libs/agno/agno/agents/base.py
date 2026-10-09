@@ -73,6 +73,19 @@ class ExternalRunResult:
 
 
 @dataclass
+class ExternalContinuation:
+    """Replay of a stored run from one of its message boundaries."""
+
+    messages: List[Message]
+    tools: Optional[List[ToolExecution]]
+    source_input: Optional[RunInput]
+    record_input: Any
+    anchor: Dict[str, Any]
+    forked_from_run_id: Optional[str] = None
+    forked_from_message_index: Optional[int] = None
+
+
+@dataclass
 class BaseExternalAgent:
     """Base class for external framework adapters.
 
@@ -864,6 +877,21 @@ class BaseExternalAgent:
             created_at=now,
         )
 
+    def _finish_run_output(
+        self, run: RunOutput, run_state: Dict[str, Any], continuation: Optional[ExternalContinuation]
+    ) -> None:
+        """Prepend a continuation's kept transcript, then let the adapter annotate messages."""
+        if continuation is not None:
+            run.messages = continuation.messages + (run.messages or [])
+            run.tools = (continuation.tools or []) + (run.tools or []) or None
+            run.input = continuation.source_input
+            run.forked_from_run_id = continuation.forked_from_run_id
+            run.forked_from_message_index = continuation.forked_from_message_index
+        self._annotate_run_output(run, run_state)
+
+    def _annotate_run_output(self, run: RunOutput, run_state: Dict[str, Any]) -> None:
+        """Attach adapter-specific per-message data recorded in run_state during the run."""
+
     def _get_history_from_session(
         self, session: AgentSession, exclude_run_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
@@ -933,16 +961,23 @@ class BaseExternalAgent:
         session_id = kwargs.get("session_id") or str(uuid4())
         kwargs["session_id"] = session_id
         user_id = kwargs.get("user_id")
+        continuation: Optional[ExternalContinuation] = kwargs.get("continuation")
+        record_input = input if continuation is None else continuation.record_input
+        run_state: Dict[str, Any] = {}
         session = await self.aread_or_create_session(session_id, user_id) if self.db else None
-        history = self._get_history_from_session(session, exclude_run_id=run_id) if session else None
+        history = (
+            self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
+        )
         try:
             async with self._run_cancellation(run_id):
-                content = await self._arun_adapter(input, history=history, run_id=run_id, session=session, **kwargs)
+                content = await self._arun_adapter(
+                    input, history=history, run_id=run_id, session=session, run_state=run_state, **kwargs
+                )
             run_output = self._build_run_output(
                 run_id,
                 session_id,
                 user_id,
-                input,
+                record_input,
                 content.content if isinstance(content, ExternalRunResult) else content,
                 RunStatus.completed,
                 tools=content.tools if isinstance(content, ExternalRunResult) else None,
@@ -951,11 +986,12 @@ class BaseExternalAgent:
                 run_output.metadata = {"warnings": content.warnings}
         except RunCancelledException:
             run_output = self._build_run_output(
-                run_id, session_id, user_id, input, "Run cancelled", RunStatus.cancelled
+                run_id, session_id, user_id, record_input, "Run cancelled", RunStatus.cancelled
             )
         except Exception as error:
             log_exception(f"Error in {self.framework} agent '{self.id}': {error}")
-            run_output = self._build_run_output(run_id, session_id, user_id, input, str(error), RunStatus.error)
+            run_output = self._build_run_output(run_id, session_id, user_id, record_input, str(error), RunStatus.error)
+        self._finish_run_output(run_output, run_state, continuation)
         if session is not None:
             await self._apersist_run_in_session(session, run_output)
         return run_output
@@ -966,8 +1002,12 @@ class BaseExternalAgent:
         kwargs["session_id"] = session_id
         user_id = kwargs.get("user_id")
         yield_run_output = kwargs.pop("yield_run_output", False)
+        continuation: Optional[ExternalContinuation] = kwargs.get("continuation")
+        run_state: Dict[str, Any] = {}
         session = await self.aread_or_create_session(session_id, user_id) if self.db else None
-        history = self._get_history_from_session(session, exclude_run_id=run_id) if session else None
+        history = (
+            self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
+        )
         yield RunStartedEvent(run_id=run_id, agent_id=self.get_id(), agent_name=self.name or "", session_id=session_id)
         accumulated_content = ""
         warnings: List[Dict[str, Any]] = []
@@ -977,7 +1017,7 @@ class BaseExternalAgent:
         try:
             async with self._run_cancellation(run_id):
                 async for event in self._arun_adapter_stream(
-                    input, history=history, run_id=run_id, session=session, **kwargs
+                    input, history=history, run_id=run_id, session=session, run_state=run_state, **kwargs
                 ):
                     if isinstance(event, ExternalRunWarningEvent) and event.warning is not None:
                         warnings.append(event.warning)
@@ -1001,13 +1041,14 @@ class BaseExternalAgent:
             run_id,
             session_id,
             user_id,
-            input,
+            input if continuation is None else continuation.record_input,
             str(run_error) if run_error else accumulated_content,
             status,
             list(tools.values()) or None,
         )
         if warnings:
             run.metadata = {"warnings": warnings}
+        self._finish_run_output(run, run_state, continuation)
         if session is not None:
             await self._apersist_run_in_session(session, run)
         fields: Dict[str, Any] = dict(
