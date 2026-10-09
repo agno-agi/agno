@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.routing import APIRouter
@@ -18,6 +18,7 @@ from agno.db.utils import (
 )
 from agno.exceptions import AgnoError
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
+from agno.os.authz.admin_router import _make_require_admin
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_db_and_scope
 from agno.os.routers.metrics.schemas import (
     DayAggregatedMetrics,
@@ -25,6 +26,7 @@ from agno.os.routers.metrics.schemas import (
     DayRunMetrics,
     DaySessionMetrics,
     DayTokenMetrics,
+    DayUserMetrics,
     MetricsRefreshResponse,
     MetricsRefreshStatusResponse,
     MetricsResponse,
@@ -36,6 +38,7 @@ from agno.os.routers.metrics.schemas import (
     OSRunMetricsResponse,
     OSSessionMetricsResponse,
     OSTokenMetricsResponse,
+    OSUserMetricsResponse,
 )
 from agno.os.schema import (
     BadRequestResponse,
@@ -49,6 +52,9 @@ from agno.os.utils import AgnoHTTPException, get_db, to_utc_datetime
 from agno.remote.base import RemoteDb
 from agno.run.base import RunStatus
 from agno.utils.log import log_error, log_warning
+
+if TYPE_CHECKING:
+    from agno.os.authz.authorization import Authorization
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +90,8 @@ def get_metrics_router(
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
     settings: AgnoAPISettings = AgnoAPISettings(),
     os_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    role_store: "Optional[Authorization]" = None,
+    auth_enabled: bool = True,
     **kwargs,
 ) -> APIRouter:
     """Create metrics router with comprehensive OpenAPI documentation for system metrics and analytics endpoints."""
@@ -98,14 +106,19 @@ def get_metrics_router(
             500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
         },
     )
-    return attach_routes(router=router, dbs=dbs, os_db=os_db)
+    return attach_routes(router=router, dbs=dbs, os_db=os_db, role_store=role_store, auth_enabled=auth_enabled)
 
 
 def attach_routes(
     router: APIRouter,
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
     os_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    role_store: "Optional[Authorization]" = None,
+    auth_enabled: bool = True,
 ) -> APIRouter:
+    # GET /os/metrics/users answers to the same admin gate as the /users API
+    require_user_admin = _make_require_admin(role_store, auth_enabled=auth_enabled)
+
     @router.get(
         "/metrics",
         response_model=MetricsResponse,
@@ -856,6 +869,106 @@ def attach_routes(
         except Exception as e:
             log_error(f"Error getting OS token metrics: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error getting OS token metrics: {str(e)}")
+
+    @router.get(
+        "/os/metrics/users",
+        response_model=OSUserMetricsResponse,
+        status_code=200,
+        operation_id="get_os_user_metrics",
+        summary="Get OS User Metrics",
+        description=(
+            "Retrieve the users in the user directory at the end of each day of a date range, their total, and "
+            "how that total compares with the date range of the same length before it. "
+            "If no date range is specified, covers the last 30 days."
+        ),
+        responses={
+            200: {
+                "description": "OS user metrics retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "metrics": [{"date": "2025-07-31T00:00:00Z", "users_count": 25}],
+                            "total_users": 25,
+                            "previous_total_users": 20,
+                            "change_percent": 25.0,
+                            "window_days": 30,
+                            "updated_at": "2025-07-31T12:49:01Z",
+                        }
+                    }
+                },
+            },
+            400: {"description": "Invalid date range parameters", "model": BadRequestResponse},
+            403: {"description": "The caller is not an admin"},
+            500: {"description": "Failed to get OS user metrics", "model": InternalServerErrorResponse},
+            503: {"description": "No user directory configured", "model": InternalServerErrorResponse},
+        },
+    )
+    async def get_os_user_metrics(
+        request: Request,
+        starting_date: Optional[date] = Query(
+            default=None,
+            description="Starting date for the window (YYYY-MM-DD format). Defaults to 29 days before ending_date",
+        ),
+        ending_date: Optional[date] = Query(
+            default=None, description="Ending date for the window (YYYY-MM-DD format). Defaults to today"
+        ),
+    ) -> OSUserMetricsResponse:
+        try:
+            user_store = getattr(request.app.state, "user_store", None)
+            if user_store is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="User metrics not available: pass a `user_directory` to AgentOS to enable this feature.",
+                )
+            await require_user_admin(request)
+            # A security key names no user, so nobody is ever added to the directory
+            if getattr(request.state, "security_key_verified", False):
+                users_by_status = await user_store.acount_by_status()
+                if users_by_status["total"] == 0:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="User metrics not available: a security key adds no user to the user directory.",
+                    )
+
+            starting_date, ending_date = _window(starting_date, ending_date)
+            starting_at = int(datetime.combine(starting_date, datetime.min.time(), tzinfo=timezone.utc).timestamp())
+            ending_before = (
+                int(datetime.combine(ending_date, datetime.min.time(), tzinfo=timezone.utc).timestamp()) + 24 * 60 * 60
+            )
+            # Every user created before the end of the window, so both windows come from one read
+            created_by_day = await user_store.acreated_by_day(ending_before=ending_before)
+
+            created: Dict[date, int] = {}
+            previous_total_users = 0
+            for row in created_by_day:
+                if row["date"] < starting_at:
+                    previous_total_users += row["count"]
+                else:
+                    day = datetime.fromtimestamp(row["date"], tz=timezone.utc).date()
+                    created[day] = created.get(day, 0) + row["count"]
+
+            # A day counts every user created up to its end, the ones created before the window included
+            total_users = previous_total_users
+            metrics = []
+            for day in _days(starting_date, ending_date):
+                total_users += created.get(day, 0)
+                metrics.append(DayUserMetrics(date=to_utc_datetime(day), users_count=total_users))
+            return OSUserMetricsResponse(
+                metrics=metrics,
+                total_users=total_users,
+                previous_total_users=previous_total_users,
+                change_percent=_change_percent(total_users, previous_total_users),
+                window_days=(ending_date - starting_date).days + 1,
+                updated_at=datetime.now(timezone.utc),
+            )
+
+        except HTTPException:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            logger.exception("GET /os/metrics/users failed")
+            raise HTTPException(status_code=500, detail=f"Error getting OS user metrics: {str(e)}")
 
     @router.get(
         "/os/metrics/models",

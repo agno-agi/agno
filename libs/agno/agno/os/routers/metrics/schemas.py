@@ -273,3 +273,26 @@ class OSLatencyMetricsResponse(BaseModel):
         default_factory=dict,
         description="Databases left out of the metrics, each with the reason: 'timeout', 'failed' or 'unsupported'",
     )
+
+
+class DayUserMetrics(BaseModel):
+    """The users in the directory at the end of one day"""
+
+    date: datetime = Field(..., description="Date the users are counted at the end of")
+    users_count: int = Field(..., description="Users in the directory at the end of this date", ge=0)
+
+
+class OSUserMetricsResponse(BaseModel):
+    metrics: List[DayUserMetrics] = Field(..., description="Daily user counts across the window, oldest first")
+    total_users: int = Field(..., description="Users in the directory at the end of the window", ge=0)
+    previous_total_users: int = Field(
+        ...,
+        description="Users in the directory at the end of the window of the same length that ends the day before this one",
+        ge=0,
+    )
+    change_percent: Optional[float] = Field(
+        None,
+        description="Change of total_users against previous_total_users, in percent. None when the previous window had no users",
+    )
+    window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
+    updated_at: Optional[datetime] = Field(None, description="Timestamp of the directory read")
