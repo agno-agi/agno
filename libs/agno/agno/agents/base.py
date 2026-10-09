@@ -42,17 +42,6 @@ _HISTORY_TOOL_RESULT_TAIL_CHARS = 400
 _HISTORY_MAX_CHARS = 24000
 
 
-def _sync_await(coro: Any) -> Any:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    import concurrent.futures
-
-    with concurrent.futures.ThreadPoolExecutor() as pool:
-        return pool.submit(asyncio.run, coro).result()
-
-
 @dataclass
 class _LiveHandle:
     agent: "BaseExternalAgent"
@@ -662,13 +651,11 @@ class BaseExternalAgent:
             self._clear_run_handle(run_id)
             await acleanup_run(run_id)
 
-    def prepare_pending_run(self, run_id: str, session_id: str, user_id: Optional[str], input: Any) -> RunOutput:
-        """Persist a PENDING run before background or queued execution."""
-        return _sync_await(self.aprepare_pending_run(run_id, session_id, user_id, input))
-
-    async def aprepare_pending_run(self, run_id: str, session_id: str, user_id: Optional[str], input: Any) -> RunOutput:
-        """Create an idempotent PENDING row using atomic inserts when available."""
-        from agno.os.job_queue import _ainsert_session_if_absent, _atomic_append_run
+    async def _aprepare_pending_run(
+        self, run_id: str, session_id: str, user_id: Optional[str], input: Any
+    ) -> RunOutput:
+        """Persist an idempotent PENDING row before background or queued execution."""
+        from agno.os.job_queue import _aappend_pending_run
 
         run = RunOutput(
             run_id=run_id,
@@ -679,26 +666,17 @@ class BaseExternalAgent:
             input=RunInput(input_content=input),
             status=RunStatus.pending,
         )
-        if await _atomic_append_run(self, session_id, run.to_dict(), user_id) is not None:
-            return run
-        session = await self.aread_or_create_session(session_id, user_id)
-        if await _ainsert_session_if_absent(self, session) is not None:
-            if await _atomic_append_run(self, session_id, run.to_dict(), user_id) is not None:
-                return run
-        if session.get_run(run_id) is None:
+        session = await _aappend_pending_run(
+            self, session_id, run.to_dict(), user_id, lambda: self.aread_or_create_session(session_id, user_id)
+        )
+        if session is not None and session.get_run(run_id) is None:
             await self._apersist_run_in_session(session, run, strict=True)
         return run
 
-    def persist_run_status_fallback(
+    async def _apersist_run_fallback(
         self, session_id: str, run_response: RunOutput, user_id: Optional[str] = None
     ) -> None:
-        """Persist a run transition on a database without the atomic primitive."""
-        _sync_await(self.apersist_run_status_fallback(session_id, run_response, user_id))
-
-    async def apersist_run_status_fallback(
-        self, session_id: str, run_response: RunOutput, user_id: Optional[str] = None
-    ) -> None:
-        """Re-read the session and persist only the changed run."""
+        """Re-read the session and persist one run; completed or cancelled rows win."""
         session = await self.aread_or_create_session(session_id, user_id)
         existing = session.get_run(run_response.run_id or "")
         if existing is not None and existing.status in (RunStatus.completed, RunStatus.cancelled):
@@ -720,7 +698,7 @@ class BaseExternalAgent:
         from agno.run.cancel import aregister_run
         from agno.run.status_persist import apersist_run_transition
 
-        run = await self.aprepare_pending_run(run_id, session_id, user_id, input)
+        run = await self._aprepare_pending_run(run_id, session_id, user_id, input)
         await aregister_run(run_id)
         transport = _BackgroundStream(run, yield_run_output=yield_run_output) if stream else None
         if transport is not None:
