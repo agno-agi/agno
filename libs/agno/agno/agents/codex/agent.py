@@ -1,3 +1,4 @@
+import asyncio
 import json
 from dataclasses import dataclass, field
 from importlib import import_module
@@ -35,6 +36,21 @@ _SANDBOX_ALIASES: Dict[str, str] = {
     "danger-full-access": "full-access",
     "danger_full_access": "full-access",
 }
+
+
+def _run_coroutine(coro: Any) -> Any:
+    """Run a coroutine from sync code, on a worker thread when a loop is already running."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None and loop.is_running():
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            return pool.submit(asyncio.run, coro).result()
+    return asyncio.run(coro)
+
 
 # thread_start-only options that thread_resume does not accept.
 _START_ONLY_KEYS = {"ephemeral", "service_name", "session_start_source", "thread_source"}
@@ -166,6 +182,81 @@ class CodexAgent(BaseExternalAgent):
         sdk = _sdk()
         async with sdk.AsyncCodex(self._codex_config(sdk)) as codex:
             await codex.login_api_key(api_key)
+
+    # ---------------------------------------------------------------------------
+    # Context compaction
+    # ---------------------------------------------------------------------------
+
+    def compact(self, session_id: str, user_id: Optional[str] = None, timeout: float = 120.0) -> bool:
+        """Sync version of acompact."""
+        return _run_coroutine(self.acompact(session_id, user_id=user_id, timeout=timeout))
+
+    async def acompact(self, session_id: str, user_id: Optional[str] = None, timeout: float = 120.0) -> bool:
+        """Compact the Codex thread behind an Agno session.
+
+        Codex keeps the conversation in its own thread. Compaction asks the app-server to
+        replace the older turns with a summary so later turns fit the context window; the
+        next run on the session continues from that summary. The thread, its rollout and the
+        summary stay on the machine running Codex. Returns False when the session has no
+        Codex thread yet. Waits until the thread is idle again and raises TimeoutError if
+        that takes longer than timeout seconds.
+        """
+        sdk = _sdk()
+        session = await self.aget_session(session_id, user_id)
+        thread_id = self._get_thread_id(session, session_id)
+        if not thread_id:
+            return False
+        client = self._async_client_class(sdk)(config=self._codex_config(sdk))
+        await client.start()
+        try:
+            await client.initialize()
+            await client.thread_resume(thread_id, self._thread_kwargs(sdk, resume=True) or None)
+            await client.thread_compact(thread_id)
+            await self._await_thread_idle(client, thread_id, timeout)
+        finally:
+            await client.close()
+        log_debug(f"Codex: compacted thread {thread_id} for session {session_id}")
+        return True
+
+    @staticmethod
+    def _async_client_class(sdk: Any) -> Any:
+        """The low-level async client, which exposes thread/compact/start."""
+        client_class = getattr(sdk, "AsyncCodexClient", None)
+        if client_class is not None:
+            return client_class
+        from openai_codex.async_client import AsyncCodexClient  # type: ignore
+
+        return AsyncCodexClient
+
+    @staticmethod
+    async def _await_thread_idle(client: Any, thread_id: str, timeout: float) -> None:
+        """Wait for the compaction to finish: the thread goes active, then idle again.
+
+        The app-server reports thread/compacted on a per-turn queue the caller never
+        registered, so the thread status notifications on the global queue are used instead.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        active = False
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError(f"Codex thread {thread_id} did not finish compacting within {timeout}s")
+            notification = await asyncio.wait_for(client.next_notification(), timeout=remaining)
+            method = getattr(notification, "method", "")
+            payload = getattr(notification, "payload", None)
+            if getattr(payload, "thread_id", thread_id) != thread_id:
+                continue
+            if method == "thread/compacted":
+                return
+            if method != "thread/status/changed":
+                continue
+            status = getattr(payload, "status", None)
+            kind = getattr(getattr(status, "root", status), "type", None)
+            if kind == "active":
+                active = True
+            elif kind == "idle" and active:
+                return
 
     # ---------------------------------------------------------------------------
     # SDK option builders

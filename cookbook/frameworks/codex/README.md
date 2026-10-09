@@ -35,6 +35,7 @@ CodexAgent(name="Codex").login_api_key("sk-...")
 - `codex_structured_output.py` — constrain the final answer with a JSON Schema
 - `codex_agentos.py` — serve Codex through AgentOS
 - `codex_session_agentos.py` — same with SQLite-backed sessions
+- `codex_compaction.py` — compact the Codex thread behind a session with `CodexAgent.acompact`, then continue from the summary
 
 ## How sessions work
 

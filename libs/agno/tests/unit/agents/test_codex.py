@@ -632,3 +632,104 @@ async def test_interrupted_sdk_turn_is_cancelled(fake_sdk, monkeypatch, stream):
         assert events[-1].status == RunStatus.cancelled
     else:
         assert (await agent.arun("go")).status == RunStatus.cancelled
+
+
+# ---------------------------------------------------------------------------
+# Compaction
+# ---------------------------------------------------------------------------
+
+
+def _status_changed(thread_id: str, kind: str) -> Any:
+    status = SimpleNamespace(root=SimpleNamespace(type=kind))
+    return SimpleNamespace(method="thread/status/changed", payload=SimpleNamespace(thread_id=thread_id, status=status))
+
+
+class FakeAsyncCodexClient:
+    """Low-level client: thread/compact/start plus the global notification queue."""
+
+    state: FakeState
+    events: List[Any] = []
+    hang: bool = False
+
+    def __init__(self, config: Any = None) -> None:
+        self.config = config
+        self._events = iter(self.events)
+
+    async def start(self) -> None:
+        self.state.calls.append({"op": "client_start"})
+
+    async def initialize(self) -> None:
+        pass
+
+    async def close(self) -> None:
+        self.state.calls.append({"op": "client_close"})
+
+    async def thread_resume(self, thread_id: str, params: Any = None) -> Any:
+        self.state.calls.append({"op": "client_thread_resume", "thread_id": thread_id, "params": params})
+        return SimpleNamespace()
+
+    async def thread_compact(self, thread_id: str) -> Any:
+        self.state.calls.append({"op": "thread_compact", "thread_id": thread_id})
+        return SimpleNamespace()
+
+    async def next_notification(self) -> Any:
+        if self.hang:
+            await asyncio.sleep(10)
+        return next(self._events)
+
+
+@pytest.fixture
+def fake_client(fake_sdk, monkeypatch) -> type:
+    FakeAsyncCodexClient.state = fake_sdk
+    FakeAsyncCodexClient.events = []
+    FakeAsyncCodexClient.hang = False
+    monkeypatch.setattr(codex_module._sdk(), "AsyncCodexClient", FakeAsyncCodexClient, raising=False)
+    return FakeAsyncCodexClient
+
+
+def test_compact_without_a_thread_is_a_no_op(fake_client, tmp_db):
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db)
+    assert agent.compact("s1") is False
+    assert not [c for c in fake_client.state.calls if c["op"] == "thread_compact"]
+
+
+def test_compact_resumes_the_session_thread_and_waits_for_idle(fake_client, tmp_db):
+    fake_client.state.notifications = [_delta("m1", "ok"), _turn_completed()]
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db, model="gpt-5.6-luna", cwd="/work")
+    _collect(agent, "first", session_id="s1")
+    fake_client.events = [
+        _status_changed("thread-9", "active"),  # another thread, ignored
+        _status_changed("thread-1", "idle"),  # idle before compaction starts, ignored
+        _status_changed("thread-1", "active"),
+        SimpleNamespace(method="mcpServer/startupStatus/updated", payload=SimpleNamespace()),
+        _status_changed("thread-1", "idle"),
+        SimpleNamespace(method="should-not-be-read", payload=SimpleNamespace()),
+    ]
+
+    assert agent.compact("s1") is True
+
+    wanted = {"client_start", "client_thread_resume", "thread_compact", "client_close"}
+    ops = [c["op"] for c in fake_client.state.calls if c["op"] in wanted]
+    assert ops == ["client_start", "client_thread_resume", "thread_compact", "client_close"]
+    resume = next(c for c in fake_client.state.calls if c["op"] == "client_thread_resume")
+    assert resume["thread_id"] == "thread-1"
+    assert resume["params"]["model"] == "gpt-5.6-luna" and resume["params"]["cwd"] == "/work"
+    assert next(c for c in fake_client.state.calls if c["op"] == "thread_compact")["thread_id"] == "thread-1"
+
+
+def test_compact_accepts_the_compacted_notification(fake_client, tmp_db):
+    fake_client.state.notifications = [_delta("m1", "ok"), _turn_completed()]
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db)
+    _collect(agent, "first", session_id="s1")
+    fake_client.events = [SimpleNamespace(method="thread/compacted", payload=SimpleNamespace(thread_id="thread-1"))]
+    assert asyncio.run(agent.acompact("s1")) is True
+
+
+def test_compact_times_out_and_closes_the_client(fake_client, tmp_db):
+    fake_client.state.notifications = [_delta("m1", "ok"), _turn_completed()]
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db)
+    _collect(agent, "first", session_id="s1")
+    fake_client.hang = True
+    with pytest.raises(TimeoutError):
+        agent.compact("s1", timeout=0.05)
+    assert [c["op"] for c in fake_client.state.calls][-1] == "client_close"

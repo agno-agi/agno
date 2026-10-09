@@ -101,3 +101,13 @@ Tested 2026-10-08 with openai-codex 0.161.0 (bundled Codex CLI 0.161.0), model g
 **Result:** 736 unit/regression tests passed; 5 integration tests passed, none skipped. One existing AsyncMock warning arose in the unchanged native save-fencing test. Required format and validation scripts passed with SQLAlchemy 2.0.52.
 
 ---
+
+### codex_compaction.py
+
+**Status:** PASS (2026-10-09, openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Seeds a fact, adds three turns including a 1200-line filler document, calls `CodexAgent.acompact(session_id)`, then asks for the fact on the same session. `acompact` returns False before any thread exists, then resumes the thread on the low-level client, sends `thread/compact/start` and waits for the thread status to go active and back to idle on the global notification queue.
+
+**Result:** `acompact` returned False before the first run and True after; the thread went idle again in about eight seconds and the rollout gained a `compacted` entry. The next turn answered `tangerine-walrus-88`. The `thread/compacted` notification itself is routed to a per-turn queue the caller never registered, which is why the adapter waits on thread status instead.
+
+---
