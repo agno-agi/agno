@@ -9,11 +9,11 @@ from typing import List
 
 import pytest
 
+from agno.run.base import RunContext
 from agno.skills.agent_skills import Skills
 from agno.skills.errors import SkillError, SkillValidationError
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.loaders.db import DbSkills
-from agno.run.base import RunContext
 from agno.skills.loaders.local import LocalSkills
 from agno.tools.function import FunctionCall
 
@@ -439,7 +439,9 @@ async def test_a_tool_call_without_a_view_on_an_async_database_sees_the_shared_r
     resolved against an async database: the call answers from the shared mapping, and that user's
     own skill appears once their prompt has been built."""
     await _seed_async_owned_skills(async_sqlite_db)
-    await async_sqlite_db.create_skill({"name": "carol-private", "description": "C", "instructions": "i", "user_id": "carol"})
+    await async_sqlite_db.create_skill(
+        {"name": "carol-private", "description": "C", "instructions": "i", "user_id": "carol"}
+    )
     skills = Skills(loaders=[DbSkills(async_sqlite_db)])
     await skills.aget_system_prompt_snippet(user_id="bob")
 
