@@ -874,3 +874,60 @@ async def test_run_workflow_stream_forwards_request_headers():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+@pytest.mark.asyncio
+async def test_get_session_runs_without_limit_returns_list():
+    client = AgentOSClient(base_url="http://localhost:7777")
+    with patch.object(client, "_aget", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = [{"run_id": "run-0", "run_index": 0, "agent_id": "agent-1"}]
+        result = await client.get_session_runs("session-1")
+
+        assert isinstance(result, list)
+        assert result[0].run_index == 0
+        assert "limit" not in mock_get.call_args.kwargs["params"]
+
+
+@pytest.mark.asyncio
+async def test_get_session_runs_with_limit_returns_cursor_page():
+    from agno.os.schema import CursorPaginatedResponse
+
+    client = AgentOSClient(base_url="http://localhost:7777")
+    with patch.object(client, "_aget", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {
+            "data": [{"run_id": "run-3", "run_index": 3, "team_id": "team-1"}],
+            "meta": {"limit": 1, "total_count": 5, "has_more": True},
+        }
+        result = await client.get_session_runs("session-1", limit=1, before_run_index=4)
+
+        assert isinstance(result, CursorPaginatedResponse)
+        assert result.data[0].run_index == 3
+        assert result.meta.has_more is True
+        params = mock_get.call_args.kwargs["params"]
+        assert params["limit"] == 1
+        assert params["before_run_index"] == 4
+
+
+@pytest.mark.asyncio
+async def test_get_session_runs_keeps_positional_arguments():
+    """limit and the cursors are appended, so existing positional db_id/table/headers still bind correctly."""
+    client = AgentOSClient(base_url="http://localhost:7777")
+    with patch.object(client, "_aget", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = []
+        await client.get_session_runs("session-1", None, None, None, None, "db-1", "table-1", {"X-Test": "1"})
+
+        params = mock_get.call_args.kwargs["params"]
+        assert params == {"db_id": "db-1", "table": "table-1"}
+        assert mock_get.call_args.kwargs["headers"] == {"X-Test": "1"}
+
+
+@pytest.mark.asyncio
+async def test_get_session_run_previews():
+    client = AgentOSClient(base_url="http://localhost:7777")
+    with patch.object(client, "_aget", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = [{"run_id": "run-0", "run_index": 0, "input_preview": "hello"}]
+        result = await client.get_session_run_previews("session-1", user_id="user-1")
+
+        assert result[0].run_id == "run-0"
+        assert result[0].input_preview == "hello"
+        assert mock_get.call_args.args[0] == "/sessions/session-1/runs/previews"

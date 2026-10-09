@@ -2769,13 +2769,15 @@ def build_mcp_server(
         session_type_enum = SessionType(session_type) if session_type else None
 
         if isinstance(db, RemoteDb):
-            runs = await db.get_session_runs(
+            # No limit is passed (run_id may reference any run), so the endpoint returns every run as a list.
+            result = await db.get_session_runs(
                 session_id=session_id,
                 session_type=session_type_enum,
                 user_id=user_id,
                 db_id=db_id,
                 headers=_forwarded_auth_headers(),
             )
+            runs = result if isinstance(result, list) else result.data
         else:
             # SessionNotFoundError propagates as the tool error verbatim ("Session {id} not found").
             runs = await session_service.get_session_runs(
