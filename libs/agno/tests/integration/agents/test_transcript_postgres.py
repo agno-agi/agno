@@ -27,7 +27,7 @@ async def test_postgres_transcript_contract(async_db):
             self.prefix = uuid4().hex
 
         def store(self, project):
-            return AgnoSessionStore(db, self.prefix + project)
+            return AgnoSessionStore(db, self.prefix + project, "agno-session")
 
         async def append(self, key, entries):
             await self.store(key["project_key"]).append(key, entries)
@@ -58,7 +58,7 @@ async def test_postgres_transcript_contract(async_db):
             return Stores()
 
         await run_session_store_conformance(make)
-        store = AgnoSessionStore(db, "tenant")
+        store = AgnoSessionStore(db, "tenant", "agno-session")
         key = {"project_key": "cwd", "session_id": "s"}
         entry = {"uuid": str(uuid4()), "type": "user", "text": "fact"}
         await store.append(key, [entry])

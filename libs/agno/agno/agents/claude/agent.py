@@ -76,6 +76,7 @@ class ClaudeAgent(BaseExternalAgent):
     cwd: Optional[str] = None
     project_key: Optional[str] = None
     _store_warning_logged: bool = field(default=False, init=False, repr=False)
+    _warn_unstable_project_key: bool = field(default=False, init=False, repr=False)
     mcp_servers: Optional[Dict[str, Any]] = None
     options_kwargs: Dict[str, Any] = field(default_factory=dict)
     framework: str = "claude-agent-sdk"
@@ -87,11 +88,15 @@ class ClaudeAgent(BaseExternalAgent):
     _sdk_session_ids: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        # Without id or name, get_id() is random per process, so the default key cannot be shared across replicas.
+        self._warn_unstable_project_key = self.project_key is None and self.id is None and self.name is None
         super().__post_init__()
         if self.project_key is None:
             self.project_key = self.get_id()
 
-    def _build_options(self, *, streaming: bool = False, resume: Optional[str] = None) -> Any:
+    def _build_options(
+        self, *, streaming: bool = False, resume: Optional[str] = None, agno_session_id: Optional[str] = None
+    ) -> Any:
         """Build ClaudeAgentOptions from agent config."""
         sdk = _sdk()
 
@@ -124,12 +129,18 @@ class ClaudeAgent(BaseExternalAgent):
             opts["resume"] = resume
 
         opts.update(self.options_kwargs)
-        if self.db is not None:
+        if self.db is not None and agno_session_id is not None:
             base = AsyncBaseDb if isinstance(self.db, AsyncBaseDb) else BaseDb
             if type(self.db).append_transcript_entries is not base.append_transcript_entries:
                 from agno.agents.claude.session_store import AgnoSessionStore
 
-                opts["session_store"] = AgnoSessionStore(self.db, self.project_key or self.get_id())
+                opts["session_store"] = AgnoSessionStore(self.db, self.project_key or self.get_id(), agno_session_id)
+                if self._warn_unstable_project_key:
+                    log_warning(
+                        f"ClaudeAgent has no id, name or project_key; transcripts are stored under the generated key "
+                        f"'{self.project_key}' and other processes will not resume them. Set id or project_key."
+                    )
+                    self._warn_unstable_project_key = False
             elif not self._store_warning_logged:
                 log_debug("Claude SDK transcript storage is unavailable on this database; resume uses local files.")
                 self._store_warning_logged = True
@@ -170,9 +181,10 @@ class ClaudeAgent(BaseExternalAgent):
     ) -> AsyncIterator[Any]:
         """Run sdk.query() against the SDK session tied to this Agno session, recording its id.
 
-        The SDK transcript lives on local disk under the agent's cwd, so a stored id may not
-        be resumable (another host, changed cwd, deleted transcript). If the resume fails
-        before any message arrives, start a fresh SDK session seeded with the Agno history.
+        Without transcript storage on the db, the SDK transcript lives on local disk under the
+        agent's cwd, so a stored id may not be resumable (another host, changed cwd, deleted
+        transcript). If the SDK reports the session as missing before any message arrives, start
+        a fresh SDK session seeded with the Agno history; other failures keep the stored id.
         """
         sdk = _sdk()
         session = kwargs.get("session")
@@ -180,7 +192,11 @@ class ClaudeAgent(BaseExternalAgent):
         resume = self._get_sdk_session_id(session, session_id)
 
         while True:
-            options = self._build_options(streaming=streaming, resume=resume)
+            options = self._build_options(
+                streaming=streaming,
+                resume=resume,
+                agno_session_id=session.session_id if session is not None else None,
+            )
             prompt = self._build_prompt(input, history, resumed=resume is not None)
             received = False
             try:
@@ -197,13 +213,25 @@ class ClaudeAgent(BaseExternalAgent):
                     yield message
                 return
             except Exception as e:
-                if resume is None or received:
+                if resume is None or received or not self._is_missing_session(sdk, e):
                     raise
                 log_warning(
                     f"Claude SDK: could not resume session {resume} for session {session_id}: {e}. Starting a new one."
                 )
                 self._forget_sdk_session(session, session_id)
                 resume = None
+
+    @staticmethod
+    def _is_missing_session(sdk: Any, error: Exception) -> bool:
+        """True when the resume target has no transcript, as opposed to a failed run such as an API error."""
+        reported = [error, getattr(error, "result", None), *(getattr(error, "errors", None) or [])]
+        if any("No conversation found" in str(part) for part in reported if part):
+            return True
+        # SDKs without ResultError report a missing transcript only as a bare exit-code ProcessError.
+        result_error = getattr(sdk, "ResultError", None)
+        return isinstance(error, sdk.ProcessError) and not (
+            result_error is not None and isinstance(error, result_error)
+        )
 
     @staticmethod
     def _mirror_warning(message: Any) -> Optional[Dict[str, Any]]:
@@ -273,7 +301,6 @@ class ClaudeAgent(BaseExternalAgent):
                         tool.tool_call_error = bool(getattr(block, "is_error", False))
 
             elif isinstance(message, sdk.ResultMessage):
-                self._check_result_message(sdk, message)
                 if hasattr(message, "result") and message.result:
                     final_result = str(message.result)
 
@@ -382,6 +409,3 @@ class ClaudeAgent(BaseExternalAgent):
                                     result=result_str,
                                 ),
                             )
-
-            elif isinstance(message, sdk.ResultMessage):
-                self._check_result_message(sdk, message)
