@@ -61,6 +61,7 @@ class FakeState:
     def __init__(self) -> None:
         self.notifications: List[Any] = []
         self.final_response: Optional[str] = "final"
+        self.usage: Any = None
         self.unresumable: set = set()
         self.thread_counter = 0
         self.calls: List[Dict[str, Any]] = []
@@ -71,7 +72,9 @@ class FakeHandle:
         self._state = state
 
     async def run(self):
-        return SimpleNamespace(final_response=self._state.final_response, items=[], status="completed", usage=None)
+        return SimpleNamespace(
+            final_response=self._state.final_response, items=[], status="completed", usage=self._state.usage
+        )
 
     async def interrupt(self):
         pass
@@ -632,3 +635,63 @@ async def test_interrupted_sdk_turn_is_cancelled(fake_sdk, monkeypatch, stream):
         assert events[-1].status == RunStatus.cancelled
     else:
         assert (await agent.arun("go")).status == RunStatus.cancelled
+
+
+# ---------------------------------------------------------------------------
+# Metrics
+# ---------------------------------------------------------------------------
+
+
+def _usage(input_tokens=14675, cached=11008, output=5, reasoning=0, total=14680) -> Any:
+    last = SimpleNamespace(
+        input_tokens=input_tokens,
+        cached_input_tokens=cached,
+        output_tokens=output,
+        reasoning_output_tokens=reasoning,
+        total_tokens=total,
+        cache_write_input_tokens=0,
+    )
+    return SimpleNamespace(last=last, total=last, model_context_window=258400)
+
+
+def _token_usage_updated(usage: Any) -> Any:
+    return SimpleNamespace(method="thread/tokenUsage/updated", payload=SimpleNamespace(token_usage=usage))
+
+
+def test_non_stream_run_reports_turn_usage(fake_sdk, tmp_db):
+    fake_sdk.usage = _usage()
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db, model="gpt-5.6-luna")
+    out = asyncio.run(agent._arun_non_stream("ping", session_id="s1"))
+    metrics = out.metrics
+    assert metrics is not None
+    assert (metrics.input_tokens, metrics.output_tokens, metrics.total_tokens) == (14675, 5, 14680)
+    assert metrics.cache_read_tokens == 11008 and metrics.cost is None
+    assert metrics.duration is not None
+    [model] = metrics.details["model"]
+    assert (model.id, model.provider) == ("gpt-5.6-luna", "openai")
+
+
+def test_stream_reports_usage_from_the_token_usage_notification(fake_sdk, tmp_db):
+    fake_sdk.notifications = [
+        _delta("m1", "pong"),
+        _token_usage_updated(_usage(output=7, total=14682)),
+        _turn_completed(),
+    ]
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db, model="gpt-5.6-luna")
+    events = _collect(agent, "ping", session_id="s1")
+    assert not [e for e in events if type(e).__name__ == "ExternalRunMetricsEvent"]
+    completed = [e for e in events if isinstance(e, RunCompletedEvent)][-1]
+    assert completed.metrics is not None and completed.metrics.output_tokens == 7
+    totals = agent.get_session("s1").session_data["session_metrics"]
+    assert totals["total_tokens"] == 14682
+
+
+def test_session_metrics_accumulate_across_codex_runs(fake_sdk, tmp_db):
+    fake_sdk.usage = _usage()
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db, model="gpt-5.6-luna")
+    asyncio.run(agent._arun_non_stream("one", session_id="s1"))
+    asyncio.run(agent._arun_non_stream("two", session_id="s1"))
+    totals = agent.get_session("s1").session_data["session_metrics"]
+    assert totals["total_tokens"] == 2 * 14680 and totals["cache_read_tokens"] == 2 * 11008
+    [model] = totals["details"]["model"]
+    assert model["id"] == "gpt-5.6-luna" and model["input_tokens"] == 2 * 14675

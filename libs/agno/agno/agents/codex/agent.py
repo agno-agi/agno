@@ -4,8 +4,9 @@ from importlib import import_module
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Set, Tuple
 from uuid import uuid4
 
-from agno.agents.base import BaseExternalAgent, ExternalRunResult
+from agno.agents.base import BaseExternalAgent, ExternalRunMetricsEvent, ExternalRunResult
 from agno.exceptions import RunCancelledException
+from agno.metrics import ModelMetrics, RunMetrics
 from agno.models.response import ToolExecution
 from agno.run.agent import (
     RunContentEvent,
@@ -80,6 +81,7 @@ class _StreamState:
     emitted_text: bool = False
     tool_info: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     error: Optional[str] = None
+    usage: Any = None
 
 
 @dataclass
@@ -349,7 +351,9 @@ class CodexAgent(BaseExternalAgent):
             if tool is not None:
                 tool.result = self._tool_result_from_item(item)
                 tools.append(tool)
-        return ExternalRunResult(self._final_text(result), tools or None)
+        return ExternalRunResult(
+            self._final_text(result), tools or None, metrics=self._metrics_from_usage(getattr(result, "usage", None))
+        )
 
     @staticmethod
     def _final_text(result: Any) -> str:
@@ -393,6 +397,30 @@ class CodexAgent(BaseExternalAgent):
 
         if state.error:
             raise RuntimeError(f"Codex turn failed: {state.error}")
+        metrics = self._metrics_from_usage(state.usage)
+        if metrics is not None:
+            yield ExternalRunMetricsEvent(run_id=run_id, agent_id=self.get_id(), metrics=metrics)
+
+    def _metrics_from_usage(self, usage: Any) -> Optional[RunMetrics]:
+        """Map the turn's token usage to RunMetrics.
+
+        Codex reports input_tokens inclusive of the cached prefix, like the OpenAI API, and
+        reports no cost. ``usage.last`` is this turn; ``usage.total`` is the whole thread.
+        """
+        last = getattr(usage, "last", None)
+        if last is None:
+            return None
+        model = ModelMetrics(
+            id=self.model or "codex",
+            provider="openai",
+            input_tokens=int(getattr(last, "input_tokens", 0) or 0),
+            output_tokens=int(getattr(last, "output_tokens", 0) or 0),
+            total_tokens=int(getattr(last, "total_tokens", 0) or 0),
+            cache_read_tokens=int(getattr(last, "cached_input_tokens", 0) or 0),
+            cache_write_tokens=int(getattr(last, "cache_write_input_tokens", 0) or 0),
+            reasoning_tokens=int(getattr(last, "reasoning_output_tokens", 0) or 0),
+        )
+        return self._build_metrics(model, [model])
 
     # ---------------------------------------------------------------------------
     # Notification translation
@@ -416,6 +444,10 @@ class CodexAgent(BaseExternalAgent):
         method = getattr(notification, "method", "") or ""
         payload = getattr(notification, "payload", None)
         if payload is None:
+            return
+
+        if method == "thread/tokenUsage/updated":
+            state.usage = getattr(payload, "token_usage", None)
             return
 
         if method == "item/agentMessage/delta":

@@ -101,3 +101,23 @@ Tested 2026-10-08 with openai-codex 0.161.0 (bundled Codex CLI 0.161.0), model g
 **Result:** 736 unit/regression tests passed; 5 integration tests passed, none skipped. One existing AsyncMock warning arose in the unchanged native save-fencing test. Required format and validation scripts passed with SQLAlchemy 2.0.52.
 
 ---
+
+### codex_metrics.py
+
+**Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** One plain turn, one streamed turn, then the session totals. Checks that `RunOutput.metrics` and the `RunCompleted` event carry the turn's token usage and duration, and that `session_data["session_metrics"]` equals the sum of the two runs.
+
+**Result:** Run 1: 14693 input (14080 cached), 5 output, 14698 total, 4.5s. Run 2 (streamed): 15875 total, 4.7s. Session totals: 30573 tokens across 2 runs. Cost is unset because Codex does not report one.
+
+---
+
+### codex_metrics_agentos.py --verify
+
+**Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Through the AgentOS test client: a non-streamed run, a streamed run, then `GET /sessions/{id}`, `GET /sessions` and `GET /metrics`. Asserts the session total equals the two runs and that the daily aggregation counts both runs.
+
+**Result:** Run 1: 14700 tokens (11008 cached). Run 2 (RunCompleted event): 15877 tokens. Session: 30577; sessions list column 30577; metrics page agent_runs_count 2, total_tokens 30577.
+
+---
