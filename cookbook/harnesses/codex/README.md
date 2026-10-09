@@ -34,7 +34,10 @@ python cookbook/harnesses/codex/basic.py
 
 Inspect the answer and Agno run ID. An order of exactly 100 dollars qualifies
 for free shipping. This prompt contains the policy, so no file read is needed.
-The script checks terminal status and nonempty output. An error exits nonzero.
+The script uses `print_response()`, which displays the terminal status and raises
+on failed or cancelled runs, so errors exit nonzero. The method returns the final
+`RunOutput`; its async equivalent is `aprint_response()`. See the shared
+[3.2 migration notes](../README.md#adapter-api-changes-for-32).
 
 ## 2. Compare with the native SDK
 

@@ -115,3 +115,72 @@ Python files with Ruff formatting/lint and the Claude cookbook pattern checker.
 and 21 agnoctl files checked by mypy). Final validation passed again after the
 test updates. These checks do not establish disconnect recovery, native
 transcript restoration or production isolation.
+
+
+## Shared adapter DX for 3.2 — 2026-10-09
+
+**Source:** `924d4ceb90` plus this PR's adapter API update, in the normal checkout
+`/Users/ab/code/agno`. No worktree was used for this update.
+
+### Constructors, typing, rendering and AgentOS regressions
+
+**Status:** PASS
+
+**Description:** Ran `libs/agno/tests/unit/agents` together with the AgentOS
+schema, external background-stream and A2A interface unit modules. Tests cover
+all built-in keyword-only signatures, configuration grouping, read-only SDK
+identity, legacy metadata, explicit media rejection, sync/async rendering,
+terminal persistence before printer exceptions, and static return types.
+
+**Result:** 265 passed in 50.47s, including 55 new DX tests. Python 3.9.25 ran
+99 runtime cases successfully (one mypy-only test skipped because mypy was not
+installed in that environment). Python 3.9 checks used fake SDKs, not live native
+SDK packages. The main validation environment remains Python 3.12.8.
+
+The initial typing checks exposed an incorrect shared async return annotation
+and an incomplete cancellation-service type union; both are corrected. The
+first repository validation found a renderer-list annotation error, corrected
+before the final successful run.
+
+---
+
+### Live examples with the shared printer
+
+**Status:** PASS
+
+**Description:** Reran all nine opt-in acceptance cases, including both updated
+`basic.py` printers, native SDK comparisons, tool scripts, real HTTP/SSE and
+persisted tool results, and native Claude options reuse.
+
+**Result:** 9 passed in 61.99s; no skips or automatic retries. Claude used
+`claude-sonnet-5-5`; Codex used `gpt-5.6-luna`. SDK/CLI versions match the previous
+configuration update. Without opt-in flags, all nine cases skip as intended.
+Raw results are in this checkout's ignored `.context/external-dx/` directory.
+
+---
+
+### Final repository gates
+
+**Status:** PASS
+
+**Description:** Ran required `./scripts/format.sh` and `./scripts/validate.sh`
+in `.venvs/claude-dx-validation`; restored the formatter's unrelated baseline
+edits. Ran both provider pattern checks, compileall and whitespace checks.
+
+**Result:** Ruff and mypy pass (1113 Agno and 21 agnoctl source files); both
+four-file provider pattern checks pass. The runtime SDK packages are optional
+for construction. Native skill/plugin execution, disconnect recovery, durable
+retry, multi-replica deployment and sandbox isolation are not established by
+these checks.
+
+
+### Live failed-run printing
+
+**Status:** PASS
+
+**Description:** Loaded each basic example without its main block, changed the
+model only in memory to `invalid-harness-cookbook-model`, and invoked the printer.
+
+**Result:** Both native providers rejected the request. Each wrapper displayed
+`Run failed` and `Status: ERROR`, raised `AgentRunException`, and exited 1.
+No example source or model default was changed, and neither check was retried.

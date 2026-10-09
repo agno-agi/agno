@@ -41,8 +41,9 @@ orders. No editing of the sample project is required.
 
 The basic and native SDK examples contain the policy in the prompt. They
 establish a round trip, not file access. The tools example must actually read
-the fixture. Assertions make failed/error runs exit unsuccessfully instead of
-printing an error and passing the test.
+the fixture. The basic examples use `print_response()`, which returns a `RunOutput` and
+raises on errors or cancellation by default. Tool/native examples also check
+terminal results explicitly. Failed runs exit unsuccessfully.
 
 ## What this first set establishes
 
@@ -96,3 +97,39 @@ Next: native session recovery and storage failures; long conversations and
 compaction; background/queue/disconnect/retry/multi-replica exercises; step
 replay; skills/plugins/registry; interfaces and session-owned sandboxes.
 These are follow-up topics, not guarantees made by this first set.
+
+
+## Adapter API changes for 3.2
+
+Configure built-in adapters with keywords, for example `ClaudeAgent(name="Reviewer",
+model="claude-sonnet-5-5")`. Positional constructor arguments are no longer accepted.
+Related fields are grouped in the constructor signature; keyword calls keep their meaning.
+This applies to Claude, Codex, LangGraph, DSPy and Antigravity. Python 3.9 remains
+supported by the adapter layer; each native SDK has its own Python requirements.
+
+
+The integration is identified by read-only `agent.sdk`, selected by the agent class.
+For example, Claude uses `"claude-agent-sdk"` and Codex uses `"codex"`. Neither `sdk`
+nor `framework` is a constructor option. `agent.framework` remains a compatibility
+alias. API metadata and new session metadata include both keys; existing transcript
+storage namespaces and database columns keep their original names and values.
+
+`print_response()` and `aprint_response()` return the final `RunOutput`, including
+run ID, status and tools. Errors and cancellations are displayed explicitly and
+raise by default. To inspect an unsuccessful result without raising:
+
+```python
+result = agent.print_response("Review the project", raise_on_error=False)
+print(result.status)
+```
+
+The async equivalent is `result = await agent.aprint_response(...)`. Interactive
+printing rejects `background=True`; call `arun(background=True)` directly for
+background execution. Foreground streams yield event objects; background streams
+yield SSE strings. With `yield_run_output=True`, either stream appends a terminal
+`RunOutput`.
+
+Separate `images`, `audio`, `videos` and `files` inputs are rejected by the current
+adapters before work starts. Empty collections are accepted. This does not restrict
+file reads through the harness's native tools; it prevents uploaded inputs from
+being silently discarded. Media support needs an explicit adapter implementation.

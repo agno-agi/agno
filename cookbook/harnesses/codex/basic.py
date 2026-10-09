@@ -1,7 +1,7 @@
 """
 CodexAgent: First Run
 =======================
-Run one shipping-policy question and inspect the Agno RunOutput.
+Run one shipping-policy question and print the answer, run ID and terminal status.
 
 No Agno database is configured. This proves a model round trip, not session
 recovery. Compare native_sdk.py for the same prompt without the Agno adapter.
@@ -12,8 +12,6 @@ import os
 from pathlib import Path
 
 from agno.agents.codex import CodexAgent
-from agno.run.agent import RunOutput
-from agno.run.base import RunStatus
 
 # ---------------------------------------------------------------------------
 # Configure the Example
@@ -37,9 +35,4 @@ agent = CodexAgent(
 # Run the Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    result = agent.run(prompt)
-    assert isinstance(result, RunOutput)
-    assert result.status == RunStatus.completed, result.content
-    assert result.content, "The harness completed without an answer"
-    print(result.content)
-    print(f"Run: {result.run_id} | Status: {result.status.value}")
+    agent.print_response(prompt, stream=False)

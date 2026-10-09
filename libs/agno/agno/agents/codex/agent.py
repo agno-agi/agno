@@ -1,9 +1,10 @@
 import json
 from dataclasses import dataclass, field
 from importlib import import_module
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Set, Tuple
+from typing import Any, AsyncIterator, ClassVar, Dict, Iterator, List, Optional, Set, Tuple
 from uuid import uuid4
 
+from agno.agents._config import agent_dataclass
 from agno.agents.base import BaseExternalAgent, ExternalRunResult
 from agno.exceptions import RunCancelledException
 from agno.models.response import ToolExecution
@@ -82,7 +83,7 @@ class _StreamState:
     error: Optional[str] = None
 
 
-@dataclass
+@agent_dataclass
 class CodexAgent(BaseExternalAgent):
     """Adapter for OpenAI Codex via the official Codex Python SDK (openai-codex).
 
@@ -129,31 +130,30 @@ class CodexAgent(BaseExternalAgent):
         AgentOS(agents=[agent])
     """
 
+    # Model and instructions
     model: Optional[str] = None
     instructions: Optional[str] = None
     base_instructions: Optional[str] = None
+    reasoning_effort: Optional[str] = None
+    output_schema: Optional[Dict[str, Any]] = None
+    # Workspace and settings
+    cwd: Optional[str] = None
     sandbox: Optional[str] = None
     approval_mode: Optional[str] = None
-    reasoning_effort: Optional[str] = None
-    cwd: Optional[str] = None
     ephemeral: Optional[bool] = None
-    output_schema: Optional[Dict[str, Any]] = None
+    # Native runtime configuration
     config: Optional[Dict[str, Any]] = None
     codex_bin: Optional[str] = None
     env: Optional[Dict[str, str]] = None
     thread_kwargs: Dict[str, Any] = field(default_factory=dict)
     turn_kwargs: Dict[str, Any] = field(default_factory=dict)
-    framework: str = "codex"
 
-    # Key under which the Codex thread id is stored in the Agno session's session_data.
+    _sdk_name: ClassVar[str] = "codex"
+    # Key under which the Codex thread id is stored in the Agno session.
     _THREAD_KEY = "codex_thread_id"
 
     # Fallback Agno session_id -> Codex thread id map, used when no db is configured.
     _thread_ids: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
-
-    # ---------------------------------------------------------------------------
-    # Authentication helpers
-    # ---------------------------------------------------------------------------
 
     def login_api_key(self, api_key: str) -> None:
         """Store an API key in the Codex CLI auth so future runs are authenticated."""

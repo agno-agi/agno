@@ -268,7 +268,8 @@ class AgentSummaryResponse(BaseModel):
     def from_agent(cls, agent: Union[Agent, AgentProtocol, RemoteAgent, AgentFactory]) -> "AgentSummaryResponse":
         agent_db = getattr(agent, "db", None)
         framework = getattr(agent, "framework", None)
-        metadata = {"framework": framework} if framework else None
+        sdk = getattr(agent, "sdk", None) or framework
+        metadata = {"sdk": sdk, "framework": framework or sdk} if sdk else None
         if isinstance(agent, AgentFactory):
             return cls(
                 id=agent.id,

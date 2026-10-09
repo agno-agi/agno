@@ -4,9 +4,24 @@ from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
 from time import time
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncIterator,
+    ClassVar,
+    Coroutine,
+    Dict,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+    Union,
+    overload,
+)
 from uuid import uuid4
 
+from agno.agents._config import agent_dataclass
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.exceptions import RunCancelledException
 from agno.media import Audio, File, Image, Video
@@ -18,7 +33,6 @@ from agno.run.agent import (
     RunCompletedEvent,
     RunContentEvent,
     RunErrorEvent,
-    RunEvent,
     RunInput,
     RunOutput,
     RunOutputEvent,
@@ -76,13 +90,18 @@ class ExternalRunResult:
     warnings: Optional[List[Dict[str, Any]]] = None
 
 
-@dataclass
+@agent_dataclass
 class BaseExternalAgent:
-    """Base class for external framework adapters.
+    """Base class for external SDK and framework adapters.
+
+    Built-in adapters accept keyword-only configuration. sdk identifies the
+    integration and is read-only; framework remains a compatibility alias.
+    Separate media arguments are rejected unless an adapter explicitly supports
+    them. Printing returns the final RunOutput and raises on failure by default.
 
     Structurally satisfies the AgentProtocol (agno.agent.protocol) — any subclass
     that implements the two hooks below will automatically be compatible with
-    AgentOS routing, SSE streaming, and the agent os.
+    AgentOS routing, SSE streaming, and session storage.
 
     Provides shared infrastructure for:
     - ID and name management
@@ -99,9 +118,10 @@ class BaseExternalAgent:
     name: Optional[str] = None
     id: Optional[str] = None
     description: Optional[str] = None
-    framework: str = "external"
-    markdown: bool = True
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
+    markdown: bool = True
+
+    _sdk_name: ClassVar[str] = "external"
 
     def __post_init__(self) -> None:
         from agno.utils.string import generate_id_from_name
@@ -109,8 +129,23 @@ class BaseExternalAgent:
         if self.id is None:
             self.id = generate_id_from_name(self.name)
 
+    @property
+    def sdk(self) -> str:
+        """Integration identifier selected by the adapter, not a constructor option."""
+        # Older custom subclasses may still declare a framework field.
+        if self._sdk_name == "external":
+            legacy = vars(self).get("framework")
+            if isinstance(legacy, str):
+                return legacy
+        return self._sdk_name
+
+    @property
+    def framework(self) -> str:
+        """Compatibility alias for sdk; existing wire and storage keys are retained."""
+        return self.sdk
+
     def get_id(self) -> str:
-        """Return the agent ID, guaranteed non-None after __post_init__."""
+        """Return the agent ID, guaranteed non-None after construction."""
         return self.id or ""
 
     def as_tool(
@@ -139,6 +174,121 @@ class BaseExternalAgent:
     # Public async API (satisfies AgentProtocol protocol)
     # ---------------------------------------------------------------------------
 
+    @overload
+    def arun(
+        self,
+        input: Any,
+        *,
+        stream: Optional[Literal[False]] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        images: Optional[Sequence[Image]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        stream_events: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        background: bool = False,
+        yield_run_output: bool = False,
+        **kwargs: Any,
+    ) -> Coroutine[Any, Any, RunOutput]: ...
+
+    @overload
+    def arun(
+        self,
+        input: Any,
+        *,
+        stream: Literal[True],
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        images: Optional[Sequence[Image]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        stream_events: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        background: Literal[False] = False,
+        yield_run_output: Literal[False] = False,
+        **kwargs: Any,
+    ) -> AsyncIterator[RunOutputEvent]: ...
+
+    @overload
+    def arun(
+        self,
+        input: Any,
+        *,
+        stream: Literal[True],
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        images: Optional[Sequence[Image]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        stream_events: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        background: Literal[False] = False,
+        yield_run_output: Literal[True],
+        **kwargs: Any,
+    ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
+
+    @overload
+    def arun(
+        self,
+        input: Any,
+        *,
+        stream: Literal[True],
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        images: Optional[Sequence[Image]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        stream_events: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        background: Literal[True],
+        yield_run_output: Literal[False] = False,
+        **kwargs: Any,
+    ) -> AsyncIterator[str]: ...
+
+    @overload
+    def arun(
+        self,
+        input: Any,
+        *,
+        stream: Literal[True],
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        images: Optional[Sequence[Image]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        stream_events: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        background: Literal[True],
+        yield_run_output: Literal[True],
+        **kwargs: Any,
+    ) -> AsyncIterator[Union[str, RunOutput]]: ...
+
+    @overload
+    def arun(
+        self,
+        input: Any,
+        *,
+        stream: Literal[True],
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        images: Optional[Sequence[Image]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        stream_events: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        background: bool = False,
+        yield_run_output: bool = False,
+        **kwargs: Any,
+    ) -> AsyncIterator[Union[RunOutputEvent, RunOutput, str]]: ...
+
+    @overload
     def arun(
         self,
         input: Any,
@@ -151,11 +301,36 @@ class BaseExternalAgent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream_events: Optional[bool] = None,
-        background: bool = False,
         run_id: Optional[str] = None,
+        background: bool = False,
         yield_run_output: bool = False,
         **kwargs: Any,
-    ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
+    ) -> Union[Coroutine[Any, Any, RunOutput], AsyncIterator[Union[RunOutputEvent, RunOutput, str]]]: ...
+
+    def arun(
+        self,
+        input: Any,
+        *,
+        stream: Optional[bool] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        images: Optional[Sequence[Image]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        stream_events: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        background: bool = False,
+        yield_run_output: bool = False,
+        **kwargs: Any,
+    ) -> Union[Coroutine[Any, Any, RunOutput], AsyncIterator[Union[RunOutputEvent, RunOutput, str]]]:
+        """Await a result, or iterate events when stream=True.
+
+        yield_run_output appends the terminal RunOutput to a stream. Background
+        streams yield SSE strings rather than event objects. Separate media
+        arguments require adapter support; unsupported media fails before work starts.
+        """
+        kwargs.update(self._media_kwargs(images=images, audio=audio, videos=videos, files=files))
         run_id = run_id or str(uuid4())
         session_id = session_id or str(uuid4())
         kwargs.update(run_id=run_id, session_id=session_id, user_id=user_id)
@@ -164,14 +339,105 @@ class BaseExternalAgent:
                 raise ValueError("Background execution requires a database")
             if stream:
                 return self._arun_background_stream(input, yield_run_output=yield_run_output, **kwargs)
-            return self._astart_background(input, stream=False, yield_run_output=yield_run_output, **kwargs)  # type: ignore[return-value]
+            return self._astart_background(input, stream=False, yield_run_output=yield_run_output, **kwargs)
         if stream:
             return self._arun_stream(input, yield_run_output=yield_run_output, **kwargs)
-        return self._arun_non_stream(input, **kwargs)  # type: ignore[return-value]
+        return self._arun_non_stream(input, **kwargs)
 
-    # ---------------------------------------------------------------------------
-    # Public sync API (convenience wrappers)
-    # ---------------------------------------------------------------------------
+    @overload
+    def run(
+        self,
+        input: Any,
+        *,
+        stream: Literal[False] = False,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        images: Optional[Sequence[Image]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        stream_events: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        background: bool = False,
+        yield_run_output: bool = False,
+        **kwargs: Any,
+    ) -> RunOutput: ...
+
+    @overload
+    def run(
+        self,
+        input: Any,
+        *,
+        stream: Literal[True],
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        images: Optional[Sequence[Image]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        stream_events: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        background: Literal[False] = False,
+        yield_run_output: Literal[False] = False,
+        **kwargs: Any,
+    ) -> Iterator[RunOutputEvent]: ...
+
+    @overload
+    def run(
+        self,
+        input: Any,
+        *,
+        stream: Literal[True],
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        images: Optional[Sequence[Image]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        stream_events: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        background: Literal[False] = False,
+        yield_run_output: Literal[True],
+        **kwargs: Any,
+    ) -> Iterator[Union[RunOutputEvent, RunOutput]]: ...
+
+    @overload
+    def run(
+        self,
+        input: Any,
+        *,
+        stream: Literal[True],
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        images: Optional[Sequence[Image]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        stream_events: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        background: bool = False,
+        yield_run_output: bool = False,
+        **kwargs: Any,
+    ) -> Iterator[Union[RunOutputEvent, RunOutput]]: ...
+
+    @overload
+    def run(
+        self,
+        input: Any,
+        *,
+        stream: bool = False,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        images: Optional[Sequence[Image]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        stream_events: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        background: bool = False,
+        yield_run_output: bool = False,
+        **kwargs: Any,
+    ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]: ...
 
     def run(
         self,
@@ -180,30 +446,53 @@ class BaseExternalAgent:
         stream: bool = False,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        images: Optional[Sequence[Image]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        stream_events: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        background: bool = False,
+        yield_run_output: bool = False,
         **kwargs: Any,
-    ) -> Union[RunOutput, Iterator[RunOutputEvent]]:
-        """Synchronous run. Dispatches to the async internals."""
-        if kwargs.pop("background", False):
+    ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
+        """Run synchronously, or iterate events when stream=True.
+
+        Background work requires arun on a persistent event loop. With
+        yield_run_output=True, a stream ends with the terminal RunOutput.
+        """
+        if background:
             raise ValueError("Use arun(background=True) on a persistent event loop")
+        kwargs.update(self._media_kwargs(images=images, audio=audio, videos=videos, files=files))
+        if run_id is not None:
+            kwargs["run_id"] = run_id
         if stream:
-            return self._run_stream(input, session_id=session_id, user_id=user_id, **kwargs)
-        else:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
+            return self._run_stream(
+                input, session_id=session_id, user_id=user_id, yield_run_output=yield_run_output, **kwargs
+            )
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            import concurrent.futures
 
-            if loop and loop.is_running():
-                import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(
+                    asyncio.run,
+                    self._arun_non_stream(input, session_id=session_id, user_id=user_id, **kwargs),
+                ).result()
+        return asyncio.run(self._arun_non_stream(input, session_id=session_id, user_id=user_id, **kwargs))
 
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    result = pool.submit(
-                        asyncio.run,
-                        self._arun_non_stream(input, session_id=session_id, user_id=user_id, **kwargs),
-                    ).result()
-                return result
-            else:
-                return asyncio.run(self._arun_non_stream(input, session_id=session_id, user_id=user_id, **kwargs))
+    def _media_kwargs(self, **media: Any) -> Dict[str, Any]:
+        """Adapters supporting media must override this and forward it to their SDK."""
+        provided = [name for name, values in media.items() if values]
+        if provided:
+            raise ValueError(
+                f"{type(self).__name__} does not support separate {', '.join(provided)} inputs. "
+                "Use text input or the adapter's documented native input format."
+            )
+        return {}
 
     def print_response(
         self,
@@ -214,117 +503,42 @@ class BaseExternalAgent:
         user_id: Optional[str] = None,
         markdown: Optional[bool] = None,
         show_message: bool = True,
+        raise_on_error: bool = True,
         **kwargs: Any,
-    ) -> None:
-        """Print agent response to terminal with Rich formatting."""
-        from rich.console import Console, Group
+    ) -> RunOutput:
+        """Render progress and return the terminal result.
+
+        Errors and cancellations raise after rendering by default. Set
+        raise_on_error=False to inspect unsuccessful results directly.
+        Background execution is not supported by this interactive helper.
+        """
+        from rich.console import Console
         from rich.live import Live
-        from rich.markdown import Markdown
-        from rich.status import Status
-        from rich.text import Text
 
-        from agno.utils.response import create_panel, format_tool_calls
+        from agno.agents._response import ResponseDisplay
 
+        if kwargs.pop("background", False):
+            raise ValueError("Use arun(background=True) directly for background execution")
+        kwargs.pop("yield_run_output", None)
+        display = ResponseDisplay(
+            label=self.name or self.sdk,
+            input=input,
+            markdown=self.markdown if markdown is None else markdown,
+            show_message=show_message,
+        )
         console = Console()
-        use_markdown = markdown if markdown is not None else self.markdown
-        accumulated_tool_calls: List[ToolExecution] = []
-
         if stream:
-            _response_content: str = ""
-
-            with Live(console=console) as live_log:
-                status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
-                live_log.update(status)
-
-                panels: list = [status]
-                if show_message and input is not None:
-                    message_panel = create_panel(
-                        content=Text(str(input), style="green"),
-                        title="Message",
-                        border_style="cyan",
-                    )
-                    panels.append(message_panel)
-                    live_log.update(Group(*panels))
-
-                for event in self.run(input=input, stream=True, session_id=session_id, user_id=user_id, **kwargs):  # type: ignore[union-attr]
-                    if event.event == RunEvent.run_content.value:  # type: ignore
-                        if hasattr(event, "content") and isinstance(event.content, str):
-                            _response_content += event.content
-
-                    if (
-                        event.event == RunEvent.tool_call_started.value
-                        and hasattr(event, "tool")
-                        and event.tool is not None
-                    ):  # type: ignore
-                        accumulated_tool_calls.append(event.tool)  # type: ignore
-
-                    # Rebuild panels
-                    panels = [status]
-                    if show_message and input is not None:
-                        message_panel = create_panel(
-                            content=Text(str(input), style="green"),
-                            title="Message",
-                            border_style="cyan",
-                        )
-                        panels.append(message_panel)
-
-                    if accumulated_tool_calls:
-                        formatted = format_tool_calls(accumulated_tool_calls)
-                        tool_text = Text("\n".join(f" - {tc}" for tc in formatted))
-                        tool_panel = create_panel(content=tool_text, title="Tool Calls", border_style="yellow")
-                        panels.append(tool_panel)
-
-                    if _response_content:
-                        if use_markdown:
-                            content_renderable: Any = Markdown(_response_content)
-                        else:
-                            content_renderable = Text(_response_content)
-                        response_panel = create_panel(
-                            content=content_renderable,
-                            title=f"Response ({self.framework}:{self.name})",
-                            border_style="blue",
-                        )
-                        panels.append(response_panel)
-
-                    live_log.update(Group(*panels))
-
-                # Final update: remove spinner
-                panels = [p for p in panels if not isinstance(p, Status)]
-                live_log.update(Group(*panels))
+            with Live(display.render(), console=console) as live:
+                for event in self.run(
+                    input, stream=True, session_id=session_id, user_id=user_id, yield_run_output=True, **kwargs
+                ):
+                    display.update(event)
+                    live.update(display.render())
+                live.update(display.render(finished=True))
         else:
-            run_output = self.run(input=input, stream=False, session_id=session_id, user_id=user_id, **kwargs)
-            assert isinstance(run_output, RunOutput)
-
-            panels = []
-            if show_message and input is not None:
-                message_panel = create_panel(
-                    content=Text(str(input), style="green"),
-                    title="Message",
-                    border_style="cyan",
-                )
-                panels.append(message_panel)
-
-            if run_output.tools:
-                formatted = format_tool_calls(run_output.tools)
-                tool_text = Text("\n".join(f" - {tc}" for tc in formatted))
-                tool_panel = create_panel(content=tool_text, title="Tool Calls", border_style="yellow")
-                panels.append(tool_panel)
-
-            content = run_output.content or ""
-            if use_markdown and isinstance(content, str):
-                content_renderable = Markdown(content)
-            elif isinstance(content, str):
-                content_renderable = Text(content)
-            else:
-                content_renderable = Text(str(content))
-
-            response_panel = create_panel(
-                content=content_renderable,
-                title=f"Response ({self.framework}:{self.name})",
-                border_style="blue",
-            )
-            panels.append(response_panel)
-            console.print(Group(*panels))
+            display.update(self.run(input, stream=False, session_id=session_id, user_id=user_id, **kwargs))
+            console.print(display.render(finished=True))
+        return display.finish(raise_on_error=raise_on_error)
 
     async def aprint_response(
         self,
@@ -335,114 +549,42 @@ class BaseExternalAgent:
         user_id: Optional[str] = None,
         markdown: Optional[bool] = None,
         show_message: bool = True,
+        raise_on_error: bool = True,
         **kwargs: Any,
-    ) -> None:
-        """Async version of print_response."""
-        from rich.console import Console, Group
+    ) -> RunOutput:
+        """Render progress and return the terminal result.
+
+        Errors and cancellations raise after rendering by default. Set
+        raise_on_error=False to inspect unsuccessful results directly.
+        Background execution is not supported by this interactive helper.
+        """
+        from rich.console import Console
         from rich.live import Live
-        from rich.markdown import Markdown
-        from rich.status import Status
-        from rich.text import Text
 
-        from agno.utils.response import create_panel, format_tool_calls
+        from agno.agents._response import ResponseDisplay
 
+        if kwargs.pop("background", False):
+            raise ValueError("Use arun(background=True) directly for background execution")
+        kwargs.pop("yield_run_output", None)
+        display = ResponseDisplay(
+            label=self.name or self.sdk,
+            input=input,
+            markdown=self.markdown if markdown is None else markdown,
+            show_message=show_message,
+        )
         console = Console()
-        use_markdown = markdown if markdown is not None else self.markdown
-        accumulated_tool_calls: List[ToolExecution] = []
-
         if stream:
-            _response_content: str = ""
-
-            with Live(console=console) as live_log:
-                status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
-                live_log.update(status)
-
-                panels: list = [status]
-                if show_message and input is not None:
-                    message_panel = create_panel(
-                        content=Text(str(input), style="green"),
-                        title="Message",
-                        border_style="cyan",
-                    )
-                    panels.append(message_panel)
-                    live_log.update(Group(*panels))
-
-                async for event in self._arun_stream(input, session_id=session_id, user_id=user_id, **kwargs):
-                    if event.event == RunEvent.run_content.value:  # type: ignore
-                        if hasattr(event, "content") and isinstance(event.content, str):
-                            _response_content += event.content
-
-                    if (
-                        event.event == RunEvent.tool_call_started.value
-                        and hasattr(event, "tool")
-                        and event.tool is not None
-                    ):  # type: ignore
-                        accumulated_tool_calls.append(event.tool)  # type: ignore
-
-                    panels = [status]
-                    if show_message and input is not None:
-                        message_panel = create_panel(
-                            content=Text(str(input), style="green"),
-                            title="Message",
-                            border_style="cyan",
-                        )
-                        panels.append(message_panel)
-
-                    if accumulated_tool_calls:
-                        formatted = format_tool_calls(accumulated_tool_calls)
-                        tool_text = Text("\n".join(f" - {tc}" for tc in formatted))
-                        tool_panel = create_panel(content=tool_text, title="Tool Calls", border_style="yellow")
-                        panels.append(tool_panel)
-
-                    if _response_content:
-                        if use_markdown:
-                            content_renderable: Any = Markdown(_response_content)
-                        else:
-                            content_renderable = Text(_response_content)
-                        response_panel = create_panel(
-                            content=content_renderable,
-                            title=f"Response ({self.framework}:{self.name})",
-                            border_style="blue",
-                        )
-                        panels.append(response_panel)
-
-                    live_log.update(Group(*panels))
-
-                panels = [p for p in panels if not isinstance(p, Status)]
-                live_log.update(Group(*panels))
+            with Live(display.render(), console=console) as live:
+                async for event in self.arun(
+                    input, stream=True, session_id=session_id, user_id=user_id, yield_run_output=True, **kwargs
+                ):
+                    display.update(event)
+                    live.update(display.render())
+                live.update(display.render(finished=True))
         else:
-            run_output = await self._arun_non_stream(input, session_id=session_id, user_id=user_id, **kwargs)
-
-            panels = []
-            if show_message and input is not None:
-                message_panel = create_panel(
-                    content=Text(str(input), style="green"),
-                    title="Message",
-                    border_style="cyan",
-                )
-                panels.append(message_panel)
-
-            if run_output.tools:
-                formatted = format_tool_calls(run_output.tools)
-                tool_text = Text("\n".join(f" - {tc}" for tc in formatted))
-                tool_panel = create_panel(content=tool_text, title="Tool Calls", border_style="yellow")
-                panels.append(tool_panel)
-
-            content = run_output.content or ""
-            if use_markdown and isinstance(content, str):
-                content_renderable = Markdown(content)
-            elif isinstance(content, str):
-                content_renderable = Text(content)
-            else:
-                content_renderable = Text(str(content))
-
-            response_panel = create_panel(
-                content=content_renderable,
-                title=f"Response ({self.framework}:{self.name})",
-                border_style="blue",
-            )
-            panels.append(response_panel)
-            console.print(Group(*panels))
+            display.update(await self.arun(input, stream=False, session_id=session_id, user_id=user_id, **kwargs))
+            console.print(display.render(finished=True))
+        return display.finish(raise_on_error=raise_on_error)
 
     # ---------------------------------------------------------------------------
     # Session persistence helpers
@@ -455,7 +597,7 @@ class BaseExternalAgent:
             agent_id=self.get_id(),
             user_id=user_id,
             session_data={},
-            agent_data={"agent_id": self.id, "agent_name": self.name, "framework": self.framework},
+            agent_data={"agent_id": self.id, "agent_name": self.name, "sdk": self.sdk, "framework": self.sdk},
             metadata={},
             runs=[],
             created_at=int(time()),
@@ -551,7 +693,7 @@ class BaseExternalAgent:
                     # Adapter not ported to v3 storage; runs persist inline via upsert_session
                     pass
         except Exception as upsert_err:
-            log_warning(f"Failed to persist run for {self.framework} agent '{self.id}': {upsert_err}")
+            log_warning(f"Failed to persist run for {self.sdk} agent '{self.id}': {upsert_err}")
             if strict or worker_owned:
                 raise
 
@@ -997,7 +1139,7 @@ class BaseExternalAgent:
                 run_id, session_id, user_id, input, "Run cancelled", RunStatus.cancelled
             )
         except Exception as error:
-            log_exception(f"Error in {self.framework} agent '{self.id}': {error}")
+            log_exception(f"Error in {self.sdk} agent '{self.id}': {error}")
             run_output = self._build_run_output(run_id, session_id, user_id, input, str(error), RunStatus.error)
         if session is not None:
             await self._apersist_run_in_session(session, run_output)
@@ -1037,7 +1179,7 @@ class BaseExternalAgent:
         except RunCancelledException:
             status = RunStatus.cancelled
         except Exception as error:
-            log_exception(f"Error in {self.framework} agent '{self.id}': {error}")
+            log_exception(f"Error in {self.sdk} agent '{self.id}': {error}")
             run_error = error
             status = RunStatus.error
         run = self._build_run_output(
@@ -1071,7 +1213,7 @@ class BaseExternalAgent:
         if yield_run_output:
             yield run
 
-    def _run_stream(self, input: Any, **kwargs: Any) -> Iterator[RunOutputEvent]:
+    def _run_stream(self, input: Any, **kwargs: Any) -> Iterator[Union[RunOutputEvent, RunOutput]]:
         """Sync streaming wrapper. Runs the async stream on a background thread."""
         import queue
         import threading

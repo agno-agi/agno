@@ -72,3 +72,36 @@ unchanged. Used openai-codex 0.162.1, `gpt-5.6-luna`, and existing CLI credentia
 **Result:** All four passed; the combined suite passed nine cases in 70.28s.
 Each HTTP run retained one successful shell tool result. The fixture remained
 unchanged and the answers gave fees 8, 0, 0. See the root log for environment details.
+
+
+## Shared adapter API update — 2026-10-09
+
+### basic.py, native_sdk.py, tools.py and agent_os.py
+
+**Status:** PASS
+
+**Description:** Reran the combined opt-in live suite after switching basic.py
+to the shared failure-aware printer and making adapter constructors keyword-only.
+
+**Result:** All nine Claude/Codex cases passed in 61.99s, including the four
+Codex script/HTTP cases. The full run also checks native Claude options.
+Model and SDK versions are unchanged from the preceding entry. Runs used the
+normal checkout at `924d4ceb90` plus the API update. Fixture integrity and stored
+tool output checks passed. Full evidence and limits are in the
+[root test log](../TEST_LOG.md#shared-adapter-dx-for-32--2026-10-09).
+
+The shared regression suite passed 265 cases, including both sync/async printers
+for success, error and cancellation, keyword-only signatures, unsupported media
+rejection, SDK metadata compatibility and public typing.
+
+
+### Live failed-run printing
+
+**Status:** PASS
+
+**Description:** Loaded each basic example without its main block, changed the
+model only in memory to `invalid-harness-cookbook-model`, and invoked the printer.
+
+**Result:** Both native providers rejected the request. Each wrapper displayed
+`Run failed` and `Status: ERROR`, raised `AgentRunException`, and exited 1.
+No example source or model default was changed, and neither check was retried.

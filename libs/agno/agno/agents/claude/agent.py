@@ -1,9 +1,10 @@
 import warnings
-from dataclasses import dataclass, field, fields
+from dataclasses import field, fields
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, ClassVar, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
+from agno.agents._config import agent_dataclass
 from agno.agents.base import BaseExternalAgent, ExternalRunResult, ExternalRunWarningEvent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.models.response import ToolExecution
@@ -51,7 +52,7 @@ def _sdk() -> Any:
         raise ImportError("claude-agent-sdk is required: pip install claude-agent-sdk") from e
 
 
-@dataclass
+@agent_dataclass
 class ClaudeAgent(BaseExternalAgent):
     """Adapter for the Claude Agent SDK (claude-agent-sdk).
 
@@ -104,30 +105,36 @@ class ClaudeAgent(BaseExternalAgent):
         AgentOS(agents=[agent])
     """
 
-    system_prompt: Optional[Union[str, "SystemPromptPreset", "SystemPromptCustom", "SystemPromptFile"]] = None
+    # Model and instructions
     model: Optional[str] = None
+    system_prompt: Optional[Union[str, "SystemPromptPreset", "SystemPromptCustom", "SystemPromptFile"]] = None
+    # Workspace and settings
+    cwd: Optional[Union[str, Path]] = None
+    project_key: Optional[str] = None
+    setting_sources: Optional[List["SettingSource"]] = None
+    # Tools and permissions
+    tools: Optional[Union[List[str], "ToolsPreset"]] = None
     allowed_tools: Optional[List[str]] = None
     disallowed_tools: Optional[List[str]] = None
     permission_mode: Optional["PermissionMode"] = None
+    mcp_servers: Optional[Union[Dict[str, "McpServerConfig"], str, Path]] = None
+    strict_mcp_config: Optional[bool] = None
+    # Extensions
+    skills: Optional[Union[List[str], Literal["all"]]] = None
+    plugins: Optional[List["SdkPluginConfig"]] = None
+    # Execution limits
     max_turns: Optional[int] = None
     max_budget_usd: Optional[float] = None
-    cwd: Optional[Union[str, Path]] = None
-    project_key: Optional[str] = None
+    # Advanced native configuration
+    options: Optional["ClaudeAgentOptions"] = None
+    options_kwargs: Dict[str, Any] = field(default_factory=dict)
+
+    _sdk_name: ClassVar[str] = "claude-agent-sdk"
+    # Key under which the SDK session id is stored in the Agno session.
+    _SESSION_KEY = "claude_sdk_session_id"
     _store_warning_logged: bool = field(default=False, init=False, repr=False)
     _warn_unstable_project_key: bool = field(default=False, init=False, repr=False)
     _store_skipped_logged: bool = field(default=False, init=False, repr=False)
-    mcp_servers: Optional[Union[Dict[str, "McpServerConfig"], str, Path]] = None
-    options_kwargs: Dict[str, Any] = field(default_factory=dict)
-    framework: str = "claude-agent-sdk"
-    options: Optional["ClaudeAgentOptions"] = None
-    tools: Optional[Union[List[str], "ToolsPreset"]] = None
-    setting_sources: Optional[List["SettingSource"]] = None
-    strict_mcp_config: Optional[bool] = None
-    skills: Optional[Union[List[str], Literal["all"]]] = None
-    plugins: Optional[List["SdkPluginConfig"]] = None
-
-    # Key under which the SDK session id is stored in the Agno session's session_data.
-    _SESSION_KEY = "claude_sdk_session_id"
 
     # Fallback Agno session_id -> SDK session id map, used when no db is configured.
     _sdk_session_ids: Dict[str, str] = field(default_factory=dict, init=False, repr=False)

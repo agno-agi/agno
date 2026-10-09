@@ -67,6 +67,7 @@ from agno.os.middleware.user_scope import (
 )
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.schema import (
+    AgentSummaryResponse,
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
@@ -2027,7 +2028,8 @@ def get_agent_router(
                             description=getattr(agent, "description", None),
                             db_id=agent_db.id if agent_db else None,
                             sessions=sessions,
-                            metadata={"framework": getattr(agent, "framework", "external")},
+                            metadata=AgentSummaryResponse.from_agent(agent).metadata
+                            or {"sdk": "external", "framework": "external"},
                         )
                     )
 
@@ -2130,7 +2132,8 @@ def get_agent_router(
                 id=agent.id,
                 name=agent.name,
                 description=getattr(agent, "description", None),
-                metadata={"framework": getattr(agent, "framework", "external")},
+                metadata=AgentSummaryResponse.from_agent(agent).metadata
+                or {"sdk": "external", "framework": "external"},
             )
 
     @router.get(

@@ -19,7 +19,8 @@ python cookbook/harnesses/claude/basic.py
 
 Inspect the answer and Agno run ID. An order of exactly 100 dollars qualifies
 for free shipping. This prompt contains the policy, so no file read is needed.
-The script checks terminal status and nonempty output. An error exits nonzero.
+The script uses `print_response()`, which displays the terminal status and raises
+on failed or cancelled runs, so errors exit nonzero.
 
 For interactive use, Agno also provides formatted output:
 
@@ -30,9 +31,10 @@ agent = ClaudeAgent(model="claude-sonnet-5-5", tools=[])
 agent.print_response("What is a Python context manager?", stream=True)
 ```
 
-In an async application, use `await agent.aprint_response(...)`. The executable
-`basic.py` uses `run()` to inspect the terminal status explicitly; formatted
-output alone is not a success check.
+In an async application, use `await agent.aprint_response(...)`. Both methods
+return the final `RunOutput`; use `raise_on_error=False` only when you want to
+handle failed or cancelled results yourself. See the shared
+[3.2 migration notes](../README.md#adapter-api-changes-for-32).
 
 ## 2. Compare with the native SDK
 

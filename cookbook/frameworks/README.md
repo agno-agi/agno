@@ -14,3 +14,7 @@ The migration is incremental. Advanced [Claude](claude-agent-sdk/README.md),
 [Codex](codex/README.md), [Antigravity](antigravity/README.md), and the older
 [mixed-framework quickstart](00_quickstart/README.md) remain at their existing
 paths. Their historical test results are separate from the new harness suite.
+
+All built-in adapters share the [3.2 API migration](../harnesses/README.md#adapter-api-changes-for-32):
+keyword-only configuration, read-only `sdk` metadata, failure-aware printing,
+and explicit rejection of unsupported media inputs.

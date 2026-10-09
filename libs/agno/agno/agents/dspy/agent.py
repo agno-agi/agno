@@ -1,7 +1,8 @@
-from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, List, Optional
+from dataclasses import field
+from typing import Any, AsyncIterator, ClassVar, Dict, List, Optional
 from uuid import uuid4
 
+from agno.agents._config import agent_dataclass
 from agno.agents.base import BaseExternalAgent
 from agno.agents.dspy.utils import build_input_with_history
 from agno.models.response import ToolExecution
@@ -13,7 +14,7 @@ from agno.run.agent import (
 )
 
 
-@dataclass
+@agent_dataclass
 class DSPyAgent(BaseExternalAgent):
     """Adapter for DSPy modules and programs.
 
@@ -53,7 +54,8 @@ class DSPyAgent(BaseExternalAgent):
     output_field: str = "answer"
     lm: Any = None
     program_kwargs: Dict[str, Any] = field(default_factory=dict)
-    framework: str = "dspy"
+
+    _sdk_name: ClassVar[str] = "dspy"
 
     @staticmethod
     def _clone_lm_without_cache(lm: Any) -> Any:

@@ -19,7 +19,19 @@ ruff check cookbook/harnesses libs/agno/tests/integration/agents/test_harness_co
 The pattern checker targets runnable agent examples, not the shipping source
 fixture. Importing an example must not start a model call or HTTP server.
 
-## 2. Live scripts, one provider at a time
+## 2. Adapter API regressions
+
+```bash
+python -m pytest libs/agno/tests/unit/agents -q
+```
+
+These cover keyword-only constructors, configuration overrides, media input
+validation, sync/async printers and stored/API metadata. With mypy installed,
+the suite also checks inferred return types and rejects positional construction.
+The runtime constructor tests also run on Python 3.9 without native SDKs; this
+does not imply the native SDK packages support that Python version.
+
+## 3. Live scripts, one provider at a time
 
 Follow the provider README, then run `basic.py`, `native_sdk.py` and `tools.py`
 individually. Check:
@@ -37,7 +49,7 @@ Do not judge success by exact prose or response speed. Keep failed attempts in
 the log. Do not retry silently; classify authentication, environment, provider,
 example or adapter failure before rerunning.
 
-## 3. Live HTTP acceptance
+## 4. Live HTTP acceptance
 
 Install pytest and pytest-asyncio (required by the repository's integration
 fixtures) in the same environment as the examples. The integration tests
@@ -72,7 +84,7 @@ disconnect, recovery or multi-replica test.
 Interactive servers must not be included in an unattended recursive cookbook
 runner. Use the explicit script list or this lifecycle-managed test suite.
 
-## 4. Submission gates
+## 5. Submission gates
 
 Run the repository-required checks in the development environment:
 
