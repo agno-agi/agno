@@ -6,6 +6,40 @@ from agno.tools.csv_toolkit import CsvTools
 
 
 @pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("SELECT value FROM records WHERE value = 'hello`world'", "value\nhello`world"),
+        ("SELECT value FROM records WHERE value = 'it''s`here'", "value\nit's`here"),
+        (r"SELECT value FROM records WHERE value = E'it\'s`here'", "value\nit's`here"),
+        ("SELECT value FROM records WHERE value = $$hello`world$$", "value\nhello`world"),
+        ("SELECT value FROM records WHERE value = $tag$hello`world$tag$", "value\nhello`world"),
+        ("SELECT \"tick`column\" FROM records WHERE value = 'plain'", "tick`column\n3"),
+        ("SELECT `value` FROM `records` WHERE value = 'plain'", "value\nplain"),
+        ("SELECT '北京`' AS city, `value` FROM `records` WHERE value = 'plain'", "city,value\n北京`,plain"),
+        ("SELECT `value` FROM records /* outer ` /* inner \" */ ' ` */ WHERE value = 'plain'", "value\nplain"),
+    ],
+    ids=[
+        "string-literal",
+        "escaped-quote",
+        "escape-string",
+        "dollar-string",
+        "tagged-dollar-string",
+        "quoted-identifier",
+        "legacy-identifier",
+        "unicode-offsets",
+        "nested-comments",
+    ],
+)
+def test_query_csv_file_preserves_backticks_in_sql_values(tmp_path, query, expected):
+    pytest.importorskip("duckdb")
+    csv_path = tmp_path / "records.csv"
+    csv_path.write_text("value,tick`column\nhello`world,1\nit's`here,2\nplain,3\n", encoding="utf-8")
+    tools = CsvTools(csvs=[csv_path])
+
+    assert tools.query_csv_file("records", query) == expected
+
+
+@pytest.mark.parametrize(
     ("constructor_limit", "requested_limit", "expected_row_count"),
     [
         (None, 0, 0),
