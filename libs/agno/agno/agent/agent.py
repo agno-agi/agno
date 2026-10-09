@@ -1039,14 +1039,13 @@ class Agent:
         cls,
         data: Dict[str, Any],
         registry: Optional[Registry] = None,
+        strict: bool = False,
         *,
         db: Optional["BaseDb"] = None,
-        strict: bool = False,
         skill_executor: Optional[SkillExecutor] = None,
     ) -> "Agent":
-        # registry keeps its pre-existing second positional slot; db and strict are
-        # keyword-only so external Agent.from_dict(config, registry) calls do not
-        # silently mis-bind a third positional argument.
+        # registry and strict keep their positional slots; db and skill_executor are
+        # keyword-only so an added parameter never shifts an existing positional call.
         return _storage.from_dict(
             cls, data=data, db=db, registry=registry, strict=strict, skill_executor=skill_executor
         )

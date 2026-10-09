@@ -22,6 +22,7 @@ import pytest
 from agno.agent._messages import aget_system_message, get_system_message
 from agno.agent._tools import aget_tools, get_tools
 from agno.agent.agent import Agent, get_agent_by_id
+from agno.exceptions import ComponentRehydrationError
 from agno.models.base import Function
 from agno.run.agent import RunOutput
 from agno.run.base import RunContext
@@ -482,7 +483,7 @@ def test_studio_load_resolves_skills(tmp_path):
 
 def test_from_dict_positional_second_arg_is_registry(tmp_path):
     """The pre-existing positional contract holds: from_dict(config, registry) binds
-    the registry, and db is keyword-only, so it cannot silently take registry's slot.
+    the registry, and db is keyword-only, so it cannot be passed positionally at all.
     """
     from agno.registry.registry import Registry
 
@@ -497,7 +498,30 @@ def test_from_dict_positional_second_arg_is_registry(tmp_path):
     assert agent.skills.get_skill_names() == ["release-notes"]
 
     with pytest.raises(TypeError):
-        Agent.from_dict(config, Registry(), db)
+        Agent.from_dict(config, Registry(), False, db)
+
+
+def test_from_dict_third_positional_arg_is_strict(tmp_path):
+    """strict keeps its pre-existing positional slot: from_dict(config, registry, True)
+    refuses an unresolvable reference and False loads it leniently, as on main.
+    """
+    from agno.registry.registry import Registry
+
+    config = {"name": "k", "knowledge": {"name": "missing-kb"}}
+    with pytest.raises(ComponentRehydrationError, match="missing-kb"):
+        Agent.from_dict(dict(config), Registry(), True)
+
+    lenient = Agent.from_dict(dict(config), Registry(), False)
+    assert lenient.knowledge is None
+
+
+def test_from_dict_db_passed_positionally_does_not_bind_as_db(tmp_path):
+    """A third positional argument binds as strict, never as db: the db slot is keyword-only."""
+    from agno.registry.registry import Registry
+
+    db = _make_db(tmp_path)
+    agent = Agent.from_dict({"name": "plain"}, Registry(), db)
+    assert agent.db is None
 
 
 async def test_asystem_message_refreshes_skills_through_async_db(tmp_path):
