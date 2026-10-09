@@ -17,6 +17,7 @@ from agno.agents.claude import ClaudeAgent
 from agno.agents.claude import agent as claude_module
 from agno.db.sqlite import SqliteDb
 from agno.run.agent import RunCompletedEvent, RunContentEvent, RunErrorEvent
+from agno.run.base import RunStatus
 
 # ---------------------------------------------------------------------------
 # Fake claude_agent_sdk
@@ -79,6 +80,10 @@ class ProcessError(Exception):
     pass
 
 
+class ResultError(ProcessError):
+    pass
+
+
 class FakeState:
     def __init__(self) -> None:
         self.known_sessions: set = set()
@@ -117,6 +122,8 @@ def fake_sdk(monkeypatch) -> FakeState:
         UserMessage,
         ToolUseBlock,
         ToolResultBlock,
+        ProcessError,
+        ResultError,
     ):
         setattr(module, cls.__name__, cls)
     module.query = query  # type: ignore[attr-defined]
@@ -187,6 +194,43 @@ def test_unresumable_session_starts_fresh_with_history(fake_sdk, tmp_db):
 
     session = agent.read_or_create_session("s1")
     assert session.session_data["claude_sdk_session_id"] == "sdk-2"
+
+
+@pytest.mark.parametrize("failure", ["error_result", "result_error"])
+def test_api_error_on_resume_keeps_sdk_session(fake_sdk, tmp_db, monkeypatch, failure):
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db)
+    agent.run("first", session_id="s1")
+    resumes = []
+
+    async def overloaded(prompt, options):
+        resumes.append(options.resume)
+        if failure == "result_error":
+            raise ResultError("Claude Code returned an error result: API Error: 529 Overloaded")
+        yield SystemMessage("init", {"session_id": options.resume})
+        yield ResultMessage(options.resume, "API Error: 529 Overloaded", subtype="success", is_error=True)
+
+    monkeypatch.setattr(claude_module._sdk(), "query", overloaded)
+    assert agent.run("second", session_id="s1").status == RunStatus.error
+    assert resumes == ["sdk-1"]
+    assert agent.read_or_create_session("s1").session_data["claude_sdk_session_id"] == "sdk-1"
+
+
+def test_missing_session_result_error_starts_fresh(fake_sdk, tmp_db, monkeypatch):
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db)
+    agent.run("first", session_id="s1")
+    resumes = []
+
+    async def missing(prompt, options):
+        resumes.append(options.resume)
+        if options.resume:
+            raise ResultError("Claude Code returned an error result: No conversation found with session ID: sdk-1")
+        yield SystemMessage("init", {"session_id": "sdk-2"})
+        yield ResultMessage("sdk-2", "ok")
+
+    monkeypatch.setattr(claude_module._sdk(), "query", missing)
+    assert agent.run("second", session_id="s1").status == RunStatus.completed
+    assert resumes == ["sdk-1", None]
+    assert agent.read_or_create_session("s1").session_data["claude_sdk_session_id"] == "sdk-2"
 
 
 def test_in_memory_mapping_without_db(fake_sdk):

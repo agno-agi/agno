@@ -212,13 +212,25 @@ class ClaudeAgent(BaseExternalAgent):
                     yield message
                 return
             except Exception as e:
-                if resume is None or received:
+                if resume is None or received or not self._is_missing_session(sdk, e):
                     raise
                 log_warning(
                     f"Claude SDK: could not resume session {resume} for session {session_id}: {e}. Starting a new one."
                 )
                 self._forget_sdk_session(session, session_id)
                 resume = None
+
+    @staticmethod
+    def _is_missing_session(sdk: Any, error: Exception) -> bool:
+        """True when the resume target has no transcript, as opposed to a failed run such as an API error."""
+        reported = [error, getattr(error, "result", None), *(getattr(error, "errors", None) or [])]
+        if any("No conversation found" in str(part) for part in reported if part):
+            return True
+        # SDKs without ResultError report a missing transcript only as a bare exit-code ProcessError.
+        result_error = getattr(sdk, "ResultError", None)
+        return isinstance(error, sdk.ProcessError) and not (
+            result_error is not None and isinstance(error, result_error)
+        )
 
     @staticmethod
     def _mirror_warning(message: Any) -> Optional[Dict[str, Any]]:
@@ -288,7 +300,6 @@ class ClaudeAgent(BaseExternalAgent):
                         tool.tool_call_error = bool(getattr(block, "is_error", False))
 
             elif isinstance(message, sdk.ResultMessage):
-                self._check_result_message(sdk, message)
                 if hasattr(message, "result") and message.result:
                     final_result = str(message.result)
 
@@ -397,6 +408,3 @@ class ClaudeAgent(BaseExternalAgent):
                                     result=result_str,
                                 ),
                             )
-
-            elif isinstance(message, sdk.ResultMessage):
-                self._check_result_message(sdk, message)
