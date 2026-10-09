@@ -8,7 +8,7 @@ the corresponding runtime pieces, including the DB-backed queue worker
 import asyncio
 import contextlib
 import inspect
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Union
 
 from agno.job_queue.config import QueueConfig, RedisCoordination
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -1129,7 +1129,7 @@ class QueueWorker:
             )
             return None
         from agno.run.base import RunStatus
-        from agno.run.status_persist import RunPersistOutcome, apersist_run_status, fallback_allowed
+        from agno.run.status_persist import RunPersistOutcome, apersist_run_status, component_hook, fallback_allowed
 
         fields: Dict[str, Any] = {
             "status": RunStatus.cancelled.value if status == "cancelled" else RunStatus.error.value,
@@ -1157,25 +1157,16 @@ class QueueWorker:
             return result
 
         component_type = job["component_type"]
-        if component_type == "agent":
-            from agno.agents.base import BaseExternalAgent
-
-            if isinstance(component, BaseExternalAgent):
-                external_error_run = await component.aget_run_output(
-                    job["id"], job["session_id"], user_id=job.get("user_id")
-                )
-                if external_error_run is not None and external_error_run.status not in (
-                    RunStatus.completed,
-                    RunStatus.cancelled,
-                ):
-                    external_error_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
-                    external_error_run.content = external_error_run.content or error
-                    if cancellation_stage is not None:
-                        external_error_run.cancellation_stage = cancellation_stage
-                    await component.apersist_run_status_fallback(
-                        job["session_id"], external_error_run, job.get("user_id")
-                    )
-                return RunPersistOutcome.UPDATED
+        persist_fallback = component_hook(component, "_apersist_run_fallback")
+        if component_type == "agent" and persist_fallback is not None:
+            hook_run = await component.aget_run_output(job["id"], job["session_id"], user_id=job.get("user_id"))
+            if hook_run is not None and hook_run.status not in (RunStatus.completed, RunStatus.cancelled):
+                hook_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
+                hook_run.content = hook_run.content or error
+                if cancellation_stage is not None:
+                    hook_run.cancellation_stage = cancellation_stage
+                await persist_fallback(job["session_id"], hook_run, job.get("user_id"))
+        elif component_type == "agent":
             from agno.agent._session import asave_run, asave_session
             from agno.agent._storage import aread_or_create_session
             from agno.run.agent import RunOutput
@@ -1659,6 +1650,7 @@ class QueueWorker:
                 from agno.run.base import RunStatus as _RS
                 from agno.run.status_persist import RunPersistOutcome as _RPO
                 from agno.run.status_persist import apersist_run_status as _aps
+                from agno.run.status_persist import component_hook
 
                 stamp_outcome = None
                 try:
@@ -1678,21 +1670,22 @@ class QueueWorker:
                         f"Job queue: RUNNING stamp failed for job {job_id} (worker={self.worker_id}, "
                         f"attempt={attempt}): {e}"
                     )
-                if stamp_outcome in (_RPO.MISSING, _RPO.UNAVAILABLE):
-                    from agno.agents.base import BaseExternalAgent
-
-                    if isinstance(component, BaseExternalAgent):
-                        external_run = await component.aget_run_output(
+                persist_fallback = component_hook(component, "_apersist_run_fallback")
+                if stamp_outcome in (_RPO.MISSING, _RPO.UNAVAILABLE) and persist_fallback is not None:
+                    try:
+                        hook_run = await component.aget_run_output(
                             job_id, job["session_id"], user_id=job.get("user_id")
                         )
-                        if external_run is not None:
-                            if external_run.status in (_RS.completed, _RS.cancelled):
-                                await self._ahonor_terminal_row(component, job)
-                                return
-                            external_run.status = _RS.running
-                            await component.apersist_run_status_fallback(
-                                job["session_id"], external_run, job.get("user_id")
-                            )
+                        if hook_run is not None and hook_run.status in (_RS.completed, _RS.cancelled):
+                            stamp_outcome = _RPO.TERMINAL_REFUSED
+                        elif hook_run is not None:
+                            hook_run.status = _RS.running
+                            await persist_fallback(job["session_id"], hook_run, job.get("user_id"))
+                    except Exception as e:
+                        log_warning(
+                            f"Job queue: RUNNING fallback failed for job {job_id} (worker={self.worker_id}, "
+                            f"attempt={attempt}): {e}"
+                        )
                 if stamp_outcome is _RPO.TERMINAL_REFUSED:
                     # The run row is already COMPLETED/CANCELLED (the guard's
                     # exact terminal set - ERROR rows pass, so operator
@@ -2178,6 +2171,26 @@ async def _ainsert_session_if_absent(component: Any, session: Any) -> Optional[b
         return None
 
 
+async def _aappend_pending_run(
+    component: Any,
+    session_id: str,
+    run_dict: Dict[str, Any],
+    user_id: Optional[str],
+    load_session: Callable[[], Awaitable[Any]],
+) -> Optional[Any]:
+    """Land a PENDING run via the atomic primitives; return the loaded session only when the caller must save it."""
+    if await _atomic_append_run(component, session_id, run_dict, user_id) is not None:
+        return None  # atomically landed (True) or a worker's row already won (False)
+    # No session row yet: create it EMPTY via insert-if-absent, then retry the append.
+    # Both steps decline to a concurrent winner, so the prepare never overwrites anyone.
+    session = await load_session()
+    if await _ainsert_session_if_absent(component, session) is not None:
+        if await _atomic_append_run(component, session_id, run_dict, user_id) is not None:
+            return None
+    # Legacy create-and-save: adapters without the atomic primitives only
+    return None if session.get_run(run_dict["run_id"]) is not None else session
+
+
 async def aprepare_queued_run(
     component: Any, component_type: str, run_id: str, session_id: str, user_id: Optional[str], input: Any
 ) -> None:
@@ -2195,13 +2208,12 @@ async def aprepare_queued_run(
     the primitives keep the legacy create-and-save path (narrow unlocked
     read-check-save window, documented)."""
     from agno.run.base import RunStatus
+    from agno.run.status_persist import component_hook
 
-    if component_type == "agent":
-        from agno.agents.base import BaseExternalAgent
-
-        if isinstance(component, BaseExternalAgent):
-            await component.aprepare_pending_run(run_id, session_id, user_id, input)
-            return
+    prepare_hook = component_hook(component, "_aprepare_pending_run")
+    if component_type == "agent" and prepare_hook is not None:
+        await prepare_hook(run_id, session_id, user_id, input)
+    elif component_type == "agent":
         from agno.agent._session import asave_run, asave_session
         from agno.agent._storage import aread_or_create_session, update_metadata
         from agno.run.agent import RunInput, RunOutput
@@ -2218,20 +2230,16 @@ async def aprepare_queued_run(
             input=RunInput(input_content=input),
             status=RunStatus.pending,
         )
-        run_dict = run_response_early.to_dict()
-        appended = await _atomic_append_run(component, session_id, run_dict, user_id)
-        if appended is not None:
-            return  # atomically landed (True) or a worker's row already won (False)
-        # No session row yet: create it EMPTY via insert-if-absent, then
-        # retry the row-locked append. Both steps decline to a concurrent
-        # winner, so the prepare never overwrites anyone.
-        session = await aread_or_create_session(component, session_id=session_id, user_id=user_id)
-        update_metadata(component, session=session)
-        if await _ainsert_session_if_absent(component, session) is not None:
-            if await _atomic_append_run(component, session_id, run_dict, user_id) is not None:
-                return
-        # Legacy create-and-save: adapters without the atomic primitives only
-        if session.get_run(run_id) is not None:
+
+        async def load_agent_session() -> Any:
+            agent_session = await aread_or_create_session(component, session_id=session_id, user_id=user_id)
+            update_metadata(component, session=agent_session)
+            return agent_session
+
+        session = await _aappend_pending_run(
+            component, session_id, run_response_early.to_dict(), user_id, load_agent_session
+        )
+        if session is None:
             return
         from agno.session._utils import resolve_run_index
 
@@ -2258,16 +2266,16 @@ async def aprepare_queued_run(
             input=TeamRunInput(input_content=input),
             status=RunStatus.pending,
         )
-        team_run_dict = team_run_early.to_dict()
-        appended = await _atomic_append_run(component, session_id, team_run_dict, user_id)
-        if appended is not None:
-            return
-        team_session = await _aread_or_create_session(component, session_id=session_id, user_id=user_id)
-        _update_metadata(component, session=team_session)
-        if await _ainsert_session_if_absent(component, team_session) is not None:
-            if await _atomic_append_run(component, session_id, team_run_dict, user_id) is not None:
-                return
-        if team_session.get_run(run_id) is not None:
+
+        async def load_team_session() -> Any:
+            loaded = await _aread_or_create_session(component, session_id=session_id, user_id=user_id)
+            _update_metadata(component, session=loaded)
+            return loaded
+
+        team_session = await _aappend_pending_run(
+            component, session_id, team_run_early.to_dict(), user_id, load_team_session
+        )
+        if team_session is None:
             return
         from agno.session._utils import resolve_run_index
 
@@ -2293,17 +2301,17 @@ async def aprepare_queued_run(
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
         )
-        workflow_run_dict = workflow_run_early.to_dict()
-        appended = await _atomic_append_run(component, session_id, workflow_run_dict, user_id)
-        if appended is not None:
-            return
-        workflow_session, _, _ = await component._aload_or_create_session(
-            session_id=session_id, user_id=user_id, session_state=None
+
+        async def load_workflow_session() -> Any:
+            loaded, _, _ = await component._aload_or_create_session(
+                session_id=session_id, user_id=user_id, session_state=None
+            )
+            return loaded
+
+        workflow_session = await _aappend_pending_run(
+            component, session_id, workflow_run_early.to_dict(), user_id, load_workflow_session
         )
-        if await _ainsert_session_if_absent(component, workflow_session) is not None:
-            if await _atomic_append_run(component, session_id, workflow_run_dict, user_id) is not None:
-                return
-        if workflow_session.get_run(run_id) is not None:
+        if workflow_session is None:
             return
         workflow_session.upsert_run(run=workflow_run_early)
         # Session row first, then the run row with its resolved index: the

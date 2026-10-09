@@ -17,7 +17,7 @@ refused by the primitive instead of clobbering through bare upsert_run.
 import asyncio
 import inspect
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 
 class RunPersistOutcome(str, Enum):
@@ -96,6 +96,13 @@ async def apersist_run_status(
     return RunPersistOutcome.MISSING
 
 
+def component_hook(component: Any, name: str) -> Optional[Callable[..., Awaitable[Any]]]:
+    """Return a persistence hook the component's class defines; mocks and plain objects never match."""
+    if getattr(type(component), name, None) is None:
+        return None
+    return getattr(component, name)
+
+
 def fallback_allowed(result: RunPersistOutcome) -> bool:
     """Whether the unfenced whole-session fallback may run after the atomic
     primitive's outcome.
@@ -172,12 +179,10 @@ async def apersist_run_transition(
     # Fallback: fresh-read + whole-session save (narrows, does not close, the
     # concurrent-write window - see module docstring). This path writes the whole run, so its
     # media is offloaded first.
-    if component_type == "agent":
-        from agno.agents.base import BaseExternalAgent
-
-        if isinstance(component, BaseExternalAgent):
-            await component.apersist_run_status_fallback(session_id, run_response, user_id)
-            return
+    persist_fallback = component_hook(component, "_apersist_run_fallback")
+    if component_type == "agent" and persist_fallback is not None:
+        await persist_fallback(session_id, run_response, user_id)
+    elif component_type == "agent":
         from agno.agent._session import asave_run, asave_session
         from agno.agent._storage import aread_or_create_session
         from agno.utils.agent import abuild_offloaded_storage_copy
