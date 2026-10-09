@@ -77,6 +77,7 @@ class ClaudeAgent(BaseExternalAgent):
     project_key: Optional[str] = None
     _store_warning_logged: bool = field(default=False, init=False, repr=False)
     _warn_unstable_project_key: bool = field(default=False, init=False, repr=False)
+    _store_skipped_logged: bool = field(default=False, init=False, repr=False)
     mcp_servers: Optional[Dict[str, Any]] = None
     options_kwargs: Dict[str, Any] = field(default_factory=dict)
     framework: str = "claude-agent-sdk"
@@ -94,10 +95,62 @@ class ClaudeAgent(BaseExternalAgent):
         if self.project_key is None:
             self.project_key = self.get_id()
 
+    def _transcript_store(self, agno_session_id: Optional[str]) -> Optional[Any]:
+        """The transcript store for this run, or None when transcripts stay on local disk.
+
+        No store is attached when the database lacks transcript storage, when the caller
+        supplies a session_store of their own, or when file checkpointing is enabled, since
+        the SDK refuses to combine the two.
+        """
+        if self.db is None or agno_session_id is None:
+            return None
+        base = AsyncBaseDb if isinstance(self.db, AsyncBaseDb) else BaseDb
+        if type(self.db).append_transcript_entries is base.append_transcript_entries:
+            if not self._store_warning_logged:
+                log_warning(
+                    f"{type(self.db).__name__} does not support Claude transcript storage, so transcripts stay on "
+                    "this machine's disk and another replica cannot resume them. Use PostgresDb or SqliteDb "
+                    "(sync or async) to store transcripts in the database."
+                )
+                self._store_warning_logged = True
+            return None
+        if "session_store" in self.options_kwargs:
+            if not self._store_skipped_logged:
+                log_debug("ClaudeAgent uses the session_store from options_kwargs; Agno transcript storage is off.")
+                self._store_skipped_logged = True
+            return None
+        if self.options_kwargs.get("enable_file_checkpointing"):
+            if not self._store_skipped_logged:
+                log_warning(
+                    "ClaudeAgent cannot store transcripts in the database while enable_file_checkpointing is set; "
+                    "transcripts stay on local disk and other replicas resume from Agno history only."
+                )
+                self._store_skipped_logged = True
+            return None
+        from agno.agents.claude.session_store import AgnoSessionStore
+
+        store = AgnoSessionStore(self.db, self.project_key or self.get_id(), agno_session_id)
+        if self._warn_unstable_project_key:
+            log_warning(
+                f"ClaudeAgent has no id, name or project_key; transcripts are stored under the generated key "
+                f"'{self.project_key}' and other processes will not resume them. Set id or project_key."
+            )
+            self._warn_unstable_project_key = False
+        return store
+
     def _build_options(
-        self, *, streaming: bool = False, resume: Optional[str] = None, agno_session_id: Optional[str] = None
+        self,
+        *,
+        streaming: bool = False,
+        resume: Optional[str] = None,
+        agno_session_id: Optional[str] = None,
+        session_store: Optional[Any] = None,
     ) -> Any:
-        """Build ClaudeAgentOptions from agent config."""
+        """Build ClaudeAgentOptions from agent config.
+
+        The transcript store is taken from session_store when given, otherwise created for
+        agno_session_id.
+        """
         sdk = _sdk()
 
         opts: Dict[str, Any] = {}
@@ -129,21 +182,9 @@ class ClaudeAgent(BaseExternalAgent):
             opts["resume"] = resume
 
         opts.update(self.options_kwargs)
-        if self.db is not None and agno_session_id is not None:
-            base = AsyncBaseDb if isinstance(self.db, AsyncBaseDb) else BaseDb
-            if type(self.db).append_transcript_entries is not base.append_transcript_entries:
-                from agno.agents.claude.session_store import AgnoSessionStore
-
-                opts["session_store"] = AgnoSessionStore(self.db, self.project_key or self.get_id(), agno_session_id)
-                if self._warn_unstable_project_key:
-                    log_warning(
-                        f"ClaudeAgent has no id, name or project_key; transcripts are stored under the generated key "
-                        f"'{self.project_key}' and other processes will not resume them. Set id or project_key."
-                    )
-                    self._warn_unstable_project_key = False
-            elif not self._store_warning_logged:
-                log_debug("Claude SDK transcript storage is unavailable on this database; resume uses local files.")
-                self._store_warning_logged = True
+        store = session_store if session_store is not None else self._transcript_store(agno_session_id)
+        if store is not None:
+            opts["session_store"] = store
         return sdk.ClaudeAgentOptions(**opts)
 
     # ---------------------------------------------------------------------------
@@ -190,13 +231,10 @@ class ClaudeAgent(BaseExternalAgent):
         session = kwargs.get("session")
         session_id = kwargs.get("session_id")
         resume = self._get_sdk_session_id(session, session_id)
+        store = self._transcript_store(session.session_id) if session is not None else None
 
         while True:
-            options = self._build_options(
-                streaming=streaming,
-                resume=resume,
-                agno_session_id=session.session_id if session is not None else None,
-            )
+            options = self._build_options(streaming=streaming, resume=resume, session_store=store)
             prompt = self._build_prompt(input, history, resumed=resume is not None)
             received = False
             try:

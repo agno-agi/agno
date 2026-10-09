@@ -283,12 +283,13 @@ def test_store_support_and_project_key(fake_sdk, tmp_path, monkeypatch):
     custom = ClaudeAgent(id="a", project_key="tenant", db=agent.db)
     assert custom._build_options(agno_session_id="agno-session").extra["session_store"].project_key == "tenant"
     logs = []
-    monkeypatch.setattr(claude_module, "log_debug", logs.append)
+    monkeypatch.setattr(claude_module, "log_warning", logs.append)
     unsupported = ClaudeAgent(db=InMemoryDb())
     assert type(unsupported.db).append_transcript_entries is BaseDb.append_transcript_entries
     assert "session_store" not in unsupported._build_options(agno_session_id="agno-session").extra
     unsupported._build_options(agno_session_id="agno-session")
-    assert len(logs) == 1
+    assert len(logs) == 1, "warn once that this database keeps transcripts on local disk"
+    assert "InMemoryDb" in logs[0] and "PostgresDb" in logs[0] and "SqliteDb" in logs[0]
 
 
 def test_generated_project_key_warns_once(fake_sdk, tmp_path, monkeypatch):
@@ -402,3 +403,20 @@ async def test_mirror_failure_is_visible_without_reexecuting(fake_sdk, tmp_db, m
     stored = await agent.aget_run_output(result.run_id, "s")
     assert stored.metadata == result.metadata
     assert len(calls) == 1
+
+
+def test_user_session_store_and_file_checkpointing_disable_injection(fake_sdk, tmp_path, monkeypatch):
+    warnings = []
+    monkeypatch.setattr(claude_module, "log_warning", warnings.append)
+    db = SqliteDb(db_file=str(tmp_path / "db"))
+    own_store = object()
+    custom = ClaudeAgent(id="a", db=db, options_kwargs={"session_store": own_store})
+    assert custom._build_options(agno_session_id="agno-session").extra["session_store"] is own_store
+
+    checkpointing = ClaudeAgent(id="a", db=db, options_kwargs={"enable_file_checkpointing": True})
+    opts = checkpointing._build_options(agno_session_id="agno-session")
+    assert "session_store" not in opts.extra
+    assert opts.extra["enable_file_checkpointing"] is True
+    checkpointing._build_options(agno_session_id="agno-session")
+    assert len(warnings) == 1
+    assert "enable_file_checkpointing" in warnings[0]

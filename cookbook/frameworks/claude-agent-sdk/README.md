@@ -26,3 +26,10 @@ If the SDK exhausts transcript-store retries, the response remains completed and
 history. Streaming callers receive a `CustomEvent` with the same `warning` object. The warning means
 another replica may be unable to recover the complete conversation. The adapter does not reexecute
 completed model work or tool side effects to repair the mirror.
+
+### When transcripts stay on local disk
+
+A database without transcript storage logs a warning once and the agent continues with the SDK's
+local-disk transcripts, so resume works on the machine that ran the session. Transcript storage is also
+skipped, with a warning, when `enable_file_checkpointing` is set in `options_kwargs`, because the SDK
+does not allow the two together. A `session_store` supplied in `options_kwargs` is used as is.
