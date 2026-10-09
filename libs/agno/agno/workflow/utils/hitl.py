@@ -494,6 +494,7 @@ def finalize_workflow_completion(
     workflow_run_response.images = state.output_images
     workflow_run_response.videos = state.output_videos
     workflow_run_response.audio = state.output_audio
+    workflow_run_response.files = state.output_files
     workflow_run_response.status = RunStatus.completed
     workflow_run_response.paused_step_index = None
     workflow_run_response.paused_step_name = None
