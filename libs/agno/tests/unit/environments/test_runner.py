@@ -1674,7 +1674,7 @@ class StubSkills:
     """Duck-typed skills: the methods the run path calls, on both the sync and
     async agent paths -- the async path awaits aget_system_prompt_snippet."""
 
-    def get_system_prompt_snippet(self):
+    def get_system_prompt_snippet(self, user_id=None):
         return "SKILLS-MARKER-XYZZY"
 
     async def aget_system_prompt_snippet(self, user_id=None):
