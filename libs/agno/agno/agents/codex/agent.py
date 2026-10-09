@@ -4,7 +4,8 @@ from importlib import import_module
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Set, Tuple
 from uuid import uuid4
 
-from agno.agents.base import BaseExternalAgent
+from agno.agents.base import BaseExternalAgent, ExternalRunResult
+from agno.exceptions import RunCancelledException
 from agno.models.response import ToolExecution
 from agno.run.agent import (
     RunContentEvent,
@@ -317,7 +318,9 @@ class CodexAgent(BaseExternalAgent):
     # Adapter hooks
     # ---------------------------------------------------------------------------
 
-    async def _arun_adapter(self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any) -> str:
+    async def _arun_adapter(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> ExternalRunResult:
         """Non-streaming: run one turn and return the final answer."""
         sdk = _sdk()
         session = kwargs.get("session")
@@ -326,9 +329,27 @@ class CodexAgent(BaseExternalAgent):
         async with self._new_client() as codex:
             thread, resumed = await self._open_thread(codex, sdk, session, session_id)
             prompt = self._build_prompt(input, history, resumed)
-            result = await thread.run(prompt, **self._turn_kwargs(sdk))
+            run_id = kwargs.get("run_id") or str(uuid4())
+            handle = await thread.turn(prompt, **self._turn_kwargs(sdk))
+            self._set_run_handle(run_id, handle)
+            try:
+                result = await handle.run()
+            finally:
+                self._clear_run_handle(run_id)
+            status = getattr(result, "status", None)
+            if getattr(status, "value", status) == "interrupted":
+                raise RunCancelledException(run_id)
+            if getattr(status, "value", status) == "failed":
+                raise RuntimeError(f"Codex turn failed: {getattr(result, 'error', None)}")
 
-        return self._final_text(result)
+        tools = []
+        for item in getattr(result, "items", None) or []:
+            item = _item_root(item)
+            tool = self._tool_from_item(item)
+            if tool is not None:
+                tool.result = self._tool_result_from_item(item)
+                tools.append(tool)
+        return ExternalRunResult(self._final_text(result), tools or None)
 
     @staticmethod
     def _final_text(result: Any) -> str:
@@ -362,9 +383,13 @@ class CodexAgent(BaseExternalAgent):
             thread, resumed = await self._open_thread(codex, sdk, session, session_id)
             prompt = self._build_prompt(input, history, resumed)
             handle = await thread.turn(prompt, **self._turn_kwargs(sdk))
-            async for notification in handle.stream():
-                for event in self._translate_notification(notification, run_id=run_id, state=state):
-                    yield event
+            self._set_run_handle(run_id, handle)
+            try:
+                async for notification in handle.stream():
+                    for event in self._translate_notification(notification, run_id=run_id, state=state):
+                        yield event
+            finally:
+                self._clear_run_handle(run_id)
 
         if state.error:
             raise RuntimeError(f"Codex turn failed: {state.error}")
@@ -372,6 +397,9 @@ class CodexAgent(BaseExternalAgent):
     # ---------------------------------------------------------------------------
     # Notification translation
     # ---------------------------------------------------------------------------
+
+    async def _ainterrupt_run(self, handle: Any) -> None:
+        await handle.interrupt()
 
     def _content_event(self, run_id: str, content: str, reasoning: Optional[str] = None) -> RunContentEvent:
         return RunContentEvent(
@@ -456,7 +484,7 @@ class CodexAgent(BaseExternalAgent):
                 error = getattr(turn, "error", None)
                 state.error = getattr(error, "message", None) or "turn failed"
             elif status_value == "interrupted":
-                log_warning("Codex: turn was interrupted before completion")
+                raise RunCancelledException(run_id)
 
         elif method == "error":
             error = getattr(payload, "error", None)
