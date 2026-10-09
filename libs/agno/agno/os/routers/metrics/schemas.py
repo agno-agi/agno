@@ -98,8 +98,8 @@ class ModelUsage(BaseModel):
 
     model_id: str = Field(..., description="Identifier of the model")
     model_provider: Optional[str] = Field(None, description="Provider serving the model")
-    run_count: int = Field(..., description="Runs the model served in the window", ge=0)
-    run_share: float = Field(..., description="Percentage of the window's runs the model served", ge=0)
+    runs_count: int = Field(..., description="Runs the model served in the window", ge=0)
+    runs_share: float = Field(..., description="Percentage of the window's runs the model served", ge=0)
 
 
 class OSModelMetricsResponse(BaseModel):

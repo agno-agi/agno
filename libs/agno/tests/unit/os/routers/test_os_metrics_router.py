@@ -524,14 +524,14 @@ class TestModels:
         assert kwargs["fields"] == ["model_metrics"]
         assert kwargs["starting_date"] == _day(1)
         assert kwargs["ending_date"] == _day(0)
-        assert [(model["model_id"], model["model_provider"], model["run_count"]) for model in body["models"]] == [
+        assert [(model["model_id"], model["model_provider"], model["runs_count"]) for model in body["models"]] == [
             ("gpt-5.5", "OpenAI", 4),
             ("claude-opus-5", "Anthropic", 1),
         ]
-        assert [model["run_share"] for model in body["models"]] == [80.0, 20.0]
+        assert [model["runs_share"] for model in body["models"]] == [80.0, 20.0]
         assert body["total_model_runs"] == 5
         assert body["window_days"] == 2
-        assert set(body["models"][0]) == {"model_id", "model_provider", "run_count", "run_share"}
+        assert set(body["models"][0]) == {"model_id", "model_provider", "runs_count", "runs_share"}
         assert body["updated_at"] == UPDATED_AT_ISO
 
     def test_database_without_window_totals_has_its_days_totalled(self, client, mock_db):
@@ -543,7 +543,7 @@ class TestModels:
         kwargs = _read_kwargs(mock_db)
         assert kwargs["fields"] == ["model_metrics"]
         assert kwargs["starting_date"] == _day(1)
-        assert [(model["model_id"], model["run_count"]) for model in body["models"]] == [
+        assert [(model["model_id"], model["runs_count"]) for model in body["models"]] == [
             ("gpt-5.5", 4),
             ("claude-opus-5", 1),
         ]
@@ -854,25 +854,38 @@ READ_ROUTES = ("sessions", "tokens", "runs", "latency", "models", "refresh/statu
 
 class TestAvailability:
     @pytest.mark.parametrize("route", READ_ROUTES)
-    def test_only_database_without_os_metrics_is_a_503(self, client, mock_db, route):
+    def test_only_database_without_os_metrics_is_a_501(self, client, mock_db, route):
         mock_db.get_os_metrics.side_effect = NotImplementedError
         mock_db.get_os_metrics_totals.side_effect = NotImplementedError
         with _scope(None):
             response = client.get(f"/os/metrics/{route}?{_last(1)}")
 
-        assert response.status_code == 503
-        assert response.json()["detail"] == "OS metrics not available from any database: 'db-1' (unsupported)"
+        assert response.status_code == 501
+        assert response.json()["detail"] == "OS metrics not supported by the configured database"
 
     @pytest.mark.parametrize("route", READ_ROUTES)
-    def test_os_without_a_database_is_a_503(self, route):
+    def test_os_without_a_database_is_a_400(self, route):
         with _scope(None):
             response = _client().get(f"/os/metrics/{route}?{_last(1)}")
 
-        assert response.status_code == 503
+        assert response.status_code == 400
+        assert response.json()["detail"] == "No database is configured on this AgentOS"
 
     def test_os_without_a_database_cannot_refresh(self):
         with _scope(None):
-            assert _client().post("/os/metrics/refresh").status_code == 503
+            assert _client().post("/os/metrics/refresh").status_code == 400
+
+    def test_os_without_its_own_database_reads_the_registered_databases(self):
+        """An AgentOS given no db still has the databases of its agents, teams and workflows."""
+        db = _db("db-1", _today_row())
+        app = FastAPI()
+        with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
+            app.include_router(get_metrics_router(dbs={db.id: [db]}, settings=AgnoAPISettings(), os_db=None))
+        with _scope(None):
+            body = TestClient(app).get(f"/os/metrics/sessions?{_last(1)}").json()
+
+        assert body["total_sessions"] == 3
+        assert body["db_ids"] == {"db-1": UPDATED_AT_ISO}
 
     def test_only_database_failing_is_a_503(self, client, mock_db):
         mock_db.get_os_metrics.side_effect = RuntimeError("boom")
@@ -957,7 +970,7 @@ class TestDatabases:
             latency["median_duration_ms"]
             == _client(_db("db-3", _today_row())).get(f"/os/metrics/latency?{_last(1)}").json()["median_duration_ms"]
         )
-        assert [(model["model_id"], model["run_count"]) for model in models["models"]] == [
+        assert [(model["model_id"], model["runs_count"]) for model in models["models"]] == [
             ("gpt-5.5", 7),
             ("claude-opus-5", 2),
         ]
@@ -1161,7 +1174,7 @@ class TestWindow:
                 f"/os/metrics/{route}?starting_date={_day(0).isoformat()}&ending_date={_day(1).isoformat()}"
             )
 
-        assert response.status_code == 400
+        assert response.status_code == 422
         mock_db.get_os_metrics.assert_not_called()
 
     def test_window_may_cover_more_than_a_year(self, client):

@@ -75,16 +75,18 @@ def _window(starting_date: Optional[date], ending_date: Optional[date]) -> Tuple
     if starting_date is None:
         starting_date = ending_date - timedelta(days=DEFAULT_WINDOW_DAYS - 1)
     if starting_date > ending_date:
-        raise HTTPException(status_code=400, detail="starting_date must be on or before ending_date")
+        raise HTTPException(status_code=422, detail="starting_date must be on or before ending_date")
     return starting_date, ending_date
 
 
 def _registered_os_dbs(
-    os_db: Union[BaseDb, AsyncBaseDb],
+    os_db: Optional[Union[BaseDb, AsyncBaseDb]],
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
 ) -> Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]]:
     """Collect every database of the AgentOS by id, each once."""
-    registered_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]] = {str(os_db.id): [os_db]}
+    registered_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]] = {}
+    if os_db is not None:
+        registered_dbs[str(os_db.id)] = [os_db]
     for registered_db_id, db_list in dbs.items():
         for db in db_list:
             os_metrics_dbs = registered_dbs.setdefault(registered_db_id, [])
@@ -472,14 +474,6 @@ def attach_routes(
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error getting metrics refresh status: {str(e)}")
 
-    def _require_os_db() -> Union[BaseDb, AsyncBaseDb]:
-        if os_db is None:
-            raise HTTPException(
-                status_code=503,
-                detail="Metrics not available: pass a `db` to AgentOS to enable this feature.",
-            )
-        return os_db
-
     def _owner(request: Request, user_id: Optional[str]) -> Optional[str]:
         """The owner a read covers: the caller's own scope, else the requested user_id, else every owner."""
         scoped_user_id = get_scoped_user_id(request)
@@ -487,7 +481,9 @@ def attach_routes(
 
     def _os_dbs(db_ids: Optional[List[str]]) -> Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]]:
         """The databases a read covers, by id: the requested ones, else every database of the AgentOS, each once."""
-        registered_dbs = _registered_os_dbs(_require_os_db(), dbs)
+        registered_dbs = _registered_os_dbs(os_db, dbs)
+        if not any(registered_dbs.values()):
+            raise HTTPException(status_code=400, detail="No database is configured on this AgentOS")
         if not db_ids:
             return registered_dbs
         os_dbs = {}
@@ -593,6 +589,8 @@ def attach_routes(
 
         # A response from no database at all would read as a window without traffic
         if not db_ids:
+            if all(reason == "unsupported" for reason in skipped_db_ids.values()):
+                raise HTTPException(status_code=501, detail="OS metrics not supported by the configured database")
             skipped = ", ".join(f"'{db_id}' ({reason})" for db_id, reason in skipped_db_ids.items())
             raise HTTPException(status_code=503, detail=f"OS metrics not available from any database: {skipped}")
         updated_ats = [updated_at for updated_at in db_ids.values() if updated_at is not None]
@@ -728,13 +726,12 @@ def attach_routes(
                     }
                 },
             },
-            400: {"description": "Invalid date range parameters", "model": BadRequestResponse},
+            400: {"description": "No database configured", "model": BadRequestResponse},
             404: {"description": "Database not found", "model": NotFoundResponse},
+            422: {"description": "Invalid date range parameters", "model": ValidationErrorResponse},
             500: {"description": "Failed to get OS session metrics", "model": InternalServerErrorResponse},
-            503: {
-                "description": "No AgentOS database configured, or no database answered",
-                "model": InternalServerErrorResponse,
-            },
+            501: {"description": "OS metrics not supported by the configured database"},
+            503: {"description": "No database answered", "model": InternalServerErrorResponse},
         },
     )
     async def get_os_session_metrics(
@@ -818,13 +815,12 @@ def attach_routes(
                     }
                 },
             },
-            400: {"description": "Invalid date range parameters", "model": BadRequestResponse},
+            400: {"description": "No database configured", "model": BadRequestResponse},
             404: {"description": "Database not found", "model": NotFoundResponse},
+            422: {"description": "Invalid date range parameters", "model": ValidationErrorResponse},
             500: {"description": "Failed to get OS token metrics", "model": InternalServerErrorResponse},
-            503: {
-                "description": "No AgentOS database configured, or no database answered",
-                "model": InternalServerErrorResponse,
-            },
+            501: {"description": "OS metrics not supported by the configured database"},
+            503: {"description": "No database answered", "model": InternalServerErrorResponse},
         },
     )
     async def get_os_token_metrics(
@@ -908,8 +904,8 @@ def attach_routes(
                     }
                 },
             },
-            400: {"description": "Invalid date range parameters", "model": BadRequestResponse},
             403: {"description": "The caller is not an admin"},
+            422: {"description": "Invalid date range parameters", "model": ValidationErrorResponse},
             500: {"description": "Failed to get OS user metrics", "model": InternalServerErrorResponse},
             503: {"description": "No user directory configured", "model": InternalServerErrorResponse},
         },
@@ -1001,8 +997,8 @@ def attach_routes(
                                 {
                                     "model_id": "gpt-5.5",
                                     "model_provider": "OpenAI",
-                                    "run_count": 96,
-                                    "run_share": 80.0,
+                                    "runs_count": 96,
+                                    "runs_share": 80.0,
                                 }
                             ],
                             "total_model_runs": 120,
@@ -1014,13 +1010,12 @@ def attach_routes(
                     }
                 },
             },
-            400: {"description": "Invalid date range parameters", "model": BadRequestResponse},
+            400: {"description": "No database configured", "model": BadRequestResponse},
             404: {"description": "Database not found", "model": NotFoundResponse},
+            422: {"description": "Invalid date range parameters", "model": ValidationErrorResponse},
             500: {"description": "Failed to get OS model metrics", "model": InternalServerErrorResponse},
-            503: {
-                "description": "No AgentOS database configured, or no database answered",
-                "model": InternalServerErrorResponse,
-            },
+            501: {"description": "OS metrics not supported by the configured database"},
+            503: {"description": "No database answered", "model": InternalServerErrorResponse},
         },
     )
     async def get_os_model_metrics(
@@ -1059,8 +1054,8 @@ def attach_routes(
                     ModelUsage(
                         model_id=model_id,
                         model_provider=model_provider,
-                        run_count=count,
-                        run_share=round(count / total_model_runs * 100, 1),
+                        runs_count=count,
+                        runs_share=round(count / total_model_runs * 100, 1),
                     )
                     for (model_id, model_provider), count in sorted(
                         run_counts.items(), key=lambda item: (-item[1], item[0][0])
@@ -1116,13 +1111,12 @@ def attach_routes(
                     }
                 },
             },
-            400: {"description": "Invalid date range parameters", "model": BadRequestResponse},
+            400: {"description": "No database configured", "model": BadRequestResponse},
             404: {"description": "Database not found", "model": NotFoundResponse},
+            422: {"description": "Invalid date range parameters", "model": ValidationErrorResponse},
             500: {"description": "Failed to get OS run metrics", "model": InternalServerErrorResponse},
-            503: {
-                "description": "No AgentOS database configured, or no database answered",
-                "model": InternalServerErrorResponse,
-            },
+            501: {"description": "OS metrics not supported by the configured database"},
+            503: {"description": "No database answered", "model": InternalServerErrorResponse},
         },
     )
     async def get_os_run_metrics(
@@ -1250,13 +1244,12 @@ def attach_routes(
                     }
                 },
             },
-            400: {"description": "Invalid date range parameters", "model": BadRequestResponse},
+            400: {"description": "No database configured", "model": BadRequestResponse},
             404: {"description": "Database not found", "model": NotFoundResponse},
+            422: {"description": "Invalid date range parameters", "model": ValidationErrorResponse},
             500: {"description": "Failed to get OS latency metrics", "model": InternalServerErrorResponse},
-            503: {
-                "description": "No AgentOS database configured, or no database answered",
-                "model": InternalServerErrorResponse,
-            },
+            501: {"description": "OS metrics not supported by the configured database"},
+            503: {"description": "No database answered", "model": InternalServerErrorResponse},
         },
     )
     async def get_os_latency_metrics(
@@ -1438,10 +1431,10 @@ def attach_routes(
                     }
                 },
             },
+            400: {"description": "No database configured", "model": BadRequestResponse},
             404: {"description": "Database not found", "model": NotFoundResponse},
             500: {"description": "Failed to refresh OS metrics", "model": InternalServerErrorResponse},
             501: {"description": "OS metrics not supported by the configured database"},
-            503: {"description": "No AgentOS database configured", "model": InternalServerErrorResponse},
         },
     )
     async def refresh_os_metrics(
@@ -1527,12 +1520,12 @@ def attach_routes(
                     }
                 },
             },
+            400: {"description": "No database configured", "model": BadRequestResponse},
             404: {"description": "Database not found", "model": NotFoundResponse},
+            422: {"description": "Invalid date range parameters", "model": ValidationErrorResponse},
             500: {"description": "Failed to get OS metrics refresh status", "model": InternalServerErrorResponse},
-            503: {
-                "description": "No AgentOS database configured, or no database answered",
-                "model": InternalServerErrorResponse,
-            },
+            501: {"description": "OS metrics not supported by the configured database"},
+            503: {"description": "No database answered", "model": InternalServerErrorResponse},
         },
     )
     async def get_os_metrics_refresh_status(
