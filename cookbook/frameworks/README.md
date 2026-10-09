@@ -117,11 +117,11 @@ run ID, status and tools. Errors and cancellations are displayed explicitly and
 raise by default. To inspect an unsuccessful result without raising:
 
 ```python
-result = agent.print_response("Review the project", raise_on_error=False)
+result = agent.print_response("Review the project", stream=True, raise_on_error=False)
 print(result.status)
 ```
 
-The async equivalent is `result = await agent.aprint_response(...)`. Interactive
+The async equivalent is `result = await agent.aprint_response(..., stream=True)`. Interactive
 printing rejects `background=True`; call `arun(background=True)` directly for
 background execution. Foreground streams yield event objects; background streams
 yield SSE strings. With `yield_run_output=True`, either stream appends a terminal

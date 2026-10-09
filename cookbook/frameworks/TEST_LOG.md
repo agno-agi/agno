@@ -314,3 +314,40 @@ Tested from `42e8d4191d` plus the Codex update in the normal checkout, using
 Python 3.12.8, openai-codex / CLI 0.162.1 and `gpt-5.6-luna`. Evidence is retained
 locally in `.context/codex-dx/`. Previous Claude results remain above; the prior
 limits on recovery, durability and deployment claims still apply.
+
+
+## Streaming examples — 2026-10-09
+
+**Status:** PASS
+
+**Description:** Stream the basic and native SDK comparisons, use streaming
+printers in the structured-output and transcript examples, and show SSE first
+in the HTTP commands. Existing tool/session/MCP printers already streamed.
+Explicit non-streaming API acceptance coverage remains in place.
+
+**Result:** All ten live acceptance cases pass in 60.88s without skips or retries.
+Both native examples assert receipt of text deltas. The live Codex structured
+output example returns valid JSON with the expected movie fields after streaming.
+The live Claude transcript example streams both turns and passes its SQLite
+mirror/resume/append assertions across two agent instances with separate working
+directories. This is a local exercise, not a multi-machine recovery test.
+All 13 interactive printer calls explicitly set `stream=True`; eight starting
+examples pass pattern checks. Compile, whitespace and the required full format
+and validation scripts pass. No framework defaults were changed.
+
+**Test harness correction:** The first transcript verification wrapper forwarded
+its own arguments into argparse and exited 2 before a model call. Running the
+script directly corrected that wrapper issue and exited 0. Both logs are retained.
+
+**Source/environment:** `9f22383c53` plus these example changes in the normal
+checkout, using `.venvs/claude-dx-validation`, Python 3.12.8, Claude SDK 0.2.165
+with `claude-sonnet-5-5`, and Codex SDK/CLI 0.162.1 with `gpt-5.6-luna`.
+Existing local CLI authentication was used, with ANTHROPIC_API_KEY unset.
+Logs and acceptance artifacts are in `.context/harness-streaming/`.
+
+```bash
+AGNO_TEST_CLAUDE_SDK=1 AGNO_TEST_CODEX_SDK=1 python -m pytest \
+  libs/agno/tests/integration/agents/test_harness_cookbooks.py -q
+python cookbook/frameworks/codex/codex_structured_output.py
+python cookbook/frameworks/claude-agent-sdk/transcript_store.py
+```

@@ -12,6 +12,7 @@ import asyncio
 from pathlib import Path
 
 from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+from claude_agent_sdk.types import StreamEvent
 
 # ---------------------------------------------------------------------------
 # Create SDK Options
@@ -24,6 +25,7 @@ options = ClaudeAgentOptions(
     tools=[],
     setting_sources=[],
     strict_mcp_config=True,
+    include_partial_messages=True,
 )
 
 
@@ -32,14 +34,22 @@ options = ClaudeAgentOptions(
 # ---------------------------------------------------------------------------
 async def main() -> None:
     result = None
+    streamed_text = []
     async for message in query(prompt=prompt, options=options):
-        if isinstance(message, ResultMessage):
+        if isinstance(message, StreamEvent):
+            if message.event.get("type") == "content_block_delta":
+                delta = message.event.get("delta", {})
+                if delta.get("type") == "text_delta":
+                    text = delta.get("text", "")
+                    streamed_text.append(text)
+                    print(text, end="", flush=True)
+        elif isinstance(message, ResultMessage):
             result = message
     assert result is not None, "No SDK result received"
     assert not result.is_error and result.subtype == "success", result
     assert result.result, "The SDK completed without an answer"
-    print(result.result)
-    print(f"Claude session: {result.session_id} | Status: {result.subtype}")
+    assert "".join(streamed_text), "No streamed text received"
+    print(f"\nClaude session: {result.session_id} | Status: {result.subtype}")
 
 
 if __name__ == "__main__":

@@ -34,7 +34,7 @@ python cookbook/frameworks/codex/codex_basic.py
 
 Inspect the answer and Agno run ID. An order of exactly 100 dollars qualifies
 for free shipping. This prompt contains the policy, so no file read is needed.
-The script uses `print_response()`, which displays the terminal status and raises
+The script uses `print_response(..., stream=True)`, which displays the terminal status and raises
 on failed or cancelled runs, so errors exit nonzero. The method returns the final
 `RunOutput`; its async equivalent is `aprint_response()`. See the shared
 [3.2 migration notes](../README.md#adapter-api-changes-for-32).
@@ -46,7 +46,8 @@ python cookbook/frameworks/codex/codex_native_sdk.py
 ```
 
 The prompt, model and corresponding execution settings match `codex_basic.py`.
-The native example creates an `AsyncCodex` client, a thread and a turn.
+The native example creates an `AsyncCodex` client, a thread and a turn, then
+prints text deltas from `turn.stream()`.
 Agno manages those calls and returns a `RunOutput`. Codex still executes the
 agent loop; its native thread ID is distinct from an Agno run/session ID.
 
@@ -75,7 +76,7 @@ agent = CodexAgent(
     thread_options=thread_options,
     turn_options=turn_options,
 )
-agent.print_response("Explain when a shipping fee should be waived.")
+agent.print_response("Explain when a shipping fee should be waived.", stream=True)
 ```
 
 - `client_options` accepts the native `CodexConfig`: executable, process environment,
@@ -131,12 +132,12 @@ In another terminal:
 ```bash
 curl -fsS http://127.0.0.1:7777/health
 curl -fsS http://127.0.0.1:7777/agents
-curl -fsS http://127.0.0.1:7777/agents/codex-reviewer/runs \
+curl --no-buffer -fsS http://127.0.0.1:7777/agents/codex-reviewer/runs \
   -F 'message=Read shipping.py and orders.json. Explain the fee for each order. Do not modify files.' \
-  -F 'session_id=codex-shipping-review' -F 'stream=false'
+  -F 'session_id=codex-shipping-review' -F 'stream=true'
 ```
 
-Repeat with `stream=true` and `curl --no-buffer` to see SSE. Run one provider
+This streams SSE. Use `stream=false` for a single JSON response. Run one provider
 server at a time, or set `PORT=7778` for the second server.
 
 Copy the returned `run_id` and read the stored result:

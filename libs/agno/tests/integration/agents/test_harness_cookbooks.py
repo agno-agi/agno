@@ -191,7 +191,7 @@ async def test_live_claude_native_options():
     options = example["options"]
     original = (options.resume, options.include_partial_messages, list(options.tools))
     agent = ClaudeAgent(id="claude-native-options", options=options)
-    result = await asyncio.wait_for(agent.arun(example["prompt"]), timeout=120)
+    result = await asyncio.wait_for(agent.aprint_response(example["prompt"], stream=True), timeout=120)
     assert result.status == RunStatus.completed, result.content
     assert result.content
     assert (options.resume, options.include_partial_messages, options.tools) == original

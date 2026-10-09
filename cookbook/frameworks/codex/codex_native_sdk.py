@@ -34,11 +34,19 @@ async def main() -> None:
             sandbox=Sandbox.read_only,
             approval_mode=ApprovalMode.deny_all,
         )
-        result = await thread.run(prompt, effort=ReasoningEffort.low)
-        assert result.status.value == "completed", result
-        assert result.final_response, "The SDK completed without an answer"
-        print(result.final_response)
-        print(f"Codex thread: {thread.id} | Status: {result.status.value}")
+        turn = await thread.turn(prompt, effort=ReasoningEffort.low)
+        completed = None
+        streamed_text = []
+        async for event in turn.stream():
+            if event.method == "item/agentMessage/delta":
+                streamed_text.append(event.payload.delta)
+                print(event.payload.delta, end="", flush=True)
+            elif event.method == "turn/completed":
+                completed = event.payload.turn
+        assert completed is not None, "No terminal turn received"
+        assert completed.status.value == "completed", completed
+        assert "".join(streamed_text), "No streamed text received"
+        print(f"\nCodex thread: {thread.id} | Status: {completed.status.value}")
 
 
 if __name__ == "__main__":

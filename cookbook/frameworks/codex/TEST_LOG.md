@@ -303,3 +303,12 @@ Claude was not rerun for this Codex-only implementation change; its previous liv
 results remain above. Native input objects are explicitly unsupported, not new
 multimodal support. These tests do not establish disconnect recovery, durability,
 multi-replica execution, retries or deployment readiness.
+
+
+## Streaming examples — 2026-10-09
+
+**Status:** PASS
+
+**Description:** codex_basic.py and codex_native_sdk.py stream their text. codex_structured_output.py uses the streaming printer and parses its returned final JSON. codex_tools.py already used print_response(prompt, stream=True).
+
+**Result:** All ten live acceptance cases pass in 60.88s. Additional live structured-output and transcript runs pass. Full format/validation, compile, whitespace and starting-example pattern checks pass. See the [shared test log](../TEST_LOG.md#streaming-examples--2026-10-09) for commands, versions, evidence and the corrected transcript test-wrapper failure.

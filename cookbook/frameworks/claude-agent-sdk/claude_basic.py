@@ -34,4 +34,4 @@ agent = ClaudeAgent(
 # Run the Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    agent.print_response(prompt, stream=False)
+    agent.print_response(prompt, stream=True)

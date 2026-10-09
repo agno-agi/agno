@@ -19,7 +19,7 @@ python cookbook/frameworks/claude-agent-sdk/claude_basic.py
 
 Inspect the answer and Agno run ID. An order of exactly 100 dollars qualifies
 for free shipping. This prompt contains the policy, so no file read is needed.
-The script uses `print_response()`, which displays the terminal status and raises
+The script uses `print_response(..., stream=True)`, which displays the terminal status and raises
 on failed or cancelled runs, so errors exit nonzero.
 
 For interactive use, Agno also provides formatted output:
@@ -31,7 +31,7 @@ agent = ClaudeAgent(model="claude-sonnet-5-5", tools=[])
 agent.print_response("What is a Python context manager?", stream=True)
 ```
 
-In an async application, use `await agent.aprint_response(...)`. Both methods
+In an async application, use `await agent.aprint_response(..., stream=True)`. Both methods
 return the final `RunOutput`; use `raise_on_error=False` only when you want to
 handle failed or cancelled results yourself. See the shared
 [3.2 migration notes](../README.md#adapter-api-changes-for-32).
@@ -83,12 +83,12 @@ In another terminal:
 ```bash
 curl -fsS http://127.0.0.1:7777/health
 curl -fsS http://127.0.0.1:7777/agents
-curl -fsS http://127.0.0.1:7777/agents/claude-reviewer/runs \
+curl --no-buffer -fsS http://127.0.0.1:7777/agents/claude-reviewer/runs \
   -F 'message=Read shipping.py and orders.json. Explain the fee for each order. Do not modify files.' \
-  -F 'session_id=claude-shipping-review' -F 'stream=false'
+  -F 'session_id=claude-shipping-review' -F 'stream=true'
 ```
 
-Repeat with `stream=true` and `curl --no-buffer` to see SSE. Run one provider
+This streams SSE. Use `stream=false` for a single JSON response. Run one provider
 server at a time, or set `PORT=7778` for the second server.
 
 Copy the returned `run_id` and read the stored result:

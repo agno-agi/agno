@@ -382,3 +382,12 @@ Source was `1d91efd765` plus the path consolidation in the normal checkout;
 SDK/model versions are unchanged from the preceding runs. See the
 [root log](../TEST_LOG.md#consolidated-framework-paths--2026-10-09) for complete
 evidence and limits. This does not rerun this directory's advanced examples.
+
+
+## Streaming examples — 2026-10-09
+
+**Status:** PASS
+
+**Description:** claude_basic.py and claude_native_sdk.py stream their text. transcript_store.py uses streaming printers for both turns, the requested claude-sonnet-5-5 model, and no explicit turn/budget limits.
+
+**Result:** All ten live acceptance cases pass in 60.88s. Additional live structured-output and transcript runs pass. Full format/validation, compile, whitespace and starting-example pattern checks pass. See the [shared test log](../TEST_LOG.md#streaming-examples--2026-10-09) for commands, versions, evidence and the corrected transcript test-wrapper failure.

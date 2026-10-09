@@ -47,7 +47,8 @@ does not imply the native SDK packages support that Python version.
 Follow the provider README, then run its `<provider>_basic.py`,
 `<provider>_native_sdk.py` and `<provider>_tools.py` individually. Check:
 
-- Basic and SDK examples both answer the inclusive threshold question with zero shipping.
+- Basic and SDK examples stream the answer to the inclusive threshold question
+  with zero shipping. Native examples assert that text deltas were received.
 - Native and wrapped examples use the same prompt/model; compare their result objects and IDs.
 - Both providers display a Tool Calls panel; their returned `result.tools`
   contains real fixture contents.
