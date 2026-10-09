@@ -274,11 +274,25 @@ class CodexAgent(BaseExternalAgent):
         if session_id:
             self._thread_ids.pop(session_id, None)
 
+    @staticmethod
+    def _is_missing_thread(error: Exception) -> bool:
+        """True when the app-server reports the resume target as gone, not a failed call.
+
+        The app-server answers a resume of an unknown thread with a JSON-RPC invalid
+        request error whose message reads "no rollout found for thread id ..."; a
+        malformed id reads "invalid session id ...".
+        """
+        text = str(getattr(error, "message", None) or error)
+        return "no rollout found" in text or "invalid session id" in text
+
     async def _open_thread(self, codex: Any, sdk: Any, session: Any, session_id: Optional[str]) -> Tuple[Any, bool]:
         """Resume the thread tied to this session, or start a new one.
 
-        Returns (thread, resumed). A failed resume (thread files removed,
-        ephemeral thread) falls back to a fresh thread.
+        Returns (thread, resumed). Only a resume the app-server rejects because the
+        thread no longer exists (rollout files removed, ephemeral thread, bad id)
+        falls back to a fresh thread. Any other failure (busy server, closed
+        transport, bad cwd) is raised as-is and keeps the stored thread id, so a
+        transient problem cannot unlink the session from its conversation.
         """
         thread_id = self._get_thread_id(session, session_id)
         if thread_id:
@@ -287,6 +301,8 @@ class CodexAgent(BaseExternalAgent):
                 log_debug(f"Codex: resumed thread {thread_id} for session {session_id}")
                 return thread, True
             except Exception as e:
+                if not self._is_missing_thread(e):
+                    raise
                 log_warning(
                     f"Codex: could not resume thread {thread_id} for session {session_id}: {e}. Starting a new one."
                 )
