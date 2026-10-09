@@ -252,6 +252,21 @@ async def test_aload_with_sync_database_matches_load(sqlite_db, skill_data) -> N
     assert [s.name for s in await loader.aload()] == [s.name for s in loader.load()]
 
 
+def test_backend_without_skills_support_is_warned_about_by_name(monkeypatch) -> None:
+    """A database with no skills methods is reported by backend and method, not by an empty message."""
+    from agno.db.in_memory import InMemoryDb
+
+    warnings: List[str] = []
+    monkeypatch.setattr("agno.skills.agent_skills.log_warning", warnings.append)
+
+    skills = Skills(loaders=[DbSkills(InMemoryDb())])
+    skills.reload()
+
+    assert skills.get_skill_names() == []
+    assert len(warnings) == 2
+    assert all("InMemoryDb" in warning and "get_skills_with_content" in warning for warning in warnings)
+
+
 def test_load_rejects_an_async_database(async_sqlite_db) -> None:
     """Test that the sync load names the problem instead of iterating a coroutine."""
     with pytest.raises(SkillError, match="aload"):

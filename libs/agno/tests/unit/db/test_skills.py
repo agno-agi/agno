@@ -385,6 +385,39 @@ def test_backend_without_skills_support_raises_not_implemented():
         db.delete_skill("x")
 
 
+_SKILLS_METHOD_CALLS = [
+    ("get_skill", ("x",)),
+    ("get_skills", ()),
+    ("get_skills_with_content", ()),
+    ("create_skill", ({"name": "x"},)),
+    ("update_skill", ("x", 1)),
+    ("delete_skill", ("x",)),
+]
+
+
+@pytest.mark.parametrize("method, args", _SKILLS_METHOD_CALLS)
+def test_backend_without_skills_support_names_itself_and_the_method(method, args):
+    """The refusal says which backend and which method, so a loader can log it as such."""
+    from agno.db.in_memory import InMemoryDb
+
+    db = InMemoryDb()
+    for _ in range(2):
+        with pytest.raises(NotImplementedError, match=f"InMemoryDb does not implement {method}"):
+            getattr(db, method)(*args)
+
+
+@pytest.mark.parametrize("method, args", _SKILLS_METHOD_CALLS)
+async def test_async_backend_without_skills_support_names_itself_and_the_method(method, args):
+    pytest.importorskip("pymongo")
+    from agno.db.mongo.async_mongo import AsyncMongoDb
+
+    # Constructing the client opens no connection; the defaults raise before any I/O.
+    db = AsyncMongoDb(db_url="mongodb://127.0.0.1:9/", db_name="skills-probe")
+    for _ in range(2):
+        with pytest.raises(NotImplementedError, match=f"AsyncMongoDb does not implement {method}"):
+            await getattr(db, method)(*args)
+
+
 # ============================================================================
 # SKILLROW MODEL TESTS
 # ============================================================================

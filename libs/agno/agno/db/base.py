@@ -2357,7 +2357,7 @@ class BaseDb(ABC):
 
     def get_skill(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a skill by name, including its content. user_id optionally scopes to an owner."""
-        raise NotImplementedError
+        raise NotImplementedError(f"{type(self).__name__} does not implement get_skill")
 
     def get_skills(
         self,
@@ -2371,7 +2371,7 @@ class BaseDb(ABC):
         Returns:
             Tuple of (skills, total_count)
         """
-        raise NotImplementedError
+        raise NotImplementedError(f"{type(self).__name__} does not implement get_skills")
 
     def get_skills_with_content(
         self,
@@ -2384,11 +2384,11 @@ class BaseDb(ABC):
         The loader's read: every column, uncapped. With include_shared=True the read is
         owner-scoped to shared (no-owner) rows plus user_id's own. Errors propagate rather
         than returning [], so a caller can tell a failed read from an empty table."""
-        raise NotImplementedError
+        raise NotImplementedError(f"{type(self).__name__} does not implement get_skills_with_content")
 
     def create_skill(self, skill_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a new skill. Raises SkillError if a skill with the same name exists."""
-        raise NotImplementedError
+        raise NotImplementedError(f"{type(self).__name__} does not implement create_skill")
 
     def update_skill(
         self, name: str, expected_version: int, *, user_id: Optional[str] = None, **kwargs: Any
@@ -2398,11 +2398,11 @@ class BaseDb(ABC):
 
         user_id, when given, is an ownership predicate on WHICH row may be updated. It is
         never written as a value, so a scoped update cannot reassign the row's owner."""
-        raise NotImplementedError
+        raise NotImplementedError(f"{type(self).__name__} does not implement update_skill")
 
     def delete_skill(self, name: str, user_id: Optional[str] = None) -> bool:
         """Delete a skill by name. user_id optionally scopes to an owner. Returns True if deleted."""
-        raise NotImplementedError
+        raise NotImplementedError(f"{type(self).__name__} does not implement delete_skill")
 
 
 class AsyncBaseDb(ABC):
@@ -3910,7 +3910,7 @@ class AsyncBaseDb(ABC):
 
     async def get_skill(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a skill by name, including its content. user_id optionally scopes to an owner."""
-        raise NotImplementedError
+        raise NotImplementedError(f"{type(self).__name__} does not implement get_skill")
 
     async def get_skills(
         self,
@@ -3924,7 +3924,7 @@ class AsyncBaseDb(ABC):
         Returns:
             Tuple of (skills, total_count)
         """
-        raise NotImplementedError
+        raise NotImplementedError(f"{type(self).__name__} does not implement get_skills")
 
     async def get_skills_with_content(
         self,
@@ -3937,11 +3937,11 @@ class AsyncBaseDb(ABC):
         The loader's read: every column, uncapped. With include_shared=True the read is
         owner-scoped to shared (no-owner) rows plus user_id's own. Errors propagate rather
         than returning [], so a caller can tell a failed read from an empty table."""
-        raise NotImplementedError
+        raise NotImplementedError(f"{type(self).__name__} does not implement get_skills_with_content")
 
     async def create_skill(self, skill_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a new skill. Raises SkillError if a skill with the same name exists."""
-        raise NotImplementedError
+        raise NotImplementedError(f"{type(self).__name__} does not implement create_skill")
 
     async def update_skill(
         self, name: str, expected_version: int, *, user_id: Optional[str] = None, **kwargs: Any
@@ -3951,8 +3951,8 @@ class AsyncBaseDb(ABC):
 
         user_id, when given, is an ownership predicate on WHICH row may be updated. It is
         never written as a value, so a scoped update cannot reassign the row's owner."""
-        raise NotImplementedError
+        raise NotImplementedError(f"{type(self).__name__} does not implement update_skill")
 
     async def delete_skill(self, name: str, user_id: Optional[str] = None) -> bool:
         """Delete a skill by name. user_id optionally scopes to an owner. Returns True if deleted."""
-        raise NotImplementedError
+        raise NotImplementedError(f"{type(self).__name__} does not implement delete_skill")
