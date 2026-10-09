@@ -1,4 +1,4 @@
-from typing import List, Optional, TypedDict
+from typing import Any, List, Optional, TypedDict
 
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
@@ -20,6 +20,11 @@ class OptionalFieldsDict(TypedDict, total=False):
     topic: str
     focus_areas: List[str]
     priority: Optional[str]
+
+
+class AnyFieldsDict(TypedDict):
+    topic: str
+    metadata: Any
 
 
 # Pydantic schemas
@@ -170,6 +175,27 @@ def test_typed_dict_agent_validate_input_with_optional_fields(optional_fields_ag
 
     assert result1 == minimal_input
     assert result2 == full_input
+
+
+def test_typed_dict_validate_input_any_field_accepts_none():
+    """`Any` accepts every value, including None."""
+    valid_input = {"topic": "AI", "metadata": None}
+
+    result = validate_input(valid_input, AnyFieldsDict)
+
+    assert result == valid_input
+
+
+def test_typed_dict_validate_input_any_field_accepts_any_value():
+    """Non-None values keep working for `Any` fields."""
+    for value in ({}, [], 0, "", False, 3.5):
+        assert validate_input({"topic": "AI", "metadata": value}, AnyFieldsDict) == {"topic": "AI", "metadata": value}
+
+
+def test_typed_dict_validate_input_none_still_rejected_for_concrete_type():
+    """Guard: accepting None for `Any` must not accept None for `str`."""
+    with pytest.raises(ValueError, match="expected type"):
+        validate_input({"topic": None, "metadata": {}}, AnyFieldsDict)
 
 
 def test_agent_without_input_schema_handles_dict():

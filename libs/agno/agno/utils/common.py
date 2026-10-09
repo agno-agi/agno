@@ -57,6 +57,10 @@ def check_type_compatibility(value: Any, expected_type: Type) -> bool:
     """Basic type compatibility checking."""
     from typing import get_args, get_origin
 
+    # `Any` accepts every value, including None, so it has to be checked before the None short-circuit.
+    if expected_type is Any:
+        return True
+
     # Handle None/Optional types
     if value is None:
         return (
@@ -79,9 +83,6 @@ def check_type_compatibility(value: Any, expected_type: Type) -> bool:
 
     if expected_type in (str, int, float, bool):
         return isinstance(value, expected_type)
-
-    if expected_type is Any:
-        return True
 
     try:
         return isinstance(value, expected_type)
