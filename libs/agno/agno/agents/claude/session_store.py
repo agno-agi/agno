@@ -13,19 +13,26 @@ class AgnoSessionStore:
     from the SDK working directory during resume.
     """
 
-    def __init__(self, db: Union[BaseDb, AsyncBaseDb], project_key: str):
+    framework = "claude-agent-sdk"
+
+    def __init__(self, db: Union[BaseDb, AsyncBaseDb], project_key: str, agno_session_id: str):
         self.db = db
         self.project_key = project_key
+        self.agno_session_id = agno_session_id
 
     async def _call(self, method: str, **kwargs: Any) -> Any:
         fn = getattr(self.db, method)
         if isinstance(self.db, AsyncBaseDb):
-            return await fn(project_key=self.project_key, **kwargs)
-        return await asyncio.to_thread(fn, project_key=self.project_key, **kwargs)
+            return await fn(framework=self.framework, project_key=self.project_key, **kwargs)
+        return await asyncio.to_thread(fn, framework=self.framework, project_key=self.project_key, **kwargs)
 
     async def append(self, key: Dict[str, Any], entries: List[Dict[str, Any]]) -> None:
         await self._call(
-            "append_transcript_entries", session_id=key["session_id"], subpath=key.get("subpath"), entries=entries
+            "append_transcript_entries",
+            session_id=key["session_id"],
+            subpath=key.get("subpath"),
+            entries=entries,
+            agno_session_id=self.agno_session_id,
         )
 
     async def load(self, key: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:

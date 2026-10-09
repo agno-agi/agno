@@ -4,19 +4,20 @@ Use `ClaudeAgent` to run Claude Code through Agno and AgentOS. Install `claude-a
 
 ## Durable transcripts
 
-`session_store.py --verify` starts two independent processes with separate empty `CLAUDE_CONFIG_DIR` directories. The first stores a fact and mirrors the Claude transcript to SQLite. Its Agno run history is removed so the second process must resume the SDK transcript from the database to recall the fact.
+Claude Code keeps each conversation as a JSONL transcript on the local disk of the machine that ran it. When `ClaudeAgent` has a database that supports transcript storage, every transcript line is also mirrored into the `agno_transcripts` table, and a later turn on any machine resumes the conversation from the database instead of the local file.
+
+`transcript_store.py` runs the whole flow and prints the table after each step. Replica A runs a turn and stores a fact. Replica B is a second agent instance with a different working directory, so replica A's local transcript is invisible to it. It resumes from the database, answers from the stored conversation, and appends its own lines to the same transcript.
 
 ```bash
-PYTHONPATH=libs/agno .venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/session_store.py --verify
+.venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/transcript_store.py
+.venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/transcript_store.py --postgres
 ```
 
-Use PostgreSQL in production. Transcript storage supports PostgresDb, AsyncPostgresDb, SqliteDb, and AsyncSqliteDb. `project_key` defaults to the agent id; set a stable tenant-specific value when sharing a database. Other database adapters retain local-file resume behavior. The adapter does not change `CLAUDE_CONFIG_DIR`; set an ephemeral directory in each container. Workspace files are not persisted by this store.
+The `--postgres` flag uses the container from `cookbook/scripts/run_pgvector.sh`. A normal `claude login` or `ANTHROPIC_API_KEY` is enough: for a store-backed resume the SDK writes the transcript into a temporary config directory and copies the caller's credentials into it, including macOS Keychain logins.
 
-### Authentication with an empty config directory
+Use PostgreSQL in production. Transcript storage supports PostgresDb, AsyncPostgresDb, SqliteDb, and AsyncSqliteDb. `project_key` defaults to the agent id; set a stable tenant-specific value when sharing a database. Other database adapters retain local-file resume behavior. Workspace files are not persisted by this store.
 
-The fresh `CLAUDE_CONFIG_DIR` also hides local login state. Export `ANTHROPIC_API_KEY` before running the example; both child processes inherit it. Our verification used the API key exported by the repository's `.envrc`, without reading or printing credentials. Remove `AGNO_DEBUG` and `AGNO_MONITOR` for clean logs.
-
-If no API key is available, run `claude setup-token` interactively and export its result as `CLAUDE_CODE_OAUTH_TOKEN`. For file-based login, copy only `~/.claude/.credentials.json` into each fresh config directory. Do not copy project transcripts. macOS Keychain login alone does not authenticate a process using an empty custom config directory.
+The `agno_transcripts` table is created on first use. A development database that ran an earlier build of this feature has an older table shape and raises a schema mismatch; drop the table and it is recreated.
 
 ## Background runs and cancellation
 
@@ -32,3 +33,10 @@ If the SDK exhausts transcript-store retries, the response remains completed and
 history. Streaming callers receive a `CustomEvent` with the same `warning` object. The warning means
 another replica may be unable to recover the complete conversation. The adapter does not reexecute
 completed model work or tool side effects to repair the mirror.
+
+### When transcripts stay on local disk
+
+A database without transcript storage logs a warning once and the agent continues with the SDK's
+local-disk transcripts, so resume works on the machine that ran the session. Transcript storage is also
+skipped, with a warning, when `enable_file_checkpointing` is set in `options_kwargs`, because the SDK
+does not allow the two together. A `session_store` supplied in `options_kwargs` is used as is.
