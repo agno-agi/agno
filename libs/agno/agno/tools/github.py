@@ -8,6 +8,7 @@ from agno.utils.log import log_debug, logger
 
 try:
     from github import Auth, Github, GithubException
+    from github.GithubObject import NotSet
 
 except ImportError:
     raise ImportError("`PyGithub` not installed. Please install using `pip install pygithub`")
@@ -357,7 +358,7 @@ class GithubTools(Toolkit):
         Args:
             repo_name (str): The full name of the repository (e.g., 'owner/repo').
             title (str): The title of the issue.
-            body (str, optional): The body content of the issue.
+            body (str, optional): The body content of the issue. Omit to create an issue without a body.
 
         Returns:
             A JSON-formatted string containing the created issue details.
@@ -365,7 +366,7 @@ class GithubTools(Toolkit):
         log_debug(f"Creating issue in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
-            issue = repo.create_issue(title=title, body=body)  # type: ignore
+            issue = repo.create_issue(title=title, body=body if body is not None else NotSet)
             issue_info = {
                 "id": issue.id,
                 "number": issue.number,
@@ -628,8 +629,8 @@ class GithubTools(Toolkit):
         Args:
             repo_name (str): The full name of the repository.
             issue_number (int): The number of the issue.
-            title (str, optional): The new title for the issue.
-            body (str, optional): The new body content for the issue.
+            title (str, optional): The new title for the issue. Omit to leave it unchanged.
+            body (str, optional): The new body content. Omit to leave it unchanged; use an empty string to clear it.
 
         Returns:
             A JSON-formatted string confirming the issue has been updated.
@@ -638,7 +639,7 @@ class GithubTools(Toolkit):
         try:
             repo = self.g.get_repo(repo_name)
             issue = repo.get_issue(number=issue_number)
-            issue.edit(title=title, body=body)  # type: ignore
+            issue.edit(title=title if title is not None else NotSet, body=body if body is not None else NotSet)
             return json.dumps({"message": f"Issue #{issue_number} updated."}, indent=2)
         except GithubException as e:
             logger.exception("Error editing issue")
