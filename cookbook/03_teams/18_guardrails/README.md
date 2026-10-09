@@ -13,3 +13,4 @@ Examples for team workflows in guardrails.
 - openai_moderation.py - Demonstrates openai moderation.
 - pii_detection.py - Demonstrates pii detection.
 - prompt_injection.py - Demonstrates prompt injection.
+- [jev_guardrail.py](jev_guardrail.py) - Async Jev checks before the team leader runs. Requires `typesafe-sdk`, `TYPESAFE_API_KEY`, and `OPENAI_API_KEY`; see [Jev setup](../../90_models/typesafe/README.md).

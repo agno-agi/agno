@@ -111,6 +111,10 @@ def resolve_run_options(
     else:
         resolved_stream = False
 
+    from agno.utils.hooks import validate_streaming_post_hooks
+
+    validate_streaming_post_hooks(team.post_hooks, resolved_stream)
+
     # stream_events: forced False when not streaming;
     # otherwise call-site > team.stream_events > False
     resolved_stream_events: bool
