@@ -149,19 +149,15 @@ METRICS_TABLE_SCHEMA = {
 OS_METRICS_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "date": {"type": Date, "nullable": False, "index": True},
-    # The period of this row: "daily" for a row of one owner and component, "daily_total" for the total row of
-    # a completed day, which has no owner and no component. A completed month has month rows, dated its first
-    # day: a "monthly" row per owner and component, and a "monthly_total" row with no owner and no component.
     "aggregation_period": {"type": String, "nullable": False},
-    # Owner and component of this row, each an empty string when there is none, since Postgres treats
-    # NULLs as distinct. Only the id matching the component's type is set.
+    # Owner and component of this row. Empty string for none, since Postgres treats NULLs as distinct and the
+    # unique constraint below would not hold.
     "user_id": {"type": String, "nullable": False, "default": ""},
     "agent_id": {"type": String, "nullable": False, "default": ""},
     "team_id": {"type": String, "nullable": False, "default": ""},
     "workflow_id": {"type": String, "nullable": False, "default": ""},
     "sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
     "runs_count": {"type": BigInteger, "nullable": False, "default": 0},
-    # Counts keyed by name, so a new run status, token kind or timing needs no new column
     "status_metrics": {"type": JSONB, "nullable": False, "default": {}},
     "token_metrics": {"type": JSONB, "nullable": False, "default": {}},
     "duration_metrics": {"type": JSONB, "nullable": False, "default": {}},
