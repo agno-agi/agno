@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from agno.skills.executor import SkillExecutor
 
 from agno.agent.followup import FollowupConfig, model_identity
-from agno.db.base import BaseDb, ComponentType, SessionType
+from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import ComponentRehydrationError
@@ -92,6 +92,12 @@ def _competing_memory_manager_ids(registry: Registry, name: str) -> List[str]:
         for manager in (registry.memory_managers or [])
         if _memory_manager_resource_name(manager) == name
     ]
+
+
+def _db_reads_skills(db: Union[BaseDb, AsyncBaseDb]) -> bool:
+    """Whether this backend implements the skills table read; the base-class default only raises."""
+    base = AsyncBaseDb if isinstance(db, AsyncBaseDb) else BaseDb
+    return type(db).get_skills_with_content is not base.get_skills_with_content
 
 
 def resolve_memory_manager_reference(
@@ -1451,8 +1457,10 @@ def from_dict(
     if "skills" in config and isinstance(config["skills"], dict):
         skill_names = config["skills"].get("names")
         # config["db"] is already live from the block above and owns this agent's skill rows,
-        # custom skills_table included; the caller's db covers only a config saved without one.
-        skills_db = config.get("db") if config.get("db") is not None else db
+        # custom skills_table included, when its backend has a skills table; the caller's db
+        # covers a config whose db is missing, could not be rebuilt, or cannot read skills.
+        config_db = config.get("db")
+        skills_db = config_db if config_db is not None and _db_reads_skills(config_db) else db
         if skill_names and skills_db is not None:
             from agno.skills import DbSkills, Skills
 

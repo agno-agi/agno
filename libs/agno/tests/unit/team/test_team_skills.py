@@ -298,6 +298,28 @@ def test_strict_load_resolves_skills_against_the_configs_own_db(tmp_path):
         assert by_id.skills.get_skill_names() == ["release-notes"]
 
 
+def test_a_config_db_without_a_skills_table_falls_back_to_the_callers_db(tmp_path):
+    from agno.db.in_memory import InMemoryDb
+    from agno.registry.registry import Registry
+
+    catalog = _make_db(tmp_path)
+    _create_skill_row(catalog)
+    own = InMemoryDb()
+    team = Team(name="test-team", id="memory-db-team", members=[], db=own, skills=Skills(loaders=[DbSkills(catalog)]))
+    version = team.save(db=catalog)
+    config = catalog.get_config(component_id="memory-db-team", version=version)["config"]
+    assert config["db"]["id"] == own.id
+    registry = Registry(dbs=[own])
+
+    for _ in range(2):
+        loaded = Team.from_dict(config, db=catalog, registry=registry, strict=True)
+        assert loaded.db is own
+        assert loaded.skills.get_skill_names() == ["release-notes"]
+        by_id = get_team_by_id(db=catalog, id="memory-db-team", registry=registry, strict=True)
+        assert by_id is not None
+        assert by_id.skills.get_skill_names() == ["release-notes"]
+
+
 def test_strict_load_raises_when_no_db_can_resolve_the_saved_skills(tmp_path):
     from agno.exceptions import ComponentRehydrationError
 

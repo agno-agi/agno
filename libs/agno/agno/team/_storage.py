@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.agent._storage import (
+    _db_reads_skills,
     _followups_from_config,
     _followups_to_config,
     is_auto_generated_memory_manager_id,
@@ -1322,8 +1323,10 @@ def from_dict(
     if "skills" in config and isinstance(config["skills"], dict):
         skill_names = config["skills"].get("names")
         # config["db"] is already live from the block above and owns this team's skill rows,
-        # custom skills_table included; the caller's db covers only a config saved without one.
-        skills_db = config.get("db") if config.get("db") is not None else db
+        # custom skills_table included, when its backend has a skills table; the caller's db
+        # covers a config whose db is missing, could not be rebuilt, or cannot read skills.
+        config_db = config.get("db")
+        skills_db = config_db if config_db is not None and _db_reads_skills(config_db) else db
         if skill_names and skills_db is not None:
             from agno.skills import DbSkills, Skills
 

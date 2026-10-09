@@ -424,6 +424,30 @@ def test_strict_load_resolves_skills_against_the_configs_own_db(tmp_path):
         assert by_id.skills.get_skill_names() == ["release-notes"]
 
 
+def test_a_config_db_without_a_skills_table_falls_back_to_the_callers_db(tmp_path):
+    """A backend with no skills table cannot own skill rows: an agent whose own db is one
+    resolves its saved skills from the caller's db instead of loading none."""
+    from agno.db.in_memory import InMemoryDb
+    from agno.registry.registry import Registry
+
+    catalog = _make_db(tmp_path)
+    _create_skill_row(catalog)
+    own = InMemoryDb()
+    agent = Agent(name="test-agent", id="memory-db-agent", db=own, skills=Skills(loaders=[DbSkills(catalog)]))
+    version = agent.save(db=catalog)
+    config = catalog.get_config(component_id="memory-db-agent", version=version)["config"]
+    assert config["db"]["id"] == own.id
+    registry = Registry(dbs=[own])
+
+    for _ in range(2):
+        loaded = Agent.from_dict(config, db=catalog, registry=registry, strict=True)
+        assert loaded.db is own
+        assert loaded.skills.get_skill_names() == ["release-notes"]
+        by_id = get_agent_by_id(db=catalog, id="memory-db-agent", registry=registry, strict=True)
+        assert by_id is not None
+        assert by_id.skills.get_skill_names() == ["release-notes"]
+
+
 def test_strict_load_raises_when_no_db_can_resolve_the_saved_skills(tmp_path):
     """A names block with nothing to resolve it against is dropped leniently and refused strictly."""
     db = _make_db(tmp_path)
