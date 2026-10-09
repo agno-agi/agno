@@ -1,9 +1,9 @@
 """
 Codex SDK: The Same First Run
 ============================
-Run the basic.py prompt directly through the official Codex Python SDK.
+Run the codex_basic.py prompt directly through the official Codex Python SDK.
 
-The SDK exposes threads and turns. Agno's basic.py returns a RunOutput instead.
+The SDK exposes threads and turns. Agno's codex_basic.py returns a RunOutput instead.
 This example uses the SDK's bundled app-server and existing authentication.
 See README.md for setup, the comparison and the official reference.
 """

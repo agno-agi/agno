@@ -17,13 +17,18 @@ import httpx
 import pytest
 
 ROOT = Path(__file__).resolve().parents[5]
-COOKBOOK = ROOT / "cookbook/harnesses"
+COOKBOOK = ROOT / "cookbook/frameworks"
+PROVIDER_DIRS = {"claude": "claude-agent-sdk", "codex": "codex"}
 GATES = {"claude": "AGNO_TEST_CLAUDE_SDK", "codex": "AGNO_TEST_CODEX_SDK"}
 PROMPT = (
     "Read shipping.py and orders.json with your file or shell tools. "
     "Explain the shipping fee for each order and the boundary condition. "
     "Do not modify files or use the network."
 )
+
+
+def _example_path(provider, example):
+    return COOKBOOK / PROVIDER_DIRS[provider] / f"{provider}_{example}.py"
 
 
 def _require_live(provider):
@@ -40,13 +45,13 @@ def _fixture_digest():
 
 
 @pytest.mark.parametrize("provider", GATES)
-@pytest.mark.parametrize("example", ["native_sdk.py", "basic.py", "tools.py"])
+@pytest.mark.parametrize("example", ["native_sdk", "basic", "tools"])
 def test_live_harness_script(provider, example, tmp_path):
     _require_live(provider)
     before = _fixture_digest()
-    command = [sys.executable, "-u", str(COOKBOOK / provider / example)]
+    command = [sys.executable, "-u", str(_example_path(provider, example))]
     tool_result_path = tmp_path / "run.json"
-    if provider == "claude" and example == "tools.py":
+    if provider == "claude" and example == "tools":
         # Execute the actual main block and inspect the printer's returned result.
         command = [
             sys.executable,
@@ -55,7 +60,7 @@ def test_live_harness_script(provider, example, tmp_path):
             "import runpy, sys; from pathlib import Path; "
             "example = runpy.run_path(sys.argv[1], run_name='__main__'); "
             "Path(sys.argv[2]).write_text(example['result'].to_json())",
-            str(COOKBOOK / provider / example),
+            str(_example_path(provider, example)),
             str(tool_result_path),
         ]
     result = subprocess.run(
@@ -68,14 +73,14 @@ def test_live_harness_script(provider, example, tmp_path):
     (tmp_path / "output.log").write_text(result.stdout + result.stderr)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Status:" in result.stdout
-    if provider == "claude" and example == "tools.py":
+    if provider == "claude" and example == "tools":
         assert "Tool Calls" in result.stdout and "Read(" in result.stdout
         run = json.loads(tool_result_path.read_text())
         assert run["status"] == "COMPLETED" and run["content"], run
         results = [str(tool.get("result", "")) for tool in run["tools"] if not tool.get("tool_call_error")]
         assert any("def shipping_fee" in value for value in results), results
         assert any("subtotal" in value and "boundary" in value for value in results), results
-    elif example == "tools.py":
+    elif example == "tools":
         assert "ToolCallStarted:" in result.stdout
         assert "ToolCallCompleted:" in result.stdout
         # The returned tool data must contain fixture content, not just a claimed read.
@@ -92,7 +97,7 @@ def _server(provider, tmp_path):
     log_path = tmp_path / "server.log"
     with log_path.open("w") as log:
         process = subprocess.Popen(
-            [sys.executable, "-u", str(COOKBOOK / provider / "agent_os.py")],
+            [sys.executable, "-u", str(_example_path(provider, "agentos"))],
             cwd=ROOT,
             env=env,
             stdout=log,
@@ -186,7 +191,7 @@ async def test_live_claude_native_options():
     from agno.agents.claude import ClaudeAgent
     from agno.run.base import RunStatus
 
-    example = runpy.run_path(str(COOKBOOK / "claude/native_sdk.py"))
+    example = runpy.run_path(str(_example_path("claude", "native_sdk")))
     options = example["options"]
     original = (options.resume, options.include_partial_messages, list(options.tools))
     agent = ClaudeAgent(id="claude-native-options", options=options)

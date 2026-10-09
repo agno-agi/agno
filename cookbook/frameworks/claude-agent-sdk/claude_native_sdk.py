@@ -1,9 +1,9 @@
 """
 Claude SDK: The Same First Run
 =============================
-Run the basic.py prompt directly through the official Claude Agent SDK.
+Run the claude_basic.py prompt directly through the official Claude Agent SDK.
 
-The SDK yields native messages, ending with a ResultMessage. Agno's basic.py
+The SDK yields native messages, ending with a ResultMessage. Agno's claude_basic.py
 returns a RunOutput instead. Neither example configures an Agno database.
 See README.md for authentication, the comparison and the official reference.
 """

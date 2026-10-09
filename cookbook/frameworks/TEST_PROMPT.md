@@ -1,4 +1,4 @@
-# Reproduce the harness cookbook checks
+# Reproduce the Claude/Codex cookbook checks
 
 Run from the repository root. Record the source commit (including whether the
 tree is dirty), imported Agno path, Python, SDK/CLI versions, model IDs and auth
@@ -10,13 +10,24 @@ Use the development environment:
 
 ```bash
 source .venv/bin/activate
-python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/harnesses/claude
-python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/harnesses/codex
-python -m compileall -q cookbook/harnesses
-ruff check cookbook/harnesses libs/agno/tests/integration/agents/test_harness_cookbooks.py
+python -m compileall -q cookbook/frameworks
+ruff check cookbook/frameworks libs/agno/tests/integration/agents/test_harness_cookbooks.py
+python - <<'PYTHON'
+from pathlib import Path
+from cookbook.scripts.check_cookbook_pattern import validate_file
+
+root = Path("cookbook/frameworks")
+for provider, directory in {"claude": "claude-agent-sdk", "codex": "codex"}.items():
+    for example in ("basic", "native_sdk", "tools", "agentos"):
+        path = root / directory / f"{provider}_{example}.py"
+        violations = validate_file(path)
+        assert not violations, violations
+print("All eight starting examples pass the cookbook pattern check.")
+PYTHON
 ```
 
-The pattern checker targets runnable agent examples, not the shipping source
+The pattern check targets the eight refreshed starting examples. Advanced
+examples have separate validation histories; the shipping project is an input
 fixture. Importing an example must not start a model call or HTTP server.
 
 ## 2. Adapter API regressions
@@ -33,8 +44,8 @@ does not imply the native SDK packages support that Python version.
 
 ## 3. Live scripts, one provider at a time
 
-Follow the provider README, then run `basic.py`, `native_sdk.py` and `tools.py`
-individually. Check:
+Follow the provider README, then run its `<provider>_basic.py`,
+`<provider>_native_sdk.py` and `<provider>_tools.py` individually. Check:
 
 - Basic and SDK examples both answer the inclusive threshold question with zero shipping.
 - Native and wrapped examples use the same prompt/model; compare their result objects and IDs.
@@ -54,7 +65,7 @@ example or adapter failure before rerunning.
 
 Install pytest and pytest-asyncio (required by the repository's integration
 fixtures) in the same environment as the examples. The integration tests
-launch the actual `agent_os.py` servers, on separate loopback ports with
+launch the actual `claude_agentos.py` and `codex_agentos.py` servers, on separate loopback ports with
 temporary SQLite directories. They make real model calls; they are skipped
 unless explicitly enabled.
 

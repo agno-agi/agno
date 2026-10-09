@@ -4,7 +4,7 @@ ClaudeAgent: First Run
 Run one shipping-policy question and print the answer, run ID and terminal status.
 
 No Agno database is configured. This proves a model round trip, not session
-recovery. Compare native_sdk.py for the same prompt without the Agno adapter.
+recovery. Compare claude_native_sdk.py for the same prompt without the Agno adapter.
 Try changing the order amount in the prompt. See README.md for setup.
 """
 
