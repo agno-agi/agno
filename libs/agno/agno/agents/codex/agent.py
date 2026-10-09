@@ -38,10 +38,6 @@ _SANDBOX_ALIASES: Dict[str, str] = {
 # thread_start-only options that thread_resume does not accept.
 _START_ONLY_KEYS = {"ephemeral", "service_name", "session_start_source", "thread_source"}
 
-# Cap on each tool result replayed into a fresh thread. Shell output can be very
-# large, and the new thread only needs to know what happened, not the full dump.
-_HISTORY_TOOL_RESULT_MAX_CHARS = 2000
-
 
 def _item_root(item: Any) -> Any:
     """Unwrap a pydantic RootModel (ThreadItem) to the concrete item."""
@@ -278,11 +274,25 @@ class CodexAgent(BaseExternalAgent):
         if session_id:
             self._thread_ids.pop(session_id, None)
 
+    @staticmethod
+    def _is_missing_thread(error: Exception) -> bool:
+        """True when the app-server reports the resume target as gone, not a failed call.
+
+        The app-server answers a resume of an unknown thread with a JSON-RPC invalid
+        request error whose message reads "no rollout found for thread id ..."; a
+        malformed id reads "invalid session id ...".
+        """
+        text = str(getattr(error, "message", None) or error)
+        return "no rollout found" in text or "invalid session id" in text
+
     async def _open_thread(self, codex: Any, sdk: Any, session: Any, session_id: Optional[str]) -> Tuple[Any, bool]:
         """Resume the thread tied to this session, or start a new one.
 
-        Returns (thread, resumed). A failed resume (thread files removed,
-        ephemeral thread) falls back to a fresh thread.
+        Returns (thread, resumed). Only a resume the app-server rejects because the
+        thread no longer exists (rollout files removed, ephemeral thread, bad id)
+        falls back to a fresh thread. Any other failure (busy server, closed
+        transport, bad cwd) is raised as-is and keeps the stored thread id, so a
+        transient problem cannot unlink the session from its conversation.
         """
         thread_id = self._get_thread_id(session, session_id)
         if thread_id:
@@ -291,6 +301,8 @@ class CodexAgent(BaseExternalAgent):
                 log_debug(f"Codex: resumed thread {thread_id} for session {session_id}")
                 return thread, True
             except Exception as e:
+                if not self._is_missing_thread(e):
+                    raise
                 log_warning(
                     f"Codex: could not resume thread {thread_id} for session {session_id}: {e}. Starting a new one."
                 )
@@ -300,38 +312,6 @@ class CodexAgent(BaseExternalAgent):
         log_debug(f"Codex: started thread {thread.id} for session {session_id}")
         self._remember_thread(session, session_id, getattr(thread, "id", None))
         return thread, False
-
-    @staticmethod
-    def _build_prompt(input: Any, history: Optional[List[Dict[str, Any]]], resumed: bool) -> str:
-        """Plain prompt when the Codex thread carries its own context; otherwise
-        prepend the persisted chat history so a fresh thread does not lose it.
-        Tool calls are replayed with their results, truncated to keep the prompt bounded."""
-        text = str(input)
-        if resumed or not history:
-            return text
-        lines = ["Previous conversation (for context, do not repeat it):"]
-        for message in history:
-            role = message.get("role")
-            content = message.get("content")
-            if role == "assistant" and message.get("tool_calls"):
-                if content:
-                    lines.append(f"assistant: {content}")
-                for tool_call in message["tool_calls"]:
-                    function = tool_call.get("function") or {}
-                    lines.append(
-                        f"assistant called {function.get('name') or 'tool'}({function.get('arguments') or ''})"
-                    )
-            elif role == "tool" and content:
-                result = str(content)
-                if len(result) > _HISTORY_TOOL_RESULT_MAX_CHARS:
-                    result = result[:_HISTORY_TOOL_RESULT_MAX_CHARS] + " [truncated]"
-                lines.append(f"tool result: {result}")
-            elif role in ("user", "assistant") and content:
-                lines.append(f"{role}: {content}")
-        if len(lines) == 1:
-            return text
-        lines.extend(["", "Current message:", text])
-        return "\n".join(lines)
 
     # ---------------------------------------------------------------------------
     # Adapter hooks
