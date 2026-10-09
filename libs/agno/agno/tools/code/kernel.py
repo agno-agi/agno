@@ -222,7 +222,10 @@ class LoopRunner:
             def _run() -> None:
                 asyncio.set_event_loop(loop)
                 loop.call_soon(ready.set)
-                loop.run_forever()
+                try:
+                    loop.run_forever()
+                finally:
+                    loop.close()
 
             thread = threading.Thread(target=_run, name="agno-code-mode", daemon=True)
             thread.start()
