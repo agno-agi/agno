@@ -1,3 +1,4 @@
+from itertools import chain
 from typing import TYPE_CHECKING, Optional
 
 from fastapi import (
@@ -94,21 +95,34 @@ def get_database_router(
     )
     async def migrate_all_databases(target_version: Optional[str] = None):
         """Migrate all local databases. Remote databases are skipped and listed in the response."""
-        all_dbs = {db.id: db for db_id, dbs in os.dbs.items() for db in dbs}
-        local_dbs = {db_id: db for db_id, db in all_dbs.items() if not isinstance(db, RemoteDb)}
-        skipped_dbs = [db_id for db_id in all_dbs if db_id not in local_dbs]
+        # Knowledge contents dbs are registered separately from the core dbs, and each
+        # Knowledge gets its own handle over a distinct knowledge_table -- so several
+        # handles legitimately share one db id. Deduplicate by object identity, not by
+        # id: keying on db.id collapses those handles and leaves every contents table
+        # but one unmigrated, which surfaces later as a MigrationRequiredError at boot.
+        all_dbs = {
+            id(db): db
+            for db in chain(chain.from_iterable(os.dbs.values()), chain.from_iterable(os.knowledge_dbs.values()))
+        }
+        local_dbs = {key: db for key, db in all_dbs.items() if not isinstance(db, RemoteDb)}
+        skipped_dbs = sorted({db.id for key, db in all_dbs.items() if key not in local_dbs})
         if skipped_dbs:
             log_info(f"Skipping migration for remote databases: {', '.join(skipped_dbs)}")
         failed_dbs: dict[str, str] = {}
+        failed_count = 0
 
-        for db_id, db in local_dbs.items():
+        for db in local_dbs.values():
             try:
                 await _migrate_single_db(db, target_version)
             except Exception as e:
-                failed_dbs[db_id] = str(e)
+                failed_count += 1
+                # Several handles can share a db id; keep the first failure per id
+                # rather than letting a later one overwrite it.
+                failed_dbs.setdefault(db.id, str(e))
 
         version_msg = f"version {target_version}" if target_version else "latest version"
-        migrated_count = len(local_dbs) - len(failed_dbs)
+        # Counted in handles, not ids: one id can cover several contents tables.
+        migrated_count = len(local_dbs) - failed_count
 
         if failed_dbs:
             content = {

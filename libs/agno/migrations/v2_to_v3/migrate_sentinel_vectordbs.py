@@ -16,10 +16,16 @@ backfill.
 To use the script simply:
 - Fill in the config block for the backend(s) you use
 - Run the script
+
+For Redis, `index_names` is optional: omit it and the script backfills every Agno index on
+the server. Discovery reads each index's schema and matches Agno's vector-index shape (a
+`content_hash` field plus `content_id`), so an index another tool created on the same Redis
+is left alone. Couchbase and Cassandra still take explicit names — see the note above
+`run()`.
 """
 
 from functools import partial
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Set, Tuple
 
 from agno.utils.log import log_error, log_info, log_warning
 
@@ -27,9 +33,14 @@ from agno.utils.log import log_error, log_info, log_warning
 # Provide EITHER redis_url OR an already-constructed client via redis_config["redis_client"].
 redis_config: Dict[str, Any] = {
     # "redis_url": "redis://localhost:6379",
-    # "index_names": ["my_index"],   # the RedisDb index_name(s) to migrate
+    # "index_names": ["my_index"],   # Omit to discover every Agno index on the server
 }
 # -----------------------------------------
+
+# Fields that together identify an index as an Agno vector store. A vector field alone would
+# also match indexes written by other tools on the same server; the content fields are what
+# make the match Agno-specific.
+_AGNO_REDIS_FIELDS = {"content_hash", "content_id"}
 
 # ------------ Setup for Couchbase ------------
 # The FTS index MUST be updated to include user_id for scoped search to work.
@@ -58,6 +69,67 @@ cassandra_config: Dict[str, Any] = {
 def _decode(value: Any) -> Any:
     """FT.INFO answers in bytes on some clients and str on others."""
     return value.decode() if isinstance(value, bytes) else value
+
+
+def _redis_client() -> Any:
+    """Build (or reuse) the Redis client described by ``redis_config``.
+
+    Returns None when neither a client nor a URL is configured.
+    """
+    client = redis_config.get("redis_client")
+    if client is not None:
+        return client
+    redis_url = redis_config.get("redis_url")
+    if redis_url is None:
+        return None
+    from redis import Redis
+
+    return Redis.from_url(redis_url)
+
+
+def _indexed_field_names(info: Any) -> Set[str]:
+    """Read the schema field names out of an FT.INFO payload.
+
+    The attribute entries are nested sequences whose 'identifier' names the hash field,
+    so the names have to be picked out rather than read off a flat list.
+    """
+    names: Set[str] = set()
+    items = info.items() if hasattr(info, "items") else []
+    for key, value in items:
+        if _decode(key) != "attributes":
+            continue
+        for attribute in value:
+            if not isinstance(attribute, (list, tuple)):
+                continue
+            flat = [_decode(entry) for entry in attribute]
+            if "identifier" in flat:
+                names.add(flat[flat.index("identifier") + 1])
+    return names
+
+
+def discover_redis_indexes() -> List[str]:
+    """Find every Agno vector index on the configured Redis server.
+
+    Returns:
+        Sorted index names whose schema carries Agno's vector-index field signature.
+    """
+    client = _redis_client()
+    if client is None:
+        log_warning("Redis: provide `redis_url` or `redis_client` in redis_config to discover indexes.")
+        return []
+
+    discovered = []
+    for raw_name in client.execute_command("FT._LIST"):
+        index_name = _decode(raw_name)
+        try:
+            info = client.ft(index_name).info()
+        except Exception as e:
+            # An index that cannot be described is not one this migration should touch.
+            log_warning(f"Redis: could not read the schema of index '{index_name}' ({e}). Skipping.")
+            continue
+        if _AGNO_REDIS_FIELDS.issubset(_indexed_field_names(info)):
+            discovered.append(index_name)
+    return sorted(discovered)
 
 
 def _indexed_vector_dimensions(info: Any) -> Any:
@@ -101,15 +173,10 @@ def migrate_redis_index(index_name: str) -> None:
 
         # Only the adapter's field constants are needed; hashes are scanned and patched directly.
         redis_url = redis_config.get("redis_url")
-        client = redis_config.get("redis_client")
-        if client is None and redis_url is None:
+        client = _redis_client()
+        if client is None:
             log_warning("Redis: provide `redis_url` or `redis_client` in redis_config. Skipping.")
             return
-        if client is None:
-            from redis import Redis
-
-            assert redis_url is not None  # narrows for the type checker
-            client = Redis.from_url(redis_url)
 
         field = RedisDb.USER_ID_FIELD
         sentinel = RedisDb.SHARED_OWNER_TAG
@@ -409,8 +476,16 @@ def run() -> None:
     partial backfill is not reported as a success.
     """
     tasks: List[Tuple[str, Callable[[], None]]] = []
-    for name in redis_config.get("index_names", []):
-        tasks.append((f"redis:{name}", partial(migrate_redis_index, name)))
+    if redis_config:
+        # Omitted `index_names` means "discover"; an explicit empty list means "nothing",
+        # so the two must not collapse into the same default.
+        redis_indexes = redis_config.get("index_names")
+        if redis_indexes is None:
+            log_info("No `index_names` set for Redis: discovering Agno indexes on the server")
+            redis_indexes = discover_redis_indexes()
+            log_info(f"Discovered {len(redis_indexes)} Redis index(es): {', '.join(redis_indexes) or 'none'}")
+        for name in redis_indexes:
+            tasks.append((f"redis:{name}", partial(migrate_redis_index, name)))
     if couchbase_config.get("collection_name"):
         tasks.append(("couchbase", migrate_couchbase))
     if cassandra_config.get("table_name"):
