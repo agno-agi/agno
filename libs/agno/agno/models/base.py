@@ -326,7 +326,8 @@ class Model(ABC):
         Invoke the model stream with retry logic for ModelProviderError.
 
         This method wraps the invoke_stream() call and retries on ModelProviderError
-        with optional exponential backoff. Note that retries restart the entire stream.
+        with optional exponential backoff. Note that retries restart the entire stream: before each retry a
+        model_request_retried event is yielded, so consumers can drop what the failed attempt streamed.
         """
         last_exception: Optional[ModelProviderError] = None
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
@@ -347,6 +348,8 @@ class Model(ABC):
                         f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. : {e}"
                         f"Retrying in {delay}s...: {e}",
                     )
+                    # The retry restarts the stream, so what this attempt streamed must be discarded
+                    yield ModelResponse(event=ModelResponseEvent.model_request_retried.value)
 
                     sleep(delay)
                 else:
@@ -367,6 +370,7 @@ class Model(ABC):
                 # Append the guidance message to help the model avoid the error in the next invoke.
                 kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
 
+                yield ModelResponse(event=ModelResponseEvent.model_request_retried.value)
                 yield from self._invoke_stream_with_retry(**kwargs, retry_with_guidance=True)
                 return  # Success, exit after regeneration
 
@@ -378,7 +382,8 @@ class Model(ABC):
         Asynchronously invoke the model stream with retry logic for ModelProviderError.
 
         This method wraps the ainvoke_stream() call and retries on ModelProviderError
-        with optional exponential backoff. Note that retries restart the entire stream.
+        with optional exponential backoff. Note that retries restart the entire stream: before each retry a
+        model_request_retried event is yielded, so consumers can drop what the failed attempt streamed.
         """
         last_exception: Optional[ModelProviderError] = None
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
@@ -400,6 +405,8 @@ class Model(ABC):
                         f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. : {e}"
                         f"Retrying in {delay}s...: {e}",
                     )
+                    # The retry restarts the stream, so what this attempt streamed must be discarded
+                    yield ModelResponse(event=ModelResponseEvent.model_request_retried.value)
 
                     await asyncio.sleep(delay)
                 else:
@@ -420,6 +427,7 @@ class Model(ABC):
                 # Append the guidance message to help the model avoid the error in the next invoke.
                 kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
 
+                yield ModelResponse(event=ModelResponseEvent.model_request_retried.value)
                 async for response in self._ainvoke_stream_with_retry(**kwargs, retry_with_guidance=True):
                     yield response
                 return  # Success, exit after regeneration
@@ -1353,6 +1361,10 @@ class Model(ABC):
             run_response=run_response,
             compress_tool_results=compress_tool_results,
         ):
+            if response_delta.event == ModelResponseEvent.model_request_retried.value:
+                self._discard_stream_attempt(stream_data=stream_data, assistant_message=assistant_message)
+                yield response_delta
+                continue
             # Set TTFT when first chunk arrives (guard ensures first-call-wins)
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
@@ -1634,6 +1646,10 @@ class Model(ABC):
             run_response=run_response,
             compress_tool_results=compress_tool_results,
         ):
+            if response_delta.event == ModelResponseEvent.model_request_retried.value:
+                self._discard_stream_attempt(stream_data=stream_data, assistant_message=assistant_message)
+                yield response_delta
+                continue
             # Set TTFT when first chunk arrives (guard ensures first-call-wins)
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
@@ -1927,6 +1943,25 @@ class Model(ABC):
                 if not tc.get("id"):
                     tc["id"] = str(uuid4())
             assistant_message.tool_calls = parsed_tool_calls
+
+    def _discard_stream_attempt(self, stream_data: MessageData, assistant_message: Message) -> None:
+        """Drop the output of a stream attempt that failed and is about to be retried.
+
+        The retry restarts the stream, so keeping this output would repeat its content and run its tool calls
+        twice. response_metrics is kept, so the usage of the failed attempt is still counted.
+        """
+        stream_data.response_content = ""
+        stream_data.response_reasoning_content = ""
+        stream_data.response_redacted_reasoning_content = ""
+        stream_data.response_citations = None
+        stream_data.response_tool_calls = []
+        stream_data.response_audio = None
+        stream_data.response_image = None
+        stream_data.response_video = None
+        stream_data.response_file = None
+        stream_data.response_provider_data = None
+        stream_data.extra = None
+        assistant_message.tool_calls = None
 
     def _populate_stream_data(
         self, stream_data: MessageData, model_response_delta: ModelResponse

@@ -1046,6 +1046,13 @@ def handle_model_response_stream(
         "reasoning_time_taken": 0.0,
     }
     model_response = ModelResponse(content="")
+    # Output accumulated before the current model request; restored if that request's stream is retried
+    before_request = (
+        model_response.content,
+        model_response.reasoning_content,
+        run_response.content,
+        run_response.reasoning_content,
+    )
 
     # Get output_schema from run_context
     output_schema = run_context.output_schema if run_context else None
@@ -1083,6 +1090,12 @@ def handle_model_response_stream(
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
             if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                before_request = (
+                    model_response.content,
+                    model_response.reasoning_content,
+                    run_response.content,
+                    run_response.reasoning_content,
+                )
                 if stream_events:
                     yield handle_event(  # type: ignore
                         create_model_request_started_event(
@@ -1094,6 +1107,16 @@ def handle_model_response_stream(
                         events_to_skip=agent.events_to_skip,  # type: ignore
                         store_events=agent.store_events,
                     )
+                continue
+
+            # The stream failed partway and is retried from scratch: drop what it streamed so far
+            if model_response_event.event == ModelResponseEvent.model_request_retried.value:
+                (
+                    model_response.content,
+                    model_response.reasoning_content,
+                    run_response.content,
+                    run_response.reasoning_content,
+                ) = before_request
                 continue
 
             if model_response_event.event == ModelResponseEvent.model_request_completed.value:
@@ -1210,6 +1233,13 @@ async def ahandle_model_response_stream(
         "reasoning_time_taken": 0.0,
     }
     model_response = ModelResponse(content="")
+    # Output accumulated before the current model request; restored if that request's stream is retried
+    before_request = (
+        model_response.content,
+        model_response.reasoning_content,
+        run_response.content,
+        run_response.reasoning_content,
+    )
 
     # Get output_schema from run_context
     output_schema = run_context.output_schema if run_context else None
@@ -1249,6 +1279,12 @@ async def ahandle_model_response_stream(
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
             if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                before_request = (
+                    model_response.content,
+                    model_response.reasoning_content,
+                    run_response.content,
+                    run_response.reasoning_content,
+                )
                 if stream_events:
                     yield handle_event(  # type: ignore
                         create_model_request_started_event(
@@ -1260,6 +1296,16 @@ async def ahandle_model_response_stream(
                         events_to_skip=agent.events_to_skip,  # type: ignore
                         store_events=agent.store_events,
                     )
+                continue
+
+            # The stream failed partway and is retried from scratch: drop what it streamed so far
+            if model_response_event.event == ModelResponseEvent.model_request_retried.value:
+                (
+                    model_response.content,
+                    model_response.reasoning_content,
+                    run_response.content,
+                    run_response.reasoning_content,
+                ) = before_request
                 continue
 
             if model_response_event.event == ModelResponseEvent.model_request_completed.value:
