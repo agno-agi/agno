@@ -1271,7 +1271,8 @@ def from_dict(
         Agent: Reconstructed agent instance
 
     Raises:
-        ComponentRehydrationError: If strict and a registry reference cannot be resolved.
+        ComponentRehydrationError: If strict and a registry reference cannot be resolved, or
+            the saved skills record a non-default executor and skill_executor is not passed.
     """
     from agno.models.utils import resolve_model
 
@@ -1460,13 +1461,12 @@ def from_dict(
         skills_db = db if db is not None else config.get("db")
         if skill_names and skills_db is not None:
             from agno.skills import DbSkills, Skills
-            from agno.skills.errors import SkillError
 
             # A non-default executor was configured when this was saved and cannot be
             # serialized. Refuse rather than fall back to the host executor: that would
             # silently turn a sandbox policy into running scripts on this machine.
             if config["skills"].get("requires_executor") and skill_executor is None:
-                raise SkillError(
+                raise ComponentRehydrationError(
                     "This was saved with a non-default skill executor, which cannot be serialized. "
                     "Pass skill_executor= to load it; loading without one would run skill scripts "
                     "on the host."

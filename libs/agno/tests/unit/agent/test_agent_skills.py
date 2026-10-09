@@ -591,7 +591,7 @@ def test_from_dict_refuses_to_load_when_a_recorded_executor_is_missing(tmp_path)
     agent = Agent(name="a", id="a", db=db, skills=Skills(loaders=[DbSkills(db)], executor=_SandboxExecutor()))
     config = agent.to_dict()
 
-    with pytest.raises(SkillError, match="executor"):
+    with pytest.raises(ComponentRehydrationError, match="executor"):
         Agent.from_dict(config, db=db)
 
 
@@ -633,8 +633,38 @@ def test_load_refuses_a_sandboxed_agent_without_an_executor(tmp_path):
     db = _db_with_skill(tmp_path)
     agent_id = _saved_agent_with(db, _SandboxExecutor())
 
-    with pytest.raises(SkillError, match="executor"):
+    with pytest.raises(ComponentRehydrationError, match="executor"):
         Agent.load(agent_id, db=db)
+
+
+def test_get_agent_by_id_reports_a_missing_executor_as_a_rehydration_error(tmp_path):
+    """Every DB-backed caller lets ComponentRehydrationError through and swallows the rest,
+    so the refusal has to be one or a sandboxed agent reads as "not found"."""
+    db = _db_with_skill(tmp_path)
+    agent_id = _saved_agent_with(db, _SandboxExecutor())
+
+    for _ in range(2):
+        with pytest.raises(ComponentRehydrationError, match="skill_executor="):
+            get_agent_by_id(db=db, id=agent_id)
+        loaded = Agent.load(agent_id, db=db, skill_executor=_SandboxExecutor())
+        assert loaded is not None
+        assert isinstance(loaded.skills.executor, _SandboxExecutor)
+
+
+def test_agents_route_answers_a_missing_executor_with_the_rehydration_status(tmp_path):
+    """Through AgentOS the refusal gets the status every rehydration error gets, with its message."""
+    from fastapi.testclient import TestClient
+
+    from agno.os import AgentOS
+
+    db = _db_with_skill(tmp_path)
+    agent_id = _saved_agent_with(db, _SandboxExecutor())
+    client = TestClient(AgentOS(db=db, agents=[Agent(name="placeholder", id="placeholder", db=db)]).get_app())
+
+    for _ in range(2):
+        response = client.get(f"/agents/{agent_id}")
+        assert response.status_code == 422, response.text
+        assert "skill_executor=" in response.json()["detail"]
 
 
 def test_load_accepts_a_re_supplied_executor(tmp_path):

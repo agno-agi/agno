@@ -401,7 +401,7 @@ class _TeamSandboxExecutor(SkillExecutor):
 def test_team_from_dict_refuses_to_load_a_recorded_executor_that_is_missing(tmp_path):
     """The team twin: a sandbox policy must not silently become host execution."""
     from agno.db.sqlite import SqliteDb
-    from agno.skills.errors import SkillError
+    from agno.exceptions import ComponentRehydrationError
 
     db = SqliteDb(db_file=str(tmp_path / "team_exec.db"))
     db.create_skill({"name": "greeter", "description": "d", "instructions": "i"})
@@ -415,11 +415,46 @@ def test_team_from_dict_refuses_to_load_a_recorded_executor_that_is_missing(tmp_
     config = team.to_dict()
     assert config["skills"]["requires_executor"] is True
 
-    with pytest.raises(SkillError, match="executor"):
+    with pytest.raises(ComponentRehydrationError, match="executor"):
         Team.from_dict(config, db=db)
 
     restored = Team.from_dict(config, db=db, skill_executor=_TeamSandboxExecutor())
     assert isinstance(restored.skills.executor, _TeamSandboxExecutor)
+
+
+def test_get_team_by_id_reports_a_missing_executor_as_a_rehydration_error(tmp_path):
+    """The team twin: the refusal must be the one error DB-backed callers let through."""
+    from agno.db.sqlite import SqliteDb
+    from agno.exceptions import ComponentRehydrationError
+
+    db = SqliteDb(db_file=str(tmp_path / "team_exec_by_id.db"))
+    db.create_skill({"name": "greeter", "description": "d", "instructions": "i"})
+    Team(
+        name="t", id="t-by-id", members=[], db=db, skills=Skills(loaders=[DbSkills(db)], executor=_TeamSandboxExecutor())
+    ).save(db=db)
+
+    for _ in range(2):
+        with pytest.raises(ComponentRehydrationError, match="skill_executor="):
+            get_team_by_id(db=db, id="t-by-id")
+
+
+def test_teams_route_answers_a_missing_executor_with_the_rehydration_status(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from agno.db.sqlite import SqliteDb
+    from agno.os import AgentOS
+
+    db = SqliteDb(db_file=str(tmp_path / "team_exec_route.db"))
+    db.create_skill({"name": "greeter", "description": "d", "instructions": "i"})
+    Team(
+        name="t", id="t-route", members=[], db=db, skills=Skills(loaders=[DbSkills(db)], executor=_TeamSandboxExecutor())
+    ).save(db=db)
+    client = TestClient(AgentOS(db=db, teams=[Team(name="placeholder", id="placeholder", members=[], db=db)]).get_app())
+
+    for _ in range(2):
+        response = client.get("/teams/t-route")
+        assert response.status_code == 422, response.text
+        assert "skill_executor=" in response.json()["detail"]
 
 
 def test_team_with_the_default_executor_round_trips_unchanged(tmp_path):
@@ -459,7 +494,7 @@ def _team_db(tmp_path, name="team_exec_load.db"):
 
 def test_team_load_refuses_a_sandboxed_team_without_an_executor(tmp_path):
     """Branch A: the contract holds through Team.load, not only from_dict."""
-    from agno.skills.errors import SkillError
+    from agno.exceptions import ComponentRehydrationError
 
     db = _team_db(tmp_path)
     team = Team(
@@ -471,7 +506,7 @@ def test_team_load_refuses_a_sandboxed_team_without_an_executor(tmp_path):
     )
     team.save(db=db)
 
-    with pytest.raises(SkillError, match="executor"):
+    with pytest.raises(ComponentRehydrationError, match="executor"):
         Team.load("t-refuse", db=db)
 
 
