@@ -9,6 +9,7 @@ from agnoctl.commands.connect import connect
 from agnoctl.commands.create import create
 from agnoctl.commands.disconnect import disconnect
 from agnoctl.commands.lifecycle import down, restart, up
+from agnoctl.commands.runtime import runtime_app
 from agnoctl.commands.status import status
 from agnoctl.commands.tokens import tokens_app
 from agnoctl.console import BRAND_COLOR, MUTED_COLOR, console, print_info
@@ -26,6 +27,7 @@ app.command(name="disconnect")(disconnect)
 app.command(name="create")(create)
 app.command(name="status")(status)
 app.add_typer(tokens_app, name="tokens")
+app.add_typer(runtime_app, name="runtime")
 app.command(name="up")(up)
 app.command(name="down")(down)
 app.command(name="restart")(restart)

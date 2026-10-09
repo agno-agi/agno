@@ -23,7 +23,6 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.job_queue import QueueConfig
 from agno.knowledge.knowledge import Knowledge
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
-from agno.os.middleware.cors import OriginPolicy
 from agno.os.config import (
     AgentOSConfig,
     AuthorizationConfig,
@@ -50,6 +49,7 @@ from agno.os.config import (
 from agno.os.event_streams import BaseEventStream, set_event_stream
 from agno.os.interfaces.base import BaseInterface
 from agno.os.job_queue import apply_queue_config, queue_lifespan
+from agno.os.middleware.cors import OriginPolicy
 from agno.os.router import get_base_router, get_info_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
 from agno.os.routers.approvals import get_approval_router
@@ -866,6 +866,16 @@ class AgentOS:
         self._add_router(app, get_base_router(self, settings=self.settings))
         self._add_router(app, get_filesystem_router(self, settings=self.settings))
         self._add_router(app, get_agent_router(self, settings=self.settings, registry=self.registry))
+        from agno.agents.sandbox import SandboxAgent
+        from agno.sandbox.router import get_sandbox_router
+
+        sandbox_agents = [entry for entry in self.agents or [] if isinstance(entry, SandboxAgent)]
+        app.state.sandbox_agents = sandbox_agents
+        if sandbox_agents:
+            if self.queue is None or not self.queue.durable:
+                raise ValueError("SandboxAgent requires QueueConfig(durable=True)")
+            self._add_router(app, get_sandbox_router(self))
+
         self._add_router(app, get_team_router(self, settings=self.settings, registry=self.registry))
         self._add_router(app, get_workflow_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))

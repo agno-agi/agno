@@ -1,0 +1,60 @@
+name: agno-sandbox-review
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: agno
+      POSTGRES_PASSWORD: local-sandbox-test
+      POSTGRES_DB: agno
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U agno]
+      interval: 2s
+      retries: 30
+    networks: [sandbox]
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 2s
+      retries: 30
+    networks: [sandbox]
+  git:
+    image: agno-sandbox:review
+    build:
+      context: ../../..
+      dockerfile: cookbook/frameworks/sandbox/Dockerfile
+      target: runtime
+    user: root
+    entrypoint: [python, /example/git_remote.py]
+    networks: [sandbox]
+    healthcheck:
+      test: [CMD, git, ls-remote, git://localhost/workspace.git]
+      interval: 2s
+      retries: 30
+  api-a: &api
+    image: agno-sandbox-control:review
+    build:
+      context: ../../..
+      dockerfile: cookbook/frameworks/sandbox/Dockerfile
+      target: control-plane
+    environment:
+      AGNO_DB_URL: postgresql+psycopg://agno:local-sandbox-test@postgres:5432/agno
+      AGNO_REDIS_URL: redis://redis:6379/0
+      AGNO_SANDBOX_SECRET: local-test-only-secret-do-not-use-in-production
+      AGNO_SANDBOX_NETWORK: agno-sandbox-review
+      AGNO_SANDBOX_IMAGE: agno-sandbox:review
+      AGNO_SANDBOX_TEST_HARNESS: '1'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports: ['127.0.0.1:18781:7777']
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      git: {condition: service_healthy}
+    networks: [sandbox]
+  api-b:
+    <<: *api
+    ports: ['127.0.0.1:18782:7777']
+networks:
+  sandbox:
+    name: agno-sandbox-review

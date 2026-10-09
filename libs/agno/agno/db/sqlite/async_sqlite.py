@@ -427,6 +427,13 @@ class AsyncSqliteDb(AsyncBaseDb):
             raise e
 
     async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
+        if table_type == "sandboxes":
+            return await self._get_or_create_table(
+                table_name=self.sandboxes_table_name,
+                table_type="sandboxes",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
         if table_type == "transcripts":
             return await self._get_or_create_table(
                 table_name=self.transcripts_table_name,
@@ -5412,3 +5419,48 @@ class AsyncSqliteDb(AsyncBaseDb):
             stmt = stmt.where(table.c.subpath == subpath)
         async with self.async_session_factory() as sess, sess.begin():
             await sess.execute(stmt)
+
+    async def upsert_sandbox(self, record: Dict[str, Any], expected_revision: Optional[int] = None) -> bool:
+        from agno.db.sql.sandboxes import write_statement
+
+        table = await self._get_table("sandboxes", create_table_if_not_found=True)
+        stmt = write_statement(table, "sqlite", record, expected_revision)
+        async with self.db_engine.begin() as conn:
+            return (await conn.execute(stmt)).first() is not None
+
+    async def get_sandbox(
+        self, sandbox_id: Optional[str] = None, session_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.sql.sandboxes import read_statement
+
+        if sandbox_id is None and session_id is None:
+            raise ValueError("sandbox_id or session_id is required")
+        table = await self._get_table("sandboxes", create_table_if_not_found=True)
+        async with self.db_engine.connect() as conn:
+            row = (
+                (await conn.execute(read_statement(table, "sqlite", sandbox_id=sandbox_id, session_id=session_id)))
+                .mappings()
+                .first()
+            )
+            return dict(row) if row is not None else None
+
+    async def list_sandboxes(
+        self, agent_id: Optional[str] = None, user_id: Optional[str] = None, status: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        from agno.db.sql.sandboxes import read_statement
+
+        table = await self._get_table("sandboxes", create_table_if_not_found=True)
+        async with self.db_engine.connect() as conn:
+            rows = (
+                (await conn.execute(read_statement(table, "sqlite", agent_id=agent_id, user_id=user_id, status=status)))
+                .mappings()
+                .all()
+            )
+            return [dict(row) for row in rows]
+
+    async def delete_sandbox(self, sandbox_id: str, expected_revision: int) -> bool:
+        from agno.db.sql.sandboxes import delete_statement
+
+        table = await self._get_table("sandboxes", create_table_if_not_found=True)
+        async with self.db_engine.begin() as conn:
+            return (await conn.execute(delete_statement(table, sandbox_id, expected_revision))).first() is not None

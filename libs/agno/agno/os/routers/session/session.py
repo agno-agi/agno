@@ -882,6 +882,9 @@ def attach_routes(
         if not delete_media and media_storage is not None:
             log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
 
+        from agno.sandbox.router import destroy_session_sandboxes
+
+        await destroy_session_sandboxes(request, db, [session_id], effective_user_id)
         media_keys = await _collect_media_keys(db, [session_id], effective_user_id) if delete_media else []
 
         if isinstance(db, AsyncBaseDb):
@@ -954,6 +957,9 @@ def attach_routes(
         if not delete_media and media_storage is not None:
             log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
 
+        from agno.sandbox.router import destroy_session_sandboxes
+
+        await destroy_session_sandboxes(http_request, db, request.session_ids, effective_user_id)
         media_keys = await _collect_media_keys(db, request.session_ids, effective_user_id) if delete_media else []
 
         if isinstance(db, AsyncBaseDb):

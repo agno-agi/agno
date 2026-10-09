@@ -457,6 +457,10 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "POST /workflows/*/runs": ["workflows:run"],
         "POST /workflows/*/runs/*/continue": ["workflows:run"],
         "POST /workflows/*/runs/*/cancel": ["workflows:run"],
+        # Sandbox routes inherit session read/write/delete permissions.
+        "GET /sandboxes": ["sessions:read"],
+        "DELETE /sandboxes/*": ["sessions:delete"],
+        "POST /sessions/*/sandbox:pause": ["sessions:write"],
         # Session endpoints
         "GET /sessions": ["sessions:read"],
         "GET /sessions/*": ["sessions:read"],

@@ -384,7 +384,7 @@ class QueueWorker:
         self._heartbeat_stop: Optional[Any] = None
         self._in_flight: Dict[str, asyncio.Task] = {}
 
-    async def start(self) -> None:
+    async def start(self, *, claim_jobs: bool = True) -> None:
         if self._running:
             return
         self._running = True
@@ -430,8 +430,23 @@ class QueueWorker:
         # prime into the store's lazy table init, and a claimed job must
         # never begin executing (and potentially block the loop) before the
         # heartbeat exists.
-        self._task = asyncio.create_task(self._poll_loop())
+        if claim_jobs:
+            self._task = asyncio.create_task(self._poll_loop())
         log_info(f"Job queue worker started: worker={self.worker_id} poll={self.config.poll_interval:g}s")
+
+    def _execute_handed_off(self, job: Dict[str, Any]) -> asyncio.Task:
+        """Track a claim already transferred to this executor; does not poll or claim jobs.
+
+        The caller must atomically hand off ownership in the queue store before
+        calling this method. It shares the normal heartbeat, fences and settlement.
+        """
+        job_id = job["id"]
+        if job_id in self._in_flight:
+            return self._in_flight[job_id]
+        task = asyncio.create_task(self._execute_claimed(job))
+        self._in_flight[job_id] = task
+        task.add_done_callback(lambda done: self._in_flight.pop(job_id, None))
+        return task
 
     async def _prepare_store(self) -> None:
         """Finish optional provisioning before heartbeat and poll tasks race to resolve tables."""
@@ -717,6 +732,12 @@ class QueueWorker:
                 "max_attempts=1 by default): set QueueConfig(max_attempts=2) or higher to allow "
                 "automatic re-execution, or grant one attempt via POST /queue/jobs/{id}/requeue."
             )
+            component = self.resolve_component(job.get("component_type"), job.get("component_id"))
+            failure_reason = getattr(component, "_failure_reason", None)
+            if callable(failure_reason):
+                reason = await failure_reason(job)
+                if reason:
+                    error = reason + "; " + error
             outcome = await self._persist_run_error_outcome(job, error)
             if outcome is None:
                 # The run row could not be terminalized (component missing
@@ -1504,6 +1525,21 @@ class QueueWorker:
         return outcome
 
     async def _execute_claimed(self, job: Dict[str, Any]) -> None:
+        # A remote executor takes over the durable claim before acknowledgement.
+        # Its heartbeat and settlement are independent of this API process. A
+        # failed or cancelled dispatch leaves the claim to stale-lease recovery;
+        # it must never run the local shutdown/error handlers after handoff.
+        component = self.resolve_component(job.get("component_type"), job.get("component_id"))
+        dispatch = getattr(component, "adispatch_claimed_job", None)
+        if callable(dispatch):
+            try:
+                await dispatch(job, self)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                log_error(f"Sandbox dispatch failed for {job['id']}: {type(error).__name__}; claim will be reconciled")
+            return
+
         from agno.run.concurrency import worker_managed_execution
 
         # Ownership spans EXACTLY the execution, exception-safe by
@@ -2548,8 +2584,16 @@ async def queue_lifespan(app: Any, agent_os: Any):
         # body leaked a running worker and a stale registration - the
         # inline-door admission gate then consulted a dead worker's store
         # forever.
+        for entry in agent_os.agents or []:
+            start_sandbox = getattr(entry, "_astart", None)
+            if callable(start_sandbox) and callable(getattr(entry, "adispatch_claimed_job", None)):
+                await start_sandbox(worker)
         await worker.start()
         yield
     finally:
         set_active_queue_worker(None)
         await worker.stop()
+        for entry in agent_os.agents or []:
+            stop_sandbox = getattr(entry, "_astop", None)
+            if callable(stop_sandbox) and callable(getattr(entry, "adispatch_claimed_job", None)):
+                await stop_sandbox()
