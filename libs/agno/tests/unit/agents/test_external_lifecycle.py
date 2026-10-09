@@ -726,3 +726,39 @@ async def test_queue_unreadable_row_is_not_executed(agent, monkeypatch):
         assert not agent.calls
     finally:
         await worker.stop()
+
+
+@pytest.mark.asyncio
+async def test_retry_cleanup_keeps_the_newer_attempts_handle():
+    """A same-process retry registers its handle while the first attempt is still unwinding.
+
+    The first attempt's cleanup must not remove the retry's handle, or cancellation would only
+    record intent and the harness would run to completion.
+    """
+    agent = BaseExternalAgent(id="retry")
+    run_id = f"run-{uuid4()}"
+    registered = {"first": asyncio.Event(), "second": asyncio.Event()}
+    proceed = {"first": asyncio.Event(), "second": asyncio.Event()}
+    handles: dict = {}
+
+    async def attempt(name: str) -> None:
+        async with agent._run_cancellation(run_id):
+            handles[name] = object()
+            agent._set_run_handle(run_id, handles[name])
+            registered[name].set()
+            await proceed[name].wait()
+
+    first = asyncio.create_task(attempt("first"))
+    await registered["first"].wait()
+    second = asyncio.create_task(attempt("second"))
+    await registered["second"].wait()
+    assert _live_handles[run_id].handle is handles["second"]
+
+    proceed["first"].set()
+    await first
+    assert run_id in _live_handles, "the first attempt's cleanup removed the retry's handle"
+    assert _live_handles[run_id].handle is handles["second"]
+
+    proceed["second"].set()
+    await second
+    assert run_id not in _live_handles

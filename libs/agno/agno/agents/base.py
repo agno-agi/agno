@@ -1,6 +1,7 @@
 import asyncio
 import json
 from contextlib import asynccontextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 from time import time
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Union
@@ -47,10 +48,16 @@ class _LiveHandle:
     agent: "BaseExternalAgent"
     handle: Any
     loop: asyncio.AbstractEventLoop
+    # The attempt that registered the handle, so a retry's cleanup never removes the
+    # handle a newer attempt registered under the same run id.
+    owner: Optional[object] = None
     interrupted: bool = False
 
 
 _live_handles: Dict[str, _LiveHandle] = {}
+# Identifies the attempt currently inside _run_cancellation on this task, so handle cleanup can
+# tell its own registration from one a retry of the same run id made in the meantime.
+_handle_owner: ContextVar[Optional[object]] = ContextVar("agno_external_handle_owner", default=None)
 
 
 @dataclass
@@ -601,10 +608,14 @@ class BaseExternalAgent:
         return registered
 
     def _set_run_handle(self, run_id: str, handle: Any) -> None:
-        _live_handles[run_id] = _LiveHandle(self, handle, asyncio.get_running_loop())
+        _live_handles[run_id] = _LiveHandle(self, handle, asyncio.get_running_loop(), owner=_handle_owner.get())
 
     def _clear_run_handle(self, run_id: str) -> None:
-        _live_handles.pop(run_id, None)
+        """Drop this attempt's handle. A handle a newer attempt registered for the same run is kept."""
+        live = _live_handles.get(run_id)
+        owner = _handle_owner.get()
+        if live is not None and (owner is None or live.owner is owner):
+            _live_handles.pop(run_id, None)
 
     async def _ainterrupt_run(self, handle: Any) -> None:
         """Interrupt an adapter's active SDK handle."""
@@ -626,6 +637,7 @@ class BaseExternalAgent:
         from agno.run.cancel import acleanup_run, ais_cancelled, araise_if_cancelled, aregister_run
 
         await aregister_run(run_id)
+        owner_token = _handle_owner.set(object())
 
         async def watch() -> None:
             while True:
@@ -649,6 +661,7 @@ class BaseExternalAgent:
             with suppress(asyncio.CancelledError):
                 await watcher
             self._clear_run_handle(run_id)
+            _handle_owner.reset(owner_token)
             await acleanup_run(run_id)
 
     async def _aprepare_pending_run(
