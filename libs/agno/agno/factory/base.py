@@ -116,7 +116,11 @@ class BaseFactory(Generic[T]):
 
     def is_async(self) -> bool:
         """Check if the factory callable is async."""
-        return inspect.iscoroutinefunction(self.factory)
+        # inspect.iscoroutinefunction is False for a callable object whose __call__ is async,
+        # which would make invoke() hand back an un-awaited coroutine.
+        return inspect.iscoroutinefunction(self.factory) or inspect.iscoroutinefunction(
+            getattr(self.factory, "__call__", None)
+        )
 
     def invoke(self, ctx: RequestContext) -> T:
         """Invoke the factory synchronously. Raises if factory is async."""
