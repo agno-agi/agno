@@ -446,6 +446,9 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
 
 # -- OS metrics util methods --
 
+# The most values one IN list of a rebuild is given: a statement takes 65,535 bind parameters at most
+OS_METRICS_IN_LIST_LIMIT = 10000
+
 # Every assistant message's request duration, skipping messages carried over from an earlier run
 _OS_METRICS_CALL_DURATIONS_PATH: Any = literal_column(
     """'$.messages[*] ? (@.role == "assistant" && (!exists(@.from_history) || @.from_history == false))"""

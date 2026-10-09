@@ -1222,3 +1222,53 @@ def test_refresh_os_metrics_after_a_delete_moves_the_day(postgres_db_real: Postg
     assert read_updated_at == latest_updated_at
     stored_rows = _stored_rows(postgres_db_real)
     assert all(row["updated_at"] == 1 for row in stored_rows.values() if row["date"] != today)
+
+
+def test_calculate_os_metrics_reads_nested_run_ids_in_chunks(postgres_db_real: PostgresDb, monkeypatch):
+    """Ensure a day with more nested runs than one statement is given finds every one stored as a run of its own"""
+    monkeypatch.setattr("agno.db.postgres.postgres.OS_METRICS_IN_LIST_LIMIT", 2)
+    base_time = _noon_utc(1)
+    member_runs = [
+        RunOutput(
+            run_id=f"member_run_{index}",
+            agent_id="agent-2",
+            user_id="bob",
+            parent_run_id="team_run",
+            status=RunStatus.completed,
+            model="gpt-5",
+            model_provider="OpenAI",
+            metrics=_run_metrics(10, 0),
+            messages=[],
+            created_at=base_time,
+        )
+        for index in range(5)
+    ]
+    team_session = TeamSession(
+        session_id="team_session",
+        team_id="team-1",
+        user_id="bob",
+        runs=[
+            TeamRunOutput(
+                run_id="team_run",
+                team_id="team-1",
+                user_id="bob",
+                status=RunStatus.completed,
+                member_responses=member_runs,
+                created_at=base_time,
+            ),
+            *member_runs,
+        ],
+        created_at=base_time,
+        updated_at=base_time,
+    )
+    _persist(postgres_db_real, team_session)
+    postgres_db_real.calculate_os_metrics()
+
+    # Every member run is stored as a run of its own, so none is counted again from the team run
+    yesterday = _utc_date(1)
+    stored_rows = _stored_rows(postgres_db_real)
+    assert stored_rows[(yesterday, "bob", "", "team-1", "")]["token_metrics"] == {}
+    assert stored_rows[(yesterday, "bob", "agent-2", "", "")]["runs_count"] == 5
+    assert stored_rows[(yesterday, "bob", "agent-2", "", "")]["token_metrics"]["input_tokens"] == 50
+    total_row = _stored_total_rows(postgres_db_real)[(yesterday, "daily_total", "", "", "", "")]
+    assert total_row["token_metrics"]["input_tokens"] == 50

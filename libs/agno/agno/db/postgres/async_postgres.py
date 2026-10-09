@@ -12,6 +12,7 @@ from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.engine import _engine_options
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
+    OS_METRICS_IN_LIST_LIMIT,
     abulk_upsert_metrics,
     abulk_upsert_os_metrics,
     acreate_schema,
@@ -2581,13 +2582,13 @@ class AsyncPostgresDb(AsyncBaseDb):
                         runs = [build_os_metrics_run(record) for record in runs_result.fetchall()]
 
                         # A nested run also stored as a run of its own is counted from that row, whatever day it is on
-                        nested_run_ids = os_metrics_nested_run_ids(runs)
-                        if nested_run_ids:
+                        run_ids = sorted(os_metrics_nested_run_ids(runs))
+                        for start in range(0, len(run_ids), OS_METRICS_IN_LIST_LIMIT):
                             stored_stmt = select(runs_table.c.run_id).where(
-                                runs_table.c.run_id.in_(sorted(nested_run_ids))
+                                runs_table.c.run_id.in_(run_ids[start : start + OS_METRICS_IN_LIST_LIMIT])
                             )
                             stored_ids_result = await sess.execute(stored_stmt)
-                            stored_run_ids = {record.run_id for record in stored_ids_result.fetchall()}
+                            stored_run_ids.update(record.run_id for record in stored_ids_result.fetchall())
 
                     records = calculate_date_os_metrics(date_to_process, sessions, runs, stored_run_ids)
                     # A month row is dated the first day of its month, and is no row of that day
@@ -2599,8 +2600,10 @@ class AsyncPostgresDb(AsyncBaseDb):
                     stored_rows = [dict(record._mapping) for record in stored_rows_result.fetchall()]
 
                     changed_rows, stale_ids = os_metrics_rows_to_write(records, stored_rows)
-                    if stale_ids:
-                        await sess.execute(table.delete().where(table.c.id.in_(stale_ids)))
+                    for start in range(0, len(stale_ids), OS_METRICS_IN_LIST_LIMIT):
+                        await sess.execute(
+                            table.delete().where(table.c.id.in_(stale_ids[start : start + OS_METRICS_IN_LIST_LIMIT]))
+                        )
                     await abulk_upsert_os_metrics(session=sess, table=table, os_metrics_records=changed_rows)
                     results.extend(records)
                     if changed_ids is not None:
