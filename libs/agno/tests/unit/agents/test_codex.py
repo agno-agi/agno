@@ -70,6 +70,12 @@ class FakeHandle:
     def __init__(self, state: FakeState) -> None:
         self._state = state
 
+    async def run(self):
+        return SimpleNamespace(final_response=self._state.final_response, items=[], status="completed", usage=None)
+
+    async def interrupt(self):
+        pass
+
     async def stream(self):
         for notification in self._state.notifications:
             yield notification
@@ -590,7 +596,7 @@ def test_missing_sdk_raises_helpful_import_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_nonstream_tools_persist(fake_sdk, tmp_db, monkeypatch):
-    async def run(self, prompt, **kwargs):
+    async def run(self):
         return SimpleNamespace(
             final_response="done",
             items=[
@@ -598,10 +604,31 @@ async def test_nonstream_tools_persist(fake_sdk, tmp_db, monkeypatch):
             ],
         )
 
-    monkeypatch.setattr(FakeThread, "run", run)
+    monkeypatch.setattr(FakeHandle, "run", run)
     agent = CodexAgent(db=tmp_db)
     result = await agent.arun("where", session_id="session")
     loaded = await agent.aget_run_output(result.run_id, "session")
     assert loaded.tools[0].result == "/workspace"
     assert loaded.tools[0].tool_args == {"command": "pwd"}
     assert any(m.role == "tool" and m.content == "/workspace" for m in loaded.messages)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_interrupted_sdk_turn_is_cancelled(fake_sdk, monkeypatch, stream):
+    from agno.run.base import RunStatus
+
+    async def run(self):
+        return SimpleNamespace(status="interrupted", final_response=None, items=[])
+
+    monkeypatch.setattr(FakeHandle, "run", run)
+    fake_sdk.notifications = [
+        SimpleNamespace(method="turn/completed", payload=SimpleNamespace(turn=SimpleNamespace(status="interrupted")))
+    ]
+    agent = CodexAgent()
+    if stream:
+        events = [e async for e in agent.arun("go", stream=True, yield_run_output=True)]
+        assert any(getattr(e, "event", None) == "RunCancelled" for e in events)
+        assert events[-1].status == RunStatus.cancelled
+    else:
+        assert (await agent.arun("go")).status == RunStatus.cancelled

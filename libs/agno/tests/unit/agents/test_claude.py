@@ -112,6 +112,28 @@ def fake_sdk(monkeypatch) -> FakeState:
         yield ResultMessage(session_id=sdk_session_id, result=state.reply)
 
     module = ModuleType("claude_agent_sdk")
+
+    class Client:
+        def __init__(self, options):
+            self.options = options
+
+        async def connect(self):
+            pass
+
+        async def query(self, prompt):
+            self.prompt = prompt
+
+        def receive_response(self):
+            return module.query(prompt=self.prompt, options=self.options)
+
+        async def disconnect(self):
+            pass
+
+        async def interrupt(self):
+            pass
+
+    module.ClaudeSDKClient = Client
+
     for cls in (
         ClaudeAgentOptions,
         SystemMessage,
@@ -369,6 +391,46 @@ async def test_error_result_on_resume_falls_back_with_store(fake_sdk, tmp_path, 
     assert len(calls) == 2
     assert "session_store" in calls[0][1].extra
     assert "Remember the code bluejay" in calls[1][0]
+
+
+@pytest.mark.asyncio
+async def test_client_interrupt_and_disconnect(fake_sdk, tmp_path, monkeypatch):
+    from agno.run.base import RunStatus
+
+    sdk = claude_module._sdk()
+    started, release = asyncio.Event(), asyncio.Event()
+    operations = []
+
+    class Client:
+        def __init__(self, options):
+            pass
+
+        async def connect(self):
+            operations.append("connect")
+
+        async def query(self, prompt):
+            operations.append("query")
+
+        async def receive_response(self):
+            started.set()
+            yield AssistantMessage([TextBlock("working")])
+            await release.wait()
+            yield ResultMessage("sdk", "interrupted", subtype="error_during_execution", is_error=True)
+
+        async def interrupt(self):
+            operations.append("interrupt")
+            release.set()
+
+        async def disconnect(self):
+            operations.append("disconnect")
+
+    monkeypatch.setattr(sdk, "ClaudeSDKClient", Client)
+    agent = ClaudeAgent(db=SqliteDb(db_file=str(tmp_path / "db")))
+    result = asyncio.create_task(agent.arun("work", run_id="interrupt-test", session_id="s"))
+    await asyncio.wait_for(started.wait(), 2)
+    await agent.acancel_run("interrupt-test")
+    assert (await result).status == RunStatus.cancelled
+    assert operations == ["connect", "query", "interrupt", "disconnect"]
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,7 @@ from agno.run.agent import (
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
+from agno.run.cancel import araise_if_cancelled
 from agno.utils.log import log_debug, log_warning
 
 
@@ -28,7 +29,7 @@ def _sdk() -> Any:
 class ClaudeAgent(BaseExternalAgent):
     """Adapter for the Claude Agent SDK (claude-agent-sdk).
 
-    Wraps the Claude Agent SDK's query() function so it can be used with AgentOS
+    Wraps a per-run Claude Agent SDK client so it can be used with AgentOS
     endpoints or standalone via .run() / .print_response().
 
     The Claude Agent SDK runs Claude Code as a subprocess. Tool execution is handled
@@ -220,7 +221,7 @@ class ClaudeAgent(BaseExternalAgent):
     async def _aquery(
         self, input: Any, history: Optional[List[Dict[str, Any]]], *, streaming: bool, **kwargs: Any
     ) -> AsyncIterator[Any]:
-        """Run sdk.query() against the SDK session tied to this Agno session, recording its id.
+        """Run a client against the SDK session tied to this Agno session, recording its id.
 
         Without transcript storage on the db, the SDK transcript lives on local disk under the
         agent's cwd, so a stored id may not be resumable (another host, changed cwd, deleted
@@ -237,8 +238,14 @@ class ClaudeAgent(BaseExternalAgent):
             options = self._build_options(streaming=streaming, resume=resume, session_store=store)
             prompt = self._build_prompt(input, history, resumed=resume is not None)
             received = False
+            run_id = kwargs.get("run_id") or str(uuid4())
+            client = sdk.ClaudeSDKClient(options=options)
             try:
-                async for message in sdk.query(prompt=prompt, options=options):
+                await client.connect()
+                await araise_if_cancelled(run_id)
+                await client.query(prompt)
+                self._set_run_handle(run_id, client)
+                async for message in client.receive_response():
                     if isinstance(message, sdk.ResultMessage):
                         self._check_result_message(sdk, message)
                     if not isinstance(message, sdk.SystemMessage):
@@ -251,6 +258,7 @@ class ClaudeAgent(BaseExternalAgent):
                     yield message
                 return
             except Exception as e:
+                await araise_if_cancelled(run_id)
                 if resume is None or received or not self._is_missing_session(sdk, e):
                     raise
                 log_warning(
@@ -258,6 +266,12 @@ class ClaudeAgent(BaseExternalAgent):
                 )
                 self._forget_sdk_session(session, session_id)
                 resume = None
+            finally:
+                self._clear_run_handle(run_id)
+                await client.disconnect()
+
+    async def _ainterrupt_run(self, handle: Any) -> None:
+        await handle.interrupt()
 
     @staticmethod
     def _is_missing_session(sdk: Any, error: Exception) -> bool:

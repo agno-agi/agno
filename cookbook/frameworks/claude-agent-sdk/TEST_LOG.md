@@ -66,6 +66,29 @@
 
 ---
 
+## 2026-10-08: background lifecycle
+
+### background_cancel.py
+
+**Status:** PASS
+
+**Description:** Ran the real SDK with this worktree imported. Started a detached streamed run, cancelled after the first content event, drained the SSE stream, and read the stored run. Claude used the API key exported by `.envrc`. Codex used `gpt-5.6-luna`, read-only sandboxing and `approval_mode="deny_all"`.
+
+**Result:** The SDK turn was interrupted and the final output and database row were CANCELLED. Both the shared demo environment and the env-gated integration tests in the worktree's development environment passed.
+
+---
+
+### Lifecycle and regression suite
+
+**Status:** PASS
+
+**Description:** 736 tests covering external agents, native background execution, cancellation, event streams, status persistence, queue retries/fencing, scoped reads and A2A. All five real integration cases were enabled and passed: Claude two-process resume, Claude cancel, Codex cancel, sync PostgreSQL transcripts, async PostgreSQL transcripts.
+
+**Result:** 736 unit/regression tests passed; 5 integration tests passed, none skipped. One existing AsyncMock warning arose in the unchanged native save-fencing test. Required format and validation scripts passed with SQLAlchemy 2.0.52.
+
+---
+
+
 ### Transcript mirror failure regression (2026-10-08)
 
 **Status:** PASS
@@ -77,6 +100,21 @@ Streaming/non-streaming unit regressions also verify warning serialization and p
 
 **Result:** Durability failure is visible without reexecuting completed work. This is a local SDK
 fault-injection test, not a live provider run. Phase 1 agent tests: 78 passed. Format and validation pass.
+
+### Lifecycle persistence review regressions (2026-10-09)
+
+**Status:** PASS
+
+**Description:** Injected terminal database failures in sync/async SQLite queue runs, with both
+streaming modes and transient/permanent failures. Tickets retry and do not report success over
+an unfinished run. Real sync/async PostgreSQL tests cover session-identity fencing and rollback
+when session storage fails. In-memory SQLite async polling retains the completed run.
+
+**Result:** 751 unit/regression tests, 12 external-agent PostgreSQL integration tests and 13 existing
+native PostgreSQL tests passed. Format and validation passed. These are persistence fault-injection
+checks; the earlier live provider cancellation runs were not repeated.
+
+---
 
 ---
 

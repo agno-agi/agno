@@ -19,6 +19,13 @@ Use PostgreSQL in production. Transcript storage supports PostgresDb, AsyncPostg
 
 The `agno_transcripts` table is created on first use. A development database that ran an earlier build of this feature has an older table shape and raises a schema mismatch; drop the table and it is recreated.
 
+## Background runs and cancellation
+
+`background_cancel.py` serves the agent through AgentOS. Submit runs with `background=true`, poll the run endpoint, or use `stream=true` for indexed SSE. Runs continue after disconnects; the resume endpoint reads the configured event stream. Cancel through the run cancellation endpoint.
+
+Run `background_cancel.py --verify` to start a real streamed turn, cancel after its first content event, and verify CANCELLED in the database. Multi-replica resume and cancellation require shared event-stream and cancellation-manager backends. Stored-event replay after the event-stream TTL is a follow-up.
+
+
 ### Transcript write failures
 
 If the SDK exhausts transcript-store retries, the response remains completed and retains its content.
