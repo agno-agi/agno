@@ -1,11 +1,13 @@
 import asyncio
 import json
 import subprocess
+from collections import OrderedDict
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Dict, List, Literal, Optional
 
 from agno.exceptions import PathSecurityError
+from agno.run.base import RunContext
 from agno.skills.errors import SkillError, SkillValidationError
 from agno.skills.executor import LocalSkillExecutor, SkillExecutor
 from agno.skills.loaders.base import SkillLoader
@@ -14,6 +16,11 @@ from agno.skills.utils import create_skill_files, read_file_safe
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_warning
 from agno.utils.path_safety import safe_join_relative_path
+
+# Per-user views kept by one Skills object. A view only has to survive from a user's prompt
+# build to that run's tool calls; past the limit the oldest user's view is dropped and comes
+# back with one database read on that user's next request.
+_USER_VIEWS_KEPT = 128
 
 
 class Skills:
@@ -53,6 +60,9 @@ class Skills:
         # from here; a failed refresh falls back to it.
         self._loader_results: Dict[int, List[Skill]] = {}
         self._refresh_lock: Optional[asyncio.Lock] = None  # Lazily created lock for the async refresh
+        # Each user's own view from an owner-scoped refresh, newest last. Kept apart from
+        # _skills so one user's request never replaces what another user's prompt advertised.
+        self._user_skills: "OrderedDict[str, Dict[str, Skill]]" = OrderedDict()
         self._warned_unsaved_skills = False
         self._load_skills()
 
@@ -98,8 +108,9 @@ class Skills:
     def _refresh_loaders(self, user_id: Optional[str] = None) -> None:
         """Re-run the loaders marked refresh_per_request and swap the rebuilt mapping in once.
 
-        Any failure keeps the previous state: a request mid-outage serves the last
-        loaded skills rather than an empty or partial set.
+        With a user the result is that user's own view; the shared mapping changes only
+        for a request without one. Any failure keeps the previous state: a request
+        mid-outage serves the last loaded skills rather than an empty or partial set.
         """
         results = dict(self._loader_results)
         changed = False
@@ -121,8 +132,37 @@ class Skills:
         except SkillError as e:
             log_warning(f"Error refreshing skills, keeping the last loaded skills: {str(e)}")
             return
-        self._loader_results = results
-        self._skills = merged
+        self._commit_refresh(user_id, results, merged)
+
+    def _commit_refresh(
+        self, user_id: Optional[str], results: Dict[int, List[Skill]], merged: Dict[str, Skill]
+    ) -> None:
+        """Store a refresh: the shared mapping without a user, else that user's view alone."""
+        if user_id is None:
+            self._loader_results = results
+            self._skills = merged
+            return
+        self._user_skills[user_id] = merged
+        self._user_skills.move_to_end(user_id)
+        while len(self._user_skills) > _USER_VIEWS_KEPT:
+            self._user_skills.popitem(last=False)
+
+    def _view_for(self, user_id: Optional[str]) -> Dict[str, Skill]:
+        """The mapping a request reads: the user's own view, else the shared mapping."""
+        if user_id is None:
+            return self._skills
+        return self._user_skills.get(user_id, self._skills)
+
+    def _view_for_call(self, run_context: Optional[RunContext]) -> Dict[str, Skill]:
+        """The mapping a tool call reads, resolved first when its user has no view yet.
+
+        A prompt build normally leaves the view behind; a resumed run or a dropped entry
+        reaches a tool without one, and resolving beats answering from the shared mapping.
+        """
+        user_id = run_context.user_id if run_context is not None else None
+        if user_id is not None and user_id not in self._user_skills:
+            self._refresh_loaders(user_id=user_id)
+        return self._view_for(user_id)
 
     @property
     def _async_refresh_lock(self) -> asyncio.Lock:
@@ -137,8 +177,9 @@ class Skills:
     async def _arefresh_loaders(self, user_id: Optional[str] = None) -> None:
         """Async twin of _refresh_loaders: awaits each refreshing loader's aload.
 
-        Any failure keeps the previous state: a request mid-outage serves the last
-        loaded skills rather than an empty or partial set.
+        With a user the result is that user's own view; the shared mapping changes only
+        for a request without one. Any failure keeps the previous state: a request
+        mid-outage serves the last loaded skills rather than an empty or partial set.
         """
         # Serialized, with the snapshot taken inside the lock: the awaits below
         # suspend, and a sibling request's refresh may commit while this one is
@@ -164,8 +205,7 @@ class Skills:
             except SkillError as e:
                 log_warning(f"Error refreshing skills, keeping the last loaded skills: {str(e)}")
                 return
-            self._loader_results = results
-            self._skills = merged
+            self._commit_refresh(user_id, results, merged)
 
     def reload(self) -> None:
         """Reload skills from all loaders, replacing the existing skills.
@@ -275,7 +315,7 @@ class Skills:
         # The once-per-request read of database-backed loaders: the system prompt is
         # built once per run, the same moment memory and learning already hit the db.
         self._refresh_loaders(user_id=user_id)
-        return self._build_system_prompt_snippet()
+        return self._build_system_prompt_snippet(self._view_for(user_id))
 
     async def aget_system_prompt_snippet(self, user_id: Optional[str] = None) -> str:
         """Async twin of get_system_prompt_snippet: the refresh awaits the database read.
@@ -284,11 +324,11 @@ class Skills:
             An XML-formatted string with skills metadata.
         """
         await self._arefresh_loaders(user_id=user_id)
-        return self._build_system_prompt_snippet()
+        return self._build_system_prompt_snippet(self._view_for(user_id))
 
-    def _build_system_prompt_snippet(self) -> str:
-        """Render the loaded skill mapping as the system prompt snippet."""
-        if not self._skills:
+    def _build_system_prompt_snippet(self, skills: Dict[str, Skill]) -> str:
+        """Render a skill mapping as the system prompt snippet."""
+        if not skills:
             return ""
 
         lines = [
@@ -320,7 +360,7 @@ class Skills:
             "",
             "## Available Skills",
         ]
-        for skill in self._skills.values():
+        for skill in skills.values():
             lines.append("<skill>")
             lines.append(f"  <name>{skill.name}</name>")
             lines.append(f"  <description>{skill.description}</description>")
@@ -376,7 +416,7 @@ class Skills:
 
         return tools
 
-    def _get_skill_instructions(self, skill_name: str) -> str:
+    def _get_skill_instructions(self, skill_name: str, run_context: Optional[RunContext] = None) -> str:
         """Load the full instructions for a skill.
 
         Args:
@@ -385,9 +425,10 @@ class Skills:
         Returns:
             A JSON string with the skill's instructions and metadata.
         """
-        skill = self.get_skill(skill_name)
+        skills = self._view_for_call(run_context)
+        skill = skills.get(skill_name)
         if skill is None:
-            available = ", ".join(self.get_skill_names())
+            available = ", ".join(skills)
             return json.dumps(
                 {
                     "error": f"Skill '{skill_name}' not found",
@@ -405,7 +446,9 @@ class Skills:
             }
         )
 
-    def _get_skill_reference(self, skill_name: str, reference_path: Optional[str] = None) -> str:
+    def _get_skill_reference(
+        self, skill_name: str, reference_path: Optional[str] = None, run_context: Optional[RunContext] = None
+    ) -> str:
         """Load a reference document from a skill.
 
         Args:
@@ -415,9 +458,10 @@ class Skills:
         Returns:
             A JSON string with the reference content.
         """
-        skill = self.get_skill(skill_name)
+        skills = self._view_for_call(run_context)
+        skill = skills.get(skill_name)
         if skill is None:
-            available = ", ".join(self.get_skill_names())
+            available = ", ".join(skills)
             return json.dumps(
                 {
                     "error": f"Skill '{skill_name}' not found",
@@ -489,6 +533,7 @@ class Skills:
         execute: bool = False,
         args: Optional[List[str]] = None,
         timeout: int = 30,
+        run_context: Optional[RunContext] = None,
     ) -> str:
         """Read or execute a script from a skill.
 
@@ -502,9 +547,10 @@ class Skills:
         Returns:
             A JSON string with either the script content or execution results.
         """
-        skill = self.get_skill(skill_name)
+        skills = self._view_for_call(run_context)
+        skill = skills.get(skill_name)
         if skill is None:
-            available = ", ".join(self.get_skill_names())
+            available = ", ".join(skills)
             return json.dumps(
                 {
                     "error": f"Skill '{skill_name}' not found",

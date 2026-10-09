@@ -25,11 +25,12 @@ from agno.agent._tools import aget_tools, get_tools
 from agno.agent.agent import Agent, get_agent_by_id
 from agno.exceptions import ComponentRehydrationError
 from agno.models.base import Function
+from agno.models.openai import OpenAIResponses
+from agno.tools.function import FunctionCall
 from agno.run.agent import RunOutput
 from agno.run.base import RunContext
 from agno.session import AgentSession
 from agno.skills import DbSkills, LocalSkills, Skills
-from agno.skills.errors import SkillError
 from agno.skills.executor import LocalSkillExecutor, SkillExecutor
 
 SAMPLE_SKILLS_DIR = "cookbook/02_agents/16_skills/sample_skills"
@@ -185,6 +186,73 @@ def _create_skill_row(db, name: str = "release-notes"):
             "references": {"style.md": "Keep it short.\n"},
         }
     )
+
+
+def _seed_owned_rows(db):
+    db.create_skill({"name": "alice-skill", "description": "d", "instructions": "i", "user_id": "alice"})
+    db.create_skill({"name": "bob-skill", "description": "d", "instructions": "i", "user_id": "bob"})
+    db.create_skill({"name": "shared-skill", "description": "d", "instructions": "i"})
+
+
+def _skill_instructions(agent: Agent, run_context: RunContext, skill_name: str) -> dict:
+    """Call get_skill_instructions the way a run does: through FunctionCall, context injected."""
+    tool = next(f for f in agent.skills.get_tools() if f.name == "get_skill_instructions")
+    tool._run_context = run_context
+    call = FunctionCall(function=tool, arguments={"skill_name": skill_name})
+    assert call.execute().status == "success"
+    return json.loads(call.result)
+
+
+def test_two_users_interleaved_requests_keep_their_own_skills(tmp_path):
+    """deep_copy shares the Skills object, which is what every AgentOS route does per request:
+    alice's prompt, bob's on the copy, then alice's tool call must still find her skill."""
+    db = _make_db(tmp_path)
+    _seed_owned_rows(db)
+    # A real model, never invoked: deep_copy rejects the mock the other tests use.
+    agent = Agent(name="test-agent", model=OpenAIResponses(id="gpt-5.5"), skills=Skills(loaders=[DbSkills(db)]))
+    fresh = agent.deep_copy()
+    assert fresh.skills is agent.skills
+
+    alice = RunContext(run_id="r-alice", session_id="s", user_id="alice")
+    bob = RunContext(run_id="r-bob", session_id="s", user_id="bob")
+    for _ in range(2):
+        alice_prompt = get_system_message(agent, _make_session(), run_context=alice).content
+        bob_prompt = get_system_message(fresh, _make_session(), run_context=bob).content
+        assert "alice-skill" in alice_prompt and "bob-skill" not in alice_prompt
+        assert "bob-skill" in bob_prompt and "alice-skill" not in bob_prompt
+
+        assert _skill_instructions(agent, alice, "alice-skill")["skill_name"] == "alice-skill"
+        assert "not found" in _skill_instructions(fresh, bob, "alice-skill")["error"]
+
+
+async def test_two_users_interleaved_requests_keep_their_own_skills_async(tmp_path):
+    db = _make_db(tmp_path)
+    _seed_owned_rows(db)
+    agent = Agent(name="test-agent", model=OpenAIResponses(id="gpt-5.5"), skills=Skills(loaders=[DbSkills(db)]))
+    fresh = agent.deep_copy()
+
+    alice = RunContext(run_id="r-alice", session_id="s", user_id="alice")
+    bob = RunContext(run_id="r-bob", session_id="s", user_id="bob")
+    for _ in range(2):
+        alice_prompt = (await aget_system_message(agent, _make_session(), run_context=alice)).content
+        bob_prompt = (await aget_system_message(fresh, _make_session(), run_context=bob)).content
+        assert "alice-skill" in alice_prompt and "bob-skill" not in alice_prompt
+        assert "bob-skill" in bob_prompt and "alice-skill" not in bob_prompt
+
+        assert _skill_instructions(agent, alice, "alice-skill")["skill_name"] == "alice-skill"
+        assert "not found" in _skill_instructions(fresh, bob, "alice-skill")["error"]
+
+
+def test_save_after_a_users_request_persists_shared_names_only(tmp_path):
+    """A user's request must not leak that user's owned skills into the saved config."""
+    db = _make_db(tmp_path)
+    _seed_owned_rows(db)
+    agent = Agent(name="test-agent", id="scoped", db=db, skills=Skills(loaders=[DbSkills(db)]))
+    agent.model = _make_model()
+
+    for _ in range(2):
+        get_system_message(agent, _make_session(), run_context=RunContext(run_id="r", session_id="s", user_id="alice"))
+        assert agent.to_dict()["skills"] == {"names": ["shared-skill"]}
 
 
 def test_to_dict_stores_skill_names_not_content(tmp_path):

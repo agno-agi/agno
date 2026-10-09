@@ -3,7 +3,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import ClassVar, List, Optional
+from typing import ClassVar, Dict, List, Optional
 
 import pytest
 
@@ -14,7 +14,8 @@ from agno.skills.loaders.base import SkillLoader
 from agno.skills.loaders.local import LocalSkills
 from agno.skills.skill import Skill
 from agno.skills.utils import ScriptResult
-from agno.tools.function import Function
+from agno.run.base import RunContext
+from agno.tools.function import Function, FunctionCall
 
 from .conftest import MockSkillLoader
 
@@ -1191,3 +1192,154 @@ def test_get_skills_from_db_warns_once_per_instance_naming_the_skipped_skills(
     with caplog.at_level(logging.WARNING):
         Skills(loaders=[mock_loader_multiple]).get_skills_from_db()
     assert len([record for record in caplog.records if record.levelno >= logging.WARNING]) == 1
+
+
+# ============================================================================
+# OWNER-SCOPED VIEWS
+# ============================================================================
+
+
+class OwnerScopedLoader(SkillLoader):
+    """A per-request, owner-scoped loader serving the shared skills plus one user's own."""
+
+    refresh_per_request: ClassVar[bool] = True
+    owner_scoped: ClassVar[bool] = True
+
+    def __init__(self, owned: Dict[Optional[str], List[Skill]]) -> None:
+        self.owned = owned
+
+    def load(self, *, user_id: Optional[str] = None) -> List[Skill]:
+        return list(self.owned.get(None, [])) + (list(self.owned.get(user_id, [])) if user_id else [])
+
+
+def _owner_scoped_skills(sample_skill: Skill, minimal_skill: Skill, content_skill: Skill) -> Skills:
+    """test-skill is shared, minimal-skill is alice's, content-skill is bob's."""
+    return Skills(loaders=[OwnerScopedLoader({None: [sample_skill], "alice": [minimal_skill], "bob": [content_skill]})])
+
+
+def _call_tool(skills: Skills, name: str, user_id: Optional[str], **arguments: object) -> dict:
+    """Run a skill tool the way the runtime does: the run context is injected, never an argument."""
+    function = next(f for f in skills.get_tools() if f.name == name)
+    function._run_context = RunContext(run_id="run", session_id="session", user_id=user_id)
+    call = FunctionCall(function=function, arguments=arguments)
+    assert call.execute().status == "success"
+    return json.loads(call.result)
+
+
+def test_owner_scoped_views_do_not_replace_each_other(
+    sample_skill: Skill, minimal_skill: Skill, content_skill: Skill
+) -> None:
+    """Alice's prompt, then bob's on the same object, then alice's tool call: each user reads
+    the set their own prompt advertised, and nobody reads another user's skill by name."""
+    skills = _owner_scoped_skills(sample_skill, minimal_skill, content_skill)
+
+    for _ in range(2):
+        alice_prompt = skills.get_system_prompt_snippet(user_id="alice")
+        bob_prompt = skills.get_system_prompt_snippet(user_id="bob")
+        assert "minimal-skill" in alice_prompt and "content-skill" not in alice_prompt
+        assert "content-skill" in bob_prompt and "minimal-skill" not in bob_prompt
+
+        alice_call = _call_tool(skills, "get_skill_instructions", "alice", skill_name="minimal-skill")
+        assert alice_call["skill_name"] == "minimal-skill"
+        bob_call = _call_tool(skills, "get_skill_instructions", "bob", skill_name="minimal-skill")
+        assert "not found" in bob_call["error"]
+        assert "content-skill" in bob_call["available_skills"] and "minimal-skill" not in bob_call["available_skills"]
+
+        # No user: the shared mapping, exactly as before owner scoping existed.
+        no_user_prompt = skills.get_system_prompt_snippet()
+        assert "test-skill" in no_user_prompt and "minimal-skill" not in no_user_prompt
+        assert "not found" in _call_tool(skills, "get_skill_instructions", None, skill_name="minimal-skill")["error"]
+        assert skills.get_skill_names() == ["test-skill"]
+
+
+async def test_owner_scoped_views_do_not_replace_each_other_async(
+    sample_skill: Skill, minimal_skill: Skill, content_skill: Skill
+) -> None:
+    skills = _owner_scoped_skills(sample_skill, minimal_skill, content_skill)
+
+    for _ in range(2):
+        alice_prompt = await skills.aget_system_prompt_snippet(user_id="alice")
+        bob_prompt = await skills.aget_system_prompt_snippet(user_id="bob")
+        assert "minimal-skill" in alice_prompt and "content-skill" not in alice_prompt
+        assert "content-skill" in bob_prompt and "minimal-skill" not in bob_prompt
+
+        assert (
+            _call_tool(skills, "get_skill_instructions", "alice", skill_name="minimal-skill")["skill_name"]
+            == "minimal-skill"
+        )
+        assert "not found" in _call_tool(skills, "get_skill_instructions", "bob", skill_name="minimal-skill")["error"]
+        assert "minimal-skill" not in await skills.aget_system_prompt_snippet()
+
+
+def test_a_tool_call_without_a_prompt_resolves_the_users_view(
+    sample_skill: Skill, minimal_skill: Skill, content_skill: Skill, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resumed run or an evicted entry reaches a tool with no view for its user: the tool
+    resolves the user's view rather than answering from the shared mapping alone. Views are
+    bounded; the oldest user's is dropped and comes back on that user's next request."""
+    monkeypatch.setattr("agno.skills.agent_skills._USER_VIEWS_KEPT", 2)
+    skills = _owner_scoped_skills(sample_skill, minimal_skill, content_skill)
+
+    for _ in range(2):
+        assert (
+            _call_tool(skills, "get_skill_instructions", "alice", skill_name="minimal-skill")["skill_name"]
+            == "minimal-skill"
+        )
+
+        skills.get_system_prompt_snippet(user_id="bob")
+        skills.get_system_prompt_snippet(user_id="carol")
+        assert list(skills._user_skills) == ["bob", "carol"]
+        assert (
+            _call_tool(skills, "get_skill_instructions", "alice", skill_name="minimal-skill")["skill_name"]
+            == "minimal-skill"
+        )
+        assert list(skills._user_skills) == ["carol", "alice"]
+
+
+# The three tools' schemas as main publishes them: the run context a tool reads is injected
+# by the runtime, so nothing about it may reach the model.
+_SKILL_TOOL_SCHEMAS = {
+    "get_skill_instructions": {
+        "properties": {
+            "skill_name": {"description": "The name of the skill to get instructions for.", "type": "string"}
+        },
+        "required": ["skill_name"],
+        "type": "object",
+    },
+    "get_skill_reference": {
+        "properties": {
+            "reference_path": {"description": "The filename of the reference document.", "type": "string"},
+            "skill_name": {"description": "The name of the skill.", "type": "string"},
+        },
+        "required": ["skill_name"],
+        "type": "object",
+    },
+    "get_skill_script": {
+        "properties": {
+            "args": {
+                "description": "Optional list of arguments to pass to the script (only used if execute=True).",
+                "items": {"type": "string"},
+                "type": "array",
+            },
+            "execute": {
+                "description": "If True, execute the script. If False (default), return content.",
+                "type": "boolean",
+            },
+            "script_path": {"description": "The filename of the script.", "type": "string"},
+            "skill_name": {"description": "The name of the skill.", "type": "string"},
+            "timeout": {
+                "description": "Maximum execution time in seconds (default: 30, only used if execute=True).",
+                "type": "integer",
+            },
+        },
+        "required": ["skill_name"],
+        "type": "object",
+    },
+}
+
+
+def test_skill_tool_schemas_are_unchanged(mock_loader: MockSkillLoader) -> None:
+    tools = Skills(loaders=[mock_loader]).get_tools()
+    for tool in tools:
+        tool.process_entrypoint()
+    assert {tool.name: tool.parameters for tool in tools} == _SKILL_TOOL_SCHEMAS
