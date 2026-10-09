@@ -14,12 +14,8 @@ if TYPE_CHECKING:
 def skill_from_row(row: SkillRow) -> Skill:
     """Build the content-carrying Skill a stored row describes.
 
-    The content dicts pass through verbatim: {} is a valid content-carrying shape
-    (a skill with no files) and must not collapse to None, or Skill.__post_init__
-    rejects the result as neither path-backed nor content-carrying.
-
-    Raises SkillValidationError if any content entry is not str -> str: Skill's own
-    validation checks structure only.
+    The content dicts pass through verbatim: {} is a valid shape (a skill with no files)
+    and must not collapse to None. Raises SkillValidationError on non-string content.
     """
     errors = row.content_errors()
     if errors:
@@ -34,11 +30,8 @@ def skill_from_row(row: SkillRow) -> Skill:
         license=row.license,
         compatibility=row.compatibility,
         allowed_tools=row.allowed_tools,
-        # Always "db": everything built here is content-carrying and served from the
-        # table, which is the distinction source_type exists to make. Passing the
-        # column through instead reported "local" for a skill created through the API,
-        # so the field stopped meaning anything past the first hop. The row keeps its
-        # own value as a record of where the skill was authored.
+        # Always "db": everything built here is served from the table, which is the
+        # distinction source_type makes; the row keeps where the skill was authored.
         source_type="db",
         reference_contents=dict(row.references),
         script_contents=dict(row.scripts),
@@ -83,8 +76,7 @@ class DbSkills(SkillLoader):
                 or a row's content entries are not string-to-string regardless of validate.
             NotImplementedError: If the database does not implement the skills methods.
         """
-        # Imported at the point of use, like SkillRow below: agno.db.base reaches
-        # agno.skills through db.schemas, so a module-level import here would cycle.
+        # Imported here: agno.db.base reaches agno.skills, so a module-level import would cycle.
         from agno.db.base import AsyncBaseDb
 
         if isinstance(self.db, AsyncBaseDb):

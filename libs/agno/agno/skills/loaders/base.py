@@ -14,13 +14,11 @@ class SkillLoader(ABC):
     are loaded from their specific source.
     """
 
-    # Loaders reading a source that can change between requests (the database) declare
-    # True, and Skills re-runs them each time a system prompt is built.
+    # True for a source that changes between requests (the database): re-run per system prompt.
     refresh_per_request: ClassVar[bool] = False
 
-    # Loaders whose source has owners declare True, and Skills passes the run's user_id
-    # to load()/aload(). Left False, the loader is called with no arguments, so a loader
-    # written before this existed -- or one whose source has no owners -- is untouched.
+    # True for a source with owners: load()/aload() receive the run's user_id. Left False,
+    # the loader is called with no arguments, as before this existed.
     owner_scoped: ClassVar[bool] = False
 
     @abstractmethod
@@ -28,9 +26,7 @@ class SkillLoader(ABC):
         """Load skills from the source.
 
         Args:
-            user_id: The user the skills are being loaded for, when the source has a
-                notion of ownership. Keyword-only with a default so a loader whose
-                source has no owners can ignore it entirely.
+            user_id: The user the skills are loaded for, when the source has owners.
 
         Returns:
             A list of Skill objects loaded from the source.

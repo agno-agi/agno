@@ -156,7 +156,7 @@ def test_validate_rejects_invalid_stored_name(sqlite_db, skill_data) -> None:
 
 
 # ============================================================================
-# SERVING FROM THE TABLE ONLY (spec 3.3: no skill directory on disk)
+# SERVING FROM THE TABLE ONLY (no skill directory on disk)
 # ============================================================================
 
 
@@ -235,7 +235,7 @@ def test_refresh_during_postgres_outage_keeps_last_loaded_skills(sqlite_db, skil
 
 
 # ============================================================================
-# ASYNC LOADING (spec 3.5 carry-forward: the async message path awaits the read)
+# ASYNC LOADING (the async message path awaits the read)
 # ============================================================================
 
 

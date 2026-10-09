@@ -125,9 +125,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         if scoped_user_id is not None and body.user_id is not None and body.user_id != scoped_user_id:
             raise HTTPException(status_code=403, detail="Cannot create skills for another user")
         if scoped_user_id is not None:
-            # A scoped caller owns what it creates. A skill with no owner is mutable only by
-            # an admin, so letting one be created here would mint a globally-loadable skill
-            # its author could never edit or delete. Admins stay unscoped and can share.
+            # A scoped caller owns what it creates: a skill with no owner is admin-mutable only,
+            # so its author could never edit or delete it.
             body.user_id = scoped_user_id
 
         db = await get_db(dbs, db_id, table)
@@ -202,8 +201,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         _enforce_user_scope(request, existing, mutating=True)
 
         updates = body.model_dump(exclude_unset=True, exclude={"version"})
-        # These columns are NOT NULL in the table: an explicit null can never be
-        # stored, and the DB layer would surface it as a misleading version conflict.
+        # NOT NULL columns: an explicit null would surface as a misleading version conflict.
         for field in ("description", "instructions", "scripts", "references", "source_type"):
             if field in updates and updates[field] is None:
                 raise HTTPException(
@@ -213,10 +211,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         _validate_skill_metadata({**existing, **updates})
 
         try:
-            # scoped_user_id is an ownership predicate on WHICH row may be written, not a
-            # value: checking the fetched row above and then writing unscoped would be a
-            # TOCTOU, since the name can be re-owned between the check and the write.
-            # Only sent when it actually scopes, leaving the unscoped call unchanged.
+            # A predicate on which row may be written, sent only when it scopes: checking the
+            # fetched row and then writing unscoped would be a TOCTOU, since a name can be re-owned.
             scope = {"user_id": scoped_user_id} if scoped_user_id is not None else {}
             if isinstance(db, AsyncBaseDb):
                 updated = await db.update_skill(name, expected_version=body.version, **scope, **updates)
@@ -230,13 +226,11 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
             raise HTTPException(status_code=500, detail=f"Failed to update skill: {e}")
 
         if updated is None:
-            # The guarded update matched nothing: the row is gone (404, raised by the
-            # re-fetch) or its version has moved -- tell the caller where it is now.
+            # Nothing matched: the row is gone (the re-fetch raises 404) or its version moved.
             current = await _fetch_skill(db, name, user_id=scoped_user_id)
             if current["version"] == body.version:
-                # The version did not move, so this is no conflict: the DB layer
-                # swallowed a real error into None. A 409 telling the caller to
-                # retry with the version they already sent could never succeed.
+                # The version did not move, so this is no conflict: a 409 asking to retry with
+                # the same version could never succeed.
                 raise HTTPException(status_code=500, detail=f"Failed to update skill '{name}'")
             raise HTTPException(
                 status_code=409,
@@ -273,9 +267,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         existing = await _fetch_skill(db, name)
         _enforce_user_scope(request, existing, mutating=True)
 
-        # Bind the delete to the caller, not the raw query param: checking the fetched row
-        # and then deleting by name alone is a TOCTOU, since a name can be re-owned between
-        # the check and the write. Unscoped callers keep the param as a plain owner filter.
+        # Bound to the caller, not the raw query param: checking then deleting by name alone
+        # is a TOCTOU. Unscoped callers keep the param as a plain owner filter.
         owner_filter = scoped_user_id if scoped_user_id is not None else user_id
         try:
             if isinstance(db, AsyncBaseDb):
@@ -288,21 +281,18 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
             raise HTTPException(status_code=500, detail=f"Failed to delete skill: {e}")
 
         if not deleted:
-            # Nothing matched: the row vanished, the user_id filter excluded it, or
-            # the DB layer swallowed an error into False. Either way nothing was
-            # deleted, and the filter case makes 404 the honest answer.
+            # Nothing deleted: the row vanished, the filter excluded it, or the DB layer
+            # swallowed an error into False; 404 is the honest answer either way.
             raise HTTPException(status_code=404, detail="Skill not found")
 
     return router
 
 
 def _validate_skill_metadata(skill_data: dict) -> None:
-    """Reject metadata the loader would refuse, at write time rather than at load.
+    """Reject metadata the loader would refuse, as one joined 422 detail.
 
-    The loader validates every row it reads and raises on the first bad one, so a skill
-    stored with an invalid name disables loading for every skill alongside it. Validating
-    here keeps that row out of the table, the way the schedules router validates a cron
-    expression before the insert.
+    The DB layer refuses it too; this keeps the response body the loader's error shape
+    would not give.
     """
     fields = {
         "name": skill_data.get("name"),
@@ -339,16 +329,9 @@ async def _fetch_skill(db: Union[BaseDb, AsyncBaseDb, RemoteDb], name: str, user
 def _enforce_user_scope(request: Request, record: dict, *, mutating: bool = False) -> None:
     """Block cross-user access without leaking existence.
 
-    Scoping is the framework's opt-in ``user_isolation`` contract: admins and callers
-    running with isolation disabled get ``None`` from ``get_scoped_user_id`` and have full
-    access. For a scoped (non-admin) caller:
-
-    - Skills with ``user_id IS NULL`` are shared. They remain readable to any
-      authenticated caller, but mutating them (``mutating=True``, i.e. PATCH/DELETE) is
-      admin-only -- a regular user must not overwrite or delete shared skills it
-      doesn't own.
-    - A skill owned by a different user returns 404 (not 403) to avoid leaking which
-      names exist.
+    Admins and callers without user isolation are unscoped. For a scoped caller, shared
+    skills (no owner) are readable but admin-only to mutate, and another user's skill
+    answers 404, not 403, so names do not leak.
     """
     scoped_user_id = get_scoped_user_id(request)
     if scoped_user_id is None:

@@ -17,8 +17,7 @@ class SkillRow:
     name: str
     description: str
     instructions: str
-    # Ownership, not identity: None means a shared/global skill, and name alone
-    # stays the unique key. Lives on the row only -- Skill has no user_id field.
+    # Ownership, not identity: None is a shared skill, and name alone stays the unique key.
     user_id: Optional[str] = None
     source_type: str = "local"
     scripts: Dict[str, str] = field(default_factory=dict)
@@ -27,9 +26,8 @@ class SkillRow:
     license: Optional[str] = None
     compatibility: Optional[str] = None
     allowed_tools: Optional[List[str]] = None
-    # Optimistic concurrency, not the skill's own version: server-managed, starts at 1 and
-    # bumps on every successful write, never set by a caller. A semantic version a user
-    # keeps -- typically under `metadata` -- is opaque to the system and unrelated to this.
+    # Optimistic concurrency, not the skill's own version: server-managed, starts at 1,
+    # bumps on every successful write. A user's semantic version lives under metadata.
     version: int = 1
     created_at: Optional[int] = None
     updated_at: Optional[int] = None

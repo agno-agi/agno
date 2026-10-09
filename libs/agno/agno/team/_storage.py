@@ -661,16 +661,13 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["references_format"] = team.references_format
 
     # --- Skills ---
-    # Skills are stored as name references and re-resolved from the database's
-    # skills table on load, the way members are stored by id and re-resolved.
-    # Saving freezes the current names: rows added later are not picked up on load.
+    # Name references, re-resolved from the skills table on load; saving freezes the names.
     if team.skills is not None:
         skill_names = team.skills.get_skills_from_db()
         if skill_names:
             config["skills"] = {"names": skill_names}
-            # An executor cannot be serialized, so record only that a non-default one was
-            # configured. Loading without it would move script execution back onto the
-            # host, so from_dict refuses rather than quietly downgrading the policy.
+            # An executor cannot be serialized: record that one was configured, so a load
+            # without it refuses rather than run scripts on the host.
             from agno.skills.executor import LocalSkillExecutor
 
             if type(team.skills.executor) is not LocalSkillExecutor:
@@ -1320,21 +1317,16 @@ def from_dict(
             del config["knowledge"]
 
     # --- Handle Skills reconstruction ---
-    # Skills are stored as name references and re-resolved from the database's
-    # skills table, the way members are stored by id and re-resolved.
+    # Name references, re-resolved from the skills table like members by id.
     if "skills" in config and isinstance(config["skills"], dict):
         skill_names = config["skills"].get("names")
-        # The db block above already turned config["db"] into a live BaseDb (or dropped
-        # the key), so a team saved with its own db resolves its skills without the
-        # caller threading one in. An explicit db still wins, and is the only source
-        # when the team had no db of its own to serialize.
+        # config["db"] is already live from the block above; an explicit db still wins.
         skills_db = db if db is not None else config.get("db")
         if skill_names and skills_db is not None:
             from agno.skills import DbSkills, Skills
 
-            # A non-default executor was configured when this was saved and cannot be
-            # serialized. Refuse rather than fall back to the host executor: that would
-            # silently turn a sandbox policy into running scripts on this machine.
+            # Refuse rather than fall back to the host executor: that would turn a sandbox
+            # policy into running scripts on this machine.
             if config["skills"].get("requires_executor") and skill_executor is None:
                 raise ComponentRehydrationError(
                     "This was saved with a non-default skill executor, which cannot be serialized. "
@@ -1576,11 +1568,8 @@ def save(
         )
 
         team_config = team.to_dict()
-        # A loader that has never loaded successfully serializes nothing for its
-        # skills, so saving would erase their previously stored names. Merge the
-        # prior names back in — a deliberate improvement over Knowledge, which
-        # tolerates the same erasure. Once every loader has loaded, the serialized
-        # names are authoritative again.
+        # A loader that never loaded serializes nothing, so saving would erase the stored
+        # names; merge them back until every loader has loaded.
         if team.skills is not None and team.skills.has_unloaded_loaders():
             prior = db_.get_config(component_id=team.id)
             prior_skills = (prior.get("config") or {}).get("skills") if prior else None

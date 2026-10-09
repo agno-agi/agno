@@ -7990,8 +7990,7 @@ class SqliteDb(BaseDb):
                 result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:
-            # Propagated, not swallowed: a caller must tell a backend fault from a
-            # missing row, or an outage answers 404 or an empty page instead of 500.
+            # Propagated: an outage must not read as a missing row or an empty page.
             log_error(f"Error getting skill: {e}")
             raise e
 
@@ -8006,8 +8005,7 @@ class SqliteDb(BaseDb):
             if table is None:
                 return [], 0
             with self.Session() as sess:
-                # Metadata only: skill rows are heavy, so the list never selects
-                # instructions, scripts or references. get_skill returns the full row.
+                # Metadata only: instructions, scripts and references are heavy; get_skill has them.
                 base_query = select(
                     table.c.id,
                     table.c.name,
@@ -8037,8 +8035,7 @@ class SqliteDb(BaseDb):
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results], total_count
         except Exception as e:
-            # Propagated, not swallowed: a caller must tell a backend fault from a
-            # missing row, or an outage answers 404 or an empty page instead of 500.
+            # Propagated: an outage must not read as a missing row or an empty page.
             log_error(f"Error listing skills: {e}")
             raise e
 
@@ -8051,20 +8048,17 @@ class SqliteDb(BaseDb):
         try:
             table = self._get_table(table_type="skills")
             if table is None:
-                # _get_table reads a swallowed connection failure as "no table". Probe the
-                # connection so an outage raises here instead of reading as an empty table.
+                # _get_table reads a connection failure as "no table"; probe so an outage raises.
                 with self.Session() as sess:
                     sess.execute(text("SELECT 1"))
                 return []
             with self.Session() as sess:
-                # The loader's read: every column, uncapped, name-ordered so the loaded
-                # mapping and the prompt built from it stay stable across requests.
+                # Name-ordered so the loaded mapping and the prompt built from it stay stable.
                 stmt = select(table).order_by(table.c.name)
                 if names is not None:
                     stmt = stmt.where(table.c.name.in_(names))
                 if include_shared:
-                    # Owner scoping: shared rows are always visible; user_id adds that
-                    # owner's. With no user_id this leaves only the shared rows.
+                    # Shared rows are always visible; user_id adds that owner's own.
                     stmt = stmt.where(
                         table.c.user_id.is_(None)
                         if user_id is None
@@ -8075,8 +8069,7 @@ class SqliteDb(BaseDb):
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results]
         except Exception as e:
-            # Propagated, not swallowed: a refreshing caller must tell a failed read
-            # from an empty table, or an outage would wipe the loaded skill set.
+            # Propagated: an outage must not read as an empty table and wipe the loaded set.
             log_error(f"Error getting skills with content: {e}")
             raise e
 
@@ -8092,8 +8085,7 @@ class SqliteDb(BaseDb):
             data["version"] = 1
             data.setdefault("created_at", now)
             data.setdefault("updated_at", now)
-            # Reject malformed content dicts before the insert; the loader builds the
-            # Skill later, so bad content would otherwise only fail on load.
+            # Checked before the insert: bad content would otherwise only fail on load.
             row = SkillRow.from_dict(data)
             content_errors = row.content_errors()
             if content_errors:
@@ -8110,7 +8102,6 @@ class SqliteDb(BaseDb):
                 "(most likely the name is already taken)"
             ) from e
         except SkillError:
-            # the content-type validation above; propagate untouched
             raise
         except Exception as e:
             log_error(f"Error creating skill: {str(e)}")
@@ -8126,7 +8117,7 @@ class SqliteDb(BaseDb):
             current = self.get_skill(name)
             if current is None:
                 return None
-            # Validate the row as it would be after the update, before writing anything
+            # The row as it would be after the update, checked before anything is written.
             updated_row = SkillRow.from_dict({**current, **kwargs})
             content_errors = updated_row.content_errors()
             if content_errors:
@@ -8134,13 +8125,11 @@ class SqliteDb(BaseDb):
             metadata_errors = validate_metadata(updated_row.frontmatter())
             if metadata_errors:
                 raise SkillValidationError(f"Skill validation failed for '{updated_row.name}'", errors=metadata_errors)
-            # One atomic statement: the version check and the bump succeed or fail together.
-            # A stale expected_version matches no row and overwrites nothing.
+            # One statement: the version check and the bump succeed or fail together.
             values = {**kwargs, "updated_at": int(time.time()), "version": expected_version + 1}
             with self.Session() as sess, sess.begin():
                 stmt = table.update().where(table.c.name == name).where(table.c.version == expected_version)
-                # Ownership predicate: names which row may be updated. Never a SET value,
-                # so a scoped update can never reassign the row's owner.
+                # A predicate on which row may change, never a SET value: scoping cannot reassign the owner.
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
                 stmt = stmt.values(**values)
@@ -8149,11 +8138,10 @@ class SqliteDb(BaseDb):
                     return None
             return self.get_skill(name)
         except SkillError:
-            # A content-validation failure must raise, not read as a version conflict
+            # Raised, not read as a version conflict.
             raise
         except Exception as e:
-            # Propagated, not swallowed: a caller must tell a backend fault from a
-            # missing row, or an outage answers 404 or an empty page instead of 500.
+            # Propagated: an outage must not read as a missing row or an empty page.
             log_error(f"Error updating skill: {e}")
             raise e
 
@@ -8169,7 +8157,6 @@ class SqliteDb(BaseDb):
                 result = sess.execute(stmt)
                 return result.rowcount > 0
         except Exception as e:
-            # Propagated, not swallowed: a caller must tell a backend fault from a
-            # missing row, or an outage answers 404 or an empty page instead of 500.
+            # Propagated: an outage must not read as a missing row or an empty page.
             log_error(f"Error deleting skill: {e}")
             raise e

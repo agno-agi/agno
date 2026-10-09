@@ -2365,8 +2365,7 @@ class BaseDb(ABC):
         limit: int = 100,
         page: int = 1,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """List skills, metadata only (no instructions, scripts or references).
-        user_id optionally scopes to an owner; None is unscoped.
+        """List skills, metadata only; user_id optionally scopes to an owner.
 
         Returns:
             Tuple of (skills, total_count)
@@ -2381,9 +2380,8 @@ class BaseDb(ABC):
     ) -> List[Dict[str, Any]]:
         """Get full skill rows, content included, for every skill or a named subset.
 
-        The loader's read: every column, uncapped. With include_shared=True the read is
-        owner-scoped to shared (no-owner) rows plus user_id's own. Errors propagate rather
-        than returning [], so a caller can tell a failed read from an empty table."""
+        With include_shared=True the read is shared (no-owner) rows plus user_id's own.
+        Errors propagate, so a caller can tell a failed read from an empty table."""
         raise NotImplementedError(f"{type(self).__name__} does not implement get_skills_with_content")
 
     def create_skill(self, skill_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -2393,11 +2391,10 @@ class BaseDb(ABC):
     def update_skill(
         self, name: str, expected_version: int, *, user_id: Optional[str] = None, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
-        """Update a skill by name. Only updates if the stored version matches expected_version
-        (atomic guard); bumps version by one on success. Returns None when no row matched.
+        """Update a skill by name when the stored version matches expected_version, bumping it by one.
 
-        user_id, when given, is an ownership predicate on WHICH row may be updated. It is
-        never written as a value, so a scoped update cannot reassign the row's owner."""
+        Returns None when no row matched. user_id is a predicate on which row may be updated,
+        never a written value, so a scoped update cannot reassign the owner."""
         raise NotImplementedError(f"{type(self).__name__} does not implement update_skill")
 
     def delete_skill(self, name: str, user_id: Optional[str] = None) -> bool:
@@ -3918,8 +3915,7 @@ class AsyncBaseDb(ABC):
         limit: int = 100,
         page: int = 1,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """List skills, metadata only (no instructions, scripts or references).
-        user_id optionally scopes to an owner; None is unscoped.
+        """List skills, metadata only; user_id optionally scopes to an owner.
 
         Returns:
             Tuple of (skills, total_count)
@@ -3934,9 +3930,8 @@ class AsyncBaseDb(ABC):
     ) -> List[Dict[str, Any]]:
         """Get full skill rows, content included, for every skill or a named subset.
 
-        The loader's read: every column, uncapped. With include_shared=True the read is
-        owner-scoped to shared (no-owner) rows plus user_id's own. Errors propagate rather
-        than returning [], so a caller can tell a failed read from an empty table."""
+        With include_shared=True the read is shared (no-owner) rows plus user_id's own.
+        Errors propagate, so a caller can tell a failed read from an empty table."""
         raise NotImplementedError(f"{type(self).__name__} does not implement get_skills_with_content")
 
     async def create_skill(self, skill_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -3946,11 +3941,10 @@ class AsyncBaseDb(ABC):
     async def update_skill(
         self, name: str, expected_version: int, *, user_id: Optional[str] = None, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
-        """Update a skill by name. Only updates if the stored version matches expected_version
-        (atomic guard); bumps version by one on success. Returns None when no row matched.
+        """Update a skill by name when the stored version matches expected_version, bumping it by one.
 
-        user_id, when given, is an ownership predicate on WHICH row may be updated. It is
-        never written as a value, so a scoped update cannot reassign the row's owner."""
+        Returns None when no row matched. user_id is a predicate on which row may be updated,
+        never a written value, so a scoped update cannot reassign the owner."""
         raise NotImplementedError(f"{type(self).__name__} does not implement update_skill")
 
     async def delete_skill(self, name: str, user_id: Optional[str] = None) -> bool:

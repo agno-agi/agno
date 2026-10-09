@@ -1262,7 +1262,7 @@ async def test_async_sqlite_outage_propagates(async_sqlite_db, skill_data, monke
 def test_skill_from_row_reports_the_database_as_the_source(skill_data):
     """A skill read from the table is database-backed, whatever the row says it was.
 
-    source_type marks the path-versus-content distinction (spec 3.1), and everything
+    source_type marks the path-versus-content distinction, and everything
     skill_from_row builds is content-carrying. Passing the stored value through meant a skill
     created through the API reported "local" and the field stopped meaning anything after
     the first hop. The column keeps its own value as a record of where the skill was

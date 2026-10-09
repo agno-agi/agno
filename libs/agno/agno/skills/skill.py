@@ -44,15 +44,13 @@ class Skill:
     license: Optional[str] = None
     compatibility: Optional[str] = None
     allowed_tools: Optional[List[str]] = None
-    # Appended rather than grouped with source_path/scripts/references so that every pre-existing
-    # field keeps the positional slot it had before these three were added.
+    # Appended so every pre-existing field keeps its positional slot.
     source_type: str = "local"
     reference_contents: Optional[Dict[str, str]] = None
     script_contents: Optional[Dict[str, str]] = None
 
     def __post_init__(self) -> None:
-        # `None` versus `{}` is the discriminator, not emptiness: a skill with instructions and
-        # no files is content-carrying with two empty dicts, and must not be read as path-backed.
+        # None versus {} is the discriminator: a skill with no files is content-carrying with empty dicts.
         has_contents = self.reference_contents is not None or self.script_contents is not None
         if self.source_path is not None and has_contents:
             raise SkillValidationError(
@@ -82,7 +80,7 @@ class Skill:
             "name": self.name,
             "description": self.description,
             "instructions": self.instructions,
-            # Coerced: source_path may be a Path, which is not JSON serializable.
+            # A Path is not JSON serializable.
             "source_path": str(self.source_path) if self.source_path is not None else None,
             "scripts": self.scripts,
             "references": self.references,

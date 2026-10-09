@@ -95,7 +95,7 @@ class TestListSkills:
         assert [r["name"] for r in data] == ["skill-a", "skill-b"]
 
     def test_list_is_metadata_only(self, client, mock_db):
-        # The list never carries content (spec: metadata only, no instructions,
+        # The list never carries content (metadata only, no instructions,
         # scripts or references) -- even if a backend were to return full rows.
         mock_db.get_skills = MagicMock(return_value=([_make_skill_row()], 1))
         resp = client.get("/skills")
@@ -509,7 +509,7 @@ class TestUserScoping:
     """For a scoped (non-admin) JWT caller with user_isolation enabled, the router enforces
     ownership-based scoping via get_scoped_user_id.
 
-    Rules (spec section 3.8, following the learnings router):
+    Rules, following the learnings router:
       - LIST: bind the user_id filter to the subject; reject an explicit user_id query
         that mismatches with 403.
       - CREATE: allow body.user_id to be null (a shared skill) or match the subject;

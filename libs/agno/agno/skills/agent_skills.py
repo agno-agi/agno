@@ -17,9 +17,8 @@ from agno.tools.function import Function
 from agno.utils.log import log_debug, log_warning
 from agno.utils.path_safety import safe_join_relative_path
 
-# Per-user views kept by one Skills object. A view only has to survive from a user's prompt
-# build to that run's tool calls; past the limit the oldest user's view is dropped and comes
-# back with one database read on that user's next request.
+# Views kept per Skills object: one must survive from a user's prompt build to that run's
+# tool calls; past the limit the oldest is dropped and comes back with one read.
 _USER_VIEWS_KEPT = 128
 
 
@@ -55,13 +54,11 @@ class Skills:
         self.on_duplicate = on_duplicate
         self.executor = executor if executor is not None else LocalSkillExecutor()
         self._skills: Dict[str, Skill] = {}
-        # Each loader's last successful result, keyed by its index in self.loaders. A
-        # per-request refresh re-runs only the loaders marked for it and merges the rest
-        # from here; a failed refresh falls back to it.
+        # Each loader's last successful result by index: a per-request refresh re-runs only
+        # the loaders marked for it and merges the rest from here.
         self._loader_results: Dict[int, List[Skill]] = {}
         self._refresh_lock: Optional[asyncio.Lock] = None  # Lazily created lock for the async refresh
-        # Each user's own view from an owner-scoped refresh, newest last. Kept apart from
-        # _skills so one user's request never replaces what another user's prompt advertised.
+        # One view per user from owner-scoped refreshes, newest last, kept apart from _skills.
         self._user_skills: "OrderedDict[str, Dict[str, Skill]]" = OrderedDict()
         self._warned_unsaved_skills = False
         self._load_skills()
@@ -83,8 +80,7 @@ class Skills:
                 log_warning(f"Error loading skills from {loader}: {str(e)}")
 
         merged = self._merge_loader_results(results)
-        # Swap once, at the end: a reader during a reload sees the previous mapping rather than an
-        # empty or half-filled one.
+        # Swapped once at the end: a reader mid-reload sees the previous mapping, never a partial one.
         self._loader_results = results
         self._skills = merged
         log_debug(f"Loaded {len(self._skills)} total skills")
@@ -106,11 +102,9 @@ class Skills:
         return merged
 
     def _refresh_loaders(self, user_id: Optional[str] = None) -> None:
-        """Re-run the loaders marked refresh_per_request and swap the rebuilt mapping in once.
+        """Re-run the refresh_per_request loaders into the user's view, or the shared mapping without a user.
 
-        With a user the result is that user's own view; the shared mapping changes only
-        for a request without one. Any failure keeps the previous state: a request
-        mid-outage serves the last loaded skills rather than an empty or partial set.
+        Any failure keeps the previous state, so a request mid-outage serves the last loaded skills.
         """
         results = dict(self._loader_results)
         changed = False
@@ -118,8 +112,7 @@ class Skills:
             if not loader.refresh_per_request:
                 continue
             try:
-                # Only loaders that declare owner scoping receive the run's user; every
-                # other loader is called exactly as it was before this existed.
+                # Only owner-scoped loaders receive the user; the rest are called as before.
                 results[index] = loader.load(user_id=user_id) if loader.owner_scoped else loader.load()
                 changed = True
             except Exception as e:
@@ -156,8 +149,7 @@ class Skills:
     def _view_for_call(self, run_context: Optional[RunContext]) -> Dict[str, Skill]:
         """The mapping a tool call reads, resolved first when its user has no view yet.
 
-        A prompt build normally leaves the view behind; a resumed run or a dropped entry
-        reaches a tool without one, and resolving beats answering from the shared mapping.
+        A resumed run or a dropped entry reaches a tool with no view behind it.
         """
         user_id = run_context.user_id if run_context is not None else None
         if user_id is not None and user_id not in self._user_skills:
@@ -166,24 +158,16 @@ class Skills:
 
     @property
     def _async_refresh_lock(self) -> asyncio.Lock:
-        """Lazily create an asyncio lock for serializing the async refresh.
-
-        Lazy, not built in __init__: on Python 3.9 asyncio.Lock() binds the running
-        event loop at construction, and __init__ runs outside any loop."""
+        """The async refresh lock, created lazily: on Python 3.9 asyncio.Lock() binds the
+        running loop at construction, and __init__ runs outside any loop."""
         if self._refresh_lock is None:
             self._refresh_lock = asyncio.Lock()
         return self._refresh_lock
 
     async def _arefresh_loaders(self, user_id: Optional[str] = None) -> None:
-        """Async twin of _refresh_loaders: awaits each refreshing loader's aload.
-
-        With a user the result is that user's own view; the shared mapping changes only
-        for a request without one. Any failure keeps the previous state: a request
-        mid-outage serves the last loaded skills rather than an empty or partial set.
-        """
-        # Serialized, with the snapshot taken inside the lock: the awaits below
-        # suspend, and a sibling request's refresh may commit while this one is
-        # parked - committing a pre-await snapshot would roll that fresher state back.
+        """Async twin of _refresh_loaders: awaits each refreshing loader's aload."""
+        # Snapshot taken inside the lock: a sibling refresh may commit while this one awaits,
+        # and committing a pre-await snapshot would roll that fresher state back.
         async with self._async_refresh_lock:
             results = dict(self._loader_results)
             changed = False
@@ -244,32 +228,19 @@ class Skills:
         return list(self._skills.keys())
 
     def has_unloaded_loaders(self) -> bool:
-        """Whether any loader has never loaded successfully.
-
-        Load results are recorded per loader only on success, so a missing entry
-        means every attempt so far has failed and the mapping may be missing that
-        loader's skills.
-
-        Returns:
-            True if at least one loader has no recorded successful load.
-        """
+        """Whether any loader has never loaded successfully, so the mapping may lack its skills."""
         return any(index not in self._loader_results for index in range(len(self.loaders)))
 
     def get_skills_from_db(self) -> List[str]:
-        """Get the skill names a stored agent or team saves to re-resolve this object.
+        """The skill names a stored agent or team saves to re-resolve this object.
 
-        Only DbSkills-produced skills are saved (other sources would resolve to the wrong
-        row or nothing; they are skipped, with one warning per instance naming them), plus
-        each database loader's configured names, so a save during an outage preserves them
-        instead of erasing.
-
-        Returns:
-            A list of skill names, loaded first, without duplicates.
+        Only DbSkills-produced skills are saved (anything else would resolve to the wrong row
+        or nothing, and is named in one warning per instance), plus each database loader's
+        configured names, so a save during an outage preserves them instead of erasing.
         """
         from agno.skills.loaders.db import DbSkills
 
-        # Which loader produced the entry that won a name: _merge_loader_results keeps the
-        # last one, so replaying that order identifies the source of every loaded skill.
+        # Replaying the merge order identifies which loader won each name.
         source: Dict[str, SkillLoader] = {}
         for index, loader in enumerate(self.loaders):
             for skill in self._loader_results.get(index, []):
@@ -282,8 +253,7 @@ class Skills:
                 names.append(name)
             else:
                 skipped.append(name)
-        # Once per instance: every save and to_dict comes through here, and an agent with
-        # only local skills would otherwise repeat this on each.
+        # Once per instance: every save and to_dict comes through here.
         if skipped and not self._warned_unsaved_skills:
             self._warned_unsaved_skills = True
             log_warning(
@@ -304,25 +274,18 @@ class Skills:
 
         This creates an XML-formatted snippet that provides the agent with
         information about available skills without including the full instructions.
-
-        With a refresh_per_request loader attached (DbSkills), building the snippet
-        performs that loader's blocking database read; the async message path uses
-        aget_system_prompt_snippet, which awaits it instead.
+        A refresh_per_request loader (DbSkills) does its blocking read here; the async
+        message path awaits it through aget_system_prompt_snippet instead.
 
         Returns:
             An XML-formatted string with skills metadata.
         """
-        # The once-per-request read of database-backed loaders: the system prompt is
-        # built once per run, the same moment memory and learning already hit the db.
+        # The per-request read of database-backed loaders, once per run with the system prompt.
         self._refresh_loaders(user_id=user_id)
         return self._build_system_prompt_snippet(self._view_for(user_id))
 
     async def aget_system_prompt_snippet(self, user_id: Optional[str] = None) -> str:
-        """Async twin of get_system_prompt_snippet: the refresh awaits the database read.
-
-        Returns:
-            An XML-formatted string with skills metadata.
-        """
+        """Async twin of get_system_prompt_snippet: the refresh awaits the database read."""
         await self._arefresh_loaders(user_id=user_id)
         return self._build_system_prompt_snippet(self._view_for(user_id))
 
@@ -487,8 +450,7 @@ class Skills:
             )
 
         if skill.source_path is None:
-            # Content-carrying: the membership check above proved the filename is declared, and
-            # Skill.__post_init__ proved every declared filename has content, so this cannot miss.
+            # Content-carrying: every declared filename has content (Skill.__post_init__), so this cannot miss.
             return json.dumps(
                 {
                     "skill_name": skill_name,
@@ -660,11 +622,9 @@ class Skills:
                 }
             )
 
-        # Executing needs a real file to hand the interpreter, so the skill's files are written to
-        # a temporary directory shaped like a skill folder and thrown away once the script exits.
+        # Executing needs real files: written to a temporary skill-shaped folder for the run.
         with TemporaryDirectory(prefix="agno-skill-") as temp_dir:
-            # Resolved, so the script path and the cwd agree the way they do for a path-backed
-            # skill, whose source_path LocalSkills has already resolved.
+            # Resolved so the script path and cwd agree, as they do for a path-backed skill.
             skill_dir = Path(temp_dir).resolve()
             try:
                 create_skill_files(skill, skill_dir)
