@@ -1,5 +1,7 @@
 # Claude cookbook test log
 
+Latest configuration/API validation is recorded at the end; the original run below used the earlier model.
+
 **Date:** 2026-10-09 (Europe/London)
 
 **Source:** main `ff9b86d5be5245bd349e55c459bce45ba3d3cc21` plus this PR's cookbook/test changes, run from an isolated worktree before commit. The imported Agno path was the worktree's `libs/agno/agno/__init__.py`, not a released wheel or the user's checkout.
@@ -59,3 +61,62 @@ pytest-asyncio, with SQLAlchemy 2.1.4. Both providers together: 8 passed in
 setup instruction; it was corrected before rerunning. See the root test log.
 
 No browser disconnect, server restart, native transcript recovery, production authorization, queue retry, compaction, approval, subagent or sandbox-replacement claim is made by these tests. API access was real loopback HTTP, not an in-process ASGI mock. The SQLite result checks are separate from native conversation durability. Older tests in cookbook/frameworks retain their historical scope.
+
+
+## Claude configuration update — 2026-10-09
+
+**Source:** `codex/harness-cookbooks` in `/Users/ab/code/agno`, based on
+`d36a67ebe4` plus the configuration changes in this PR. Main's merged setup
+changes (#10920) are included. This follow-up ran in the user's normal checkout.
+
+### Native model identifier
+
+**Status:** FAIL
+
+**Description:** First attempted the requested `sonnet-5-5` literal using the
+native SDK example, before testing the wrapper.
+
+**Result:** The SDK returned `unrecognized_model` and exited 1. No automatic
+retry was performed. The user supplied the full ID `claude-sonnet-5-5`; all four
+examples now use that literal without a model environment override.
+
+---
+
+### Full-ID standalone and AgentOS acceptance
+
+**Status:** PASS
+
+**Description:** With `claude-sonnet-5-5`, ran the native/basic/tools scripts and
+real AgentOS HTTP/SSE/persisted-result checks. Added a fifth Claude test that
+reuses the native example's `ClaudeAgentOptions` directly in `ClaudeAgent`.
+
+**Result:** The initial four Claude cases passed in 28.25s in `.venv`.
+The expanded combined Claude/Codex suite passed all nine cases in 70.28s in
+`.venvs/claude-dx-validation`, with no skips or retries. Claude HTTP results
+contained two Read results each and correct fees of 8, 0, 0. Fixture hashes
+were unchanged. After giving the new native-options test an explicit async
+120-second timeout, that final test passed again in 2.88s. The input options
+object retained its original resume, streaming and tool configuration.
+
+**Environment:** Python 3.12.8; editable Agno 3.1.2 from this checkout;
+claude-agent-sdk 0.2.165; bundled Claude Code 2.1.294. Clean validation used
+SQLAlchemy 2.0.52, pytest 9.1.1 and pytest-asyncio 1.4.0. Existing local CLI
+credentials were used; no credential values were logged.
+
+---
+
+### Configuration and session regressions
+
+**Status:** PASS
+
+**Description:** Tested typed options, named overrides including empty/false
+values, independent configuration containers, callback/service identity,
+legacy deprecation and precedence, conflicting session/stream settings,
+transcript-store injection, checkpoint exclusions and SDK-optional imports.
+Exercised typed options through sync and async runs, streaming and non-streaming,
+including a second run that resumes the native session.
+
+**Result:** 192 external-agent unit tests passed. The final focused Claude
+configuration/session suite passed all 45 cases. Native skills/plugins option
+forwarding is covered by configuration tests; real skill/plugin execution was
+not tested. The earlier durability and deployment limits still apply.

@@ -10,7 +10,6 @@ This reads files; it does not demonstrate edits, approvals or tenant isolation.
 See README.md for setup and permission details.
 """
 
-import os
 from pathlib import Path
 
 from agno.agents.claude import ClaudeAgent
@@ -28,17 +27,15 @@ prompt = "Read shipping.py and orders.json with your file or shell tools. Explai
 # ---------------------------------------------------------------------------
 agent = ClaudeAgent(
     id="claude-tools",
-    model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6"),
+    model="claude-sonnet-5-5",
     cwd=str(workspace),
     max_turns=6,
     max_budget_usd=0.5,
     allowed_tools=["Read"],
     permission_mode="dontAsk",
-    options_kwargs={
-        "tools": ["Read"],
-        "setting_sources": [],
-        "strict_mcp_config": True,
-    },
+    tools=["Read"],
+    setting_sources=[],
+    strict_mcp_config=True,
 )
 
 # ---------------------------------------------------------------------------

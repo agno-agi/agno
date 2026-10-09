@@ -1,5 +1,7 @@
-from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, List, Optional
+import warnings
+from dataclasses import dataclass, field, fields
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 from agno.agents.base import BaseExternalAgent, ExternalRunResult, ExternalRunWarningEvent
@@ -13,6 +15,30 @@ from agno.run.agent import (
 )
 from agno.run.cancel import araise_if_cancelled
 from agno.utils.log import log_debug, log_warning
+
+if TYPE_CHECKING:
+    from claude_agent_sdk import ClaudeAgentOptions
+    from claude_agent_sdk.types import (
+        McpServerConfig,
+        PermissionMode,
+        SdkPluginConfig,
+        SettingSource,
+        SystemPromptCustom,
+        SystemPromptFile,
+        SystemPromptPreset,
+        ToolsPreset,
+    )
+
+
+def _copy_config(value: Any) -> Any:
+    """Copy configuration containers while preserving SDK callbacks and service objects."""
+    if isinstance(value, dict):
+        return {key: _copy_config(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_copy_config(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_copy_config(item) for item in value)
+    return value
 
 
 def _sdk() -> Any:
@@ -33,21 +59,32 @@ class ClaudeAgent(BaseExternalAgent):
     endpoints or standalone via .run() / .print_response().
 
     The Claude Agent SDK runs Claude Code as a subprocess. Tool execution is handled
-    internally by the SDK — you configure tools via allowed_tools and MCP servers.
+    internally by the SDK. tools selects built-in tools; allowed_tools pre-approves calls.
 
     Args:
         name: Display name for this agent.
         id: Unique identifier (auto-generated from name if not set).
         system_prompt: Optional system prompt for the agent.
-        model: Model to use (e.g. "claude-sonnet-4-20250514"). Defaults to SDK default.
-        allowed_tools: List of tools the agent can use (e.g. ["Read", "Bash", "WebSearch"]).
+        model: Model to use. Defaults to the SDK default unless set in options.
+        tools: Built-in tool names or the Claude Code tool preset. An empty list disables built-in tools.
+        allowed_tools: Tool calls to auto-approve; this does not limit the available tool set.
         disallowed_tools: List of tools to block.
-        permission_mode: Permission mode ("default", "acceptEdits", "plan", "bypassPermissions").
+        permission_mode: SDK permission mode, such as "default", "acceptEdits" or "dontAsk".
         max_turns: Maximum number of turns.
         max_budget_usd: Maximum cost budget in USD.
         cwd: Working directory for the agent.
         mcp_servers: MCP server configurations for custom tools.
-        options_kwargs: Additional kwargs passed to ClaudeAgentOptions.
+        setting_sources: Filesystem settings to load; [] disables user/project/local settings.
+        strict_mcp_config: Use only explicitly configured MCP servers when True.
+        skills: Available skill names, or "all". Include "Skill" when explicitly selecting tools.
+        plugins: Native SDK plugin configurations.
+        options: Native ClaudeAgentOptions for advanced configuration. Non-None constructor
+            fields override these options, including empty collections and False. Agno owns
+            native session selection and token streaming; configure them through run/arun.
+            Configuration containers are copied per run; callbacks and services retain identity.
+        options_kwargs: Deprecated dictionary alternative to options. Cannot be combined with
+            options. Retains legacy precedence over constructor fields; migrate to options
+            for explicit constructor precedence. Conflicting runtime settings are rejected.
 
     Example:
         from agno.agents.claude import ClaudeAgent
@@ -67,21 +104,27 @@ class ClaudeAgent(BaseExternalAgent):
         AgentOS(agents=[agent])
     """
 
-    system_prompt: Optional[str] = None
+    system_prompt: Optional[Union[str, "SystemPromptPreset", "SystemPromptCustom", "SystemPromptFile"]] = None
     model: Optional[str] = None
     allowed_tools: Optional[List[str]] = None
     disallowed_tools: Optional[List[str]] = None
-    permission_mode: Optional[str] = None
+    permission_mode: Optional["PermissionMode"] = None
     max_turns: Optional[int] = None
     max_budget_usd: Optional[float] = None
-    cwd: Optional[str] = None
+    cwd: Optional[Union[str, Path]] = None
     project_key: Optional[str] = None
     _store_warning_logged: bool = field(default=False, init=False, repr=False)
     _warn_unstable_project_key: bool = field(default=False, init=False, repr=False)
     _store_skipped_logged: bool = field(default=False, init=False, repr=False)
-    mcp_servers: Optional[Dict[str, Any]] = None
+    mcp_servers: Optional[Union[Dict[str, "McpServerConfig"], str, Path]] = None
     options_kwargs: Dict[str, Any] = field(default_factory=dict)
     framework: str = "claude-agent-sdk"
+    options: Optional["ClaudeAgentOptions"] = None
+    tools: Optional[Union[List[str], "ToolsPreset"]] = None
+    setting_sources: Optional[List["SettingSource"]] = None
+    strict_mcp_config: Optional[bool] = None
+    skills: Optional[Union[List[str], Literal["all"]]] = None
+    plugins: Optional[List["SdkPluginConfig"]] = None
 
     # Key under which the SDK session id is stored in the Agno session's session_data.
     _SESSION_KEY = "claude_sdk_session_id"
@@ -90,11 +133,41 @@ class ClaudeAgent(BaseExternalAgent):
     _sdk_session_ids: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if self.options is not None and self.options_kwargs:
+            raise ValueError("Use options or options_kwargs, not both.")
+        if self.options is not None and not isinstance(self.options, _sdk().ClaudeAgentOptions):
+            raise TypeError("options must be a claude_agent_sdk.ClaudeAgentOptions instance.")
+        if self.options_kwargs:
+            warnings.warn(
+                "options_kwargs is deprecated; use options=ClaudeAgentOptions(...) or named parameters. "
+                "Named parameters override options; options_kwargs retains legacy precedence.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        self._validate_runtime_options(self._option_values())
         # Without id or name, get_id() is random per process, so the default key cannot be shared across replicas.
         self._warn_unstable_project_key = self.project_key is None and self.id is None and self.name is None
         super().__post_init__()
         if self.project_key is None:
             self.project_key = self.get_id()
+
+    def _option_values(self) -> Dict[str, Any]:
+        if self.options is not None:
+            return {item.name: getattr(self.options, item.name) for item in fields(self.options) if item.init}
+        return dict(self.options_kwargs)
+
+    @staticmethod
+    def _validate_runtime_options(opts: Dict[str, Any]) -> None:
+        for name in ("resume", "session_id", "continue_conversation", "fork_session"):
+            if opts.get(name):
+                raise ValueError(
+                    f"ClaudeAgent manages {name}; use run/arun(session_id=...) for conversation continuity."
+                )
+        # Raw CLI arguments must not bypass the same session/streaming contract.
+        reserved_flags = {"resume", "session-id", "continue", "fork-session", "include-partial-messages"}
+        for flag in opts.get("extra_args", {}):
+            if flag.lstrip("-") in reserved_flags:
+                raise ValueError(f"ClaudeAgent manages extra_args[{flag!r}]; use run/arun configuration instead.")
 
     def _transcript_store(self, agno_session_id: Optional[str]) -> Optional[Any]:
         """The transcript store for this run, or None when transcripts stay on local disk.
@@ -115,12 +188,13 @@ class ClaudeAgent(BaseExternalAgent):
                 )
                 self._store_warning_logged = True
             return None
-        if "session_store" in self.options_kwargs:
+        opts = self._option_values()
+        if opts.get("session_store") is not None or "session_store" in self.options_kwargs:
             if not self._store_skipped_logged:
-                log_debug("ClaudeAgent uses the session_store from options_kwargs; Agno transcript storage is off.")
+                log_debug("ClaudeAgent uses the configured session_store; Agno transcript storage is off.")
                 self._store_skipped_logged = True
             return None
-        if self.options_kwargs.get("enable_file_checkpointing"):
+        if opts.get("enable_file_checkpointing"):
             if not self._store_skipped_logged:
                 log_warning(
                     "ClaudeAgent cannot store transcripts in the database while enable_file_checkpointing is set; "
@@ -154,35 +228,37 @@ class ClaudeAgent(BaseExternalAgent):
         """
         sdk = _sdk()
 
-        opts: Dict[str, Any] = {}
+        opts = self._option_values()
+        self._validate_runtime_options(opts)
+        for name in (
+            "system_prompt",
+            "model",
+            "tools",
+            "allowed_tools",
+            "disallowed_tools",
+            "permission_mode",
+            "max_turns",
+            "max_budget_usd",
+            "cwd",
+            "mcp_servers",
+            "setting_sources",
+            "strict_mcp_config",
+            "skills",
+            "plugins",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                opts[name] = value
 
-        if self.system_prompt:
-            opts["system_prompt"] = self.system_prompt
-        if self.model:
-            opts["model"] = self.model
-        if self.allowed_tools:
-            opts["allowed_tools"] = self.allowed_tools
-        if self.disallowed_tools:
-            opts["disallowed_tools"] = self.disallowed_tools
-        if self.permission_mode:
-            opts["permission_mode"] = self.permission_mode
-        if self.max_turns is not None:
-            opts["max_turns"] = self.max_turns
-        if self.max_budget_usd is not None:
-            opts["max_budget_usd"] = self.max_budget_usd
-        if self.cwd:
-            opts["cwd"] = self.cwd
-        if self.mcp_servers:
-            opts["mcp_servers"] = self.mcp_servers
-
-        # Enable token-level streaming when streaming is requested
-        if streaming:
-            opts["include_partial_messages"] = True
-
-        if resume:
-            opts["resume"] = resume
-
+        # Keep the old dictionary's precedence during migration, without allowing it to
+        # override the native session selected by Agno or disable requested streaming.
         opts.update(self.options_kwargs)
+        partial = opts.get("include_partial_messages", False)
+        if (partial and not streaming) or ("include_partial_messages" in self.options_kwargs and partial != streaming):
+            raise ValueError("ClaudeAgent manages include_partial_messages; use run/arun(stream=...).")
+        opts["include_partial_messages"] = streaming
+        opts["resume"] = resume
+        opts = _copy_config(opts)
         store = session_store if session_store is not None else self._transcript_store(agno_session_id)
         if store is not None:
             opts["session_store"] = store

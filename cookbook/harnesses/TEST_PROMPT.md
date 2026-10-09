@@ -30,6 +30,8 @@ individually. Check:
 - The final explanation covers `small=8`, `boundary=0` and `large=0`.
 - All runs complete successfully and the fixture is unchanged.
 - An invalid model makes the script exit unsuccessfully, not print a false pass.
+  Claude uses a literal model ID: temporarily edit it for this check and restore
+  it afterward; there is no `CLAUDE_MODEL` environment override.
 
 Do not judge success by exact prose or response speed. Keep failed attempts in
 the log. Do not retry silently; classify authentication, environment, provider,
@@ -51,8 +53,9 @@ AGNO_TEST_CODEX_SDK=1 python -m pytest \
   libs/agno/tests/integration/agents/test_harness_cookbooks.py -k codex -q
 ```
 
-Each provider has four cases: three script executions, and an HTTP case with
-two model runs. Enable both flags to run all eight cases. Allow several minutes;
+Each provider has three script cases and an HTTP case with two model runs.
+Claude also has a case that reuses the native SDK options directly in Agno.
+Enable both flags to run all nine cases. Allow several minutes;
 a script exceeding 180 seconds or HTTP read exceeding 120 seconds fails.
 The native examples also enforce a 120-second total wait.
 

@@ -43,5 +43,7 @@ completed model work or tool side effects to repair the mirror.
 
 A database without transcript storage logs a warning once and the agent continues with the SDK's
 local-disk transcripts, so resume works on the machine that ran the session. Transcript storage is also
-skipped, with a warning, when `enable_file_checkpointing` is set in `options_kwargs`, because the SDK
-does not allow the two together. A `session_store` supplied in `options_kwargs` is used as is.
+skipped, with a warning, when `enable_file_checkpointing` is set in `options=ClaudeAgentOptions(...)`, because the SDK
+does not allow the two together. A `session_store` supplied through these native `options` is used as is.
+The legacy `options_kwargs` dictionary is deprecated; see the
+[current configuration guide](../../harnesses/claude/README.md#configure-claude-without-a-keyword-dictionary).

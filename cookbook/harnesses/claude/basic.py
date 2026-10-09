@@ -8,7 +8,6 @@ recovery. Compare native_sdk.py for the same prompt without the Agno adapter.
 Try changing the order amount in the prompt. See README.md for setup.
 """
 
-import os
 from pathlib import Path
 
 from agno.agents.claude import ClaudeAgent
@@ -26,11 +25,13 @@ prompt = "Shipping costs 8 dollars below 100 dollars and is free at or above 100
 # ---------------------------------------------------------------------------
 agent = ClaudeAgent(
     id="claude-basic",
-    model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6"),
+    model="claude-sonnet-5-5",
     cwd=str(workspace),
     max_turns=2,
     max_budget_usd=0.5,
-    options_kwargs={"tools": [], "setting_sources": [], "strict_mcp_config": True},
+    tools=[],
+    setting_sources=[],
+    strict_mcp_config=True,
 )
 
 # ---------------------------------------------------------------------------

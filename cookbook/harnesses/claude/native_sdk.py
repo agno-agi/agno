@@ -9,7 +9,6 @@ See README.md for authentication, the comparison and the official reference.
 """
 
 import asyncio
-import os
 from pathlib import Path
 
 from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
@@ -20,7 +19,7 @@ from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
 workspace = Path(__file__).resolve().parents[1] / "sample_project"
 prompt = "Shipping costs 8 dollars below 100 dollars and is free at or above 100 dollars. What is the shipping fee for an order of exactly 100 dollars? Answer in one sentence. Do not use tools."
 options = ClaudeAgentOptions(
-    model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6"),
+    model="claude-sonnet-5-5",
     cwd=str(workspace),
     tools=[],
     setting_sources=[],

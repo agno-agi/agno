@@ -472,13 +472,64 @@ def test_user_session_store_and_file_checkpointing_disable_injection(fake_sdk, t
     monkeypatch.setattr(claude_module, "log_warning", warnings.append)
     db = SqliteDb(db_file=str(tmp_path / "db"))
     own_store = object()
-    custom = ClaudeAgent(id="a", db=db, options_kwargs={"session_store": own_store})
+    with pytest.warns(DeprecationWarning, match="options_kwargs"):
+        custom = ClaudeAgent(id="a", db=db, options_kwargs={"session_store": own_store})
     assert custom._build_options(agno_session_id="agno-session").extra["session_store"] is own_store
 
-    checkpointing = ClaudeAgent(id="a", db=db, options_kwargs={"enable_file_checkpointing": True})
+    with pytest.warns(DeprecationWarning, match="options_kwargs"):
+        checkpointing = ClaudeAgent(id="a", db=db, options_kwargs={"enable_file_checkpointing": True})
     opts = checkpointing._build_options(agno_session_id="agno-session")
     assert "session_store" not in opts.extra
     assert opts.extra["enable_file_checkpointing"] is True
     checkpointing._build_options(agno_session_id="agno-session")
     assert len(warnings) == 1
     assert "enable_file_checkpointing" in warnings[0]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("use_async", [False, True])
+def test_typed_options_flow_through_run_and_preserve_resume(fake_sdk, monkeypatch, stream, use_async):
+    @dataclass
+    class NativeOptions:
+        model: Optional[str] = None
+        tools: Optional[List[str]] = None
+        resume: Optional[str] = None
+        include_partial_messages: bool = False
+
+    sdk = claude_module._sdk()
+    monkeypatch.setattr(sdk, "ClaudeAgentOptions", NativeOptions)
+    captured = []
+    original_query = sdk.query
+
+    async def query(prompt, options):
+        captured.append(options)
+        async for message in original_query(prompt, options):
+            yield message
+
+    monkeypatch.setattr(sdk, "query", query)
+    source = NativeOptions(model="base-model", tools=["Bash"])
+    agent = ClaudeAgent(id="typed", options=source, model="named-model", tools=[])
+
+    async def async_run(prompt):
+        if stream:
+            return [event async for event in agent.arun(prompt, session_id="session", stream=True)][-1]
+        return await agent.arun(prompt, session_id="session")
+
+    def run(prompt):
+        if use_async:
+            return asyncio.run(async_run(prompt))
+        if stream:
+            return list(agent.run(prompt, session_id="session", stream=True))[-1]
+        return agent.run(prompt, session_id="session")
+
+    first = run("first")
+    second = run("second")
+    if stream:
+        assert isinstance(first, RunCompletedEvent) and isinstance(second, RunCompletedEvent)
+    else:
+        assert first.status == second.status == RunStatus.completed
+    assert captured[0].resume is None
+    assert captured[1].resume == "sdk-1"
+    assert all(item.model == "named-model" and item.tools == [] for item in captured)
+    assert all(item.include_partial_messages == stream for item in captured)
+    assert source.model == "base-model" and source.tools == ["Bash"] and source.resume is None

@@ -1,8 +1,10 @@
 """Opt-in real harness examples and loopback HTTP tests; no mocked model calls."""
 
+import asyncio
 import hashlib
 import json
 import os
+import runpy
 import socket
 import subprocess
 import sys
@@ -154,3 +156,20 @@ def test_live_harness_agentos_http(provider, tmp_path):
         stored = _assert_stored_run(client, provider, session_id, run_id)
         (tmp_path / "stream.json").write_text(json.dumps(stored, indent=2))
     assert _fixture_digest() == before, "The read-only API exercise modified its fixture"
+
+
+@pytest.mark.asyncio
+async def test_live_claude_native_options():
+    """The native comparison's options can be reused directly by the Agno adapter."""
+    _require_live("claude")
+    from agno.agents.claude import ClaudeAgent
+    from agno.run.base import RunStatus
+
+    example = runpy.run_path(str(COOKBOOK / "claude/native_sdk.py"))
+    options = example["options"]
+    original = (options.resume, options.include_partial_messages, list(options.tools))
+    agent = ClaudeAgent(id="claude-native-options", options=options)
+    result = await asyncio.wait_for(agent.arun(example["prompt"]), timeout=120)
+    assert result.status == RunStatus.completed, result.content
+    assert result.content
+    assert (options.resume, options.include_partial_messages, options.tools) == original

@@ -9,7 +9,7 @@ uv pip install 'claude-agent-sdk==0.2.165'
 
 Authenticate through your existing Claude CLI login, or export
 `ANTHROPIC_API_KEY` in your shell. Do not put credentials in these files.
-The examples default to `claude-sonnet-4-6`; `CLAUDE_MODEL` overrides it.
+The examples use `claude-sonnet-5-5` directly.
 
 ## 1. Run the smallest example
 
@@ -20,6 +20,19 @@ python cookbook/harnesses/claude/basic.py
 Inspect the answer and Agno run ID. An order of exactly 100 dollars qualifies
 for free shipping. This prompt contains the policy, so no file read is needed.
 The script checks terminal status and nonempty output. An error exits nonzero.
+
+For interactive use, Agno also provides formatted output:
+
+```python
+from agno.agents.claude import ClaudeAgent
+
+agent = ClaudeAgent(model="claude-sonnet-5-5", tools=[])
+agent.print_response("What is a Python context manager?", stream=True)
+```
+
+In an async application, use `await agent.aprint_response(...)`. The executable
+`basic.py` uses `run()` to inspect the terminal status explicitly; formatted
+output alone is not a success check.
 
 ## 2. Compare with the native SDK
 
@@ -52,8 +65,8 @@ fixture contents in the output. Inspect the final explanation yourself.
 
 Only the SDK's `Read` tool is exposed, and `dontAsk` denies permission
 requests instead of waiting for unattended approval. `allowed_tools` alone
-does not remove other tools, so `options_kwargs["tools"]` specifies the actual
-tool set. User/project settings are not loaded and ambient MCP configuration
+does not remove other tools, so `tools=["Read"]` specifies the actual
+built-in tool set. User/project settings are not loaded and ambient MCP configuration
 is disabled. The working directory is a starting point, not a filesystem jail.
 
 ## 4. Serve the same review through AgentOS
@@ -91,6 +104,52 @@ not validate cross-process restoration. See the
 The local server has no authentication. Use PostgreSQL and explicit
 authorization for production. Background jobs, disconnects and recovery are
 follow-up exercises, not guarantees demonstrated here.
+
+## Configure Claude without a keyword dictionary
+
+Use named parameters for ordinary configuration: `model`, `system_prompt`,
+`cwd`, `tools`, `allowed_tools`, `disallowed_tools`, `permission_mode`,
+`max_turns`, `max_budget_usd`, `mcp_servers`, `setting_sources`,
+`strict_mcp_config`, `skills` and `plugins`. These retain the SDK's semantics.
+For example, `skills` accepts exact skill names or `"all"`; if you explicitly
+select `tools`, include `"Skill"` to make those skills invocable. Plugin
+configurations use the native SDK's local plugin shape.
+
+You can also reuse the SDK's typed options object:
+
+```python
+from claude_agent_sdk import ClaudeAgentOptions
+from agno.agents.claude import ClaudeAgent
+
+options = ClaudeAgentOptions(
+    tools=["Read"],
+    allowed_tools=["Read"],
+    permission_mode="dontAsk",
+    setting_sources=[],
+    strict_mcp_config=True,
+)
+agent = ClaudeAgent(model="claude-sonnet-5-5", cwd="./my-project", options=options)
+```
+
+- Non-`None` named parameters override `options`. Empty lists/dictionaries,
+  empty strings, zero and `False` are explicit overrides; `None` inherits.
+- Agno copies configuration containers per run. It does not deep-copy native
+  callbacks, MCP server instances or session-store objects.
+- Use `run`/`arun` with `session_id` and `stream` for Agno conversations and
+  streaming. Native `resume`, `session_id`, `continue_conversation` and
+  `fork_session` cannot select a different conversation through `options`.
+  Conflicting `include_partial_messages` and raw CLI lifecycle flags raise
+  errors rather than silently overriding Agno's run settings.
+- A native `session_store` supplied through `options` takes precedence over
+  Agno's transcript mirror. `enable_file_checkpointing=True` disables that
+  mirror because the SDK cannot combine the two. These options do not change
+  where Agno saves product-facing runs.
+
+`options_kwargs` is deprecated. Existing dictionaries still work and emit a
+`DeprecationWarning`; they retain their old precedence over named parameters.
+Do not pass both forms. When migrating to `options=ClaudeAgentOptions(...)`,
+remove duplicate settings or place the intended override in a named parameter.
+Native session/streaming conflicts are rejected for the legacy form too.
 
 ## Validate and continue
 

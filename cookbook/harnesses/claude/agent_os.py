@@ -29,17 +29,15 @@ agent = ClaudeAgent(
     id="claude-reviewer",
     name="Claude Shipping Reviewer",
     db=SqliteDb(db_file=str(state_dir / "runs.db")),
-    model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6"),
+    model="claude-sonnet-5-5",
     cwd=str(workspace),
     max_turns=6,
     max_budget_usd=0.5,
     allowed_tools=["Read"],
     permission_mode="dontAsk",
-    options_kwargs={
-        "tools": ["Read"],
-        "setting_sources": [],
-        "strict_mcp_config": True,
-    },
+    tools=["Read"],
+    setting_sources=[],
+    strict_mcp_config=True,
 )
 agent_os = AgentOS(agents=[agent])
 app = agent_os.get_app()

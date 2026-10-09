@@ -59,3 +59,16 @@ pytest-asyncio, with SQLAlchemy 2.1.4. Both providers together: 8 passed in
 setup instruction; it was corrected before rerunning. See the root test log.
 
 No browser disconnect, server restart, native transcript recovery, production authorization, queue retry, compaction, approval, subagent or sandbox-replacement claim is made by these tests. API access was real loopback HTTP, not an in-process ASGI mock. The SQLite result checks are separate from native conversation durability. Older tests in cookbook/frameworks retain their historical scope.
+
+
+## Claude API update regression — 2026-10-09
+
+**Status:** PASS
+
+**Description:** Reran all four Codex cases from the normal checkout as part of
+the expanded nine-case harness suite. Codex code and model configuration were
+unchanged. Used openai-codex 0.162.1, `gpt-5.6-luna`, and existing CLI credentials.
+
+**Result:** All four passed; the combined suite passed nine cases in 70.28s.
+Each HTTP run retained one successful shell tool result. The fixture remained
+unchanged and the answers gave fees 8, 0, 0. See the root log for environment details.
