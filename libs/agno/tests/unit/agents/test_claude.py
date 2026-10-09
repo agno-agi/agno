@@ -306,6 +306,25 @@ def test_generated_project_key_warns_once(fake_sdk, tmp_path, monkeypatch):
     assert generated.project_key in warnings[0]
 
 
+@pytest.mark.parametrize("stream", [False, True])
+def test_store_records_the_runs_agno_session(fake_sdk, tmp_path, monkeypatch, stream):
+    stores = []
+    sdk = claude_module._sdk()
+    original = sdk.query
+
+    def query(prompt, options):
+        stores.append(options.extra["session_store"])
+        return original(prompt=prompt, options=options)
+
+    monkeypatch.setattr(sdk, "query", query)
+    agent = ClaudeAgent(id="a", db=SqliteDb(db_file=str(tmp_path / "db")))
+    if stream:
+        session_id = [e for e in agent.run("hi", stream=True)][-1].session_id
+    else:
+        session_id = agent.run("hi").session_id
+    assert session_id and [store.agno_session_id for store in stores] == [session_id]
+
+
 @pytest.mark.asyncio
 async def test_nonstream_tools_persist(fake_sdk, tmp_path, monkeypatch):
     tool = ToolUseBlock()

@@ -181,9 +181,10 @@ class ClaudeAgent(BaseExternalAgent):
     ) -> AsyncIterator[Any]:
         """Run sdk.query() against the SDK session tied to this Agno session, recording its id.
 
-        The SDK transcript lives on local disk under the agent's cwd, so a stored id may not
-        be resumable (another host, changed cwd, deleted transcript). If the resume fails
-        before any message arrives, start a fresh SDK session seeded with the Agno history.
+        Without transcript storage on the db, the SDK transcript lives on local disk under the
+        agent's cwd, so a stored id may not be resumable (another host, changed cwd, deleted
+        transcript). If the SDK reports the session as missing before any message arrives, start
+        a fresh SDK session seeded with the Agno history; other failures keep the stored id.
         """
         sdk = _sdk()
         session = kwargs.get("session")
