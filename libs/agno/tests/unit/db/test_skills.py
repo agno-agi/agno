@@ -343,7 +343,7 @@ _PRE_SKILLS_CONSTRUCTOR_PARAMS = {
 @pytest.mark.parametrize("class_name", sorted(_PRE_SKILLS_CONSTRUCTOR_PARAMS))
 def test_skills_table_follows_the_last_pre_existing_table_parameter(class_name):
     """skills_table must not shift any constructor parameter that predates it: it sits
-    right after the last pre-existing *_table parameter, the way main appends its own."""
+    right after the last pre-existing *_table parameter, where a new one is appended."""
     import inspect
 
     from agno.db.base import AsyncBaseDb, BaseDb

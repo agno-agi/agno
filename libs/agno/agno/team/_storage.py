@@ -1337,7 +1337,7 @@ def from_dict(
             if strict and not skills.has_unloaded_loaders():
                 # The eager load answered with the shared rows, so a name it did not return is
                 # either owned (resolved per request) or gone; one unscoped read tells which.
-                missing = [name for name in skill_names if name not in skills.get_skill_names()]
+                missing = [name for name in skill_names if skills.get_skill(name) is None]
                 if missing:
                     stored = {row["name"] for row in skills_db.get_skills_with_content(names=missing)}
                     missing = [name for name in missing if name not in stored]

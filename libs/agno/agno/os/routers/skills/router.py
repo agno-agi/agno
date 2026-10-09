@@ -27,6 +27,8 @@ from agno.skills.validator import validate_metadata
 
 logger = logging.getLogger(__name__)
 
+_UNSUPPORTED_DB = "Skills are supported on Postgres and SQLite only; the configured database does not implement them"
+
 
 def get_skills_router(
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
@@ -87,10 +89,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
             else:
                 records, total_count = cast(BaseDb, db).get_skills(user_id=user_id, limit=limit, page=page)
         except NotImplementedError:
-            raise HTTPException(
-                status_code=501,
-                detail="Skills are supported on Postgres and SQLite only; the configured database does not implement them",
-            )
+            raise HTTPException(status_code=501, detail=_UNSUPPORTED_DB)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to list skills: {e}")
 
@@ -145,10 +144,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
             else:
                 created = cast(BaseDb, db).create_skill(body.model_dump())
         except NotImplementedError:
-            raise HTTPException(
-                status_code=501,
-                detail="Skills are supported on Postgres and SQLite only; the configured database does not implement them",
-            )
+            raise HTTPException(status_code=501, detail=_UNSUPPORTED_DB)
         except SkillValidationError as e:
             raise HTTPException(status_code=422, detail=str(e))
         except SkillError as e:
@@ -225,10 +221,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
             else:
                 updated = cast(BaseDb, db).update_skill(name, expected_version=body.version, **scope, **updates)
         except NotImplementedError:
-            raise HTTPException(
-                status_code=501,
-                detail="Skills are supported on Postgres and SQLite only; the configured database does not implement them",
-            )
+            raise HTTPException(status_code=501, detail=_UNSUPPORTED_DB)
         except SkillValidationError as e:
             raise HTTPException(status_code=422, detail=str(e))
         except Exception as e:
@@ -285,10 +278,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
             else:
                 deleted = cast(BaseDb, db).delete_skill(name, user_id=owner_filter)
         except NotImplementedError:
-            raise HTTPException(
-                status_code=501,
-                detail="Skills are supported on Postgres and SQLite only; the configured database does not implement them",
-            )
+            raise HTTPException(status_code=501, detail=_UNSUPPORTED_DB)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete skill: {e}")
 
@@ -301,10 +291,10 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
 
 
 def _validate_skill_metadata(skill_data: dict) -> None:
-    """Reject metadata the loader would refuse, as one joined 422 detail.
+    """Reject metadata the loader would refuse, before the write.
 
-    The DB layer refuses it too; this keeps the response body the loader's error shape
-    would not give.
+    The DB layer refuses it too; checking here keeps the 422 detail a plain "; "-joined list
+    rather than the exception text with its count prefix.
     """
     fields = {
         "name": skill_data.get("name"),
@@ -329,10 +319,7 @@ async def _fetch_skill(db: Union[BaseDb, AsyncBaseDb, RemoteDb], name: str, user
         else:
             record = cast(BaseDb, db).get_skill(name, user_id=user_id)
     except NotImplementedError:
-        raise HTTPException(
-            status_code=501,
-            detail="Skills are supported on Postgres and SQLite only; the configured database does not implement them",
-        )
+        raise HTTPException(status_code=501, detail=_UNSUPPORTED_DB)
     except Exception as e:
         # A DB error is not "not found" -- surface it rather than emit a misleading 404.
         raise HTTPException(status_code=500, detail=f"Failed to fetch skill: {e}")

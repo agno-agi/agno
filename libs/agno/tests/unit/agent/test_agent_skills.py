@@ -651,7 +651,7 @@ def test_from_dict_positional_second_arg_is_registry(tmp_path):
 
 def test_from_dict_third_positional_arg_is_strict(tmp_path):
     """strict keeps its pre-existing positional slot: from_dict(config, registry, True)
-    refuses an unresolvable reference and False loads it leniently, as on main.
+    refuses an unresolvable reference and False loads it leniently.
     """
     from agno.registry.registry import Registry
 

@@ -1890,7 +1890,8 @@ def get_agent_by_id(
         Agent instance or None.
 
     Raises:
-        ComponentRehydrationError: If strict and a registry reference cannot be resolved.
+        ComponentRehydrationError: If strict and a registry reference cannot be resolved, or the
+            saved skills record a non-default executor, which this helper cannot supply.
     """
     from agno.exceptions import ComponentRehydrationError
     from agno.utils.log import log_error

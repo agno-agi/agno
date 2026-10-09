@@ -18,7 +18,7 @@ class SkillLoader(ABC):
     refresh_per_request: ClassVar[bool] = False
 
     # True for a source with owners: load()/aload() receive the run's user_id. Left False,
-    # the loader is called with no arguments, as before this existed.
+    # the loader is called with no arguments.
     owner_scoped: ClassVar[bool] = False
 
     @abstractmethod

@@ -1917,7 +1917,8 @@ def get_team_by_id(
         Team instance or None.
 
     Raises:
-        ComponentRehydrationError: If strict and a member or registry reference cannot be resolved.
+        ComponentRehydrationError: If strict and a member or registry reference cannot be resolved,
+            or the saved skills record a non-default executor, which this helper cannot supply.
     """
     from agno.exceptions import ComponentRehydrationError
 
