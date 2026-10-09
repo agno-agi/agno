@@ -34,10 +34,13 @@ class DayAggregatedMetrics(BaseModel):
             agent_sessions_count=metrics_dict.get("agent_sessions_count", 0),
             date=to_utc_datetime(metrics_dict.get("date")) or datetime.now(timezone.utc),
             id=metrics_dict.get("id", ""),
-            model_metrics=metrics_dict.get("model_metrics", {}),
+            # A stored row carries the JSON column default ``{}``, or no key at all for a row
+            # written before per-owner metrics existed, so the falsy shapes have to land on the
+            # container the field declares -- as aggregate_metrics_by_date() already normalizes.
+            model_metrics=metrics_dict.get("model_metrics") or [],
             team_runs_count=metrics_dict.get("team_runs_count", 0),
             team_sessions_count=metrics_dict.get("team_sessions_count", 0),
-            token_metrics=metrics_dict.get("token_metrics", {}),
+            token_metrics=metrics_dict.get("token_metrics") or {},
             created_at=created_at,
             updated_at=updated_at,
             users_count=metrics_dict.get("users_count", 0),
