@@ -546,7 +546,14 @@ def attach_routes(
         async def _read_one(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> Any:
             if isinstance(db, RemoteDb):
                 raise NotImplementedError
-            return await asyncio.wait_for(read(db), timeout=_OS_METRICS_READ_TIMEOUT_SECONDS)
+            task = asyncio.ensure_future(read(db))
+            try:
+                return await asyncio.wait_for(asyncio.shield(task), timeout=_OS_METRICS_READ_TIMEOUT_SECONDS)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                # The read finishes in the background, so a rebuild it started is not rolled
+                # back; retrieve its eventual result so it never warns
+                task.add_done_callback(lambda t: t.cancelled() or t.exception())
+                raise
 
         results: List[Any] = []
         db_ids: Dict[str, Optional[datetime]] = {}

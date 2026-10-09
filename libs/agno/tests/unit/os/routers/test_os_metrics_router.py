@@ -1,5 +1,6 @@
 """Tests for the GET /os/metrics/* routes and POST /os/metrics/refresh on the metrics router."""
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -1043,6 +1044,28 @@ class TestDatabases:
 
         assert db.get_os_metrics.call_count == 1
         assert body["total_sessions"] == 3
+
+    def test_read_that_timed_out_is_left_to_finish(self):
+        """A read may have started a rebuild: the route stops waiting for it, and never cancels it."""
+        finished = []
+
+        async def slow_read(**kwargs):
+            await asyncio.sleep(0.3)
+            finished.append(True)
+            return [], None
+
+        slow = MagicMock(spec=AsyncBaseDb)
+        slow.id = "db-2"
+        slow.get_os_metrics = AsyncMock(side_effect=slow_read)
+        with _scope(None), patch("agno.os.routers.metrics.metrics._OS_METRICS_READ_TIMEOUT_SECONDS", 0.05):
+            # Entered, so the event loop of the first request is still running after it has answered
+            with _dbs_client(_db("db-1", _today_row()), slow) as client:
+                body = client.get(f"/os/metrics/sessions?{_last(1)}").json()
+                assert body["skipped_db_ids"] == {"db-2": "timeout"}
+                assert finished == []
+                time.sleep(0.5)
+
+        assert finished == [True]
 
     def test_every_database_is_read_for_the_caller(self):
         dbs = [_db("db-1", _today_row()), _db("db-2", _today_row())]
