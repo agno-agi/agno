@@ -548,6 +548,23 @@ class AwsBedrock(Model):
             log_warning(f"Failed to count tokens via Bedrock API: {str(e)}")
             return await super().acount_tokens(messages, tools, output_schema)
 
+    def _get_tool_config(
+        self, tools: Optional[List[Dict[str, Any]]], tool_choice: Optional[Union[str, Dict[str, Any]]]
+    ) -> Optional[Dict[str, Any]]:
+        if not tools:
+            return None
+
+        tool_config: Dict[str, Any] = {"tools": self._format_tools_for_request(tools)}
+        if tool_choice == "required":
+            tool_config["toolChoice"] = {"any": {}}
+        elif isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
+            function = tool_choice.get("function")
+            if isinstance(function, dict):
+                name = function.get("name")
+                if isinstance(name, str) and name:
+                    tool_config["toolChoice"] = {"tool": {"name": name}}
+        return tool_config
+
     def invoke(
         self,
         messages: List[Message],
@@ -564,9 +581,7 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            tool_config = None
-            if tools:
-                tool_config = {"tools": self._format_tools_for_request(tools)}
+            tool_config = self._get_tool_config(tools, tool_choice)
 
             body = {
                 "system": system_message,
@@ -610,9 +625,7 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            tool_config = None
-            if tools:
-                tool_config = {"tools": self._format_tools_for_request(tools)}
+            tool_config = self._get_tool_config(tools, tool_choice)
 
             body = {
                 "system": system_message,
@@ -660,9 +673,7 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            tool_config = None
-            if tools:
-                tool_config = {"tools": self._format_tools_for_request(tools)}
+            tool_config = self._get_tool_config(tools, tool_choice)
 
             body = {
                 "system": system_message,
@@ -709,9 +720,7 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            tool_config = None
-            if tools:
-                tool_config = {"tools": self._format_tools_for_request(tools)}
+            tool_config = self._get_tool_config(tools, tool_choice)
 
             body = {
                 "system": system_message,
