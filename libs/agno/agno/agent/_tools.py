@@ -915,6 +915,10 @@ def run_tool(
                                 from_run_response=run_response,  # type: ignore[arg-type]
                                 tool=tool,
                                 content=call_result.content,  # type: ignore
+                                images=call_result.images,
+                                videos=call_result.videos,
+                                audio=call_result.audios,
+                                files=call_result.files,
                             ),
                             run_response,
                             events_to_skip=agent.events_to_skip,  # type: ignore
@@ -934,7 +938,13 @@ def run_tool(
                     else:
                         yield handle_event(  # type: ignore
                             create_tool_call_completed_event(
-                                from_run_response=run_response, tool=tool, content=call_result.content
+                                from_run_response=run_response,
+                                tool=tool,
+                                content=call_result.content,
+                                images=call_result.images,
+                                videos=call_result.videos,
+                                audio=call_result.audios,
+                                files=call_result.files,
                             ),
                             run_response,
                             events_to_skip=agent.events_to_skip,  # type: ignore
@@ -1030,6 +1040,10 @@ async def arun_tool(
                                 from_run_response=run_response,  # type: ignore[arg-type]
                                 tool=tool,
                                 content=call_result.content,  # type: ignore
+                                images=call_result.images,
+                                videos=call_result.videos,
+                                audio=call_result.audios,
+                                files=call_result.files,
                             ),
                             run_response,
                             events_to_skip=agent.events_to_skip,  # type: ignore
@@ -1049,7 +1063,13 @@ async def arun_tool(
                     else:
                         yield handle_event(  # type: ignore
                             create_tool_call_completed_event(
-                                from_run_response=run_response, tool=tool, content=call_result.content
+                                from_run_response=run_response,
+                                tool=tool,
+                                content=call_result.content,
+                                images=call_result.images,
+                                videos=call_result.videos,
+                                audio=call_result.audios,
+                                files=call_result.files,
                             ),
                             run_response,
                             events_to_skip=agent.events_to_skip,  # type: ignore
