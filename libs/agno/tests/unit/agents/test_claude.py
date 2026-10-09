@@ -846,3 +846,93 @@ def test_sequential_tool_calls_keep_a_checkpoint_per_step(fake_sdk, tmp_db):
     assert agent._checkpoint_indexes(messages) == [2, 4]
     _, _, continuation = agent._build_continuation(_recorded_run(messages), continue_from=3, fork=True, input="next")
     assert continuation.forked_from_message_index == 3 and continuation.anchor["uuid"] == "r1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_resume_fallback_after_fork_only_replays_active_branch(scripted, tmp_db, monkeypatch, stream):
+    turns, _, _ = scripted
+    source_turn = _tool_turn("go")
+    source_turn[-2] = _msg(AssistantMessage([TextBlock("discarded reply")]), "u-final")
+    source_turn[-1] = ResultMessage("sdk-1", "discarded reply")
+    turns.append(source_turn)
+    turns.append(
+        [
+            SystemMessage("init", {"session_id": "fork-1"}),
+            _user("v-prompt", "next"),
+            _msg(AssistantMessage([TextBlock("branch reply")]), "v-final"),
+            ResultMessage("fork-1", "branch reply"),
+        ]
+    )
+    agent = ClaudeAgent(id="branch-history", db=tmp_db)
+    source = await agent.arun("go", session_id="s")
+    await agent.acontinue_run(run_response=source, continue_from=3, input="next")
+    prompts = []
+
+    async def missing_session(prompt, options):
+        prompts.append(prompt)
+        if options.resume:
+            raise ProcessError("No conversation found")
+        yield SystemMessage("init", {"session_id": "fresh"})
+        yield AssistantMessage([TextBlock("recovered")])
+        yield ResultMessage("fresh", "recovered")
+
+    monkeypatch.setattr(claude_module._sdk(), "query", missing_session)
+    # A fresh adapter verifies that branch selection survives a process restart.
+    restarted = ClaudeAgent(id="branch-history", db=tmp_db)
+    if stream:
+        events = [event async for event in restarted.arun("remember?", session_id="s", stream=True)]
+        assert isinstance(events[-1], RunCompletedEvent)
+    else:
+        result = await restarted.arun("remember?", session_id="s")
+        assert result.content == "recovered"
+    assert len(prompts) == 2
+    assert "discarded reply" not in prompts[-1]
+    assert "branch reply" in prompts[-1]
+    assert prompts[-1].count("user: go") == 1
+    assert prompts[-1].count("assistant called Bash") == 1
+    assert prompts[-1].count("tool result: alpha") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_agentos_automatic_fork_does_not_change_source_stream(scripted, tmp_db, monkeypatch, stream):
+    from httpx import ASGITransport, AsyncClient
+
+    import agno.os.event_streams as event_streams
+    from agno.os import AgentOS
+    from agno.os.event_streams import InMemoryEventStream
+    from agno.os.managers import EventsBuffer, SSESubscriberManager
+
+    event_stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+    monkeypatch.setattr(event_streams, "_event_stream", event_stream)
+    turns, _, _ = scripted
+    turns.append(_tool_turn("go"))
+    turns.append(
+        [
+            SystemMessage("init", {"session_id": "fork-1"}),
+            _user("v-prompt", "next"),
+            ResultMessage("fork-1", "branch failed", is_error=True),
+        ]
+    )
+    agent = ClaudeAgent(id="stream-identity", db=tmp_db)
+    source = await agent.arun("go", session_id="s")
+    await event_stream.register_run(source.run_id)
+    await event_stream.add_event(source.run_id, RunCompletedEvent(run_id=source.run_id))
+    await event_stream.complete_run(source.run_id, RunStatus.completed)
+    original_events = await event_stream.replay(source.run_id)
+    app = AgentOS(agents=[agent], db=tmp_db).get_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            f"/agents/{agent.id}/runs/{source.run_id}/continue",
+            data={"session_id": "s", "input": "next", "stream": str(stream).lower()},
+        )
+    assert response.status_code == 200
+    branch = (await agent.aget_session("s")).runs[-1]
+    assert branch.run_id != source.run_id and branch.status == RunStatus.error
+    assert await event_stream.get_run_status(source.run_id) == RunStatus.completed
+    assert await event_stream.replay(source.run_id) == original_events
+    if stream:
+        branch_events = await event_stream.replay(branch.run_id)
+        assert branch_events and all(event.run_id == branch.run_id for _, event in branch_events)
+        assert await event_stream.get_run_status(branch.run_id) == RunStatus.error

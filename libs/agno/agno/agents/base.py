@@ -908,10 +908,35 @@ class BaseExternalAgent:
         history: List[Dict[str, Any]] = []
         if not session.runs:
             return history
+        # A fork already contains the retained prefix of its source run. Its
+        # predecessor is the source's predecessor, not the most recent sibling.
+        # Keep predecessor links so forks of older branches also discard any
+        # intervening turns, without copying the entire history for every run.
+        runs: List[RunOutput] = []
+        predecessors: List[Optional[int]] = []
+        indexes: Dict[str, int] = {}
+        head: Optional[int] = None
         for run in session.runs:
             if not isinstance(run, RunOutput) or not run.messages or run.run_id == exclude_run_id:
                 continue
-            for msg in run.messages:
+            predecessor = head
+            if run.forked_from_run_id:
+                source_index = indexes.get(run.forked_from_run_id)
+                # If the source was deleted, its earlier ancestry is unknown;
+                # only the prefix retained in the fork is safe to replay.
+                predecessor = predecessors[source_index] if source_index is not None else None
+            head = len(runs)
+            runs.append(run)
+            predecessors.append(predecessor)
+            if run.run_id:
+                indexes[run.run_id] = head
+
+        branch: List[RunOutput] = []
+        while head is not None:
+            branch.append(runs[head])
+            head = predecessors[head]
+        for run in reversed(branch):
+            for msg in run.messages or []:
                 if msg.role == "assistant" and msg.tool_calls:
                     # Assistant message with tool calls (no text content)
                     history.append(

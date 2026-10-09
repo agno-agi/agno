@@ -15,15 +15,23 @@ Every run stores its messages in Agno, and with transcript storage the Claude co
 
 A finished run is never rewritten in place. Whatever `fork` is set to, the continuation is a new run in the same session with `forked_from_run_id` and `forked_from_message_index` set, and the source run is kept as is. Later turns in the session continue from the newest branch.
 
+If a later turn cannot resume its SDK session, history recovery follows the active branch's ancestry. Discarded sibling replies are excluded, and the retained source messages appear only once. AgentOS streams and buffers continuation events under the new run's ID, including when a completed run forks automatically; use that ID to resume the branch's stream.
+
 ## Cookbooks
 
-| File | What it shows |
-|------|---------------|
-| `01_continue_finished_run.py` | Continue a completed run with a new instruction; the model remembers the source run. |
-| `02_fork_from_checkpoint.py` | List checkpoints and fork from a tool step; the branch carries only the earlier tool results. |
-| `03_replay_user_turn.py` | Replay the original prompt, or rewrite it from message 0. |
-| `04_background_continue.py` | Submit a continuation with `background=True` and poll the database for the result. |
-| `05_agentos_api.py` | Serve the agent and use `/checkpoints` and `/continue` over HTTP (`--verify` runs the flow end to end). |
+Each cookbook seeds a temporary workspace with a small realistic task and asserts on files, tool results and run lineage rather than on the model's wording.
+
+| File | Scenario | What it shows |
+|------|----------|---------------|
+| `01_continue_finished_run.py` | Write a Python module and run it, then ask for tests for "the function you just wrote". | A continuation remembers the source run; it is a new run with `forked_from_run_id`. |
+| `02_fork_from_checkpoint.py` | Three Bash steps over a CSV file: count rows, sum a column, write a summary. Fork after step one. | The branch knows the row count and not the total; checkpoint listing; files are not rewound. |
+| `03_replay_user_turn.py` | List markdown files, add a file, replay the prompt; then rewrite the prompt from message 0. | Replay re-runs tools against the current workspace; `continue_from=0` replaces the prompt. |
+| `04_background_continue.py` | Write a script, then run it in a background continuation with `stream=True`. | Live tool and content events from a background run, the final `RunOutput`, and the stored result. |
+| `05_agentos_api.py` | The CSV scenario over HTTP. `--verify` runs it end to end. | `/checkpoints`, `/continue` with `fork=true`, a streamed follow-up, and the session's run lineage. |
+
+A script that consumes a background stream and exits at once can log "Failed to complete event stream": the final output reaches the client before the run finishes its event-stream bookkeeping, and closing the loop cancels that step. `await_background_runs()` from `agno.run.background` waits for it; a server keeps its loop alive and does not need it.
+
+The SDK's default system prompt does not tell the model its working directory, so the cookbooks that create files set `system_prompt` to name it. Bash already runs in `cwd`.
 
 ```bash
 .venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/continue_from/01_continue_finished_run.py
