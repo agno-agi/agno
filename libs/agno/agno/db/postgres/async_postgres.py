@@ -2528,32 +2528,37 @@ class AsyncPostgresDb(AsyncBaseDb):
             runs_table = await self._get_table(table_type="runs")
 
             results = []
-            async with self.async_session_factory() as sess, sess.begin():
-                # One rebuild of this table at a time: a second one waits here, or skips when told not to wait
-                lock_params = {"table_name": table.fullname}
-                if wait_for_rebuild:
-                    await sess.execute(
-                        text("SELECT pg_advisory_xact_lock(hashtext('agno_os_metrics'), hashtext(:table_name))"),
-                        lock_params,
-                    )
-                else:
-                    lock_result = await sess.execute(
-                        text("SELECT pg_try_advisory_xact_lock(hashtext('agno_os_metrics'), hashtext(:table_name))"),
-                        lock_params,
-                    )
-                    if not lock_result.scalar():
+            lock_params = {"table_name": table.fullname}
+            for date_to_process in dates_to_process:
+                # Each day is its own transaction, so a day that fails never holds back the rows of the days before it
+                async with self.async_session_factory() as sess, sess.begin():
+                    # One rebuild of this table at a time: a second one waits here, or skips when told not to wait.
+                    # The lock is released when the day's transaction ends
+                    if wait_for_rebuild:
+                        await sess.execute(
+                            text("SELECT pg_advisory_xact_lock(hashtext('agno_os_metrics'), hashtext(:table_name))"),
+                            lock_params,
+                        )
+                    elif not (
+                        await sess.execute(
+                            text(
+                                "SELECT pg_try_advisory_xact_lock(hashtext('agno_os_metrics'), hashtext(:table_name))"
+                            ),
+                            lock_params,
+                        )
+                    ).scalar():
                         # Reset the throttle so the next read tries again
                         self._os_metrics_refreshed_at = 0.0
                         log_debug("Another process is calculating OS metrics. Won't calculate OS metrics.")
                         return None
 
-                # Skip the days a rebuild this one waited for has completed
-                latest_result = await sess.execute(select(func.max(table.c.date)).where(table.c.completed.is_(True)))
-                latest_completed = latest_result.scalar()
-                if latest_completed is not None:
-                    dates_to_process = [day for day in dates_to_process if day > latest_completed]
+                    # Skip a day a rebuild this one waited for has completed
+                    latest_completed = (
+                        await sess.execute(select(func.max(table.c.date)).where(table.c.completed.is_(True)))
+                    ).scalar()
+                    if latest_completed is not None and date_to_process <= latest_completed:
+                        continue
 
-                for date_to_process in dates_to_process:
                     start_timestamp = int(
                         datetime.combine(date_to_process, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
                     )
@@ -2628,7 +2633,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         """Calculate the month rows of every completed month that has none.
 
         A completed month gets its month rows once, whichever rebuild completed its days. They are written
-        after the days' own transaction, so a month that fails to calculate never holds back the rows of a day.
+        after the days' own transactions, so a month that fails to calculate never holds back the rows of a day.
 
         Args:
             table (Table): The OS metrics table.

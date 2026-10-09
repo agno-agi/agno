@@ -1355,3 +1355,31 @@ async def test_calculate_os_metrics_calculates_in_a_thread(
 
     assert calculation_threads
     assert threading.main_thread() not in calculation_threads
+
+
+@pytest.mark.asyncio
+async def test_calculate_os_metrics_stores_each_day_as_it_is_calculated(
+    async_postgres_db_real: AsyncPostgresDb, monkeypatch
+):
+    """Ensure a day that fails to calculate leaves the days before it stored, and the next rebuild writes the rest"""
+    for days_ago in [3, 2, 1, 0]:
+        await _persist(async_postgres_db_real, _session_on(_utc_date(days_ago), f"alice_{days_ago}_days_ago", "alice"))
+
+    def _fail_two_days_ago(date_to_process, *args):
+        if date_to_process == _utc_date(2):
+            raise RuntimeError("Two days ago cannot be calculated")
+        return calculate_date_os_metrics(date_to_process, *args)
+
+    with monkeypatch.context() as patch:
+        patch.setattr("agno.db.postgres.async_postgres.calculate_date_os_metrics", _fail_two_days_ago)
+        with pytest.raises(RuntimeError):
+            await async_postgres_db_real.calculate_os_metrics()
+    assert {row_id[0] for row_id in await _stored_rows(async_postgres_db_real)} == {_utc_date(3)}
+
+    await async_postgres_db_real.calculate_os_metrics()
+    assert {row_id[0] for row_id in await _stored_rows(async_postgres_db_real)} == {
+        _utc_date(3),
+        _utc_date(2),
+        _utc_date(1),
+        _utc_date(0),
+    }
