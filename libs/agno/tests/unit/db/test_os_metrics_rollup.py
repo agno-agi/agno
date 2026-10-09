@@ -1030,14 +1030,12 @@ def test_build_os_metrics_run_rebuilds_the_stored_run_shape():
             team_id=None,
             workflow_id=None,
             user_id="alice",
-            parent_run_id=None,
             status=COMPLETED,
             metrics={"duration": 1.0, "details": {"gpt-5": {}}},
             model="gpt-5",
             model_provider="OpenAI",
             call_durations=[0.2, 0.3],
-            step_executor_runs=None,
-            member_responses=None,
+            nested_runs=None,
         )
     )
 
@@ -1049,8 +1047,6 @@ def test_build_os_metrics_run_rebuilds_the_stored_run_shape():
             {"role": "assistant", "metrics": {"duration": 0.2}},
             {"role": "assistant", "metrics": {"duration": 0.3}},
         ],
-        "step_executor_runs": None,
-        "member_responses": None,
     }
     row = _only_row(runs=[run])
     assert row["duration_metrics"]["model_calls_count"] == 2
@@ -1069,13 +1065,68 @@ def test_build_os_metrics_run_without_calls():
             model=None,
             model_provider=None,
             call_durations=None,
-            step_executor_runs=None,
-            member_responses=None,
+            nested_runs=None,
         )
     )
 
     assert run["run_data"]["messages"] == []
     assert _only_row(runs=[run])["runs_count"] == 1
+
+
+def test_build_os_metrics_run_nests_the_nested_runs_again():
+    """The nested runs the runs query reads flat are put back inside the run each one is nested in."""
+
+    def nested_row(depth, key, run_id, call_durations=(), **ids):
+        return {
+            "depth": depth,
+            "key": key,
+            "run_id": run_id,
+            "agent_id": ids.get("agent_id"),
+            "team_id": ids.get("team_id"),
+            "metrics": {"input_tokens": 10, "details": {"gpt-5": {}}},
+            "model": "gpt-5",
+            "model_provider": "OpenAI",
+            "call_durations": list(call_durations),
+        }
+
+    run = build_os_metrics_run(
+        _Row(
+            run_id="run-1",
+            run_type="workflow",
+            workflow_id="wf-1",
+            user_id="alice",
+            status=COMPLETED,
+            metrics=None,
+            model=None,
+            model_provider=None,
+            call_durations=[],
+            nested_runs=[
+                nested_row(1, "step_executor_runs", "team-run", team_id="team-1"),
+                nested_row(2, "member_responses", "member-run", call_durations=[0.2], agent_id="agent-1"),
+                nested_row(3, "member_responses", "unnamed-run"),
+                nested_row(1, "step_executor_runs", "agent-run", agent_id="agent-2"),
+                nested_row(1, "member_responses", "other-run", agent_id="agent-3"),
+            ],
+        )
+    )
+
+    step_team, step_agent = run["run_data"]["step_executor_runs"]
+    assert [step_team["run_id"], step_agent["run_id"]] == ["team-run", "agent-run"]
+    assert [nested_run["run_id"] for nested_run in run["run_data"]["member_responses"]] == ["other-run"]
+    (member,) = step_team["member_responses"]
+    assert member["messages"] == [{"role": "assistant", "metrics": {"duration": 0.2}}]
+    assert [nested_run["run_id"] for nested_run in member["member_responses"]] == ["unnamed-run"]
+    assert "member_responses" not in step_agent
+    assert os_metrics_nested_run_ids([run]) == {"team-run", "member-run", "unnamed-run", "agent-run", "other-run"}
+    row = _only_row(runs=[run])
+    assert row["token_metrics"] == {"input_tokens": 50}
+    assert row["duration_metrics"]["model_calls_count"] == 1
+    assert row["model_metrics"] == [
+        {"model_id": "gpt-5", "model_provider": "OpenAI", "count": 1, "team_id": "team-1"},
+        {"model_id": "gpt-5", "model_provider": "OpenAI", "count": 2, "agent_id": "agent-1"},
+        {"model_id": "gpt-5", "model_provider": "OpenAI", "count": 1, "agent_id": "agent-2"},
+        {"model_id": "gpt-5", "model_provider": "OpenAI", "count": 1, "agent_id": "agent-3"},
+    ]
 
 
 def test_build_os_metrics_totals_assembles_each_query():

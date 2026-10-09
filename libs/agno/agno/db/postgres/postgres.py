@@ -3147,6 +3147,9 @@ class PostgresDb(BaseDb):
                     runs: List[Dict[str, Any]] = []
                     stored_run_ids: Set[str] = set()
                     if runs_table is not None:
+                        # Compiling this query takes longer than a day of few runs takes to read,
+                        # and saves nothing on a day of many
+                        sess.execute(text("SET LOCAL jit = off"))
                         result = sess.execute(
                             build_os_metrics_runs_query(runs_table, start_timestamp, end_timestamp)
                         ).fetchall()

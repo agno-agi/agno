@@ -27,6 +27,7 @@ try:
         select,
         true,
         union_all,
+        values,
     )
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.exc import NoSuchTableError
@@ -446,14 +447,23 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
 
 # -- OS metrics util methods --
 
-# The most values one IN list of a rebuild is given: a statement takes 65,535 bind parameters at most
-OS_METRICS_IN_LIST_LIMIT = 10000
-
 # Every assistant message's request duration, skipping messages carried over from an earlier run
 _OS_METRICS_CALL_DURATIONS_PATH: Any = literal_column(
     """'$.messages[*] ? (@.role == "assistant" && (!exists(@.from_history) || @.from_history == false))"""
     """.metrics.duration'::jsonpath"""
 )
+
+# The values of a stored details object that a model call that served nothing reports, as text
+_OS_METRICS_EMPTY_DETAILS = ("{}", "[]", '""', "0", "false")
+
+# The keys of a stored run that hold the runs nested inside it, in the order the rollup walks them
+_OS_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses")
+
+# Every run of one of those lists. A list stored as null holds none
+_OS_METRICS_NESTED_RUNS_PATH: Any = literal_column("""'$[*] ? (@.type() == "object")'::jsonpath""")
+
+# The most values one IN list of a rebuild is given: a statement takes 65,535 bind parameters at most
+OS_METRICS_IN_LIST_LIMIT = 10000
 
 
 def bulk_upsert_os_metrics(session: Session, table: Table, os_metrics_records: List[Dict[str, Any]]) -> None:
@@ -514,6 +524,16 @@ async def abulk_upsert_os_metrics(
     await session.execute(stmt, os_metrics_records)
 
 
+def _os_metrics_run_metrics(run_data: Any, keys: Sequence[str] = ()) -> Any:
+    """Build the metrics of a stored run with only token counts, the given keys and whether details were reported."""
+    metrics = run_data["metrics"]
+    pairs: List[Any] = []
+    for key in (*OS_METRICS_FIXED_KEYS["token_metrics"], *keys):
+        pairs.extend([key, metrics[key]])
+    pairs.extend(["details", metrics["details"].astext.notin_(_OS_METRICS_EMPTY_DETAILS)])
+    return func.jsonb_strip_nulls(func.jsonb_build_object(*pairs))
+
+
 def build_os_metrics_runs_query(table: Table, start_timestamp: int, end_timestamp: int) -> Select:
     """Build the query that reads the runs created in the given time range, with only what OS metrics count.
 
@@ -523,8 +543,69 @@ def build_os_metrics_runs_query(table: Table, start_timestamp: int, end_timestam
         end_timestamp (int): The end of the range, not included.
 
     Returns:
-        Select: The query. Of the messages it reads only each request's duration.
+        Select: The query. Of the messages it reads only each request's duration, of the metrics only what
+            OS metrics count, and of the runs nested inside a run, at any depth, only the same.
     """
+    nested_keys = values(column("position"), column("key"), name="nested_keys").data(
+        list(enumerate(_OS_METRICS_NESTED_RUN_KEYS))
+    )
+    nested_run = (
+        func.jsonb_path_query(table.c.run_data.op("->")(nested_keys.c.key), _OS_METRICS_NESTED_RUNS_PATH)
+        .table_valued(column("value", postgresql.JSONB), with_ordinality="ordinality")
+        .render_derived()
+    )
+    # One row per nested run, read a level at a time. The path orders them the way the rollup walks them
+    nested = (
+        select(
+            postgresql.array([nested_keys.c.position, nested_run.c.ordinality]).label("path"),
+            literal(1).label("depth"),
+            nested_keys.c.key.label("key"),
+            nested_run.c.value.label("run_data"),
+        )
+        .select_from(nested_keys.join(nested_run, true()))
+        .correlate(table)
+        .cte("nested", recursive=True, nesting=True)
+    )
+    nested_run = (
+        func.jsonb_path_query(nested.c.run_data.op("->")(nested_keys.c.key), _OS_METRICS_NESTED_RUNS_PATH)
+        .table_valued(column("value", postgresql.JSONB), with_ordinality="ordinality")
+        .render_derived()
+    )
+    nested = nested.union_all(
+        select(
+            nested.c.path.op("||")(postgresql.array([nested_keys.c.position, nested_run.c.ordinality])),
+            nested.c.depth + 1,
+            nested_keys.c.key,
+            nested_run.c.value,
+        ).select_from(nested.join(nested_keys, true()).join(nested_run, true()))
+    )
+    nested_runs = select(
+        func.jsonb_agg(
+            postgresql.aggregate_order_by(
+                func.jsonb_build_object(
+                    "depth",
+                    nested.c.depth,
+                    "key",
+                    nested.c.key,
+                    "run_id",
+                    nested.c.run_data["run_id"],
+                    "agent_id",
+                    nested.c.run_data["agent_id"],
+                    "team_id",
+                    nested.c.run_data["team_id"],
+                    "metrics",
+                    _os_metrics_run_metrics(nested.c.run_data),
+                    "model",
+                    nested.c.run_data["model"],
+                    "model_provider",
+                    nested.c.run_data["model_provider"],
+                    "call_durations",
+                    func.jsonb_path_query_array(nested.c.run_data, _OS_METRICS_CALL_DURATIONS_PATH),
+                ),
+                nested.c.path,
+            )
+        )
+    ).scalar_subquery()
     return select(
         table.c.run_id,
         table.c.run_type,
@@ -532,14 +613,12 @@ def build_os_metrics_runs_query(table: Table, start_timestamp: int, end_timestam
         table.c.team_id,
         table.c.workflow_id,
         table.c.user_id,
-        table.c.parent_run_id,
         table.c.status,
-        table.c.run_data["metrics"].label("metrics"),
+        _os_metrics_run_metrics(table.c.run_data, ["duration", "time_to_first_token"]).label("metrics"),
         table.c.run_data["model"].astext.label("model"),
         table.c.run_data["model_provider"].astext.label("model_provider"),
         func.jsonb_path_query_array(table.c.run_data, _OS_METRICS_CALL_DURATIONS_PATH).label("call_durations"),
-        table.c.run_data["step_executor_runs"].label("step_executor_runs"),
-        table.c.run_data["member_responses"].label("member_responses"),
+        nested_runs.label("nested_runs"),
     ).where(table.c.created_at >= start_timestamp, table.c.created_at < end_timestamp)
 
 
@@ -553,6 +632,7 @@ def build_os_metrics_run(row: Any) -> Dict[str, Any]:
         Dict[str, Any]: The run, with the run_data calculate_date_os_metrics reads.
     """
     run = dict(row._mapping)
+    nested_runs = run.pop("nested_runs") or []
     run["run_data"] = {
         "metrics": run.pop("metrics"),
         "model": run.pop("model"),
@@ -560,9 +640,17 @@ def build_os_metrics_run(row: Any) -> Dict[str, Any]:
         "messages": [
             {"role": "assistant", "metrics": {"duration": duration}} for duration in run.pop("call_durations") or []
         ],
-        "step_executor_runs": run.pop("step_executor_runs"),
-        "member_responses": run.pop("member_responses"),
     }
+    # A nested run comes after the run it is nested inside, so the last run met at each depth is its parent
+    parents = [run["run_data"]]
+    for nested_run in nested_runs:
+        depth = nested_run.pop("depth")
+        nested_run["messages"] = [
+            {"role": "assistant", "metrics": {"duration": duration}}
+            for duration in nested_run.pop("call_durations") or []
+        ]
+        parents[depth - 1].setdefault(nested_run.pop("key"), []).append(nested_run)
+        parents[depth:] = [nested_run]
     return run
 
 

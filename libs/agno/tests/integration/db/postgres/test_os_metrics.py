@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import inspect, select, text
 
 from agno.db.postgres.postgres import PostgresDb
+from agno.db.postgres.utils import build_os_metrics_runs_query
 from agno.db.utils import (
     calculate_date_os_metrics,
     merge_os_metrics_totals,
@@ -1302,3 +1303,79 @@ def test_calculate_os_metrics_stores_each_day_as_it_is_calculated(postgres_db_re
         _utc_date(1),
         _utc_date(0),
     }
+
+
+def test_calculate_os_metrics_counts_nested_runs_at_every_depth(postgres_db_real: PostgresDb):
+    """Ensure the runs nested inside a run are counted at every depth, from only what is read of them"""
+    inner_member = RunOutput(
+        run_id="nested_inner_member",
+        model="gpt-5",
+        model_provider="OpenAI",
+        metrics=_run_metrics(2, 1),
+        messages=[_assistant_message(0.4)],
+    )
+    inner_team = TeamRunOutput(
+        run_id="nested_inner_team",
+        team_id="inner-team",
+        model="gpt-5",
+        model_provider="OpenAI",
+        metrics=_run_metrics(3, 1),
+        messages=[_assistant_message(0.5)],
+        member_responses=[inner_member],
+    )
+    member = RunOutput(
+        run_id="nested_member",
+        agent_id="agent-2",
+        model="gpt-5",
+        model_provider="OpenAI",
+        metrics=_run_metrics(4, 2),
+        messages=[
+            Message(role="assistant", content="Earlier", from_history=True, metrics=MessageMetrics(duration=9.9)),
+            _assistant_message(0.6),
+        ],
+    )
+    session = TeamSession(
+        session_id="nested_session",
+        team_id="team-1",
+        user_id="alice",
+        runs=[
+            TeamRunOutput(
+                run_id="nested_team_run",
+                team_id="team-1",
+                user_id="alice",
+                status=RunStatus.completed,
+                model="gpt-5",
+                model_provider="OpenAI",
+                metrics=_run_metrics(10, 5, duration=2.0),
+                messages=[_assistant_message(1.2)],
+                member_responses=[member, inner_team],
+                created_at=_noon_utc(1),
+            )
+        ],
+        created_at=_noon_utc(1),
+    )
+    _persist(postgres_db_real, session)
+
+    runs_table = postgres_db_real._get_table("runs")
+    with postgres_db_real.Session() as sess:
+        result = sess.execute(build_os_metrics_runs_query(runs_table, _noon_utc(1), _noon_utc(1) + 1))
+        (run,) = result.fetchall()
+    assert [(nested_run["depth"], nested_run["run_id"]) for nested_run in run.nested_runs] == [
+        (1, "nested_member"),
+        (1, "nested_inner_team"),
+        (2, "nested_inner_member"),
+    ]
+    assert all("messages" not in nested_run for nested_run in run.nested_runs)
+    assert [nested_run["call_durations"] for nested_run in run.nested_runs] == [[0.6], [0.5], [0.4]]
+
+    postgres_db_real.calculate_os_metrics()
+
+    row = _stored_rows(postgres_db_real)[(_utc_date(1), "alice", "", "team-1", "")]
+    assert row["token_metrics"] == {"input_tokens": 19, "output_tokens": 9, "total_tokens": 28}
+    assert row["duration_metrics"]["model_calls_count"] == 4
+    assert row["duration_metrics"]["total_model_call_ms"] == 2700
+    assert row["model_metrics"] == [
+        {"model_id": "gpt-5", "model_provider": "OpenAI", "count": 2, "team_id": "inner-team"},
+        {"model_id": "gpt-5", "model_provider": "OpenAI", "count": 1, "team_id": "team-1"},
+        {"model_id": "gpt-5", "model_provider": "OpenAI", "count": 1, "agent_id": "agent-2"},
+    ]
