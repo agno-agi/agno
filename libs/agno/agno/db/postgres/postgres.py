@@ -1304,6 +1304,7 @@ class PostgresDb(BaseDb):
             if table is None:
                 return False
             runs_table = self._get_table(table_type="runs")
+            transcripts_table = self._get_table(table_type="transcripts")
             compactions_table = self._get_table(table_type="compactions")
 
             with self.Session() as sess, sess.begin():
@@ -1319,6 +1320,9 @@ class PostgresDb(BaseDb):
                 # Also delete the runs belonging to the session
                 if runs_table is not None:
                     sess.execute(runs_table.delete().where(runs_table.c.session_id == session_id))
+                # And external-agent transcripts, which also hold the conversation verbatim.
+                if transcripts_table is not None:
+                    sess.execute(transcripts_table.delete().where(transcripts_table.c.agno_session_id == session_id))
                 # And its compaction records. They hold the folded transcript verbatim, and are
                 # found by session id - left behind, a session recreated under the same id would
                 # inherit the old fold and offer the agent a search over the deleted conversation.
@@ -1353,6 +1357,7 @@ class PostgresDb(BaseDb):
             if table is None:
                 return
             runs_table = self._get_table(table_type="runs")
+            transcripts_table = self._get_table(table_type="transcripts")
             compactions_table = self._get_table(table_type="compactions")
 
             with self.Session() as sess, sess.begin():
@@ -1379,6 +1384,9 @@ class PostgresDb(BaseDb):
                     if user_id is not None:
                         runs_delete_stmt = runs_delete_stmt.where(runs_table.c.user_id == user_id)
                     sess.execute(runs_delete_stmt)
+                # And external-agent transcripts, which also hold the conversation verbatim.
+                if transcripts_table is not None:
+                    sess.execute(transcripts_table.delete().where(transcripts_table.c.agno_session_id.in_(cascade_ids)))
 
                 # And their compaction records. They hold the folded transcript verbatim, and are
                 # found by session id - left behind, a session recreated under the same id would

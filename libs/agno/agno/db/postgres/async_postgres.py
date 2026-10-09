@@ -1101,6 +1101,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             if table is None:
                 return False
             runs_table = await self._get_table(table_type="runs")
+            transcripts_table = await self._get_table(table_type="transcripts")
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
@@ -1115,6 +1116,11 @@ class AsyncPostgresDb(AsyncBaseDb):
                 # Also delete the runs belonging to the session
                 if runs_table is not None:
                     await sess.execute(runs_table.delete().where(runs_table.c.session_id == session_id))
+                # And external-agent transcripts, which also hold the conversation verbatim.
+                if transcripts_table is not None:
+                    await sess.execute(
+                        transcripts_table.delete().where(transcripts_table.c.agno_session_id == session_id)
+                    )
 
                 log_debug(f"Successfully deleted session with session_id: {session_id} in table {table.name}")
 
@@ -1144,6 +1150,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             if table is None:
                 return
             runs_table = await self._get_table(table_type="runs")
+            transcripts_table = await self._get_table(table_type="transcripts")
 
             async with self.async_session_factory() as sess, sess.begin():
                 # The ids a user_id-scoped delete is allowed to touch. The
@@ -1169,6 +1176,11 @@ class AsyncPostgresDb(AsyncBaseDb):
                     if user_id is not None:
                         runs_delete_stmt = runs_delete_stmt.where(runs_table.c.user_id == user_id)
                     await sess.execute(runs_delete_stmt)
+                # And external-agent transcripts, which also hold the conversation verbatim.
+                if transcripts_table is not None:
+                    await sess.execute(
+                        transcripts_table.delete().where(transcripts_table.c.agno_session_id.in_(cascade_ids))
+                    )
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")  # type: ignore
 

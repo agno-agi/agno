@@ -169,3 +169,25 @@ async def test_missing_transcript_table_is_empty(backend):
     await call("delete_transcript", **key)
     with pytest.raises(RuntimeError, match="Could not create transcript table"):
         await call("append_transcript_entries", **key, entries=[{"type": "x"}], agno_session_id="a")
+
+
+@pytest.mark.asyncio
+async def test_session_delete_removes_its_transcripts(db_factory):
+    from agno.session import AgentSession
+
+    db = db_factory()
+
+    async def call(name, *args, **kwargs):
+        result = getattr(db, name)(*args, **kwargs)
+        return await result if isinstance(db, AsyncSqliteDb) else result
+
+    for session_id, user_id in [("one", "u1"), ("two", "u1"), ("other-user", "u2"), ("kept", "u1")]:
+        await call("upsert_session", AgentSession(session_id=session_id, user_id=user_id, agent_id="agent"))
+        key = {"project_key": "cwd", "session_id": "sdk-" + session_id}
+        await AgnoSessionStore(db, "project", session_id).append(key, [{"type": "x"}])
+
+    assert await call("delete_session", "one")
+    await call("delete_sessions", ["two", "other-user"], user_id="u1")
+
+    listed = await AgnoSessionStore(db, "project", "any").list_sessions("cwd")
+    assert sorted(row["session_id"] for row in listed) == ["sdk-kept", "sdk-other-user"]
