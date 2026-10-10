@@ -19,6 +19,7 @@ from agno.os.interfaces.telegram.security import validate_webhook_secret_token
 from agno.os.interfaces.telegram.state import BotState, StreamState, build_session_store_config, find_latest_session_id
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
+from agno.session.sharing import ajoin_shared_session
 from agno.team import RemoteTeam, Team
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
@@ -367,6 +368,10 @@ def attach_routes(
                         session_id = found
                 except Exception as e:
                     log_warning(f"Session lookup failed, using default: {str(e)}")
+
+            if is_group:
+                # A group chat or topic is one session for everyone in it.
+                await ajoin_shared_session(entity, session_id, user_id)
 
             log_info(f"Processing message from user {user_id}")
             log_debug(f"Message content: {message_text}")

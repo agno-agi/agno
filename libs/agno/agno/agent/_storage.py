@@ -367,6 +367,31 @@ async def aget_last_run_output(agent: Agent, session_id: Optional[str] = None) -
 # ---------------------------------------------------------------------------
 
 
+def _owner_filter(session_type: SessionType, user_id: Optional[str]) -> Optional[str]:
+    # Agent sessions can be shared with other users, so access is checked after the read.
+    return None if session_type == SessionType.AGENT else user_id
+
+
+def _visible_to(session: Any, session_type: SessionType, user_id: Optional[str]) -> Any:
+    from agno.session.sharing import can_access_session
+
+    if session is None or session_type != SessionType.AGENT or can_access_session(session, user_id):
+        return session
+    return None
+
+
+def _claim_or_refuse(session: AgentSession, user_id: Optional[str]) -> AgentSession:
+    """An unclaimed session becomes the caller's; one the caller cannot access is refused."""
+    from agno.session.sharing import can_access_session
+
+    if not can_access_session(session, user_id):
+        # Writing here would add this run to another user's history.
+        raise ValueError(f"Session {session.session_id} belongs to another user")
+    if session.user_id is None and user_id is not None:
+        session.user_id = user_id
+    return session
+
+
 def read_session(
     agent: Agent,
     session_id: str,
@@ -387,9 +412,13 @@ def read_session(
         raise ValueError("Db not initialized")
     # Every adapter accepts runs_limit; those that don't optimize it load the full
     # history (a safe superset), so we can pass it unconditionally.
-    return agent.db.get_session(  # type: ignore
-        session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+    session = agent.db.get_session(  # type: ignore
+        session_id=session_id,
+        session_type=session_type,
+        user_id=_owner_filter(session_type, user_id),
+        runs_limit=runs_limit,
     )
+    return _visible_to(session, session_type, user_id)
 
 
 async def aread_session(
@@ -406,13 +435,16 @@ async def aread_session(
         raise ValueError("Db not initialized")
     # Every adapter accepts runs_limit; those that don't optimize it load the full
     # history (a safe superset), so we can pass it unconditionally.
+    owner_filter = _owner_filter(session_type, user_id)
     if _init.has_async_db(agent):
-        return await agent.db.get_session(  # type: ignore
-            session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+        session = await agent.db.get_session(  # type: ignore
+            session_id=session_id, session_type=session_type, user_id=owner_filter, runs_limit=runs_limit
         )
-    return agent.db.get_session(  # type: ignore
-        session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
-    )
+    else:
+        session = agent.db.get_session(  # type: ignore
+            session_id=session_id, session_type=session_type, user_id=owner_filter, runs_limit=runs_limit
+        )
+    return _visible_to(session, session_type, user_id)
 
 
 def upsert_session(
@@ -665,7 +697,9 @@ def read_or_create_session(
     if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
         log_debug(f"Reading AgentSession: {session_id}")
 
-        agent_session = cast(AgentSession, read_session(agent, session_id=session_id, user_id=user_id))
+        agent_session = cast(AgentSession, read_session(agent, session_id=session_id))
+        if agent_session is not None:
+            agent_session = _claim_or_refuse(agent_session, user_id)
 
     if agent_session is None:
         # Creating new session if none found
@@ -735,9 +769,11 @@ async def aread_or_create_session(
     if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
         log_debug(f"Reading AgentSession: {session_id}")
         if _init.has_async_db(agent):
-            agent_session = cast(AgentSession, await aread_session(agent, session_id=session_id, user_id=user_id))
+            agent_session = cast(AgentSession, await aread_session(agent, session_id=session_id))
         else:
-            agent_session = cast(AgentSession, read_session(agent, session_id=session_id, user_id=user_id))
+            agent_session = cast(AgentSession, read_session(agent, session_id=session_id))
+        if agent_session is not None:
+            agent_session = _claim_or_refuse(agent_session, user_id)
 
     if agent_session is None:
         # Creating new session if none found

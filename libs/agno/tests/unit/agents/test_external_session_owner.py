@@ -69,15 +69,35 @@ async def test_reads_hide_another_users_session(agent):
 
 
 @pytest.mark.asyncio
-async def test_unowned_session_is_shared_across_users(agent):
-    await agent.arun("opened", session_id="team")
-    alice = await agent.arun("from alice", session_id="team", user_id="alice")
+async def test_unowned_session_is_claimed_by_first_identified_user(agent):
+    await agent.arun("opened", session_id="s")
+    await agent.arun("from alice", session_id="s", user_id="alice")
+    session = await agent.aget_session("s")
+    assert session.user_id == "alice"
+    assert [run.input.input_content for run in session.runs] == ["opened", "from alice"]
+    with pytest.raises(ValueError, match="belongs to another user"):
+        await agent.arun("from bob", session_id="s", user_id="bob")
+
+
+@pytest.mark.asyncio
+async def test_shared_session_admits_members_only(agent):
+    from agno.session.sharing import ashare_session
+
+    await agent.arun("from alice", session_id="team", user_id="alice")
+    await ashare_session(agent.db, "team", ["bob"], user_id="alice")
     bob = await agent.arun("from bob", session_id="team", user_id="bob")
-    session = await agent.aget_session("team")
-    assert session.user_id is None
-    assert [run.user_id for run in session.runs] == [None, "alice", "bob"]
-    assert (await agent.aget_run_output(alice.run_id, "team", user_id="bob")).content == "echo from alice"
+    session = await agent.aget_session("team", user_id="bob")
+    assert session.user_id == "alice"
+    assert [(run.user_id, run.input.input_content) for run in session.runs] == [
+        ("alice", "from alice"),
+        ("bob", "from bob"),
+    ]
     assert (await agent.aget_run_output(bob.run_id, "team", user_id="alice")).content == "echo from bob"
+    assert await agent.aget_session("team", user_id="carol") is None
+    with pytest.raises(ValueError, match="belongs to another user"):
+        await agent.arun("from carol", session_id="team", user_id="carol")
+    with pytest.raises(PermissionError):
+        await ashare_session(agent.db, "team", ["bob", "carol"], user_id="bob")
 
 
 @pytest.mark.asyncio

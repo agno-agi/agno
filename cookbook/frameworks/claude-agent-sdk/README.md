@@ -52,3 +52,14 @@ A database without transcript storage logs a warning once and the agent continue
 local-disk transcripts, so resume works on the machine that ran the session. Transcript storage is also
 skipped, with a warning, when `enable_file_checkpointing` is set in `options_kwargs`, because the SDK
 does not allow the two together. A `session_store` supplied in `options_kwargs` is used as is.
+
+## Sharing a session between users
+
+`shared_session.py` shows two users in one `ClaudeAgent` session. A session belongs to the user who started it and is refused to anyone else. The owner, or an admin, shares it with named members: in Python with `agno.session.sharing.share_session` / `ashare_session`, over AgentOS with `PUT /sessions/{session_id}/sharing` and `{"members": [...]}` (an empty list unshares). Members continue the same Claude conversation and can read the session's runs; each run keeps its own `user_id`. Slack threads and Telegram group chats add each sender as a member automatically.
+
+```bash
+PYTHONPATH=libs/agno .venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/shared_session.py
+```
+
+Run one turn at a time in a shared session: two concurrent turns resume the same Claude conversation and one of them branches. Members share the agent's working directory and credentials, as all users of one agent do.
+

@@ -27,6 +27,7 @@ from agno.os.interfaces.slack.helpers import (
 from agno.os.interfaces.slack.pause import PAUSE_LABELS, finalize_pause, post_pause_card
 from agno.os.interfaces.slack.state import StreamState, TaskStatus
 from agno.os.interfaces.slack.types import tool_name
+from agno.session.sharing import ajoin_shared_session
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
 from agno.utils.log import log_error
@@ -142,6 +143,8 @@ class SlackEventHandler:
                 resolved_user_id, display_name = await resolve_slack_user(client, sender_user)
 
         channel_name = await resolve_channel_name(client, raw_ctx["channel_id"])
+        # A thread is one session for everyone in it.
+        await ajoin_shared_session(self.entity, session_id, resolved_user_id)
 
         return EventContext(
             channel_id=raw_ctx["channel_id"],

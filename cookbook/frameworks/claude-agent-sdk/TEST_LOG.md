@@ -154,3 +154,14 @@ checks; the earlier live provider cancellation runs were not repeated.
 **Description:** Live run with claude-agent-sdk 0.2.95 and `claude-sonnet-4-6` on SQLite transcript storage. A two-step Bash turn listed checkpoints at both tool results and the end. Continuing from the first tool result with a question produced a branch that only knew `echo alpha`; `continue_from="last_user"` replayed the turn as a forked sibling. Separately, with `claude-haiku-4-5`, exercised AgentOS `/checkpoints` and `/continue` (non-stream and SSE), an in-place streamed continue, and a replay of a non-first turn that kept earlier context.
 
 **Result:** Continue and checkpoints work end to end against the real SDK. Files touched after a checkpoint are not rewound.
+
+---
+
+### shared_session.py (2026-10-10)
+
+**Status:** PASS
+
+**Description:** Live run with claude-agent-sdk 0.2.95 and `claude-sonnet-4-6` on SQLite. Alice started the session and shared it with Bob; Bob asked for the codeword Alice set and the agent answered `PELICAN` from the same Claude conversation. Carol was refused with "Session team belongs to another user". Both runs were stored with their own `user_id`.
+
+**Result:** Explicit sharing works end to end; non-members are refused.
+

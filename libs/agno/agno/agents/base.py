@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Opti
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
-from agno.db.utils import owner_key
 from agno.exceptions import RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
@@ -475,21 +474,18 @@ class BaseExternalAgent:
             created_at=int(time()),
         )
 
-    @staticmethod
-    def _session_open_to(session: AgentSession, user_id: Optional[str]) -> bool:
-        """A session without an owner is shared; an owned one is closed to any other user_id.
-
-        A caller that passes no user_id is trusted code and is not restricted.
-        """
-        return user_id is None or session.user_id is None or owner_key(session.user_id) == owner_key(user_id)
-
     def _owned_session_or_new(self, row: Any, session_id: str, user_id: Optional[str]) -> AgentSession:
+        """The stored session, claimed by the caller when unowned, or a new one. Refuses one the caller cannot access."""
+        from agno.session.sharing import can_access_session
+
         session = AgentSession.from_dict(row) if isinstance(row, dict) else row
         if not isinstance(session, AgentSession):
             return self._create_session(session_id, user_id)
-        if not self._session_open_to(session, user_id):
+        if not can_access_session(session, user_id):
             # Writing here would add this run to another user's history.
             raise ValueError(f"Session {session_id} belongs to another user")
+        if session.user_id is None and user_id is not None:
+            session.user_id = user_id
         return session
 
     def read_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> AgentSession:
@@ -573,15 +569,15 @@ class BaseExternalAgent:
                 raise
 
     def _visible_session(self, row: Any, user_id: Optional[str]) -> Optional[AgentSession]:
+        from agno.session.sharing import can_access_session
+
         session = AgentSession.from_dict(row) if isinstance(row, dict) else row
         if not isinstance(session, AgentSession) or session.agent_id != self.get_id():
             return None
-        if not self._session_open_to(session, user_id):
-            return None
-        return session
+        return session if can_access_session(session, user_id) else None
 
     def get_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
-        """Read a session scoped to this agent; with user_id, only that user's or an unowned shared session."""
+        """Read a session scoped to this agent; with user_id, only one that user owns or is shared with."""
         if self.db is None:
             return None
         if isinstance(self.db, AsyncBaseDb):

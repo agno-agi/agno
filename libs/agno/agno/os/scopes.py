@@ -463,6 +463,7 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "POST /sessions": ["sessions:write"],
         "POST /sessions/*/rename": ["sessions:write"],
         "PATCH /sessions/*": ["sessions:write"],
+        "PUT /sessions/*/sharing": ["sessions:write"],
         "DELETE /sessions": ["sessions:delete"],
         "DELETE /sessions/*": ["sessions:delete"],
         # Memory endpoints

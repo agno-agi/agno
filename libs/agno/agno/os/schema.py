@@ -535,6 +535,12 @@ class UpdateSessionRequest(BaseModel):
     summary: Optional[Dict[str, Any]] = Field(None, description="Session summary")
 
 
+class ShareSessionRequest(BaseModel):
+    members: List[str] = Field(
+        default_factory=list, description="User IDs to share the session with; an empty list unshares it"
+    )
+
+
 class AgentSessionDetailSchema(BaseModel):
     user_id: Optional[str] = Field(None, description="User ID associated with the session")
     agent_session_id: str = Field(..., description="Unique agent session identifier")

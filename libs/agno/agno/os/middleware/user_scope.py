@@ -540,6 +540,12 @@ async def assert_session_writable(
     owner = row.get("user_id") if isinstance(row, dict) else getattr(row, "user_id", None)
     if owner is None or owner == effective_user_id:
         return
+    from agno.db.base import SessionType
+    from agno.session.sharing import can_access_session
+
+    shareable = session_type in (None, SessionType.AGENT)
+    if effective_user_id is not None and shareable and can_access_session(row, effective_user_id):
+        return
 
     log_warning(
         f"user_scope: refused a run into session_id={session_id!r} owned by "
