@@ -3,9 +3,16 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Dict, Iterator, List, Literal, Optional, Tuple, Union, cast
 from uuid import uuid4
 
-from agno.agents.base import BaseExternalAgent, ExternalContinuation, ExternalRunResult, ExternalRunWarningEvent
+from agno.agents.base import (
+    BaseExternalAgent,
+    ExternalContinuation,
+    ExternalRunMetricsEvent,
+    ExternalRunResult,
+    ExternalRunWarningEvent,
+)
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.exceptions import RunNotContinuableError
+from agno.metrics import BaseMetrics, ModelMetrics, RunMetrics
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.run.agent import (
@@ -714,6 +721,63 @@ class ClaudeAgent(BaseExternalAgent):
         log_warning(warning["message"])
         return warning
 
+    def _metrics_from_result(self, message: Any) -> Optional[RunMetrics]:
+        """Map the ResultMessage's usage and cost to RunMetrics.
+
+        Like the native Anthropic model, input_tokens excludes the cached prefix, which is
+        reported in cache_read_tokens and cache_write_tokens. Per-model entries come from the
+        CLI's modelUsage map so subagents on other models are listed separately.
+        """
+        usage = getattr(message, "usage", None) or {}
+        cost = getattr(message, "total_cost_usd", None)
+        model_usage = getattr(message, "model_usage", None) or {}
+        if not usage and not model_usage and cost is None:
+            return None
+
+        def _int(source: Dict[str, Any], *keys: str) -> int:
+            for key in keys:
+                if source.get(key) is not None:
+                    return int(source[key])
+            return 0
+
+        details: List[ModelMetrics] = []
+        for model_id, entry in model_usage.items():
+            if not isinstance(entry, dict):
+                continue
+            entry_cost = entry.get("costUSD", entry.get("cost_usd"))
+            input_tokens = _int(entry, "inputTokens", "input_tokens")
+            output_tokens = _int(entry, "outputTokens", "output_tokens")
+            details.append(
+                ModelMetrics(
+                    id=str(model_id),
+                    provider="anthropic",
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=input_tokens + output_tokens,
+                    cache_read_tokens=_int(entry, "cacheReadInputTokens", "cache_read_input_tokens"),
+                    cache_write_tokens=_int(entry, "cacheCreationInputTokens", "cache_creation_input_tokens"),
+                    cost=float(entry_cost) if entry_cost is not None else None,
+                )
+            )
+        input_tokens = _int(usage, "input_tokens")
+        output_tokens = _int(usage, "output_tokens")
+        totals = BaseMetrics(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=input_tokens + output_tokens,
+            cache_read_tokens=_int(usage, "cache_read_input_tokens"),
+            cache_write_tokens=_int(usage, "cache_creation_input_tokens"),
+            cost=float(cost) if cost is not None else None,
+        )
+        if not details:
+            details.append(ModelMetrics(id=self.model or "claude", provider="anthropic", **totals.__dict__))
+        additional: Dict[str, Any] = {}
+        if getattr(message, "num_turns", None) is not None:
+            additional["num_turns"] = int(message.num_turns)
+        if getattr(message, "duration_api_ms", None) is not None:
+            additional["api_duration"] = int(message.duration_api_ms) / 1000
+        return self._build_metrics(totals, details, additional)
+
     @staticmethod
     def _check_result_message(sdk: Any, message: Any) -> None:
         """Raise if the SDK reported an error result so the base class can surface it."""
@@ -741,6 +805,7 @@ class ClaudeAgent(BaseExternalAgent):
         assistant_text = ""
         final_result = ""
         tools: Dict[str, ToolExecution] = {}
+        metrics: Optional[RunMetrics] = None
 
         async for message in self._aquery(input, history, streaming=False, **kwargs):
             # Share the live accumulator so the base class can persist work
@@ -775,9 +840,12 @@ class ClaudeAgent(BaseExternalAgent):
             elif isinstance(message, sdk.ResultMessage):
                 if hasattr(message, "result") and message.result:
                     final_result = str(message.result)
+                metrics = self._metrics_from_result(message)
 
         # Prefer ResultMessage.result, fall back to accumulated assistant text
-        return ExternalRunResult(final_result or assistant_text, list(tools.values()) or None, warnings or None)
+        return ExternalRunResult(
+            final_result or assistant_text, list(tools.values()) or None, warnings or None, metrics=metrics
+        )
 
     async def _arun_adapter_stream(
         self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
@@ -824,6 +892,11 @@ class ClaudeAgent(BaseExternalAgent):
                                 agent_name=self.name or "",
                                 content=text,
                             )
+
+            elif isinstance(message, sdk.ResultMessage):
+                metrics = self._metrics_from_result(message)
+                if metrics is not None:
+                    yield ExternalRunMetricsEvent(run_id=run_id, agent_id=self.get_id(), metrics=metrics)
 
             elif isinstance(message, sdk.AssistantMessage):
                 # Always extract tool calls from complete AssistantMessage
