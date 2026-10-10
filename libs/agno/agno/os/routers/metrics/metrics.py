@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple, Union
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.routing import APIRouter
@@ -1413,6 +1413,9 @@ def attach_routes(
             "skipped_db_ids": skipped_db_ids,
         }
 
+    # The db ids an OS metrics refresh is running for, so a database is never refreshed by two requests at once
+    os_metrics_refreshing_db_ids: Set[str] = set()
+
     async def _do_os_refresh(os_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]], refresh_key: str) -> None:
         try:
             await _refresh_os_dbs(os_dbs)
@@ -1423,6 +1426,8 @@ def attach_routes(
             _record_refresh_outcome(refresh_key, error=error)
         else:
             _record_refresh_outcome(refresh_key)
+        finally:
+            os_metrics_refreshing_db_ids.difference_update(os_dbs)
 
     @router.post(
         "/os/metrics/refresh",
@@ -1487,8 +1492,7 @@ def attach_routes(
             os_dbs = _os_dbs(db_id)
             # Resolved before the background branch so an identity-less token cannot start a refresh.
             get_scoped_user_id(request)
-            # Kept apart from the daily metrics refresh of the same database, which rebuilds another table,
-            # and from an OS metrics refresh of other databases
+            # Kept apart from the daily metrics refresh of the same database, which rebuilds another table
             refresh_key = f"os_metrics:{','.join(sorted(os_dbs))}"
             # Refused before anything runs, so an AgentOS without the table is never told "started"
             if not any(
@@ -1498,9 +1502,10 @@ def attach_routes(
 
             if background:
                 response.status_code = 202
-                if _refresh_is_running(refresh_key):
+                if os_metrics_refreshing_db_ids.intersection(os_dbs):
                     return _already_running_response()
 
+                os_metrics_refreshing_db_ids.update(os_dbs)
                 _mark_refresh_running(refresh_key)
                 background_tasks.add_task(_do_os_refresh, os_dbs, refresh_key)
 
@@ -1508,15 +1513,18 @@ def attach_routes(
 
             # The same guard the background path has: without it every concurrent caller
             # starts its own rebuild of every day the table still needs
-            if _refresh_is_running(refresh_key):
+            if os_metrics_refreshing_db_ids.intersection(os_dbs):
                 return _already_running_response()
 
+            os_metrics_refreshing_db_ids.update(os_dbs)
             _mark_refresh_running(refresh_key)
             try:
                 databases = await _refresh_os_dbs(os_dbs)
             except Exception as e:
                 _record_refresh_outcome(refresh_key, error=str(e) or type(e).__name__)
                 raise
+            finally:
+                os_metrics_refreshing_db_ids.difference_update(os_dbs)
             _record_refresh_outcome(refresh_key)
 
             return OSMetricsRefreshResponse(**refresh_states[refresh_key].model_dump(), **databases)

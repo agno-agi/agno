@@ -782,6 +782,25 @@ class TestRefresh:
         assert seen["same"]["status"] == "already_running"
         second.refresh_os_metrics.assert_called_once_with()
 
+    def test_refresh_of_a_database_already_being_refreshed_is_told_one_is_running(self):
+        first, second = _db("db-1"), _db("db-2")
+        client = _dbs_client(first, second)
+        seen = {}
+
+        def reenter():
+            # Fired while the refresh of every database is still in flight
+            seen["one"] = client.post("/os/metrics/refresh?db_id=db-2").json()
+            return UPDATED_AT, UPDATED_AT, False
+
+        first.refresh_os_metrics = MagicMock(side_effect=reenter)
+        second.refresh_os_metrics = MagicMock(return_value=(UPDATED_AT, UPDATED_AT, False))
+        with _scope(None):
+            client.post("/os/metrics/refresh")
+            after = client.post("/os/metrics/refresh?db_id=db-2").json()
+
+        assert seen["one"]["status"] == "already_running"
+        assert after["status"] == "completed"
+
     def test_background_refresh_is_read_back_from_the_status(self, client, mock_db):
         """The 202 is sent before the rebuild runs, so what changed is read from the status afterwards."""
         mock_db.refresh_os_metrics = MagicMock(return_value=(UPDATED_AT - 60, UPDATED_AT, True))
