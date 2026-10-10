@@ -2,6 +2,7 @@ import asyncio
 import json
 from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
+from copy import copy
 from dataclasses import dataclass
 from time import time
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Dict, Iterator, List, Optional, Sequence, Union
@@ -144,6 +145,12 @@ class BaseExternalAgent:
     framework: str = "external"
     markdown: bool = True
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
+    # Keep the streamed events on the persisted run (RunOutput.events), as Agent does, so a
+    # finished run can be shown and replayed from the database. AgentOS turns this on.
+    store_events: bool = False
+    # Events not kept when store_events is on. Defaults to RunContent: the deltas add up to
+    # the run's content, which is stored anyway.
+    events_to_skip: Optional[List[RunEvent]] = None
     # Number of times to retry a failed run
     retries: int = 0
     # Delay between retries (in seconds)
@@ -156,6 +163,8 @@ class BaseExternalAgent:
 
         if self.id is None:
             self.id = generate_id_from_name(self.name)
+        if self.events_to_skip is None:
+            self.events_to_skip = [RunEvent.run_content]
 
     def get_id(self) -> str:
         """Return the agent ID, guaranteed non-None after __post_init__."""
@@ -1262,7 +1271,18 @@ class BaseExternalAgent:
         history = (
             self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
         )
-        yield RunStartedEvent(run_id=run_id, agent_id=self.get_id(), agent_name=self.name or "", session_id=session_id)
+        stored_events: Optional[List[Any]] = [] if self.store_events else None
+        skipped = {event.value for event in self.events_to_skip or []}
+
+        def keep(event: Any) -> Any:
+            # Record an event on the run before it is yielded, unless the agent skips its kind.
+            if stored_events is not None and getattr(event, "event", None) not in skipped:
+                stored_events.append(event)
+            return event
+
+        yield keep(
+            RunStartedEvent(run_id=run_id, agent_id=self.get_id(), agent_name=self.name or "", session_id=session_id)
+        )
         accumulated_content = ""
         warnings: List[Dict[str, Any]] = []
         tools: Dict[str, ToolExecution] = {}
@@ -1296,11 +1316,11 @@ class BaseExternalAgent:
                             elif isinstance(event, (ToolCallStartedEvent, ToolCallCompletedEvent)) and event.tool:
                                 key = event.tool.tool_call_id or str(uuid4())
                                 if key not in tools:
-                                    tools[key] = event.tool
+                                    tools[key] = copy(event.tool)
                                 elif isinstance(event, ToolCallCompletedEvent):
                                     tools[key].result = event.tool.result
                                     tools[key].tool_call_error = event.tool.tool_call_error
-                            yield event
+                            yield keep(event)
                         break
                     except RunCancelledException:
                         raise
@@ -1311,7 +1331,7 @@ class BaseExternalAgent:
                         # the retry streams a fresh answer, and keep it in the stored run's warnings.
                         warning = self._retry_warning(attempt, num_attempts, error)
                         warnings.append(warning)
-                        yield ExternalRunWarningEvent(run_id=run_id, agent_id=self.get_id(), warning=warning)
+                        yield keep(ExternalRunWarningEvent(run_id=run_id, agent_id=self.get_id(), warning=warning))
                         await self._await_retry(run_id, attempt, num_attempts, error)
         except RunCancelledException:
             status = RunStatus.cancelled
@@ -1336,8 +1356,6 @@ class BaseExternalAgent:
         if attempts_made > 1:
             run.metadata = {**(run.metadata or {}), "attempts": attempts_made}
         self._finish_run_output(run, run_state, continuation)
-        if session is not None:
-            await self._apersist_run_in_session(session, run)
         fields: Dict[str, Any] = dict(
             run_id=run_id,
             session_id=session_id,
@@ -1345,14 +1363,23 @@ class BaseExternalAgent:
             agent_name=self.name or "",
             content=run.content,
         )
+        # The terminal event is built before the run is persisted so the stored run ends with it,
+        # which is what a replay from the database needs to know the run is over.
+        terminal: Any
         if status == RunStatus.cancelled:
-            yield RunCancelledEvent(
+            terminal = RunCancelledEvent(
                 run_id=run_id, session_id=session_id, agent_id=self.get_id(), reason="Run cancelled"
             )
         elif run_error is not None:
-            yield RunErrorEvent(**fields, error_type=error_type_of(run_error))
+            terminal = RunErrorEvent(**fields, error_type=error_type_of(run_error))
         else:
-            yield RunCompletedEvent(**fields, metrics=run.metrics)
+            terminal = RunCompletedEvent(**fields, metrics=run.metrics)
+        keep(terminal)
+        if stored_events is not None:
+            run.events = list(stored_events)
+        if session is not None:
+            await self._apersist_run_in_session(session, run)
+        yield terminal
         if yield_run_output:
             yield run
 
