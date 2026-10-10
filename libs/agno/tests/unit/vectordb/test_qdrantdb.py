@@ -155,6 +155,15 @@ def test_upsert_documents(qdrant_db, sample_documents, mock_qdrant_client):
         mock_insert.assert_called_once()
 
 
+def test_upsert_available(qdrant_db):
+    """Qdrant supports upsert, so upsert_available must report True.
+
+    The VectorDb base class defaults to False; Qdrant overrides it because
+    both upsert / async_upsert are implemented.
+    """
+    assert qdrant_db.upsert_available() is True
+
+
 def test_search(qdrant_db, mock_qdrant_client):
     """Test search functionality"""
     # Set up mock embedding
@@ -540,3 +549,71 @@ async def test_concurrent_async_searches_no_blocking(tracking_embedder):
     # All should use async embedder
     assert tracking_embedder.async_call_count == 5, "async_get_embedding should be called 5 times"
     assert tracking_embedder.sync_call_count == 0, "sync get_embedding should NOT be called"
+
+
+@pytest.mark.asyncio
+async def test_async_upsert_deletes_existing_points_before_insert(mock_embedder, sample_documents):
+    """async_upsert must clear points sharing the content_hash before re-inserting.
+
+    This mirrors the sync upsert path: point ids fold in each chunk's own id, so a
+    re-upsert into fewer chunks would strand the surplus points unless the prior
+    ones are cleared first. The clear must stay scoped to the writing owner.
+    """
+    db = Qdrant(embedder=mock_embedder, collection="test_collection")
+    calls: List[str] = []
+
+    with (
+        patch.object(db, "content_hash_exists", return_value=True) as mock_exists,
+        patch.object(db, "_delete_by_content_hash", side_effect=lambda *a, **k: calls.append("delete")) as mock_delete,
+        patch.object(
+            db, "async_insert", new_callable=AsyncMock, side_effect=lambda **k: calls.append("insert")
+        ) as mock_async_insert,
+    ):
+        await db.async_upsert(content_hash="hash_a", documents=sample_documents, user_id="alice")
+
+    # Guard and delete resolve the same bucket: same content_hash, same owner
+    assert mock_exists.call_args.args == ("hash_a", "alice")
+    assert mock_delete.call_args.args == ("hash_a", "alice")
+
+    # Deleted the stale points first, then delegated to async_insert for the fresh chunks
+    assert calls == ["delete", "insert"]
+    assert mock_async_insert.await_args.kwargs["content_hash"] == "hash_a"
+    assert mock_async_insert.await_args.kwargs["user_id"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_async_upsert_skips_delete_when_no_existing_points(mock_embedder, sample_documents):
+    """async_upsert must not issue a delete when no points share the content_hash."""
+    db = Qdrant(embedder=mock_embedder, collection="test_collection")
+
+    with (
+        patch.object(db, "content_hash_exists", return_value=False) as mock_exists,
+        patch.object(db, "_delete_by_content_hash") as mock_delete,
+        patch.object(db, "async_insert", new_callable=AsyncMock) as mock_async_insert,
+    ):
+        await db.async_upsert(content_hash="hash_a", documents=sample_documents)
+
+    mock_exists.assert_called_once()
+    mock_delete.assert_not_called()
+    mock_async_insert.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_async_upsert_propagates_delete_errors_without_inserting(mock_embedder, sample_documents):
+    """A failed dedup-delete must propagate and the insert must be skipped.
+
+    If the error were swallowed, fresh chunks would be stacked on top of the
+    stale ones the delete failed to remove, producing exactly the duplicate
+    accumulation that upsert is meant to prevent.
+    """
+    db = Qdrant(embedder=mock_embedder, collection="test_collection")
+
+    with (
+        patch.object(db, "content_hash_exists", return_value=True),
+        patch.object(db, "_delete_by_content_hash", side_effect=RuntimeError("qdrant delete failed")),
+        patch.object(db, "async_insert", new_callable=AsyncMock) as mock_async_insert,
+    ):
+        with pytest.raises(RuntimeError, match="qdrant delete failed"):
+            await db.async_upsert(content_hash="hash_a", documents=sample_documents)
+
+    mock_async_insert.assert_not_called()
