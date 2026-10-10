@@ -45,6 +45,10 @@ def show_card(card: AgentCard, label: str) -> None:
     print(f"{label} description: {card.description}")
     print(f"{label} version: {card.version}")
     print(f"{label} endpoint: {card.url}")
+    print(
+        f"{label} protocol versions: {[interface.get('protocolVersion') for interface in card.interfaces]}"
+    )
+    print(f"{label} skills: {[skill.get('id') for skill in card.skills]}")
 
 
 # ---------------------------------------------------------------------------

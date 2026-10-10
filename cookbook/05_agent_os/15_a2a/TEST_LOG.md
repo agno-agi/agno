@@ -1,7 +1,9 @@
 # Test Log: 15_a2a
 
 Tested on 2026-07-24 against Agno source commit
-`a463d3be3563d30d11d32d4f0f9dc23ccefdb4d2`.
+`a463d3be3563d30d11d32d4f0f9dc23ccefdb4d2`. `basic.py`, `client.py`,
+`agent_card.py` and `team.py` were re-run on 2026-10-10 against the A2A v1.0
+interface (a2a-sdk 1.2.2). `external_agent.py` was added and run on 2026-10-10.
 
 ### basic.py
 
@@ -15,8 +17,8 @@ the first-party client tests.
 
 **Result:** `GET /health` returned `ok`; `GET /config` returned OS
 `a2a-basic-os`, Agent `a2a-assistant`, and interface route `/a2a`. The Agent
-card returned name `A2A Assistant`, version `1.0.0`, and stream endpoint
-`http://127.0.0.1:7779/a2a/agents/a2a-assistant/v1/message:stream`.
+card returned name `A2A Assistant`, version `0.0.1`, and A2A endpoint
+`http://127.0.0.1:7779/a2a/agents/a2a-assistant` for both A2A v1.0 and v0.3.
 
 ---
 
@@ -29,11 +31,11 @@ card returned name `A2A Assistant`, version `1.0.0`, and stream endpoint
 **Description:** Ran non-streaming, multi-turn, streaming, and unavailable
 server paths against the live `basic.py` server.
 
-**Result:** Initial task `b17568ab-ee9f-4ae3-bf59-1764310e3274` returned
-context `e9ed46f7-d205-478b-9c06-49f51751c84b`. The follow-up reused that exact
-context and returned `cedar-42`. Streaming produced `working`, `content`,
-`completed`, and final `task` events. A dynamically selected unused local port
-raised and was caught as `RemoteServerUnavailableError`.
+**Result:** Initial task `bb0685f3-b4b1-4751-b767-ba9e47be2559` returned
+context `4b4ef067-1293-4f8b-8dfa-cfaea7fddcc1`. The follow-up reused that exact
+context and returned `cedar-42`. Streaming produced `task`, `working`,
+`content`, `artifact`, and final `completed` events. A dynamically selected
+unused local port raised and was caught as `RemoteServerUnavailableError`.
 
 ---
 
@@ -47,7 +49,7 @@ raised and was caught as `RemoteServerUnavailableError`.
 `get_agent_card()` method and asynchronous `aget_agent_card()` method.
 
 **Result:** Both methods returned the same name `A2A Assistant`, description,
-version `1.0.0`, and entity-scoped stream endpoint. The synchronous method was
+version `0.0.1`, and entity-scoped A2A endpoint. The synchronous method was
 called directly and only the asynchronous method was awaited.
 
 ---
@@ -63,8 +65,25 @@ configuration, and discovery, then ran the checked-in `--demo` client.
 
 **Result:** `GET /config` returned OS `a2a-team-os`, Team `research-team`, and
 interface route `/a2a`. The Team card endpoint resolved under `/a2a/teams`.
-Task `021632de-761c-42e5-91cd-5d299482860a` completed and returned two concise
+Task `fd2d0460-7109-4629-a805-d071b259f808` completed and returned two concise
 reasons to keep API examples small.
+
+---
+
+### external_agent.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Started the external Agent server on port 7779, inspected
+configuration, then ran the checked-in `--demo` client.
+
+**Result:** `GET /config` returned OS `a2a-external-os`, Agent
+`codex-assistant`, and interface route `/a2a`. The Agent card endpoint resolved
+under `/a2a/agents`. Task `a0757136-b2da-4033-9c23-9537ec43e3dc` completed and
+returned a one-sentence description of a list comprehension. `get_task` read
+the stored task back with status `completed`.
 
 ---
 

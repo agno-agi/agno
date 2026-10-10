@@ -63,6 +63,8 @@ def validate_a2a_response(response_data: Dict[str, Any]) -> Tuple[bool, str]:
         return False, "Missing 'result' field"
 
     result = response_data["result"]
+    # A2A v1.0 wraps the task of a send response, v0.3 returns it directly
+    result = result.get("task", result)
 
     if "id" not in result:
         return False, "Missing 'id' field in result"
@@ -109,18 +111,18 @@ class TestA2ALocalAgentNonStreaming:
     def test_a2a_send_message_local_agent(self, client: httpx.Client, test_context_id: str, test_user_id: str):
         """Test A2A send message to local agent."""
         response = client.post(
-            "/a2a/agents/gateway-agent/v1/message:send",
+            "/a2a/agents/gateway-agent",
+            headers={"A2A-Version": "1.0"},
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
-                "method": "message/send",
+                "method": "SendMessage",
                 "params": {
                     "message": {
-                        "agentId": "gateway-agent",
                         "contextId": test_context_id,
                         "messageId": str(uuid.uuid4()),
-                        "role": "user",
-                        "parts": [{"kind": "text", "text": "Say hello"}],
+                        "role": "ROLE_USER",
+                        "parts": [{"text": "Say hello"}],
                         "metadata": {"userId": test_user_id},
                     }
                 },
@@ -133,7 +135,11 @@ class TestA2ALocalAgentNonStreaming:
         assert is_valid, f"Response validation failed: {error_msg}"
 
         # Check task status
-        assert data["result"]["status"]["state"] in ["completed", "working", "failed"]
+        assert data["result"]["task"]["status"]["state"] in [
+            "TASK_STATE_COMPLETED",
+            "TASK_STATE_WORKING",
+            "TASK_STATE_FAILED",
+        ]
 
     def test_a2a_send_message_with_context(self, client: httpx.Client, test_user_id: str):
         """Test A2A send message preserves context."""
@@ -141,7 +147,7 @@ class TestA2ALocalAgentNonStreaming:
 
         # First message
         response1 = client.post(
-            "/a2a/agents/gateway-agent/v1/message:send",
+            "/a2a/agents/gateway-agent",
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -162,7 +168,7 @@ class TestA2ALocalAgentNonStreaming:
 
         # Second message in same context
         response2 = client.post(
-            "/a2a/agents/gateway-agent/v1/message:send",
+            "/a2a/agents/gateway-agent",
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -195,7 +201,7 @@ class TestA2ARemoteAgentNonStreaming:
         context_id = str(uuid.uuid4())
 
         response = client.post(
-            "/a2a/agents/assistant-agent/v1/message:send",
+            "/a2a/agents/assistant-agent",
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -232,18 +238,18 @@ class TestA2ATeamNonStreaming:
         context_id = str(uuid.uuid4())
 
         response = client.post(
-            "/a2a/teams/research-team/v1/message:send",
+            "/a2a/teams/research-team",
+            headers={"A2A-Version": "1.0"},
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
-                "method": "message/send",
+                "method": "SendMessage",
                 "params": {
                     "message": {
-                        "agentId": "research-team",
                         "contextId": context_id,
                         "messageId": str(uuid.uuid4()),
-                        "role": "user",
-                        "parts": [{"kind": "text", "text": "Calculate 10 * 5"}],
+                        "role": "ROLE_USER",
+                        "parts": [{"text": "Calculate 10 * 5"}],
                         "metadata": {"userId": test_user_id},
                     }
                 },
@@ -269,18 +275,18 @@ class TestA2AWorkflowNonStreaming:
         context_id = str(uuid.uuid4())
 
         response = client.post(
-            "/a2a/workflows/gateway-workflow/v1/message:send",
+            "/a2a/workflows/gateway-workflow",
+            headers={"A2A-Version": "1.0"},
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
-                "method": "message/send",
+                "method": "SendMessage",
                 "params": {
                     "message": {
-                        "agentId": "gateway-workflow",
                         "contextId": context_id,
                         "messageId": str(uuid.uuid4()),
-                        "role": "user",
-                        "parts": [{"kind": "text", "text": "Hello workflow"}],
+                        "role": "ROLE_USER",
+                        "parts": [{"text": "Hello workflow"}],
                         "metadata": {"userId": test_user_id},
                     }
                 },
@@ -297,7 +303,7 @@ class TestA2AWorkflowNonStreaming:
         context_id = str(uuid.uuid4())
 
         response = client.post(
-            "/a2a/workflows/qa-workflow/v1/message:send",
+            "/a2a/workflows/qa-workflow",
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -334,18 +340,18 @@ class TestA2AStreaming:
         context_id = str(uuid.uuid4())
 
         response = client.post(
-            "/a2a/agents/gateway-agent/v1/message:stream",
+            "/a2a/agents/gateway-agent",
+            headers={"A2A-Version": "1.0"},
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
-                "method": "message/stream",
+                "method": "SendStreamingMessage",
                 "params": {
                     "message": {
-                        "agentId": "gateway-agent",
                         "contextId": context_id,
                         "messageId": str(uuid.uuid4()),
-                        "role": "user",
-                        "parts": [{"kind": "text", "text": "Say hello"}],
+                        "role": "ROLE_USER",
+                        "parts": [{"text": "Say hello"}],
                         "metadata": {"userId": test_user_id},
                     }
                 },
@@ -362,7 +368,7 @@ class TestA2AStreaming:
         context_id = str(uuid.uuid4())
 
         response = client.post(
-            "/a2a/agents/assistant-agent/v1/message:stream",
+            "/a2a/agents/assistant-agent",
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -390,18 +396,18 @@ class TestA2AStreaming:
         context_id = str(uuid.uuid4())
 
         response = client.post(
-            "/a2a/teams/research-team/v1/message:stream",
+            "/a2a/teams/research-team",
+            headers={"A2A-Version": "1.0"},
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
-                "method": "message/stream",
+                "method": "SendStreamingMessage",
                 "params": {
                     "message": {
-                        "agentId": "research-team",
                         "contextId": context_id,
                         "messageId": str(uuid.uuid4()),
-                        "role": "user",
-                        "parts": [{"kind": "text", "text": "Calculate 7 * 8"}],
+                        "role": "ROLE_USER",
+                        "parts": [{"text": "Calculate 7 * 8"}],
                         "metadata": {"userId": test_user_id},
                     }
                 },
@@ -437,9 +443,10 @@ class TestA2AAgentCardDiscovery:
         assert "streaming" in capabilities
         assert capabilities["streaming"] is True
 
-        # Verify URL points to streaming endpoint
-        assert "message:stream" in card["url"]
-        assert "gateway-agent" in card["url"]
+        # Verify URL points to the agent's A2A endpoint
+        assert card["url"].endswith("/a2a/agents/gateway-agent")
+        assert card["supportedInterfaces"][0]["url"] == card["url"]
+        assert card["supportedInterfaces"][0]["protocolVersion"] == "1.0"
 
     def test_get_team_card(self, client: httpx.Client):
         """Test retrieving agent card for team."""
@@ -453,8 +460,7 @@ class TestA2AAgentCardDiscovery:
         assert "skills" in card
 
         # Verify URL points to team endpoint
-        assert "teams/research-team" in card["url"]
-        assert "message:stream" in card["url"]
+        assert card["url"].endswith("/a2a/teams/research-team")
 
     def test_get_workflow_card(self, client: httpx.Client):
         """Test retrieving agent card for workflow."""
@@ -468,7 +474,7 @@ class TestA2AAgentCardDiscovery:
         assert "skills" in card
 
         # Verify URL points to workflow endpoint
-        assert "workflows/gateway-workflow" in card["url"]
+        assert card["url"].endswith("/a2a/workflows/gateway-workflow")
 
     def test_get_agent_card_not_found(self, client: httpx.Client):
         """Test agent card 404 for non-existent agent."""
@@ -503,30 +509,28 @@ class TestA2AErrorHandling:
     def test_a2a_agent_not_found(self, client: httpx.Client):
         """Test A2A error when agent is not found."""
         response = client.post(
-            "/a2a/agents/non-existent-agent/v1/message:send",
+            "/a2a/agents/non-existent-agent",
+            headers={"A2A-Version": "1.0"},
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
-                "method": "message/send",
+                "method": "SendMessage",
                 "params": {
                     "message": {
-                        "agentId": "non-existent-agent",
                         "contextId": str(uuid.uuid4()),
                         "messageId": str(uuid.uuid4()),
-                        "role": "user",
-                        "parts": [{"kind": "text", "text": "Hello"}],
+                        "role": "ROLE_USER",
+                        "parts": [{"text": "Hello"}],
                     }
                 },
             },
         )
         assert response.status_code == 404
-        data = response.json()
-        assert "detail" in data
 
     def test_a2a_team_not_found(self, client: httpx.Client):
         """Test A2A error when team is not found."""
         response = client.post(
-            "/a2a/teams/non-existent-team/v1/message:send",
+            "/a2a/teams/non-existent-team",
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -543,13 +547,11 @@ class TestA2AErrorHandling:
             },
         )
         assert response.status_code == 404
-        data = response.json()
-        assert "detail" in data
 
     def test_a2a_workflow_not_found(self, client: httpx.Client):
         """Test A2A error when workflow is not found."""
         response = client.post(
-            "/a2a/workflows/non-existent-workflow/v1/message:send",
+            "/a2a/workflows/non-existent-workflow",
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -566,8 +568,6 @@ class TestA2AErrorHandling:
             },
         )
         assert response.status_code == 404
-        data = response.json()
-        assert "detail" in data
 
 
 class TestA2ARemoteAgentGoogleADK:

@@ -10,6 +10,12 @@ were recorded. The shared demo environment was not modified. The Google ADK
 server ran in an isolated `uv` environment that resolved `google-adk==2.5.0`,
 `a2a-sdk==0.3.26`, and `uvicorn==0.51.0`.
 
+`servers/a2a_server.py` and `04_remote_as_team_member.py` were run again live
+on 2026-10-10 for the move to A2A v1.0, with the worktree's development
+environment (`a2a-sdk==1.2.2`). The entries that use the Google ADK server
+(`servers/adk_server.py`, `03_remote_via_a2a.py` and `05_gateway.py`) keep
+their earlier record: no Google API key was available on that date.
+
 ### servers/agentos_server.py
 
 **Status:** PASS
@@ -33,12 +39,13 @@ and an authorized config request returned HTTP 200.
 
 **Test mode:** LIVE
 
-**Description:** Started the Agno A2A REST backend on port 7781 and exercised it
+**Description:** Started the Agno A2A backend on port 7781 and exercised it
 through direct A2A and gateway requests.
 
 **Result:** `GET /health` returned `ok`. The entity-scoped Agent card returned
-`A2A Assistant`, the expected message-stream URL, and
-`capabilities.streaming=true`. Live calculator requests returned 42 and 21.
+`A2A Assistant`, the endpoint `http://127.0.0.1:7781/a2a/agents/a2a-assistant`
+under protocol versions 1.0 and 0.3, and `capabilities.streaming=true`. Live
+calculator requests returned 42 and 9.
 
 ---
 
@@ -109,10 +116,10 @@ Google ADK JSON-RPC `RemoteAgent` calls.
 
 **Test mode:** LIVE
 
-**Description:** Ran one local Team with native AgentOS and A2A REST
+**Description:** Ran one local Team with native AgentOS and A2A
 `RemoteAgent` members in broadcast mode.
 
-**Result:** Team run `a86c5c37-87be-48e3-ac58-980740cc0507` retained exactly
+**Result:** Team run `5592780a-de2f-4000-a245-d0529951d18e` retained exactly
 two member responses, synthesized their answers, and returned 96.
 
 ---

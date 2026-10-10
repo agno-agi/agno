@@ -13,6 +13,7 @@ from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent
+from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
     from fastapi import UploadFile
@@ -403,13 +404,18 @@ class BaseRemote:
             base_url: Base URL for remote instance (e.g., "http://localhost:7777")
             timeout: Request timeout in seconds (default: 60)
             protocol: Communication protocol - "agentos" (default) or "a2a"
-            a2a_protocol: For A2A protocol only - Whether to use JSON-RPC or REST protocol.
+            a2a_protocol: Deprecated. For A2A protocol, the protocol is negotiated from the Agent Card.
             config_ttl: Time-to-live for cached config in seconds (default: 300)
         """
         self.base_url = base_url.rstrip("/")
         self.timeout: float = timeout
         self.protocol = protocol
         self.a2a_protocol = a2a_protocol
+        if protocol == "a2a" and a2a_protocol != "rest":
+            log_warning(
+                "The `a2a_protocol` argument is deprecated and will be removed in a future release. "
+                "The protocol is negotiated from the Agent Card instead."
+            )
         self.config_ttl: float = config_ttl
         self._cached_config = None
         self._cached_agent_card = None
@@ -478,7 +484,6 @@ class BaseRemote:
         return A2AClient(
             base_url=self.base_url,
             timeout=int(self.timeout),
-            protocol=self.a2a_protocol,
         )
 
     @property
@@ -540,7 +545,7 @@ class BaseRemote:
     def get_agent_card(self) -> Optional["AgentCard"]:
         """Get agent card for A2A protocol agents, cached with TTL.
 
-        Fetches the agent card from the standard /.well-known/agent.json endpoint
+        Fetches the agent card from the standard /.well-known/agent-card.json endpoint
         to populate agent metadata (name, description, etc.) for A2A agents.
 
         Returns None for non-A2A protocols or if the server doesn't support agent cards.
@@ -567,7 +572,7 @@ class BaseRemote:
     async def aget_agent_card(self) -> Optional["AgentCard"]:
         """Get agent card for A2A protocol agents, cached with TTL.
 
-        Fetches the agent card from the standard /.well-known/agent.json endpoint
+        Fetches the agent card from the standard /.well-known/agent-card.json endpoint
         to populate agent metadata (name, description, etc.) for A2A agents.
 
         Returns None for non-A2A protocols or if the server doesn't support agent cards.

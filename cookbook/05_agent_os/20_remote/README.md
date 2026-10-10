@@ -2,8 +2,8 @@
 
 `RemoteAgent`, `RemoteTeam`, and `RemoteWorkflow` let one Python process compose
 components hosted elsewhere. This lesson compares the native AgentOS protocol
-with A2A REST and JSON-RPC, uses remote Agents as Team members, and finishes
-with one AgentOS gateway over all three transports.
+with A2A peers from Agno and Google ADK, uses remote Agents as Team members,
+and finishes with one AgentOS gateway over all three transports.
 
 ## Files
 
@@ -11,13 +11,13 @@ with one AgentOS gateway over all three transports.
 |---|---|
 | `01_remote_agent.py` | Await and stream an Agent hosted on another AgentOS. |
 | `02_remote_team_and_workflow.py` | Run a remote Team and Workflow through the native AgentOS protocol. |
-| `03_remote_via_a2a.py` | Compare an Agno A2A REST peer with a Google ADK JSON-RPC peer. |
+| `03_remote_via_a2a.py` | Compare an Agno A2A peer with a Google ADK A2A peer. |
 | `04_remote_as_team_member.py` | Delegate one Team run to AgentOS and A2A remote members. |
 | `05_gateway.py` | Serve local, AgentOS, Agno A2A, and Google ADK components behind one AgentOS. |
 | `06_remote_auth.py` | Supply a per-call Bearer credential with `auth_token`. |
 | `servers/agentos_server.py` | Host two Agents, one Team, and one Workflow on port 7780. |
-| `servers/a2a_server.py` | Host one Agno Agent through A2A REST on port 7781. |
-| `servers/adk_server.py` | Host one Google ADK Agent through A2A JSON-RPC on port 8001. |
+| `servers/a2a_server.py` | Host one Agno Agent through A2A on port 7781. |
+| `servers/adk_server.py` | Host one Google ADK Agent through A2A on port 8001. |
 
 ## Prerequisites
 
@@ -36,8 +36,8 @@ dependencies cannot downgrade the Agno environment:
 
 ```bash
 uv run --isolated \
-  --with google-adk \
-  --with "a2a-sdk[http-server]>=0.3.0,<1.0" \
+  --with "google-adk>=2.5" \
+  --with "a2a-sdk[http-server]>=1.2.2,<2" \
   --with uvicorn \
   cookbook/05_agent_os/20_remote/servers/adk_server.py
 ```
@@ -66,8 +66,8 @@ Start the three upstream servers in this order, one terminal per command:
 
 ```bash
 uv run --isolated \
-  --with google-adk \
-  --with "a2a-sdk[http-server]>=0.3.0,<1.0" \
+  --with "google-adk>=2.5" \
+  --with "a2a-sdk[http-server]>=1.2.2,<2" \
   --with uvicorn \
   cookbook/05_agent_os/20_remote/servers/adk_server.py
 ```
@@ -130,18 +130,16 @@ forwarded through their configured transports.
   `protocol="agentos"` when the peer is AgentOS and native run, session, and
   configuration semantics matter. Pass the server root plus the entity ID.
 - Use `RemoteAgent(protocol="a2a")` when an A2A entity should behave like a
-  composable Agno Agent. For Agno REST, pass the full entity root. For Google
-  ADK JSON-RPC, pass the server root and set `a2a_protocol="json-rpc"`.
+  composable Agno Agent. For an Agno peer, pass the full entity root. For
+  Google ADK, pass the server root. The protocol version is negotiated from the
+  peer's Agent card.
 - Use the lower-level `A2AClient` from `15_a2a` when the application needs
   protocol task IDs, context IDs, Agent cards, or raw A2A stream events.
 
 `get_agent_config()` on an A2A RemoteAgent returns a small AgentOS-compatible
-view derived from its Agent card. The current JSON-RPC client sends every
-request to the RPC root, including card discovery; Google ADK serves its card
-at `/.well-known/agent-card.json`. Consequently the ADK RemoteAgent falls back
-to its configured ID and a generic description. `03_remote_via_a2a.py`
-demonstrates card-derived introspection with the Agno REST peer and uses the
-ADK peer for JSON-RPC execution.
+view derived from its Agent card, read from `/.well-known/agent-card.json`
+under the configured `base_url`. `03_remote_via_a2a.py` demonstrates
+card-derived introspection with the Agno peer and runs both peers.
 
 ## Authenticated remote runs
 
@@ -169,10 +167,7 @@ Basic remote calls and HTTP streaming are supported. AgentOS gateway routes do
 not make every local lifecycle feature transparent: background execution,
 run polling and listing, checkpoints, resumable streams, and remote Workflow
 continuation over WebSocket are not supported. A2A remote components also do
-not support AgentOS continuation or cancellation semantics. A completed
-non-streaming A2A response currently maps its content correctly but retains the
-`RUNNING` status supplied while the A2A task was in flight; use the returned
-content rather than AgentOS polling at that boundary.
+not support AgentOS continuation or cancellation semantics.
 
 Google ADK's A2A adapter is experimental and emits corresponding warnings at
 startup. The isolated command keeps those dependencies and warnings scoped to

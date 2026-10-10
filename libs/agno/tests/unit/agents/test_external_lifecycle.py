@@ -338,23 +338,24 @@ async def test_a2a_poll_and_cancel_scoped_external(agent, monkeypatch):
     from httpx import ASGITransport, AsyncClient
 
     from agno.os.interfaces.a2a import router as a2a_router
+    from agno.os.interfaces.a2a import task_store as a2a_task_store
 
     app = FastAPI()
     app.include_router(a2a_router.attach_routes(APIRouter(), agents=[agent]))
-    monkeypatch.setattr(a2a_router, "get_scoped_user_id", lambda request: request.headers.get("test-user"))
+    monkeypatch.setattr(a2a_task_store, "get_scoped_user_id", lambda request: request.headers.get("test-user"))
     run = await agent.arun("go", background=True, session_id="s", user_id="owner")
     await asyncio.wait_for(agent.started.wait(), 2)
-    body = {"id": "request", "params": {"id": run.run_id, "contextId": "s"}}
+    headers = {"A2A-Version": "1.0"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        for action in ("get", "cancel"):
-            response = await client.post(
-                "/agents/external/v1/tasks:" + action, json=body, headers={"test-user": "other"}
-            )
-            assert response.status_code == 404
-        response = await client.post("/agents/external/v1/tasks:get", json=body, headers={"test-user": "owner"})
-        assert response.status_code == 200, response.text
-        response = await client.post("/agents/external/v1/tasks:cancel", json=body, headers={"test-user": "owner"})
-        assert response.status_code == 200, response.text
+        for method in ("GetTask", "CancelTask"):
+            body = {"jsonrpc": "2.0", "id": "request", "method": method, "params": {"id": run.run_id}}
+            response = await client.post("/agents/external", json=body, headers={**headers, "test-user": "other"})
+            assert response.json()["error"]["code"] == -32001
+        for method in ("GetTask", "CancelTask"):
+            body = {"jsonrpc": "2.0", "id": "request", "method": method, "params": {"id": run.run_id}}
+            response = await client.post("/agents/external", json=body, headers={**headers, "test-user": "owner"})
+            assert response.status_code == 200, response.text
+            assert "result" in response.json(), response.text
     assert (await terminal(agent, run.run_id)).status == RunStatus.cancelled
 
 

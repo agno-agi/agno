@@ -56,7 +56,7 @@ class RemoteAgent(BaseRemote):
             agent_id: ID of remote agent on the remote server
             timeout: Request timeout in seconds (default: 60)
             protocol: Communication protocol - "agentos" (default) or "a2a"
-            a2a_protocol: For A2A protocol only - Whether to use JSON-RPC or REST protocol.
+            a2a_protocol: Deprecated. For A2A protocol, the protocol is negotiated from the Agent Card.
             config_ttl: Time-to-live for cached config in seconds (default: 300)
         """
         super().__init__(base_url, timeout, protocol, a2a_protocol, config_ttl)
@@ -483,6 +483,17 @@ class RemoteAgent(BaseRemote):
     ]:
         headers = self._get_auth_headers(auth_token)
 
+        # A2A protocol path
+        if self.a2a_client:
+            return self._acontinue_run_a2a(  # type: ignore[return-value]
+                run_id=run_id,
+                requirements=requirements,
+                stream=stream or False,
+                user_id=user_id,
+                context_id=session_id,  # Map session_id → context_id for A2A
+                headers=headers,
+            )
+
         if self.agentos_client:
             tools_list = (
                 [r.tool_execution for r in requirements if r.tool_execution is not None] if requirements else []
@@ -512,6 +523,77 @@ class RemoteAgent(BaseRemote):
         else:
             raise ValueError("No client available")
 
+    def _acontinue_run_a2a(
+        self,
+        run_id: str,
+        requirements: Optional[List[RunRequirement]],
+        stream: bool,
+        user_id: Optional[str],
+        context_id: Optional[str],
+        headers: Optional[Dict[str, str]],
+    ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
+        """Continue a paused run via A2A protocol.
+
+        Args:
+            run_id: The run_id to continue (maps to the A2A task id)
+            requirements: Resolved requirements of the paused run
+            stream: Whether to stream the response
+            user_id: User identifier
+            context_id: Session/context ID (maps to session_id)
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            RunOutput for non-streaming, AsyncIterator[RunOutputEvent] for streaming
+        """
+        if not self.a2a_client:
+            raise ValueError("A2A client not available")
+        from agno.client.a2a.utils import map_stream_events_to_run_events
+
+        data = {"requirements": [requirement.to_dict() for requirement in requirements or []]}
+        if stream:
+            # Return async generator for streaming
+            event_stream = self.a2a_client.stream_message(
+                message="",
+                context_id=context_id,
+                user_id=user_id,
+                headers=headers,
+                task_id=run_id,
+                data=data,
+            )
+            return map_stream_events_to_run_events(event_stream, agent_id=self.agent_id)
+        else:
+            # Return coroutine for non-streaming
+            return self._acontinue_run_a2a_send(  # type: ignore[return-value]
+                run_id=run_id,
+                data=data,
+                user_id=user_id,
+                context_id=context_id,
+                headers=headers,
+            )
+
+    async def _acontinue_run_a2a_send(
+        self,
+        run_id: str,
+        data: Dict[str, Any],
+        user_id: Optional[str],
+        context_id: Optional[str],
+        headers: Optional[Dict[str, str]],
+    ) -> RunOutput:
+        """Send a non-streaming A2A continue message and convert response to RunOutput."""
+        if not self.a2a_client:
+            raise ValueError("A2A client not available")
+        from agno.client.a2a.utils import map_task_result_to_run_output
+
+        task_result = await self.a2a_client.send_message(
+            message="",
+            context_id=context_id,
+            user_id=user_id,
+            headers=headers,
+            task_id=run_id,
+            data=data,
+        )
+        return map_task_result_to_run_output(task_result, agent_id=self.agent_id, user_id=user_id)
+
     async def acancel_run(self, run_id: str, auth_token: Optional[str] = None) -> bool:
         """Cancel a running agent execution.
 
@@ -523,6 +605,12 @@ class RemoteAgent(BaseRemote):
             bool: True if the run was successfully cancelled, False otherwise.
         """
         headers = self._get_auth_headers(auth_token)
+        if self.a2a_client:
+            try:
+                task_result = await self.a2a_client.cancel_task(run_id, headers=headers)
+                return task_result.is_canceled
+            except Exception:
+                return False
         if not self.agentos_client:
             raise ValueError("AgentOS client not available")
         try:

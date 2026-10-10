@@ -128,7 +128,6 @@ adk_facts_agent = RemoteAgent(
     base_url=ADK_SERVER_URL,
     agent_id="facts_agent",
     protocol="a2a",
-    a2a_protocol="json-rpc",  # Needed for Google ADK servers
 )
 
 remote_a2a_assistant = RemoteAgent(
