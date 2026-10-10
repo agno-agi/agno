@@ -141,10 +141,16 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
         Agent: A new Agent instance.
     """
     from dataclasses import fields
-    from inspect import signature
+
+    from agno.agent.agent import Agent
+    from agno.utils.rebuild import forwards_init_kwargs, init_parameter_names, rebuild_through_base_init
+
+    # A subclass that forwards **kwargs is rebuilt through Agent.__init__, since its
+    # own signature does not name the fields it accepts
+    bypass_subclass_init = forwards_init_kwargs(agent.__class__, Agent)
 
     # Get the set of valid __init__ parameter names
-    init_params = set(signature(agent.__class__.__init__).parameters.keys()) - {"self"}
+    init_params = init_parameter_names(Agent if bypass_subclass_init else agent.__class__)
 
     # Extract the fields to set for the new Agent
     fields_for_new_agent: Dict = {}
@@ -169,7 +175,12 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
 
     # Create a new Agent
     try:
-        new_agent = agent.__class__(**fields_for_new_agent)
+        if bypass_subclass_init:
+            new_agent = rebuild_through_base_init(
+                agent, Agent, fields_for_new_agent, lambda name, value: deep_copy_field(agent, name, value)
+            )
+        else:
+            new_agent = agent.__class__(**fields_for_new_agent)
         log_debug(f"Created new {agent.__class__.__name__}")
         return new_agent
     except Exception as e:

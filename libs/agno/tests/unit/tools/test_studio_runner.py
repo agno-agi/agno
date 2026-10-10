@@ -2417,13 +2417,10 @@ class TestStudioEmbedding:
         from agno.agent.agent import Agent as AgentClass
 
         class _UncopyableAgent(AgentClass):
-            def __init__(self, topic, **kwargs):
-                self.topic = topic
-                super().__init__(**kwargs)
+            def deep_copy(self, *, update=None):
+                raise TypeError("this agent cannot be rebuilt")
 
-        researcher = _UncopyableAgent(
-            "ai", id="researcher", name="Researcher", model=OpenAIResponses(id="gpt-5.4"), db=db
-        )
+        researcher = _UncopyableAgent(id="researcher", name="Researcher", model=OpenAIResponses(id="gpt-5.4"), db=db)
         reg = Registry(name="Singleton Registry", agents=[researcher], models=[OpenAIResponses(id="gpt-5.4")], dbs=[db])
         studio = StudioTools(registry=reg, db=db)
         created = _loads(
@@ -3445,11 +3442,10 @@ class TestMemberIsolation:
         from agno.team.team import Team as TeamClass
 
         class _UncopyableAgent(AgentClass):
-            def __init__(self, topic, **kwargs):
-                self.topic = topic
-                super().__init__(**kwargs)
+            def deep_copy(self, *, update=None):
+                raise TypeError("this agent cannot be rebuilt")
 
-        grandchild = _UncopyableAgent("ai", id="grandchild", name="Grandchild", model=OpenAIResponses(id="gpt-5.4"))
+        grandchild = _UncopyableAgent(id="grandchild", name="Grandchild", model=OpenAIResponses(id="gpt-5.4"))
         inner = TeamClass(id="inner", name="Inner", model=OpenAIResponses(id="gpt-5.4"), members=[grandchild])
         outer = TeamClass(id="outer", name="Outer", model=OpenAIResponses(id="gpt-5.4"), members=[inner])
 

@@ -11708,12 +11708,51 @@ class Workflow:
         """
         from copy import copy, deepcopy
         from dataclasses import fields
-        from inspect import signature
 
         from agno.utils.log import log_debug, log_warning
+        from agno.utils.rebuild import forwards_init_kwargs, init_parameter_names, rebuild_through_base_init
+
+        # A subclass that forwards **kwargs is rebuilt through Workflow.__init__, since its
+        # own signature does not name the fields it accepts
+        bypass_subclass_init = forwards_init_kwargs(self.__class__, Workflow)
 
         # Get the set of valid __init__ parameter names
-        init_params = set(signature(self.__class__.__init__).parameters.keys()) - {"self"}
+        init_params = init_parameter_names(Workflow if bypass_subclass_init else self.__class__)
+
+        def copy_field(name: str, field_value: Any) -> Any:
+            # Special handling for steps that may contain agents/teams
+            if name == "steps":
+                return self._deep_copy_steps(field_value)
+            # Special handling for workflow agent
+            if name == "agent":
+                return field_value.deep_copy() if hasattr(field_value, "deep_copy") else field_value
+            # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
+            if name == "db":
+                return field_value
+            # For compound types, attempt a deep copy
+            if isinstance(field_value, (list, dict, set)):
+                try:
+                    return deepcopy(field_value)
+                except Exception:
+                    try:
+                        return copy(field_value)
+                    except Exception as e:
+                        log_warning(f"Failed to copy field: {name}: {str(e)}")
+                        return field_value
+            # For pydantic models, attempt a model_copy
+            if isinstance(field_value, BaseModel):
+                try:
+                    return field_value.model_copy(deep=True)
+                except Exception:
+                    try:
+                        return field_value.model_copy(deep=False)
+                    except Exception:
+                        return field_value
+            # For other types, attempt a shallow copy
+            try:
+                return copy(field_value)
+            except Exception:
+                return field_value
 
         # Extract the fields to set for the new Workflow
         fields_for_new_workflow: Dict[str, Any] = {}
@@ -11725,43 +11764,7 @@ class Workflow:
 
             field_value = getattr(self, f.name)
             if field_value is not None:
-                # Special handling for steps that may contain agents/teams
-                if f.name == "steps" and field_value is not None:
-                    fields_for_new_workflow[f.name] = self._deep_copy_steps(field_value)
-                # Special handling for workflow agent
-                elif f.name == "agent" and field_value is not None:
-                    if hasattr(field_value, "deep_copy"):
-                        fields_for_new_workflow[f.name] = field_value.deep_copy()
-                    else:
-                        fields_for_new_workflow[f.name] = field_value
-                # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
-                elif f.name == "db":
-                    fields_for_new_workflow[f.name] = field_value
-                # For compound types, attempt a deep copy
-                elif isinstance(field_value, (list, dict, set)):
-                    try:
-                        fields_for_new_workflow[f.name] = deepcopy(field_value)
-                    except Exception:
-                        try:
-                            fields_for_new_workflow[f.name] = copy(field_value)
-                        except Exception as e:
-                            log_warning(f"Failed to copy field: {f.name}: {str(e)}")
-                            fields_for_new_workflow[f.name] = field_value
-                # For pydantic models, attempt a model_copy
-                elif isinstance(field_value, BaseModel):
-                    try:
-                        fields_for_new_workflow[f.name] = field_value.model_copy(deep=True)
-                    except Exception:
-                        try:
-                            fields_for_new_workflow[f.name] = field_value.model_copy(deep=False)
-                        except Exception:
-                            fields_for_new_workflow[f.name] = field_value
-                # For other types, attempt a shallow copy
-                else:
-                    try:
-                        fields_for_new_workflow[f.name] = copy(field_value)
-                    except Exception:
-                        fields_for_new_workflow[f.name] = field_value
+                fields_for_new_workflow[f.name] = copy_field(f.name, field_value)
 
         # Update fields if provided
         if update:
@@ -11769,7 +11772,10 @@ class Workflow:
 
         # Create a new Workflow
         try:
-            new_workflow = self.__class__(**fields_for_new_workflow)
+            if bypass_subclass_init:
+                new_workflow = rebuild_through_base_init(self, Workflow, fields_for_new_workflow, copy_field)
+            else:
+                new_workflow = self.__class__(**fields_for_new_workflow)
             log_debug(f"Created new {self.__class__.__name__}", log_level=2)
             return new_workflow
         except Exception as e:

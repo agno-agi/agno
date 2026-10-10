@@ -551,9 +551,10 @@ class StudioRunnerTools(Toolkit):
         """A checked deep copy for dispatch. Raises DispatchCopyError on a
         copy that is unavailable, raised, or fails a fidelity check.
 
-        deep_copy rebuilds via the component class's __init__ signature, so a
-        subclass with a ``(custom, **kwargs)`` initializer can come back blank
-        or fail to rebuild entirely, and the field-level copier keeps the
+        deep_copy rebuilds via the component class's __init__ signature (or the
+        base initializer for a subclass that forwards **kwargs), so a subclass
+        whose initializer declares only some fields can come back without the
+        rest or fail to rebuild entirely, and the field-level copier keeps the
         original value for a field whose own copy raised. The copy is
         dispatched when it is a distinct instance of the same class that kept
         its id, name, model and instructions, and whose copyable members were
