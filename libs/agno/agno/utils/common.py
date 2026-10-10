@@ -1,5 +1,5 @@
 from dataclasses import asdict
-from typing import Any, List, Optional, Set, Type, Union, get_type_hints
+from typing import Any, List, Literal, Optional, Set, Type, Union, get_type_hints
 
 
 def isinstanceany(obj: Any, class_list: List[Type]) -> bool:
@@ -57,6 +57,11 @@ def check_type_compatibility(value: Any, expected_type: Type) -> bool:
     """Basic type compatibility checking."""
     from typing import get_args, get_origin
 
+    # Literal choices require both matching value and type (False is not Literal[0]).
+    origin = get_origin(expected_type)
+    if origin is Literal:
+        return any(type(value) is type(choice) and value == choice for choice in get_args(expected_type))
+
     # Handle None/Optional types
     if value is None:
         return (
@@ -64,7 +69,6 @@ def check_type_compatibility(value: Any, expected_type: Type) -> bool:
         )
 
     # Handle Union types (including Optional)
-    origin = get_origin(expected_type)
     if origin is Union:
         return any(check_type_compatibility(value, arg) for arg in get_args(expected_type))
 
