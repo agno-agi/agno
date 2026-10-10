@@ -2296,7 +2296,6 @@ class Model(ABC):
                                 yield ModelResponse(content=item.content)
 
                         if isinstance(item, CustomEvent):
-                            function_call_output += str(item)
                             item.tool_call_id = function_call.call_id
 
                         # For WorkflowCompletedEvent, extract content for final output
@@ -2867,7 +2866,6 @@ class Model(ABC):
                                 continue
 
                         if isinstance(item, CustomEvent):
-                            function_call_output += str(item)
                             item.tool_call_id = function_call.call_id
 
                             # For WorkflowCompletedEvent, extract content for final output
@@ -3000,7 +2998,6 @@ class Model(ABC):
                                     continue
 
                             elif isinstance(item, CustomEvent):
-                                function_call_output += str(item)
                                 item.tool_call_id = function_call.call_id
 
                             # Yield the event itself to bubble it up
