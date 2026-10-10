@@ -521,3 +521,20 @@ class RunNotContinuableError(ValueError):
     Subclasses ``ValueError`` so existing SDK callers that catch ``ValueError``
     keep working; the OS layer maps it to HTTP 409.
     """
+
+
+class SessionBusyError(AgnoError):
+    """Raised when a turn is started on a session that already has a turn in flight.
+
+    External agents (Claude Code, Codex) keep one conversation per session on their own side,
+    and two turns writing to it at once corrupt it, so a session accepts one turn at a time.
+    The OS layer maps this to HTTP 409; the durable queue and agent retries re-drive the turn
+    after their delay, which serializes it behind the one in flight.
+    """
+
+    def __init__(self, message: str, run_id: Optional[str] = None, session_id: Optional[str] = None):
+        super().__init__(message, 409)
+        self.run_id = run_id
+        self.session_id = session_id
+        self.type = "session_busy"
+        self.error_id = "session_busy"

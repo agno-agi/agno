@@ -170,12 +170,13 @@ async def test_background_runs_store_stream_indices_for_replay_floors(tmp_path):
     stored = await agent.aget_run_output(job["id"], "s")
     assert _kinds(stored) == ["RunStarted", "ToolCallStarted", "ToolCallCompleted", "RunCompleted"]
     indices = [e.event_index for e in stored.events]
-    assert indices[:3] == [0, 2, 3], "RunContent took index 1 on the stream but is not stored"
-    assert indices[3] is None, "the terminal event is persisted before it is published, as for Agent"
+    assert indices == [0, 2, 3, 5], "RunContent took indices 1 and 4 on the stream but is not stored"
+    # The terminal event is persisted before it is published; the row is written again with its
+    # index once the stream stamped it, so a replay from the database stays in order.
 
     await get_event_stream().cleanup_run(job["id"])
     client = TestClient(app, raise_server_exceptions=False)
     resp = client.post(f"/agents/flaky/runs/{job['id']}/resume", data={"session_id": "s", "last_event_index": "2"})
     assert resp.status_code == 200
     tail = _sse_payloads(resp.text)
-    assert [(p["event"], p["event_index"]) for p in tail[1:]] == [("ToolCallCompleted", 3), ("RunCompleted", 3)]
+    assert [(p["event"], p["event_index"]) for p in tail[1:]] == [("ToolCallCompleted", 3), ("RunCompleted", 5)]

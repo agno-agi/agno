@@ -235,3 +235,13 @@ checks; the earlier live provider cancellation runs were not repeated.
 **Description:** Live run with claude-agent-sdk 0.2.95 and `claude-sonnet-4-6` on SQLite transcript storage. A two-step Bash turn listed checkpoints at both tool results and the end. Continuing from the first tool result with a question produced a branch that only knew `echo alpha`; `continue_from="last_user"` replayed the turn as a forked sibling. Separately, with `claude-haiku-4-5`, exercised AgentOS `/checkpoints` and `/continue` (non-stream and SSE), an in-place streamed continue, and a replay of a non-first turn that kept earlier context.
 
 **Result:** Continue and checkpoints work end to end against the real SDK. Files touched after a checkpoint are not rewound.
+
+### Overlapping turns on one session (2026-10-10)
+
+**Status:** PASS (claude-sonnet-4-6)
+
+**Description:** Soak finding: a second turn on a session whose first turn was still running was accepted and appended to the same transcript. Reproduced with two concurrent `arun` calls on one session, the first running a 6s shell command. Fixed with a one-turn-per-session check in the base class (in-process turns and pending or running run rows).
+
+**Result:** Before: both turns ran and both appended to the session's transcript concurrently. After: the second turn raises `SessionBusyError` in under a millisecond naming the run in flight, no run row is written for it, the first turn completes, and a turn sent afterwards runs normally.
+
+---

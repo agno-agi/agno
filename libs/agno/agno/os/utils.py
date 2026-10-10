@@ -27,6 +27,7 @@ from agno.os.config import AgentOSConfig
 from agno.registry import Registry, ToolSource
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
+from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import RemoteTeam, Team, TeamFactory
@@ -504,16 +505,43 @@ def stored_event_replay_dicts(
     """
     floor = last_event_index if last_event_index is not None else -1
     dicts: List[Dict[str, Any]] = []
+    last_index = -1
     for position, event in enumerate(getattr(run_output, "events", None) or []):
         event_dict = event.to_dict()
         stored_index = event_dict.get("event_index")
         if stored_index is not None and int(stored_index) <= floor:
             continue
-        event_dict["event_index"] = int(stored_index) if stored_index is not None else position
+        if stored_index is not None:
+            index = int(stored_index)
+        else:
+            # Positional fallback, but never behind a stamped event that came before it in the
+            # row (an unstamped terminal event after stamped ones), so the replay stays ordered.
+            index = max(position, last_index + 1)
+        last_index = max(last_index, index)
+        event_dict["event_index"] = index
         if "run_id" not in event_dict:
             event_dict["run_id"] = run_id
         dicts.append(event_dict)
     return dicts
+
+
+def no_stored_events_replay_meta(run_output: Any, run_id: str) -> Dict[str, Any]:
+    """The replay meta for a run found in the database with no stored events.
+
+    A run submitted with stream=false, inline or in the background, never publishes to the
+    event stream and stores no events, so there is nothing to attach to: the message says
+    whether the run is still going (poll the run endpoint) or finished with only its final
+    output, instead of claiming it completed.
+    """
+    status = run_output.status.value if hasattr(run_output.status, "value") else (run_output.status or "unknown")
+    if status in (RunStatus.pending.value, RunStatus.running.value):
+        message = (
+            f"Run is {status} and was submitted without streaming, so it has no event stream to attach to. "
+            "Poll the run endpoint for its result."
+        )
+    else:
+        message = f"Run {status} with no stored events: a run submitted without streaming keeps only its final output."
+    return {"event": "replay", "run_id": run_id, "status": status, "total_events": 0, "message": message}
 
 
 def stored_event_replay_frames(run_output: Any, run_id: str, last_event_index: Optional[int] = None) -> List[str]:

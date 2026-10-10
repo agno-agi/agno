@@ -387,6 +387,55 @@ def test_stream_file_change_web_search_and_failed_command_results(fake_sdk):
     assert completed["w1"].tool_args == {"query": "agno"}
     assert '"title": "Agno"' in (completed["w1"].result or "")
     assert completed["c2"].result == "[exit code 1]"
+    assert completed["c2"].tool_call_error is True, "a failed command is a failed tool call"
+    assert completed["f1"].tool_call_error is False and completed["w1"].tool_call_error is False
+
+
+def _mcp_item(item_id: str, status: str, error: Any = None, text: str = "") -> Any:
+    result = SimpleNamespace(content=[SimpleNamespace(type="text", text=text)], structured_content=None)
+    return _item(
+        type="mcpToolCall",
+        id=item_id,
+        server="boom",
+        tool="lookup",
+        arguments={"key": "alpha"},
+        status=SimpleNamespace(value=status),
+        error=error,
+        result=result if text else None,
+    )
+
+
+@pytest.mark.parametrize("stream", [True, False])
+def test_failed_mcp_tool_calls_carry_the_error_flag(fake_sdk, stream):
+    """A failing MCP tool arrives with status failed; the error may be on the item or, when the
+    server returned it as an isError text result, only in the result text."""
+    on_item = _mcp_item("m-err", "failed", error=SimpleNamespace(message="backend down"))
+    in_text = _mcp_item("m-text", "failed", text="Error executing tool lookup: backend unavailable")
+    ok = _mcp_item("m-ok", "completed", text="found alpha")
+    fake_sdk.notifications = [
+        _started(on_item),
+        _completed(on_item),
+        _started(in_text),
+        _completed(in_text),
+        _started(ok),
+        _completed(ok),
+        _delta("m1", "done"),
+        _turn_completed("completed"),
+    ]
+    agent = CodexAgent(name="Codex", id="codex")
+
+    if stream:
+        events = _collect(agent, "lookup")
+        tools = {e.tool.tool_call_id: e.tool for e in events if isinstance(e, ToolCallCompletedEvent)}
+    else:
+        run = agent.run("lookup")
+        assert run.status == RunStatus.completed
+        tools = {t.tool_call_id: t for t in run.tools or []}
+
+    assert tools["m-err"].tool_call_error is True and tools["m-err"].result == "error: backend down"
+    assert tools["m-text"].tool_call_error is True
+    assert tools["m-text"].result == "Error executing tool lookup: backend unavailable"
+    assert tools["m-ok"].tool_call_error is False and tools["m-ok"].result == "found alpha"
 
 
 def test_stream_reasoning_deltas_become_reasoning_content(fake_sdk):
@@ -1104,3 +1153,49 @@ def test_run_without_usage_reports_has_duration_only(fake_sdk, tmp_db):
     agent = CodexAgent(name="Codex", id="codex", db=tmp_db)
     metrics = asyncio.run(agent._arun_non_stream("go", session_id="s1")).metrics
     assert metrics is not None and metrics.total_tokens == 0 and metrics.duration is not None
+
+
+# ---------------------------------------------------------------------------
+# One turn per session: the app-server's active-writer guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("stream", [True, False])
+def test_active_writer_rejection_is_a_session_busy_error(fake_sdk, tmp_db, monkeypatch, stream):
+    from agno.exceptions import SessionBusyError
+
+    fake_sdk.notifications = [_delta("m1", "ok"), _turn_completed()]
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db)
+    _collect(agent, "first", session_id="s1")
+
+    original = FakeAsyncCodex.thread_resume
+
+    async def busy_resume(self, thread_id, **kwargs):
+        raise JsonRpcError(-32600, f"thread {thread_id} already has an active writer")
+
+    monkeypatch.setattr(FakeAsyncCodex, "thread_resume", busy_resume)
+    if stream:
+        run = agent.run("second", session_id="s1", stream=True)
+        events = list(run)
+        out = agent.get_run_output(events[0].run_id, "s1")
+    else:
+        out = agent.run("second", session_id="s1")
+    assert out.status == RunStatus.error
+    assert out.metadata["error_type"] == "session_busy"
+    assert out.metadata["retryable"] is True, "a busy thread frees up; retries and the queue may re-drive"
+    assert agent.read_or_create_session("s1").session_data["codex_thread_id"] == "thread-1", "the thread is kept"
+
+    # With retries the turn waits out the busy thread: serialization by retry.
+    attempts = {"n": 0}
+
+    async def busy_once(self, thread_id, **kwargs):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise JsonRpcError(-32600, f"thread {thread_id} already has an active writer")
+        return await original(self, thread_id, **kwargs)
+
+    monkeypatch.setattr(FakeAsyncCodex, "thread_resume", busy_once)
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db, retries=1, delay_between_retries=0)
+    out = agent.run("third", session_id="s1")
+    assert out.status == RunStatus.completed and out.metadata["attempts"] == 2
+    assert isinstance(SessionBusyError("x"), Exception)
