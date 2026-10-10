@@ -1735,7 +1735,7 @@ class Function(BaseModel):
 
     @staticmethod
     def _validate_callable(func: Callable) -> Callable:
-        from inspect import isasyncgenfunction, iscoroutinefunction, signature
+        from inspect import Parameter, isasyncgenfunction, iscoroutinefunction, signature
 
         pydantic_version = _get_pydantic_version()
 
@@ -1748,7 +1748,52 @@ class Function(BaseModel):
         if isasyncgenfunction(func):
             if getattr(func, "_wrapped_for_validation", False):
                 return func
-            validated = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
+
+            validation_target = func
+            try:
+                hints = get_type_hints(func, include_extras=True)
+                bind_hints = get_type_hints(func)
+            except Exception:
+                # Let validate_call report unresolved annotations as it did before.
+                hints = None
+                bind_hints = None
+
+            if hints is not None and bind_hints is not None:
+                from agno.agent.agent import Agent
+                from agno.team.team import Team
+
+                sig = signature(func)
+                try:
+                    injected = {
+                        name
+                        for name, param in sig.parameters.items()
+                        if param.kind in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY)
+                        and name in bind_hints
+                        and (name in {"agent", "team"} or is_framework_typed(bind_hints[name]))
+                        and annotation_binds(bind_hints[name], (Agent, Team))
+                    }
+                except Exception:
+                    # If ownership cannot be proved, retain validate_call's error path.
+                    injected = set()
+                if injected:
+                    # Pydantic cannot resolve the Agent/Team object graph. Validate
+                    # only the user-owned arguments, then call the original tool.
+                    @wraps(func)
+                    def validation_target(*args, **kwargs):
+                        return func(*args, **kwargs)
+
+                    validation_target.__annotations__ = {  # type: ignore[attr-defined]
+                        name: Any if name in injected else hint for name, hint in hints.items()
+                    }
+                    validation_target.__signature__ = sig.replace(  # type: ignore[attr-defined]
+                        parameters=[
+                            param.replace(annotation=Any if name in injected else hints.get(name, param.annotation))
+                            for name, param in sig.parameters.items()
+                        ],
+                        return_annotation=hints.get("return", sig.return_annotation),
+                    )
+
+            validated = validate_call(validation_target, config=dict(arbitrary_types_allowed=True))  # type: ignore
 
             @wraps(func)
             async def async_gen_wrapper(*args, **kwargs):
