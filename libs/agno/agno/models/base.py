@@ -1134,12 +1134,13 @@ class Model(ABC):
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
 
-        # Update model response with assistant message content and audio
+        # Update model response with the current assistant message's content and audio.
+        # Content is intentionally NOT accumulated across model calls: every call in a
+        # run produces its own assistant message, and concatenating them here merges
+        # all assistant text into run_response.content, losing the interleaving order
+        # with tool calls (agno-agi/agno#10936). The latest call's text wins.
         if assistant_message.content is not None:
-            if model_response.content is None:
-                model_response.content = assistant_message.get_content_string()
-            else:
-                model_response.content += assistant_message.get_content_string()
+            model_response.content = assistant_message.get_content_string()
         if assistant_message.reasoning_content is not None:
             model_response.reasoning_content = assistant_message.reasoning_content
         if assistant_message.redacted_reasoning_content is not None:
@@ -1204,12 +1205,13 @@ class Model(ABC):
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
 
-        # Update model response with assistant message content and audio
+        # Update model response with the current assistant message's content and audio.
+        # Content is intentionally NOT accumulated across model calls: every call in a
+        # run produces its own assistant message, and concatenating them here merges
+        # all assistant text into run_response.content, losing the interleaving order
+        # with tool calls (agno-agi/agno#10936). The latest call's text wins.
         if assistant_message.content is not None:
-            if model_response.content is None:
-                model_response.content = assistant_message.get_content_string()
-            else:
-                model_response.content += assistant_message.get_content_string()
+            model_response.content = assistant_message.get_content_string()
         if assistant_message.reasoning_content is not None:
             model_response.reasoning_content = assistant_message.reasoning_content
         if assistant_message.redacted_reasoning_content is not None:

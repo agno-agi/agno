@@ -1035,6 +1035,12 @@ def _handle_model_response_stream(
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
             if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                # A new model request starts a new assistant turn within this run.
+                # Reset the accumulated content so text streamed by earlier calls is
+                # not merged into run_response.content (agno-agi/agno#10936).
+                if full_model_response.content:
+                    full_model_response.content = None
+                    run_response.content = None
                 if stream_events:
                     yield handle_event(  # type: ignore
                         create_team_model_request_started_event(
@@ -1197,6 +1203,12 @@ async def _ahandle_model_response_stream(
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
             if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                # A new model request starts a new assistant turn within this run.
+                # Reset the accumulated content so text streamed by earlier calls is
+                # not merged into run_response.content (agno-agi/agno#10936).
+                if full_model_response.content:
+                    full_model_response.content = None
+                    run_response.content = None
                 if stream_events:
                     yield handle_event(  # type: ignore
                         create_team_model_request_started_event(
