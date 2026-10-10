@@ -324,6 +324,7 @@ class BaseDb(ABC):
         mcp_oauth_codes_table: Optional[str] = None,
         mcp_oauth_refresh_tokens_table: Optional[str] = None,
         mcp_oauth_keys_table: Optional[str] = None,
+        skills_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -360,6 +361,7 @@ class BaseDb(ABC):
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
+        self.skills_table_name = skills_table or "agno_skills"
         # Built-in MCP OAuth authorization server store (see agno.os.mcp_auth_builtin).
         self.mcp_oauth_clients_table_name = mcp_oauth_clients_table or "agno_mcp_oauth_clients"
         self.mcp_oauth_transactions_table_name = mcp_oauth_transactions_table or "agno_mcp_oauth_transactions"
@@ -451,6 +453,7 @@ class BaseDb(ABC):
             "approvals_table": self.approvals_table_name,
             "auth_tokens_table": self.auth_tokens_table_name,
             "service_accounts_table": self.service_accounts_table_name,
+            "skills_table": self.skills_table_name,
             "mcp_oauth_clients_table": self.mcp_oauth_clients_table_name,
             "mcp_oauth_transactions_table": self.mcp_oauth_transactions_table_name,
             "mcp_oauth_codes_table": self.mcp_oauth_codes_table_name,
@@ -482,6 +485,7 @@ class BaseDb(ABC):
             approvals_table=data.get("approvals_table"),
             auth_tokens_table=data.get("auth_tokens_table"),
             service_accounts_table=data.get("service_accounts_table"),
+            skills_table=data.get("skills_table"),
             mcp_oauth_clients_table=data.get("mcp_oauth_clients_table"),
             mcp_oauth_transactions_table=data.get("mcp_oauth_transactions_table"),
             mcp_oauth_codes_table=data.get("mcp_oauth_codes_table"),
@@ -2348,6 +2352,55 @@ class BaseDb(ABC):
         """Delete one subpath, or the main transcript and all subpaths."""
         raise NotImplementedError
 
+    # --- Skills (Optional) ---
+    # These methods are optional. Override in subclasses to enable skills persistence.
+
+    def get_skill(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a skill by name, including its content. user_id optionally scopes to an owner."""
+        raise NotImplementedError(f"{type(self).__name__} does not implement get_skill")
+
+    def get_skills(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List skills, metadata only; user_id optionally scopes to an owner.
+
+        Returns:
+            Tuple of (skills, total_count)
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not implement get_skills")
+
+    def get_skills_with_content(
+        self,
+        names: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
+        include_shared: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Get full skill rows, content included, for every skill or a named subset.
+
+        With include_shared=True the read is shared (no-owner) rows plus user_id's own.
+        Errors propagate, so a caller can tell a failed read from an empty table."""
+        raise NotImplementedError(f"{type(self).__name__} does not implement get_skills_with_content")
+
+    def create_skill(self, skill_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new skill. Raises SkillError if a skill with the same name exists."""
+        raise NotImplementedError(f"{type(self).__name__} does not implement create_skill")
+
+    def update_skill(
+        self, name: str, expected_version: int, *, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a skill by name when the stored version matches expected_version, bumping it by one.
+
+        Returns None when no row matched. user_id is a predicate on which row may be updated,
+        never a written value, so a scoped update cannot reassign the owner."""
+        raise NotImplementedError(f"{type(self).__name__} does not implement update_skill")
+
+    def delete_skill(self, name: str, user_id: Optional[str] = None) -> bool:
+        """Delete a skill by name. user_id optionally scopes to an owner. Returns True if deleted."""
+        raise NotImplementedError(f"{type(self).__name__} does not implement delete_skill")
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -2372,6 +2425,7 @@ class AsyncBaseDb(ABC):
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
+        skills_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -2415,6 +2469,7 @@ class AsyncBaseDb(ABC):
         self.authz_users_table_name = "agno_authz_users"
         self.authz_audit_table_name = "agno_authz_audit"
         self.authz_decisions_table_name = "agno_authz_decisions"
+        self.skills_table_name = skills_table or "agno_skills"
 
         # Async adapters cannot create component config/link tables yet, but
         # the FK dependency map needs their configured names.
@@ -3846,3 +3901,52 @@ class AsyncBaseDb(ABC):
     ) -> None:
         """Delete one subpath, or the main transcript and all subpaths."""
         raise NotImplementedError
+
+    # --- Skills (Optional) ---
+    # These methods are optional. Override in subclasses to enable skills persistence.
+
+    async def get_skill(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a skill by name, including its content. user_id optionally scopes to an owner."""
+        raise NotImplementedError(f"{type(self).__name__} does not implement get_skill")
+
+    async def get_skills(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List skills, metadata only; user_id optionally scopes to an owner.
+
+        Returns:
+            Tuple of (skills, total_count)
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not implement get_skills")
+
+    async def get_skills_with_content(
+        self,
+        names: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
+        include_shared: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Get full skill rows, content included, for every skill or a named subset.
+
+        With include_shared=True the read is shared (no-owner) rows plus user_id's own.
+        Errors propagate, so a caller can tell a failed read from an empty table."""
+        raise NotImplementedError(f"{type(self).__name__} does not implement get_skills_with_content")
+
+    async def create_skill(self, skill_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new skill. Raises SkillError if a skill with the same name exists."""
+        raise NotImplementedError(f"{type(self).__name__} does not implement create_skill")
+
+    async def update_skill(
+        self, name: str, expected_version: int, *, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a skill by name when the stored version matches expected_version, bumping it by one.
+
+        Returns None when no row matched. user_id is a predicate on which row may be updated,
+        never a written value, so a scoped update cannot reassign the owner."""
+        raise NotImplementedError(f"{type(self).__name__} does not implement update_skill")
+
+    async def delete_skill(self, name: str, user_id: Optional[str] = None) -> bool:
+        """Delete a skill by name. user_id optionally scopes to an owner. Returns True if deleted."""
+        raise NotImplementedError(f"{type(self).__name__} does not implement delete_skill")
