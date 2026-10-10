@@ -4986,17 +4986,18 @@ def _sync_team_run_response_with_model_response(
     in :mod:`agno.team._response`.
     """
     if model_response.tool_executions is not None:
-        existing_child_run_ids = {
-            tool.tool_call_id: tool.child_run_id
-            for tool in (run_response.tools or [])
-            if tool.tool_call_id is not None and tool.child_run_id is not None
-        }
-        new_tools = list(model_response.tool_executions)
-        if existing_child_run_ids:
-            for tool in new_tools:
-                if tool.child_run_id is None and tool.tool_call_id in existing_child_run_ids:
-                    tool.child_run_id = existing_child_run_ids[tool.tool_call_id]
-        run_response.tools = new_tools
+        if run_response.tools is None:
+            run_response.tools = list(model_response.tool_executions)
+        else:
+            existing_by_id = {tool.tool_call_id: i for i, tool in enumerate(run_response.tools) if tool.tool_call_id}
+            for tool in model_response.tool_executions:
+                if tool.tool_call_id and tool.tool_call_id in existing_by_id:
+                    index = existing_by_id[tool.tool_call_id]
+                    if tool.child_run_id is None and run_response.tools[index].child_run_id is not None:
+                        tool.child_run_id = run_response.tools[index].child_run_id
+                    run_response.tools[index] = tool
+                else:
+                    run_response.tools.append(tool)
     run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
 
 
