@@ -50,7 +50,11 @@ persisted chat history to the prompt so context is not lost.
 
 ## Retries
 
-With the durable job queue, the queue retries a job and this setting retries attempts inside one job, so set one of them rather than both unless you want the product of the two. A streamed run that is retried emits a `retry` warning event before the new attempt, so clients know the output before it came from the failed attempt.
+`CodexAgent` takes `retries`, `delay_between_retries` and `exponential_backoff`, the same settings an Agno `Agent` takes. A failed attempt is retried with the same run id and resumes the Codex thread the failed attempt started. Errors that would fail again are not retried: session budget and usage limits, context window overflows, authentication, bad requests and policy blocks. Cancelled runs are not retried.
+
+- **Combined budget with the job queue.** The durable queue retries a job up to its `max_attempts`, and this setting retries attempts inside each job, so Codex can be invoked up to `max_attempts × (retries + 1)` times for one run. Set one of the two unless you want that product. An error the agent classifies as permanent is marked on the run, and the queue fails the job at once instead of re-driving it.
+- **Streaming clients see the failed attempt's output first.** The stream emits a warning event with `type: "retry"` between the failed attempt's events and the new attempt's. Treat everything before that event as superseded. The final `RunCompleted` content and the stored run hold only the last attempt's answer; tool calls from every attempt are kept because they ran.
+- **Tools are not exactly-once.** The retry resumes the same thread and re-sends the prompt, so Codex sees what the failed attempt did but may run a command again. A command that completed before the failure is not undone. Make tools idempotent or keep `retries=0` where a repeated side effect would be harmful.
 
 ## Sandbox and approvals
 

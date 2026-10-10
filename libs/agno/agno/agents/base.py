@@ -694,6 +694,12 @@ class BaseExternalAgent:
         override this for errors that fail the same way every time or would bypass a limit."""
         return not isinstance(error, ImportError)
 
+    def _failure_metadata(self, error: Exception) -> Dict[str, Any]:
+        """Recorded on a run that ends in error. The durable job queue reads ``retryable`` so a
+        failure that would repeat (a limit, authentication, billing, a bad request) fails the job
+        at once instead of being re-driven for every remaining queue attempt."""
+        return {"retryable": self._is_retryable_error(error), "error_type": error_type_of(error)}
+
     def _should_retry(self, error: Exception, attempt: int, num_attempts: int) -> bool:
         if attempt >= num_attempts - 1:
             return False
@@ -1160,6 +1166,7 @@ class BaseExternalAgent:
                 RunStatus.error,
                 tools=list(carried_tools.values()) or None,
             )
+            run_output.metadata = self._failure_metadata(error)
         self._finish_run_output(run_output, run_state, continuation)
         if session is not None:
             await self._apersist_run_in_session(session, run_output)
@@ -1234,6 +1241,8 @@ class BaseExternalAgent:
         )
         if warnings:
             run.metadata = {"warnings": warnings}
+        if run_error is not None:
+            run.metadata = {**(run.metadata or {}), **self._failure_metadata(run_error)}
         self._finish_run_output(run, run_state, continuation)
         if session is not None:
             await self._apersist_run_in_session(session, run)

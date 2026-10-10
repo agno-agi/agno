@@ -702,6 +702,7 @@ def test_non_stream_retry_keeps_the_failed_turns_tool_calls(fake_sdk, tmp_db, mo
 class CodexErrorInfoValue(str, Enum):
     usage_limit_exceeded = "usageLimitExceeded"
     server_overloaded = "serverOverloaded"
+    unauthorized = "unauthorized"
 
 
 @pytest.mark.parametrize(
@@ -739,6 +740,39 @@ def test_retry_skips_limits_and_permanent_turn_errors(fake_sdk, monkeypatch, inf
     else:
         assert agent.run("go").status == RunStatus.error
     assert len(turns) == (3 if retried else 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    "info, redriven",
+    [(CodexErrorInfoValue.unauthorized, False), (CodexErrorInfoValue.server_overloaded, True)],
+    ids=["unauthorized", "overloaded"],
+)
+async def test_queue_does_not_redrive_permanent_codex_errors(fake_sdk, tmp_db, monkeypatch, info, redriven, stream):
+    """The queue's own attempts stop at a failure the agent classified as permanent."""
+    from ._queue_harness import run_through_queue
+
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db, retries=0)
+    turns: List[int] = []
+
+    async def run_failing(self):
+        turns.append(1)
+        error = SimpleNamespace(message="turn failed", codex_error_info=info)
+        return SimpleNamespace(final_response=None, items=[], status="failed", error=error, usage=None)
+
+    async def stream_failing(self):
+        turns.append(1)
+        yield _turn_completed("failed", error="turn failed", info=info)
+
+    monkeypatch.setattr(FakeHandle, "run", run_failing)
+    monkeypatch.setattr(FakeHandle, "stream", stream_failing)
+    job = await run_through_queue(agent, stream=stream, max_attempts=3)
+    assert job["status"] == "failed"
+    assert job["attempt"] == (3 if redriven else 1)
+    assert len(turns) == job["attempt"]
+    run = await agent.aget_run_output(job["id"], "s")
+    assert run.status == RunStatus.error and run.metadata["retryable"] is redriven
 
 
 @pytest.mark.parametrize("code, retried", [(-32602, False), (-32600, False), (-32001, True)])

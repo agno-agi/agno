@@ -23,7 +23,11 @@ The `agno_transcripts` table is created on first use. A development database tha
 
 `ClaudeAgent` takes `retries`, `delay_between_retries` and `exponential_backoff`, the same settings an Agno `Agent` takes. A failed run is retried with the same run id and resumes the SDK session the failed attempt started, so Claude sees the work already done. Errors that would fail again are not retried: `max_turns` and `max_budget_usd` limits, authentication and billing errors, and invalid requests. Cancelled runs are not retried, and cancelling during the backoff wait ends the run.
 
-With the durable job queue, the queue retries a job and this setting retries attempts inside one job, so set one of them rather than both unless you want the product of the two.
+Three things to know before turning retries on:
+
+- **Combined budget with the job queue.** The durable queue retries a job up to its `max_attempts`, and this setting retries attempts inside each job, so the SDK can be invoked up to `max_attempts × (retries + 1)` times for one run. Set one of the two unless you want that product. An error the agent classifies as permanent (limits, authentication, billing, invalid requests) is marked on the run, and the queue fails the job at once instead of re-driving it.
+- **Streaming clients see the failed attempt's output first.** The events of a failed attempt have already been sent when the retry starts. The stream then emits a warning event with `type: "retry"` and the new attempt's events follow. Treat everything before that event as superseded: either discard it or label it as a failed attempt. The final `RunCompleted` content and the stored run hold only the last attempt's answer; tool calls from every attempt are kept because they ran.
+- **Tools are not exactly-once.** The retry resumes the same SDK session and re-sends the prompt, so Claude sees what the failed attempt did but may run a tool again. A tool that completed before the failure is not undone. Make tools idempotent or keep `retries=0` where a repeated side effect would be harmful.
 
 `claude_retries.py` makes the failure happen on purpose so the retry can be watched: it cuts the first attempt off with a simulated transient error after Claude has answered, then shows the retry resuming the same SDK session, a run that exhausts its retries, a `max_turns` limit that is not retried, and the default of no retries.
 

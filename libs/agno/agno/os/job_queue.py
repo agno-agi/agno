@@ -1043,7 +1043,11 @@ class QueueWorker:
             # would close cleanly and the client would never see the retry's
             # output. Leave the stream open; the retry attempt continues it
             # (dead-producer TTL detection bounds the wait if no retry comes).
-            will_retry = status == RunStatus.error and job.get("attempt", 1) < job.get("max_attempts", 1)
+            will_retry = (
+                status == RunStatus.error
+                and job.get("attempt", 1) < job.get("max_attempts", 1)
+                and not self._run_is_not_retryable(final_output)
+            )
             if not will_retry:
                 with contextlib.suppress(Exception):
                     await asyncio.shield(event_stream.complete_run(job_id, status, generation=stream_generation))
@@ -1243,6 +1247,13 @@ class QueueWorker:
             return 0  # explicit no-backoff configuration (tests, dev loops)
         ceiling = min(base * (2 ** max(0, attempt - 1)), base * 10)
         return random.randint(0, ceiling)
+
+    @staticmethod
+    def _run_is_not_retryable(run: Any) -> bool:
+        """A run row whose component marked the failure as one that would repeat
+        (``metadata["retryable"] is False``, set by external agents from their error classification)."""
+        metadata = getattr(run, "metadata", None)
+        return isinstance(metadata, dict) and metadata.get("retryable") is False
 
     @staticmethod
     def _is_permanent_failure(exc: BaseException, continuation_component: Optional[str] = None) -> bool:
@@ -1730,7 +1741,17 @@ class QueueWorker:
                 await self._asettle_ticket(job_id, attempt, "cancelled")
             elif status == RunStatus.error:
                 error_content = str(getattr(result, "content", "") or "run errored")
-                await self._aretry_or_fail_ticket(job_id, attempt, error_content, self._retry_delay(attempt))
+                if self._run_is_not_retryable(result):
+                    # The component already classified this failure as one that repeats
+                    # (a limit, authentication, billing, a bad request): re-driving it would
+                    # spend the remaining attempts on the same error.
+                    log_warning(
+                        f"Job queue: run {job_id} failed with a non-retryable error; "
+                        f"failing the ticket without retry: {error_content}"
+                    )
+                    await self._asettle_ticket(job_id, attempt, "failed", error_content)
+                else:
+                    await self._aretry_or_fail_ticket(job_id, attempt, error_content, self._retry_delay(attempt))
             else:
                 await self._asettle_ticket(job_id, attempt, "completed")
         except asyncio.CancelledError:

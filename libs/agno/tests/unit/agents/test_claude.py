@@ -593,6 +593,41 @@ def test_retry_skips_limits_and_permanent_errors(fake_sdk, monkeypatch, failure,
     assert len(attempts) == (3 if retried else 1)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    "failure, redriven",
+    [
+        (ResultMessage("sdk-1", "", subtype="error_max_turns", is_error=True), False),
+        (ResultMessage("sdk-1", "API Error: 401", is_error=True, api_error_status=401), False),
+        (AssistantMessage(content=[], error="billing_error"), False),
+        (ResultMessage("sdk-1", "API Error: 529 Overloaded", is_error=True, api_error_status=529), True),
+    ],
+    ids=["max_turns", "authentication", "billing", "overloaded"],
+)
+async def test_queue_does_not_redrive_permanent_claude_errors(fake_sdk, tmp_db, monkeypatch, failure, redriven, stream):
+    """The queue's own attempts stop at a failure the agent classified as permanent."""
+    from ._queue_harness import run_through_queue
+
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, retries=0)
+    attempts: List[Any] = []
+
+    async def failing(prompt, options):
+        attempts.append(options.resume)
+        yield SystemMessage("init", {"session_id": "sdk-1"})
+        yield failure
+        if isinstance(failure, AssistantMessage):
+            yield ResultMessage("sdk-1", "API Error: billing", is_error=True)
+
+    monkeypatch.setattr(claude_module._sdk(), "query", failing)
+    job = await run_through_queue(agent, stream=stream, max_attempts=3)
+    assert job["status"] == "failed"
+    assert job["attempt"] == (3 if redriven else 1)
+    assert len(attempts) == job["attempt"]
+    run = await agent.aget_run_output(job["id"], "s")
+    assert run.status == RunStatus.error and run.metadata["retryable"] is redriven
+
+
 # ---------------------------------------------------------------------------
 # Continue from a message boundary
 # ---------------------------------------------------------------------------

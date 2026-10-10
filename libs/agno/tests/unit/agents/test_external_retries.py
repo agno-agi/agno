@@ -216,3 +216,39 @@ def test_stream_retry_announces_the_retry_to_the_consumer():
     assert isinstance(events[position - 1], ToolCallCompletedEvent) and events[position + 1].content == "partial 2 "
     run = events[-1]
     assert run.metadata["warnings"] == [warning]
+
+
+@dataclass
+class PermanentAgent(FlakyAgent):
+    """Every failure is classified as one that would repeat."""
+
+    def _is_retryable_error(self, error: Exception) -> bool:
+        return False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("permanent", [True, False], ids=["permanent", "transient"])
+async def test_queue_fails_a_permanent_failure_without_redriving_it(tmp_path, stream, permanent):
+    from agno.db.sqlite import SqliteDb
+    from ._queue_harness import run_through_queue
+
+    agent_cls = PermanentAgent if permanent else FlakyAgent
+    agent = agent_cls(id="flaky", db=SqliteDb(db_file=str(tmp_path / "runs.db")), failures=5)
+
+    job = await run_through_queue(agent, stream=stream, max_attempts=3)
+
+    assert job["status"] == "failed"
+    assert job["attempt"] == (1 if permanent else 3), "a permanent failure is not re-driven by the queue"
+    assert len(agent.attempts) == job["attempt"]
+    run = await agent.aget_run_output(job["id"], "s")
+    assert run.status == RunStatus.error
+    assert run.metadata["retryable"] is (not permanent)
+    assert run.metadata["error_type"]
+
+
+def test_error_runs_record_retryability():
+    permanent = PermanentAgent(id="p", failures=5).run("go")
+    assert permanent.status == RunStatus.error and permanent.metadata["retryable"] is False
+    transient = FlakyAgent(id="t", failures=5).run("go")
+    assert transient.status == RunStatus.error and transient.metadata["retryable"] is True
