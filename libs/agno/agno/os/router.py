@@ -280,6 +280,10 @@ def get_info_router(os: "AgentOS") -> APIRouter:
             provider = os._get_mcp_auth_provider()
             if provider is not None:
                 mcp_oauth = McpOAuthInfo(**describe_mcp_auth(provider))
+        # The transport path is configurable, so report the one this deployment actually
+        # serves -- a client builds the card and tool-runner URLs from it.
+        mcp_config = getattr(os, "mcp_config", None)
+        mcp_path = (mcp_config.path if mcp_config is not None else None) or "/mcp"
         return InfoResponse(
             os_id=os.id or "Unnamed OS",
             name=os.name,
@@ -288,7 +292,11 @@ def get_info_router(os: "AgentOS") -> APIRouter:
             agent_count=len(public_selection["agents"] if public_selection is not None else os.agents or []),
             team_count=len(public_selection["teams"] if public_selection is not None else os.teams or []),
             workflow_count=len(public_selection["workflows"] if public_selection is not None else os.workflows or []),
-            mcp=McpInfo(enabled=mcp_enabled, path="/mcp" if mcp_enabled else None, oauth=mcp_oauth),
+            mcp=McpInfo(
+                enabled=mcp_enabled,
+                path=mcp_path if mcp_enabled else None,
+                oauth=mcp_oauth,
+            ),
             auth_mode=get_effective_auth_mode(
                 settings=os.settings,
                 authorization=os.authorization,
