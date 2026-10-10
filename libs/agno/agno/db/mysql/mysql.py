@@ -1,7 +1,7 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -11,29 +11,51 @@ from agno.db.base import BaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.mysql.schemas import get_table_schema_definition
 from agno.db.mysql.utils import (
+    OS_METRICS_IN_LIST_LIMIT,
     apply_sorting,
+    build_os_metrics_runs,
+    build_os_metrics_runs_query,
+    build_os_metrics_total_dates_query,
+    build_os_metrics_totals,
+    build_os_metrics_totals_queries,
     bulk_upsert_metrics,
+    bulk_upsert_os_metrics,
     calculate_date_metrics,
     create_schema,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    get_stored_os_metrics_state,
     is_table_available,
     is_valid_table,
+    os_metrics_lock_name,
+    update_os_metrics_state,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
     HISTORY_SKIP_STATUSES,
+    OS_METRICS_DAY_PERIODS,
+    OS_METRICS_STATE_ID,
     SessionRunObjectCache,
     build_single_run_row,
+    calculate_date_os_metrics,
+    calculate_month_os_metrics,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
     filter_context_runs,
+    get_months_to_calculate_os_metrics_for,
     json_serializer,
+    merge_os_metrics_totals,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
+    os_metrics_dates_to_read,
+    os_metrics_full_months,
+    os_metrics_month_end,
+    os_metrics_rows_to_write,
+    os_metrics_state_of,
+    resolve_os_metrics_fields,
     run_index_lock_name,
     table_schema_mismatch_error,
     validate_pagination,
@@ -49,7 +71,7 @@ from agno.utils.string import generate_id
 try:
     from sqlalchemy import TEXT, ForeignKey, Index, UniqueConstraint, and_, cast, func, or_, update
     from sqlalchemy.dialects import mysql
-    from sqlalchemy.engine import Engine, create_engine
+    from sqlalchemy.engine import Connection, Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
     from sqlalchemy.schema import Column, MetaData, Table
     from sqlalchemy.sql.expression import select, text
@@ -68,6 +90,7 @@ class MySQLDb(BaseDb):
         runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
+        os_metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
@@ -92,6 +115,7 @@ class MySQLDb(BaseDb):
             runs_table (Optional[str]): Name of the table to store the runs of each session.
             memory_table (Optional[str]): Name of the table to store memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
+            os_metrics_table (Optional[str]): Name of the table to store OS metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
             traces_table (Optional[str]): Name of the table to store run traces.
@@ -116,6 +140,7 @@ class MySQLDb(BaseDb):
             runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
+            os_metrics_table=os_metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             traces_table=traces_table,
@@ -143,6 +168,9 @@ class MySQLDb(BaseDb):
         # contract. Per adapter instance, so it can never serve runs across
         # databases.
         self._run_object_cache = SessionRunObjectCache()
+
+        # Zero means never refreshed; get_os_metrics uses this to refresh lazily, at most once per minute
+        self._os_metrics_refreshed_at: float = 0.0
 
     def close(self) -> None:
         """Close database connections and dispose of the connection pool.
@@ -312,6 +340,7 @@ class MySQLDb(BaseDb):
             (self.runs_table_name, "runs"),
             (self.memory_table_name, "memories"),
             (self.metrics_table_name, "metrics"),
+            (self.os_metrics_table_name, "os_metrics"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
             (self.trace_table_name, "traces"),
@@ -359,6 +388,14 @@ class MySQLDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.metrics_table
+
+        if table_type == "os_metrics":
+            self.os_metrics_table = self._get_or_create_table(
+                table_name=self.os_metrics_table_name,
+                table_type="os_metrics",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.os_metrics_table
 
         if table_type == "evals":
             self.eval_table = self._get_or_create_table(
@@ -2100,7 +2137,10 @@ class MySQLDb(BaseDb):
             # be rebuilt
             latest_completed = sess.execute(select(func.max(table.c.date)).where(table.c.completed.is_(True))).scalar()
 
-            incomplete_stmt = select(func.min(table.c.date)).where(table.c.completed.is_(False))
+            # The state row of the OS metrics table is no day
+            incomplete_stmt = select(func.min(table.c.date)).where(
+                table.c.completed.is_(False), table.c.aggregation_period != OS_METRICS_STATE_ID
+            )
             if latest_completed is not None:
                 incomplete_stmt = incomplete_stmt.where(table.c.date > latest_completed)
             earliest_incomplete = sess.execute(incomplete_stmt).scalar()
@@ -2243,6 +2283,427 @@ class MySQLDb(BaseDb):
         except Exception as e:
             log_error(f"Exception getting metrics: {str(e)}")
             return [], None
+
+    # -- OS metrics methods --
+    def calculate_os_metrics(self) -> Optional[List[Dict[str, Any]]]:
+        """Calculate OS metrics for all dates without complete OS metrics.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: The calculated OS metrics.
+
+        Raises:
+            Exception: If an error occurs during OS metrics calculation.
+        """
+        try:
+            return self._calculate_os_metrics(wait_for_rebuild=True)
+
+        except Exception as e:
+            log_error(f"Exception refreshing OS metrics: {str(e)}")
+            raise e
+
+    def refresh_os_metrics(self) -> Tuple[Optional[int], Optional[int], bool]:
+        """Calculate OS metrics for all dates without complete OS metrics, and report whether any row changed.
+
+        Returns:
+            Tuple[Optional[int], Optional[int], bool]: When the OS metrics were last updated before the
+                calculation and after it, and whether it wrote or deleted any row.
+
+        Raises:
+            Exception: If an error occurs during OS metrics calculation.
+        """
+        try:
+            table = self._get_table(table_type="os_metrics", create_table_if_not_found=True)
+            if table is None:
+                return None, None, False
+
+            # The state row is stamped when it is written, a time no row of a day reports
+            updated_at_stmt = select(func.max(table.c.updated_at)).where(
+                table.c.aggregation_period != OS_METRICS_STATE_ID
+            )
+            with self.Session() as sess:
+                previous_updated_at = sess.execute(updated_at_stmt).scalar()
+
+            changed_ids: List[str] = []
+            self._calculate_os_metrics(wait_for_rebuild=True, changed_ids=changed_ids)
+
+            with self.Session() as sess:
+                latest_updated_at = sess.execute(updated_at_stmt).scalar()
+
+            return previous_updated_at, latest_updated_at, bool(changed_ids)
+
+        except Exception as e:
+            log_error(f"Exception refreshing OS metrics: {str(e)}")
+            raise e
+
+    def _calculate_os_metrics(
+        self, wait_for_rebuild: bool, changed_ids: Optional[List[str]] = None
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Calculate OS metrics for all dates without complete OS metrics.
+
+        Args:
+            wait_for_rebuild (bool): Wait for a rebuild another process is running. When False, skip instead.
+            changed_ids (Optional[List[str]]): When given, the ids of the rows deleted and of the calculated
+                rows written are added to it.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: The calculated OS metrics.
+        """
+        # Stamp first so failed runs are throttled too instead of retried on every read
+        self._os_metrics_refreshed_at = time.time()
+
+        table = self._get_table(table_type="os_metrics", create_table_if_not_found=True)
+        if table is None:
+            return None
+
+        starting_date = self._get_metrics_calculation_starting_date(table)
+        if starting_date is None:
+            log_info("No session data found. Won't calculate OS metrics.")
+            return None
+
+        dates_to_process = get_dates_to_calculate_metrics_for(starting_date)
+        if not dates_to_process:
+            log_info("OS metrics already calculated for all relevant dates.")
+            return None
+
+        sessions_table = self._get_table(table_type="sessions")
+        if sessions_table is None:
+            return None
+        runs_table = self._get_table(table_type="runs")
+
+        results = []
+        lock_name = os_metrics_lock_name(table.fullname)
+        # GET_LOCK is connection-scoped, so the lock, every day's transaction and the release share one connection
+        with self.db_engine.connect() as conn:
+            # The lock survives COMMIT, so it is released in the finally below
+            acquired = conn.execute(
+                text("SELECT GET_LOCK(:name, :timeout)"), {"name": lock_name, "timeout": -1 if wait_for_rebuild else 0}
+            ).scalar()
+            conn.commit()
+            if not acquired:
+                # Reset the throttle so the next read tries again
+                self._os_metrics_refreshed_at = 0.0
+                log_debug("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                return None
+
+            try:
+                for date_to_process in dates_to_process:
+                    # Each day is its own transaction, so a failed day never holds back the days before it
+                    with self.Session.session_factory(bind=conn) as sess, sess.begin():
+                        # Skip a day a rebuild this one waited for has completed
+                        latest_completed = sess.execute(
+                            select(func.max(table.c.date)).where(table.c.completed.is_(True))
+                        ).scalar()
+                        if latest_completed is not None and date_to_process <= latest_completed:
+                            continue
+
+                        start_timestamp = int(
+                            datetime.combine(date_to_process, datetime.min.time())
+                            .replace(tzinfo=timezone.utc)
+                            .timestamp()
+                        )
+                        end_timestamp = int(
+                            datetime.combine(date_to_process + timedelta(days=1), datetime.min.time())
+                            .replace(tzinfo=timezone.utc)
+                            .timestamp()
+                        )
+
+                        sessions_stmt = select(
+                            sessions_table.c.session_type,
+                            sessions_table.c.user_id,
+                            sessions_table.c.agent_id,
+                            sessions_table.c.team_id,
+                            sessions_table.c.workflow_id,
+                        ).where(
+                            sessions_table.c.created_at >= start_timestamp, sessions_table.c.created_at < end_timestamp
+                        )
+                        result = sess.execute(sessions_stmt).fetchall()
+                        sessions = [dict(record._mapping) for record in result]
+
+                        runs: List[Dict[str, Any]] = []
+                        stored_run_ids: Set[str] = set()
+                        if runs_table is not None:
+                            result = sess.execute(
+                                build_os_metrics_runs_query(runs_table, start_timestamp, end_timestamp)
+                            ).fetchall()
+                            runs, nested_run_ids = build_os_metrics_runs(result)
+
+                            # A nested run also stored as a run of its own is counted from that row, whatever day it is on
+                            run_ids = sorted(nested_run_ids)
+                            for start in range(0, len(run_ids), OS_METRICS_IN_LIST_LIMIT):
+                                stored_stmt = select(runs_table.c.run_id).where(
+                                    runs_table.c.run_id.in_(run_ids[start : start + OS_METRICS_IN_LIST_LIMIT])
+                                )
+                                result = sess.execute(stored_stmt).fetchall()
+                                stored_run_ids.update(record.run_id for record in result)
+
+                        records = calculate_date_os_metrics(date_to_process, sessions, runs, stored_run_ids)
+                        # A month row is dated the first day of its month, and is no row of that day
+                        result = sess.execute(
+                            select(table).where(
+                                table.c.date == date_to_process, table.c.aggregation_period.in_(OS_METRICS_DAY_PERIODS)
+                            )
+                        ).fetchall()
+                        stored_rows = [dict(record._mapping) for record in result]
+
+                        changed_rows, stale_ids = os_metrics_rows_to_write(records, stored_rows)
+                        for start in range(0, len(stale_ids), OS_METRICS_IN_LIST_LIMIT):
+                            sess.execute(
+                                table.delete().where(
+                                    table.c.id.in_(stale_ids[start : start + OS_METRICS_IN_LIST_LIMIT])
+                                )
+                            )
+                        bulk_upsert_os_metrics(session=sess, table=table, os_metrics_records=changed_rows)
+                        # The state moves in the day's transaction, so it is never read without the rows it tells of
+                        if changed_rows or stale_ids:
+                            update_os_metrics_state(
+                                session=sess,
+                                table=table,
+                                changed_rows=changed_rows,
+                                stale_ids=stale_ids,
+                                day=date_to_process,
+                            )
+                        results.extend(records)
+                        if changed_ids is not None:
+                            changed_ids.extend([*stale_ids, *(row["id"] for row in changed_rows)])
+
+                month_rows = self._calculate_month_os_metrics(table, conn)
+                if changed_ids is not None:
+                    changed_ids.extend(row["id"] for row in month_rows)
+            finally:
+                try:
+                    conn.execute(text("SELECT RELEASE_LOCK(:name)"), {"name": lock_name})
+                except Exception:
+                    # A closed connection frees its named locks, and is never handed out with one held
+                    conn.invalidate()
+
+        log_debug("Updated OS metrics calculations")
+
+        return results
+
+    def _calculate_month_os_metrics(self, table: Table, conn: Connection) -> List[Dict[str, Any]]:
+        """Calculate the month rows of every completed month that has none.
+
+        A completed month gets its month rows once, whichever rebuild completed its days. They are written
+        after the days' own transactions, so a month that fails to calculate never holds back the rows of a day.
+
+        Args:
+            table (Table): The OS metrics table.
+            conn (Connection): The connection that holds the rebuild lock.
+
+        Returns:
+            List[Dict[str, Any]]: The month rows written.
+        """
+        results = []
+        with self.Session.session_factory(bind=conn) as sess, sess.begin():
+            total_dates = sess.execute(
+                build_os_metrics_total_dates_query(table, ["daily_total", "monthly_total"])
+            ).fetchall()
+            total_days = [record.date for record in total_dates if record.aggregation_period == "daily_total"]
+            calculated_months = [record.date for record in total_dates if record.aggregation_period == "monthly_total"]
+            for month_start in get_months_to_calculate_os_metrics_for(total_days, calculated_months):
+                result = sess.execute(
+                    select(table).where(
+                        table.c.date >= month_start,
+                        table.c.date <= os_metrics_month_end(month_start),
+                        table.c.aggregation_period == "daily",
+                    )
+                ).fetchall()
+                stored_rows = [dict(record._mapping) for record in result]
+
+                month_rows = calculate_month_os_metrics(month_start, stored_rows)
+                bulk_upsert_os_metrics(session=sess, table=table, os_metrics_records=month_rows)
+                results.extend(month_rows)
+            if results:
+                update_os_metrics_state(session=sess, table=table, changed_rows=results, stale_ids=[])
+
+        return results
+
+    def get_os_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Get the OS metrics totals of each day in the given date range.
+
+        OS metrics are refreshed lazily, at most once per minute per process.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each day, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_os_metrics_fields(fields)
+
+            # Refresh at most once per minute per process
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    self._calculate_os_metrics(wait_for_rebuild=False)
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            table = self._get_table(table_type="os_metrics", create_table_if_not_found=True)
+            if table is None:
+                return [], None
+
+            return self._get_os_metrics_totals_by_date(table, starting_date, ending_date, user_id, fields)
+
+        except Exception as e:
+            log_error(f"Exception getting OS metrics: {str(e)}")
+            raise e
+
+    def get_os_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """Get the OS metrics totals of the whole given date range.
+
+        OS metrics are refreshed lazily, as in get_os_metrics.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[Dict[str, Any], Optional[int]]: The totals of the date range, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_os_metrics_fields(fields)
+
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    self._calculate_os_metrics(wait_for_rebuild=False)
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            table = self._get_table(table_type="os_metrics", create_table_if_not_found=True)
+            if table is None:
+                return merge_os_metrics_totals([], fields), None
+
+            totals, latest_updated_at = self._get_os_metrics_totals_by_date(
+                table, starting_date, ending_date, user_id, fields, use_month_rows=True
+            )
+            return merge_os_metrics_totals(totals, fields), latest_updated_at
+
+        except Exception as e:
+            log_error(f"Exception getting OS metrics totals: {str(e)}")
+            raise e
+
+    def get_os_metrics_state(self, ending_date: Optional[date] = None) -> Tuple[Optional[int], str]:
+        """Get when any OS metrics row was last written or deleted, and the hash of the state.
+
+        OS metrics are refreshed lazily, as in get_os_metrics.
+
+        Args:
+            ending_date (Optional[date]): The last day that is read. When it is a completed day, the state of
+                the rows of completed days is returned, which a day still open does not move.
+
+        Returns:
+            Tuple[Optional[int], str]: When any row was last written or deleted, and the hash of the state. Both
+                are the same again only while no rebuild wrote or deleted a row.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    self._calculate_os_metrics(wait_for_rebuild=False)
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            table = self._get_table(table_type="os_metrics", create_table_if_not_found=True)
+            if table is None:
+                return None, ""
+
+            with self.Session() as sess:
+                return os_metrics_state_of(get_stored_os_metrics_state(session=sess, table=table), ending_date)
+
+        except Exception as e:
+            log_error(f"Exception getting OS metrics state: {str(e)}")
+            raise e
+
+    def _get_os_metrics_totals_by_date(
+        self,
+        table: Table,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str],
+        fields: List[str],
+        use_month_rows: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Total the OS metrics of the given date range, every day from one period.
+
+        Args:
+            table (Table): The OS metrics table.
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner.
+            fields (List[str]): The columns to total.
+            use_month_rows (bool): Total a calendar month inside the date range from its month rows, as one date.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
+        """
+        aggregation_periods = []
+        if user_id is None:
+            aggregation_periods.append("daily_total")
+        if use_month_rows and os_metrics_full_months(starting_date, ending_date):
+            aggregation_periods.append("monthly_total")
+
+        month_starts: List[date] = []
+        total_days: List[date] = []
+        row_days: Optional[List[date]] = None
+        rows_by_query = {}
+        with self.Session() as sess, sess.begin():
+            if aggregation_periods:
+                total_dates = sess.execute(
+                    build_os_metrics_total_dates_query(
+                        table, aggregation_periods, starting_date=starting_date, ending_date=ending_date
+                    )
+                ).fetchall()
+                stored_total_days = {
+                    record.date for record in total_dates if record.aggregation_period == "daily_total"
+                }
+                calculated_months = {
+                    record.date for record in total_dates if record.aggregation_period == "monthly_total"
+                }
+                month_starts, total_days, row_days = os_metrics_dates_to_read(
+                    starting_date, ending_date, stored_total_days, calculated_months
+                )
+            if not month_starts and not total_days:
+                row_days = None
+            queries = build_os_metrics_totals_queries(
+                table,
+                starting_date,
+                ending_date,
+                user_id,
+                fields,
+                month_starts=month_starts,
+                total_days=total_days,
+                row_days=row_days,
+            )
+            for name, query in queries.items():
+                rows_by_query[name] = sess.execute(query).fetchall()
+
+        return build_os_metrics_totals(fields, rows_by_query)
 
     # -- Knowledge methods --
 
