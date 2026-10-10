@@ -1,6 +1,6 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Set, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -11,28 +11,45 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    build_os_metrics_state,
     build_single_run_row,
+    calculate_date_os_metrics,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
     drop_legacy_metrics,
     filter_context_runs,
+    merge_os_metrics_totals,
     merge_runs_table_with_legacy_blob,
     metric_record_day,
+    metrics_starting_date_from_days,
     metrics_starting_date_from_records,
+    os_metrics_nested_run_ids,
+    os_metrics_rows_to_write,
+    os_metrics_state_of,
+    resolve_os_metrics_fields,
+    total_os_metrics_records,
 )
 from agno.db.valkey.utils import (
+    OS_METRICS_BATCH_SIZE,
+    OS_METRICS_LOCK_SECONDS,
     apply_filters,
     apply_pagination,
     apply_sorting,
+    build_os_metrics_run,
+    build_os_metrics_session,
     calculate_date_metrics,
     create_index_entries,
     deserialize_data,
+    deserialize_os_metrics_record,
     fetch_all_sessions_data,
     generate_index_key,
     generate_valkey_key,
     get_all_keys_for_table,
     get_dates_to_calculate_metrics_for,
+    get_os_metrics_index_fields,
+    os_metrics_record_day,
+    os_metrics_record_id,
     record_matches_filter_expr,
     remove_index_entries,
     serialize_data,
@@ -43,13 +60,14 @@ from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
     from glide_sync import (
         Batch,
         ClusterBatch,
+        ConditionalChange,
         ExpirySet,
         ExpiryType,
         GlideClient,
@@ -83,6 +101,7 @@ class ValkeyDb(BaseDb):
         runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
+        os_metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
@@ -119,6 +138,7 @@ class ValkeyDb(BaseDb):
             runs_table (Optional[str]): Name of the table to store runs (one key per run)
             memory_table (Optional[str]): Name of the table to store memories
             metrics_table (Optional[str]): Name of the table to store metrics
+            os_metrics_table (Optional[str]): Name of the table to store OS metrics
             eval_table (Optional[str]): Name of the table to store evaluation runs
             knowledge_table (Optional[str]): Name of the table to store knowledge documents
             traces_table (Optional[str]): Name of the table to store traces
@@ -139,6 +159,7 @@ class ValkeyDb(BaseDb):
             runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
+            os_metrics_table=os_metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             traces_table=traces_table,
@@ -148,6 +169,9 @@ class ValkeyDb(BaseDb):
 
         self.db_prefix = db_prefix
         self.expire = expire
+
+        # Zero means never refreshed; get_os_metrics uses this to refresh lazily, at most once per minute
+        self._os_metrics_refreshed_at: float = 0.0
 
         if valkey_client is not None:
             self.valkey_client = valkey_client
@@ -199,6 +223,9 @@ class ValkeyDb(BaseDb):
 
         elif table_type == "metrics":
             return self.metrics_table_name
+
+        elif table_type == "os_metrics":
+            return self.os_metrics_table_name
 
         elif table_type == "evals":
             return self.eval_table_name
@@ -1948,6 +1975,548 @@ class ValkeyDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting metrics: {str(e)}")
+            raise e
+
+    # -- OS metrics methods --
+
+    def _os_metrics_lock_key(self) -> str:
+        """Key held by the one process calculating OS metrics. Kept out of the os_metrics keys, which hold records."""
+        return f"{self.db_prefix}:os_metrics_lock"
+
+    def _os_metrics_state_key(self) -> str:
+        """Key holding when any OS metrics record was last written or deleted, and the hash of the state."""
+        return generate_valkey_key(prefix=self.db_prefix, table_type="os_metrics", key_id="state")
+
+    def _acquire_os_metrics_lock(self, wait_for_rebuild: bool) -> Optional[str]:
+        """Take the OS metrics lock, so one process calculates OS metrics at a time.
+
+        Args:
+            wait_for_rebuild (bool): Wait for a rebuild another process is running. When False, skip instead.
+
+        Returns:
+            Optional[str]: The token the lock is held with, None when another process holds it.
+        """
+        token = str(uuid4())
+        while not self.valkey_client.set(
+            self._os_metrics_lock_key(),
+            token,
+            conditional_set=ConditionalChange.ONLY_IF_DOES_NOT_EXIST,
+            expiry=ExpirySet(ExpiryType.SEC, OS_METRICS_LOCK_SECONDS),
+        ):
+            if not wait_for_rebuild:
+                return None
+            time.sleep(0.1)
+        return token
+
+    def _extend_os_metrics_lock(self, token: str) -> bool:
+        """Hold the OS metrics lock for OS_METRICS_LOCK_SECONDS more. False when it is no longer held with the token."""
+        holder = self.valkey_client.get(self._os_metrics_lock_key())
+        # glide returns bytes, decode if needed
+        if (holder.decode("utf-8") if isinstance(holder, bytes) else holder) != token:
+            return False
+        self.valkey_client.expire(self._os_metrics_lock_key(), OS_METRICS_LOCK_SECONDS)
+        return True
+
+    def _release_os_metrics_lock(self, token: str) -> None:
+        """Release the OS metrics lock, unless it expired and another process holds it."""
+        holder = self.valkey_client.get(self._os_metrics_lock_key())
+        if (holder.decode("utf-8") if isinstance(holder, bytes) else holder) == token:
+            self.valkey_client.delete([self._os_metrics_lock_key()])
+
+    def _exec_os_metrics_pipeline(self, pipeline: Union[Batch, ClusterBatch]) -> List[Any]:
+        """Execute a batch pipeline of an OS metrics rebuild or read.
+
+        Unlike _exec_pipeline, a command that failed raises.
+        """
+        results = self._exec_pipeline(pipeline) or []
+        for result in results:
+            if isinstance(result, RequestError):
+                raise result
+        return results
+
+    def _get_records_for_os_metrics_calculation(
+        self, table_type: str, start_timestamp: int, end_timestamp: int, lock_token: str
+    ) -> Dict[date, List[Dict[str, Any]]]:
+        """Get the sessions or runs created in the given time range, with only what OS metrics count.
+
+        Unlike _get_all_records, a failed read raises, so a rebuild never writes a day without its records.
+
+        Args:
+            table_type (str): "sessions" or "runs".
+            start_timestamp (int): The start of the range, included.
+            end_timestamp (int): The end of the range, not included.
+            lock_token (str): The token the OS metrics lock is held with.
+
+        Returns:
+            Dict[date, List[Dict[str, Any]]]: The records, trimmed to what OS metrics count, by the UTC day they
+                were created on.
+        """
+        keys = get_all_keys_for_table(valkey_client=self.valkey_client, prefix=self.db_prefix, table_type=table_type)
+
+        records_by_day: Dict[date, List[Dict[str, Any]]] = {}
+        for batch_start in range(0, len(keys), OS_METRICS_BATCH_SIZE):
+            # Extend the lock with every batch, so a long read keeps it
+            self._extend_os_metrics_lock(lock_token)
+            pipeline = self._create_pipeline()
+            for key in keys[batch_start : batch_start + OS_METRICS_BATCH_SIZE]:
+                pipeline.get(key)
+            for raw in self._exec_os_metrics_pipeline(pipeline):
+                if not raw:
+                    continue
+                record = deserialize_data(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
+                created_at = record.get("created_at")
+                if created_at is None or not start_timestamp <= created_at < end_timestamp:
+                    continue
+                day = datetime.fromtimestamp(created_at, tz=timezone.utc).date()
+                records_by_day.setdefault(day, []).append(
+                    build_os_metrics_run(record) if table_type == "runs" else build_os_metrics_session(record)
+                )
+
+        return records_by_day
+
+    def _get_os_metrics_record_ids(self, index_field: str, index_values: List[str]) -> List[List[str]]:
+        """Get the IDs of the OS metrics records indexed under each of the given values of a field.
+
+        Every command reads a single key, so it works on a cluster too.
+
+        Args:
+            index_field (str): The indexed field: "date", "user_id" or "aggregation_period".
+            index_values (List[str]): The values of the field to get the record IDs of.
+
+        Returns:
+            List[List[str]]: The record IDs of each value, in the order of the values.
+        """
+        if not index_values:
+            return []
+        pipeline = self._create_pipeline()
+        for index_value in index_values:
+            pipeline.smembers(generate_index_key(self.db_prefix, "os_metrics", index_field, index_value))
+        # glide returns bytes, decode if needed
+        return [
+            [record_id.decode("utf-8") if isinstance(record_id, bytes) else record_id for record_id in record_ids or []]
+            for record_ids in self._exec_os_metrics_pipeline(pipeline)
+        ]
+
+    def _get_os_metrics_records(self, record_ids: List[str]) -> List[Dict[str, Any]]:
+        """Get the OS metrics records with the given IDs, a batch at a time.
+
+        Args:
+            record_ids (List[str]): The IDs of the records to get.
+
+        Returns:
+            List[Dict[str, Any]]: The records that exist, their date read back as a date.
+        """
+        records = []
+        for batch_start in range(0, len(record_ids), OS_METRICS_BATCH_SIZE):
+            pipeline = self._create_pipeline()
+            for record_id in record_ids[batch_start : batch_start + OS_METRICS_BATCH_SIZE]:
+                pipeline.get(generate_valkey_key(prefix=self.db_prefix, table_type="os_metrics", key_id=record_id))
+            for raw in self._exec_os_metrics_pipeline(pipeline):
+                # A record that expired is left out, as if the day did not have it
+                if not raw:
+                    continue
+                records.append(
+                    deserialize_os_metrics_record(
+                        deserialize_data(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
+                    )
+                )
+        return records
+
+    def _get_stored_os_metrics_state(self) -> Dict[str, Any]:
+        """Get the state of the OS metrics, as build_os_metrics_state builds it, from the state key."""
+        data = self.valkey_client.get(self._os_metrics_state_key())
+        if not data:
+            return {}
+        return deserialize_data(data.decode("utf-8") if isinstance(data, bytes) else data)
+
+    def _store_os_metrics_records(
+        self,
+        changed_rows: List[Dict[str, Any]],
+        stale_rows: List[Dict[str, Any]],
+        previous_state: Dict[str, Any],
+        state: Dict[str, Any],
+    ) -> None:
+        """Save the changed OS metrics records of a day, and delete the ones the day no longer has.
+
+        The state key is written with the last batch, so it moves only once the whole day is saved.
+
+        Args:
+            changed_rows (List[Dict[str, Any]]): The records to write.
+            stale_rows (List[Dict[str, Any]]): The stored records to delete.
+            previous_state (Dict[str, Any]): The state before the day is saved.
+            state (Dict[str, Any]): The state once the day is saved, for the state key.
+        """
+        # The state is marked before any record is written, so a day saved without its state is not taken as unchanged
+        self.valkey_client.set(self._os_metrics_state_key(), serialize_data({**previous_state, "rebuilding": True}))
+        expiry = ExpirySet(ExpiryType.SEC, self.expire) if self.expire is not None else None
+        # The total record of a day is written last, so a day whose write failed part way has none
+        changed_rows = sorted(changed_rows, key=lambda row: row["aggregation_period"] != "daily")
+        pipeline = self._create_pipeline()
+        for position, row in enumerate([*stale_rows, *changed_rows]):
+            key = generate_valkey_key(prefix=self.db_prefix, table_type="os_metrics", key_id=row["id"])
+            if position < len(stale_rows):
+                for field in get_os_metrics_index_fields(row):
+                    index_key = generate_index_key(self.db_prefix, "os_metrics", field, str(row[field]))
+                    pipeline.srem(index_key, [row["id"]])
+                pipeline.delete([key])
+            else:
+                pipeline.set(key, serialize_data(row), expiry=expiry)
+                for field in get_os_metrics_index_fields(row):
+                    index_key = generate_index_key(self.db_prefix, "os_metrics", field, str(row[field]))
+                    pipeline.sadd(index_key, [row["id"]])
+            if (position + 1) % OS_METRICS_BATCH_SIZE == 0:
+                self._exec_os_metrics_pipeline(pipeline)
+                pipeline = self._create_pipeline()
+        # No TTL: the state must outlive ``self.expire``
+        pipeline.set(self._os_metrics_state_key(), serialize_data(state))
+        self._exec_os_metrics_pipeline(pipeline)
+
+    def calculate_os_metrics(self) -> Optional[List[Dict[str, Any]]]:
+        """Calculate OS metrics for all dates without complete OS metrics.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: The calculated OS metrics.
+
+        Raises:
+            Exception: If any error occurs while calculating the OS metrics.
+        """
+        try:
+            return self._calculate_os_metrics(wait_for_rebuild=True)
+
+        except Exception as e:
+            log_error(f"Error calculating OS metrics: {str(e)}")
+            raise e
+
+    def refresh_os_metrics(self) -> Tuple[Optional[int], Optional[int], bool]:
+        """Calculate OS metrics for all dates without complete OS metrics, and report whether any record changed.
+
+        Returns:
+            Tuple[Optional[int], Optional[int], bool]: When the OS metrics were last updated before the
+                calculation and after it, and whether it wrote or deleted any record.
+
+        Raises:
+            Exception: If any error occurs while calculating the OS metrics.
+        """
+        try:
+            previous_updated_at = self._get_stored_os_metrics_state().get("updated_at")
+
+            changed_ids: List[str] = []
+            self._calculate_os_metrics(wait_for_rebuild=True, changed_ids=changed_ids)
+
+            latest_updated_at = self._get_stored_os_metrics_state().get("updated_at")
+
+            return previous_updated_at, latest_updated_at, bool(changed_ids)
+
+        except Exception as e:
+            log_error(f"Error calculating OS metrics: {str(e)}")
+            raise e
+
+    def _calculate_os_metrics(
+        self, wait_for_rebuild: bool, changed_ids: Optional[List[str]] = None
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Calculate OS metrics for all dates without complete OS metrics.
+
+        Args:
+            wait_for_rebuild (bool): Wait for a rebuild another process is running. When False, skip instead.
+            changed_ids (Optional[List[str]]): When given, the IDs of the records deleted and of the calculated
+                records written are added to it.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: The calculated OS metrics.
+        """
+        # Stamp first so failed runs are throttled too instead of retried on every read
+        self._os_metrics_refreshed_at = time.time()
+
+        lock_token = self._acquire_os_metrics_lock(wait_for_rebuild)
+        if lock_token is None:
+            # Reset the throttle so the next read tries again
+            self._os_metrics_refreshed_at = 0.0
+            log_debug("Another process is calculating OS metrics. Won't calculate OS metrics.")
+            return None
+
+        try:
+            today = datetime.now(timezone.utc).date()
+
+            # The ID of a total record starts with its day
+            total_days = [
+                os_metrics_record_day(record_id)
+                for record_id in self._get_os_metrics_record_ids("aggregation_period", ["daily_total"])[0]
+            ]
+            latest_completed = max((day for day in total_days if day is not None), default=None)
+
+            days_after_latest_completed: List[date] = []
+            if latest_completed is not None:
+                days_after_latest_completed = [
+                    latest_completed + timedelta(days=offset) for offset in range(1, (today - latest_completed).days)
+                ]
+            else:
+                index_prefix = generate_index_key(self.db_prefix, "os_metrics", "date", "")
+                for key in get_all_keys_for_table(
+                    valkey_client=self.valkey_client, prefix=self.db_prefix, table_type="os_metrics:index:date"
+                ):
+                    index_day = os_metrics_record_day(key[len(index_prefix) :])
+                    if index_day is not None and index_day < today:
+                        days_after_latest_completed.append(index_day)
+            open_days = [
+                day
+                for day, record_ids in zip(
+                    days_after_latest_completed,
+                    self._get_os_metrics_record_ids("date", [day.isoformat() for day in days_after_latest_completed]),
+                )
+                if record_ids
+            ]
+            starting_date = metrics_starting_date_from_days(latest_completed, min(open_days) if open_days else None)
+
+            # Without a completed day every session and run is read: the first session is the day to start from
+            start_timestamp = 0
+            if latest_completed is not None:
+                first_day = latest_completed + timedelta(days=1)
+                start_timestamp = int(
+                    datetime.combine(first_day, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+                )
+            end_timestamp = int(
+                datetime.combine(today + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
+            )
+            sessions_by_day = self._get_records_for_os_metrics_calculation(
+                "sessions", start_timestamp, end_timestamp, lock_token
+            )
+            if starting_date is None:
+                # The records of today are still deleted once its last session is
+                if not sessions_by_day and not self._get_os_metrics_record_ids("date", [today.isoformat()])[0]:
+                    log_info("No session data found. Won't calculate OS metrics.")
+                    return None
+                starting_date = min(sessions_by_day, default=today)
+            runs_by_day = self._get_records_for_os_metrics_calculation(
+                "runs", start_timestamp, end_timestamp, lock_token
+            )
+
+            days_to_complete = sorted(
+                {day for day in [*runs_by_day, *sessions_by_day, *open_days] if starting_date <= day < today}
+            )
+            # Today comes first, so a long first rebuild shows the current day early
+            dates_to_process = [today, *days_to_complete]
+
+            state = self._get_stored_os_metrics_state()
+            updated_at = int(time.time())
+            # A rebuild that saved records and not the state left its mark, so the state moves for it
+            if state.get("rebuilding"):
+                state = build_os_metrics_state(state, updated_at, [], [])
+                self.valkey_client.set(self._os_metrics_state_key(), serialize_data(state))
+
+            results = []
+            for date_to_process in dates_to_process:
+                # A rebuild that lost the lock stops: the process that holds it calculates the days left
+                if not self._extend_os_metrics_lock(lock_token):
+                    log_debug("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                    break
+
+                sessions = sessions_by_day.get(date_to_process, [])
+                runs = runs_by_day.get(date_to_process, [])
+                stored_rows = self._get_os_metrics_records(
+                    self._get_os_metrics_record_ids("date", [date_to_process.isoformat()])[0]
+                )
+                if sessions or runs or stored_rows:
+                    # A nested run also stored as a run of its own is counted from that record
+                    stored_run_ids: Set[str] = set()
+                    nested_run_ids = sorted(os_metrics_nested_run_ids(runs))
+                    for batch_start in range(0, len(nested_run_ids), OS_METRICS_BATCH_SIZE):
+                        run_ids = nested_run_ids[batch_start : batch_start + OS_METRICS_BATCH_SIZE]
+                        pipeline = self._create_pipeline()
+                        for run_id in run_ids:
+                            pipeline.exists(
+                                [generate_valkey_key(prefix=self.db_prefix, table_type="runs", key_id=run_id)]
+                            )
+                        stored_run_ids.update(
+                            run_id
+                            for run_id, exists in zip(run_ids, self._exec_os_metrics_pipeline(pipeline))
+                            if exists
+                        )
+
+                    records = calculate_date_os_metrics(date_to_process, sessions, runs, stored_run_ids)
+                    changed_rows, stale_ids = os_metrics_rows_to_write(records, stored_rows)
+                    stored_by_id = {row["id"]: row for row in stored_rows}
+                    for record in records:
+                        record["id"] = os_metrics_record_id(
+                            date_to_process,
+                            record["aggregation_period"],
+                            record["user_id"],
+                            record["agent_id"],
+                            record["team_id"],
+                            record["workflow_id"],
+                            record["parent_id"],
+                        )
+                        # Update the existing record while preserving created_at
+                        if record["id"] in stored_by_id:
+                            record["created_at"] = stored_by_id[record["id"]].get("created_at", record["created_at"])
+                    if changed_rows or stale_ids:
+                        # Each day is written on its own, so a failed day never holds back the days before it
+                        # Stamp every record left when the day lost one
+                        for row in changed_rows:
+                            row["updated_at"] = updated_at
+                        previous_state = state
+                        state = build_os_metrics_state(state, updated_at, changed_rows, stale_ids, date_to_process)
+                        self._store_os_metrics_records(
+                            changed_rows, [stored_by_id[stale_id] for stale_id in stale_ids], previous_state, state
+                        )
+                    results.extend(records)
+                    if changed_ids is not None:
+                        changed_ids.extend([*stale_ids, *(row["id"] for row in changed_rows)])
+
+            log_debug("Updated OS metrics calculations")
+
+            return results
+
+        finally:
+            self._release_os_metrics_lock(lock_token)
+
+    def _get_os_metrics_totals_by_date(
+        self, starting_date: date, ending_date: date, user_id: Optional[str], fields: List[str]
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Total the OS metrics of the given date range, every day from one period.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's records. ``None`` totals every owner.
+            fields (List[str]): The fields to total.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each day, and when they were last updated.
+        """
+        days = [starting_date + timedelta(days=offset) for offset in range((ending_date - starting_date).days + 1)]
+        if user_id is None:
+            records = self._get_os_metrics_records([os_metrics_record_id(day, "daily_total") for day in days])
+            total_days = {record["date"] for record in records}
+            row_days = [day for day in days if day not in total_days]
+            record_ids = self._get_os_metrics_record_ids("date", [day.isoformat() for day in row_days])
+            # A total record written since is left out, so no day is counted from two periods
+            records.extend(
+                record
+                for record in self._get_os_metrics_records([record_id for ids in record_ids for record_id in ids])
+                if record["aggregation_period"] == "daily"
+            )
+        else:
+            # The ID of each record starts with its day, so only the records of the date range are read
+            record_ids = self._get_os_metrics_record_ids("user_id", [user_id])
+            records = self._get_os_metrics_records(
+                [
+                    record_id
+                    for record_id in record_ids[0]
+                    if starting_date <= (os_metrics_record_day(record_id) or date.min) <= ending_date
+                ]
+            )
+        return total_os_metrics_records(records, fields)
+
+    def get_os_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Get the OS metrics totals of each day in the given date range.
+
+        OS metrics are refreshed lazily, at most once per minute per process.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's records. ``None`` totals every owner.
+            fields (Optional[List[str]]): The fields to total. ``None`` totals all.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each day, and when they were last updated.
+
+        Raises:
+            Exception: If any error occurs while getting the OS metrics.
+        """
+        try:
+            fields = resolve_os_metrics_fields(fields)
+
+            # Refresh at most once per minute per process
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    self._calculate_os_metrics(wait_for_rebuild=False)
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            return self._get_os_metrics_totals_by_date(starting_date, ending_date, user_id, fields)
+
+        except Exception as e:
+            log_error(f"Error getting OS metrics: {str(e)}")
+            raise e
+
+    def get_os_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """Get the OS metrics totals of the whole given date range.
+
+        OS metrics are refreshed lazily, as in get_os_metrics.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's records. ``None`` totals every owner.
+            fields (Optional[List[str]]): The fields to total. ``None`` totals all.
+
+        Returns:
+            Tuple[Dict[str, Any], Optional[int]]: The totals of the date range, and when they were last updated.
+
+        Raises:
+            Exception: If any error occurs while getting the OS metrics totals.
+        """
+        try:
+            fields = resolve_os_metrics_fields(fields)
+
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    self._calculate_os_metrics(wait_for_rebuild=False)
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            totals, latest_updated_at = self._get_os_metrics_totals_by_date(starting_date, ending_date, user_id, fields)
+            return merge_os_metrics_totals(totals, fields), latest_updated_at
+
+        except Exception as e:
+            log_error(f"Error getting OS metrics totals: {str(e)}")
+            raise e
+
+    def get_os_metrics_state(self, ending_date: Optional[date] = None) -> Tuple[Optional[int], str]:
+        """Get when any OS metrics record was last written or deleted, and the hash of the state.
+
+        OS metrics are refreshed lazily, as in get_os_metrics.
+
+        Args:
+            ending_date (Optional[date]): The last day that is read. When it is a completed day, the state of
+                the records of completed days is returned, which a day still open does not move.
+
+        Returns:
+            Tuple[Optional[int], str]: When any record was last written or deleted, and the hash of the state.
+                Both are the same again only while no rebuild wrote or deleted a record.
+
+        Raises:
+            Exception: If any error occurs while getting the OS metrics state.
+        """
+        try:
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    self._calculate_os_metrics(wait_for_rebuild=False)
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            # Records expire without a rebuild, which the state cannot tell
+            if self.expire is not None:
+                return None, ""
+            return os_metrics_state_of(self._get_stored_os_metrics_state(), ending_date)
+
+        except Exception as e:
+            log_error(f"Error getting OS metrics state: {str(e)}")
             raise e
 
     # -- Knowledge methods --

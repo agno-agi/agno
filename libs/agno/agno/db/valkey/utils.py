@@ -7,8 +7,9 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Union, cast
 from uuid import UUID
 
 from agno.db.filter_converter import DATETIME_COLUMNS, MAX_FILTER_DEPTH, _normalize_datetime_value
-from agno.db.utils import get_sort_value
+from agno.db.utils import OS_METRICS_FIXED_KEYS, get_sort_value
 from agno.utils.log import log_warning
+from agno.utils.string import generate_id
 
 try:
     from glide_sync import ClusterScanCursor, GlideClusterClient
@@ -535,3 +536,156 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
     if days_diff <= 0:
         return []
     return [starting_date + timedelta(days=x) for x in range(days_diff)]
+
+
+# -- OS metrics utils --
+
+OS_METRICS_LOCK_SECONDS = 300
+
+# Kept small: a batch is a single request, which the client waits 250 milliseconds for by default
+OS_METRICS_BATCH_SIZE = 100
+
+_OS_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses")
+
+
+def os_metrics_record_id(
+    day: date,
+    aggregation_period: str,
+    user_id: str = "",
+    agent_id: str = "",
+    team_id: str = "",
+    workflow_id: str = "",
+    parent_id: str = "",
+) -> str:
+    """Generate the deterministic ID of an OS metrics record. This simplifies avoiding duplicates.
+
+    The ID starts with the day, so the day of a record is read off an index entry without reading the record.
+
+    Args:
+        day (date): The day of the record.
+        aggregation_period (str): The period of the record.
+        user_id (str): The owner of the record. Empty for a total record.
+        agent_id (str): The agent of the record.
+        team_id (str): The team of the record.
+        workflow_id (str): The workflow of the record.
+        parent_id (str): The parent of the record.
+
+    Returns:
+        str: The ID of the record.
+    """
+    component_id = generate_id(
+        json.dumps([user_id or "", agent_id or "", team_id or "", workflow_id or "", parent_id or ""])
+    )
+    return f"{day.isoformat()}_{aggregation_period}_{component_id}"
+
+
+def os_metrics_record_day(record_id: Any) -> Optional[date]:
+    """Read the day off the ID of an OS metrics record, or ``None`` if it does not start with one."""
+    # glide returns bytes, decode if needed
+    record_id = record_id.decode() if isinstance(record_id, (bytes, bytearray)) else str(record_id)
+    try:
+        return date.fromisoformat(record_id[:10])
+    except ValueError:
+        return None
+
+
+def get_os_metrics_index_fields(record: Dict[str, Any]) -> List[str]:
+    """Return the fields an OS metrics record is indexed by.
+
+    Only total records are indexed by period, and they are not indexed by owner.
+    """
+    if record["aggregation_period"] == "daily":
+        return ["date", "user_id"]
+    return ["date", "aggregation_period"]
+
+
+def deserialize_os_metrics_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a stored OS metrics record in the shape calculate_date_os_metrics writes.
+
+    Args:
+        record (Dict[str, Any]): The stored record.
+
+    Returns:
+        Dict[str, Any]: The record, with its day, stored as an ISO string, as a date.
+    """
+    return {**record, "date": date.fromisoformat(record["date"])}
+
+
+def _build_os_metrics_run_data(run_data: Dict[str, Any]) -> Dict[str, Any]:
+    """The run_data of a stored run, or of a run nested inside it, with only what OS metrics count."""
+    metrics = run_data.get("metrics") or {}
+    trimmed_metrics = {
+        key: metrics[key]
+        for key in (*OS_METRICS_FIXED_KEYS["token_metrics"], "duration", "time_to_first_token")
+        if metrics.get(key) is not None
+    }
+    # Only whether the model call reported details is counted
+    if metrics.get("details"):
+        trimmed_metrics["details"] = True
+    trimmed: Dict[str, Any] = {
+        "run_id": run_data.get("run_id"),
+        "agent_id": run_data.get("agent_id"),
+        "team_id": run_data.get("team_id"),
+        "metrics": trimmed_metrics,
+        "model": run_data.get("model"),
+        "model_provider": run_data.get("model_provider"),
+        # Only each request's duration, skipping messages carried over from an earlier run
+        "messages": [
+            {"role": "assistant", "metrics": {"duration": message["metrics"]["duration"]}}
+            for message in run_data.get("messages") or []
+            if isinstance(message, dict)
+            and message.get("role") == "assistant"
+            and not message.get("from_history")
+            and (message.get("metrics") or {}).get("duration") is not None
+        ],
+    }
+    for key in _OS_METRICS_NESTED_RUN_KEYS:
+        nested_runs = [
+            _build_os_metrics_run_data(nested_run)
+            for nested_run in run_data.get(key) or []
+            if isinstance(nested_run, dict)
+        ]
+        if nested_runs:
+            trimmed[key] = nested_runs
+    return trimmed
+
+
+def build_os_metrics_run(run: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a run with only what OS metrics count from a record of the runs table.
+
+    Args:
+        run (Dict[str, Any]): The run, as stored.
+
+    Returns:
+        Dict[str, Any]: The run with the run_data calculate_date_os_metrics reads: no message content, and of
+            the metrics only the token counts, the timings and whether the model call reported details.
+    """
+    return {
+        "run_id": run.get("run_id"),
+        "run_type": run.get("run_type"),
+        "agent_id": run.get("agent_id"),
+        "team_id": run.get("team_id"),
+        "workflow_id": run.get("workflow_id"),
+        "user_id": run.get("user_id"),
+        "parent_run_id": run.get("parent_run_id"),
+        "status": run.get("status"),
+        "run_data": _build_os_metrics_run_data(run.get("run_data") or {}),
+    }
+
+
+def build_os_metrics_session(session: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a session with only what OS metrics count from a record of the sessions table.
+
+    Args:
+        session (Dict[str, Any]): The session, as stored.
+
+    Returns:
+        Dict[str, Any]: The session with its type, its owner and its agent, team or workflow.
+    """
+    return {
+        "session_type": session.get("session_type"),
+        "user_id": session.get("user_id"),
+        "agent_id": session.get("agent_id"),
+        "team_id": session.get("team_id"),
+        "workflow_id": session.get("workflow_id"),
+    }

@@ -2,7 +2,8 @@ import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from os import getenv
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Set, Tuple, Union
+from uuid import uuid4
 
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
@@ -10,9 +11,13 @@ if TYPE_CHECKING:
 from agno.db.base import BaseDb, SessionType
 from agno.db.dynamo.schemas import get_table_schema_definition
 from agno.db.dynamo.utils import (
+    OS_METRICS_BATCH_SIZE,
+    OS_METRICS_INDEX_LAG_SECONDS,
+    OS_METRICS_STATE_ID,
     apply_pagination,
     apply_sorting,
     batch_write_with_retry,
+    build_os_metrics_run,
     build_query_filter_expression,
     build_topic_filter_expression,
     calculate_date_metrics,
@@ -20,35 +25,46 @@ from agno.db.dynamo.utils import (
     deserialize_from_dynamodb_item,
     deserialize_knowledge_row,
     deserialize_metrics_date,
+    deserialize_os_metrics_record,
     deserialize_session_result,
     execute_query_with_pagination,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     merge_with_existing_session,
+    os_metrics_record_id,
     prepare_session_data,
     serialize_eval_record,
     serialize_knowledge_row,
+    serialize_os_metrics_record,
     serialize_to_dynamo_item,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    build_os_metrics_state,
     build_single_run_row,
+    calculate_date_os_metrics,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
     drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_days,
     metrics_starting_date_from_records,
+    os_metrics_nested_run_ids,
+    os_metrics_rows_to_write,
+    os_metrics_state_of,
+    resolve_os_metrics_fields,
+    total_os_metrics_records,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
 from agno.session import Session
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
@@ -72,6 +88,7 @@ class DynamoDb(BaseDb):
         runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
+        os_metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
@@ -89,6 +106,7 @@ class DynamoDb(BaseDb):
             session_table: The name of the session table.
             memory_table: The name of the memory table.
             metrics_table: The name of the metrics table.
+            os_metrics_table: The name of the OS metrics table.
             eval_table: The name of the eval table.
             knowledge_table: The name of the knowledge table.
             traces_table: The name of the traces table.
@@ -105,6 +123,7 @@ class DynamoDb(BaseDb):
             runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
+            os_metrics_table=os_metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             traces_table=traces_table,
@@ -131,6 +150,9 @@ class DynamoDb(BaseDb):
             session = boto3.Session(**session_kwargs)
             self.client = session.client("dynamodb")
 
+        # Zero means never refreshed; get_os_metrics uses this to refresh lazily, at most once per minute
+        self._os_metrics_refreshed_at: float = 0.0
+
     def table_exists(self, table_name: str) -> bool:
         """Check if a DynamoDB table exists.
 
@@ -153,6 +175,7 @@ class DynamoDb(BaseDb):
             ("runs", self.runs_table_name),
             ("memories", self.memory_table_name),
             ("metrics", self.metrics_table_name),
+            ("os_metrics", self.os_metrics_table_name),
             ("evals", self.eval_table_name),
             ("knowledge", self.knowledge_table_name),
         ]
@@ -186,6 +209,8 @@ class DynamoDb(BaseDb):
             table_name = self.memory_table_name
         elif table_type == "metrics":
             table_name = self.metrics_table_name
+        elif table_type == "os_metrics":
+            table_name = self.os_metrics_table_name
         elif table_type == "evals":
             table_name = self.eval_table_name
         elif table_type == "knowledge":
@@ -2046,6 +2071,571 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to get metrics: {str(e)}")
+            raise e
+
+    # --- OS metrics ---
+
+    def calculate_os_metrics(self) -> Optional[List[Dict[str, Any]]]:
+        """Calculate OS metrics for all dates without complete OS metrics.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: The calculated OS metrics.
+
+        Raises:
+            Exception: If an error occurs during OS metrics calculation.
+        """
+        try:
+            return self._calculate_os_metrics()
+
+        except Exception as e:
+            log_error(f"Failed to calculate OS metrics: {str(e)}")
+            raise e
+
+    def refresh_os_metrics(self) -> Tuple[Optional[int], Optional[int], bool]:
+        """Calculate OS metrics for all dates without complete OS metrics, and report whether any record changed.
+
+        Returns:
+            Tuple[Optional[int], Optional[int], bool]: When the OS metrics were last updated before the
+                calculation and after it, and whether it wrote or deleted any record.
+
+        Raises:
+            Exception: If an error occurs during OS metrics calculation.
+        """
+        try:
+            previous_updated_at = self._get_stored_os_metrics_state().get("updated_at")
+
+            changed_ids: List[str] = []
+            self._calculate_os_metrics(changed_ids=changed_ids)
+
+            latest_updated_at = self._get_stored_os_metrics_state().get("updated_at")
+
+            return previous_updated_at, latest_updated_at, bool(changed_ids)
+
+        except Exception as e:
+            log_error(f"Failed to calculate OS metrics: {str(e)}")
+            raise e
+
+    def _query_all_pages(self, query_kwargs: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Run a query to its last page.
+
+        Args:
+            query_kwargs: The arguments of the query.
+
+        Returns:
+            List[Dict[str, Any]]: The items of every page.
+        """
+        response = self.client.query(**query_kwargs)
+        items = response.get("Items", [])
+        while "LastEvaluatedKey" in response:
+            response = self.client.query(**query_kwargs, ExclusiveStartKey=response["LastEvaluatedKey"])
+            items.extend(response.get("Items", []))
+        return items
+
+    def _query_created_in_range(
+        self,
+        table_name: str,
+        index_name: str,
+        key_name: str,
+        key_value: str,
+        start_timestamp: int,
+        end_timestamp: int,
+        attributes: List[str],
+    ) -> List[Dict[str, Any]]:
+        """Get the records of one index key created in the given time range, with only the given attributes.
+
+        Args:
+            table_name: The table to query.
+            index_name: The index keyed by key_name and created_at.
+            key_name: The index's hash key.
+            key_value: The value of the hash key to read.
+            start_timestamp: The start of the range, included.
+            end_timestamp: The end of the range, not included.
+            attributes: The attributes to read.
+
+        Returns:
+            List[Dict[str, Any]]: The records.
+        """
+        attribute_names = {f"#{attribute}": attribute for attribute in attributes}
+        items = self._query_all_pages(
+            {
+                "TableName": table_name,
+                "IndexName": index_name,
+                "KeyConditionExpression": f"#{key_name} = :key AND created_at BETWEEN :start_ts AND :end_ts",
+                "ExpressionAttributeNames": {f"#{key_name}": key_name, **attribute_names},
+                "ExpressionAttributeValues": {
+                    ":key": {"S": key_value},
+                    ":start_ts": {"N": str(start_timestamp)},
+                    # BETWEEN includes its end, and the range does not
+                    ":end_ts": {"N": str(end_timestamp - 1)},
+                },
+                "ProjectionExpression": ", ".join(attribute_names),
+            }
+        )
+        return [deserialize_from_dynamodb_item(item) for item in items]
+
+    def _get_os_metrics_records(
+        self,
+        table_name: str,
+        aggregation_period: str,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        attributes: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get the OS metrics records of one period in the given date range.
+
+        Args:
+            table_name: The OS metrics table.
+            aggregation_period: The period to read: "daily" or "daily_total".
+            starting_date: The first day to read.
+            ending_date: The last day to read.
+            user_id: Only this owner's records. ``None`` reads every owner's, and ``""`` the ones with no owner.
+            attributes: The attributes to read. ``None`` reads the whole record.
+
+        Returns:
+            List[Dict[str, Any]]: The records, in the shape calculate_date_os_metrics writes.
+        """
+        if starting_date > ending_date:
+            return []
+
+        query_kwargs: Dict[str, Any] = {
+            "TableName": table_name,
+            "IndexName": "aggregation_period-date-index",
+            "KeyConditionExpression": "aggregation_period = :period AND #date BETWEEN :start_date AND :end_date",
+            "ExpressionAttributeNames": {"#date": "date"},
+            "ExpressionAttributeValues": {
+                ":period": {"S": aggregation_period},
+                ":start_date": {"S": starting_date.isoformat()},
+                ":end_date": {"S": ending_date.isoformat()},
+            },
+        }
+        if user_id:
+            query_kwargs["IndexName"] = "user_id-date-index"
+            query_kwargs["KeyConditionExpression"] = "user_id = :user_id AND #date BETWEEN :start_date AND :end_date"
+            query_kwargs["FilterExpression"] = "aggregation_period = :period"
+            query_kwargs["ExpressionAttributeValues"][":user_id"] = {"S": user_id}
+        elif user_id == "":
+            query_kwargs["FilterExpression"] = "attribute_not_exists(user_id)"
+        if attributes is not None:
+            attribute_names = {f"#{attribute}": attribute for attribute in attributes}
+            query_kwargs["ExpressionAttributeNames"].update(attribute_names)
+            query_kwargs["ProjectionExpression"] = ", ".join(attribute_names)
+
+        return [deserialize_os_metrics_record(item) for item in self._query_all_pages(query_kwargs)]
+
+    def _get_stored_os_metrics_state(self) -> Dict[str, Any]:
+        """Get the state of the OS metrics, from the state record.
+
+        Returns:
+            Dict[str, Any]: The state, as build_os_metrics_state builds it. Empty when no rebuild has written it.
+        """
+        try:
+            response = self.client.get_item(
+                TableName=self.os_metrics_table_name, Key={"id": {"S": OS_METRICS_STATE_ID}}, ConsistentRead=True
+            )
+        except self.client.exceptions.ResourceNotFoundException:
+            return {}
+        item = response.get("Item")
+        if not item:
+            return {}
+        return deserialize_from_dynamodb_item(item)
+
+    def _mark_os_metrics_state(self, rebuild_id: str) -> None:
+        """Mark the state record before a rebuild writes or deletes records of a day.
+
+        A day saved without its state leaves the mark, so the state is not taken as the state of its records.
+
+        Args:
+            rebuild_id: The id the rebuild marks the state with. Its state write takes the mark off.
+        """
+        self.client.update_item(
+            TableName=self.os_metrics_table_name,
+            Key={"id": {"S": OS_METRICS_STATE_ID}},
+            UpdateExpression="ADD rebuilding :rebuilding",
+            ExpressionAttributeValues={":rebuilding": {"SS": [rebuild_id]}},
+        )
+
+    def _update_os_metrics_state(
+        self,
+        updated_at: int,
+        changed_rows: List[Dict[str, Any]],
+        stale_ids: List[str],
+        day: Optional[date] = None,
+        rebuild_ids: Optional[List[str]] = None,
+    ) -> None:
+        """Write the state record after a rebuild wrote or deleted records of a day.
+
+        Args:
+            updated_at: When the records were written.
+            changed_rows: The records the rebuild wrote.
+            stale_ids: The ids of the records the rebuild deleted.
+            day: The day the records are of. ``None`` when they may not all be saved.
+            rebuild_ids: The marks to take off the state.
+        """
+        state = build_os_metrics_state(self._get_stored_os_metrics_state(), updated_at, changed_rows, stale_ids, day)
+        names = {f"#{key}": key for key, value in state.items() if value is not None}
+        update_expression = "SET " + ", ".join(f"{name} = :{key}" for name, key in names.items())
+        values: Dict[str, Any] = {
+            f":{key}": {"N": str(state[key])} if isinstance(state[key], int) else {"S": state[key]}
+            for key in names.values()
+        }
+        if rebuild_ids:
+            update_expression += " DELETE rebuilding :rebuilding"
+            values[":rebuilding"] = {"SS": rebuild_ids}
+        self.client.update_item(
+            TableName=self.os_metrics_table_name,
+            Key={"id": {"S": OS_METRICS_STATE_ID}},
+            UpdateExpression=update_expression,
+            ExpressionAttributeNames=names,
+            ExpressionAttributeValues=values,
+        )
+
+    def _get_os_metrics_calculation_starting_date(self, table_name: str, sessions_table_name: str) -> Optional[date]:
+        """Get the first date for which OS metrics calculation is needed:
+        1. If there are OS metrics records, return the first day after the latest completed one.
+        2. If there are no OS metrics records, return the date of the first recorded session.
+        3. If there are no OS metrics records and no sessions records, return None.
+
+        Args:
+            table_name: The OS metrics table.
+            sessions_table_name: The sessions table.
+
+        Returns:
+            Optional[date]: The starting date for which OS metrics calculation is needed.
+        """
+        try:
+            # 1. A completed day has a total record, so the latest one is read off the period index
+            query_kwargs: Dict[str, Any] = {
+                "TableName": table_name,
+                "IndexName": "aggregation_period-date-index",
+                "KeyConditionExpression": "aggregation_period = :period",
+                "ExpressionAttributeNames": {"#date": "date"},
+                "ExpressionAttributeValues": {":period": {"S": "daily_total"}},
+                "ProjectionExpression": "#date",
+                "ScanIndexForward": False,
+                "Limit": 1,
+            }
+            items = self.client.query(**query_kwargs).get("Items", [])
+            latest_completed = deserialize_os_metrics_record(items[0])["date"] if items else None
+
+            query_kwargs["ExpressionAttributeValues"] = {":period": {"S": "daily"}}
+            query_kwargs["ScanIndexForward"] = True
+            if latest_completed is not None:
+                query_kwargs["KeyConditionExpression"] = "aggregation_period = :period AND #date > :date"
+                query_kwargs["ExpressionAttributeValues"][":date"] = {"S": latest_completed.isoformat()}
+            items = self.client.query(**query_kwargs).get("Items", [])
+            earliest_incomplete = deserialize_os_metrics_record(items[0])["date"] if items else None
+
+            starting_date = metrics_starting_date_from_days(latest_completed, earliest_incomplete)
+            if starting_date is not None:
+                return starting_date
+
+            # 2. No OS metrics records. Return the date of the first recorded session.
+            earliest_session_date = None
+            for session_type in ["agent", "team", "workflow"]:
+                response = self.client.query(
+                    TableName=sessions_table_name,
+                    IndexName="session_type-created_at-index",
+                    KeyConditionExpression="session_type = :session_type",
+                    ExpressionAttributeValues={":session_type": {"S": session_type}},
+                    ProjectionExpression="created_at",
+                    ScanIndexForward=True,  # Ascending order to get earliest
+                    Limit=1,
+                )
+
+                items = response.get("Items", [])
+                if items:
+                    first_session_timestamp = deserialize_from_dynamodb_item(items[0]).get("created_at")
+
+                    if first_session_timestamp:
+                        session_date = datetime.fromtimestamp(first_session_timestamp, tz=timezone.utc).date()
+                        if earliest_session_date is None or session_date < earliest_session_date:
+                            earliest_session_date = session_date
+
+            # 3. Return the earliest session date or None if no sessions exist
+            return earliest_session_date
+
+        except Exception as e:
+            log_error(f"Failed to get OS metrics calculation starting date: {str(e)}")
+            raise e
+
+    def _calculate_os_metrics(self, changed_ids: Optional[List[str]] = None) -> Optional[List[Dict[str, Any]]]:
+        """Calculate OS metrics for all dates without complete OS metrics.
+
+        Args:
+            changed_ids: When given, the ids of the records deleted and of the calculated records written are
+                added to it.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: The calculated OS metrics.
+        """
+        # Stamp first so failed runs are throttled too instead of retried on every read
+        self._os_metrics_refreshed_at = time.time()
+
+        table_name = self._get_table("os_metrics")
+        sessions_table_name = self._get_table("sessions")
+        if table_name is None or sessions_table_name is None:
+            return None
+
+        # A rebuild that saved records and not the state left its mark, so the state moves for it
+        rebuild_ids = self._get_stored_os_metrics_state().get("rebuilding")
+        if rebuild_ids:
+            self._update_os_metrics_state(int(time.time()), [], [], rebuild_ids=rebuild_ids)
+
+        starting_date = self._get_os_metrics_calculation_starting_date(table_name, sessions_table_name)
+        if starting_date is None:
+            log_info("No session data found. Won't calculate OS metrics.")
+            return None
+
+        today = datetime.now(timezone.utc).date()
+        if starting_date > today:
+            log_info("OS metrics already calculated for all relevant dates.")
+            return None
+
+        runs_table_name = self._get_table("runs")
+        if runs_table_name is None:
+            return None
+
+        start_timestamp = int(
+            datetime.combine(starting_date, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+        )
+        end_timestamp = int(datetime.combine(today, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp())
+        days: Set[date] = set()
+        if start_timestamp < end_timestamp:
+            for status in RunStatus:
+                for run in self._query_created_in_range(
+                    runs_table_name,
+                    "status-created_at-index",
+                    "status",
+                    status.value,
+                    start_timestamp,
+                    end_timestamp,
+                    ["created_at"],
+                ):
+                    days.add(datetime.fromtimestamp(run["created_at"], tz=timezone.utc).date())
+            for session_type in ["agent", "team", "workflow"]:
+                for session in self._query_created_in_range(
+                    sessions_table_name,
+                    "session_type-created_at-index",
+                    "session_type",
+                    session_type,
+                    start_timestamp,
+                    end_timestamp,
+                    ["created_at"],
+                ):
+                    days.add(datetime.fromtimestamp(session["created_at"], tz=timezone.utc).date())
+        open_days = [
+            record["date"]
+            for record in self._get_os_metrics_records(
+                table_name, "daily", starting_date, today - timedelta(days=1), attributes=["date"]
+            )
+        ]
+
+        # Today comes first, so a long first rebuild shows the current day early
+        dates_to_process = [today, *sorted({*days, *open_days})]
+
+        results = []
+        for date_to_process in dates_to_process:
+            # Each day is written on its own, so a failed day never holds back the days before it
+            start_timestamp = int(
+                datetime.combine(date_to_process, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
+            end_timestamp = int(
+                datetime.combine(date_to_process + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
+            )
+
+            stored_rows = [
+                *self._get_os_metrics_records(table_name, "daily_total", date_to_process, date_to_process),
+                *self._get_os_metrics_records(table_name, "daily", date_to_process, date_to_process),
+            ]
+
+            sessions = []
+            for session_type in ["agent", "team", "workflow"]:
+                sessions.extend(
+                    self._query_created_in_range(
+                        sessions_table_name,
+                        "session_type-created_at-index",
+                        "session_type",
+                        session_type,
+                        start_timestamp,
+                        end_timestamp,
+                        ["session_type", "user_id", "agent_id", "team_id", "workflow_id"],
+                    )
+                )
+            runs = []
+            for status in RunStatus:
+                for run in self._query_created_in_range(
+                    runs_table_name,
+                    "status-created_at-index",
+                    "status",
+                    status.value,
+                    start_timestamp,
+                    end_timestamp,
+                    [
+                        "run_id",
+                        "run_type",
+                        "agent_id",
+                        "team_id",
+                        "workflow_id",
+                        "user_id",
+                        "parent_run_id",
+                        "status",
+                        "run_data",
+                    ],
+                ):
+                    runs.append(build_os_metrics_run(run))
+
+            # A nested run also stored as a run of its own is counted from that record
+            stored_run_ids: Set[str] = set()
+            nested_run_ids = sorted(os_metrics_nested_run_ids(runs))
+            for i in range(0, len(nested_run_ids), OS_METRICS_BATCH_SIZE):
+                batch = nested_run_ids[i : i + OS_METRICS_BATCH_SIZE]
+                request_items: Dict[Any, Any] = {
+                    runs_table_name: {
+                        "Keys": [{"run_id": {"S": run_id}} for run_id in batch],
+                        "ProjectionExpression": "run_id",
+                    }
+                }
+                while request_items:
+                    response = self.client.batch_get_item(RequestItems=request_items)
+                    for item in response.get("Responses", {}).get(runs_table_name, []):
+                        stored_run_ids.add(item["run_id"]["S"])
+                    request_items = response.get("UnprocessedKeys") or {}
+
+            records = calculate_date_os_metrics(date_to_process, sessions, runs, stored_run_ids)
+            changed_rows, stale_ids = os_metrics_rows_to_write(records, stored_rows)
+            stored_by_id = {record["id"]: record for record in stored_rows}
+            for record in records:
+                record["id"] = os_metrics_record_id(record)
+            for record in changed_rows:
+                # Update the existing record while preserving created_at
+                if record["id"] in stored_by_id:
+                    record["created_at"] = stored_by_id[record["id"]].get("created_at", record["created_at"])
+                # Stamp every record left when the day lost one, so its updated_at moves
+                if stale_ids:
+                    record["updated_at"] = int(time.time())
+            if changed_rows or stale_ids:
+                rebuild_id = str(uuid4())
+                self._mark_os_metrics_state(rebuild_id)
+                rows_written = 0
+                try:
+                    for stale_id in stale_ids:
+                        self.client.delete_item(TableName=table_name, Key={"id": {"S": stale_id}})
+                        rows_written += 1
+                    # The total record is written last, so a day whose records were not all written is calculated again
+                    for record in sorted(changed_rows, key=lambda record: record["aggregation_period"] != "daily"):
+                        self.client.put_item(TableName=table_name, Item=serialize_os_metrics_record(record))
+                        rows_written += 1
+                finally:
+                    # Also written when only some of the records were, as a day that is not completed yet
+                    self._update_os_metrics_state(
+                        updated_at=max([record["updated_at"] for record in changed_rows] or [int(time.time())]),
+                        changed_rows=changed_rows,
+                        stale_ids=stale_ids,
+                        day=date_to_process if rows_written == len(stale_ids) + len(changed_rows) else None,
+                        rebuild_ids=[rebuild_id],
+                    )
+            results.extend(records)
+            if changed_ids is not None:
+                changed_ids.extend([*stale_ids, *(row["id"] for row in changed_rows)])
+
+        log_debug("Updated OS metrics calculations")
+
+        return results
+
+    def get_os_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Get the OS metrics totals of each day in the given date range.
+
+        OS metrics are refreshed lazily, at most once per minute per process.
+
+        Args:
+            starting_date: The first day to total.
+            ending_date: The last day to total.
+            user_id: Total only this owner's records. ``None`` totals every owner.
+            fields: The fields to total. ``None`` totals all.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each day, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_os_metrics_fields(fields)
+
+            # Refresh at most once per minute per process
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    self._calculate_os_metrics()
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            table_name = self._get_table("os_metrics")
+            if table_name is None:
+                return [], None
+
+            if user_id is not None:
+                records = self._get_os_metrics_records(table_name, "daily", starting_date, ending_date, user_id)
+                return total_os_metrics_records(records, fields)
+
+            records = self._get_os_metrics_records(table_name, "daily_total", starting_date, ending_date)
+            total_days = {record["date"] for record in records}
+            day = starting_date
+            while day <= ending_date:
+                if day in total_days:
+                    day += timedelta(days=1)
+                    continue
+                last_day = day
+                while last_day < ending_date and last_day + timedelta(days=1) not in total_days:
+                    last_day += timedelta(days=1)
+                records.extend(self._get_os_metrics_records(table_name, "daily", day, last_day))
+                day = last_day + timedelta(days=1)
+
+            return total_os_metrics_records(records, fields)
+
+        except Exception as e:
+            log_error(f"Failed to get OS metrics: {str(e)}")
+            raise e
+
+    def get_os_metrics_state(self, ending_date: Optional[date] = None) -> Tuple[Optional[int], str]:
+        """Get when any OS metrics record was last written or deleted, and the hash of the state.
+
+        OS metrics are refreshed lazily, as in get_os_metrics.
+
+        Args:
+            ending_date (Optional[date]): The last day that is read. When it is a completed day, the state of
+                the records of completed days is returned, which a day still open does not move.
+
+        Returns:
+            Tuple[Optional[int], str]: When any record was last written or deleted, and the hash of the state.
+                Both are the same again only while no rebuild wrote or deleted a record.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    self._calculate_os_metrics()
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            updated_at, state_hash = os_metrics_state_of(self._get_stored_os_metrics_state(), ending_date)
+            # The records are read from indexes, which follow a write a moment later than the state does
+            if updated_at is not None and time.time() - updated_at < OS_METRICS_INDEX_LAG_SECONDS:
+                return None, ""
+            return updated_at, state_hash
+
+        except Exception as e:
+            log_error(f"Failed to get OS metrics state: {str(e)}")
             raise e
 
     # --- Knowledge methods ---
