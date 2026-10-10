@@ -207,11 +207,13 @@ class Steps:
         current_images = step_input.images or []
         current_videos = step_input.videos or []
         current_audio = step_input.audio or []
+        current_files = step_input.files or []
 
         if isinstance(step_outputs, list):
             step_images = sum([out.images or [] for out in step_outputs], [])
             step_videos = sum([out.videos or [] for out in step_outputs], [])
             step_audio = sum([out.audio or [] for out in step_outputs], [])
+            step_files = sum([out.files or [] for out in step_outputs], [])
             # Use the last output's content for chaining
             previous_step_content = step_outputs[-1].content if step_outputs else None
         else:
@@ -219,6 +221,7 @@ class Steps:
             step_images = step_outputs.images or []
             step_videos = step_outputs.videos or []
             step_audio = step_outputs.audio or []
+            step_files = step_outputs.files or []
             previous_step_content = step_outputs.content
 
         updated_previous_step_outputs = {}
@@ -235,6 +238,7 @@ class Steps:
             images=current_images + step_images,
             videos=current_videos + step_videos,
             audio=current_audio + step_audio,
+            files=current_files + step_files,
         )
 
     def execute(

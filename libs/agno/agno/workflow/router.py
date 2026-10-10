@@ -429,16 +429,19 @@ class Router:
         current_images = step_input.images or []
         current_videos = step_input.videos or []
         current_audio = step_input.audio or []
+        current_files = step_input.files or []
 
         if isinstance(step_outputs, list):
             all_images = sum([out.images or [] for out in step_outputs], [])
             all_videos = sum([out.videos or [] for out in step_outputs], [])
             all_audio = sum([out.audio or [] for out in step_outputs], [])
+            all_files = sum([out.files or [] for out in step_outputs], [])
             previous_step_content = step_outputs[-1].content if step_outputs else None
         else:
             all_images = step_outputs.images or []
             all_videos = step_outputs.videos or []
             all_audio = step_outputs.audio or []
+            all_files = step_outputs.files or []
             previous_step_content = step_outputs.content
 
         updated_previous_step_outputs = {}
@@ -455,6 +458,7 @@ class Router:
             images=current_images + all_images,
             videos=current_videos + all_videos,
             audio=current_audio + all_audio,
+            files=current_files + all_files,
         )
 
     def _resolve_selector_result(self, result: Any) -> List[Any]:

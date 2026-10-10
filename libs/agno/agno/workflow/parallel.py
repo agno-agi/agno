@@ -213,6 +213,7 @@ class Parallel:
                 images=single_result.images,
                 videos=single_result.videos,
                 audio=single_result.audio,
+                files=single_result.files,
                 metrics=aggregated_metrics,
                 success=single_result.success,
                 error=single_result.error,
@@ -229,12 +230,14 @@ class Parallel:
         all_images = []
         all_videos = []
         all_audio = []
+        all_files = []
         has_any_failure = False
 
         for result in step_outputs:
             all_images.extend(result.images or [])
             all_videos.extend(result.videos or [])
             all_audio.extend(result.audio or [])
+            all_files.extend(result.files or [])
             if result.success is False:
                 has_any_failure = True
 
@@ -251,6 +254,7 @@ class Parallel:
             images=all_images if all_images else None,
             videos=all_videos if all_videos else None,
             audio=all_audio if all_audio else None,
+            files=all_files if all_files else None,
             success=not has_any_failure,
             stop=early_termination_requested,
             metrics=aggregated_metrics,
