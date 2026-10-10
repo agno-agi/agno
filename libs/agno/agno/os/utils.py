@@ -970,7 +970,9 @@ def get_session_name(session: Dict[str, Any]) -> str:
             if message.get("role") == "user" and message.get("content"):
                 return message["content"]
 
-        run_input = r.get("input")
+        run_input = run_dict.get("input")
+        if isinstance(run_input, dict) and run_input.get("input_content") is not None:
+            run_input = run_input["input_content"]
         if run_input is not None:
             return stringify_input_content(run_input)
 
