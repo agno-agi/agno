@@ -3598,6 +3598,72 @@ class TestPartialRegistryFailsClosed:
         assert StudioRunnerTools(registry=registry, db=db)._find_agent("plain", for_dispatch=True) is not None
 
 
+class TestAllowlistedMemberRehydration:
+    """A stored team's code-defined member is supplied through include_agents,
+    the same channel run_agent resolves it from."""
+
+    def _store_team(self, db):
+        db.upsert_component(component_id="crew", component_type="team", name="Crew")
+        db.upsert_config(
+            component_id="crew",
+            stage="published",
+            config={
+                "id": "crew",
+                "name": "Crew",
+                "model": {"id": "gpt-5.4", "provider": "OpenAI"},
+                "members": [{"type": "agent", "agent_id": "researcher"}],
+            },
+        )
+
+    def _researcher(self):
+        from agno.agent import Agent
+
+        return Agent(id="researcher", name="Researcher", model=OpenAIResponses(id="gpt-5.4"))
+
+    def test_without_registry_the_allowlist_supplies_the_member(self, db):
+        self._store_team(db)
+        runner = StudioRunnerTools(db=db, include_agents=[self._researcher()])
+        team = runner._team_for_run("crew")
+        assert [m.id for m in team.members] == ["researcher"]
+
+    def test_with_registry_missing_the_member_the_allowlist_supplies_it(self, db, registry):
+        self._store_team(db)
+        runner = StudioRunnerTools(registry=registry, db=db, include_agents=[self._researcher()])
+        team = runner._team_for_run("crew")
+        assert [m.id for m in team.members] == ["researcher"]
+        # The caller's registry is not modified.
+        assert registry.agents == []
+
+    def test_member_outside_the_allowlist_still_refuses_with_both_options_named(self, db):
+        self._store_team(db)
+        error = _loads(StudioRunnerTools(db=db).run_team("crew", "hi", _agno_run_context=_context()))["error"]
+        assert "researcher" in error and "include_agents" in error and "registry" in error
+
+    def test_stored_member_is_still_checked_when_also_allowlisted(self, db):
+        # from_dict reads the db before the registry, so a member stored under
+        # an allowlisted id rebuilds from its stored config and must still be
+        # guarded: its knowledge reference needs the absent registry.
+        self._store_team(db)
+        db.upsert_component(component_id="researcher", component_type="agent", name="Researcher")
+        db.upsert_config(
+            component_id="researcher",
+            stage="published",
+            config={
+                "id": "researcher",
+                "model": {"id": "gpt-5.4", "provider": "OpenAI"},
+                "knowledge": {"name": "handbook"},
+            },
+        )
+        runner = StudioRunnerTools(db=db, include_agents=[self._researcher()])
+        error = _loads(runner.run_team("crew", "hi", _agno_run_context=_context()))["error"]
+        assert "knowledge" in error and "registry" in error
+
+    def test_registry_member_still_resolves_without_allowlist(self, db, registry):
+        self._store_team(db)
+        registry.agents = [self._researcher()]
+        assert StudioRunnerTools(registry=registry, db=db)._team_for_run("crew") is not None
+
+
 class TestMemberStructureFidelity:
     """Whether a member is aliased is _shared_member's question (TestMemberIsolation).
     This is the other half: whether the copy holds the same members at all."""
