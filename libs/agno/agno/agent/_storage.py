@@ -45,7 +45,6 @@ from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.string import generate_id_from_name
 
-
 # MemoryManager.__init__ (agno/memory/manager.py) auto-generates
 # ``memory_manager_<8 hex>`` when no id is passed. Such an id is minted fresh
 # every process, so a config carrying it can never resolve against a registry

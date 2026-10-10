@@ -19,6 +19,20 @@ def _spawn_background(coro: Awaitable[None]) -> None:
     task.add_done_callback(_background_tasks.discard)
 
 
+async def await_background_runs(timeout: Optional[float] = None) -> None:
+    """Wait for every background run started on this event loop to finish its bookkeeping.
+
+    A background run hands its final output to the attached client before it marks the event
+    stream complete, so a script that exits right after consuming the stream cancels that last
+    step and logs a warning. Call this before closing the loop. A server keeps its loop alive
+    and does not need it.
+    """
+    pending = [task for task in _background_tasks if not task.done()]
+    if not pending:
+        return
+    await asyncio.wait(pending, timeout=timeout)
+
+
 async def _execute_background(
     run: Any,
     execute: Callable[[], Awaitable[None]],
