@@ -6,6 +6,7 @@ import pytest
 pytest.importorskip("ag_ui", reason="ag_ui not installed")
 
 from ag_ui.core import EventType
+from ag_ui.core.types import AssistantMessage, DeveloperMessage, SystemMessage, UserMessage
 from ag_ui.core.types import Tool as AGUITool
 
 from agno.agent.remote import RemoteAgent
@@ -27,13 +28,32 @@ class FakeRunInput:
 class CaptureKwargsEntity:
     def __init__(self):
         self.captured_kwargs = {}
-        self.dependencies = None
         self.arun_called = False
-        self.acontinue_run_called = False
+        self.additional_input = None
+        self.id = None
+        self.calls = []
+
+    def set_id(self) -> None:
+        self.id = self.id or "capture-entity"
+
+    def deep_copy(self, *, update=None):
+        copy = CaptureKwargsEntity()
+        copy.__dict__.update(self.__dict__)
+        copy.__dict__.update(update or {})
+        # The record is shared so the test reads what the copy was actually run with.
+        copy.captured_kwargs = self.captured_kwargs
+        copy.calls = self.calls
+        return copy
+
+    def forwarded_input(self):
+        """The additional input the entity the run reached was carrying."""
+        entity = self.calls[-1] if self.calls else self
+        return [(msg.role, msg.content) for msg in entity.additional_input or []]
 
     async def arun(self, **kwargs):
-        self.captured_kwargs = kwargs
+        self.captured_kwargs.update(kwargs)
         self.arun_called = True
+        self.calls.append(self)
         return
         yield
 
@@ -218,3 +238,97 @@ async def test_run_entity_remote_agent_warns_and_drops_client_tools(caplog):
     assert "run_context" not in captured
     assert any("client tools are not forwarded" in record.message for record in caplog.records)
     assert events[-1].type == EventType.RUN_FINISHED
+
+
+def _remote_agent(captured: dict):
+    """A RemoteAgent wired to a recording stream instead of a real AgentOS."""
+    remote_agent = RemoteAgent(base_url="http://fake-host", agent_id="remote-agent")
+    remote_agent.agentos_client = MagicMock(run_agent_stream=capturing_wire_stream(captured))
+    return remote_agent
+
+
+def _two_turns():
+    """Real AG-UI messages: a MagicMock would not notice a renamed protocol field."""
+    return [
+        UserMessage(id="m1", role="user", content="my name is Ada"),
+        AssistantMessage(id="m2", role="assistant", content="Hello Ada"),
+        UserMessage(id="m3", role="user", content="what is my name?"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_remote_entity_warns_that_history_is_not_forwarded(caplog):
+    """A remote run route takes a single message, so the transcript cannot travel with it."""
+    captured: dict = {}
+    remote_agent = _remote_agent(captured)
+
+    with caplog.at_level(logging.WARNING):
+        events = [event async for event in run_entity(remote_agent, FakeRunInput(messages=_two_turns()))]
+
+    assert any("history is not forwarded" in record.message for record in caplog.records)
+    assert captured["message"] == "what is my name?"
+    assert "additional_input" not in captured
+    assert events[-1].type == EventType.RUN_FINISHED
+
+
+@pytest.mark.asyncio
+async def test_remote_team_warns_that_history_is_not_forwarded(caplog):
+    captured: dict = {}
+    remote_team = RemoteTeam(base_url="http://fake-host", team_id="remote-team")
+    remote_team.agentos_client = MagicMock(run_team_stream=capturing_wire_stream(captured))
+
+    with caplog.at_level(logging.WARNING):
+        events = [event async for event in run_entity(remote_team, FakeRunInput(messages=_two_turns()))]
+
+    assert any("history is not forwarded" in record.message for record in caplog.records)
+    assert "additional_input" not in captured
+    assert events[-1].type == EventType.RUN_FINISHED
+
+
+@pytest.mark.asyncio
+async def test_remote_entity_first_turn_does_not_warn(caplog):
+    """Client system and developer messages are not a conversation.
+
+    The client-tools warning is the positive control: it proves the assertion below is
+    reading live log output rather than passing on an empty record list.
+    """
+    captured: dict = {}
+    remote_agent = _remote_agent(captured)
+    messages = [
+        SystemMessage(id="s1", role="system", content="You are a pirate."),
+        DeveloperMessage(id="d1", role="developer", content="internal note"),
+        UserMessage(id="m1", role="user", content="my name is Ada"),
+    ]
+    run_input = FakeRunInput(messages=messages, tools=[AGUITool(name="noop", description="does nothing")])
+
+    with caplog.at_level(logging.WARNING):
+        events = [event async for event in run_entity(remote_agent, run_input)]
+
+    assert any("client tools are not forwarded" in record.message for record in caplog.records)
+    assert not any("history is not forwarded" in record.message for record in caplog.records)
+    assert events[-1].type == EventType.RUN_FINISHED
+
+
+@pytest.mark.asyncio
+async def test_a_forwarded_run_carries_the_transcript_and_reads_no_session():
+    """Forwarding the transcript and reading a session would both feed the same run."""
+    entity = CaptureKwargsEntity()
+
+    async for _ in run_entity(entity, FakeRunInput(messages=_two_turns())):
+        pass
+
+    assert entity.captured_kwargs["add_history_to_context"] is False
+    assert entity.forwarded_input() == [("user", "my name is Ada"), ("assistant", "Hello Ada")]
+    assert entity.captured_kwargs["input"] == "what is my name?"
+
+
+@pytest.mark.asyncio
+async def test_a_first_turn_reads_no_session_either():
+    """A worker-local cached session belongs to whoever ran this thread on it first."""
+    entity = CaptureKwargsEntity()
+
+    async for _ in run_entity(entity, FakeRunInput(messages=[UserMessage(id="m1", role="user", content="q1")])):
+        pass
+
+    assert entity.captured_kwargs["add_history_to_context"] is False
+    assert entity.forwarded_input() == []
