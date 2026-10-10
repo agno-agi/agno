@@ -90,6 +90,10 @@ class FakeThread:
         self._state.calls.append({"op": "run", "thread_id": self.id, "prompt": prompt, "kwargs": kwargs})
         return SimpleNamespace(final_response=self._state.final_response, items=[], status="completed", usage=None)
 
+    async def compact(self) -> Any:
+        self._state.calls.append({"op": "thread_compact", "thread_id": self.id})
+        return SimpleNamespace()
+
 
 class FakeAsyncCodex:
     state: FakeState
@@ -646,7 +650,7 @@ def _status_changed(thread_id: str, kind: str) -> Any:
 
 
 class FakeAsyncCodexClient:
-    """Low-level app-server client: thread/compact/start plus the global notification queue."""
+    """Low-level app-server client: only the global notification queue."""
 
     state: FakeState
     events: List[Any] = []
@@ -655,10 +659,6 @@ class FakeAsyncCodexClient:
     def __init__(self, config: Any = None) -> None:
         self.config = config
         self._events = iter(self.events)
-
-    async def thread_compact(self, thread_id: str) -> Any:
-        self.state.calls.append({"op": "thread_compact", "thread_id": thread_id})
-        return SimpleNamespace()
 
     async def next_notification(self) -> Any:
         if self.hang:
