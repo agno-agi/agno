@@ -254,6 +254,40 @@ METRICS_TABLE_SCHEMA = {
     "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
 }
 
+OS_METRICS_TABLE_SCHEMA = {
+    "TableName": "agno_os_metrics",
+    "KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+    "AttributeDefinitions": [
+        {"AttributeName": "id", "AttributeType": "S"},
+        {"AttributeName": "date", "AttributeType": "S"},
+        {"AttributeName": "aggregation_period", "AttributeType": "S"},
+        {"AttributeName": "user_id", "AttributeType": "S"},
+    ],
+    "GlobalSecondaryIndexes": [
+        {
+            "IndexName": "aggregation_period-date-index",
+            "KeySchema": [
+                {"AttributeName": "aggregation_period", "KeyType": "HASH"},
+                {"AttributeName": "date", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
+        {
+            # A key attribute cannot be an empty string, so a record with no owner is not in this index
+            "IndexName": "user_id-date-index",
+            "KeySchema": [
+                {"AttributeName": "user_id", "KeyType": "HASH"},
+                {"AttributeName": "date", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
+    ],
+    "BillingMode": "PROVISIONED",
+    "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+}
+
 TRACE_TABLE_SCHEMA = {
     "TableName": "agno_traces",
     "KeySchema": [{"AttributeName": "trace_id", "KeyType": "HASH"}],
@@ -473,6 +507,7 @@ def get_table_schema_definition(table_type: str) -> Dict[str, Any]:
         "evals": EVAL_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
+        "os_metrics": OS_METRICS_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
         "spans": SPAN_TABLE_SCHEMA,
     }
