@@ -2,6 +2,27 @@
 
 ## 2026-10-09
 
+### continue_from.py (finished runs always fork)
+
+**Status:** PASS
+
+**Description:** Reran after `continue_run(fork=False)` on a completed run was changed to behave like native agents: the continuation becomes a new sibling run with fork lineage instead of rewriting the source run. Also exercised live with `background=True` on a completed run (ALPHA -> BETA -> GAMMA, three runs in the session, source run untouched).
+
+**Result:** Checkpoints listed at 3, 5 and 6; branch from step 3 kept only `echo alpha`; replayed turn returned DONE. The in-place-with-background ValueError is gone.
+
+---
+
+### continue_from.py (review fixes)
+
+**Status:** PASS
+
+**Description:** Reran after the review fixes: checkpoints are exposed per tool batch (one per sequential step, one per parallel batch, anchored at the batch's last transcript entry), `continue_from=0` starts a branch before the prompt, `continue_from="last_user"` replays the selected user turn rather than only the first, cancelled runs are rejected, and in-place continuation refuses `background=True`. The cookbook now asserts on the tool results the branch carries instead of on the model's wording, so a run where Claude batches both commands still passes.
+
+**Result:** Sequential run: checkpoints at messages 3, 5 and the end; the branch from step 3 carried only the first result and answered with the first command. Replay of the whole turn completed. A separate parallel run exposed a single checkpoint at the batch end.
+
+---
+## 2026-10-09
+
 ### transcript_store.py
 
 **Status:** PASS
@@ -116,8 +137,6 @@ checks; the earlier live provider cancellation runs were not repeated.
 
 ---
 
----
-
 ### session_store.py (transcript schema revision)
 
 **Status:** PASS
@@ -125,3 +144,13 @@ checks; the earlier live provider cancellation runs were not repeated.
 **Description:** Reran the two-process verification after scoping transcript rows by framework, project, session and subpath, numbering positions per transcript and recording the owning Agno session. Used claude-agent-sdk 0.2.95 from the demo environment, the `ANTHROPIC_API_KEY` from `.envrc` and empty config directories.
 
 **Result:** Process A replied `OK`; process B, with its Agno run deleted, replied `cobalt orchard 742`. The PostgreSQL contract test (PostgresDb and AsyncPostgresDb) passed against PostgreSQL 14.
+
+---
+
+### continue_from.py (2026-10-08)
+
+**Status:** PASS
+
+**Description:** Live run with claude-agent-sdk 0.2.95 and `claude-sonnet-4-6` on SQLite transcript storage. A two-step Bash turn listed checkpoints at both tool results and the end. Continuing from the first tool result with a question produced a branch that only knew `echo alpha`; `continue_from="last_user"` replayed the turn as a forked sibling. Separately, with `claude-haiku-4-5`, exercised AgentOS `/checkpoints` and `/continue` (non-stream and SSE), an in-place streamed continue, and a replay of a non-first turn that kept earlier context.
+
+**Result:** Continue and checkpoints work end to end against the real SDK. Files touched after a checkpoint are not rewound.

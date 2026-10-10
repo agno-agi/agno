@@ -19,6 +19,18 @@ Use PostgreSQL in production. Transcript storage supports PostgresDb, AsyncPostg
 
 The `agno_transcripts` table is created on first use. A development database that ran an earlier build of this feature has an older table shape and raises a schema mismatch; drop the table and it is recreated.
 
+## Continue from a step
+
+The `continue_from/` folder has one cookbook per scenario: continue a finished run with a new instruction, fork from a tool checkpoint, replay or rewrite the prompt, continue in the background, and the same flow over the AgentOS API. See `continue_from/README.md`.
+
+```bash
+.venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/continue_from/01_continue_finished_run.py
+```
+
+`ClaudeAgent.continue_run` / `acontinue_run` take the same `continue_from` and `fork` arguments as `Agent.continue_run`, and AgentOS serves them through `/agents/{id}/runs/{run_id}/continue` and `/checkpoints`. Each tool result is a checkpoint. Continuing forks the Claude SDK transcript at that message, so the model only remembers what happened up to it; `continue_from="last_user"` without `input` re-sends the original prompt. A finished run is never rewritten in place: like native agents, its continuation is a new sibling run with `forked_from_run_id`, whatever `fork` is set to. Later turns in the session continue from the newest branch.
+
+Requires a database with transcript storage, and only runs recorded with it can be continued. Files the agent changed after the checkpoint are not rewound. `regenerate` and HITL `requirements` are not supported.
+
 ## Background runs and cancellation
 
 `background_cancel.py` serves the agent through AgentOS. Submit runs with `background=true`, poll the run endpoint, or use `stream=true` for indexed SSE. Runs continue after disconnects; the resume endpoint reads the configured event stream. Cancel through the run cancellation endpoint.
