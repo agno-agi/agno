@@ -1072,3 +1072,14 @@ def test_sync_continue_failed_run_preserves_tool_results(scripted, tmp_db):
     assert recovered.status == RunStatus.completed
     assert recovered.tools[0].result == "alpha"
     assert forks == [{"session_id": "sdk-1", "up_to": "u-result"}]
+
+
+def test_shared_session_continues_one_sdk_conversation_across_users(fake_sdk, tmp_db):
+    agent = ClaudeAgent(id="claude", db=tmp_db)
+    agent.run("open the shared session", session_id="team")
+    agent.run("from alice", session_id="team", user_id="alice")
+    agent.run("from bob", session_id="team", user_id="bob")
+    assert [call["resume"] for call in fake_sdk.calls] == [None, "sdk-1", "sdk-1"]
+    with pytest.raises(ValueError, match="belongs to another user"):
+        agent.run("mine", session_id="private", user_id="alice")
+        agent.run("intrude", session_id="private", user_id="bob")

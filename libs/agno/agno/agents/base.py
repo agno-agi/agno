@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Opti
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+from agno.db.utils import owner_key
 from agno.exceptions import RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
@@ -474,36 +475,39 @@ class BaseExternalAgent:
             created_at=int(time()),
         )
 
-    def read_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> AgentSession:
-        """Read a session from the DB, or create a new one."""
-        session = None
-        if self.db is not None and isinstance(self.db, BaseDb):
-            session = self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+    @staticmethod
+    def _session_open_to(session: AgentSession, user_id: Optional[str]) -> bool:
+        """A session without an owner is shared; an owned one is closed to any other user_id.
 
-        if session is not None and isinstance(session, dict):
-            session = AgentSession.from_dict(session)
+        A caller that passes no user_id is trusted code and is not restricted.
+        """
+        return user_id is None or session.user_id is None or owner_key(session.user_id) == owner_key(user_id)
 
-        if session is None or not isinstance(session, AgentSession):
-            session = self._create_session(session_id, user_id)
-
+    def _owned_session_or_new(self, row: Any, session_id: str, user_id: Optional[str]) -> AgentSession:
+        session = AgentSession.from_dict(row) if isinstance(row, dict) else row
+        if not isinstance(session, AgentSession):
+            return self._create_session(session_id, user_id)
+        if not self._session_open_to(session, user_id):
+            # Writing here would add this run to another user's history.
+            raise ValueError(f"Session {session_id} belongs to another user")
         return session
+
+    def read_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> AgentSession:
+        """Read a session from the DB, or create a new one. Refuses a session owned by another user."""
+        row = None
+        if self.db is not None and isinstance(self.db, BaseDb):
+            row = self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+        return self._owned_session_or_new(row, session_id, user_id)
 
     async def aread_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> AgentSession:
-        """Async read a session from the DB, or create a new one."""
-        session = None
+        """Async read a session from the DB, or create a new one. Refuses a session owned by another user."""
+        row = None
         if self.db is not None:
             if isinstance(self.db, AsyncBaseDb):
-                session = await self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+                row = await self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
             elif isinstance(self.db, BaseDb):
-                session = self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
-
-        if session is not None and isinstance(session, dict):
-            session = AgentSession.from_dict(session)
-
-        if session is None or not isinstance(session, AgentSession):
-            session = self._create_session(session_id, user_id)
-
-        return session
+                row = self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+        return self._owned_session_or_new(row, session_id, user_id)
 
     def upsert_session(self, session: AgentSession) -> None:
         """Persist a session to the DB (sync)."""
@@ -568,18 +572,22 @@ class BaseExternalAgent:
             if strict or worker_owned:
                 raise
 
+    def _visible_session(self, row: Any, user_id: Optional[str]) -> Optional[AgentSession]:
+        session = AgentSession.from_dict(row) if isinstance(row, dict) else row
+        if not isinstance(session, AgentSession) or session.agent_id != self.get_id():
+            return None
+        if not self._session_open_to(session, user_id):
+            return None
+        return session
+
     def get_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
-        """Read a session scoped to this agent and, when supplied, its user."""
+        """Read a session scoped to this agent; with user_id, only that user's or an unowned shared session."""
         if self.db is None:
             return None
         if isinstance(self.db, AsyncBaseDb):
             raise ValueError("Use aget_session with an async database")
-        session = self.db.get_session(session_id=session_id, session_type=SessionType.AGENT, user_id=user_id)
-        if isinstance(session, dict):
-            session = AgentSession.from_dict(session)
-        if not isinstance(session, AgentSession) or session.agent_id != self.get_id():
-            return None
-        return session
+        row = self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+        return self._visible_session(row, user_id)
 
     async def aget_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
         """Read a persisted session without creating a missing session."""
@@ -588,12 +596,8 @@ class BaseExternalAgent:
         if isinstance(self.db, BaseDb):
             # Match the synchronous persistence path, including thread-local in-memory SQLite.
             return self.get_session(session_id, user_id)
-        session = await self.db.get_session(session_id=session_id, session_type=SessionType.AGENT, user_id=user_id)
-        if isinstance(session, dict):
-            session = AgentSession.from_dict(session)
-        if not isinstance(session, AgentSession) or session.agent_id != self.get_id():
-            return None
-        return session
+        row = await self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+        return self._visible_session(row, user_id)
 
     def cancel_run(self, run_id: str) -> bool:
         """Store cancellation intent and interrupt a live local SDK handle."""
@@ -692,9 +696,13 @@ class BaseExternalAgent:
             input=RunInput(input_content=input),
             status=RunStatus.pending,
         )
-        session = await _aappend_pending_run(
-            self, session_id, run.to_dict(), user_id, lambda: self.aread_or_create_session(session_id, user_id)
-        )
+        # Check ownership first: the atomic append does not, and would add the run to another user's session.
+        loaded = await self.aread_or_create_session(session_id, user_id)
+
+        async def load_session() -> AgentSession:
+            return loaded
+
+        session = await _aappend_pending_run(self, session_id, run.to_dict(), user_id, load_session)
         if session is not None and session.get_run(run_id) is None:
             await self._apersist_run_in_session(session, run, strict=True)
         return run
