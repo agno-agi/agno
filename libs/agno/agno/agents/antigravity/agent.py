@@ -5,6 +5,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 from uuid import uuid4
 
 from agno.agents.base import BaseExternalAgent
+from agno.db.base import BaseDb
 from agno.exceptions import PathSecurityError
 from agno.models.response import ToolExecution
 from agno.run.agent import (
@@ -132,9 +133,9 @@ class AntigravityAgent(BaseExternalAgent):
         import httpx
 
         env_id = environment_id
-        if not env_id and session_id and self.db is not None:
-            session = self.read_or_create_session(session_id)
-            env_id = (session.session_data or {}).get(self._ENV_KEY)
+        if not env_id and session_id and isinstance(self.db, BaseDb):
+            session = self.get_session(session_id)
+            env_id = ((session.session_data if session else None) or {}).get(self._ENV_KEY)
         if not env_id:
             raise ValueError(
                 "download_environment_snapshot needs an environment_id, or a session_id "
