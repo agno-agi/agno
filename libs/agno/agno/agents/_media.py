@@ -149,7 +149,8 @@ def stage_media(
                 counter += 1
                 target = root / f"{target.stem}-{counter}{target.suffix}"
             claimed.add(target.name)
-            if not (reuse_existing and target.is_file() and target.stat().st_size == len(data)):
+            # A kept file may have been edited by the harness since; never overwrite it.
+            if not (reuse_existing and target.exists()):
                 target.write_bytes(data)
             staged.append(StagedMedia(kind, target.name, str(target), _mime_for(item), len(data)))
     return staged
@@ -195,15 +196,26 @@ def cleanup_media(workspace: Optional[Any], run_id: str) -> None:
 
 
 def prior_attachments(
-    session: Any, exclude_run_id: Optional[str] = None, limit: Optional[int] = RESTORED_RUNS_LIMIT
+    session: Any,
+    exclude_run_id: Optional[str] = None,
+    limit: Optional[int] = RESTORED_RUNS_LIMIT,
+    until_run_id: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """Attachments recorded on the last `limit` earlier runs of the session, keyed by run.
 
     They are re-staged under that run's own folder, so the paths the harness's transcript
-    already names resolve again on whichever replica runs the next turn.
+    already names resolve again on whichever replica runs the next turn. A continued run's
+    transcript ends at its source run, so until_run_id ends the window there, source included.
     """
     found: Dict[str, Dict[str, Any]] = {}
-    runs = [run for run in getattr(session, "runs", None) or [] if getattr(run, "run_id", None) != exclude_run_id]
+    runs = list(getattr(session, "runs", None) or [])
+    if until_run_id is not None:
+        ids = [getattr(run, "run_id", None) for run in runs]
+        if until_run_id in ids:
+            runs = runs[: ids.index(until_run_id) + 1]
+    runs = [
+        run for run in runs if getattr(run, "run_id", None) not in (exclude_run_id, None) or run.run_id == until_run_id
+    ]
     if limit is not None:
         runs = runs[-limit:] if limit > 0 else []
     for run in runs:
@@ -240,6 +252,7 @@ def stage_prior_media(
     session: Any,
     exclude_run_id: Optional[str] = None,
     limit: Optional[int] = RESTORED_RUNS_LIMIT,
+    until_run_id: Optional[str] = None,
 ) -> Tuple[List[Path], str]:
     """Put earlier runs' attachments back where the harness's transcript expects them.
 
@@ -247,10 +260,10 @@ def stage_prior_media(
     earlier run's files are restored under that folder, so the paths the harness already knows
     resolve again, on the same machine or on a replica with the same layout. When that folder
     cannot be written, the files go under this workspace instead and the returned note tells
-    the harness where they are now. Only the last `limit` earlier runs are restored, and files
-    still on disk are not written again. Returns the folders created, for cleanup, and the note.
+    the harness where they are now. Only the last `limit` earlier runs are restored, ending at
+    until_run_id when given, and files still on disk are not written again. Returns the folders created, for cleanup, and the note.
     """
-    attachments = prior_attachments(session, exclude_run_id, limit)
+    attachments = prior_attachments(session, exclude_run_id, limit, until_run_id)
     if not attachments:
         return [], ""
     recorded = (getattr(session, "session_data", None) or {}).get(UPLOADS_ROOT_KEY)

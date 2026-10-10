@@ -1396,8 +1396,68 @@ def test_kept_attachments_are_not_duplicated_on_later_turns(fake_sdk, tmp_db, tm
     folder = tmp_path / ".agno" / "uploads" / first.run_id
     assert sorted(p.name for p in folder.iterdir()) == ["notes-2.txt", "notes.txt"]
 
+    # The harness edited a kept file between turns; the edit must survive later restores.
+    (folder / "notes.txt").write_bytes(b"edited by the harness")
     agent.run("again", session_id="s")
     agent.run("and again", session_id="s")
 
     assert sorted(p.name for p in folder.iterdir()) == ["notes-2.txt", "notes.txt"]
-    assert (folder / "notes.txt").read_bytes() == b"one" and (folder / "notes-2.txt").read_bytes() == b"two"
+    assert (folder / "notes.txt").read_bytes() == b"edited by the harness"
+    assert (folder / "notes-2.txt").read_bytes() == b"two"
+
+
+def test_restore_window_ends_at_the_continued_run(tmp_path):
+    """A continued run's transcript ends at its source, so the window ends there, source included,
+    even when the source is the run being continued in place."""
+    from types import SimpleNamespace
+
+    from agno.agents._media import stage_prior_media
+    from agno.media import File
+
+    runs = [
+        SimpleNamespace(
+            run_id=f"run-{i}",
+            input=SimpleNamespace(images=None, files=[File(content=b"x", filename="a.txt", mime_type="text/plain")]),
+        )
+        for i in range(5)
+    ]
+    session = SimpleNamespace(session_data={}, runs=runs)
+
+    forked, _ = stage_prior_media(tmp_path / "fork", session, exclude_run_id="new-run", limit=2, until_run_id="run-1")
+    assert sorted(f.name for f in forked) == ["run-0", "run-1"]
+
+    in_place, _ = stage_prior_media(tmp_path / "same", session, exclude_run_id="run-1", limit=2, until_run_id="run-1")
+    assert sorted(f.name for f in in_place) == ["run-0", "run-1"]
+
+
+def test_continuing_an_old_run_restores_its_attachments(scripted, tmp_db, tmp_path, monkeypatch):
+    """Forking a run older than the restore limit still brings back the files its transcript names."""
+    from agno.media import File
+
+    turns, calls, _ = scripted
+    for _ in range(3):
+        turns.append(_tool_turn("go"))
+    turns.append(
+        [
+            SystemMessage("init", {"session_id": "fork-1"}),
+            _msg(AssistantMessage([TextBlock("branched")]), "v-final"),
+            ResultMessage("fork-1", "branched"),
+        ]
+    )
+    restored: List[List[str]] = []
+    real_stage_prior_media = claude_module.stage_prior_media
+
+    def recording(*args, **kwargs):
+        folders, note = real_stage_prior_media(*args, **kwargs, limit=1)
+        restored.append(sorted(f.name for f in folders))
+        return folders, note
+
+    monkeypatch.setattr(claude_module, "stage_prior_media", recording)
+    agent = ClaudeAgent(db=tmp_db, cwd=str(tmp_path))
+    source = agent.run("go", session_id="s", files=[File(content=b"v1", filename="spec.txt", mime_type="text/plain")])
+    agent.run("go", session_id="s")
+    agent.run("go", session_id="s")
+
+    agent.continue_run(run_id=source.run_id, session_id="s", continue_from=3, fork=True, input="next")
+
+    assert restored[-1] == [source.run_id]

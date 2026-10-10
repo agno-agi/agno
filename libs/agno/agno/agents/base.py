@@ -110,6 +110,8 @@ class ExternalContinuation:
     anchor: Dict[str, Any]
     forked_from_run_id: Optional[str] = None
     forked_from_message_index: Optional[int] = None
+    # The stored run being continued; the resumed transcript ends there.
+    source_run_id: Optional[str] = None
 
 
 @agent_dataclass
