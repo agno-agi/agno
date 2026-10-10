@@ -7,8 +7,9 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from agno.db.firestore.schemas import get_collection_indexes
-from agno.db.utils import get_sort_value
+from agno.db.utils import OS_METRICS_FIXED_KEYS, get_sort_value, metric_record_day
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.string import generate_id
 
 try:
     from google.cloud.firestore import Client  # type: ignore[import-untyped]
@@ -369,3 +370,107 @@ def bulk_upsert_metrics(collection_ref, metrics_records: List[Dict[str, Any]]) -
         batch.commit()
 
     return results
+
+
+# -- OS metrics util methods --
+
+# The document holding when OS metrics records were last written or deleted, and their hash
+OS_METRICS_STATE_ID = "os_metrics_state"
+
+# Firestore takes 30 values at most in one `in` filter
+OS_METRICS_IN_LIST_LIMIT = 30
+
+_OS_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses")
+
+
+def os_metrics_record_id(record: Dict[str, Any]) -> str:
+    """The id an OS metrics record is stored under: one per day, period, owner, component and parent."""
+    day = record["date"]
+    return generate_id(
+        json.dumps(
+            [
+                day.isoformat() if isinstance(day, date) else day,
+                record["aggregation_period"],
+                record.get("user_id") or "",
+                record.get("agent_id") or "",
+                record.get("team_id") or "",
+                record.get("workflow_id") or "",
+                record.get("parent_id") or "",
+            ]
+        )
+    )
+
+
+def _build_os_metrics_run_data(run_data: Dict[str, Any]) -> Dict[str, Any]:
+    """The run_data of a stored run, or of a run nested inside it, with only what OS metrics count."""
+    metrics = run_data.get("metrics") or {}
+    trimmed_metrics = {
+        key: metrics[key]
+        for key in (*OS_METRICS_FIXED_KEYS["token_metrics"], "duration", "time_to_first_token")
+        if metrics.get(key) is not None
+    }
+    # Only whether the model call reported details is counted
+    if metrics.get("details"):
+        trimmed_metrics["details"] = True
+    trimmed: Dict[str, Any] = {
+        "metrics": trimmed_metrics,
+        "model": run_data.get("model"),
+        "model_provider": run_data.get("model_provider"),
+        # Only each request's duration, skipping messages carried over from an earlier run
+        "messages": [
+            {"role": "assistant", "metrics": {"duration": message["metrics"]["duration"]}}
+            for message in run_data.get("messages") or []
+            if isinstance(message, dict)
+            and message.get("role") == "assistant"
+            and not message.get("from_history")
+            and (message.get("metrics") or {}).get("duration") is not None
+        ],
+    }
+    for key in _OS_METRICS_NESTED_RUN_KEYS:
+        nested_runs = [nested_run for nested_run in run_data.get(key) or [] if isinstance(nested_run, dict)]
+        if nested_runs:
+            trimmed[key] = [
+                {
+                    "run_id": nested_run.get("run_id"),
+                    "agent_id": nested_run.get("agent_id"),
+                    "team_id": nested_run.get("team_id"),
+                    **_build_os_metrics_run_data(nested_run),
+                }
+                for nested_run in nested_runs
+            ]
+    return trimmed
+
+
+def build_os_metrics_run(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a run with only what OS metrics count from a document of the runs collection.
+
+    Args:
+        record (Dict[str, Any]): A document of the runs collection.
+
+    Returns:
+        Dict[str, Any]: The run, with the run_data calculate_date_os_metrics reads.
+    """
+    run_data = record.get("run_data")
+    return {
+        "run_id": record.get("run_id"),
+        "run_type": record.get("run_type"),
+        "agent_id": record.get("agent_id"),
+        "team_id": record.get("team_id"),
+        "workflow_id": record.get("workflow_id"),
+        "user_id": record.get("user_id"),
+        "parent_run_id": record.get("parent_run_id"),
+        "status": record.get("status"),
+        "run_data": _build_os_metrics_run_data(run_data if isinstance(run_data, dict) else {}),
+    }
+
+
+def deserialize_os_metrics_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a stored OS metrics record in the shape calculate_date_os_metrics writes.
+
+    Args:
+        record (Dict[str, Any]): The stored record.
+
+    Returns:
+        Dict[str, Any]: The record, with its day, stored as an ISO string, as a date.
+    """
+    return {**record, "date": metric_record_day(record)}
