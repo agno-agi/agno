@@ -298,3 +298,227 @@ def test_message_reasoning_content_optional():
     msg = Message(role="assistant", content="Just content")
     # Should not raise, reasoning_content should be None or not set
     assert msg.content == "Just content"
+
+
+# ============================================================================
+# Native model reasoning lifecycle events (agent + team, chunk + stream-end)
+# ============================================================================
+
+
+def _reasoning_state():
+    return {"reasoning_started": False, "reasoning_time_taken": 0.0, "native_reasoning_streamed": False}
+
+
+def _reasoning_chunk(text):
+    from agno.models.response import ModelResponse, ModelResponseEvent
+
+    return ModelResponse(event=ModelResponseEvent.assistant_response.value, reasoning_content=text)
+
+
+def _base_mocks():
+    """Mocks shared by agent and team handlers."""
+    from unittest.mock import MagicMock
+
+    owner = MagicMock()
+    owner.events_to_skip = None
+    owner.store_events = False
+    session = MagicMock()
+    session.session_id = "test-session"
+    run_messages = MagicMock()
+    run_messages.messages = []
+    run_context = MagicMock()
+    run_context.output_schema = None
+    return owner, session, run_messages, run_context
+
+
+def _agent_mocks():
+    from agno.run.agent import RunOutput
+
+    agent, session, run_messages, run_context = _base_mocks()
+    return agent, session, RunOutput(session_id="test-session"), run_messages, run_context
+
+
+def _team_mocks():
+    from agno.run.team import TeamRunOutput
+
+    team, session, run_messages, run_context = _base_mocks()
+    team.stream_member_events = True
+    team._member_response_model = None
+    return team, session, TeamRunOutput(session_id="test-session"), run_messages, run_context
+
+
+def _assert_delta(events, delta_event, content):
+    deltas = [e for e in events if e.event == delta_event]
+    assert len(deltas) == 1
+    assert deltas[0].reasoning_content == content
+    return deltas[0]
+
+
+def _assert_lifecycle(events, delta_event, completed_event, content):
+    """One delta, one completed, completed after delta, completed carries full content."""
+    delta = _assert_delta(events, delta_event, content)
+    completed = [e for e in events if e.event == completed_event]
+    assert len(completed) == 1
+    assert completed[0].content == content
+    assert events.index(completed[0]) > events.index(delta)
+
+
+# ----------------------------------------------------------------------------
+# Chunk handlers (agent + team)
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("stream_events,expect_delta", [(True, True), (False, False)])
+def test_agent_chunk_reasoning_delta(stream_events, expect_delta):
+    from agno.agent._response import handle_model_response_chunk
+    from agno.models.response import ModelResponse
+    from agno.run.agent import RunEvent
+
+    agent, session, run_response, _, _ = _agent_mocks()
+    reasoning_state = _reasoning_state()
+
+    events = list(
+        handle_model_response_chunk(
+            agent=agent,
+            session=session,
+            run_response=run_response,
+            model_response=ModelResponse(content=""),
+            model_response_event=_reasoning_chunk("thinking..."),
+            reasoning_state=reasoning_state,
+            stream_events=stream_events,
+        )
+    )
+
+    assert len([e for e in events if e.event == RunEvent.reasoning_content_delta.value]) == (1 if expect_delta else 0)
+    assert reasoning_state["native_reasoning_streamed"] is expect_delta
+    # Accumulation happens regardless of streaming
+    assert run_response.reasoning_content == "thinking..."
+
+
+@pytest.mark.parametrize("stream_events,expect_delta", [(True, True), (False, False)])
+def test_team_chunk_reasoning_delta(stream_events, expect_delta):
+    from agno.models.response import ModelResponse
+    from agno.run.team import TeamRunEvent
+    from agno.team._response import _handle_model_response_chunk
+
+    team, session, run_response, _, _ = _team_mocks()
+    reasoning_state = _reasoning_state()
+
+    events = list(
+        _handle_model_response_chunk(
+            team,
+            session=session,
+            run_response=run_response,
+            full_model_response=ModelResponse(content=""),
+            model_response_event=_reasoning_chunk("team thinking..."),
+            reasoning_state=reasoning_state,
+            stream_events=stream_events,
+        )
+    )
+
+    assert len([e for e in events if e.event == TeamRunEvent.reasoning_content_delta.value]) == (
+        1 if expect_delta else 0
+    )
+    assert reasoning_state["native_reasoning_streamed"] is expect_delta
+    assert run_response.reasoning_content == "team thinking..."
+
+
+# ----------------------------------------------------------------------------
+# Stream-end ReasoningCompleted (agent + team, sync + async)
+# ----------------------------------------------------------------------------
+
+
+def test_agent_stream_emits_reasoning_completed_at_end(monkeypatch):
+    import agno.agent._response as ar
+    from agno.run.agent import RunEvent
+
+    agent, session, run_response, run_messages, run_context = _agent_mocks()
+    monkeypatch.setattr(ar, "call_model_stream_with_fallback", lambda *a, **k: iter([_reasoning_chunk("think")]))
+
+    events = list(
+        ar.handle_model_response_stream(
+            agent=agent,
+            session=session,
+            run_response=run_response,
+            run_messages=run_messages,
+            stream_events=True,
+            run_context=run_context,
+        )
+    )
+    _assert_lifecycle(events, RunEvent.reasoning_content_delta.value, RunEvent.reasoning_completed.value, "think")
+
+
+@pytest.mark.asyncio
+async def test_agent_astream_emits_reasoning_completed_at_end(monkeypatch):
+    import agno.agent._response as ar
+    from agno.run.agent import RunEvent
+
+    agent, session, run_response, run_messages, run_context = _agent_mocks()
+
+    async def fake_stream(*args, **kwargs):
+        yield _reasoning_chunk("think")
+
+    monkeypatch.setattr(ar, "acall_model_stream_with_fallback", fake_stream)
+
+    events = [
+        e
+        async for e in ar.ahandle_model_response_stream(
+            agent=agent,
+            session=session,
+            run_response=run_response,
+            run_messages=run_messages,
+            stream_events=True,
+            run_context=run_context,
+        )
+    ]
+    _assert_lifecycle(events, RunEvent.reasoning_content_delta.value, RunEvent.reasoning_completed.value, "think")
+
+
+def test_team_stream_emits_reasoning_completed_at_end(monkeypatch):
+    import agno.team._response as tr
+    from agno.run.team import TeamRunEvent
+
+    team, session, run_response, run_messages, run_context = _team_mocks()
+    monkeypatch.setattr(tr, "call_model_stream_with_fallback", lambda *a, **k: iter([_reasoning_chunk("team think")]))
+
+    events = list(
+        tr._handle_model_response_stream(
+            team=team,
+            session=session,
+            run_response=run_response,
+            run_messages=run_messages,
+            stream_events=True,
+            run_context=run_context,
+        )
+    )
+    _assert_lifecycle(
+        events, TeamRunEvent.reasoning_content_delta.value, TeamRunEvent.reasoning_completed.value, "team think"
+    )
+
+
+@pytest.mark.asyncio
+async def test_team_astream_emits_reasoning_completed_at_end(monkeypatch):
+    import agno.team._response as tr
+    from agno.run.team import TeamRunEvent
+
+    team, session, run_response, run_messages, run_context = _team_mocks()
+
+    async def fake_stream(*args, **kwargs):
+        yield _reasoning_chunk("team think")
+
+    monkeypatch.setattr(tr, "acall_model_stream_with_fallback", fake_stream)
+
+    events = [
+        e
+        async for e in tr._ahandle_model_response_stream(
+            team=team,
+            session=session,
+            run_response=run_response,
+            run_messages=run_messages,
+            stream_events=True,
+            run_context=run_context,
+        )
+    ]
+    _assert_lifecycle(
+        events, TeamRunEvent.reasoning_content_delta.value, TeamRunEvent.reasoning_completed.value, "team think"
+    )
