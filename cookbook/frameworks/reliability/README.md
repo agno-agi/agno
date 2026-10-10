@@ -63,6 +63,8 @@ python cookbook/frameworks/reliability/verify.py --cases concurrency --concurren
 python cookbook/frameworks/reliability/verify.py --cases concurrency --concurrency 8
 # Negative probes record failures as evidence; inspect TEST_LOG.md.
 python cookbook/frameworks/reliability/verify.py --cases active_reconnect,live_reconnect,tool_error,retention
+# Run separately from the soak: Redis outage stops the dedicated test service.
+python cookbook/frameworks/reliability/verify.py --cases same_session,redis_outage
 # Only after preflight; keeps the same replica processes alive for up to eight hours.
 python cookbook/frameworks/reliability/soak.py
 ```
@@ -81,6 +83,14 @@ The tests distinguish:
 - **Background acknowledgement:** durable HTTP 202 arrives before a held tool finishes.
 - **Reconnect:** close SSE mid-tool, then obtain subsequent indexed events through
   the other replica after completion.
+- **Live reconnect:** reconnect through the other replica while the tool is still
+  held, then release it and require the terminal event.
+- **Retention:** expire only a completed run's Redis keys and require stored event
+  replay, including its tool result. This is stricter than polling run history.
+- **Same session:** overlap two submissions and require both saved run records to
+  survive. This does not prove a linear native conversation.
+- **Redis outage:** stop only the test Redis after a run completes; require Postgres
+  polling and an explicit SSE transport error. Restore Redis in `finally`.
 - **Cancel:** cancel through the replica that did not execute the held tool.
 - **Sessions:** preserve a synthetic fact while moving between SDK homes. Claude
   must retain its native session ID. Codex records whether it resumed or used

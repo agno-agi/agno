@@ -215,7 +215,7 @@ class Suite:
 
     def tool_prompt(self, case, wait=False):
         return (
-            f'Call the fixture checkpoint tool exactly once with case_id="{case}", step="one", '
+            f'Call the mcp__fixture__checkpoint tool exactly once with case_id="{case}", step="one", '
             f"wait={str(wait).lower()}, fail=false. Do not use other tools. "
             "After it returns, reply with the exact RECEIPT string from its result."
         )
@@ -309,10 +309,12 @@ class Suite:
             },
         ) as response:
             response.raise_for_status()
+            # Opening the response establishes the subscription. Waiting for a new
+            # event before releasing the tool deadlocks when the cursor is current.
+            if reconnect_while_running:
+                self.release(case)
             for event in self.events(response):
                 replay.append(event)
-                if reconnect_while_running:
-                    self.release(case)
         indexed = [e["event_index"] for e in replay if "event_index" in e]
         assert indexed and all(i > last for i in indexed), replay
         assert indexed == sorted(set(indexed)), replay
@@ -411,6 +413,46 @@ class Suite:
         assert any(e.get("event") == "RunCompleted" for e in events), events
         return {"events": events, "run": final}
 
+    def case_redis_outage(self):
+        """A completed run remains pollable while its event transport is down.
+
+        This stops only the dedicated Compose project's Redis service. Run after
+        the soak, with no other test controller using the fixture infrastructure.
+        It does not test an outage during a model turn or Redis data recovery.
+        """
+        evidence = self.case_disconnect()
+        run = evidence["run"]
+        compose = ["docker", "compose", "-f", str(HERE / "compose.yaml")]
+        try:
+            subprocess.run(
+                compose + ["stop", "redis"],
+                check=True,
+                timeout=30,
+                capture_output=True,
+                text=True,
+            )
+            polled = self.poll(run["run_id"], run["session_id"], timeout=10)
+            assert polled["status"] == "COMPLETED", polled
+            with self.client.stream(
+                "POST",
+                self.replicas["b"].base + self.runs + f"/{run['run_id']}/resume",
+                data={"session_id": run["session_id"], "last_event_index": "-1"},
+                timeout=15,
+            ) as response:
+                response.raise_for_status()
+                events = list(self.events(response))
+            write_json(self.directory / "redis-outage-replay.json", events)
+            assert any(e.get("event") == "error" for e in events), events
+            return {"events": events, "polled": polled}
+        finally:
+            subprocess.run(
+                compose + ["up", "-d", "--wait", "redis"],
+                check=True,
+                timeout=60,
+                capture_output=True,
+                text=True,
+            )
+
     def case_session(self):
         fact = "beacon-" + uuid4().hex
         first, session, _ = self.submit(
@@ -457,6 +499,39 @@ class Suite:
             "run": final,
             "receipts": self.receipts(case),
         }
+
+    def case_same_session(self):
+        """Observe overlap and require both concurrent runs to remain stored."""
+        first_case, second_case = str(uuid4()), str(uuid4())
+        try:
+            first, session, _ = self.submit(self.tool_prompt(first_case, True))
+            self.wait_receipt(first_case)
+            second, _, _ = self.submit(
+                self.tool_prompt(second_case, True), replica="b", session=session
+            )
+            # A bounded observation, not a proof of global session serialization.
+            until = time.monotonic() + 15
+            while time.monotonic() < until and not self.receipts(second_case):
+                time.sleep(0.2)
+            overlapped = bool(self.receipts(second_case))
+            self.release(first_case)
+            first_result = self.poll(first["run_id"], session)
+            self.wait_receipt(second_case)
+            self.release(second_case)
+            second_result = self.poll(second["run_id"], session)
+            self.assert_tool(first_result, first_case)
+            self.assert_tool(second_result, second_case)
+            # Re-read the first run after the second persists to catch lost writes.
+            self.assert_tool(self.poll(first["run_id"], session), first_case)
+            return {
+                "session": session,
+                "overlap_observed": overlapped,
+                "runs": [first_result, second_result],
+                "note": "Saved run records alone do not prove a linear native SDK conversation.",
+            }
+        finally:
+            self.release(first_case)
+            self.release(second_case)
 
     def case_crash(self):
         case = str(uuid4())
