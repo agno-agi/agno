@@ -1170,7 +1170,7 @@ class StudioRunnerTools(Toolkit):
     ) -> None:
         """Every dispatch guard for the component type, in refusal-priority order."""
         self._require_matching_db(config, component, component_type, component_id)
-        self._require_declared_models(config, component_type, component_id)
+        self._require_declared_models(config, component, component_type, component_id)
         self._require_inspectable_depth(component, component_type, component_id)
         if component_type == "workflow":
             self._require_reconstructable_steps(config, component_id)
@@ -1491,10 +1491,7 @@ class StudioRunnerTools(Toolkit):
                 self._require_reference_type_matches(ref_type, ref_id, component_type, component_id)
                 continue
             self._require_faithful_rebuild(target, ref_config, ref_type, ref_id)
-            # A member or step executor declares its own models, so the loss is
-            # reported where it happened rather than only for the component the
-            # caller named.
-            self._require_declared_models(ref_config, ref_type, ref_id)
+            self._require_declared_models(ref_config, target, ref_type, ref_id)
             self._require_matching_db(ref_config, target, ref_type, ref_id)
             self._check_references(
                 target, ref_config, ref_type, ref_id, seen, configs, depth + 1, version=ref_resolved_version
@@ -1664,29 +1661,20 @@ class StudioRunnerTools(Toolkit):
                 )
 
     @staticmethod
-    def _require_declared_models(config: Dict[str, Any], component_type: str, component_id: str) -> None:
-        """Refuse a component whose declared reasoning, parser or output model
-        cannot be reconstructed.
-
-        These are written by to_dict and never read back -- from_dict's
-        reconstruction for them is commented out (#9452) -- so a component that
-        declares one always rebuilds without it and answers through a
-        materially different pipeline than it was configured for. The run
-        succeeds, so a log line is invisible to whoever asked.
-
-        Until #9452 lands, not dispatchable is the honest description of the
-        capability: the alternative is a successful answer computed some other
-        way, which is the failure this toolkit exists to prevent. Reads and
-        edits still load the component, so it stays inspectable."""
-        # reasoning_model reconstructs through the registry now; the other two
-        # model roles still do not, so they keep the honest refusal.
-        declared = [field for field in ("parser_model", "output_model") if config.get(field)]
-        if not declared:
+    def _require_declared_models(
+        config: Dict[str, Any], component: Any, component_type: str, component_id: str
+    ) -> None:
+        """Refuse a saved component if a declared model stage was lost on rebuild."""
+        missing = [
+            field
+            for field in ("reasoning_model", "parser_model", "output_model")
+            if config.get(field) and getattr(component, field, None) is None
+        ]
+        if not missing:
             return
         raise ComponentNotDispatchableError(
-            f"{component_type.capitalize()} '{component_id}' declares {', '.join(declared)}, which the framework "
-            "does not reconstruct, so the run would answer through a different pipeline than it was "
-            "configured for. Remove the declaration, or run it as a code-defined component."
+            f"{component_type.capitalize()} '{component_id}' declares {', '.join(missing)}, which could not be "
+            "reconstructed. Restore the model configuration before dispatching it."
         )
 
     def _warn_if_model_rebuilt(self, component: Any, component_type: str, component_id: str) -> None:
