@@ -176,7 +176,7 @@ class MongoDb(VectorDb):
                     log_info(f"Using database: {self.database}")
 
                 except errors.ConnectionFailure as e:
-                    raise ConnectionError(f"Failed to connect to Azure Cosmos DB: {e}")
+                    raise ConnectionError(f"Failed to connect to Azure Cosmos DB: {e}") from e
                 except Exception:
                     logger.exception("An error occurred while connecting to Azure Cosmos DB")
                     raise
@@ -190,7 +190,7 @@ class MongoDb(VectorDb):
                     self._db = self._client[self.database]  # type: ignore
                 except errors.ConnectionFailure as e:
                     logger.exception("Failed to connect to MongoDB")
-                    raise ConnectionError(f"Failed to connect to MongoDB: {e}")
+                    raise ConnectionError(f"Failed to connect to MongoDB: {e}") from e
                 except Exception:
                     logger.exception("An error occurred while connecting to MongoDB")
                     raise
