@@ -307,6 +307,7 @@ def test_os_metrics_table_creation(postgres_db_real: PostgresDb):
         "agent_id",
         "team_id",
         "workflow_id",
+        "parent_id",
         "sessions_count",
         "runs_count",
         "status_metrics",
@@ -333,6 +334,7 @@ def test_os_metrics_table_creation(postgres_db_real: PostgresDb):
         "agent_id",
         "team_id",
         "workflow_id",
+        "parent_id",
     ]
 
     indexes = {
@@ -482,9 +484,11 @@ def test_calculate_os_metrics(postgres_db_real: PostgresDb, sample_sessions_for_
     assert team_row["runs_count"] == 1
     assert team_row["model_metrics"][0]["team_id"] == "team-1"
     member_row = stored_rows[(past_day, "bob", "agent-2", "", "")]
+    assert team_row["parent_id"] == ""
     assert member_row["sessions_count"] == 0
     assert member_row["runs_count"] == 1
     assert member_row["token_metrics"] == {"input_tokens": 40, "output_tokens": 10, "total_tokens": 50}
+    assert member_row["parent_id"] == "team-1"
 
     unowned_row = stored_rows[(past_day, "", "agent-1", "", "")]
     assert unowned_row["user_id"] == ""

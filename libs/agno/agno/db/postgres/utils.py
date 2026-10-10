@@ -484,11 +484,21 @@ def bulk_upsert_os_metrics(session: Session, table: Table, os_metrics_records: L
         col.name: stmt.excluded[col.name]
         for col in table.columns
         if col.name
-        not in ["id", "created_at", "user_id", "date", "aggregation_period", "agent_id", "team_id", "workflow_id"]
+        not in [
+            "id",
+            "created_at",
+            "user_id",
+            "date",
+            "aggregation_period",
+            "agent_id",
+            "team_id",
+            "workflow_id",
+            "parent_id",
+        ]
     }
 
     stmt = stmt.on_conflict_do_update(
-        index_elements=["user_id", "date", "aggregation_period", "agent_id", "team_id", "workflow_id"],
+        index_elements=["user_id", "date", "aggregation_period", "agent_id", "team_id", "workflow_id", "parent_id"],
         set_=update_columns,
     )
     session.execute(stmt, os_metrics_records)
@@ -514,11 +524,21 @@ async def abulk_upsert_os_metrics(
         col.name: stmt.excluded[col.name]
         for col in table.columns
         if col.name
-        not in ["id", "created_at", "user_id", "date", "aggregation_period", "agent_id", "team_id", "workflow_id"]
+        not in [
+            "id",
+            "created_at",
+            "user_id",
+            "date",
+            "aggregation_period",
+            "agent_id",
+            "team_id",
+            "workflow_id",
+            "parent_id",
+        ]
     }
 
     stmt = stmt.on_conflict_do_update(
-        index_elements=["user_id", "date", "aggregation_period", "agent_id", "team_id", "workflow_id"],
+        index_elements=["user_id", "date", "aggregation_period", "agent_id", "team_id", "workflow_id", "parent_id"],
         set_=update_columns,
     )
     await session.execute(stmt, os_metrics_records)
@@ -613,6 +633,7 @@ def build_os_metrics_runs_query(table: Table, start_timestamp: int, end_timestam
         table.c.team_id,
         table.c.workflow_id,
         table.c.user_id,
+        table.c.parent_run_id,
         table.c.status,
         _os_metrics_run_metrics(table.c.run_data, ["duration", "time_to_first_token"]).label("metrics"),
         table.c.run_data["model"].astext.label("model"),

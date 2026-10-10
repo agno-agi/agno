@@ -156,6 +156,8 @@ OS_METRICS_TABLE_SCHEMA = {
     "agent_id": {"type": String, "nullable": False, "default": ""},
     "team_id": {"type": String, "nullable": False, "default": ""},
     "workflow_id": {"type": String, "nullable": False, "default": ""},
+    # The agent, team or workflow whose run started the runs of this row
+    "parent_id": {"type": String, "nullable": False, "default": ""},
     "sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
     "runs_count": {"type": BigInteger, "nullable": False, "default": 0},
     "status_metrics": {"type": JSONB, "nullable": False, "default": {}},
@@ -164,12 +166,12 @@ OS_METRICS_TABLE_SCHEMA = {
     "model_metrics": {"type": JSONB, "nullable": False, "default": []},
     "metadata": {"type": JSONB, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False},
-    "updated_at": {"type": BigInteger, "nullable": True},
+    "updated_at": {"type": BigInteger, "nullable": True, "index": True},
     "completed": {"type": Boolean, "nullable": False, "default": False},
     "_unique_constraints": [
         {
             "name": "uq_os_metrics_user_date_period_component",
-            "columns": ["user_id", "date", "aggregation_period", "agent_id", "team_id", "workflow_id"],
+            "columns": ["user_id", "date", "aggregation_period", "agent_id", "team_id", "workflow_id", "parent_id"],
         }
     ],
 }

@@ -186,7 +186,7 @@ def test_row_shape():
     """A row carries the columns the upsert expects, keyed by its owner and component within the day."""
     row = _only_row(runs=[_run()])
 
-    assert _os_metrics_row_key(row) == (OS_METRICS_DAY_PERIODS.index("daily"), "alice", "agent-1", "", "")
+    assert _os_metrics_row_key(row) == (OS_METRICS_DAY_PERIODS.index("daily"), "alice", "agent-1", "", "", "")
     assert len(row["id"]) == 36
     assert row["date"] == TARGET_DATE
     assert row["aggregation_period"] == "daily"
@@ -227,6 +227,26 @@ def test_team_member_run_counts_under_the_member_agent():
 
     assert rows[("alice", "", "team-1", "")]["runs_count"] == 1
     assert rows[("alice", "member-1", "", "")]["runs_count"] == 1
+
+
+def test_member_run_carries_the_team_that_started_it():
+    """The same agent run alone and as a team's member gets a row for each, and the day's total stays the same."""
+    runs = [
+        _run("team-run", run_type="team", component_id="team-1", tokens={"total_tokens": 300}),
+        _run("member-run", component_id="member-1", parent_run_id="team-run", tokens={"total_tokens": 500}),
+        _run("alone-run", component_id="member-1", tokens={"total_tokens": 120}),
+    ]
+    rows = {
+        (row["agent_id"], row["team_id"], row["parent_id"]): row
+        for row in calculate_date_os_metrics(TARGET_DATE, [], runs, set())
+        if row["aggregation_period"] == "daily"
+    }
+
+    assert set(rows) == {("", "team-1", ""), ("member-1", "", "team-1"), ("member-1", "", "")}
+    assert rows[("member-1", "", "team-1")]["token_metrics"] == {"total_tokens": 500}
+    assert rows[("member-1", "", "")]["token_metrics"] == {"total_tokens": 120}
+    assert _total_row(runs=runs)["token_metrics"] == {"total_tokens": 920}
+    assert _total_row(runs=runs)["runs_count"] == 3
 
 
 def test_regenerated_run_is_not_a_run_but_its_calls_count():

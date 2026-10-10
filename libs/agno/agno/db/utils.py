@@ -960,14 +960,15 @@ def resolve_os_metrics_fields(fields: Optional[Sequence[str]]) -> List[str]:
 OS_METRICS_DAY_PERIODS = ("daily_total", "daily")
 
 
-def _os_metrics_row_key(row: Dict[str, Any]) -> Tuple[int, str, str, str, str]:
-    """The period, owner and component a row is unique by within its day, a total row ordered first."""
+def _os_metrics_row_key(row: Dict[str, Any]) -> Tuple[int, str, str, str, str, str]:
+    """The period, owner, component and parent a row is unique by within its day, a total row ordered first."""
     return (
         OS_METRICS_DAY_PERIODS.index(row["aggregation_period"]),
         row.get("user_id") or "",
         row.get("agent_id") or "",
         row.get("team_id") or "",
         row.get("workflow_id") or "",
+        row.get("parent_id") or "",
     )
 
 
@@ -979,6 +980,12 @@ def _os_metrics_component(record: Dict[str, Any]) -> Tuple[str, str, str]:
         (record.get("team_id") or "") if kind == "team" else "",
         (record.get("workflow_id") or "") if kind == "workflow" else "",
     )
+
+
+def _os_metrics_parent_id(run: Dict[str, Any], components: Dict[str, Tuple[str, str, str]]) -> str:
+    """The id of the agent, team or workflow whose run started the given run. Empty for a run no run started."""
+    agent_id, team_id, workflow_id = components.get(run.get("parent_run_id") or "", ("", "", ""))
+    return agent_id or team_id or workflow_id
 
 
 def _os_metrics_nested_runs(run_data: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1071,6 +1078,8 @@ def calculate_date_os_metrics(
 ) -> List[Dict[str, Any]]:
     """Calculate OS metrics for the given single date, one record per user and agent, team or workflow.
 
+    The runs another run of the date started are counted apart, under the id of what started them.
+
     Args:
         date_to_process (date): The date to calculate OS metrics for.
         sessions (List[Dict[str, Any]]): The sessions created on that date.
@@ -1093,19 +1102,21 @@ def calculate_date_os_metrics(
             "model_counts": {},
         }
 
-    per_owner: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
+    per_owner: Dict[Tuple[str, str, str, str, str], Dict[str, Any]] = {}
 
     for session in sessions:
         agent_id, team_id, workflow_id = _os_metrics_component(session)
-        bucket_key = (session.get("user_id") or "", agent_id, team_id, workflow_id)
+        bucket_key = (session.get("user_id") or "", agent_id, team_id, workflow_id, "")
         bucket = per_owner.setdefault(bucket_key, _empty_os_metrics_record())
         bucket["sessions_count"] += 1
 
     seen_run_ids = {run["run_id"] for run in runs if run.get("run_id")} | stored_run_ids
+    components = {run["run_id"]: _os_metrics_component(run) for run in runs if run.get("run_id")}
     for run in runs:
         component = _os_metrics_component(run)
         agent_id, team_id, workflow_id = component
-        bucket_key = (run.get("user_id") or "", agent_id, team_id, workflow_id)
+        parent_id = _os_metrics_parent_id(run, components)
+        bucket_key = (run.get("user_id") or "", agent_id, team_id, workflow_id, parent_id)
         bucket = per_owner.setdefault(bucket_key, _empty_os_metrics_record())
         status = run.get("status")
         run_data = run.get("run_data") or {}
@@ -1159,7 +1170,7 @@ def calculate_date_os_metrics(
     completed = date_to_process < datetime.now(timezone.utc).date() - timedelta(days=1)
 
     records: List[Dict[str, Any]] = []
-    for (user_id, agent_id, team_id, workflow_id), bucket in per_owner.items():
+    for (user_id, agent_id, team_id, workflow_id, parent_id), bucket in per_owner.items():
         model_metrics = []
         # Sorted so an unchanged day rebuilds to the same list
         for (model_id, model_provider, model_agent_id, model_team_id, model_workflow_id), count in sorted(
@@ -1186,6 +1197,7 @@ def calculate_date_os_metrics(
                 "agent_id": agent_id,
                 "team_id": team_id,
                 "workflow_id": workflow_id,
+                "parent_id": parent_id,
                 "sessions_count": bucket["sessions_count"],
                 "runs_count": bucket["runs_count"],
                 "status_metrics": bucket["status_metrics"],
@@ -1344,6 +1356,7 @@ def build_os_metrics_total_row(
     agent_id: str = "",
     team_id: str = "",
     workflow_id: str = "",
+    parent_id: str = "",
 ) -> Dict[str, Any]:
     """Build the row that totals the given rows: the total row of a day or of a month, or a month row of one
     owner and component.
@@ -1356,6 +1369,7 @@ def build_os_metrics_total_row(
         agent_id (str): The agent of a month row of one owner and component.
         team_id (str): The team of a month row of one owner and component.
         workflow_id (str): The workflow of a month row of one owner and component.
+        parent_id (str): The parent of a month row of one owner and component.
 
     Returns:
         Dict[str, Any]: The row, in the shape calculate_date_os_metrics writes.
@@ -1375,6 +1389,7 @@ def build_os_metrics_total_row(
         "agent_id": agent_id,
         "team_id": team_id,
         "workflow_id": workflow_id,
+        "parent_id": parent_id,
         "sessions_count": row_totals["sessions_count"],
         "runs_count": row_totals["runs_count"],
         "status_metrics": row_totals["status_metrics"],
@@ -1437,13 +1452,14 @@ def calculate_month_os_metrics(month_start: date, stored_rows: Sequence[Dict[str
     """
     if not stored_rows or any(not row.get("completed") for row in stored_rows):
         return []
-    per_owner: Dict[Tuple[str, str, str, str], List[Dict[str, Any]]] = {}
+    per_owner: Dict[Tuple[str, str, str, str, str], List[Dict[str, Any]]] = {}
     for row in stored_rows:
         bucket_key = (
             row.get("user_id") or "",
             row.get("agent_id") or "",
             row.get("team_id") or "",
             row.get("workflow_id") or "",
+            row.get("parent_id") or "",
         )
         per_owner.setdefault(bucket_key, []).append(row)
     month_rows = [build_os_metrics_total_row(stored_rows, month_start, "monthly_total")]
