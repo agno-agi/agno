@@ -227,6 +227,10 @@ class SmolTools(Toolkit):
                 atexit.unregister(self._cleanup_at_exit)
                 self._cleanup_registered = False
 
+    async def aclose(self) -> None:
+        """Delete an owned VM without blocking the event loop."""
+        await asyncio.to_thread(self.close)
+
     def _cleanup_at_exit(self) -> None:
         try:
             self.close()

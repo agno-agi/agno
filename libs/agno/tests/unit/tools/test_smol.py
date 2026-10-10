@@ -111,7 +111,8 @@ def test_async_tools_use_worker_threads_and_share_the_same_machine(machines):
             == set(tools.async_functions)
             == {"run_shell_command", "run_python_code", "write_file", "read_file"}
         )
-        tools.close()
+        asyncio.run(tools.aclose())
+        vm.delete.assert_called_once_with()
 
 
 def test_close_waits_for_inflight_command(machines):
