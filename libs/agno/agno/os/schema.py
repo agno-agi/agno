@@ -664,6 +664,7 @@ CANCELLATION_STAGE_DESCRIPTION = (
 class RunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the run")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
+    caller_run_id: Optional[str] = Field(None, description="ID of the run that started this run, if any")
     agent_id: Optional[str] = Field(None, description="Agent ID that executed this run")
     user_id: Optional[str] = Field(None, description="User ID associated with the run")
     status: Optional[str] = Field(None, description="Run status (PENDING, RUNNING, COMPLETED, ERROR, etc.)")
@@ -718,6 +719,7 @@ class RunSchema(BaseModel):
         return cls(
             run_id=run_dict.get("run_id", ""),
             parent_run_id=run_dict.get("parent_run_id", ""),
+            caller_run_id=run_dict.get("caller_run_id"),
             agent_id=run_dict.get("agent_id", ""),
             user_id=run_dict.get("user_id", ""),
             status=run_dict.get("status"),
@@ -754,6 +756,7 @@ class RunSchema(BaseModel):
 class TeamRunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the team run")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
+    caller_run_id: Optional[str] = Field(None, description="ID of the run that started this run, if any")
     team_id: Optional[str] = Field(None, description="Team ID that executed this run")
     status: Optional[str] = Field(None, description="Run status (PENDING, RUNNING, COMPLETED, ERROR, etc.)")
     cancellation_stage: Optional[str] = Field(None, description=CANCELLATION_STAGE_DESCRIPTION)
@@ -806,6 +809,7 @@ class TeamRunSchema(BaseModel):
         return cls(
             run_id=run_dict.get("run_id", ""),
             parent_run_id=run_dict.get("parent_run_id", ""),
+            caller_run_id=run_dict.get("caller_run_id"),
             team_id=run_dict.get("team_id", ""),
             status=run_dict.get("status"),
             cancellation_stage=run_dict.get("cancellation_stage"),
@@ -840,6 +844,7 @@ class TeamRunSchema(BaseModel):
 
 class WorkflowRunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the workflow run")
+    caller_run_id: Optional[str] = Field(None, description="ID of the run that started this run, if any")
     run_input: Optional[str] = Field(None, description="Input provided to the workflow")
     events: Optional[List[dict]] = Field(None, description="Events generated during the workflow")
     workflow_id: Optional[str] = Field(None, description="Workflow ID that was executed")
@@ -876,6 +881,7 @@ class WorkflowRunSchema(BaseModel):
         run_input = get_run_input(run_response, is_workflow_run=True)
         return cls(
             run_id=run_response.get("run_id", ""),
+            caller_run_id=run_response.get("caller_run_id"),
             run_input=run_input,
             events=run_response.get("events", []),
             workflow_id=run_response.get("workflow_id", ""),
