@@ -10,6 +10,7 @@ from uuid import uuid4
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.exceptions import RunCancelledException
 from agno.media import Audio, File, Image, Video
+from agno.metrics import BaseMetrics, ModelMetrics, RunMetrics, SessionMetrics
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.run.agent import (
@@ -68,12 +69,20 @@ class ExternalRunWarningEvent(CustomEvent):
 
 
 @dataclass
+class ExternalRunMetricsEvent(CustomEvent):
+    """Token usage and cost reported by a streaming adapter; consumed by the base, not forwarded."""
+
+    metrics: Optional[RunMetrics] = None
+
+
+@dataclass
 class ExternalRunResult:
     """Adapter output with tool executions retained for session history."""
 
     content: str
     tools: Optional[List[ToolExecution]] = None
     warnings: Optional[List[Dict[str, Any]]] = None
+    metrics: Optional[RunMetrics] = None
 
 
 @dataclass
@@ -534,6 +543,7 @@ class BaseExternalAgent:
         from agno.run.concurrency import get_worker_ownership
 
         session.upsert_run(run=run_output)
+        self._update_session_metrics(session, run_output)
         worker_owned = get_worker_ownership(run_output.run_id or "") is not None
         try:
             if self.db is not None:
@@ -824,6 +834,7 @@ class BaseExternalAgent:
         content: Any,
         status: RunStatus,
         tools: Optional[List[ToolExecution]] = None,
+        metrics: Optional[RunMetrics] = None,
     ) -> RunOutput:
         """Build a RunOutput with properly populated messages for chat history."""
         now = int(time())
@@ -877,8 +888,60 @@ class BaseExternalAgent:
             messages=messages,
             tools=tools,
             status=status,
+            metrics=metrics,
             created_at=now,
         )
+
+    @staticmethod
+    def _build_metrics(
+        totals: BaseMetrics,
+        models: Sequence[ModelMetrics],
+        additional_metrics: Optional[Dict[str, Any]] = None,
+    ) -> RunMetrics:
+        """Assemble RunMetrics from a framework's turn totals and its per-model entries.
+
+        Adapters only parse their SDK's usage object into these two pieces; the totals are
+        the framework's own figures for the turn and are not recomputed from the models,
+        because frameworks may count helper models separately from the main conversation.
+        """
+        return RunMetrics(
+            input_tokens=totals.input_tokens,
+            output_tokens=totals.output_tokens,
+            total_tokens=totals.total_tokens,
+            cache_read_tokens=totals.cache_read_tokens,
+            cache_write_tokens=totals.cache_write_tokens,
+            reasoning_tokens=totals.reasoning_tokens,
+            cost=totals.cost,
+            details={"model": list(models)} if models else None,
+            additional_metrics=additional_metrics or None,
+        )
+
+    @staticmethod
+    def _finish_metrics(timer: RunMetrics, adapter_metrics: Optional[RunMetrics]) -> Optional[RunMetrics]:
+        """Stop the run timer and merge its timing into the metrics the adapter reported.
+
+        Token counts and cost come from the framework; wall-clock duration and time to
+        first token are measured here so every external agent reports them the same way.
+        """
+        timer.stop_timer()
+        metrics = adapter_metrics if adapter_metrics is not None else RunMetrics()
+        if metrics.duration is None:
+            metrics.duration = timer.duration
+        if metrics.time_to_first_token is None:
+            metrics.time_to_first_token = timer.time_to_first_token
+        return metrics
+
+    @staticmethod
+    def _update_session_metrics(session: AgentSession, run_output: RunOutput) -> None:
+        """Add a completed run's metrics to the session totals AgentOS reads from session_data."""
+        if run_output.metrics is None or run_output.status != RunStatus.completed:
+            return
+        if session.session_data is None:
+            session.session_data = {}
+        stored = session.session_data.get("session_metrics")
+        session_metrics = SessionMetrics.from_dict(stored) if isinstance(stored, dict) else SessionMetrics()
+        session_metrics.accumulate_from_run(run_output.metrics)
+        session.session_data["session_metrics"] = session_metrics.to_dict()
 
     def _finish_run_output(
         self, run: RunOutput, run_state: Dict[str, Any], continuation: Optional[ExternalContinuation]
@@ -1040,6 +1103,8 @@ class BaseExternalAgent:
         history = (
             self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
         )
+        timer = RunMetrics()
+        timer.start_timer()
         try:
             async with self._run_cancellation(run_id):
                 content = await self._arun_adapter(
@@ -1053,6 +1118,9 @@ class BaseExternalAgent:
                 content.content if isinstance(content, ExternalRunResult) else content,
                 RunStatus.completed,
                 tools=content.tools if isinstance(content, ExternalRunResult) else None,
+                metrics=self._finish_metrics(
+                    timer, content.metrics if isinstance(content, ExternalRunResult) else None
+                ),
             )
             if isinstance(content, ExternalRunResult) and content.warnings:
                 run_output.metadata = {"warnings": content.warnings}
@@ -1100,14 +1168,22 @@ class BaseExternalAgent:
         tools: Dict[str, ToolExecution] = {}
         status = RunStatus.completed
         run_error: Optional[Exception] = None
+        adapter_metrics: Optional[RunMetrics] = None
+        timer = RunMetrics()
+        timer.start_timer()
         try:
             async with self._run_cancellation(run_id):
                 async for event in self._arun_adapter_stream(
                     input, history=history, run_id=run_id, session=session, run_state=run_state, **kwargs
                 ):
+                    if isinstance(event, ExternalRunMetricsEvent):
+                        adapter_metrics = event.metrics
+                        continue
                     if isinstance(event, ExternalRunWarningEvent) and event.warning is not None:
                         warnings.append(event.warning)
                     if isinstance(event, RunContentEvent):
+                        if event.content:
+                            timer.set_time_to_first_token()
                         accumulated_content += event.content or ""
                     elif isinstance(event, (ToolCallStartedEvent, ToolCallCompletedEvent)) and event.tool:
                         key = event.tool.tool_call_id or str(uuid4())
@@ -1131,6 +1207,7 @@ class BaseExternalAgent:
             str(run_error) if run_error else accumulated_content,
             status,
             list(tools.values()) or None,
+            metrics=self._finish_metrics(timer, adapter_metrics) if status == RunStatus.completed else None,
         )
         if warnings:
             run.metadata = {"warnings": warnings}
@@ -1151,7 +1228,7 @@ class BaseExternalAgent:
         elif run_error is not None:
             yield RunErrorEvent(**fields, error_type=error_type_of(run_error))
         else:
-            yield RunCompletedEvent(**fields)
+            yield RunCompletedEvent(**fields, metrics=run.metrics)
         if yield_run_output:
             yield run
 
