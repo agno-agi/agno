@@ -25,6 +25,7 @@ from agno.agents._config import agent_dataclass
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.exceptions import RunCancelledException, UnsupportedMediaError
 from agno.media import Audio, File, Image, Video
+from agno.metrics import BaseMetrics, ModelMetrics, RunMetrics, SessionMetrics
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.run.agent import (
@@ -82,12 +83,33 @@ class ExternalRunWarningEvent(CustomEvent):
 
 
 @dataclass
+class ExternalRunMetricsEvent(CustomEvent):
+    """Token usage and cost reported by a streaming adapter; consumed by the base, not forwarded."""
+
+    metrics: Optional[RunMetrics] = None
+
+
+@dataclass
 class ExternalRunResult:
     """Adapter output with tool executions retained for session history."""
 
     content: str
     tools: Optional[List[ToolExecution]] = None
     warnings: Optional[List[Dict[str, Any]]] = None
+    metrics: Optional[RunMetrics] = None
+
+
+@dataclass
+class ExternalContinuation:
+    """Replay of a stored run from one of its message boundaries."""
+
+    messages: List[Message]
+    tools: Optional[List[ToolExecution]]
+    source_input: Optional[RunInput]
+    record_input: Any
+    anchor: Dict[str, Any]
+    forked_from_run_id: Optional[str] = None
+    forked_from_message_index: Optional[int] = None
 
 
 @agent_dataclass
@@ -664,6 +686,7 @@ class BaseExternalAgent:
         from agno.run.concurrency import get_worker_ownership
 
         session.upsert_run(run=run_output)
+        self._update_session_metrics(session, run_output)
         worker_owned = get_worker_ownership(run_output.run_id or "") is not None
         try:
             if self.db is not None:
@@ -950,6 +973,7 @@ class BaseExternalAgent:
         content: Any,
         status: RunStatus,
         tools: Optional[List[ToolExecution]] = None,
+        metrics: Optional[RunMetrics] = None,
         media: Optional[Dict[str, Any]] = None,
     ) -> RunOutput:
         """Build a RunOutput with properly populated messages for chat history."""
@@ -1012,8 +1036,75 @@ class BaseExternalAgent:
             messages=messages,
             tools=tools,
             status=status,
+            metrics=metrics,
             created_at=now,
         )
+
+    @staticmethod
+    def _build_metrics(
+        totals: BaseMetrics,
+        models: Sequence[ModelMetrics],
+        additional_metrics: Optional[Dict[str, Any]] = None,
+    ) -> RunMetrics:
+        """Assemble RunMetrics from a framework's turn totals and its per-model entries.
+
+        Adapters only parse their SDK's usage object into these two pieces; the totals are
+        the framework's own figures for the turn and are not recomputed from the models,
+        because frameworks may count helper models separately from the main conversation.
+        """
+        return RunMetrics(
+            input_tokens=totals.input_tokens,
+            output_tokens=totals.output_tokens,
+            total_tokens=totals.total_tokens,
+            cache_read_tokens=totals.cache_read_tokens,
+            cache_write_tokens=totals.cache_write_tokens,
+            reasoning_tokens=totals.reasoning_tokens,
+            cost=totals.cost,
+            details={"model": list(models)} if models else None,
+            additional_metrics=additional_metrics or None,
+        )
+
+    @staticmethod
+    def _finish_metrics(timer: RunMetrics, adapter_metrics: Optional[RunMetrics]) -> Optional[RunMetrics]:
+        """Stop the run timer and merge its timing into the metrics the adapter reported.
+
+        Token counts and cost come from the framework; wall-clock duration and time to
+        first token are measured here so every external agent reports them the same way.
+        """
+        timer.stop_timer()
+        metrics = adapter_metrics if adapter_metrics is not None else RunMetrics()
+        if metrics.duration is None:
+            metrics.duration = timer.duration
+        if metrics.time_to_first_token is None:
+            metrics.time_to_first_token = timer.time_to_first_token
+        return metrics
+
+    @staticmethod
+    def _update_session_metrics(session: AgentSession, run_output: RunOutput) -> None:
+        """Add a completed run's metrics to the session totals AgentOS reads from session_data."""
+        if run_output.metrics is None or run_output.status != RunStatus.completed:
+            return
+        if session.session_data is None:
+            session.session_data = {}
+        stored = session.session_data.get("session_metrics")
+        session_metrics = SessionMetrics.from_dict(stored) if isinstance(stored, dict) else SessionMetrics()
+        session_metrics.accumulate_from_run(run_output.metrics)
+        session.session_data["session_metrics"] = session_metrics.to_dict()
+
+    def _finish_run_output(
+        self, run: RunOutput, run_state: Dict[str, Any], continuation: Optional[ExternalContinuation]
+    ) -> None:
+        """Prepend a continuation's kept transcript, then let the adapter annotate messages."""
+        if continuation is not None:
+            run.messages = continuation.messages + (run.messages or [])
+            run.tools = (continuation.tools or []) + (run.tools or []) or None
+            run.input = continuation.source_input
+            run.forked_from_run_id = continuation.forked_from_run_id
+            run.forked_from_message_index = continuation.forked_from_message_index
+        self._annotate_run_output(run, run_state)
+
+    def _annotate_run_output(self, run: RunOutput, run_state: Dict[str, Any]) -> None:
+        """Attach adapter-specific per-message data recorded in run_state during the run."""
 
     def _get_history_from_session(
         self, session: AgentSession, exclude_run_id: Optional[str] = None
@@ -1032,10 +1123,35 @@ class BaseExternalAgent:
         history: List[Dict[str, Any]] = []
         if not session.runs:
             return history
+        # A fork already contains the retained prefix of its source run. Its
+        # predecessor is the source's predecessor, not the most recent sibling.
+        # Keep predecessor links so forks of older branches also discard any
+        # intervening turns, without copying the entire history for every run.
+        runs: List[RunOutput] = []
+        predecessors: List[Optional[int]] = []
+        indexes: Dict[str, int] = {}
+        head: Optional[int] = None
         for run in session.runs:
             if not isinstance(run, RunOutput) or not run.messages or run.run_id == exclude_run_id:
                 continue
-            for msg in run.messages:
+            predecessor = head
+            if run.forked_from_run_id:
+                source_index = indexes.get(run.forked_from_run_id)
+                # If the source was deleted, its earlier ancestry is unknown;
+                # only the prefix retained in the fork is safe to replay.
+                predecessor = predecessors[source_index] if source_index is not None else None
+            head = len(runs)
+            runs.append(run)
+            predecessors.append(predecessor)
+            if run.run_id:
+                indexes[run.run_id] = head
+
+        branch: List[RunOutput] = []
+        while head is not None:
+            branch.append(runs[head])
+            head = predecessors[head]
+        for run in reversed(branch):
+            for msg in run.messages or []:
                 if msg.role == "assistant" and msg.tool_calls:
                     # Assistant message with tool calls (no text content)
                     history.append(
@@ -1128,32 +1244,59 @@ class BaseExternalAgent:
         session_id = kwargs.get("session_id") or str(uuid4())
         kwargs["session_id"] = session_id
         user_id = kwargs.get("user_id")
+        continuation: Optional[ExternalContinuation] = kwargs.get("continuation")
+        record_input = input if continuation is None else continuation.record_input
+        run_state: Dict[str, Any] = {}
         session = await self.aread_or_create_session(session_id, user_id) if self.db else None
-        history = self._get_history_from_session(session, exclude_run_id=run_id) if session else None
+        history = (
+            self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
+        )
+        timer = RunMetrics()
+        timer.start_timer()
         try:
             async with self._run_cancellation(run_id):
-                content = await self._arun_adapter(input, history=history, run_id=run_id, session=session, **kwargs)
+                content = await self._arun_adapter(
+                    input, history=history, run_id=run_id, session=session, run_state=run_state, **kwargs
+                )
             run_output = self._build_run_output(
                 run_id,
                 session_id,
                 user_id,
-                input,
+                record_input,
                 content.content if isinstance(content, ExternalRunResult) else content,
                 RunStatus.completed,
                 tools=content.tools if isinstance(content, ExternalRunResult) else None,
+                metrics=self._finish_metrics(
+                    timer, content.metrics if isinstance(content, ExternalRunResult) else None
+                ),
                 media=kwargs.get("media"),
             )
             if isinstance(content, ExternalRunResult) and content.warnings:
                 run_output.metadata = {"warnings": content.warnings}
         except RunCancelledException:
             run_output = self._build_run_output(
-                run_id, session_id, user_id, input, "Run cancelled", RunStatus.cancelled, media=kwargs.get("media")
+                run_id,
+                session_id,
+                user_id,
+                record_input,
+                "Run cancelled",
+                RunStatus.cancelled,
+                tools=list(run_state.get("tools", {}).values()) or None,
+                media=kwargs.get("media"),
             )
         except Exception as error:
             log_exception(f"Error in {self.sdk} agent '{self.id}': {error}")
             run_output = self._build_run_output(
-                run_id, session_id, user_id, input, str(error), RunStatus.error, media=kwargs.get("media")
+                run_id,
+                session_id,
+                user_id,
+                record_input,
+                str(error),
+                RunStatus.error,
+                tools=list(run_state.get("tools", {}).values()) or None,
+                media=kwargs.get("media"),
             )
+        self._finish_run_output(run_output, run_state, continuation)
         if session is not None:
             await self._apersist_run_in_session(session, run_output)
         return run_output
@@ -1164,22 +1307,34 @@ class BaseExternalAgent:
         kwargs["session_id"] = session_id
         user_id = kwargs.get("user_id")
         yield_run_output = kwargs.pop("yield_run_output", False)
+        continuation: Optional[ExternalContinuation] = kwargs.get("continuation")
+        run_state: Dict[str, Any] = {}
         session = await self.aread_or_create_session(session_id, user_id) if self.db else None
-        history = self._get_history_from_session(session, exclude_run_id=run_id) if session else None
+        history = (
+            self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
+        )
         yield RunStartedEvent(run_id=run_id, agent_id=self.get_id(), agent_name=self.name or "", session_id=session_id)
         accumulated_content = ""
         warnings: List[Dict[str, Any]] = []
         tools: Dict[str, ToolExecution] = {}
         status = RunStatus.completed
         run_error: Optional[Exception] = None
+        adapter_metrics: Optional[RunMetrics] = None
+        timer = RunMetrics()
+        timer.start_timer()
         try:
             async with self._run_cancellation(run_id):
                 async for event in self._arun_adapter_stream(
-                    input, history=history, run_id=run_id, session=session, **kwargs
+                    input, history=history, run_id=run_id, session=session, run_state=run_state, **kwargs
                 ):
+                    if isinstance(event, ExternalRunMetricsEvent):
+                        adapter_metrics = event.metrics
+                        continue
                     if isinstance(event, ExternalRunWarningEvent) and event.warning is not None:
                         warnings.append(event.warning)
                     if isinstance(event, RunContentEvent):
+                        if event.content:
+                            timer.set_time_to_first_token()
                         accumulated_content += event.content or ""
                     elif isinstance(event, (ToolCallStartedEvent, ToolCallCompletedEvent)) and event.tool:
                         key = event.tool.tool_call_id or str(uuid4())
@@ -1199,14 +1354,16 @@ class BaseExternalAgent:
             run_id,
             session_id,
             user_id,
-            input,
+            input if continuation is None else continuation.record_input,
             str(run_error) if run_error else accumulated_content,
             status,
             list(tools.values()) or None,
+            metrics=self._finish_metrics(timer, adapter_metrics) if status == RunStatus.completed else None,
             media=kwargs.get("media"),
         )
         if warnings:
             run.metadata = {"warnings": warnings}
+        self._finish_run_output(run, run_state, continuation)
         if session is not None:
             await self._apersist_run_in_session(session, run)
         fields: Dict[str, Any] = dict(
@@ -1223,7 +1380,7 @@ class BaseExternalAgent:
         elif run_error is not None:
             yield RunErrorEvent(**fields, error_type=error_type_of(run_error))
         else:
-            yield RunCompletedEvent(**fields)
+            yield RunCompletedEvent(**fields, metrics=run.metrics)
         if yield_run_output:
             yield run
 

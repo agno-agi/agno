@@ -7,6 +7,49 @@ of the consolidated paths.
 ## Earlier framework examples
 
 
+## 2026-10-10
+
+### metrics_agentos.py --verify
+
+**Status:** PASS
+
+**Description:** Through the AgentOS test client: a non-streamed run, a streamed run with a Bash call, then `GET /sessions/{id}`, `GET /sessions` and `GET /metrics`. Asserts the session total equals the two runs and that the daily aggregation counts both runs.
+
+**Result:** Run 1: 7 tokens, $0.0195. Run 2 (RunCompleted event): 123 tokens, $0.0348, time to first token 6.1s. Session: 130 tokens, $0.0543; sessions list column 130; metrics page agent_runs_count 2, total_tokens 130.
+
+---
+
+### metrics.py
+
+**Status:** PASS
+
+**Description:** One plain turn, one streamed turn with a Bash call, then the session totals. Checks that `RunOutput.metrics` and the `RunCompleted` event carry tokens, cache usage, cost and duration, and that `session_data["session_metrics"]` equals the sum of the two runs.
+
+**Result:** Run 1: 3 input, 4 output, 13802 cache read, 2665 cache write, $0.0208, 4.4s, with per-model entries for claude-sonnet-4-6 and the claude-haiku-4-5 helper model. Run 2 (streamed): 125 tokens, $0.0341, time to first token 5.5s. Session totals: 132 tokens, $0.0548 across 2 runs.
+
+---
+
+## 2026-10-09
+
+### continue_from.py (finished runs always fork)
+
+**Status:** PASS
+
+**Description:** Reran after `continue_run(fork=False)` on a completed run was changed to behave like native agents: the continuation becomes a new sibling run with fork lineage instead of rewriting the source run. Also exercised live with `background=True` on a completed run (ALPHA -> BETA -> GAMMA, three runs in the session, source run untouched).
+
+**Result:** Checkpoints listed at 3, 5 and 6; branch from step 3 kept only `echo alpha`; replayed turn returned DONE. The in-place-with-background ValueError is gone.
+
+---
+
+### continue_from.py (review fixes)
+
+**Status:** PASS
+
+**Description:** Reran after the review fixes: checkpoints are exposed per tool batch (one per sequential step, one per parallel batch, anchored at the batch's last transcript entry), `continue_from=0` starts a branch before the prompt, `continue_from="last_user"` replays the selected user turn rather than only the first, cancelled runs are rejected, and in-place continuation refuses `background=True`. The cookbook now asserts on the tool results the branch carries instead of on the model's wording, so a run where Claude batches both commands still passes.
+
+**Result:** Sequential run: checkpoints at messages 3, 5 and the end; the branch from step 3 carried only the first result and answered with the first command. Replay of the whole turn completed. A separate parallel run exposed a single checkpoint at the batch end.
+
+---
 ## 2026-10-09
 
 ### transcript_store.py
@@ -120,8 +163,6 @@ when session storage fails. In-memory SQLite async polling retains the completed
 **Result:** 751 unit/regression tests, 12 external-agent PostgreSQL integration tests and 13 existing
 native PostgreSQL tests passed. Format and validation passed. These are persistence fault-injection
 checks; the earlier live provider cancellation runs were not repeated.
-
----
 
 ---
 
@@ -391,6 +432,26 @@ evidence and limits. This does not rerun this directory's advanced examples.
 **Description:** claude_basic.py and claude_native_sdk.py stream their text. transcript_store.py uses streaming printers for both turns, the requested claude-sonnet-5-5 model, and no explicit turn/budget limits.
 
 **Result:** All ten live acceptance cases pass in 60.88s. Additional live structured-output and transcript runs pass. Full format/validation, compile, whitespace and starting-example pattern checks pass. See the [shared test log](../TEST_LOG.md#streaming-examples--2026-10-09) for commands, versions, evidence and the corrected transcript test-wrapper failure.
+
+
+---
+
+### continue_from.py (2026-10-08)
+
+**Status:** PASS
+
+**Description:** Live run with claude-agent-sdk 0.2.95 and `claude-sonnet-4-6` on SQLite transcript storage. A two-step Bash turn listed checkpoints at both tool results and the end. Continuing from the first tool result with a question produced a branch that only knew `echo alpha`; `continue_from="last_user"` replayed the turn as a forked sibling. Separately, with `claude-haiku-4-5`, exercised AgentOS `/checkpoints` and `/continue` (non-stream and SSE), an in-place streamed continue, and a replay of a non-first turn that kept earlier context.
+
+**Result:** Continue and checkpoints work end to end against the real SDK. Files touched after a checkpoint are not rewound.
+
+
+### claude_agentos.py — DX review refresh, 10 October 2026
+
+**Status:** PASS
+
+**Description:** Restored the standalone server command and streaming curl request in the module docstring. Imported the actual example and verified the configured agent ID and `/agents/{agent_id}/runs` OpenAPI route without a model call.
+
+**Result:** Startup configuration and documented route/ID checks passed. The merged-main refresh also passed 310 adapter/background-stream tests, including metrics, replay, typed options and persistence. `scripts/format.sh` and `scripts/validate.sh` passed in `.venvs/claude-dx-validation`; this entry does not claim a new live provider run. Existing live results above retain their original source/version scope.
 
 ### claude_media.py
 

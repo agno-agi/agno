@@ -168,6 +168,8 @@ Use [TEST_PROMPT.md](../TEST_PROMPT.md) for reproducible live tests and
 - [codex_session_agentos.py](codex_session_agentos.py): sessions through AgentOS.
 - [codex_mcp_tools.py](codex_mcp_tools.py): connect native MCP tools.
 - [codex_structured_output.py](codex_structured_output.py): JSON Schema output.
+- [codex_metrics.py](codex_metrics.py): per-run token usage and session totals.
+- [codex_metrics_agentos.py](codex_metrics_agentos.py): metrics through the AgentOS API.
 - [background_cancel.py](background_cancel.py): background execution and cancellation.
 
 Each exercise has its own setup and validation history in [TEST_LOG.md](TEST_LOG.md).
@@ -182,6 +184,10 @@ the lifetime of the agent object.
 If a thread cannot be resumed (for example `ephemeral=True`, or the Codex
 session files were removed), the adapter starts a fresh thread and prepends the
 persisted chat history to the prompt so context is not lost.
+
+## Metrics
+
+Every run reports the token usage for the whole turn on `RunOutput.metrics` (input, cached input, output, reasoning and total), plus wall-clock `duration` measured by Agno and `time_to_first_token` when streaming. A turn with tool calls makes several model requests; Codex reports usage after each one, and the adapter sums them by taking the growth of the thread total over the turn, so a two-tool turn reports all three requests rather than only the last. Like the OpenAI API, `input_tokens` includes the cached prefix. Codex reports no cost. Completed runs are added to `session_data["session_metrics"]`, which AgentOS reads for the sessions list, the session view and the metrics page.
 
 ## Images and files
 

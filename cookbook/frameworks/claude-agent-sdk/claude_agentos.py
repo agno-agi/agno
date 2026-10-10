@@ -3,9 +3,18 @@ ClaudeAgent: Serve the Shipping Reviewer
 ==========================================
 Expose the file-reading agent through AgentOS with local SQLite run storage.
 
-Start this file, then use the HTTP examples in README.md. Inspect run IDs,
-streamed tool events and stored results. This local server has no authentication;
-keep it bound to loopback. SQLite is for this local exercise only.
+Start the server:
+    python cookbook/frameworks/claude-agent-sdk/claude_agentos.py
+
+Stream a run from your own client:
+    curl -N http://127.0.0.1:7777/agents/claude-reviewer/runs \
+      -F 'message=Read shipping.py and explain the shipping fee rules.' \
+      -F 'session_id=shipping-review' \
+      -F 'stream=true'
+
+Use stream=false for a JSON response. See README.md for more HTTP examples.
+Inspect run IDs, streamed tool events and stored results. This local server has
+no authentication; keep it bound to loopback. SQLite is for this local exercise only.
 This does not establish durable queueing or multi-replica recovery.
 """
 
