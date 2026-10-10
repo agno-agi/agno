@@ -73,6 +73,7 @@ from agno.run.cancel import (
     cleanup_run,
     raise_if_cancelled,
     register_run,
+    reraise_if_paused_on_disconnect,
 )
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
@@ -1871,6 +1872,7 @@ async def _arun(
 
                 return run_response
             except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
+                reraise_if_paused_on_disconnect(run_response.status, cancel_exc)
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
                 if agent_session is not None:
                     if isinstance(cancel_exc, asyncio.CancelledError):
@@ -2609,6 +2611,7 @@ async def _arun_stream(
                 break
 
             except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
+                reraise_if_paused_on_disconnect(run_response.status, cancel_exc)
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
                 # Build terminal events first so they are stored on the run
                 cancelled_event, completed_event = _build_cancel_terminal_events(
@@ -5103,6 +5106,7 @@ async def _acontinue_run(
             except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
+                reraise_if_paused_on_disconnect(run_response.status, cancel_exc)
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
                 if agent_session is not None:
                     if isinstance(cancel_exc, asyncio.CancelledError):
@@ -5725,6 +5729,7 @@ async def _acontinue_run_stream(
             except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
+                reraise_if_paused_on_disconnect(run_response.status, cancel_exc)
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
                 # Build terminal events first so they are stored on the run
                 cancelled_event, completed_event = _build_cancel_terminal_events(
