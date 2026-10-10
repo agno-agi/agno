@@ -102,33 +102,23 @@ Tested 2026-10-08 with openai-codex 0.161.0 (bundled Codex CLI 0.161.0), model g
 
 ---
 
-### codex_retries.py
+### codex_compaction.py
 
-**Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
+**Status:** PASS (2026-10-09, openai-codex 0.161.0, gpt-5.6-luna)
 
-**Description:** Ran live with the demo environment. The cookbook injects the failure itself: the first attempt is cut off with a simulated transient error at the turn's completion notification. Four cases with `retries=2`, `delay_between_retries=1`, `exponential_backoff=True`: one failure then success (non-streaming), one failure then success (streaming), more failures than retries, and the default `retries=0`.
+**Description:** Seeds a fact, adds three turns including a 1200-line filler document, calls `CodexAgent.acompact(session_id)`, then asks for the fact on the same session. `acompact` returns False before any thread exists, then resumes the thread on the low-level client, sends `thread/compact/start` and waits for the thread status to go active and back to idle on the global notification queue.
 
-**Result:** Non-streaming: two attempts, the retry resumed the same Codex thread and answered `51`. Streaming: two attempts, stream closed with RunCompleted. Exhaustion: three attempts with 1s then 2s backoff, run ended in ERROR with the last error. Default: one attempt, ERROR.
-
----
-
-### codex_retries.py (review follow-up)
-
-**Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
-
-**Description:** Reran after the base-class changes from the review (retry warning event on streamed retries; tool calls of failed non-streamed attempts kept). A failed Codex turn now leaves its tool calls in `run_state["tools"]` before raising.
-
-**Result:** All four cookbook cases pass as before: retry resumed the same thread, streaming closed with RunCompleted, exhaustion after three attempts, default of no retries.
+**Result:** `acompact` returned False before the first run and True after; the thread went idle again in about eight seconds and the rollout gained a `compacted` entry. The next turn answered `tangerine-walrus-88`. The `thread/compacted` notification itself is routed to a per-turn queue the caller never registered, which is why the adapter waits on thread status instead.
 
 ---
 
-### codex_retries.py (tool calls kept across a mid-turn failure)
+### codex_compaction.py (review fixes, cookbook extended)
 
 **Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
 
-**Description:** The non-streaming path now consumes the turn's notification stream itself and records each tool call as it completes, instead of the SDK's `handle.run()`, which returns items only when the turn ends. Live check: a prompt that runs one shell command, with a simulated transport failure injected before `turn/completed` on the first attempt, `retries=1`.
+**Description:** Review found that `acompact` resumed the thread on the low-level client with the adapter's high-level kwargs, which are sent verbatim: `sandbox="full-access"` was rejected (`unknown variant full-access`) and instructions and approval mode were silently dropped. Replicated with a probe against the app-server. The resume now goes through `AsyncCodex.thread_resume` exactly as runs do, and only `thread/compact/start` uses the low-level client. Also: a missing rollout returns False and forgets the stored thread id; compaction refuses while a run on the session is pending or running; the wait maps `asyncio.TimeoutError` to the builtin.
 
-**Result:** Non-streamed and streamed: two attempts, completed, and the stored run holds the shell call from each attempt (two tools, two tool messages). Before the change the non-streamed run lost the first attempt's call. The four cookbook cases, `codex_tools.py` and `codex_structured_output.py` pass unchanged.
+**Result:** The cookbook now uses `sandbox="full-access"`, `instructions` and `approval_mode="deny_all"`, the configuration the first version could not compact. It compacted after three turns and recalled the fact on the next turn. With a background run pending on the session, `acompact` raised `RuntimeError` naming the run; after the run finished it compacted again. Pointing the session at a nonexistent thread id returned False with a warning and removed the id.
 
 ### codex_metrics.py
 

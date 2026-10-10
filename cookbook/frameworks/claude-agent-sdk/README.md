@@ -47,6 +47,16 @@ The `continue_from/` folder has one cookbook per scenario: continue a finished r
 
 Requires a database with transcript storage, and only runs recorded with it can be continued. Files the agent changed after the checkpoint are not rewound. `regenerate` and HITL `requirements` are not supported.
 
+## Compaction
+
+Claude Code compacts a long conversation into a summary on its own when the context window fills, or when asked with `/compact`. Through `ClaudeAgent` the slash command is an ordinary run input, and a `PreCompact` hook passed in `options_kwargs` sees every compaction. With transcript storage the compaction lands in `agno_transcripts` like any other line: a `compact_boundary` system entry followed by the summary. A later turn on any replica resumes from the database and continues from that summary.
+
+```bash
+.venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/compaction.py
+```
+
+A very short conversation returns "Not enough messages to compact"; the cookbook adds a few turns first.
+
 ## Metrics
 
 Every run reports the tokens, cache usage and cost Claude Code returned for the turn on `RunOutput.metrics`, with one entry per model in `metrics.details["model"]` (Claude Code uses a small helper model next to the main one, and subagents may use others). Agno adds wall-clock `duration` and, when streaming, `time_to_first_token`. The `RunCompleted` event carries the same metrics. Completed runs are added to `session_data["session_metrics"]`, which AgentOS reads for the sessions list, the session view and the metrics page. Like the native Anthropic model, `input_tokens` excludes the cached prefix; cached tokens are in `cache_read_tokens` and `cache_write_tokens`.

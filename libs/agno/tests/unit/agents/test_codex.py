@@ -97,19 +97,26 @@ class FakeThread:
         self._state.calls.append({"op": "run", "thread_id": self.id, "prompt": prompt, "kwargs": kwargs})
         return SimpleNamespace(final_response=self._state.final_response, items=[], status="completed", usage=None)
 
+    async def compact(self) -> Any:
+        self._state.calls.append({"op": "thread_compact", "thread_id": self.id})
+        return SimpleNamespace()
+
 
 class FakeAsyncCodex:
     state: FakeState
+    # Low-level app-server client class, set by the compaction tests (AsyncCodex._client).
+    client_class: Any = None
 
     def __init__(self, config: Any = None) -> None:
         self.config = config
         self.state.calls.append({"op": "client", "config": config})
+        self._client = self.client_class(config) if self.client_class is not None else None
 
     async def __aenter__(self) -> "FakeAsyncCodex":
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
-        return None
+        self.state.calls.append({"op": "client_exit"})
 
     async def thread_start(self, **kwargs: Any) -> FakeThread:
         self.state.thread_counter += 1
@@ -794,6 +801,161 @@ def test_retry_skips_rejected_rpc_requests(fake_sdk, monkeypatch, code, retried)
 
 
 # ---------------------------------------------------------------------------
+# Compaction
+# ---------------------------------------------------------------------------
+
+
+def _status_changed(thread_id: str, kind: str) -> Any:
+    status = SimpleNamespace(root=SimpleNamespace(type=kind))
+    return SimpleNamespace(method="thread/status/changed", payload=SimpleNamespace(thread_id=thread_id, status=status))
+
+
+class FakeAsyncCodexClient:
+    """Low-level app-server client: only the global notification queue."""
+
+    state: FakeState
+    events: List[Any] = []
+    hang: bool = False
+
+    def __init__(self, config: Any = None) -> None:
+        self.config = config
+        self._events = iter(self.events)
+
+    async def next_notification(self) -> Any:
+        if self.hang:
+            await asyncio.sleep(10)
+        return next(self._events)
+
+
+@pytest.fixture
+def fake_client(fake_sdk, monkeypatch) -> type:
+    FakeAsyncCodexClient.state = fake_sdk
+    FakeAsyncCodexClient.events = []
+    FakeAsyncCodexClient.hang = False
+    monkeypatch.setattr(FakeAsyncCodex, "client_class", FakeAsyncCodexClient)
+    return FakeAsyncCodexClient
+
+
+def _idle_after_active(thread_id: str = "thread-1") -> List[Any]:
+    return [_status_changed(thread_id, "active"), _status_changed(thread_id, "idle")]
+
+
+def _started_session(fake_sdk, tmp_db, **agent_kwargs) -> CodexAgent:
+    fake_sdk.notifications = [_delta("m1", "ok"), _turn_completed()]
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db, **agent_kwargs)
+    _collect(agent, "first", session_id="s1")
+    return agent
+
+
+def test_compact_without_a_thread_is_a_no_op(fake_client, tmp_db):
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db)
+    assert agent.compact("s1") is False
+    assert not [c for c in fake_client.state.calls if c["op"] == "thread_compact"]
+
+
+def test_compact_resumes_the_session_thread_and_waits_for_idle(fake_client, tmp_db):
+    agent = _started_session(fake_client.state, tmp_db, model="gpt-5.6-luna", cwd="/work")
+    fake_client.events = [
+        _status_changed("thread-9", "active"),  # another thread, ignored
+        _status_changed("thread-1", "idle"),  # idle before compaction starts, ignored
+        _status_changed("thread-1", "active"),
+        SimpleNamespace(method="mcpServer/startupStatus/updated", payload=SimpleNamespace()),
+        _status_changed("thread-1", "idle"),
+        SimpleNamespace(method="should-not-be-read", payload=SimpleNamespace()),
+    ]
+
+    assert agent.compact("s1") is True
+
+    wanted = {"thread_resume", "thread_compact", "client_exit"}
+    ops = [c["op"] for c in fake_client.state.calls if c["op"] in wanted]
+    assert ops[-3:] == ["thread_resume", "thread_compact", "client_exit"]
+    resume = [c for c in fake_client.state.calls if c["op"] == "thread_resume"][-1]
+    assert resume["thread_id"] == "thread-1"
+    assert resume["kwargs"]["model"] == "gpt-5.6-luna" and resume["kwargs"]["cwd"] == "/work"
+    assert next(c for c in fake_client.state.calls if c["op"] == "thread_compact")["thread_id"] == "thread-1"
+
+
+def test_compact_resumes_with_the_same_translated_options_as_a_run(fake_client, tmp_db):
+    """The resume goes through the high-level client, which maps these to the wire format
+    (full-access -> danger-full-access, approval_mode -> approval policy, camelCase keys).
+    The low-level client would send the dict verbatim and the app-server would reject it."""
+    agent = _started_session(
+        fake_client.state,
+        tmp_db,
+        sandbox="full-access",
+        instructions="Always answer in French.",
+        approval_mode="deny_all",
+        ephemeral=False,
+    )
+    fake_client.events = _idle_after_active()
+
+    assert agent.compact("s1") is True
+
+    [compact_resume] = [c for c in fake_client.state.calls if c["op"] == "thread_resume"]
+    assert compact_resume["kwargs"]["sandbox"] is Sandbox.full_access
+    assert compact_resume["kwargs"]["developer_instructions"] == "Always answer in French."
+    assert compact_resume["kwargs"]["approval_mode"] is ApprovalMode.deny_all
+    assert "ephemeral" not in compact_resume["kwargs"], "thread_start-only options are not sent on resume"
+    # Exactly what a run's resume sends, so the SDK applies the same wire translation.
+    assert compact_resume["kwargs"] == agent._thread_kwargs(codex_module._sdk(), resume=True)
+
+
+def test_compact_forgets_a_thread_whose_rollout_is_gone(fake_client, tmp_db):
+    agent = _started_session(fake_client.state, tmp_db)
+    fake_client.state.unresumable.add("thread-1")
+
+    assert agent.compact("s1") is False
+
+    assert not [c for c in fake_client.state.calls if c["op"] == "thread_compact"]
+    assert "codex_thread_id" not in (agent.get_session("s1").session_data or {})
+
+
+def test_compact_propagates_other_resume_failures(fake_client, tmp_db, monkeypatch):
+    agent = _started_session(fake_client.state, tmp_db)
+
+    async def busy_resume(self, thread_id, **kwargs):
+        raise RuntimeError("app-server busy")
+
+    monkeypatch.setattr(FakeAsyncCodex, "thread_resume", busy_resume)
+    with pytest.raises(RuntimeError, match="busy"):
+        agent.compact("s1")
+    assert agent.get_session("s1").session_data["codex_thread_id"] == "thread-1"
+
+
+def test_compact_refuses_while_a_run_is_in_flight(fake_client, tmp_db):
+    from agno.run.agent import RunOutput
+    from agno.session.agent import AgentSession
+
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db)
+    session = AgentSession(
+        session_id="s1",
+        session_data={"codex_thread_id": "thread-1"},
+        runs=[RunOutput(run_id="r1", status=RunStatus.running)],
+    )
+
+    async def aget_session(session_id, user_id=None):
+        return session
+
+    agent.aget_session = aget_session  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="r1 is RUNNING"):
+        agent.compact("s1")
+    assert not [c for c in fake_client.state.calls if c["op"] in ("thread_resume", "thread_compact")]
+
+
+def test_compact_accepts_the_compacted_notification(fake_client, tmp_db):
+    agent = _started_session(fake_client.state, tmp_db)
+    fake_client.events = [SimpleNamespace(method="thread/compacted", payload=SimpleNamespace(thread_id="thread-1"))]
+    assert asyncio.run(agent.acompact("s1")) is True
+
+
+def test_compact_times_out_and_closes_the_client(fake_client, tmp_db):
+    agent = _started_session(fake_client.state, tmp_db)
+    fake_client.hang = True
+    with pytest.raises(TimeoutError, match="did not finish compacting"):
+        agent.compact("s1", timeout=0.05)
+    assert [c["op"] for c in fake_client.state.calls][-1] == "client_exit"
+
+
 # Metrics
 # ---------------------------------------------------------------------------
 

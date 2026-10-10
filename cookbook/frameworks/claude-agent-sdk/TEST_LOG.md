@@ -24,6 +24,26 @@
 
 ## 2026-10-09
 
+### compaction.py (transcript read API)
+
+**Status:** PASS
+
+**Description:** Reran after replacing the cookbook's raw SQL on `agno_transcripts` with `db.get_transcript_entries(framework, project_key, session_id)`, keyed by the Claude session id stored on the Agno session.
+
+**Result:** 29 rows before `/compact`, 39 after; the `compact_boundary` and summary entries were found at positions 33 and 34; replica B recalled the fact.
+
+---
+
+### compaction.py
+
+**Status:** PASS
+
+**Description:** Seeds a fact, adds three turns including a 1200-line filler document, sends `/compact` as the run input with a `PreCompact` hook registered through `options_kwargs`, prints the transcript rows the compaction produced, then resumes the session from a second agent instance with a different working directory.
+
+**Result:** 35 transcript rows before, 45 after. The hook fired with trigger `manual`. Rows 39 and 40 were the `compact_boundary` system entry and the `isCompactSummary` user entry. Replica B resumed from the database alone and answered `tangerine-walrus-88` from the summary. A conversation of one turn returns "Not enough messages to compact", which is why the cookbook adds turns first.
+
+---
+
 ### continue_from.py (finished runs always fork)
 
 **Status:** PASS
@@ -130,7 +150,6 @@
 **Result:** 736 unit/regression tests passed; 5 integration tests passed, none skipped. One existing AsyncMock warning arose in the unchanged native save-fencing test. Required format and validation scripts passed with SQLAlchemy 2.0.52.
 
 ---
-
 
 ### Transcript mirror failure regression (2026-10-08)
 

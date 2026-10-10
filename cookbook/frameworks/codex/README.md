@@ -36,6 +36,8 @@ CodexAgent(name="Codex").login_api_key("sk-...")
 - `codex_retries.py` — retry failed runs with exponential backoff. The cookbook injects a transient failure so the retry can be watched resuming the failed attempt's thread, then shows exhaustion and the default of no retries. Limits and permanent errors are not retried
 - `codex_agentos.py` — serve Codex through AgentOS
 - `codex_session_agentos.py` — same with SQLite-backed sessions
+- `codex_compaction.py` — compact the Codex thread behind a session with `CodexAgent.acompact` (a full-access agent with instructions and an approval mode), continue from the summary, then the guards: compaction refuses while a background run on the session is in flight, and a stored thread id whose rollout is gone is forgotten
+
 - `codex_metrics.py` — token usage per run on `RunOutput.metrics` and session totals for AgentOS
 - `codex_metrics_agentos.py` — the same through the AgentOS API (`--verify` prints run, session, sessions list and `/metrics`)
 

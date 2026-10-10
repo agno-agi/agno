@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
 from time import time
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Dict, Iterator, List, Optional, Sequence, Union
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
@@ -59,6 +59,25 @@ _live_handles: Dict[str, _LiveHandle] = {}
 # Identifies the attempt currently inside _run_cancellation on this task, so handle cleanup can
 # tell its own registration from one a retry of the same run id made in the meantime.
 _handle_owner: ContextVar[Optional[object]] = ContextVar("agno_external_handle_owner", default=None)
+
+
+def run_coroutine_sync(coro: Awaitable[Any]) -> Any:
+    """Run a coroutine from sync code.
+
+    On a thread with a running event loop (a notebook, a sync call made inside an async
+    server) the coroutine runs on a worker thread with its own loop; otherwise asyncio.run
+    is used directly. Shared by the sync wrappers of every external agent.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None and loop.is_running():
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            return pool.submit(asyncio.run, coro).result()  # type: ignore[arg-type]
+    return asyncio.run(coro)  # type: ignore[arg-type]
 
 
 @dataclass
@@ -216,23 +235,7 @@ class BaseExternalAgent:
             raise ValueError("Use arun(background=True) on a persistent event loop")
         if stream:
             return self._run_stream(input, session_id=session_id, user_id=user_id, **kwargs)
-        else:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-
-            if loop and loop.is_running():
-                import concurrent.futures
-
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    result = pool.submit(
-                        asyncio.run,
-                        self._arun_non_stream(input, session_id=session_id, user_id=user_id, **kwargs),
-                    ).result()
-                return result
-            else:
-                return asyncio.run(self._arun_non_stream(input, session_id=session_id, user_id=user_id, **kwargs))
+        return run_coroutine_sync(self._arun_non_stream(input, session_id=session_id, user_id=user_id, **kwargs))
 
     def print_response(
         self,
