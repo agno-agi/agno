@@ -121,3 +121,13 @@ Tested 2026-10-08 with openai-codex 0.161.0 (bundled Codex CLI 0.161.0), model g
 **Result:** Run 1: 14700 tokens (11008 cached). Run 2 (RunCompleted event): 15877 tokens. Session: 30577; sessions list column 30577; metrics page agent_runs_count 2, total_tokens 30577.
 
 ---
+
+### Codex turn usage across several model requests (review fix)
+
+**Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Review finding: `usage.last` is one model request, not the turn, and `TurnResult.usage` is only the latest report, so a turn with tool calls under-counted on both paths. Replicated with a prompt that makes two shell calls, tapping every `thread/tokenUsage/updated` as (last, total). Fixed by computing the turn as the final thread total minus the thread total before the turn (first report's total minus its own request); the non-streaming path now consumes the notification stream itself instead of `handle.run()`. Reran `codex_metrics.py`, `codex_metrics_agentos.py --verify`, `codex_structured_output.py` and `codex_tools.py` to check the non-streaming path is unchanged.
+
+**Result:** Before: streamed turn recorded 14972 of 44739 actual, non-streamed 14502 of 43341. After: streamed 44725 of 44725, non-streamed 43289 of 43289 (three requests each). Other cookbooks unchanged.
+
+---
