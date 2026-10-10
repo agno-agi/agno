@@ -35,6 +35,23 @@ tools = MCPTools(servers=["npx", "-y", "@anthropic/mcp-server-filesystem"])
 agent = Agent(tools=[tools])
 ```
 
+## Smol microVM sandbox
+
+`smol_tools.py` gives an agent shell, Python, and file tools inside one VM. The
+same toolkit runs locally or on Smol Cloud; no Docker daemon or host directory
+mount is needed. Install `agno[smol,openai]`, set `OPENAI_API_KEY`, then run:
+
+```bash
+python cookbook/91_tools/smol_tools.py
+SMOL_TARGET=cloud python cookbook/91_tools/smol_tools.py
+```
+
+Local execution needs supported virtualization. Cloud execution uses a `smol cloud login` session or `SMOL_CLOUD_TOKEN`.
+Toolkits create a VM on the first tool call; call `sandbox.close()` when the agent finishes to delete it. A Cloud VM has a
+one-hour default expiry if the host exits unexpectedly. Use `SmolTools(network=False)`
+when your image and workload do not need network access. Pass `machine_id` to
+connect to an existing VM; closing that toolkit leaves the machine running.
+
 ## Workspace speech
 
 `sixtydb_tools.py` uses 60db workspace voices. Set `SIXTYDB_API_KEY` and the

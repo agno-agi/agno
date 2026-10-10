@@ -134,3 +134,11 @@ those require service and model credentials.
 **Result:** Both examples completed without errors. Domain-restricted search returned arxiv-sourced MoE papers, and the news agent returned items from the last few days. Note: answer text is model-composed; the domain restriction applies to the search results feeding it.
 
 ---
+
+### smol_tools.py
+
+**Status:** PASS
+
+**Description:** A live Agno agent used the Smol tools to calculate 6 * 7 inside a local microVM, write `answer.txt`, read it back, and answer 42. Separately ran the same toolkit's Python, shell, and file tools against a real Smol Cloud VM.
+
+**Result:** Local agent tool calls and cloud VM file round-trip passed; both VMs were deleted by `close()`.
