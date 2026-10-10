@@ -1017,11 +1017,24 @@ class TestDatabases:
         slow = _db("db-2", _today_row())
         slow.get_os_metrics.side_effect = lambda **kwargs: time.sleep(0.5) or ([], None)
         client = _dbs_client(_db("db-1", _today_row()), slow)
-        with _scope(None), patch("agno.os.routers.metrics.metrics._OS_METRICS_READ_TIMEOUT_SECONDS", 0.05):
-            body = client.get(f"/os/metrics/sessions?{_last(1)}").json()
+        with _scope(None):
+            body = client.get(f"/os/metrics/sessions?{_last(1)}&timeout_seconds=0.05").json()
 
         assert body["total_sessions"] == 3
         assert body["skipped_db_ids"] == {"db-2": "timeout"}
+
+    def test_caller_can_wait_longer_for_a_database(self):
+        slow = _db("db-2", _today_row())
+        read = slow.get_os_metrics.side_effect
+        slow.get_os_metrics.side_effect = lambda **kwargs: time.sleep(0.3) or read(**kwargs)
+        client = _dbs_client(_db("db-1", _today_row()), slow)
+        with _scope(None):
+            body = client.get(f"/os/metrics/sessions?{_last(1)}&timeout_seconds=1").json()
+            refused = client.get(f"/os/metrics/sessions?{_last(1)}&timeout_seconds=0")
+
+        assert body["total_sessions"] == 6
+        assert body["skipped_db_ids"] == {}
+        assert refused.status_code == 422
 
     def test_remote_database_is_unsupported(self):
         remote = MagicMock(spec=RemoteDb)
@@ -1140,10 +1153,10 @@ class TestDatabases:
         slow = MagicMock(spec=AsyncBaseDb)
         slow.id = "db-2"
         slow.get_os_metrics = AsyncMock(side_effect=slow_read)
-        with _scope(None), patch("agno.os.routers.metrics.metrics._OS_METRICS_READ_TIMEOUT_SECONDS", 0.05):
+        with _scope(None):
             # Entered, so the event loop of the first request is still running after it has answered
             with _dbs_client(_db("db-1", _today_row()), slow) as client:
-                body = client.get(f"/os/metrics/sessions?{_last(1)}").json()
+                body = client.get(f"/os/metrics/sessions?{_last(1)}&timeout_seconds=0.05").json()
                 assert body["skipped_db_ids"] == {"db-2": "timeout"}
                 assert finished == []
                 time.sleep(0.5)

@@ -65,7 +65,6 @@ DEFAULT_WINDOW_DAYS = 30
 # The /os/metrics routes read every database of the AgentOS at the same time, this many at once. A database
 # that has not answered within the timeout is left out of the response and named in skipped_db_ids.
 _MAX_CONCURRENT_OS_METRICS_READS = 8
-_OS_METRICS_READ_TIMEOUT_SECONDS = 30.0
 
 
 def _window(starting_date: Optional[date], ending_date: Optional[date]) -> Tuple[date, date]:
@@ -549,6 +548,7 @@ def attach_routes(
     async def _read_os_dbs(
         os_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
         read: Callable[[Union[BaseDb, AsyncBaseDb]], Awaitable[Tuple[Any, Optional[int]]]],
+        timeout_seconds: float,
     ) -> Tuple[List[Any], Dict[str, Any]]:
         """Read every database at the same time, at most _MAX_CONCURRENT_OS_METRICS_READS at once."""
 
@@ -557,7 +557,7 @@ def attach_routes(
                 raise NotImplementedError
             task = asyncio.ensure_future(read(db))
             try:
-                return await asyncio.wait_for(asyncio.shield(task), timeout=_OS_METRICS_READ_TIMEOUT_SECONDS)
+                return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_seconds)
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 # The read finishes in the background, so a rebuild it started is not rolled
                 # back; retrieve its eventual result so it never warns
@@ -606,10 +606,13 @@ def attach_routes(
         starting_date: date,
         ending_date: date,
         fields: List[str],
+        timeout_seconds: float,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """The window's OS metrics, totalled per day and added up across the databases, oldest first."""
         results, databases = await _read_os_dbs(
-            os_dbs, lambda db: _read_os_metrics(db, effective_user_id, starting_date, ending_date, fields)
+            os_dbs,
+            lambda db: _read_os_metrics(db, effective_user_id, starting_date, ending_date, fields),
+            timeout_seconds,
         )
         if len(results) == 1:
             return results[0], databases
@@ -627,9 +630,12 @@ def attach_routes(
         starting_date: date,
         ending_date: date,
         fields: List[str],
+        timeout_seconds: float,
     ) -> Tuple[Dict[date, Dict[str, Any]], Dict[str, Any]]:
         """The window's OS metrics, totalled per day and added up across the databases, keyed by day."""
-        totals, databases = await _os_metrics(os_dbs, effective_user_id, starting_date, ending_date, fields)
+        totals, databases = await _os_metrics(
+            os_dbs, effective_user_id, starting_date, ending_date, fields, timeout_seconds
+        )
         return {day_totals["date"]: day_totals for day_totals in totals}, databases
 
     async def _os_metrics_totals(
@@ -638,10 +644,13 @@ def attach_routes(
         starting_date: date,
         ending_date: date,
         fields: List[str],
+        timeout_seconds: float,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """The window's OS metrics, totalled into one set of totals and added up across the databases."""
         results, databases = await _read_os_dbs(
-            os_dbs, lambda db: _read_os_metrics_totals(db, effective_user_id, starting_date, ending_date, fields)
+            os_dbs,
+            lambda db: _read_os_metrics_totals(db, effective_user_id, starting_date, ending_date, fields),
+            timeout_seconds,
         )
         if len(results) == 1:
             return results[0], databases
@@ -750,13 +759,19 @@ def attach_routes(
             default=None,
             description="Database ID to read OS metrics from. Repeat it to read several. Defaults to every database",
         ),
+        timeout_seconds: float = Query(default=30, gt=0, description="Seconds to wait for each database to answer"),
     ) -> OSSessionMetricsResponse:
         try:
             os_dbs = _os_dbs(db_id)
             starting_date, ending_date = _window(starting_date, ending_date)
             previous_starting_date = _previous_starting_date(starting_date, ending_date)
             totals, databases = await _os_metrics_by_day(
-                os_dbs, _owner(request, user_id), previous_starting_date, ending_date, ["sessions_count"]
+                os_dbs,
+                _owner(request, user_id),
+                previous_starting_date,
+                ending_date,
+                ["sessions_count"],
+                timeout_seconds,
             )
 
             metrics = [
@@ -839,13 +854,19 @@ def attach_routes(
             default=None,
             description="Database ID to read OS metrics from. Repeat it to read several. Defaults to every database",
         ),
+        timeout_seconds: float = Query(default=30, gt=0, description="Seconds to wait for each database to answer"),
     ) -> OSTokenMetricsResponse:
         try:
             os_dbs = _os_dbs(db_id)
             starting_date, ending_date = _window(starting_date, ending_date)
             previous_starting_date = _previous_starting_date(starting_date, ending_date)
             totals, databases = await _os_metrics_by_day(
-                os_dbs, _owner(request, user_id), previous_starting_date, ending_date, ["token_metrics"]
+                os_dbs,
+                _owner(request, user_id),
+                previous_starting_date,
+                ending_date,
+                ["token_metrics"],
+                timeout_seconds,
             )
 
             metrics = []
@@ -1034,12 +1055,13 @@ def attach_routes(
             default=None,
             description="Database ID to read OS metrics from. Repeat it to read several. Defaults to every database",
         ),
+        timeout_seconds: float = Query(default=30, gt=0, description="Seconds to wait for each database to answer"),
     ) -> OSModelMetricsResponse:
         try:
             os_dbs = _os_dbs(db_id)
             starting_date, ending_date = _window(starting_date, ending_date)
             totals, databases = await _os_metrics_totals(
-                os_dbs, _owner(request, user_id), starting_date, ending_date, ["model_metrics"]
+                os_dbs, _owner(request, user_id), starting_date, ending_date, ["model_metrics"], timeout_seconds
             )
 
             # One entry per model and caller, so the runs add up per model
@@ -1135,13 +1157,19 @@ def attach_routes(
             default=None,
             description="Database ID to read OS metrics from. Repeat it to read several. Defaults to every database",
         ),
+        timeout_seconds: float = Query(default=30, gt=0, description="Seconds to wait for each database to answer"),
     ) -> OSRunMetricsResponse:
         try:
             os_dbs = _os_dbs(db_id)
             starting_date, ending_date = _window(starting_date, ending_date)
             previous_starting_date = _previous_starting_date(starting_date, ending_date)
             totals, databases = await _os_metrics_by_day(
-                os_dbs, _owner(request, user_id), previous_starting_date, ending_date, ["runs_count", "status_metrics"]
+                os_dbs,
+                _owner(request, user_id),
+                previous_starting_date,
+                ending_date,
+                ["runs_count", "status_metrics"],
+                timeout_seconds,
             )
 
             metrics = []
@@ -1268,13 +1296,19 @@ def attach_routes(
             default=None,
             description="Database ID to read OS metrics from. Repeat it to read several. Defaults to every database",
         ),
+        timeout_seconds: float = Query(default=30, gt=0, description="Seconds to wait for each database to answer"),
     ) -> OSLatencyMetricsResponse:
         try:
             os_dbs = _os_dbs(db_id)
             starting_date, ending_date = _window(starting_date, ending_date)
             # The medians and p95s are read from each day's bucket counts
             totals, databases = await _os_metrics_by_day(
-                os_dbs, _owner(request, user_id), starting_date, ending_date, ["duration_metrics", "duration_buckets"]
+                os_dbs,
+                _owner(request, user_id),
+                starting_date,
+                ending_date,
+                ["duration_metrics", "duration_buckets"],
+                timeout_seconds,
             )
 
             metrics = []
@@ -1544,13 +1578,14 @@ def attach_routes(
             default=None,
             description="Database ID to read OS metrics from. Repeat it to read several. Defaults to every database",
         ),
+        timeout_seconds: float = Query(default=30, gt=0, description="Seconds to wait for each database to answer"),
     ) -> OSMetricsRefreshStatusResponse:
         try:
             os_dbs = _os_dbs(db_id)
             starting_date, ending_date = _window(starting_date, ending_date)
             # The cheapest total to read; only its updated_at is used
             _, databases = await _os_metrics(
-                os_dbs, _owner(request, user_id), starting_date, ending_date, ["sessions_count"]
+                os_dbs, _owner(request, user_id), starting_date, ending_date, ["sessions_count"], timeout_seconds
             )
             return OSMetricsRefreshStatusResponse(**databases)
 
