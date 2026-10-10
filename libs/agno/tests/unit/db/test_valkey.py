@@ -124,6 +124,9 @@ def _ensure_glide_sync_stub():
     class _ExpiryType:
         SEC = "SEC"
 
+    class _ConditionalChange:
+        ONLY_IF_DOES_NOT_EXIST = "NX"
+
     class _RangeByIndex:
         def __init__(self, start, end):
             self.start = start
@@ -144,6 +147,7 @@ def _ensure_glide_sync_stub():
     glide_mod.ServerCredentials = _ServerCredentials
     glide_mod.ExpirySet = _ExpirySet
     glide_mod.ExpiryType = _ExpiryType
+    glide_mod.ConditionalChange = _ConditionalChange
     glide_mod.DataType = MagicMock(name="DataType")
 
     # Also add stubs for vector store imports so both test files can coexist
@@ -174,6 +178,7 @@ def _patch_missing_attrs(glide_mod):
         "Batch",
         "ClusterBatch",
         "ClusterScanCursor",
+        "ConditionalChange",
         "DataType",
         "ExpirySet",
         "ExpiryType",
