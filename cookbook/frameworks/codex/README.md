@@ -37,6 +37,9 @@ CodexAgent(name="Codex").login_api_key("sk-...")
 - `codex_session_agentos.py` — same with SQLite-backed sessions
 - `codex_compaction.py` — compact the Codex thread behind a session with `CodexAgent.acompact` (a full-access agent with instructions and an approval mode), continue from the summary, then the guards: compaction refuses while a background run on the session is in flight, and a stored thread id whose rollout is gone is forgotten
 
+- `codex_metrics.py` — token usage per run on `RunOutput.metrics` and session totals for AgentOS
+- `codex_metrics_agentos.py` — the same through the AgentOS API (`--verify` prints run, session, sessions list and `/metrics`)
+
 ## How sessions work
 
 Each Agno `session_id` maps to one Codex thread. The thread id is stored on the
@@ -47,6 +50,10 @@ the lifetime of the agent object.
 If a thread cannot be resumed (for example `ephemeral=True`, or the Codex
 session files were removed), the adapter starts a fresh thread and prepends the
 persisted chat history to the prompt so context is not lost.
+
+## Metrics
+
+Every run reports the token usage for the whole turn on `RunOutput.metrics` (input, cached input, output, reasoning and total), plus wall-clock `duration` measured by Agno and `time_to_first_token` when streaming. A turn with tool calls makes several model requests; Codex reports usage after each one, and the adapter sums them by taking the growth of the thread total over the turn, so a two-tool turn reports all three requests rather than only the last. Like the OpenAI API, `input_tokens` includes the cached prefix. Codex reports no cost. Completed runs are added to `session_data["session_metrics"]`, which AgentOS reads for the sessions list, the session view and the metrics page.
 
 ## Sandbox and approvals
 

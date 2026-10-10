@@ -41,6 +41,19 @@ Claude Code compacts a long conversation into a summary on its own when the cont
 
 A very short conversation returns "Not enough messages to compact"; the cookbook adds a few turns first.
 
+## Metrics
+
+Every run reports the tokens, cache usage and cost Claude Code returned for the turn on `RunOutput.metrics`, with one entry per model in `metrics.details["model"]` (Claude Code uses a small helper model next to the main one, and subagents may use others). Agno adds wall-clock `duration` and, when streaming, `time_to_first_token`. The `RunCompleted` event carries the same metrics. Completed runs are added to `session_data["session_metrics"]`, which AgentOS reads for the sessions list, the session view and the metrics page. Like the native Anthropic model, `input_tokens` excludes the cached prefix; cached tokens are in `cache_read_tokens` and `cache_write_tokens`.
+
+```bash
+.venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/metrics.py
+.venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/metrics_agentos.py --verify
+```
+
+`metrics_agentos.py` serves the agent through AgentOS; `--verify` drives two runs over HTTP and prints the run metrics, the session totals, the sessions list token column and the daily aggregation from `/metrics`.
+
+`cache_read_tokens` counts every API call inside the turn. Claude Code's system prompt, tool schemas and project context are a cached prefix of roughly 15k tokens, and a turn with one tool call makes two API calls, so a cache read figure around 30k for such a turn is expected. Cached reads are billed at a tenth of the input price, which is why cost stays low.
+
 ## Background runs and cancellation
 
 `background_cancel.py` serves the agent through AgentOS. Submit runs with `background=true`, poll the run endpoint, or use `stream=true` for indexed SSE. Runs continue after disconnects; the resume endpoint reads the configured event stream. Cancel through the run cancellation endpoint.

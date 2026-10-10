@@ -1,5 +1,27 @@
 # Test log
 
+## 2026-10-10
+
+### metrics_agentos.py --verify
+
+**Status:** PASS
+
+**Description:** Through the AgentOS test client: a non-streamed run, a streamed run with a Bash call, then `GET /sessions/{id}`, `GET /sessions` and `GET /metrics`. Asserts the session total equals the two runs and that the daily aggregation counts both runs.
+
+**Result:** Run 1: 7 tokens, $0.0195. Run 2 (RunCompleted event): 123 tokens, $0.0348, time to first token 6.1s. Session: 130 tokens, $0.0543; sessions list column 130; metrics page agent_runs_count 2, total_tokens 130.
+
+---
+
+### metrics.py
+
+**Status:** PASS
+
+**Description:** One plain turn, one streamed turn with a Bash call, then the session totals. Checks that `RunOutput.metrics` and the `RunCompleted` event carry tokens, cache usage, cost and duration, and that `session_data["session_metrics"]` equals the sum of the two runs.
+
+**Result:** Run 1: 3 input, 4 output, 13802 cache read, 2665 cache write, $0.0208, 4.4s, with per-model entries for claude-sonnet-4-6 and the claude-haiku-4-5 helper model. Run 2 (streamed): 125 tokens, $0.0341, time to first token 5.5s. Session totals: 132 tokens, $0.0548 across 2 runs.
+
+---
+
 ## 2026-10-09
 
 ### compaction.py (transcript read API)
