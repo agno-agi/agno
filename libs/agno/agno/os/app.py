@@ -1400,8 +1400,8 @@ class AgentOS:
         # Fall back to finding the first available database
         db: Optional[Union[BaseDb, AsyncBaseDb, RemoteDb]] = None
 
-        for agent in self._agents:
-            if agent.db:
+        for agent in self.agents or []:
+            if isinstance(agent, (Agent, BaseExternalAgent)) and agent.db is not None:
                 db = agent.db
                 break
 
