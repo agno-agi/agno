@@ -50,6 +50,7 @@ class TextBlock:
 @dataclass
 class AssistantMessage:
     content: List[Any]
+    error: Optional[str] = None
 
 
 @dataclass
@@ -58,6 +59,8 @@ class ResultMessage:
     result: str
     subtype: str = "success"
     is_error: bool = False
+    errors: Optional[List[str]] = None
+    api_error_status: Optional[int] = None
     usage: Optional[Dict[str, Any]] = None
     total_cost_usd: Optional[float] = None
     model_usage: Optional[Dict[str, Any]] = None
@@ -491,6 +494,147 @@ def test_user_session_store_and_file_checkpointing_disable_injection(fake_sdk, t
     assert "enable_file_checkpointing" in warnings[0]
 
 
+@pytest.mark.parametrize("stream", [True, False])
+def test_retry_resumes_the_sdk_session_of_the_failed_attempt(fake_sdk, tmp_db, monkeypatch, stream):
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, retries=1, delay_between_retries=0)
+    calls: List[Any] = []
+
+    async def overloaded_once(prompt, options):
+        calls.append({"prompt": prompt, "resume": options.resume})
+        sdk_session_id = options.resume or "sdk-1"
+        yield SystemMessage("init", {"session_id": sdk_session_id})
+        if len(calls) == 1:
+            raise ResultError("Claude Code returned an error result: API Error: 529 Overloaded")
+        yield ResultMessage(sdk_session_id, "recovered")
+
+    monkeypatch.setattr(claude_module._sdk(), "query", overloaded_once)
+    if stream:
+        events = _collect(agent, "go", session_id="s1")
+        assert isinstance(events[-1], RunCompletedEvent)
+    else:
+        assert agent.run("go", session_id="s1").content == "recovered"
+    assert calls == [{"prompt": "go", "resume": None}, {"prompt": "go", "resume": "sdk-1"}]
+
+
+def test_non_stream_retry_keeps_the_failed_attempts_tool_calls(fake_sdk, tmp_db, monkeypatch):
+    """A tool that ran in the failed attempt stays in the run; the retry resumes the session and finishes."""
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, retries=1, delay_between_retries=0)
+    calls: List[Any] = []
+
+    async def tool_then_outage(prompt, options):
+        calls.append(options.resume)
+        sdk_session_id = options.resume or "sdk-1"
+        yield SystemMessage("init", {"session_id": sdk_session_id})
+        if len(calls) == 1:
+            tool = ToolUseBlock()
+            tool.id, tool.name, tool.input = "call-1", "Bash", {"command": "echo alpha"}
+            yield AssistantMessage([tool])
+            result = ToolResultBlock()
+            result.tool_use_id, result.content = "call-1", "alpha"
+            user = UserMessage()
+            user.content = [result]
+            yield user
+            raise ResultError("Claude Code returned an error result: API Error: 529 Overloaded")
+        yield ResultMessage(sdk_session_id, "recovered")
+
+    monkeypatch.setattr(claude_module._sdk(), "query", tool_then_outage)
+    out = agent.run("go", session_id="s1")
+    assert out.status == RunStatus.completed and out.content == "recovered"
+    assert calls == [None, "sdk-1"]
+    [tool] = out.tools or []
+    assert (tool.tool_call_id, tool.tool_name, tool.result) == ("call-1", "Bash", "alpha")
+    stored = agent.get_run_output(out.run_id, "s1")
+    assert any(m.role == "tool" and m.content == "alpha" for m in stored.messages or [])
+
+
+def _sdk_result_error(**fields: Any) -> ResultError:
+    error = ResultError("Claude Code returned an error result")
+    error.__dict__.update(fields)
+    return error
+
+
+@pytest.mark.parametrize(
+    "failure, retried",
+    [
+        (ResultMessage("sdk-1", "", subtype="error_max_turns", is_error=True), False),
+        (ResultMessage("sdk-1", "", subtype="error_max_budget_usd", is_error=True), False),
+        (ResultMessage("sdk-1", "", subtype="error_max_structured_output_retries", is_error=True), False),
+        (ResultMessage("sdk-1", "API Error: 401", is_error=True, api_error_status=401), False),
+        (AssistantMessage(content=[], error="billing_error"), False),
+        (_sdk_result_error(subtype="error_max_turns"), False),
+        (ResultMessage("sdk-1", "API Error: 529 Overloaded", is_error=True, api_error_status=529), True),
+        (ResultMessage("sdk-1", "", subtype="error_during_execution", is_error=True), True),
+        (_sdk_result_error(subtype="success", api_error_status=500), True),
+    ],
+    ids=[
+        "max_turns",
+        "max_budget",
+        "max_structured_output_retries",
+        "status_401",
+        "billing",
+        "sdk_result_error_max_turns",
+        "status_529",
+        "during_execution",
+        "sdk_result_error_500",
+    ],
+)
+@pytest.mark.parametrize("stream", [True, False])
+def test_retry_skips_limits_and_permanent_errors(fake_sdk, monkeypatch, failure, retried, stream):
+    agent = ClaudeAgent(name="Claude", id="claude", retries=2, delay_between_retries=0)
+    attempts: List[Any] = []
+
+    async def failing(prompt, options):
+        attempts.append(options.resume)
+        yield SystemMessage("init", {"session_id": "sdk-1"})
+        if isinstance(failure, Exception):
+            raise failure
+        yield failure
+        if isinstance(failure, AssistantMessage):
+            yield ResultMessage("sdk-1", "API Error: billing", is_error=True)
+
+    monkeypatch.setattr(claude_module._sdk(), "query", failing)
+    if stream:
+        assert isinstance(_collect(agent, "go", session_id="s1")[-1], RunErrorEvent)
+    else:
+        assert agent.run("go", session_id="s1").status == RunStatus.error
+    assert len(attempts) == (3 if retried else 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    "failure, redriven",
+    [
+        (ResultMessage("sdk-1", "", subtype="error_max_turns", is_error=True), False),
+        (ResultMessage("sdk-1", "API Error: 401", is_error=True, api_error_status=401), False),
+        (AssistantMessage(content=[], error="billing_error"), False),
+        (ResultMessage("sdk-1", "API Error: 529 Overloaded", is_error=True, api_error_status=529), True),
+    ],
+    ids=["max_turns", "authentication", "billing", "overloaded"],
+)
+async def test_queue_does_not_redrive_permanent_claude_errors(fake_sdk, tmp_db, monkeypatch, failure, redriven, stream):
+    """The queue's own attempts stop at a failure the agent classified as permanent."""
+    from ._queue_harness import run_through_queue
+
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, retries=0)
+    attempts: List[Any] = []
+
+    async def failing(prompt, options):
+        attempts.append(options.resume)
+        yield SystemMessage("init", {"session_id": "sdk-1"})
+        yield failure
+        if isinstance(failure, AssistantMessage):
+            yield ResultMessage("sdk-1", "API Error: billing", is_error=True)
+
+    monkeypatch.setattr(claude_module._sdk(), "query", failing)
+    job = await run_through_queue(agent, stream=stream, max_attempts=3)
+    assert job["status"] == "failed"
+    assert job["attempt"] == (3 if redriven else 1)
+    assert len(attempts) == job["attempt"]
+    run = await agent.aget_run_output(job["id"], "s")
+    assert run.status == RunStatus.error and run.metadata["retryable"] is redriven
+
+
 # ---------------------------------------------------------------------------
 # Continue from a message boundary
 # ---------------------------------------------------------------------------
@@ -532,6 +676,8 @@ def scripted(fake_sdk, monkeypatch):
     async def query(prompt, options):
         calls.append({"prompt": prompt, "resume": options.resume, "extra_args": options.extra.get("extra_args")})
         for message in turns.pop(0):
+            if isinstance(message, Exception):
+                raise message
             yield message
 
     async def fork_session_via_store(store, session_id, directory=None, up_to_message_id=None):
@@ -1079,6 +1225,47 @@ def test_sync_continue_failed_run_preserves_tool_results(scripted, tmp_db):
     assert recovered.status == RunStatus.completed
     assert recovered.tools[0].result == "alpha"
     assert forks == [{"session_id": "sdk-1", "up_to": "u-result"}]
+
+
+@pytest.mark.asyncio
+async def test_retried_continuation_forks_again_from_the_anchor(scripted, tmp_db):
+    turns, calls, forks = scripted
+    turns.append(_tool_turn("go"))
+    turns.append(
+        [
+            SystemMessage("init", {"session_id": "fork-1"}),
+            ResultError("Claude Code returned an error result: API Error: 529 Overloaded"),
+        ]
+    )
+    turns.append(
+        [
+            SystemMessage("init", {"session_id": "fork-2"}),
+            _user("v-prompt", "next"),
+            _msg(AssistantMessage([TextBlock("branched")]), "v-final"),
+            ResultMessage("fork-2", "branched"),
+        ]
+    )
+    agent = ClaudeAgent(db=tmp_db)
+    source = await agent.arun("go", session_id="s")
+    agent.retries, agent.delay_between_retries = 1, 0
+    branch = await agent.acontinue_run(run_id=source.run_id, session_id="s", continue_from=3, fork=True, input="next")
+
+    assert branch.content == "branched"
+    assert forks == [{"session_id": "sdk-1", "up_to": "u-result"}] * 2
+    assert [c["resume"] for c in calls[1:]] == ["fork-1", "fork-2"]
+    assert [m.role for m in branch.messages] == ["user", "assistant", "tool", "user", "assistant"]
+    assert _ref(branch.messages[3]) == {"session_id": "fork-2", "uuid": "v-prompt", "position": 0}
+    assert (await agent.aget_session("s")).session_data["claude_sdk_session_id"] == "fork-2"
+
+
+@pytest.mark.asyncio
+async def test_fork_failures_are_not_continuable_and_not_retried(fake_sdk):
+    from agno.exceptions import RunNotContinuableError
+
+    agent = ClaudeAgent(id="claude", retries=2)
+    with pytest.raises(RunNotContinuableError):
+        await agent._afork_sdk_session({"session_id": "sdk-1", "uuid": "u-1"}, None)
+    assert agent._is_retryable_error(RunNotContinuableError("transcript entry not found")) is False
 
 
 # ---------------------------------------------------------------------------

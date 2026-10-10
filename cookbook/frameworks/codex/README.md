@@ -33,6 +33,7 @@ CodexAgent(name="Codex").login_api_key("sk-...")
 - `codex_session.py` — multi-turn session; the Codex thread is resumed across turns via Agno's DB
 - `codex_mcp_tools.py` — connect Codex to an MCP server through `config` overrides
 - `codex_structured_output.py` — constrain the final answer with a JSON Schema
+- `codex_retries.py` — retry failed runs with exponential backoff. The cookbook injects a transient failure so the retry can be watched resuming the failed attempt's thread, then shows exhaustion and the default of no retries. Limits and permanent errors are not retried
 - `codex_agentos.py` — serve Codex through AgentOS
 - `codex_session_agentos.py` — same with SQLite-backed sessions
 - `codex_compaction.py` — compact the Codex thread behind a session with `CodexAgent.acompact` (a full-access agent with instructions and an approval mode), continue from the summary, then the guards: compaction refuses while a background run on the session is in flight, and a stored thread id whose rollout is gone is forgotten
@@ -50,6 +51,14 @@ the lifetime of the agent object.
 If a thread cannot be resumed (for example `ephemeral=True`, or the Codex
 session files were removed), the adapter starts a fresh thread and prepends the
 persisted chat history to the prompt so context is not lost.
+
+## Retries
+
+`CodexAgent` takes `retries`, `delay_between_retries` and `exponential_backoff`, the same settings an Agno `Agent` takes. A failed attempt is retried with the same run id and resumes the Codex thread the failed attempt started. Errors that would fail again are not retried: session budget and usage limits, context window overflows, authentication, bad requests and policy blocks. Cancelled runs are not retried.
+
+- **Combined budget with the job queue.** The durable queue retries a job up to its `max_attempts`, and this setting retries attempts inside each job, so Codex can be invoked up to `max_attempts × (retries + 1)` times for one run. Set one of the two unless you want that product. On top of both, the Codex CLI retries transient API errors on its own before reporting a failure, so one Agno attempt can already be several model requests. An error the agent classifies as permanent is marked on the run, and the queue fails the job at once instead of re-driving it.
+- **Streaming clients see the failed attempt's output first.** The stream emits a warning event with `type: "retry"` between the failed attempt's events and the new attempt's. Treat everything before that event as superseded: reset the text you have buffered for the run and start again from the event; keep the tool events, since those tools ran. The event carries `attempt` (the attempt that failed, counting from 1), `attempts` (the total allowed) and `delay`, and a run that was retried stores `metadata["attempts"]`. Everything before that event is superseded. The final `RunCompleted` content and the stored run hold only the last attempt's answer; tool calls from every attempt are kept because they ran.
+- **Tools are not exactly-once.** The retry resumes the same thread and re-sends the prompt, so Codex sees what the failed attempt did but may run a command again. A command that completed before the failure is not undone. The same holds when the durable queue re-drives a job after a worker crash: the job restarts from the beginning and tools that already ran run again. Anything a tool changes outside the workspace (an API call, a message, a payment) must be idempotent, or keyed so a repeat is a no-op, before enabling agent retries or queue `max_attempts` above 1.
 
 ## Metrics
 

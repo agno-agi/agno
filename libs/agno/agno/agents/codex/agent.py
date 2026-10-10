@@ -43,10 +43,39 @@ _SANDBOX_ALIASES: Dict[str, str] = {
 # thread_start-only options that thread_resume does not accept.
 _START_ONLY_KEYS = {"ephemeral", "service_name", "session_start_source", "thread_source"}
 
+# codexErrorInfo values that fail the same way on every attempt, or are limits a retry would bypass.
+_PERMANENT_TURN_ERRORS = {
+    "contextWindowExceeded",
+    "sessionBudgetExceeded",
+    "usageLimitExceeded",
+    "unauthorized",
+    "badRequest",
+    "cyberPolicy",
+    "misalignmentPolicyViolation",
+    "tooManyDenials",
+}
+# JSON-RPC codes for requests the app-server rejects as malformed.
+_PERMANENT_RPC_CODES = {-32700, -32600, -32601, -32602}
+
+
+class CodexTurnError(RuntimeError):
+    """A failed Codex turn, with the app-server's codexErrorInfo value when it sent a plain one."""
+
+    def __init__(self, message: str, codex_error_info: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.codex_error_info = codex_error_info
+
 
 def _item_root(item: Any) -> Any:
     """Unwrap a pydantic RootModel (ThreadItem) to the concrete item."""
     return getattr(item, "root", item)
+
+
+def _error_info(error: Any) -> Optional[str]:
+    """The plain codexErrorInfo value of a TurnError. Structured variants (connection failures) give None."""
+    info = _item_root(getattr(error, "codex_error_info", None))
+    value = getattr(info, "value", info)
+    return value if isinstance(value, str) else None
 
 
 def _coerce_args(raw: Any) -> Optional[Dict[str, Any]]:
@@ -84,6 +113,7 @@ class _StreamState:
     emitted_text: bool = False
     tool_info: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     error: Optional[str] = None
+    error_info: Optional[str] = None
     usage_first: Any = None
     usage_last: Any = None
 
@@ -93,7 +123,7 @@ class _TurnOutcome:
     """What a non-streaming turn produced, collected from the app-server notifications."""
 
     status: Optional[str] = None
-    error: Optional[str] = None
+    error: Any = None
     items: List[Any] = field(default_factory=list)
     final_response: Optional[str] = None
     usage_first: Any = None
@@ -129,6 +159,10 @@ class CodexAgent(BaseExternalAgent):
         env: Environment variables for the Codex process.
         thread_kwargs: Extra kwargs forwarded to thread_start / thread_resume.
         turn_kwargs: Extra kwargs forwarded to each turn.
+        retries: Number of times to retry a failed run. Cancelled runs, budget and usage limits and errors
+            that would fail again (context window, authentication, bad requests, policy) are not retried.
+        delay_between_retries: Seconds to wait before each retry.
+        exponential_backoff: Double the delay after each failed attempt.
 
     Example:
         from agno.agents.codex import CodexAgent
@@ -454,34 +488,32 @@ class CodexAgent(BaseExternalAgent):
             handle = await thread.turn(prompt, **self._turn_kwargs(sdk))
             self._set_run_handle(run_id, handle)
             try:
-                result = await self._acollect_turn(handle)
+                result = await self._acollect_turn(handle, kwargs.get("run_state"))
             finally:
                 self._clear_run_handle(run_id)
             if result.status == "interrupted":
                 raise RunCancelledException(run_id)
             if result.status == "failed":
-                raise RuntimeError(f"Codex turn failed: {result.error}")
+                # The tools that completed are already in run_state for the base class to keep.
+                raise CodexTurnError(
+                    f"Codex turn failed: {getattr(result.error, 'message', None) or result.error}",
+                    _error_info(result.error),
+                )
 
-        tools = []
-        for item in result.items:
-            item = _item_root(item)
-            tool = self._tool_from_item(item)
-            if tool is not None:
-                tool.result = self._tool_result_from_item(item)
-                tools.append(tool)
         return ExternalRunResult(
             self._final_text(result),
-            tools or None,
+            self._tools_from_items(result.items) or None,
             metrics=self._metrics_from_usage(result.usage_first, result.usage_last),
         )
 
-    @staticmethod
-    async def _acollect_turn(handle: Any) -> _TurnOutcome:
-        """Consume a turn's notification stream the way the SDK's run() does, keeping every
-        token usage update rather than only the last one.
+    async def _acollect_turn(self, handle: Any, run_state: Optional[Dict[str, Any]] = None) -> _TurnOutcome:
+        """Consume a turn's notification stream the way the SDK's run() does.
 
-        A turn with tool calls makes several model requests and the app-server reports usage
-        after each, so the first and last reports are both needed to size the whole turn.
+        Unlike run(), which returns items only once the turn ends, this records each tool call
+        in run_state["tools"] as it completes, so a transport error later in the turn still
+        leaves the work that was done for the base class to keep. It also keeps the first and
+        last token usage report: a turn with tool calls makes several model requests and the
+        app-server reports usage after each, so both are needed to size the whole turn.
         """
         outcome = _TurnOutcome()
         async for notification in handle.stream():
@@ -497,14 +529,19 @@ class CodexAgent(BaseExternalAgent):
                     outcome.usage_last = usage
             elif method == "item/completed":
                 item = getattr(payload, "item", None)
-                if item is not None:
-                    outcome.items.append(item)
+                if item is None:
+                    continue
+                outcome.items.append(item)
+                if run_state is not None:
+                    tool = self._tool_from_item(_item_root(item))
+                    if tool is not None:
+                        tool.result = self._tool_result_from_item(_item_root(item))
+                        run_state.setdefault("tools", {})[tool.tool_call_id or str(uuid4())] = tool
             elif method == "turn/completed":
                 turn = getattr(payload, "turn", None)
                 status = getattr(turn, "status", None)
                 outcome.status = getattr(status, "value", status)
-                error = getattr(turn, "error", None)
-                outcome.error = getattr(error, "message", None) or (str(error) if error else None)
+                outcome.error = getattr(turn, "error", None)
                 break
         # The SDK's final_response rule: the final-answer phase message, else the last message
         # without a phase.
@@ -523,6 +560,16 @@ class CodexAgent(BaseExternalAgent):
         if outcome.final_response is None:
             outcome.final_response = unphased
         return outcome
+
+    def _tools_from_items(self, items: List[Any]) -> List[ToolExecution]:
+        tools = []
+        for item in items:
+            item = _item_root(item)
+            tool = self._tool_from_item(item)
+            if tool is not None:
+                tool.result = self._tool_result_from_item(item)
+                tools.append(tool)
+        return tools
 
     @staticmethod
     def _final_text(result: Any) -> str:
@@ -565,6 +612,7 @@ class CodexAgent(BaseExternalAgent):
                 self._clear_run_handle(run_id)
 
         if state.error:
+            raise CodexTurnError(f"Codex turn failed: {state.error}", state.error_info)
             raise RuntimeError(f"Codex turn failed: {state.error}")
         metrics = self._metrics_from_usage(state.usage_first, state.usage_last)
         if metrics is not None:
@@ -608,6 +656,18 @@ class CodexAgent(BaseExternalAgent):
 
     async def _ainterrupt_run(self, handle: Any) -> None:
         await handle.interrupt()
+
+    def _is_retryable_error(self, error: Exception) -> bool:
+        if not super()._is_retryable_error(error):
+            return False
+        if getattr(error, "codex_error_info", None) in _PERMANENT_TURN_ERRORS:
+            return False
+        rpc_error = getattr(_sdk(), "JsonRpcError", None)
+        return not (
+            rpc_error is not None
+            and isinstance(error, rpc_error)
+            and getattr(error, "code", None) in _PERMANENT_RPC_CODES
+        )
 
     def _content_event(self, run_id: str, content: str, reasoning: Optional[str] = None) -> RunContentEvent:
         return RunContentEvent(
@@ -699,6 +759,7 @@ class CodexAgent(BaseExternalAgent):
             if status_value == "failed":
                 error = getattr(turn, "error", None)
                 state.error = getattr(error, "message", None) or "turn failed"
+                state.error_info = _error_info(error) or state.error_info
             elif status_value == "interrupted":
                 raise RunCancelledException(run_id)
 
@@ -709,6 +770,7 @@ class CodexAgent(BaseExternalAgent):
                 log_debug(f"Codex: transient error, retrying: {message}")
             else:
                 state.error = message
+                state.error_info = _error_info(error) or state.error_info
 
     @staticmethod
     def _tool_from_item(item: Any) -> Optional[ToolExecution]:

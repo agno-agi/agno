@@ -55,6 +55,13 @@ class CodexConfig:
     env: Optional[Dict[str, str]] = None
 
 
+class JsonRpcError(Exception):
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(f"JSON-RPC error {code}: {message}")
+        self.code = code
+        self.message = message
+
+
 class FakeState:
     """Shared, scripted behaviour for the fake SDK."""
 
@@ -133,6 +140,7 @@ def fake_sdk(monkeypatch) -> FakeState:
     module.ApprovalMode = ApprovalMode  # type: ignore[attr-defined]
     module.CodexConfig = CodexConfig  # type: ignore[attr-defined]
     module.AsyncCodex = FakeAsyncCodex  # type: ignore[attr-defined]
+    module.JsonRpcError = JsonRpcError  # type: ignore[attr-defined]
     module.types = SimpleNamespace(ReasoningEffort=ReasoningEffort)  # type: ignore[attr-defined]
     monkeypatch.setattr(codex_module, "_sdk", lambda: module)
     return state
@@ -170,10 +178,10 @@ def _delta(item_id: str, text: str) -> Any:
     return SimpleNamespace(method="item/agentMessage/delta", payload=SimpleNamespace(item_id=item_id, delta=text))
 
 
-def _turn_completed(status: str = "completed", error: Optional[str] = None) -> Any:
+def _turn_completed(status: str = "completed", error: Optional[str] = None, info: Any = None) -> Any:
     turn = SimpleNamespace(
         status=SimpleNamespace(value=status),
-        error=SimpleNamespace(message=error) if error else None,
+        error=SimpleNamespace(message=error, codex_error_info=info) if error else None,
     )
     return SimpleNamespace(method="turn/completed", payload=SimpleNamespace(turn=turn))
 
@@ -637,6 +645,159 @@ async def test_interrupted_sdk_turn_is_cancelled(fake_sdk, stream):
         assert events[-1].status == RunStatus.cancelled
     else:
         assert (await agent.arun("go")).status == RunStatus.cancelled
+
+
+@pytest.mark.parametrize("stream", [True, False])
+def test_retry_resumes_the_thread_of_the_failed_attempt(fake_sdk, tmp_db, monkeypatch, stream):
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db, retries=1, delay_between_retries=0)
+    turns: List[int] = []
+    original_stream = FakeHandle.stream
+
+    async def stream_failing_once(self):
+        turns.append(1)
+        if len(turns) == 1:
+            yield _turn_completed("failed", error="overloaded")
+            return
+        async for notification in original_stream(self):
+            yield notification
+
+    fake_sdk.notifications = [_agent_message("m1", "recovered"), _turn_completed()]
+    monkeypatch.setattr(FakeHandle, "stream", stream_failing_once)
+    if stream:
+        events = _collect(agent, "go", session_id="s1")
+        assert isinstance(events[-1], RunCompletedEvent)
+        assert events[-1].content == "recovered"
+    else:
+        assert agent.run("go", session_id="s1").content == "recovered"
+
+    ops = [(c["op"], c.get("thread_id")) for c in fake_sdk.calls if c["op"] in ("thread_start", "thread_resume")]
+    assert ops == [("thread_start", "thread-1"), ("thread_resume", "thread-1")]
+    assert [c["prompt"] for c in fake_sdk.calls if c["op"] == "turn"] == ["go", "go"]
+
+
+@pytest.mark.parametrize("failure", ["failed_turn", "exception_mid_turn"])
+def test_non_stream_retry_keeps_the_failed_attempts_tool_calls(fake_sdk, tmp_db, monkeypatch, failure):
+    """A tool that completed in the failed attempt stays in the run, whether the turn ended with a
+    failed status or died with an exception before the turn completed."""
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db, retries=1, delay_between_retries=0)
+    turns: List[int] = []
+    tool_item = _item(type="commandExecution", id="call", command="pwd", aggregated_output="/workspace", exit_code=0)
+
+    async def tool_then_failure_then_success(self):
+        turns.append(1)
+        if len(turns) == 1:
+            yield _completed(tool_item)
+            if failure == "failed_turn":
+                yield _turn_completed("failed", error="overloaded")
+                return
+            raise RuntimeError("connection reset mid-turn")
+        yield _agent_message("m1", "recovered")
+        yield _turn_completed()
+
+    monkeypatch.setattr(FakeHandle, "stream", tool_then_failure_then_success)
+    out = agent.run("go", session_id="s1")
+    assert out.status == RunStatus.completed and out.content == "recovered"
+    assert len(turns) == 2
+    [tool] = out.tools or []
+    assert tool.tool_args == {"command": "pwd"} and tool.result == "/workspace"
+    stored = agent.get_run_output(out.run_id, "s1")
+    assert [m.role for m in stored.messages or []].count("tool") == 1
+    assert any(m.role == "tool" and m.content == "/workspace" for m in stored.messages or [])
+
+
+def test_non_stream_exhausted_retries_keep_tools_from_every_attempt(fake_sdk, tmp_db, monkeypatch):
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db, retries=1, delay_between_retries=0)
+    turns: List[int] = []
+
+    async def tool_then_exception(self):
+        turns.append(1)
+        yield _completed(
+            _item(type="commandExecution", id=f"call-{len(turns)}", command="pwd", aggregated_output="/w", exit_code=0)
+        )
+        raise RuntimeError("connection reset mid-turn")
+
+    monkeypatch.setattr(FakeHandle, "stream", tool_then_exception)
+    out = agent.run("go", session_id="s1")
+    assert out.status == RunStatus.error and len(turns) == 2
+    assert [t.tool_call_id for t in out.tools or []] == ["call-1", "call-2"]
+
+
+class CodexErrorInfoValue(str, Enum):
+    usage_limit_exceeded = "usageLimitExceeded"
+    server_overloaded = "serverOverloaded"
+    unauthorized = "unauthorized"
+
+
+@pytest.mark.parametrize(
+    "info, retried",
+    [
+        # Shapes mirror CodexErrorInfo: a RootModel over an enum, or over a structured variant
+        (SimpleNamespace(root=CodexErrorInfoValue.usage_limit_exceeded), False),
+        ("sessionBudgetExceeded", False),
+        ("contextWindowExceeded", False),
+        ("unauthorized", False),
+        (SimpleNamespace(root=CodexErrorInfoValue.server_overloaded), True),
+        (SimpleNamespace(root=SimpleNamespace(http_connection_failed=SimpleNamespace(http_status_code=502))), True),
+        (None, True),
+    ],
+    ids=["usage_limit", "session_budget", "context_window", "unauthorized", "overloaded", "connection", "none"],
+)
+@pytest.mark.parametrize("stream", [True, False])
+def test_retry_skips_limits_and_permanent_turn_errors(fake_sdk, monkeypatch, info, retried, stream):
+    agent = CodexAgent(name="Codex", id="codex", retries=2, delay_between_retries=0)
+    turns: List[int] = []
+
+    async def stream_failing(self):
+        turns.append(1)
+        yield _turn_completed("failed", error="turn failed", info=info)
+
+    monkeypatch.setattr(FakeHandle, "stream", stream_failing)
+    if stream:
+        assert isinstance(_collect(agent, "go")[-1], RunErrorEvent)
+    else:
+        assert agent.run("go").status == RunStatus.error
+    assert len(turns) == (3 if retried else 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    "info, redriven",
+    [(CodexErrorInfoValue.unauthorized, False), (CodexErrorInfoValue.server_overloaded, True)],
+    ids=["unauthorized", "overloaded"],
+)
+async def test_queue_does_not_redrive_permanent_codex_errors(fake_sdk, tmp_db, monkeypatch, info, redriven, stream):
+    """The queue's own attempts stop at a failure the agent classified as permanent."""
+    from ._queue_harness import run_through_queue
+
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db, retries=0)
+    turns: List[int] = []
+
+    async def stream_failing(self):
+        turns.append(1)
+        yield _turn_completed("failed", error="turn failed", info=info)
+
+    monkeypatch.setattr(FakeHandle, "stream", stream_failing)
+    job = await run_through_queue(agent, stream=stream, max_attempts=3)
+    assert job["status"] == "failed"
+    assert job["attempt"] == (3 if redriven else 1)
+    assert len(turns) == job["attempt"]
+    run = await agent.aget_run_output(job["id"], "s")
+    assert run.status == RunStatus.error and run.metadata["retryable"] is redriven
+
+
+@pytest.mark.parametrize("code, retried", [(-32602, False), (-32600, False), (-32001, True)])
+def test_retry_skips_rejected_rpc_requests(fake_sdk, monkeypatch, code, retried):
+    agent = CodexAgent(name="Codex", id="codex", retries=2, delay_between_retries=0)
+    starts: List[int] = []
+
+    async def thread_start(self, **kwargs: Any):
+        starts.append(1)
+        raise JsonRpcError(code, "rejected")
+
+    monkeypatch.setattr(FakeAsyncCodex, "thread_start", thread_start)
+    assert agent.run("go").status == RunStatus.error
+    assert len(starts) == (3 if retried else 1)
 
 
 # ---------------------------------------------------------------------------

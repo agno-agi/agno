@@ -11,7 +11,7 @@ from agno.agents.base import (
     ExternalRunWarningEvent,
 )
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.exceptions import RunNotContinuableError
+from agno.exceptions import ModelProviderError, RunNotContinuableError
 from agno.metrics import BaseMetrics, ModelMetrics, RunMetrics
 from agno.models.message import Message
 from agno.models.response import ToolExecution
@@ -37,6 +37,31 @@ def _sdk() -> Any:
         raise ImportError("claude-agent-sdk is required: pip install claude-agent-sdk") from e
 
 
+# Result subtypes for limits the user configured; a retry would grant a fresh allowance.
+_LIMIT_SUBTYPES = {"error_max_turns", "error_max_budget_usd", "error_max_structured_output_retries"}
+# AssistantMessage.error values that fail the same way on every attempt.
+_PERMANENT_ASSISTANT_ERRORS = {"authentication_failed", "billing_error", "invalid_request"}
+
+
+class ClaudeResultError(RuntimeError):
+    """An error result from Claude Code, with the fields the SDK's own ResultError carries."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        subtype: Optional[str] = None,
+        errors: Optional[List[str]] = None,
+        api_error_status: Optional[int] = None,
+        assistant_error: Optional[str] = None,
+    ) -> None:
+        super().__init__(message)
+        self.subtype = subtype
+        self.errors = errors
+        self.api_error_status = api_error_status
+        self.assistant_error = assistant_error
+
+
 @dataclass
 class ClaudeAgent(BaseExternalAgent):
     """Adapter for the Claude Agent SDK (claude-agent-sdk).
@@ -60,6 +85,10 @@ class ClaudeAgent(BaseExternalAgent):
         cwd: Working directory for the agent.
         mcp_servers: MCP server configurations for custom tools.
         options_kwargs: Additional kwargs passed to ClaudeAgentOptions.
+        retries: Number of times to retry a failed run. Cancelled runs, max_turns / max_budget_usd limits
+            and errors that would fail again (authentication, billing, invalid requests) are not retried.
+        delay_between_retries: Seconds to wait before each retry.
+        exponential_backoff: Double the delay after each failed attempt.
 
     Example:
         from agno.agents.claude import ClaudeAgent
@@ -262,6 +291,7 @@ class ClaudeAgent(BaseExternalAgent):
             options = self._build_options(streaming=streaming, resume=resume, session_store=store)
             prompt = self._build_prompt(input, history, resumed=resume is not None)
             received = False
+            assistant_error: Optional[str] = None
             run_id = kwargs.get("run_id") or str(uuid4())
             client = sdk.ClaudeSDKClient(options=options)
             try:
@@ -274,8 +304,10 @@ class ClaudeAgent(BaseExternalAgent):
                     if isinstance(message, sdk.UserMessage) and not self._tool_result_ids(sdk, message):
                         # The echoed prompt is bookkeeping only; adapters never see it.
                         continue
+                    if isinstance(message, sdk.AssistantMessage) and getattr(message, "error", None):
+                        assistant_error = message.error
                     if isinstance(message, sdk.ResultMessage):
-                        self._check_result_message(sdk, message)
+                        self._check_result_message(sdk, message, assistant_error)
                     if not isinstance(message, sdk.SystemMessage):
                         received = True
                     sdk_session_id = None
@@ -464,14 +496,14 @@ class ClaudeAgent(BaseExternalAgent):
     async def _afork_sdk_session(self, anchor: Dict[str, Any], store: Any) -> Optional[str]:
         """Fork the stored SDK transcript at the anchor; None starts a fresh SDK session."""
         if store is None:
-            raise ValueError("Continuing a ClaudeAgent run requires a database with transcript storage")
+            raise RunNotContinuableError("Continuing a ClaudeAgent run requires a database with transcript storage")
         up_to: Optional[str] = anchor["uuid"]
         if anchor.get("before"):
             key = {"project_key": store.project_key, "session_id": anchor["session_id"]}
             entries = await store.load(key) or []
             entry = next((entry for entry in entries if entry.get("uuid") == up_to), None)
             if entry is None:
-                raise ValueError(f"Claude SDK transcript entry {up_to} was not found")
+                raise RunNotContinuableError(f"Claude SDK transcript entry {up_to} was not found")
             up_to = entry.get("parentUuid")
             if up_to is None:
                 return None
@@ -721,6 +753,21 @@ class ClaudeAgent(BaseExternalAgent):
         log_warning(warning["message"])
         return warning
 
+    def _is_retryable_error(self, error: Exception) -> bool:
+        if not super()._is_retryable_error(error):
+            return False
+        # Read by attribute so the SDK's own ResultError classifies the same way.
+        if isinstance(error, RunNotContinuableError):
+            return False
+        if getattr(error, "subtype", None) in _LIMIT_SUBTYPES:
+            return False
+        if getattr(error, "api_error_status", None) in ModelProviderError.NON_RETRYABLE_STATUS_CODES:
+            return False
+        if getattr(error, "assistant_error", None) in _PERMANENT_ASSISTANT_ERRORS:
+            return False
+        cli_not_found = getattr(_sdk(), "CLINotFoundError", None)
+        return cli_not_found is None or not isinstance(error, cli_not_found)
+
     def _metrics_from_result(self, message: Any) -> Optional[RunMetrics]:
         """Map the ResultMessage's usage and cost to RunMetrics.
 
@@ -779,7 +826,7 @@ class ClaudeAgent(BaseExternalAgent):
         return self._build_metrics(totals, details, additional)
 
     @staticmethod
-    def _check_result_message(sdk: Any, message: Any) -> None:
+    def _check_result_message(sdk: Any, message: Any, assistant_error: Optional[str] = None) -> None:
         """Raise if the SDK reported an error result so the base class can surface it."""
         if not isinstance(message, sdk.ResultMessage):
             return
@@ -793,7 +840,13 @@ class ClaudeAgent(BaseExternalAgent):
                 or getattr(message, "result", None)
                 or getattr(message, "stop_reason", None)
             )
-            raise RuntimeError(f"Claude SDK error (is_error={is_error}, subtype={subtype}): {detail}")
+            raise ClaudeResultError(
+                f"Claude SDK error (is_error={is_error}, subtype={subtype}): {detail}",
+                subtype=subtype,
+                errors=getattr(message, "errors", None),
+                api_error_status=getattr(message, "api_error_status", None),
+                assistant_error=assistant_error,
+            )
 
     async def _arun_adapter(
         self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
