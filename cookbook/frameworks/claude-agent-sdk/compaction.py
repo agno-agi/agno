@@ -21,14 +21,13 @@ Usage:
 """
 
 import asyncio
-import json
-import sqlite3
 import tempfile
 from pathlib import Path
 
 from claude_agent_sdk import HookMatcher
 
 from agno.agents.claude import ClaudeAgent
+from agno.agents.claude.session_store import AgnoSessionStore
 from agno.db.sqlite import SqliteDb
 from agno.run.base import RunStatus
 
@@ -44,16 +43,25 @@ async def on_pre_compact(input_data, tool_use_id, context):
     return {}
 
 
-def compaction_rows(db_file: str):
-    """Transcript rows written by the compaction: the boundary marker and the summary."""
-    connection = sqlite3.connect(db_file)
-    rows = connection.execute(
-        "select position, entry from agno_transcripts order by position"
-    ).fetchall()
-    connection.close()
+def compaction_rows(agent: ClaudeAgent):
+    """Transcript entries written by the compaction: the boundary marker and the summary.
+
+    Transcripts are read back through the database's transcript API, keyed by the Claude
+    session id the agent stored on the Agno session.
+    """
+    session = agent.get_session(SESSION_ID)
+    sdk_session_id = (
+        (session.session_data or {}).get("claude_sdk_session_id") if session else None
+    )
+    if not sdk_session_id:
+        return 0, []
+    entries = agent.db.get_transcript_entries(
+        framework=AgnoSessionStore.framework,
+        project_key=agent.project_key,
+        session_id=sdk_session_id,
+    )
     found = []
-    for position, raw in rows:
-        entry = json.loads(raw)
+    for position, entry in enumerate(entries, start=1):
         if entry.get("type") == "system" and entry.get("subtype") == "compact_boundary":
             found.append((position, "compact_boundary", str(entry.get("content"))))
         elif entry.get("type") == "user" and entry.get("isCompactSummary"):
@@ -61,7 +69,7 @@ def compaction_rows(db_file: str):
             found.append(
                 (position, "compact_summary", str(summary)[:160].replace("\n", " "))
             )
-    return len(rows), found
+    return len(entries), found
 
 
 async def main():
@@ -102,14 +110,14 @@ async def main():
         ]:
             run = await replica_a.arun(prompt, session_id=SESSION_ID)
             assert run.status == RunStatus.completed, run.content
-        total, found = compaction_rows(db_file)
+        total, found = compaction_rows(replica_a)
         print(f"Before /compact: {total} transcript rows, {len(found)} compaction rows")
 
         # 2. Ask Claude Code to compact. The slash command is an ordinary run input.
         run = await replica_a.arun("/compact", session_id=SESSION_ID)
         assert run.status == RunStatus.completed, run.content
         assert compactions == ["manual"], compactions
-        total, found = compaction_rows(db_file)
+        total, found = compaction_rows(replica_a)
         print(
             f"After /compact: {total} transcript rows, PreCompact hook saw {compactions}"
         )

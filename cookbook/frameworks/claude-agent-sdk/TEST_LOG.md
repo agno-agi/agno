@@ -2,6 +2,16 @@
 
 ## 2026-10-09
 
+### compaction.py (transcript read API)
+
+**Status:** PASS
+
+**Description:** Reran after replacing the cookbook's raw SQL on `agno_transcripts` with `db.get_transcript_entries(framework, project_key, session_id)`, keyed by the Claude session id stored on the Agno session.
+
+**Result:** 29 rows before `/compact`, 39 after; the `compact_boundary` and summary entries were found at positions 33 and 34; replica B recalled the fact.
+
+---
+
 ### compaction.py
 
 **Status:** PASS
@@ -118,7 +128,6 @@
 **Result:** 736 unit/regression tests passed; 5 integration tests passed, none skipped. One existing AsyncMock warning arose in the unchanged native save-fencing test. Required format and validation scripts passed with SQLAlchemy 2.0.52.
 
 ---
-
 
 ### Transcript mirror failure regression (2026-10-08)
 
