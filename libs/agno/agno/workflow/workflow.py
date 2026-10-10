@@ -2131,14 +2131,10 @@ class Workflow:
 
     async def _aupsert_session(self, session: WorkflowSession) -> Optional[WorkflowSession]:
         """Upsert a Session into the database."""
-        try:
-            if not self.db:
-                raise ValueError("Db not initialized")
-            result = await self.db.upsert_session(session=session)  # type: ignore
-            return result if isinstance(result, (WorkflowSession, type(None))) else None
-        except Exception as e:
-            log_warning(f"Error upserting session into db: {str(e)}")
-            return None
+        if not self.db:
+            raise ValueError("Db not initialized")
+        result = await self.db.upsert_session(session=session)  # type: ignore
+        return result if isinstance(result, (WorkflowSession, type(None))) else None
 
     def _upsert_session(self, session: WorkflowSession) -> Optional[WorkflowSession]:
         """Upsert a Session into the database."""
@@ -2147,14 +2143,10 @@ class Workflow:
                 "Cannot use sync _upsert_session() with an async database. Use _aupsert_session() instead."
             )
 
-        try:
-            if not self.db:
-                raise ValueError("Db not initialized")
-            result = self.db.upsert_session(session=session)
-            return result if isinstance(result, (WorkflowSession, type(None))) else None
-        except Exception as e:
-            log_warning(f"Error upserting session into db: {str(e)}")
-            return None
+        if not self.db:
+            raise ValueError("Db not initialized")
+        result = self.db.upsert_session(session=session)
+        return result if isinstance(result, (WorkflowSession, type(None))) else None
 
     def save_run(
         self,
@@ -2184,8 +2176,6 @@ class Workflow:
             self.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
         except NotImplementedError:
             log_debug(f"{type(self.db).__name__} does not implement upsert_run; skipping per-run write")
-        except Exception as e:
-            log_warning(f"Error upserting run into db: {str(e)}")
 
     async def asave_run(
         self,
@@ -2214,8 +2204,6 @@ class Workflow:
                 self.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
         except NotImplementedError:
             log_debug(f"{type(self.db).__name__} does not implement upsert_run; skipping per-run write")
-        except Exception as e:
-            log_warning(f"Error upserting run into db: {str(e)}")
 
     def _scrub_run_media_copy(self, run: "WorkflowRunOutput") -> "WorkflowRunOutput":
         """Drop media from a deep copy of ``run`` before it is written to the runs table.
@@ -2940,6 +2928,7 @@ class Workflow:
         workflow_run_response.status = RunStatus.running
 
         if callable(self.steps):
+            execution_error: Optional[Exception] = None
             try:
                 if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
                     raise ValueError("Cannot use async function with synchronous execution")
@@ -2962,6 +2951,9 @@ class Workflow:
             except RunCancelledException as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 _mark_workflow_run_cancelled(workflow_run_response, e)
+            except Exception as e:
+                execution_error = e
+                raise
             finally:
                 if workflow_run_response.metrics:
                     workflow_run_response.metrics.stop_timer()
@@ -2970,10 +2962,14 @@ class Workflow:
                     session.upsert_run(run=workflow_run_response)
                     self._persist_session_and_run(session=session, run=workflow_run_response)
                 except Exception as store_err:
+                    if execution_error is None:
+                        raise
                     log_warning(f"Failed to persist workflow run: {store_err}")
-                cleanup_run(workflow_run_response.run_id)  # type: ignore
-                cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
+                finally:
+                    cleanup_run(workflow_run_response.run_id)  # type: ignore
+                    cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
         else:
+            execution_error = None
             try:
                 # Track outputs from each step for enhanced data flow
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
@@ -3241,6 +3237,7 @@ class Workflow:
                         workflow_run_response.metrics,  # type: ignore[arg-type]
                     )
             except Exception as e:
+                execution_error = e
                 import traceback
 
                 traceback.print_exc()
@@ -3260,10 +3257,12 @@ class Workflow:
                     session.upsert_run(run=workflow_run_response)
                     self._persist_session_and_run(session=session, run=workflow_run_response)
                 except Exception as store_err:
+                    if execution_error is None:
+                        raise
                     log_warning(f"Failed to persist workflow run: {store_err}")
-                # Always clean up the run tracking
-                cleanup_run(workflow_run_response.run_id)  # type: ignore
-                cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
+                finally:
+                    cleanup_run(workflow_run_response.run_id)  # type: ignore
+                    cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -3829,20 +3828,21 @@ class Workflow:
             metadata=workflow_run_response.metadata,
             run_output=workflow_run_response,  # Include full run output for nested workflows
         )
-        yield self._handle_event(workflow_completed_event, workflow_run_response)
+        handled_completed_event = self._handle_event(workflow_completed_event, workflow_run_response)
 
         # Stop timer on error
         if workflow_run_response.metrics:
             workflow_run_response.metrics.stop_timer()
 
         # Store the completed workflow response
-        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
-        session.upsert_run(run=workflow_run_response)
-        self._persist_session_and_run(session=session, run=workflow_run_response)
-
-        # Always clean up the run tracking
-        cleanup_run(workflow_run_response.run_id)  # type: ignore
-        cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
+        try:
+            self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+            session.upsert_run(run=workflow_run_response)
+            self._persist_session_and_run(session=session, run=workflow_run_response)
+        finally:
+            cleanup_run(workflow_run_response.run_id)  # type: ignore
+            cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
+        yield handled_completed_event
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -4277,12 +4277,13 @@ class Workflow:
         if workflow_run_response.metrics:
             workflow_run_response.metrics.stop_timer()
 
-        self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
-        workflow_session.upsert_run(run=workflow_run_response)
-        await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
-        # Always clean up the run tracking
-        await acleanup_run(workflow_run_response.run_id)  # type: ignore
-        await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
+        try:
+            self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
+            workflow_session.upsert_run(run=workflow_run_response)
+            await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
+        finally:
+            await acleanup_run(workflow_run_response.run_id)  # type: ignore
+            await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -4902,24 +4903,25 @@ class Workflow:
             metadata=workflow_run_response.metadata,
             run_output=workflow_run_response,  # Include full run output for nested workflows
         )
-        yield self._handle_event(workflow_completed_event, workflow_run_response)
+        handled_completed_event = self._handle_event(workflow_completed_event, workflow_run_response)
 
         # Stop timer on error
         if workflow_run_response.metrics:
             workflow_run_response.metrics.stop_timer()
 
         # Store the completed workflow response
-        self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
-        workflow_session.upsert_run(run=workflow_run_response)
-        await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
+        try:
+            self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
+            workflow_session.upsert_run(run=workflow_run_response)
+            await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
+        finally:
+            await acleanup_run(workflow_run_response.run_id)  # type: ignore
+            await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
+        yield handled_completed_event
 
         # Log Workflow Telemetry
         if self.telemetry:
             await self._alog_workflow_telemetry(session_id=session_id, run_id=workflow_run_response.run_id)
-
-        # Always clean up the run tracking
-        await acleanup_run(workflow_run_response.run_id)  # type: ignore
-        await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
     async def _arun_background(
         self,

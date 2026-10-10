@@ -2502,7 +2502,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     runs_result = await sess.execute(runs_stmt)
                     runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
                     for session_id, model, model_provider in runs_result.fetchall():
-                        runs_by_session.setdefault(session_id, []).append(
+                        runs_by_session.setdefault(cast(str, session_id), []).append(
                             {"model": model, "model_provider": model_provider}
                         )
 
