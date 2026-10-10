@@ -25,7 +25,22 @@ class RunMessages:
     events: List[Any] = field(default_factory=list)
 
     def get_input_messages(self) -> List[Message]:
-        """Get the input messages for the model."""
+        """Get the input messages for the model.
+
+        When ``messages`` has been assembled by the agent (system + history +
+        user + tool messages), prefer it so callers receive the full context.
+        ``extra_messages`` are appended without duplicating any already in
+        ``messages``. Otherwise, fall back to the system + user + extra shape
+        for callers that build the list piecewise.
+        """
+        if self.messages:
+            input_messages = list(self.messages)
+            if self.extra_messages:
+                for msg in self.extra_messages:
+                    if msg not in input_messages:
+                        input_messages.append(msg)
+            return input_messages
+
         input_messages = []
         if self.system_message is not None:
             input_messages.append(self.system_message)
