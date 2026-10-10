@@ -138,3 +138,52 @@ class TestResumeEndpointHonorsFloor:
             if line.startswith("data: ") and '"event": "replay"' not in line
         ]
         assert indices == [0, 1, 5, 6], f"gaps must survive the DB round-trip, got {indices}"
+
+
+class TestResumeWithoutStoredEvents:
+    """PATH-3 for a run that stored no events (submitted with stream=false): the
+    replay frame must report the run's real status, not claim it completed."""
+
+    @pytest.fixture()
+    def harness(self, tmp_path):
+        import time
+
+        from fastapi.testclient import TestClient
+
+        from agno.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.os import AgentOS
+        from agno.run.agent import RunOutput
+        from agno.session import AgentSession
+
+        db = SqliteDb(db_file=str(tmp_path / "t.db"))
+        agent = Agent(id="qa-agent", name="QA Agent", db=db)
+        app = AgentOS(agents=[agent], telemetry=False).get_app()
+        session = AgentSession(session_id="s-bg", agent_id="qa-agent", created_at=int(time.time()))
+        db.upsert_session(session)
+        for run_id, status in (("r-running", RunStatus.running), ("r-done", RunStatus.completed)):
+            db.upsert_run(
+                run=RunOutput(run_id=run_id, session_id="s-bg", agent_id="qa-agent", status=status, content="late"),
+                session_id="s-bg",
+            )
+        return TestClient(app, raise_server_exceptions=False)
+
+    @staticmethod
+    def _meta(resp):
+        frames = [json.loads(line.split("data: ", 1)[1]) for line in resp.text.split("\n") if line.startswith("data: ")]
+        assert len(frames) == 1 and frames[0]["event"] == "replay" and frames[0]["total_events"] == 0
+        return frames[0]
+
+    def test_running_run_reports_running_and_says_to_poll(self, harness):
+        resp = harness.post("/agents/qa-agent/runs/r-running/resume", data={"session_id": "s-bg"})
+        assert resp.status_code == 200
+        meta = self._meta(resp)
+        assert meta["status"] == "RUNNING"
+        assert "completed" not in meta["message"].lower()
+        assert "poll the run endpoint" in meta["message"].lower()
+
+    def test_completed_run_without_events_says_so(self, harness):
+        resp = harness.post("/agents/qa-agent/runs/r-done/resume", data={"session_id": "s-bg"})
+        meta = self._meta(resp)
+        assert meta["status"] == "COMPLETED"
+        assert "no stored events" in meta["message"].lower()

@@ -149,3 +149,23 @@ Tested 2026-10-08 with openai-codex 0.161.0 (bundled Codex CLI 0.161.0), model g
 **Result:** Before: streamed turn recorded 14972 of 44739 actual, non-streamed 14502 of 43341. After: streamed 44725 of 44725, non-streamed 43289 of 43289 (three requests each). Other cookbooks unchanged.
 
 ---
+
+### Codex tool error flag (2026-10-10)
+
+**Status:** PASS (openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Soak finding: a failing MCP tool stored its error text with `tool_call_error=null`. Reproduced with `cat` on a missing file (exit code 1) and a stdio MCP server whose tool raises, on the streamed and non-streamed paths. Codex marks both items `status=failed`; the MCP item has `error=null` because the server returned the error as a text result. Fixed by setting `tool_call_error` from the item status, the exit code and the MCP error on every path.
+
+**Result:** Before: `tool_call_error=None` in all four cases. After: `True` in all four, with the result text unchanged (`[exit code 1]` suffix for the command, the server's error message for the MCP call).
+
+---
+
+### Overlapping turns on one session (2026-10-10)
+
+**Status:** PASS (openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Soak finding: a second turn on a session whose first turn was still running was accepted and failed on the app-server's thread lock. Reproduced with two concurrent `arun` calls on one session, the first running a 6s shell command. Fixed with a one-turn-per-session check in the base class (in-process turns and pending or running run rows), plus the app-server's "already has an active writer" rejection mapped to the same error.
+
+**Result:** Before: the second turn ended as an ERROR run in the session with `JSON-RPC error -32600: thread ... already has an active writer` after 0.1s. After: the second turn raises `SessionBusyError` in under a millisecond naming the run in flight, no run row is written for it, the first turn completes, and a turn sent afterwards runs normally.
+
+---

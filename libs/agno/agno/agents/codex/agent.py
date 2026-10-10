@@ -6,10 +6,9 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Set, Tupl
 from uuid import uuid4
 
 from agno.agents.base import BaseExternalAgent, ExternalRunMetricsEvent, ExternalRunResult, run_coroutine_sync
-from agno.exceptions import RunCancelledException
+from agno.exceptions import RunCancelledException, SessionBusyError
 from agno.metrics import ModelMetrics, RunMetrics
 from agno.models.response import ToolExecution
-from agno.run.base import RunStatus
 from agno.run.agent import (
     RunContentEvent,
     RunOutputEvent,
@@ -268,14 +267,14 @@ class CodexAgent(BaseExternalAgent):
         log_debug(f"Codex: compacted thread {thread_id} for session {session_id}")
         return True
 
-    @staticmethod
-    def _check_no_run_in_flight(session: Any, session_id: str) -> None:
-        for run in getattr(session, "runs", None) or []:
+    @classmethod
+    def _check_no_run_in_flight(cls, session: Any, session_id: str) -> None:
+        run = cls._run_in_flight(session)
+        if run is not None:
             status = getattr(run.status, "value", run.status)
-            if status in (RunStatus.pending.value, RunStatus.running.value):
-                raise RuntimeError(
-                    f"Cannot compact session {session_id}: run {run.run_id} is {status}. Wait for it to finish."
-                )
+            raise RuntimeError(
+                f"Cannot compact session {session_id}: run {run.run_id} is {status}. Wait for it to finish."
+            )
 
     @staticmethod
     def _app_server_client(codex: Any) -> Any:
@@ -431,6 +430,11 @@ class CodexAgent(BaseExternalAgent):
             self._thread_ids.pop(session_id, None)
 
     @staticmethod
+    def _is_active_writer(error: Exception) -> bool:
+        """True when the app-server refuses a resume because a turn is running on the thread."""
+        return "already has an active writer" in str(getattr(error, "message", None) or error)
+
+    @staticmethod
     def _is_missing_thread(error: Exception) -> bool:
         """True when the app-server reports the resume target as gone, not a failed call.
 
@@ -457,6 +461,13 @@ class CodexAgent(BaseExternalAgent):
                 log_debug(f"Codex: resumed thread {thread_id} for session {session_id}")
                 return thread, True
             except Exception as e:
+                if self._is_active_writer(e):
+                    # The app-server's own guard: another turn holds the thread. Same contract
+                    # as the base class's check, for a turn that slipped past it on another replica.
+                    raise SessionBusyError(
+                        f"Session {session_id} already has a turn in flight on Codex thread {thread_id}: {e}",
+                        session_id=session_id,
+                    ) from e
                 if not self._is_missing_thread(e):
                     raise
                 log_warning(
@@ -535,7 +546,7 @@ class CodexAgent(BaseExternalAgent):
                 if run_state is not None:
                     tool = self._tool_from_item(_item_root(item))
                     if tool is not None:
-                        tool.result = self._tool_result_from_item(_item_root(item))
+                        self._finish_tool(tool, _item_root(item))
                         run_state.setdefault("tools", {})[tool.tool_call_id or str(uuid4())] = tool
             elif method == "turn/completed":
                 turn = getattr(payload, "turn", None)
@@ -567,9 +578,16 @@ class CodexAgent(BaseExternalAgent):
             item = _item_root(item)
             tool = self._tool_from_item(item)
             if tool is not None:
-                tool.result = self._tool_result_from_item(item)
+                self._finish_tool(tool, item)
                 tools.append(tool)
         return tools
+
+    @classmethod
+    def _finish_tool(cls, tool: ToolExecution, item: Any) -> ToolExecution:
+        """Fill in a completed item's result and failure flag on its ToolExecution."""
+        tool.result = cls._tool_result_from_item(item)
+        tool.tool_call_error = cls._tool_error_from_item(item)
+        return tool
 
     @staticmethod
     def _final_text(result: Any) -> str:
@@ -749,7 +767,7 @@ class CodexAgent(BaseExternalAgent):
                         tool_call_id=tool.tool_call_id, tool_name=tool.tool_name, tool_args=tool.tool_args
                     ),
                 )
-            tool.result = self._tool_result_from_item(item)
+            self._finish_tool(tool, item)
             yield ToolCallCompletedEvent(run_id=run_id, agent_id=self.get_id(), agent_name=self.name or "", tool=tool)
 
         elif method == "turn/completed":
@@ -817,6 +835,24 @@ class CodexAgent(BaseExternalAgent):
             )
 
         return None
+
+    @staticmethod
+    def _tool_error_from_item(item: Any) -> bool:
+        """Whether a completed Codex item is a failed tool call.
+
+        Codex marks failure on the item's status (failed, declined) for every item kind. A
+        command that exited non-zero and an MCP call whose server reported an error are
+        failures too; an MCP server that returns its error as a text result (isError on the
+        MCP side) still arrives with status failed and error unset.
+        """
+        status = getattr(item, "status", None)
+        if getattr(status, "value", status) in ("failed", "declined"):
+            return True
+        if getattr(item, "type", None) == "commandExecution":
+            return getattr(item, "exit_code", None) not in (None, 0)
+        if getattr(item, "type", None) in ("mcpToolCall", "dynamicToolCall"):
+            return getattr(item, "error", None) is not None
+        return False
 
     @staticmethod
     def _tool_result_from_item(item: Any) -> str:
