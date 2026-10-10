@@ -336,12 +336,63 @@ class Gemini(Model):
 
         # Add thinking configuration
         thinking_config_params: Dict[str, Any] = {}
-        if self.thinking_budget is not None:
-            thinking_config_params["thinking_budget"] = self.thinking_budget
         if self.include_thoughts is not None:
             thinking_config_params["include_thoughts"] = self.include_thoughts
-        if self.thinking_level is not None:
-            thinking_config_params["thinking_level"] = self.thinking_level
+
+        normalized_id = re.sub(r"^[a-z]{2,}\.(?=(?:gemini|gemma)-)", "", self.id.lower().rsplit("/", 1)[-1])
+        version_match = re.match(r"^gemini-(\d+)(?:\.\d+)?(?:-|$)", normalized_id)
+        is_gemini_3_plus = (version_match is not None and int(version_match.group(1)) >= 3) or normalized_id in (
+            "gemini-flash-latest",
+            "gemini-flash-lite-latest",
+            "gemini-pro-latest",
+        )
+        is_pro = "-pro" in normalized_id
+
+        if is_gemini_3_plus:
+            if self.thinking_level is not None:
+                if isinstance(self.thinking_level, str):
+                    lvl = self.thinking_level.lower()
+                    if lvl in ("none", "disable"):
+                        thinking_config_params["thinking_level"] = "low" if is_pro else "minimal"
+                        thinking_config_params.setdefault("include_thoughts", False)
+                    elif lvl == "minimal" and is_pro:
+                        thinking_config_params["thinking_level"] = "low"
+                    elif lvl == "medium" and normalized_id.startswith("gemini-3-pro"):
+                        thinking_config_params["thinking_level"] = "high"
+                    else:
+                        thinking_config_params["thinking_level"] = self.thinking_level
+                else:
+                    thinking_config_params["thinking_level"] = self.thinking_level
+            elif self.thinking_budget is not None:
+                if self.thinking_budget <= 0:
+                    thinking_config_params["thinking_level"] = "low" if is_pro else "minimal"
+                    thinking_config_params.setdefault("include_thoughts", False)
+                elif self.thinking_budget <= 1024:
+                    thinking_config_params["thinking_level"] = "low"
+                elif self.thinking_budget <= 8192 and not normalized_id.startswith("gemini-3-pro"):
+                    thinking_config_params["thinking_level"] = "medium"
+                else:
+                    thinking_config_params["thinking_level"] = "high"
+        else:
+            if self.thinking_budget is not None:
+                if self.thinking_budget <= 0 and is_pro:
+                    thinking_config_params["thinking_budget"] = 128
+                else:
+                    thinking_config_params["thinking_budget"] = self.thinking_budget
+            elif self.thinking_level is not None:
+                lvl = str(self.thinking_level).lower()
+                level_to_budget = {
+                    "none": 128 if is_pro else 0,
+                    "disable": 128 if is_pro else 0,
+                    "minimal": 128 if is_pro else 0,
+                    "low": 1024,
+                    "medium": 8192,
+                    "high": 24576,
+                }
+                thinking_config_params["thinking_budget"] = level_to_budget.get(lvl, 1024)
+                if lvl in ("none", "disable"):
+                    thinking_config_params.setdefault("include_thoughts", False)
+
         if thinking_config_params:
             config["thinking_config"] = ThinkingConfig(**thinking_config_params)
 
@@ -964,7 +1015,7 @@ class Gemini(Model):
         return None
 
     def _supports_multimodal_function_responses(self) -> bool:
-        model_version = re.search(r"(?:^|/)gemini-(\d+)(?:\.\d+)?(?:-|$)", self.id)
+        model_version = re.search(r"(?:^|/|[a-z]{2,}\.)gemini-(\d+)(?:\.\d+)?(?:-|$)", self.id.lower())
         return model_version is not None and int(model_version.group(1)) >= 3
 
     def _format_tool_result_media(self, message: Message) -> tuple[List[FunctionResponsePart], List[Part]]:
@@ -1535,6 +1586,8 @@ class Gemini(Model):
             # Extract usage metadata if present
             if self._should_collect_metrics(response_delta, candidate) and response_delta.usage_metadata is not None:
                 model_response.response_usage = self._get_metrics(response_delta.usage_metadata)
+        elif response_delta.usage_metadata is not None:
+            model_response.response_usage = self._get_metrics(response_delta.usage_metadata)
 
         return model_response
 
@@ -1600,11 +1653,18 @@ class Gemini(Model):
         """
         metrics = MessageMetrics()
 
+        raw_thoughts_tokens = getattr(response_usage, "thoughts_token_count", None)
+        thoughts_tokens: int = raw_thoughts_tokens if isinstance(raw_thoughts_tokens, int) else 0
         metrics.input_tokens = response_usage.prompt_token_count or 0
-        metrics.output_tokens = response_usage.candidates_token_count or 0
+        metrics.output_tokens = (response_usage.candidates_token_count or 0) + thoughts_tokens
         if response_usage.thoughts_token_count is not None:
             metrics.reasoning_tokens = response_usage.thoughts_token_count or 0
-        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+        raw_total_tokens = getattr(response_usage, "total_token_count", None)
+        metrics.total_tokens = (
+            raw_total_tokens
+            if isinstance(raw_total_tokens, int) and raw_total_tokens > 0
+            else (metrics.input_tokens + metrics.output_tokens)
+        )
 
         metrics.cache_read_tokens = response_usage.cached_content_token_count or 0
 
