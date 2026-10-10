@@ -121,3 +121,13 @@ Tested 2026-10-08 with openai-codex 0.161.0 (bundled Codex CLI 0.161.0), model g
 **Result:** All four cookbook cases pass as before: retry resumed the same thread, streaming closed with RunCompleted, exhaustion after three attempts, default of no retries.
 
 ---
+
+### codex_retries.py (tool calls kept across a mid-turn failure)
+
+**Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** The non-streaming path now consumes the turn's notification stream itself and records each tool call as it completes, instead of the SDK's `handle.run()`, which returns items only when the turn ends. Live check: a prompt that runs one shell command, with a simulated transport failure injected before `turn/completed` on the first attempt, `retries=1`.
+
+**Result:** Non-streamed and streamed: two attempts, completed, and the stored run holds the shell call from each attempt (two tools, two tool messages). Before the change the non-streamed run lost the first attempt's call. The four cookbook cases, `codex_tools.py` and `codex_structured_output.py` pass unchanged.
+
+---

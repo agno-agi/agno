@@ -113,6 +113,16 @@ class _StreamState:
 
 
 @dataclass
+class _TurnOutcome:
+    """What a non-streaming turn produced, collected from the app-server notifications."""
+
+    status: Optional[str] = None
+    error: Any = None
+    items: List[Any] = field(default_factory=list)
+    final_response: Optional[str] = None
+
+
+@dataclass
 class CodexAgent(BaseExternalAgent):
     """Adapter for OpenAI Codex via the official Codex Python SDK (openai-codex).
 
@@ -367,24 +377,66 @@ class CodexAgent(BaseExternalAgent):
             handle = await thread.turn(prompt, **self._turn_kwargs(sdk))
             self._set_run_handle(run_id, handle)
             try:
-                result = await handle.run()
+                result = await self._acollect_turn(handle, kwargs.get("run_state"))
             finally:
                 self._clear_run_handle(run_id)
-            status = getattr(result, "status", None)
-            if getattr(status, "value", status) == "interrupted":
+            if result.status == "interrupted":
                 raise RunCancelledException(run_id)
-            tools = self._tools_from_items(getattr(result, "items", None) or [])
-            if getattr(status, "value", status) == "failed":
-                # The tools ran even though the turn failed; leave them for the base class to
-                # keep in the run if it retries or gives up.
-                if kwargs.get("run_state") is not None and tools:
-                    kwargs["run_state"]["tools"] = {tool.tool_call_id or str(uuid4()): tool for tool in tools}
-                error = getattr(result, "error", None)
+            if result.status == "failed":
+                # The tools that completed are already in run_state for the base class to keep.
                 raise CodexTurnError(
-                    f"Codex turn failed: {getattr(error, 'message', None) or error}", _error_info(error)
+                    f"Codex turn failed: {getattr(result.error, 'message', None) or result.error}",
+                    _error_info(result.error),
                 )
 
-        return ExternalRunResult(self._final_text(result), tools or None)
+        return ExternalRunResult(self._final_text(result), self._tools_from_items(result.items) or None)
+
+    async def _acollect_turn(self, handle: Any, run_state: Optional[Dict[str, Any]] = None) -> _TurnOutcome:
+        """Consume a turn's notification stream the way the SDK's run() does.
+
+        Unlike run(), which returns items only once the turn ends, this records each tool call
+        in run_state["tools"] as it completes. A transport error later in the turn then still
+        leaves the work that was done for the base class to keep when it retries or gives up.
+        """
+        outcome = _TurnOutcome()
+        async for notification in handle.stream():
+            method = getattr(notification, "method", "") or ""
+            payload = getattr(notification, "payload", None)
+            if payload is None:
+                continue
+            if method == "item/completed":
+                item = getattr(payload, "item", None)
+                if item is None:
+                    continue
+                outcome.items.append(item)
+                if run_state is not None:
+                    tool = self._tool_from_item(_item_root(item))
+                    if tool is not None:
+                        tool.result = self._tool_result_from_item(_item_root(item))
+                        run_state.setdefault("tools", {})[tool.tool_call_id or str(uuid4())] = tool
+            elif method == "turn/completed":
+                turn = getattr(payload, "turn", None)
+                status = getattr(turn, "status", None)
+                outcome.status = getattr(status, "value", status)
+                outcome.error = getattr(turn, "error", None)
+                break
+        # The SDK's final_response rule: the final-answer phase message, else the last message
+        # without a phase.
+        unphased: Optional[str] = None
+        for item in reversed(outcome.items):
+            root = _item_root(item)
+            if getattr(root, "type", None) != "agentMessage":
+                continue
+            phase = getattr(root, "phase", None)
+            phase = getattr(phase, "value", phase)
+            if phase == "final_answer":
+                outcome.final_response = getattr(root, "text", None)
+                break
+            if phase is None and unphased is None:
+                unphased = getattr(root, "text", None)
+        if outcome.final_response is None:
+            outcome.final_response = unphased
+        return outcome
 
     def _tools_from_items(self, items: List[Any]) -> List[ToolExecution]:
         tools = []
