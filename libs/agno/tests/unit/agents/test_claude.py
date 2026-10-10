@@ -1354,3 +1354,50 @@ def test_prior_attachments_fall_back_to_the_workspace_when_the_recorded_root_is_
     assert new_path.read_bytes() == b"v1"
     assert folders == [new_path.parent]
     assert "have moved" in note and f"- {new_path} (was {recorded_root / 'run-1' / 'spec.txt'})" in note
+
+
+def test_only_recent_runs_attachments_are_restaged(tmp_path):
+    """Restoring is bounded: attachments of runs older than the limit stay in the session only."""
+    from types import SimpleNamespace
+
+    from agno.agents._media import stage_prior_media
+    from agno.media import File
+
+    runs = [
+        SimpleNamespace(
+            run_id=f"run-{i}",
+            input=SimpleNamespace(images=None, files=[File(content=b"x", filename="a.txt", mime_type="text/plain")]),
+        )
+        for i in range(5)
+    ]
+    session = SimpleNamespace(session_data={}, runs=runs + [SimpleNamespace(run_id="current", input=None)])
+
+    folders, _ = stage_prior_media(tmp_path, session, exclude_run_id="current", limit=2)
+
+    uploads = tmp_path / ".agno" / "uploads"
+    assert sorted(f.name for f in folders) == ["run-3", "run-4"]
+    assert sorted(p.name for p in uploads.iterdir()) == ["run-3", "run-4"]
+
+
+def test_kept_attachments_are_not_duplicated_on_later_turns(fake_sdk, tmp_db, tmp_path):
+    """With keep_uploads, a later turn reuses the files already on disk instead of writing
+    renamed copies next to them, and same-named files in one run keep their original names."""
+    from agno.media import File
+
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path), keep_uploads=True)
+    first = agent.run(
+        "read them",
+        session_id="s",
+        files=[
+            File(content=b"one", filename="notes.txt", mime_type="text/plain"),
+            File(content=b"two", filename="notes.txt", mime_type="text/plain"),
+        ],
+    )
+    folder = tmp_path / ".agno" / "uploads" / first.run_id
+    assert sorted(p.name for p in folder.iterdir()) == ["notes-2.txt", "notes.txt"]
+
+    agent.run("again", session_id="s")
+    agent.run("and again", session_id="s")
+
+    assert sorted(p.name for p in folder.iterdir()) == ["notes-2.txt", "notes.txt"]
+    assert (folder / "notes.txt").read_bytes() == b"one" and (folder / "notes-2.txt").read_bytes() == b"two"
