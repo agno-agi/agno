@@ -370,3 +370,125 @@ async def test_reclaimed_job_honors_a_persisted_non_retryable_run(tmp_path):
     job = await store.get_job(run_id)
     assert job["status"] == "failed" and job["attempt"] == 2
     assert len(agent.attempts) == 1, "the permanent failure was not re-executed after the restart"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_cancel_during_backoff_keeps_tools_from_the_failed_attempt(stream):
+    """A tool completed, the attempt failed, and the run was cancelled while waiting to retry:
+    the cancelled run still records the tool that ran."""
+    agent = ToolyAgent(id="tooly", retries=3, failures=5, delay_between_retries=30)
+
+    async def run() -> RunOutput:
+        if not stream:
+            return await agent._arun_non_stream("go", run_id="r1")
+        events = [e async for e in agent._arun_stream("go", run_id="r1", yield_run_output=True)]
+        return events[-1]
+
+    task = asyncio.create_task(run())
+    while not agent.attempts:
+        await asyncio.sleep(0.01)
+    await agent.acancel_run("r1")
+    out = await asyncio.wait_for(task, 3)
+    assert out.status == RunStatus.cancelled and len(agent.attempts) == 1
+    assert [t.tool_call_id for t in out.tools or []] == ["t1"]
+    assert [m.tool_call_id for m in out.messages or [] if m.role == "tool"] == ["t1"]
+
+
+@pytest.mark.asyncio
+async def test_reclaim_defers_execution_when_the_classification_cannot_be_read(tmp_path):
+    """A read failure on the reclaim must not be taken as 'retryable'. The job waits for a
+    reclaim that can read the row, then fails without re-executing."""
+    from uuid import uuid4
+
+    from agno.db.schemas.jobs import QueuedJob
+    from agno.db.sqlite import SqliteDb
+    from agno.job_queue.config import QueueConfig
+    from agno.job_queue.store import InMemoryQueueStore
+    from agno.os.job_queue import QueueWorker
+
+    agent = PermanentAgent(id="permanent", db=SqliteDb(db_file=str(tmp_path / "runs.db")), failures=5)
+    store = InMemoryQueueStore()
+    run_id = str(uuid4())
+    await store.enqueue_job(
+        QueuedJob(
+            id=run_id,
+            component_type="agent",
+            component_id=agent.id,
+            session_id="s",
+            payload={"input": "go"},
+            max_attempts=5,
+        ).to_dict()
+    )
+
+    async def wait_until(predicate, timeout=5):
+        async def poll():
+            while not await predicate():
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(poll(), timeout)
+
+    async def lost_settle(*args, **kwargs):
+        return False
+
+    crashing = QueueWorker(
+        store=store,
+        resolve_component=lambda *_: agent,
+        config=QueueConfig(durable=True, poll_interval=0.01, retry_delay_seconds=0),
+        worker_id="worker-one",
+    )
+    crashing._asettle_ticket = lost_settle  # type: ignore[method-assign]
+    crashing._aretry_or_fail_ticket = lost_settle  # type: ignore[method-assign]
+    await crashing.start()
+    try:
+
+        async def row_is_error():
+            run = await agent.aget_run_output(run_id, "s")
+            return run is not None and run.status == RunStatus.error
+
+        await wait_until(row_is_error)
+    finally:
+        await crashing.stop()
+    assert len(agent.attempts) == 1
+
+    # The reclaiming worker's first row read fails.
+    real_read = agent.aget_run_output
+    reads = {"failed": 0}
+
+    async def flaky_read(*args, **kwargs):
+        if reads["failed"] == 0:
+            reads["failed"] += 1
+            raise RuntimeError("database unavailable")
+        return await real_read(*args, **kwargs)
+
+    agent.aget_run_output = flaky_read  # type: ignore[method-assign]
+    store._jobs[run_id]["locked_at"] -= 3600
+    reclaiming = QueueWorker(
+        store=store,
+        resolve_component=lambda *_: agent,
+        config=QueueConfig(durable=True, poll_interval=0.01, retry_delay_seconds=0),
+        worker_id="worker-two",
+    )
+    await reclaiming.start()
+    try:
+
+        async def deferred():
+            job = await store.get_job(run_id)
+            return reads["failed"] == 1 and job["status"] == "running" and job["attempt"] == 2
+
+        await wait_until(deferred)
+        await asyncio.sleep(0.05)
+        assert len(agent.attempts) == 1, "a failed classification read must not execute the agent"
+        assert (await store.get_job(run_id))["status"] == "running", "the claim is left to go stale, not settled"
+
+        # The lease goes stale; the next reclaim reads the row and fails the ticket.
+        store._jobs[run_id]["locked_at"] -= 3600
+
+        async def ticket_failed():
+            return (await store.get_job(run_id))["status"] == "failed"
+
+        await wait_until(ticket_failed)
+    finally:
+        await reclaiming.stop()
+    job = await store.get_job(run_id)
+    assert job["attempt"] == 3 and len(agent.attempts) == 1

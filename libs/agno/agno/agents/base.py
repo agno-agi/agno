@@ -1148,6 +1148,9 @@ class BaseExternalAgent:
             if isinstance(content, ExternalRunResult) and content.warnings:
                 run_output.metadata = {"warnings": content.warnings}
         except RunCancelledException:
+            # Cancelled mid-attempt or during a retry backoff: the tools that completed ran. A
+            # failed attempt's tools were already moved into carried_tools before the backoff.
+            self._collect_attempt_tools(run_state, carried_tools)
             run_output = self._build_run_output(
                 run_id,
                 session_id,
@@ -1155,7 +1158,7 @@ class BaseExternalAgent:
                 record_input,
                 "Run cancelled",
                 RunStatus.cancelled,
-                tools=list(run_state.get("tools", {}).values()) or None,
+                tools=list(carried_tools.values()) or None,
             )
         except Exception as error:
             log_exception(f"Error in {self.framework} agent '{self.id}': {error}")

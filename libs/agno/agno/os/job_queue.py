@@ -1253,13 +1253,21 @@ class QueueWorker:
         non-retryable. The worker that wrote that row crashed before settling the ticket, so the
         classification lives only on the row: honor it here instead of re-executing a failure
         that would repeat. Settles the ticket failed and closes the stream view. Returns True
-        when the job was handled this way."""
+        when the job must not execute now: handled this way, or the row could not be read and
+        execution is deferred to a later reclaim."""
         from agno.run.base import RunStatus
 
         try:
             run = await component.aget_run_output(job["id"], job["session_id"], user_id=job.get("user_id"))
-        except Exception:
-            return False
+        except Exception as e:
+            # Fail closed: without the row we cannot tell a transient failure from one the
+            # component refused to retry. Do not execute; leave the claim unsettled so the
+            # lease goes stale and a later reclaim reads the row again.
+            log_warning(
+                f"Job queue: reclaimed job {job['id']} (attempt {job['attempt']}) could not read its run row "
+                f"to check retryability ({e}); deferring execution until the row can be read"
+            )
+            return True
         raw = getattr(run, "status", None)
         status = raw.value if isinstance(raw, RunStatus) else raw
         if run is None or str(status).upper() != RunStatus.error.value or not self._run_is_not_retryable(run):
