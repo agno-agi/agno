@@ -3,14 +3,16 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
-from uuid import UUID
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple, Union
+from uuid import UUID, uuid4
 
 from agno.exceptions import MigrationRequiredError, SchemaMismatchError
 from agno.metrics import ModelMetrics, RunMetrics, SessionMetrics
 from agno.models.message import Message
 from agno.run.base import HISTORY_SKIP_STATUSES as _RUN_HISTORY_SKIP_STATUSES
+from agno.run.base import RunStatus
 from agno.utils.log import log_error, log_warning
+from agno.utils.string import generate_id
 
 if TYPE_CHECKING:
     from agno.db.base import AsyncBaseDb, BaseDb, SessionType
@@ -27,6 +29,7 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
         "runs_table",
         "memory_table",
         "metrics_table",
+        "os_metrics_table",
         "eval_table",
         "knowledge_table",
         "traces_table",
@@ -833,6 +836,823 @@ def identify_metrics_by_owner(rows: Sequence[Dict[str, Any]], user_id: str) -> L
         day_key, period = bucket
         identified.append({**row, "id": f"{day_key}_{user_id}_{period}"})
     return identified
+
+
+# The token counts an OS metrics row keeps in token_metrics, the same ones agno_metrics keeps
+_OS_METRICS_TOKEN_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+    "audio_input_tokens",
+    "audio_output_tokens",
+    "audio_total_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "reasoning_tokens",
+)
+
+# The upper bounds, in milliseconds, of the buckets each timing is counted into. Changing a bound makes
+# stored rows disagree with new ones.
+_OS_METRICS_BUCKET_BOUNDS_MS = (
+    10,
+    12,
+    15,
+    20,
+    25,
+    30,
+    40,
+    50,
+    60,
+    80,
+    100,
+    120,
+    150,
+    200,
+    250,
+    300,
+    400,
+    500,
+    600,
+    800,
+    1000,
+    1200,
+    1500,
+    2000,
+    2500,
+    3000,
+    4000,
+    5000,
+    6000,
+    8000,
+    10000,
+    12000,
+    15000,
+    20000,
+    25000,
+    30000,
+    40000,
+    50000,
+    60000,
+    80000,
+    100000,
+    120000,
+    150000,
+    200000,
+    250000,
+    300000,
+    400000,
+    500000,
+    600000,
+    800000,
+    1000000,
+    1200000,
+    1500000,
+    2000000,
+    2500000,
+    3000000,
+    4000000,
+    5000000,
+    6000000,
+    8000000,
+)
+
+# The keys of each JSON column, so a backend can total each key directly
+OS_METRICS_FIXED_KEYS = {
+    "status_metrics": tuple(status.value for status in RunStatus),
+    "token_metrics": _OS_METRICS_TOKEN_FIELDS,
+    "duration_metrics": (
+        "duration_runs_count",
+        "total_duration_ms",
+        "max_duration_ms",
+        "time_to_first_token_runs_count",
+        "total_time_to_first_token_ms",
+        "max_time_to_first_token_ms",
+        "model_calls_count",
+        "total_model_call_ms",
+        "max_model_call_ms",
+    ),
+}
+
+# What get_os_metrics can total, and totals when the caller names none. duration_buckets is the bucket
+# objects inside duration_metrics, which only a median or p95 needs
+OS_METRICS_FIELDS = (
+    "sessions_count",
+    "runs_count",
+    "status_metrics",
+    "token_metrics",
+    "duration_metrics",
+    "model_metrics",
+    "duration_buckets",
+)
+
+
+def resolve_os_metrics_fields(fields: Optional[Sequence[str]]) -> List[str]:
+    """The columns a get_os_metrics call totals, rejecting any the table does not have."""
+    if fields is None:
+        return list(OS_METRICS_FIELDS)
+    unknown = [field for field in fields if field not in OS_METRICS_FIELDS]
+    if unknown:
+        raise ValueError(f"Unknown OS metrics fields: {unknown}")
+    return list(fields)
+
+
+# The periods stored under a day's own date, in the order a rebuild writes them: a total row sorts ahead of the
+# rows it totals. A month row is dated the first day of its month.
+OS_METRICS_DAY_PERIODS = ("daily_total", "daily")
+
+# The id and the period of the row holding when OS metrics rows were last written or deleted, and their hash
+OS_METRICS_STATE_ID = "os_metrics_state"
+
+
+def _os_metrics_row_key(row: Dict[str, Any]) -> Tuple[int, str, str, str, str, str]:
+    """The period, owner, component and parent a row is unique by within its day, a total row ordered first."""
+    return (
+        OS_METRICS_DAY_PERIODS.index(row["aggregation_period"]),
+        row.get("user_id") or "",
+        row.get("agent_id") or "",
+        row.get("team_id") or "",
+        row.get("workflow_id") or "",
+        row.get("parent_id") or "",
+    )
+
+
+def _os_metrics_component(record: Dict[str, Any]) -> Tuple[str, str, str]:
+    """The (agent_id, team_id, workflow_id) a session or run is counted under, by its type."""
+    kind = record.get("session_type") or record.get("run_type")
+    return (
+        (record.get("agent_id") or "") if kind == "agent" else "",
+        (record.get("team_id") or "") if kind == "team" else "",
+        (record.get("workflow_id") or "") if kind == "workflow" else "",
+    )
+
+
+def _os_metrics_parent_id(run: Dict[str, Any], components: Dict[str, Tuple[str, str, str]]) -> str:
+    """The id of the agent, team or workflow whose run started the given run. Empty for a run no run started."""
+    agent_id, team_id, workflow_id = components.get(run.get("parent_run_id") or "", ("", "", ""))
+    return agent_id or team_id or workflow_id
+
+
+def _os_metrics_nested_runs(run_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The runs nested inside a stored run: its workflow steps' runs and its team members' runs."""
+    return (run_data.get("step_executor_runs") or []) + (run_data.get("member_responses") or [])
+
+
+def _add_os_metrics_nested_run_ids(run_data: Dict[str, Any], nested_run_ids: Set[str]) -> None:
+    """Add the ids of every run nested inside run_data, at any depth, to nested_run_ids."""
+    for nested_run in _os_metrics_nested_runs(run_data):
+        if nested_run.get("run_id"):
+            nested_run_ids.add(nested_run["run_id"])
+        _add_os_metrics_nested_run_ids(nested_run, nested_run_ids)
+
+
+def os_metrics_nested_run_ids(runs: Sequence[Dict[str, Any]]) -> Set[str]:
+    """The ids of every run nested inside a day's stored runs, at any depth.
+
+    A nested run ending after midnight is stored on the next day, so the rollup asks the runs table
+    which of these ids exist before it walks the nested runs.
+    """
+    nested_run_ids: Set[str] = set()
+    for run in runs:
+        _add_os_metrics_nested_run_ids(run.get("run_data") or {}, nested_run_ids)
+    return nested_run_ids
+
+
+def _os_metrics_model_calls(
+    run_data: Dict[str, Any], component: Tuple[str, str, str], seen_run_ids: Set[str]
+) -> List[Tuple[Dict[str, Any], Tuple[str, str, str]]]:
+    """Every model call a stored run holds, with the agent or team that made it, skipping nested runs already counted."""
+    calls = [(run_data, component)] if run_data.get("model") else []
+    for nested_run in _os_metrics_nested_runs(run_data):
+        run_id = nested_run.get("run_id")
+        if run_id in seen_run_ids:
+            continue
+        if run_id:
+            seen_run_ids.add(run_id)
+        nested_component = (nested_run.get("agent_id") or "", nested_run.get("team_id") or "", "")
+        calls.extend(
+            _os_metrics_model_calls(nested_run, nested_component if any(nested_component) else component, seen_run_ids)
+        )
+    return calls
+
+
+def _os_metrics_call_durations(call: Dict[str, Any]) -> List[float]:
+    """How long each request of a model call took, in seconds, skipping messages carried over from an earlier run."""
+    return [
+        message["metrics"]["duration"]
+        for message in call.get("messages") or []
+        if message.get("role") == "assistant"
+        and not message.get("from_history")
+        and (message.get("metrics") or {}).get("duration") is not None
+    ]
+
+
+def _os_metrics_bucket(milliseconds: int) -> str:
+    """The bucket a timing is counted into."""
+    for bound in _OS_METRICS_BUCKET_BOUNDS_MS:
+        if milliseconds <= bound:
+            return f"le_{bound}"
+    return f"gt_{_OS_METRICS_BUCKET_BOUNDS_MS[-1]}"
+
+
+def _add_os_metrics_timing(
+    duration_metrics: Dict[str, Any],
+    count_key: str,
+    total_key: str,
+    max_key: str,
+    buckets_key: str,
+    seconds: Optional[float],
+) -> None:
+    """Add one timing to a row's duration_metrics: a count, a total and a maximum in milliseconds, and its bucket."""
+    if seconds is None:
+        return
+    milliseconds = int(round(seconds * 1000))
+    duration_metrics[count_key] = duration_metrics.get(count_key, 0) + 1
+    duration_metrics[total_key] = duration_metrics.get(total_key, 0) + milliseconds
+    duration_metrics[max_key] = max(duration_metrics.get(max_key, 0), milliseconds)
+    buckets = duration_metrics.setdefault(buckets_key, {})
+    bucket = _os_metrics_bucket(milliseconds)
+    buckets[bucket] = buckets.get(bucket, 0) + 1
+
+
+def calculate_date_os_metrics(
+    date_to_process: date,
+    sessions: List[Dict[str, Any]],
+    runs: List[Dict[str, Any]],
+    stored_run_ids: Set[str],
+) -> List[Dict[str, Any]]:
+    """Calculate OS metrics for the given single date, one record per user and agent, team or workflow.
+
+    The runs another run of the date started are counted apart, under the id of what started them.
+
+    Args:
+        date_to_process (date): The date to calculate OS metrics for.
+        sessions (List[Dict[str, Any]]): The sessions created on that date.
+        runs (List[Dict[str, Any]]): The runs created on that date, as stored.
+        stored_run_ids (Set[str]): The ids of the nested runs of that date that are stored as runs of their
+            own, on any date. Those are counted where they are stored.
+
+    Returns:
+        List[Dict[str, Any]]: The calculated OS metrics, one record per user and agent, team or workflow. Once
+            the date is completed, its total record comes ahead of them.
+    """
+
+    def _empty_os_metrics_record() -> Dict[str, Any]:
+        return {
+            "sessions_count": 0,
+            "runs_count": 0,
+            "status_metrics": {},
+            "token_metrics": {},
+            "duration_metrics": {},
+            "model_counts": {},
+        }
+
+    per_owner: Dict[Tuple[str, str, str, str, str], Dict[str, Any]] = {}
+
+    for session in sessions:
+        agent_id, team_id, workflow_id = _os_metrics_component(session)
+        bucket_key = (session.get("user_id") or "", agent_id, team_id, workflow_id, "")
+        bucket = per_owner.setdefault(bucket_key, _empty_os_metrics_record())
+        bucket["sessions_count"] += 1
+
+    seen_run_ids = {run["run_id"] for run in runs if run.get("run_id")} | stored_run_ids
+    components = {run["run_id"]: _os_metrics_component(run) for run in runs if run.get("run_id")}
+    for run in runs:
+        component = _os_metrics_component(run)
+        agent_id, team_id, workflow_id = component
+        parent_id = _os_metrics_parent_id(run, components)
+        bucket_key = (run.get("user_id") or "", agent_id, team_id, workflow_id, parent_id)
+        bucket = per_owner.setdefault(bucket_key, _empty_os_metrics_record())
+        status = run.get("status")
+        run_data = run.get("run_data") or {}
+        run_metrics = run_data.get("metrics") or {}
+
+        # A regenerated run sits beside the run that replaced it, but the model calls it made were made
+        if status != RunStatus.regenerated.value:
+            bucket["runs_count"] += 1
+            if status:
+                bucket["status_metrics"][status] = bucket["status_metrics"].get(status, 0) + 1
+        if status == RunStatus.completed.value:
+            _add_os_metrics_timing(
+                bucket["duration_metrics"],
+                "duration_runs_count",
+                "total_duration_ms",
+                "max_duration_ms",
+                "duration_ms_buckets",
+                run_metrics.get("duration"),
+            )
+            _add_os_metrics_timing(
+                bucket["duration_metrics"],
+                "time_to_first_token_runs_count",
+                "total_time_to_first_token_ms",
+                "max_time_to_first_token_ms",
+                "time_to_first_token_ms_buckets",
+                run_metrics.get("time_to_first_token"),
+            )
+
+        for call, call_component in _os_metrics_model_calls(run_data, component, seen_run_ids):
+            call_metrics = call.get("metrics") or {}
+            for field in _OS_METRICS_TOKEN_FIELDS:
+                if value := call_metrics.get(field):
+                    bucket["token_metrics"][field] = bucket["token_metrics"].get(field, 0) + value
+            for seconds in _os_metrics_call_durations(call):
+                _add_os_metrics_timing(
+                    bucket["duration_metrics"],
+                    "model_calls_count",
+                    "total_model_call_ms",
+                    "max_model_call_ms",
+                    "model_call_ms_buckets",
+                    seconds,
+                )
+
+            # A model that failed before answering reports no details, so it served nothing
+            if call_metrics.get("details"):
+                model_key = (call["model"], call.get("model_provider") or "", *call_component)
+                bucket["model_counts"][model_key] = bucket["model_counts"].get(model_key, 0) + 1
+
+    current_time = int(time.time())
+    # A run can be written again after its day ended, so a day is completed one day later
+    completed = date_to_process < datetime.now(timezone.utc).date() - timedelta(days=1)
+
+    records: List[Dict[str, Any]] = []
+    for (user_id, agent_id, team_id, workflow_id, parent_id), bucket in per_owner.items():
+        model_metrics = []
+        # Sorted so an unchanged day rebuilds to the same list
+        for (model_id, model_provider, model_agent_id, model_team_id, model_workflow_id), count in sorted(
+            bucket["model_counts"].items()
+        ):
+            model_metric: Dict[str, Any] = {"model_id": model_id, "model_provider": model_provider, "count": count}
+            if model_agent_id:
+                model_metric["agent_id"] = model_agent_id
+            if model_team_id:
+                model_metric["team_id"] = model_team_id
+            if model_workflow_id:
+                model_metric["workflow_id"] = model_workflow_id
+            model_metrics.append(model_metric)
+
+        records.append(
+            {
+                "id": str(uuid4()),
+                "date": date_to_process,
+                "completed": completed,
+                "created_at": current_time,
+                "updated_at": current_time,
+                "aggregation_period": "daily",
+                "user_id": user_id,
+                "agent_id": agent_id,
+                "team_id": team_id,
+                "workflow_id": workflow_id,
+                "parent_id": parent_id,
+                "sessions_count": bucket["sessions_count"],
+                "runs_count": bucket["runs_count"],
+                "status_metrics": bucket["status_metrics"],
+                "token_metrics": bucket["token_metrics"],
+                "duration_metrics": bucket["duration_metrics"],
+                "model_metrics": model_metrics,
+                "metadata": None,
+            }
+        )
+
+    # A completed day is never rebuilt, so its total is stored with it and read in place of its records
+    if completed and records:
+        return [build_os_metrics_total_row(records, date_to_process, "daily_total")] + records
+    return records
+
+
+def os_metrics_rows_to_write(
+    computed_rows: Sequence[Dict[str, Any]], stored_rows: Sequence[Dict[str, Any]]
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Compare a day's rebuilt rows with the rows stored for it.
+
+    Returns the rows that are new or changed, in key order so no two writers lock rows in opposite orders,
+    and the ids of stored rows the day no longer has. Only rows that were read are ever deleted. When the day
+    lost a row, every row left is returned, so the time the day was last updated moves.
+    """
+    stored_by_key = {_os_metrics_row_key(row): row for row in stored_rows}
+    changed_rows = []
+    for row in sorted(computed_rows, key=_os_metrics_row_key):
+        stored = stored_by_key.pop(_os_metrics_row_key(row), None)
+        # A rebuild gives every row a new id and timestamps, so those are not compared
+        if stored is None or any(
+            value != stored.get(column)
+            for column, value in row.items()
+            if column not in ["id", "created_at", "updated_at"]
+        ):
+            changed_rows.append(row)
+    stale_ids = sorted(row["id"] for row in stored_by_key.values())
+    # A day that lost a row has every row left rewritten, so its updated_at moves for the next read of the day
+    if stale_ids:
+        return sorted(computed_rows, key=_os_metrics_row_key), stale_ids
+    # A day's total row is rewritten with its rows, so both periods report the same time of the last rebuild
+    if any(row["aggregation_period"] == "daily" for row in changed_rows):
+        changed_ids = {row["id"] for row in changed_rows}
+        changed_rows.extend(
+            row for row in computed_rows if row["aggregation_period"] != "daily" and row["id"] not in changed_ids
+        )
+        changed_rows.sort(key=_os_metrics_row_key)
+    return changed_rows, stale_ids
+
+
+def merge_os_metrics_json(target: Dict[str, Any], extra: Optional[Dict[str, Any]]) -> None:
+    """Merge extra OS metrics counts into target in place: max_ keys keep the larger value, the rest are summed."""
+    for key, value in (extra or {}).items():
+        if isinstance(value, dict):
+            buckets = target.setdefault(key, {})
+            for bucket, count in value.items():
+                buckets[bucket] = (buckets.get(bucket) or 0) + (count or 0)
+        elif key in ["max_duration_ms", "max_time_to_first_token_ms", "max_model_call_ms"]:
+            target[key] = max(target.get(key) or 0, value or 0)
+        else:
+            target[key] = (target.get(key) or 0) + (value or 0)
+
+
+def merge_os_model_metrics(target: List[Dict[str, Any]], extra: List[Dict[str, Any]]) -> None:
+    """Merge extra OS model_metrics into target in place, summing counts per model and caller."""
+    index: Dict[Any, Dict[str, Any]] = {}
+    for m in [*target, *extra]:
+        key = (m.get("model_id"), m.get("model_provider"), m.get("agent_id"), m.get("team_id"), m.get("workflow_id"))
+        entry = index.get(key)
+        if entry is None:
+            index[key] = dict(m)
+        else:
+            entry["count"] = (entry.get("count") or 0) + (m.get("count") or 0)
+    target[:] = list(index.values())
+
+
+def total_os_metrics_records(
+    records: Sequence[Dict[str, Any]], fields: Sequence[str]
+) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+    """Total OS metrics records per date, to build a total row or a month row from the rows it totals.
+
+    Returns one dict per date, oldest first, in the shape get_os_metrics totals to, and when the records
+    were last updated. A key no record reported stays out, as it does there.
+    """
+    totals_by_date: Dict[date, Dict[str, Any]] = {}
+    latest_updated_at: Optional[int] = None
+    for record in records:
+        day = metric_record_day(record)
+        if day is None:
+            continue
+        day_totals = totals_by_date.get(day)
+        if day_totals is None:
+            day_totals = {"date": day}
+            for field in fields:
+                if field in ["sessions_count", "runs_count"]:
+                    day_totals[field] = 0
+                elif field == "model_metrics":
+                    day_totals[field] = []
+                else:
+                    day_totals[field] = {}
+            totals_by_date[day] = day_totals
+
+        duration_metrics = record.get("duration_metrics") or {}
+        for field in fields:
+            if field in ["sessions_count", "runs_count"]:
+                day_totals[field] += record.get(field) or 0
+            elif field == "model_metrics":
+                merge_os_model_metrics(day_totals[field], record.get(field) or [])
+            elif field == "duration_metrics":
+                # The bucket objects are totalled apart, under duration_buckets
+                merge_os_metrics_json(
+                    day_totals[field],
+                    {key: value for key, value in duration_metrics.items() if not isinstance(value, dict)},
+                )
+            elif field == "duration_buckets":
+                merge_os_metrics_json(
+                    day_totals[field],
+                    {key: value for key, value in duration_metrics.items() if isinstance(value, dict)},
+                )
+            else:
+                merge_os_metrics_json(day_totals[field], record.get(field))
+
+        updated_at = record.get("updated_at")
+        if updated_at is not None and (latest_updated_at is None or updated_at > latest_updated_at):
+            latest_updated_at = updated_at
+
+    return [totals_by_date[day] for day in sorted(totals_by_date)], latest_updated_at
+
+
+def merge_os_metrics_totals(totals: Sequence[Dict[str, Any]], fields: Sequence[str]) -> Dict[str, Any]:
+    """Merge the OS metrics totals of several dates into the totals of the whole date range."""
+    range_totals: Dict[str, Any] = {}
+    for field in fields:
+        if field in ["sessions_count", "runs_count"]:
+            range_totals[field] = 0
+        elif field == "model_metrics":
+            range_totals[field] = []
+        else:
+            range_totals[field] = {}
+    for day_totals in totals:
+        for field in fields:
+            if field in ["sessions_count", "runs_count"]:
+                range_totals[field] += day_totals.get(field) or 0
+            elif field == "model_metrics":
+                merge_os_model_metrics(range_totals[field], day_totals.get(field) or [])
+            else:
+                merge_os_metrics_json(range_totals[field], day_totals.get(field))
+    return range_totals
+
+
+def build_os_metrics_total_row(
+    rows: Sequence[Dict[str, Any]],
+    row_date: date,
+    aggregation_period: str,
+    user_id: str = "",
+    agent_id: str = "",
+    team_id: str = "",
+    workflow_id: str = "",
+    parent_id: str = "",
+) -> Dict[str, Any]:
+    """Build the row that totals the given rows: the total row of a day or of a month, or a month row of one
+    owner and component.
+
+    Args:
+        rows (Sequence[Dict[str, Any]]): The rows to total.
+        row_date (date): The date of the row: the day, or the first day of the month.
+        aggregation_period (str): The period of the row.
+        user_id (str): The owner of a month row of one owner and component. Empty for a total row.
+        agent_id (str): The agent of a month row of one owner and component.
+        team_id (str): The team of a month row of one owner and component.
+        workflow_id (str): The workflow of a month row of one owner and component.
+        parent_id (str): The parent of a month row of one owner and component.
+
+    Returns:
+        Dict[str, Any]: The row, in the shape calculate_date_os_metrics writes.
+    """
+    totals, latest_updated_at = total_os_metrics_records(rows, OS_METRICS_FIELDS)
+    row_totals = merge_os_metrics_totals(totals, OS_METRICS_FIELDS)
+    current_time = int(time.time())
+    return {
+        "id": str(uuid4()),
+        "date": row_date,
+        "completed": True,
+        "created_at": current_time,
+        # When the rows it totals were last written, so a read reports the same time from either period
+        "updated_at": latest_updated_at,
+        "aggregation_period": aggregation_period,
+        "user_id": user_id,
+        "agent_id": agent_id,
+        "team_id": team_id,
+        "workflow_id": workflow_id,
+        "parent_id": parent_id,
+        "sessions_count": row_totals["sessions_count"],
+        "runs_count": row_totals["runs_count"],
+        "status_metrics": row_totals["status_metrics"],
+        "token_metrics": row_totals["token_metrics"],
+        # Stored the way a row keeps them: the bucket objects inside duration_metrics
+        "duration_metrics": {**row_totals["duration_metrics"], **row_totals["duration_buckets"]},
+        "model_metrics": row_totals["model_metrics"],
+        "metadata": None,
+    }
+
+
+def os_metrics_state_hash(previous_hash: str, changed_rows: Sequence[Dict[str, Any]], stale_ids: Sequence[str]) -> str:
+    """Hash the rows a rebuild wrote and the ids of the rows it deleted, onto the hash of the state before.
+
+    The hash before is part of it, so no state is the same as an earlier one, even when its rows are.
+
+    Args:
+        previous_hash (str): The hash of the state before the rebuild. Empty when there is none.
+        changed_rows (Sequence[Dict[str, Any]]): The rows the rebuild wrote.
+        stale_ids (Sequence[str]): The ids of the rows the rebuild deleted.
+
+    Returns:
+        str: The hash of the state after the rebuild.
+    """
+    return generate_id(json.dumps([previous_hash, changed_rows, stale_ids], default=str))
+
+
+def build_os_metrics_state(
+    previous_state: Dict[str, Any],
+    updated_at: int,
+    changed_rows: Sequence[Dict[str, Any]],
+    stale_ids: Sequence[str],
+    day: Optional[date] = None,
+) -> Dict[str, Any]:
+    """Build the state of the OS metrics after a rebuild wrote or deleted rows.
+
+    The state has two parts. One moves with every row a rebuild writes or deletes. The other moves only with the
+    rows of completed days, so what was read from completed days alone is not taken as changed by a day still open.
+
+    Args:
+        previous_state (Dict[str, Any]): The state before the rebuild. Empty when there is none.
+        updated_at (int): When the rebuild wrote or deleted the rows.
+        changed_rows (Sequence[Dict[str, Any]]): The rows the rebuild wrote.
+        stale_ids (Sequence[str]): The ids of the rows the rebuild deleted.
+        day (Optional[date]): The day the rows are of. ``None`` for rows of no single day, which are taken as
+            rows of completed days.
+
+    Returns:
+        Dict[str, Any]: The state after the rebuild.
+    """
+    state_hash = os_metrics_state_hash(previous_state.get("hash") or "", changed_rows, stale_ids)
+    completed_date = previous_state.get("completed_date")
+    state = {
+        "updated_at": updated_at,
+        "hash": state_hash,
+        "completed_date": completed_date,
+        "completed_updated_at": previous_state.get("completed_updated_at"),
+        "completed_hash": previous_state.get("completed_hash") or "",
+    }
+    completed = any(row.get("completed") for row in changed_rows)
+    # A day at or before the latest completed one is not rebuilt, so rows written there count as rows of it
+    if day is None or completed or (completed_date is not None and day.isoformat() <= completed_date):
+        state["completed_updated_at"] = updated_at
+        state["completed_hash"] = state_hash
+    if day is not None and completed and (completed_date is None or day.isoformat() > completed_date):
+        state["completed_date"] = day.isoformat()
+    return state
+
+
+def os_metrics_state_of(
+    state: Optional[Dict[str, Any]], ending_date: Optional[date] = None
+) -> Tuple[Optional[int], str]:
+    """What get_os_metrics_state reports from the stored state: when it last moved, and its hash.
+
+    Args:
+        state (Optional[Dict[str, Any]]): The stored state, from build_os_metrics_state. Empty when there is none.
+        ending_date (Optional[date]): The last day that is read. When it is a completed day, the part of the
+            state that only moves with the rows of completed days is reported.
+
+    Returns:
+        Tuple[Optional[int], str]: The state. ``None`` and an empty hash when there is none, and while a rebuild
+            that marked it is writing rows, which may be ahead of it.
+    """
+    if not state or state.get("rebuilding"):
+        return None, ""
+    completed_date = state.get("completed_date")
+    if ending_date is not None and completed_date is not None and ending_date.isoformat() <= completed_date:
+        return state.get("completed_updated_at"), state.get("completed_hash") or ""
+    return state.get("updated_at"), state.get("hash") or ""
+
+
+def build_os_metrics_state_row(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the row that holds the state of the OS metrics table.
+
+    Args:
+        state (Dict[str, Any]): The state, from build_os_metrics_state.
+
+    Returns:
+        Dict[str, Any]: The row, in the shape calculate_date_os_metrics writes. It is dated the day of the
+            rebuild, and is no row of that day.
+    """
+    updated_at = state["updated_at"]
+    return {
+        "id": OS_METRICS_STATE_ID,
+        "date": datetime.fromtimestamp(updated_at, tz=timezone.utc).date(),
+        "completed": False,
+        "created_at": updated_at,
+        "updated_at": updated_at,
+        "aggregation_period": OS_METRICS_STATE_ID,
+        "user_id": "",
+        "agent_id": "",
+        "team_id": "",
+        "workflow_id": "",
+        "parent_id": "",
+        "sessions_count": 0,
+        "runs_count": 0,
+        "status_metrics": {},
+        "token_metrics": {},
+        "duration_metrics": {},
+        "model_metrics": [],
+        "metadata": {key: value for key, value in state.items() if key != "updated_at"},
+    }
+
+
+def os_metrics_month_end(month_start: date) -> date:
+    """The last day of the calendar month that starts on the given day."""
+    return (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+
+
+def os_metrics_full_months(starting_date: date, ending_date: date) -> List[date]:
+    """The first day of every calendar month that is fully inside the given date range."""
+    month_starts = []
+    month_start = starting_date.replace(day=1)
+    while month_start <= ending_date:
+        if month_start >= starting_date and os_metrics_month_end(month_start) <= ending_date:
+            month_starts.append(month_start)
+        month_start = os_metrics_month_end(month_start) + timedelta(days=1)
+    return month_starts
+
+
+def get_months_to_calculate_os_metrics_for(total_days: Sequence[date], calculated_months: Sequence[date]) -> List[date]:
+    """Return the list of months to calculate month rows for.
+
+    A month is completed once it ended before yesterday. Every completed month with a total row and no month
+    rows is returned, whenever its days were rebuilt, so a month one rebuild could not calculate is calculated by
+    a later one.
+
+    Args:
+        total_days (Sequence[date]): The days that have a total row.
+        calculated_months (Sequence[date]): The first day of every month that has month rows.
+
+    Returns:
+        List[date]: The first day of every month to calculate month rows for.
+    """
+    yesterday = datetime.now(timezone.utc).date() - timedelta(days=1)
+    month_starts = {day.replace(day=1) for day in total_days} - set(calculated_months)
+    return sorted(month_start for month_start in month_starts if os_metrics_month_end(month_start) < yesterday)
+
+
+def calculate_month_os_metrics(month_start: date, stored_rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Calculate the month rows of a completed month from the rows stored for its days.
+
+    A completed day is never rebuilt, so a month of completed days never changes and its month rows are written
+    once.
+
+    Args:
+        month_start (date): The first day of the month.
+        stored_rows (Sequence[Dict[str, Any]]): The rows stored for the days of the month.
+
+    Returns:
+        List[Dict[str, Any]]: The total row of the month, then one row per user and agent, team or workflow.
+            Empty while a day of the month is still open.
+    """
+    if not stored_rows or any(not row.get("completed") for row in stored_rows):
+        return []
+    per_owner: Dict[Tuple[str, str, str, str, str], List[Dict[str, Any]]] = {}
+    for row in stored_rows:
+        bucket_key = (
+            row.get("user_id") or "",
+            row.get("agent_id") or "",
+            row.get("team_id") or "",
+            row.get("workflow_id") or "",
+            row.get("parent_id") or "",
+        )
+        per_owner.setdefault(bucket_key, []).append(row)
+    month_rows = [build_os_metrics_total_row(stored_rows, month_start, "monthly_total")]
+    for bucket_key, rows in sorted(per_owner.items()):
+        month_rows.append(build_os_metrics_total_row(rows, month_start, "monthly", *bucket_key))
+    return month_rows
+
+
+def os_metrics_dates_to_read(
+    starting_date: date, ending_date: date, total_days: Set[date], calculated_months: Set[date]
+) -> Tuple[List[date], List[date], List[date]]:
+    """Pick the period a read totals each day of the date range from, so no day is counted from two.
+
+    Args:
+        starting_date (date): The first day of the range.
+        ending_date (date): The last day of the range.
+        total_days (Set[date]): The days to read from their total row.
+        calculated_months (Set[date]): The first day of every month to read from its month rows, when the
+            whole month is inside the range.
+
+    Returns:
+        Tuple[List[date], List[date], List[date]]: The first day of every month read from its month rows, the
+            days read from their total row, and the days read from their rows.
+    """
+    month_starts = [
+        month_start
+        for month_start in os_metrics_full_months(starting_date, ending_date)
+        if month_start in calculated_months
+    ]
+    days = [starting_date + timedelta(days=offset) for offset in range((ending_date - starting_date).days + 1)]
+    days = [day for day in days if day.replace(day=1) not in month_starts]
+    days_with_total = [day for day in days if day in total_days]
+    row_days = [day for day in days if day not in total_days]
+    if days_with_total:
+        # A total row is of every owner, and a day before a completed one is never calculated again, so
+        # such a day without a total row has no rows to read
+        latest_completed = max([*days_with_total, *(os_metrics_month_end(month) for month in month_starts)])
+        row_days = [day for day in row_days if day > latest_completed]
+    return month_starts, days_with_total, row_days
+
+
+def os_metrics_day_ranges(days: Sequence[date]) -> List[Tuple[date, date]]:
+    """Group days, oldest first, into the first and last day of every run of days that follow one another."""
+    ranges: List[Tuple[date, date]] = []
+    for day in days:
+        if ranges and day - ranges[-1][1] == timedelta(days=1):
+            ranges[-1] = (ranges[-1][0], day)
+        else:
+            ranges.append((day, day))
+    return ranges
+
+
+def os_metrics_percentile(buckets: Dict[str, int], fraction: float, max_ms: Optional[int] = None) -> Optional[int]:
+    """The timing, in milliseconds, below which a fraction of the counted timings fall, read from bucket counts.
+
+    The answer is placed inside its bucket in proportion to where the fraction lands, so it is approximate,
+    and it never exceeds max_ms, the slowest timing counted.
+    """
+    total = sum(buckets.values())
+    if not total:
+        return None
+    # One timing is its own median and p95, and the slowest timing recorded is exactly it
+    if total == 1 and max_ms is not None:
+        return max_ms
+    target = fraction * total
+    lower_bound = 0
+    counted = 0
+    for bound in _OS_METRICS_BUCKET_BOUNDS_MS:
+        count = buckets.get(f"le_{bound}", 0)
+        if count and counted + count >= target:
+            value = round(lower_bound + (bound - lower_bound) * (target - counted) / count)
+            return value if max_ms is None else min(value, max_ms)
+        counted += count
+        lower_bound = bound
+    # Past the last bound only the slowest timing recorded says how far the tail goes
+    return _OS_METRICS_BUCKET_BOUNDS_MS[-1] if max_ms is None else max(max_ms, _OS_METRICS_BUCKET_BOUNDS_MS[-1])
 
 
 def owner_key(user_id: Any) -> Optional[str]:

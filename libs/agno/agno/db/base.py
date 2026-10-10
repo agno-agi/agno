@@ -304,6 +304,7 @@ class BaseDb(ABC):
         runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
+        os_metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
@@ -342,6 +343,7 @@ class BaseDb(ABC):
             self.runs_table_name = "agno_runs"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
+        self.os_metrics_table_name = os_metrics_table or "agno_os_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.trace_table_name = traces_table or "agno_traces"
@@ -437,6 +439,7 @@ class BaseDb(ABC):
             "runs_table": self.runs_table_name,
             "memory_table": self.memory_table_name,
             "metrics_table": self.metrics_table_name,
+            "os_metrics_table": self.os_metrics_table_name,
             "eval_table": self.eval_table_name,
             "knowledge_table": self.knowledge_table_name,
             "traces_table": self.trace_table_name,
@@ -468,6 +471,7 @@ class BaseDb(ABC):
             runs_table=data.get("runs_table"),
             memory_table=data.get("memory_table"),
             metrics_table=data.get("metrics_table"),
+            os_metrics_table=data.get("os_metrics_table"),
             eval_table=data.get("eval_table"),
             knowledge_table=data.get("knowledge_table"),
             traces_table=data.get("traces_table"),
@@ -752,6 +756,55 @@ class BaseDb(ABC):
 
     @abstractmethod
     def calculate_metrics(self) -> Optional[Any]:
+        raise NotImplementedError
+
+    # --- OS Metrics (Optional) ---
+    # Optional: daily OS metrics (agno_os_metrics), one row per owner and agent, team or workflow.
+    # Optional: a completed day may also store a total row, and a completed month its month rows,
+    # read in place of the rows they total.
+    # ``user_id`` works as in get_metrics: ``None`` totals every owner, a name totals that user's
+    # rows, and ``""`` totals the unowned ones.
+
+    def get_os_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """The OS metrics totals of each day in the date range, and when they were last updated."""
+        raise NotImplementedError
+
+    def get_os_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """The OS metrics totals of the whole date range, and when they were last updated."""
+        raise NotImplementedError
+
+    def calculate_os_metrics(self) -> Optional[List[Dict[str, Any]]]:
+        """Calculate OS metrics for all dates without complete OS metrics."""
+        raise NotImplementedError
+
+    def refresh_os_metrics(self) -> Tuple[Optional[int], Optional[int], bool]:
+        """Calculate OS metrics as calculate_os_metrics does, and report whether any row changed.
+
+        Returns when the OS metrics were last updated before the calculation and after it, and whether it
+        wrote or deleted any row.
+        """
+        raise NotImplementedError
+
+    def get_os_metrics_state(self, ending_date: Optional[date] = None) -> Tuple[Optional[int], str]:
+        """When any OS metrics row was last written or deleted, and the hash of the rows written and deleted.
+
+        Cheap to read, and different after every rebuild that wrote or deleted a row, so an answer built from
+        the OS metrics can be reused while it is the same. Given an ending_date that is a completed day, it is
+        the state of the rows of completed days, which a day still open does not move. OS metrics are refreshed
+        lazily, as in get_os_metrics.
+        """
         raise NotImplementedError
 
     # --- Knowledge ---
@@ -2359,6 +2412,7 @@ class AsyncBaseDb(ABC):
         runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
+        os_metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
@@ -2389,6 +2443,7 @@ class AsyncBaseDb(ABC):
             self.runs_table_name = "agno_runs"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
+        self.os_metrics_table_name = os_metrics_table or "agno_os_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.trace_table_name = traces_table or "agno_traces"
@@ -2675,6 +2730,51 @@ class AsyncBaseDb(ABC):
 
     @abstractmethod
     async def calculate_metrics(self) -> Optional[Any]:
+        raise NotImplementedError
+
+    # --- OS Metrics (Optional) ---
+    # See the BaseDb OS metrics methods.
+
+    async def get_os_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """The OS metrics totals of each day in the date range, and when they were last updated."""
+        raise NotImplementedError
+
+    async def get_os_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """The OS metrics totals of the whole date range, and when they were last updated."""
+        raise NotImplementedError
+
+    async def calculate_os_metrics(self) -> Optional[List[Dict[str, Any]]]:
+        """Calculate OS metrics for all dates without complete OS metrics."""
+        raise NotImplementedError
+
+    async def refresh_os_metrics(self) -> Tuple[Optional[int], Optional[int], bool]:
+        """Calculate OS metrics as calculate_os_metrics does, and report whether any row changed.
+
+        Returns when the OS metrics were last updated before the calculation and after it, and whether it
+        wrote or deleted any row.
+        """
+        raise NotImplementedError
+
+    async def get_os_metrics_state(self, ending_date: Optional[date] = None) -> Tuple[Optional[int], str]:
+        """When any OS metrics row was last written or deleted, and the hash of the rows written and deleted.
+
+        Cheap to read, and different after every rebuild that wrote or deleted a row, so an answer built from
+        the OS metrics can be reused while it is the same. Given an ending_date that is a completed day, it is
+        the state of the rows of completed days, which a day still open does not move. OS metrics are refreshed
+        lazily, as in get_os_metrics.
+        """
         raise NotImplementedError
 
     # --- Knowledge ---
