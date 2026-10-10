@@ -153,11 +153,16 @@ async def agent_response_streamer(
         async for run_response_chunk in run_response:  # type: ignore[union-attr]
             yield format_sse_event(run_response_chunk)  # type: ignore
     except (InputCheckError, OutputCheckError) as e:
+        # Carry the run identity so clients can attach the error to the message they sent.
         error_response = RunErrorEvent(
             content=str(e),
             error_type=e.type,
             error_id=e.error_id,
             additional_data=e.additional_data,
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
         )
         yield format_sse_event(error_response)
     except asyncio.CancelledError:
@@ -168,6 +173,10 @@ async def agent_response_streamer(
         traceback.print_exc(limit=3)
         error_response = RunErrorEvent(
             content=str(e),
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
         )
         yield format_sse_event(error_response)
 
@@ -238,11 +247,16 @@ async def agent_resumable_response_streamer(
                     )
                 yield format_sse_event(sse_data)
     except (InputCheckError, OutputCheckError) as e:
+        # Carry the run identity so clients can attach the error to the message they sent.
         error_response = RunErrorEvent(
             content=str(e),
             error_type=e.type,
             error_id=e.error_id,
             additional_data=e.additional_data,
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
         )
         yield format_sse_event(error_response)
     except asyncio.CancelledError:
@@ -253,6 +267,10 @@ async def agent_resumable_response_streamer(
         traceback.print_exc(limit=3)
         error_response = RunErrorEvent(
             content=str(e),
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
         )
         yield format_sse_event(error_response)
 
@@ -349,11 +367,16 @@ async def agent_continue_response_streamer(
                     final_status=RunStatus.cancelled if _cancelled else None,
                 )
     except (InputCheckError, OutputCheckError) as e:
+        # Carry the run identity so clients can attach the error to the message they sent.
         error_response = RunErrorEvent(
             content=str(e),
             error_type=e.type,
             error_id=e.error_id,
             additional_data=e.additional_data,
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
         )
         yield format_sse_event(error_response)
 
@@ -427,11 +450,16 @@ async def agent_resumable_continue_response_streamer(
         ):
             yield sse_data
     except (InputCheckError, OutputCheckError) as e:
+        # Carry the run identity so clients can attach the error to the message they sent.
         error_response = RunErrorEvent(
             content=str(e),
             error_type=e.type,
             error_id=e.error_id,
             additional_data=e.additional_data,
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
         )
         yield format_sse_event(error_response)
     except asyncio.CancelledError:
@@ -442,6 +470,10 @@ async def agent_resumable_continue_response_streamer(
         traceback.print_exc(limit=3)
         error_response = RunErrorEvent(
             content=str(e),
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
         )
         yield format_sse_event(error_response)
 
@@ -2035,8 +2067,7 @@ def get_agent_router(
                             description=getattr(agent, "description", None),
                             db_id=agent_db.id if agent_db else None,
                             sessions=sessions,
-                            metadata=AgentSummaryResponse.from_agent(agent).metadata
-                            or {"sdk": "external", "framework": "external"},
+                            metadata=AgentSummaryResponse.from_agent(agent).metadata or {"sdk": "external"},
                         )
                     )
 
@@ -2139,8 +2170,7 @@ def get_agent_router(
                 id=agent.id,
                 name=agent.name,
                 description=getattr(agent, "description", None),
-                metadata=AgentSummaryResponse.from_agent(agent).metadata
-                or {"sdk": "external", "framework": "external"},
+                metadata=AgentSummaryResponse.from_agent(agent).metadata or {"sdk": "external"},
             )
 
     @router.get(

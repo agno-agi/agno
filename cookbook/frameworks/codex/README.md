@@ -189,6 +189,10 @@ persisted chat history to the prompt so context is not lost.
 
 Every run reports the token usage for the whole turn on `RunOutput.metrics` (input, cached input, output, reasoning and total), plus wall-clock `duration` measured by Agno and `time_to_first_token` when streaming. A turn with tool calls makes several model requests; Codex reports usage after each one, and the adapter sums them by taking the growth of the thread total over the turn, so a two-tool turn reports all three requests rather than only the last. Like the OpenAI API, `input_tokens` includes the cached prefix. Codex reports no cost. Completed runs are added to `session_data["session_metrics"]`, which AgentOS reads for the sessions list, the session view and the metrics page.
 
+## Images and files
+
+Images passed to `run` / `arun`, or uploaded through the AgentOS API and UI, go to Codex as native image inputs on the turn, so the model sees them directly. Files are written under `cwd/.agno/uploads/<run_id>/` and named in the prompt; Codex reads them with its shell, so text formats work everywhere and PDFs need a reader such as `pdftotext` on the machine. The folder is removed when the run ends unless `keep_uploads=True`. Before any later turn of the session, the attachments of earlier runs are written back to the uploads folder the session recorded when they were first staged, so the paths Codex already knows resolve again on whichever replica runs that turn (replicas normally share the same layout). If that folder cannot be written there, the files go under the replica's own working directory and the prompt names the new location. A continued or forked run gets the same treatment. The run's `input` records what was attached. Audio and video are rejected before the run starts.
+
 ## Sandbox and approvals
 
 | Setting | Values | Notes |

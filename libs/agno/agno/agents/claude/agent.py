@@ -20,6 +20,15 @@ from typing import (
 from uuid import uuid4
 
 from agno.agents._config import agent_dataclass
+from agno.agents._media import (
+    accept_media,
+    cleanup_media,
+    media_prompt_block,
+    remember_uploads_root,
+    remove_upload_folder,
+    stage_media,
+    stage_prior_media,
+)
 from agno.agents.base import (
     BaseExternalAgent,
     ExternalContinuation,
@@ -100,6 +109,7 @@ class ClaudeAgent(BaseExternalAgent):
         max_turns: Maximum number of turns.
         max_budget_usd: Maximum cost budget in USD.
         cwd: Working directory for the agent.
+        keep_uploads: Keep files attached to a run under cwd/.agno/uploads/<run_id>/ after the run.
         mcp_servers: MCP server configurations for custom tools.
         setting_sources: Filesystem settings to load; [] disables user/project/local settings.
         strict_mcp_config: Use only explicitly configured MCP servers when True.
@@ -136,6 +146,8 @@ class ClaudeAgent(BaseExternalAgent):
     system_prompt: Optional[Union[str, "SystemPromptPreset", "SystemPromptCustom", "SystemPromptFile"]] = None
     # Workspace and settings
     cwd: Optional[Union[str, Path]] = None
+    # Keep attachments staged under cwd/.agno/uploads/<run_id>/ after the run instead of deleting them.
+    keep_uploads: bool = False
     project_key: Optional[str] = None
     setting_sources: Optional[List["SettingSource"]] = None
     # Tools and permissions
@@ -332,7 +344,45 @@ class ClaudeAgent(BaseExternalAgent):
         if session_id:
             self._sdk_session_ids.pop(session_id, None)
 
+    def _media_kwargs(self, **media: Any) -> Dict[str, Any]:
+        """Images and files are written under cwd/.agno/uploads/<run_id>/ and named in the prompt,
+        so Claude Code opens them with its Read tool. Audio and video are rejected."""
+        return accept_media(media)
+
     async def _aquery(
+        self, input: Any, history: Optional[List[Dict[str, Any]]], *, streaming: bool, **kwargs: Any
+    ) -> AsyncIterator[Any]:
+        """Stage attachments for the run, query, then remove them unless keep_uploads is set."""
+        media = kwargs.pop("media", None)
+        run_id = kwargs.get("run_id") or str(uuid4())
+        kwargs["run_id"] = run_id
+        staged = stage_media(self.cwd, run_id, media) if media else []
+        if staged:
+            remember_uploads_root(kwargs.get("session"), self.cwd)
+        if staged and input is not None:
+            input = f"{input}{media_prompt_block(staged)}"
+        # Earlier turns' attachments come back under their original paths, so Claude can
+        # open again a file it was given before, on whichever replica runs this turn.
+        continuation: Optional[ExternalContinuation] = kwargs.get("continuation")
+        restaged, moved_note = stage_prior_media(
+            self.cwd,
+            kwargs.get("session"),
+            exclude_run_id=run_id,
+            until_run_id=continuation.source_run_id if continuation is not None else None,
+        )
+        if moved_note and input is not None:
+            input = f"{input}{moved_note}"
+        try:
+            async for message in self._aquery_sdk(input, history, streaming=streaming, **kwargs):
+                yield message
+        finally:
+            if not self.keep_uploads:
+                if staged:
+                    cleanup_media(self.cwd, run_id)
+                for folder in restaged:
+                    remove_upload_folder(folder)
+
+    async def _aquery_sdk(
         self, input: Any, history: Optional[List[Dict[str, Any]]], *, streaming: bool, **kwargs: Any
     ) -> AsyncIterator[Any]:
         """Run a client against the SDK session tied to this Agno session, recording its id.
@@ -648,6 +698,7 @@ class ClaudeAgent(BaseExternalAgent):
             anchor={"session_id": ref["session_id"], "uuid": ref["uuid"], "before": before},
             forked_from_run_id=source.run_id if fork else source.forked_from_run_id,
             forked_from_message_index=index if fork else source.forked_from_message_index,
+            source_run_id=source.run_id,
         )
         return prompt, str(uuid4()) if fork else str(source.run_id), continuation
 

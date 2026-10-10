@@ -267,9 +267,10 @@ class AgentSummaryResponse(BaseModel):
     @classmethod
     def from_agent(cls, agent: Union[Agent, AgentProtocol, RemoteAgent, AgentFactory]) -> "AgentSummaryResponse":
         agent_db = getattr(agent, "db", None)
-        framework = getattr(agent, "framework", None)
-        sdk = getattr(agent, "sdk", None) or framework
-        metadata = {"sdk": sdk, "framework": framework or sdk} if sdk else None
+        # Built-in adapters expose sdk. The framework fallback is only for third-party adapters that
+        # satisfy AgentProtocol structurally and predate the rename; drop it with the framework alias.
+        sdk = getattr(agent, "sdk", None) or getattr(agent, "framework", None)
+        metadata = {"sdk": sdk} if sdk else None
         if isinstance(agent, AgentFactory):
             return cls(
                 id=agent.id,

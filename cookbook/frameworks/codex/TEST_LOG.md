@@ -353,4 +353,12 @@ multi-replica execution, retries or deployment readiness.
 
 **Result:** Startup configuration and documented route/ID checks passed. The merged-main refresh also passed 310 adapter/background-stream tests, including metrics, replay, typed options and persistence. `scripts/format.sh` and `scripts/validate.sh` passed in `.venvs/claude-dx-validation`; this entry does not claim a new live provider run. Existing live results above retain their original source/version scope.
 
+### codex_media.py
+
+**Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Attaches a solid blue PNG and a CSV to one run via `images=` and `files=`. The image is sent as a native local-image input, the CSV is staged in the workspace and named in the prompt. Checks the answer names the colour and the column total, that the run's `input` records the attachments, and that `cwd/.agno/uploads` is gone afterwards.
+
+**Result:** "Blue; total amount: 200." Attachments recorded on the run, staging folder removed.
+
 ---

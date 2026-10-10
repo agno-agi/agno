@@ -23,7 +23,7 @@ from uuid import uuid4
 
 from agno.agents._config import agent_dataclass
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
-from agno.exceptions import RunCancelledException
+from agno.exceptions import RunCancelledException, UnsupportedMediaError
 from agno.media import Audio, File, Image, Video
 from agno.metrics import BaseMetrics, ModelMetrics, RunMetrics, SessionMetrics
 from agno.models.message import Message
@@ -110,6 +110,46 @@ class ExternalContinuation:
     anchor: Dict[str, Any]
     forked_from_run_id: Optional[str] = None
     forked_from_message_index: Optional[int] = None
+    # The stored run being continued; the resumed transcript ends there.
+    source_run_id: Optional[str] = None
+
+
+def session_branch(
+    session_runs: Optional[Sequence[Any]], exclude_run_id: Optional[str] = None, until_run_id: Optional[str] = None
+) -> List[RunOutput]:
+    """The runs on the conversation branch that ends at the latest run, or at until_run_id, oldest first."""
+    # A fork already contains the retained prefix of its source run. Its
+    # predecessor is the source's predecessor, not the most recent sibling.
+    # Keep predecessor links so forks of older branches also discard any
+    # intervening turns, without copying the entire history for every run.
+    runs: List[RunOutput] = []
+    predecessors: List[Optional[int]] = []
+    indexes: Dict[str, int] = {}
+    head: Optional[int] = None
+    for run in session_runs or []:
+        if not isinstance(run, RunOutput) or not run.messages:
+            continue
+        if run.run_id == exclude_run_id and run.run_id != until_run_id:
+            continue
+        predecessor = head
+        if run.forked_from_run_id:
+            source_index = indexes.get(run.forked_from_run_id)
+            # If the source was deleted, its earlier ancestry is unknown;
+            # only the prefix retained in the fork is safe to replay.
+            predecessor = predecessors[source_index] if source_index is not None else None
+        head = len(runs)
+        runs.append(run)
+        predecessors.append(predecessor)
+        if run.run_id:
+            indexes[run.run_id] = head
+        if until_run_id is not None and run.run_id == until_run_id:
+            break
+
+    branch: List[RunOutput] = []
+    while head is not None:
+        branch.append(runs[head])
+        head = predecessors[head]
+    return list(reversed(branch))
 
 
 @agent_dataclass
@@ -510,9 +550,10 @@ class BaseExternalAgent:
         """Adapters supporting media must override this and forward it to their SDK."""
         provided = [name for name, values in media.items() if values]
         if provided:
-            raise ValueError(
+            raise UnsupportedMediaError(
                 f"{type(self).__name__} does not support separate {', '.join(provided)} inputs. "
-                "Use text input or the adapter's documented native input format."
+                "Use text input or the adapter's documented native input format.",
+                media=provided,
             )
         return {}
 
@@ -619,7 +660,7 @@ class BaseExternalAgent:
             agent_id=self.get_id(),
             user_id=user_id,
             session_data={},
-            agent_data={"agent_id": self.id, "agent_name": self.name, "sdk": self.sdk, "framework": self.sdk},
+            agent_data={"agent_id": self.id, "agent_name": self.name, "sdk": self.sdk},
             metadata={},
             runs=[],
             created_at=int(time()),
@@ -973,6 +1014,7 @@ class BaseExternalAgent:
         status: RunStatus,
         tools: Optional[List[ToolExecution]] = None,
         metrics: Optional[RunMetrics] = None,
+        media: Optional[Dict[str, Any]] = None,
     ) -> RunOutput:
         """Build a RunOutput with properly populated messages for chat history."""
         now = int(time())
@@ -1021,7 +1063,15 @@ class BaseExternalAgent:
             agent_name=self.name,
             session_id=session_id,
             user_id=user_id,
-            input=RunInput(input_content=str(input_text)) if input_text is not None else None,
+            input=(
+                RunInput(
+                    input_content=str(input_text),
+                    images=(media or {}).get("images"),
+                    files=(media or {}).get("files"),
+                )
+                if input_text is not None
+                else None
+            ),
             content=content,
             messages=messages,
             tools=tools,
@@ -1111,36 +1161,7 @@ class BaseExternalAgent:
         - tool_call_id: (tool only) ID linking to the assistant's tool_call
         """
         history: List[Dict[str, Any]] = []
-        if not session.runs:
-            return history
-        # A fork already contains the retained prefix of its source run. Its
-        # predecessor is the source's predecessor, not the most recent sibling.
-        # Keep predecessor links so forks of older branches also discard any
-        # intervening turns, without copying the entire history for every run.
-        runs: List[RunOutput] = []
-        predecessors: List[Optional[int]] = []
-        indexes: Dict[str, int] = {}
-        head: Optional[int] = None
-        for run in session.runs:
-            if not isinstance(run, RunOutput) or not run.messages or run.run_id == exclude_run_id:
-                continue
-            predecessor = head
-            if run.forked_from_run_id:
-                source_index = indexes.get(run.forked_from_run_id)
-                # If the source was deleted, its earlier ancestry is unknown;
-                # only the prefix retained in the fork is safe to replay.
-                predecessor = predecessors[source_index] if source_index is not None else None
-            head = len(runs)
-            runs.append(run)
-            predecessors.append(predecessor)
-            if run.run_id:
-                indexes[run.run_id] = head
-
-        branch: List[RunOutput] = []
-        while head is not None:
-            branch.append(runs[head])
-            head = predecessors[head]
-        for run in reversed(branch):
+        for run in session_branch(session.runs, exclude_run_id=exclude_run_id):
             for msg in run.messages or []:
                 if msg.role == "assistant" and msg.tool_calls:
                     # Assistant message with tool calls (no text content)
@@ -1259,6 +1280,7 @@ class BaseExternalAgent:
                 metrics=self._finish_metrics(
                     timer, content.metrics if isinstance(content, ExternalRunResult) else None
                 ),
+                media=kwargs.get("media"),
             )
             if isinstance(content, ExternalRunResult) and content.warnings:
                 run_output.metadata = {"warnings": content.warnings}
@@ -1271,6 +1293,7 @@ class BaseExternalAgent:
                 "Run cancelled",
                 RunStatus.cancelled,
                 tools=list(run_state.get("tools", {}).values()) or None,
+                media=kwargs.get("media"),
             )
         except Exception as error:
             log_exception(f"Error in {self.sdk} agent '{self.id}': {error}")
@@ -1282,6 +1305,7 @@ class BaseExternalAgent:
                 str(error),
                 RunStatus.error,
                 tools=list(run_state.get("tools", {}).values()) or None,
+                media=kwargs.get("media"),
             )
         self._finish_run_output(run_output, run_state, continuation)
         if session is not None:
@@ -1346,6 +1370,7 @@ class BaseExternalAgent:
             status,
             list(tools.values()) or None,
             metrics=self._finish_metrics(timer, adapter_metrics) if status == RunStatus.completed else None,
+            media=kwargs.get("media"),
         )
         if warnings:
             run.metadata = {"warnings": warnings}

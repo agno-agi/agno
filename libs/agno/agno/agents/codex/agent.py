@@ -7,6 +7,15 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, ClassVar, Dict, Iterator, 
 from uuid import uuid4
 
 from agno.agents._config import agent_dataclass
+from agno.agents._media import (
+    accept_media,
+    cleanup_media,
+    media_prompt_block,
+    remember_uploads_root,
+    remove_upload_folder,
+    stage_media,
+    stage_prior_media,
+)
 from agno.agents.base import BaseExternalAgent, ExternalRunMetricsEvent, ExternalRunResult
 from agno.agents.codex.options import ThreadOptions, TurnOptions
 from agno.exceptions import RunCancelledException
@@ -126,6 +135,7 @@ class CodexAgent(BaseExternalAgent):
         approval_mode: "auto_review" or "deny_all" for escalated permission requests.
         reasoning_effort: "minimal", "low", "medium", "high" or "xhigh".
         cwd: Working directory for the agent.
+        keep_uploads: Keep files attached to a run under cwd/.agno/uploads/<run_id>/ after the run.
         ephemeral: Do not persist Codex thread files. Ephemeral threads cannot be resumed.
         output_schema: JSON Schema constraining the final answer. Content is the JSON string.
         model_provider: Native Codex model provider name.
@@ -172,6 +182,8 @@ class CodexAgent(BaseExternalAgent):
     mcp_servers: Optional[Dict[str, Any]] = None
     # Workspace and settings
     cwd: Optional[str] = None
+    # Keep attachments staged under cwd/.agno/uploads/<run_id>/ after the run instead of deleting them.
+    keep_uploads: bool = False
     sandbox: Optional[str] = None
     approval_mode: Optional[str] = None
     ephemeral: Optional[bool] = None
@@ -418,7 +430,66 @@ class CodexAgent(BaseExternalAgent):
     # Adapter hooks
     # ---------------------------------------------------------------------------
 
+    def _media_kwargs(self, **media: Any) -> Dict[str, Any]:
+        """Images go to Codex as native local-image inputs; files are written under
+        cwd/.agno/uploads/<run_id>/ and named in the prompt. Audio and video are rejected."""
+        return accept_media(media)
+
+    def _turn_input(self, sdk: Any, prompt: str, staged: Any, moved_note: str = "") -> Any:
+        """The turn input: plain text, or text plus native image items when media was attached."""
+        if not staged:
+            return f"{prompt}{moved_note}"
+        files = [item for item in staged if item.kind == "file"]
+        text = f"{prompt}{media_prompt_block(files)}{moved_note}" if files or moved_note else prompt
+        items: List[Any] = [sdk.TextInput(text=text)]
+        for item in staged:
+            if item.kind == "image" and item.path:
+                items.append(sdk.LocalImageInput(path=item.path))
+            elif item.kind == "image" and item.url:
+                items.append(sdk.ImageInput(url=item.url))
+        return items
+
     async def _arun_adapter(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> ExternalRunResult:
+        """Stage attachments for the run, execute, then remove them unless keep_uploads is set."""
+        media = kwargs.pop("media", None)
+        run_id = kwargs.get("run_id") or str(uuid4())
+        kwargs["run_id"] = run_id
+        kwargs["staged_media"] = stage_media(self.cwd, run_id, media) if media else []
+        if kwargs["staged_media"]:
+            remember_uploads_root(kwargs.get("session"), self.cwd)
+        restaged, kwargs["moved_note"] = stage_prior_media(self.cwd, kwargs.get("session"), exclude_run_id=run_id)
+        try:
+            return await self._arun_adapter_sdk(input, history=history, **kwargs)
+        finally:
+            if not self.keep_uploads:
+                if kwargs["staged_media"]:
+                    cleanup_media(self.cwd, run_id)
+                for folder in restaged:
+                    remove_upload_folder(folder)
+
+    async def _arun_adapter_stream(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> AsyncIterator[RunOutputEvent]:
+        media = kwargs.pop("media", None)
+        run_id = kwargs.get("run_id") or str(uuid4())
+        kwargs["run_id"] = run_id
+        kwargs["staged_media"] = stage_media(self.cwd, run_id, media) if media else []
+        if kwargs["staged_media"]:
+            remember_uploads_root(kwargs.get("session"), self.cwd)
+        restaged, kwargs["moved_note"] = stage_prior_media(self.cwd, kwargs.get("session"), exclude_run_id=run_id)
+        try:
+            async for event in self._arun_adapter_stream_sdk(input, history=history, **kwargs):
+                yield event
+        finally:
+            if not self.keep_uploads:
+                if kwargs["staged_media"]:
+                    cleanup_media(self.cwd, run_id)
+                for folder in restaged:
+                    remove_upload_folder(folder)
+
+    async def _arun_adapter_sdk(
         self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
     ) -> ExternalRunResult:
         """Non-streaming: run one turn and return the final answer."""
@@ -433,7 +504,9 @@ class CodexAgent(BaseExternalAgent):
             thread, resumed = await self._open_thread(codex, sdk, session, session_id)
             prompt = self._build_prompt(input, history, resumed)
             run_id = kwargs.get("run_id") or str(uuid4())
-            handle = await thread.turn(prompt, **turn_options)
+            handle = await thread.turn(
+                self._turn_input(sdk, prompt, kwargs.get("staged_media"), kwargs.get("moved_note", "")), **turn_options
+            )
             self._set_run_handle(run_id, handle)
             try:
                 result = await self._acollect_turn(handle)
@@ -518,7 +591,7 @@ class CodexAgent(BaseExternalAgent):
                 parts.append(str(root.text))
         return "\n\n".join(parts)
 
-    async def _arun_adapter_stream(
+    async def _arun_adapter_stream_sdk(
         self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
     ) -> AsyncIterator[RunOutputEvent]:
         """Streaming: translate Codex app-server notifications into Agno events.
@@ -540,7 +613,9 @@ class CodexAgent(BaseExternalAgent):
         async with self._new_client() as codex:
             thread, resumed = await self._open_thread(codex, sdk, session, session_id)
             prompt = self._build_prompt(input, history, resumed)
-            handle = await thread.turn(prompt, **turn_options)
+            handle = await thread.turn(
+                self._turn_input(sdk, prompt, kwargs.get("staged_media"), kwargs.get("moved_note", "")), **turn_options
+            )
             self._set_run_handle(run_id, handle)
             try:
                 async for notification in handle.stream():

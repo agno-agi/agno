@@ -55,6 +55,21 @@ class CodexConfig:
     env: Optional[Dict[str, str]] = None
 
 
+@dataclass
+class TextInput:
+    text: str
+
+
+@dataclass
+class LocalImageInput:
+    path: str
+
+
+@dataclass
+class ImageInput:
+    url: str
+
+
 class FakeState:
     """Shared, scripted behaviour for the fake SDK."""
 
@@ -82,8 +97,19 @@ class FakeThread:
         self._state = state
         self.id = thread_id
 
-    async def turn(self, prompt: str, **kwargs: Any) -> FakeHandle:
-        self._state.calls.append({"op": "turn", "thread_id": self.id, "prompt": prompt, "kwargs": kwargs})
+    async def turn(self, prompt: Any, **kwargs: Any) -> FakeHandle:
+        import os
+
+        paths = [getattr(item, "path", None) for item in prompt] if isinstance(prompt, list) else []
+        self._state.calls.append(
+            {
+                "op": "turn",
+                "thread_id": self.id,
+                "prompt": prompt,
+                "kwargs": kwargs,
+                "paths_exist": [os.path.exists(p) for p in paths if p],
+            }
+        )
         return FakeHandle(self._state)
 
     async def run(self, prompt: str, **kwargs: Any) -> Any:
@@ -126,6 +152,9 @@ def fake_sdk(monkeypatch) -> FakeState:
     module.ApprovalMode = ApprovalMode  # type: ignore[attr-defined]
     module.CodexConfig = CodexConfig  # type: ignore[attr-defined]
     module.AsyncCodex = FakeAsyncCodex  # type: ignore[attr-defined]
+    module.TextInput = TextInput  # type: ignore[attr-defined]
+    module.LocalImageInput = LocalImageInput  # type: ignore[attr-defined]
+    module.ImageInput = ImageInput  # type: ignore[attr-defined]
     module.types = SimpleNamespace(ReasoningEffort=ReasoningEffort)  # type: ignore[attr-defined]
     monkeypatch.setattr(codex_module, "_sdk", lambda: module)
     return state
@@ -979,3 +1008,87 @@ def test_run_without_usage_reports_has_duration_only(fake_sdk, tmp_db):
     agent = CodexAgent(name="Codex", id="codex", db=tmp_db)
     metrics = asyncio.run(agent._arun_non_stream("go", session_id="s1")).metrics
     assert metrics is not None and metrics.total_tokens == 0 and metrics.duration is not None
+
+
+# ---------------------------------------------------------------------------
+# Media: images as native inputs, files staged in the workspace
+# ---------------------------------------------------------------------------
+
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + bytes(32)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_images_go_to_codex_natively_and_files_through_the_workspace(fake_sdk, tmp_db, tmp_path, stream):
+    from agno.media import File, Image
+
+    fake_sdk.notifications = [_delta("m1", "seen"), _turn_completed()]
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db, cwd=str(tmp_path))
+    media = dict(
+        images=[Image(content=PNG_BYTES, format="png")],
+        files=[File(content=b"a,b", filename="data.csv", mime_type="text/csv")],
+    )
+    if stream:
+        # Through the public call, where media is validated and converted before the stream starts.
+        events = list(agent.run("What is attached?", stream=True, session_id="s", **media))
+        assert isinstance(events[-1], RunCompletedEvent)
+        run_id = events[-1].run_id
+    else:
+        out = agent.run("What is attached?", session_id="s", **media)
+        assert out.status == RunStatus.completed
+        run_id = out.run_id
+
+    turn = [c for c in fake_sdk.calls if c["op"] == "turn"][-1]
+    items = turn["prompt"]
+    assert isinstance(items, list) and isinstance(items[0], TextInput)
+    assert items[0].text.startswith("What is attached?") and "data.csv" in items[0].text and "text/csv" in items[0].text
+    assert "image-1.png" not in items[0].text, "images are native inputs, not prompt lines"
+    [image] = [item for item in items if isinstance(item, LocalImageInput)]
+    uploads = tmp_path / ".agno" / "uploads" / run_id
+    assert image.path == str(uploads / "image-1.png") and turn["paths_exist"] == [True]
+    assert not uploads.exists(), "attachments are removed after the run"
+    stored = agent.get_run_output(run_id, "s")
+    assert stored.input.files[0].filename == "data.csv" and len(stored.input.images) == 1
+
+
+def test_plain_runs_still_send_a_string_prompt(fake_sdk, tmp_db):
+    fake_sdk.notifications = [_delta("m1", "ok"), _turn_completed()]
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db)
+    agent.run("hello", session_id="s")
+    assert [c for c in fake_sdk.calls if c["op"] == "turn"][-1]["prompt"] == "hello"
+
+
+def test_codex_rejects_audio(fake_sdk, tmp_db):
+    from agno.exceptions import UnsupportedMediaError
+    from agno.media import Audio
+
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db)
+    with pytest.raises(UnsupportedMediaError, match="audio"):
+        agent.run("listen", audio=[Audio(content=b"RIFF", format="wav")])
+
+
+def test_earlier_attachments_are_restaged_for_later_codex_turns(fake_sdk, tmp_db, tmp_path):
+    from agno.media import File
+
+    fake_sdk.notifications = [_delta("m1", "ok"), _turn_completed()]
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db, cwd=str(tmp_path))
+    first = agent.run(
+        "read it", session_id="s", files=[File(content=b"a,b", filename="data.csv", mime_type="text/csv")]
+    )
+    expected = tmp_path / ".agno" / "uploads" / first.run_id / "data.csv"
+    assert not expected.exists()
+
+    original_turn = FakeThread.turn
+    seen = {}
+
+    async def turn(self, prompt, **kwargs):
+        seen["exists"] = expected.exists()
+        return await original_turn(self, prompt, **kwargs)
+
+    FakeThread.turn = turn  # type: ignore[method-assign]
+    try:
+        out = agent.run("read it again", session_id="s")
+    finally:
+        FakeThread.turn = original_turn  # type: ignore[method-assign]
+    assert out.status == RunStatus.completed and seen["exists"]
+    assert [c for c in fake_sdk.calls if c["op"] == "turn"][-1]["prompt"] == "read it again"
+    assert not expected.exists()

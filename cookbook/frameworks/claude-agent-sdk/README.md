@@ -212,6 +212,14 @@ Every run reports the tokens, cache usage and cost Claude Code returned for the 
 
 `cache_read_tokens` counts every API call inside the turn. Claude Code's system prompt, tool schemas and project context are a cached prefix of roughly 15k tokens, and a turn with one tool call makes two API calls, so a cache read figure around 30k for such a turn is expected. Cached reads are billed at a tenth of the input price, which is why cost stays low.
 
+## Images and files
+
+Claude Code reads files itself, so attachments reach it the way they reach a person at a terminal. `ClaudeAgent` writes each image or file passed to `run` / `arun` (or uploaded through the AgentOS API and UI) under `cwd/.agno/uploads/<run_id>/` and names the paths in the prompt; Claude opens them with its Read tool, which handles images and PDFs. The folder is removed when the run ends unless `keep_uploads=True`. Before any later turn of the session, the attachments of earlier runs are written back to the uploads folder the session recorded when they were first staged, so the paths Claude already knows resolve again on whichever replica runs that turn (replicas normally share the same layout). If that folder cannot be written there, the files go under the replica's own working directory and the prompt names the new location. A continued or forked run gets the same treatment. The run's `input` records what was attached. Audio and video are rejected before the run starts, with a 400 or a `RunError` event through AgentOS, because Claude Code has no way to use them. The Read tool must be allowed for attachments to be useful.
+
+```bash
+.venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/claude_media.py
+```
+
 ## Background runs and cancellation
 
 `background_cancel.py` serves the agent through AgentOS. Submit runs with `background=true`, poll the run endpoint, or use `stream=true` for indexed SSE. Runs continue after disconnects; the resume endpoint reads the configured event stream. Cancel through the run cancellation endpoint.
