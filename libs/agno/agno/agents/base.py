@@ -90,6 +90,7 @@ class BaseExternalAgent:
     - Tool call event wrapping
     - Sync/async run and print_response methods
     - Session persistence via Agno's DB (when db is configured)
+    - Retrying failed runs (retries, delay_between_retries, exponential_backoff)
 
     Subclasses must implement:
     - _arun_adapter(input, **kwargs) -> str | ExternalRunResult  (non-streaming)
@@ -102,6 +103,12 @@ class BaseExternalAgent:
     framework: str = "external"
     markdown: bool = True
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
+    # Number of times to retry a failed run
+    retries: int = 0
+    # Delay between retries (in seconds)
+    delay_between_retries: int = 1
+    # Exponential backoff: if True, the delay between retries is doubled each time
+    exponential_backoff: bool = False
 
     def __post_init__(self) -> None:
         from agno.utils.string import generate_id_from_name
@@ -664,6 +671,27 @@ class BaseExternalAgent:
             _handle_owner.reset(owner_token)
             await acleanup_run(run_id)
 
+    def _retry_delay(self, attempt: int) -> int:
+        if self.exponential_backoff:
+            return self.delay_between_retries * (2**attempt)
+        return self.delay_between_retries
+
+    async def _await_retry(self, run_id: str, attempt: int, num_attempts: int, error: Exception) -> None:
+        """Wait out the backoff before the next attempt, ending early if the run is cancelled."""
+        from agno.run.cancel import araise_if_cancelled
+
+        await araise_if_cancelled(run_id)
+        delay = self._retry_delay(attempt)
+        log_warning(
+            f"{self.framework} agent '{self.id}' attempt {attempt + 1}/{num_attempts} failed. "
+            f"Retrying in {delay}s...: {error}"
+        )
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + delay
+        while (remaining := deadline - loop.time()) > 0:
+            await asyncio.sleep(min(remaining, 0.5))
+            await araise_if_cancelled(run_id)
+
     async def _aprepare_pending_run(
         self, run_id: str, session_id: str, user_id: Optional[str], input: Any
     ) -> RunOutput:
@@ -980,7 +1008,19 @@ class BaseExternalAgent:
         history = self._get_history_from_session(session, exclude_run_id=run_id) if session else None
         try:
             async with self._run_cancellation(run_id):
-                content = await self._arun_adapter(input, history=history, run_id=run_id, session=session, **kwargs)
+                num_attempts = self.retries + 1
+                for attempt in range(num_attempts):
+                    try:
+                        content = await self._arun_adapter(
+                            input, history=history, run_id=run_id, session=session, **kwargs
+                        )
+                        break
+                    except RunCancelledException:
+                        raise
+                    except Exception as error:
+                        if attempt == num_attempts - 1:
+                            raise
+                        await self._await_retry(run_id, attempt, num_attempts, error)
             run_output = self._build_run_output(
                 run_id,
                 session_id,
@@ -1019,21 +1059,33 @@ class BaseExternalAgent:
         run_error: Optional[Exception] = None
         try:
             async with self._run_cancellation(run_id):
-                async for event in self._arun_adapter_stream(
-                    input, history=history, run_id=run_id, session=session, **kwargs
-                ):
-                    if isinstance(event, ExternalRunWarningEvent) and event.warning is not None:
-                        warnings.append(event.warning)
-                    if isinstance(event, RunContentEvent):
-                        accumulated_content += event.content or ""
-                    elif isinstance(event, (ToolCallStartedEvent, ToolCallCompletedEvent)) and event.tool:
-                        key = event.tool.tool_call_id or str(uuid4())
-                        if key not in tools:
-                            tools[key] = event.tool
-                        elif isinstance(event, ToolCallCompletedEvent):
-                            tools[key].result = event.tool.result
-                            tools[key].tool_call_error = event.tool.tool_call_error
-                    yield event
+                num_attempts = self.retries + 1
+                for attempt in range(num_attempts):
+                    # Content is the final attempt's answer; tool calls from every attempt ran, so they are kept.
+                    accumulated_content = ""
+                    try:
+                        async for event in self._arun_adapter_stream(
+                            input, history=history, run_id=run_id, session=session, **kwargs
+                        ):
+                            if isinstance(event, ExternalRunWarningEvent) and event.warning is not None:
+                                warnings.append(event.warning)
+                            if isinstance(event, RunContentEvent):
+                                accumulated_content += event.content or ""
+                            elif isinstance(event, (ToolCallStartedEvent, ToolCallCompletedEvent)) and event.tool:
+                                key = event.tool.tool_call_id or str(uuid4())
+                                if key not in tools:
+                                    tools[key] = event.tool
+                                elif isinstance(event, ToolCallCompletedEvent):
+                                    tools[key].result = event.tool.result
+                                    tools[key].tool_call_error = event.tool.tool_call_error
+                            yield event
+                        break
+                    except RunCancelledException:
+                        raise
+                    except Exception as error:
+                        if attempt == num_attempts - 1:
+                            raise
+                        await self._await_retry(run_id, attempt, num_attempts, error)
         except RunCancelledException:
             status = RunStatus.cancelled
         except Exception as error:

@@ -125,3 +125,15 @@ checks; the earlier live provider cancellation runs were not repeated.
 **Description:** Reran the two-process verification after scoping transcript rows by framework, project, session and subpath, numbering positions per transcript and recording the owning Agno session. Used claude-agent-sdk 0.2.95 from the demo environment, the `ANTHROPIC_API_KEY` from `.envrc` and empty config directories.
 
 **Result:** Process A replied `OK`; process B, with its Agno run deleted, replied `cobalt orchard 742`. The PostgreSQL contract test (PostgresDb and AsyncPostgresDb) passed against PostgreSQL 14.
+
+---
+
+### claude_retries.py
+
+**Status:** PASS
+
+**Description:** Ran the cookbook with claude-agent-sdk from the demo environment, then a fault-injection run with the real SDK: the first attempt's result message was made to raise after the SDK session had started, with `retries=2`.
+
+**Result:** The cookbook answered normally. In both streaming and non-streaming runs the first attempt failed, the retry resumed the SDK session the failed attempt started (same session id stored on the Agno session) and completed with `pong`.
+
+---

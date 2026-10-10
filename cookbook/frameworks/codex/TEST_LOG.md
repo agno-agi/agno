@@ -101,3 +101,13 @@ Tested 2026-10-08 with openai-codex 0.161.0 (bundled Codex CLI 0.161.0), model g
 **Result:** 736 unit/regression tests passed; 5 integration tests passed, none skipped. One existing AsyncMock warning arose in the unchanged native save-fencing test. Required format and validation scripts passed with SQLAlchemy 2.0.52.
 
 ---
+
+### codex_retries.py
+
+**Status:** NOT RUN
+
+**Description:** openai-codex is not installed in the demo environment, so the cookbook was not run live. Retry behaviour is covered by unit tests against the fake SDK: a failed turn is retried and resumes the thread the failed attempt started, in both streaming and non-streaming runs.
+
+**Result:** Unit tests pass; live run pending.
+
+---

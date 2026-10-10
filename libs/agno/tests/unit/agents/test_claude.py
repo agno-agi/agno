@@ -482,3 +482,25 @@ def test_user_session_store_and_file_checkpointing_disable_injection(fake_sdk, t
     checkpointing._build_options(agno_session_id="agno-session")
     assert len(warnings) == 1
     assert "enable_file_checkpointing" in warnings[0]
+
+
+@pytest.mark.parametrize("stream", [True, False])
+def test_retry_resumes_the_sdk_session_of_the_failed_attempt(fake_sdk, tmp_db, monkeypatch, stream):
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, retries=1, delay_between_retries=0)
+    calls: List[Any] = []
+
+    async def overloaded_once(prompt, options):
+        calls.append({"prompt": prompt, "resume": options.resume})
+        sdk_session_id = options.resume or "sdk-1"
+        yield SystemMessage("init", {"session_id": sdk_session_id})
+        if len(calls) == 1:
+            raise ResultError("Claude Code returned an error result: API Error: 529 Overloaded")
+        yield ResultMessage(sdk_session_id, "recovered")
+
+    monkeypatch.setattr(claude_module._sdk(), "query", overloaded_once)
+    if stream:
+        events = _collect(agent, "go", session_id="s1")
+        assert isinstance(events[-1], RunCompletedEvent)
+    else:
+        assert agent.run("go", session_id="s1").content == "recovered"
+    assert calls == [{"prompt": "go", "resume": None}, {"prompt": "go", "resume": "sdk-1"}]

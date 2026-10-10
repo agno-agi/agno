@@ -19,6 +19,10 @@ Use PostgreSQL in production. Transcript storage supports PostgresDb, AsyncPostg
 
 The `agno_transcripts` table is created on first use. A development database that ran an earlier build of this feature has an older table shape and raises a schema mismatch; drop the table and it is recreated.
 
+## Retries
+
+`claude_retries.py` sets `retries`, `delay_between_retries` and `exponential_backoff`, the same settings an Agno `Agent` takes. A failed run is retried with the same run id and resumes the SDK session the failed attempt started, so Claude sees the work already done. Cancelled runs are not retried, and cancelling during the backoff wait ends the run.
+
 ## Background runs and cancellation
 
 `background_cancel.py` serves the agent through AgentOS. Submit runs with `background=true`, poll the run endpoint, or use `stream=true` for indexed SSE. Runs continue after disconnects; the resume endpoint reads the configured event stream. Cancel through the run cancellation endpoint.

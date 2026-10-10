@@ -111,6 +111,9 @@ class CodexAgent(BaseExternalAgent):
         env: Environment variables for the Codex process.
         thread_kwargs: Extra kwargs forwarded to thread_start / thread_resume.
         turn_kwargs: Extra kwargs forwarded to each turn.
+        retries: Number of times to retry a failed run. Cancelled runs are never retried.
+        delay_between_retries: Seconds to wait before each retry.
+        exponential_backoff: Double the delay after each failed attempt.
 
     Example:
         from agno.agents.codex import CodexAgent

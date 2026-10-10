@@ -48,6 +48,9 @@ class ClaudeAgent(BaseExternalAgent):
         cwd: Working directory for the agent.
         mcp_servers: MCP server configurations for custom tools.
         options_kwargs: Additional kwargs passed to ClaudeAgentOptions.
+        retries: Number of times to retry a failed run. Cancelled runs are never retried.
+        delay_between_retries: Seconds to wait before each retry.
+        exponential_backoff: Double the delay after each failed attempt.
 
     Example:
         from agno.agents.claude import ClaudeAgent

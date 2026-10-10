@@ -632,3 +632,37 @@ async def test_interrupted_sdk_turn_is_cancelled(fake_sdk, monkeypatch, stream):
         assert events[-1].status == RunStatus.cancelled
     else:
         assert (await agent.arun("go")).status == RunStatus.cancelled
+
+
+@pytest.mark.parametrize("stream", [True, False])
+def test_retry_resumes_the_thread_of_the_failed_attempt(fake_sdk, tmp_db, monkeypatch, stream):
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db, retries=1, delay_between_retries=0)
+    turns: List[int] = []
+    original_stream = FakeHandle.stream
+
+    async def run_failing_once(self):
+        turns.append(1)
+        status = "failed" if len(turns) == 1 else "completed"
+        return SimpleNamespace(final_response="recovered", items=[], status=status, error="overloaded", usage=None)
+
+    async def stream_failing_once(self):
+        turns.append(1)
+        if len(turns) == 1:
+            yield _turn_completed("failed", error="overloaded")
+            return
+        async for notification in original_stream(self):
+            yield notification
+
+    fake_sdk.notifications = [_delta("m1", "recovered"), _turn_completed()]
+    monkeypatch.setattr(FakeHandle, "run", run_failing_once)
+    monkeypatch.setattr(FakeHandle, "stream", stream_failing_once)
+    if stream:
+        events = _collect(agent, "go", session_id="s1")
+        assert isinstance(events[-1], RunCompletedEvent)
+        assert events[-1].content == "recovered"
+    else:
+        assert agent.run("go", session_id="s1").content == "recovered"
+
+    ops = [(c["op"], c.get("thread_id")) for c in fake_sdk.calls if c["op"] in ("thread_start", "thread_resume")]
+    assert ops == [("thread_start", "thread-1"), ("thread_resume", "thread-1")]
+    assert [c["prompt"] for c in fake_sdk.calls if c["op"] == "turn"] == ["go", "go"]
