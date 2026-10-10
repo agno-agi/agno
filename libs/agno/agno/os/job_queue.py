@@ -1257,8 +1257,13 @@ class QueueWorker:
         execution is deferred to a later reclaim."""
         from agno.run.base import RunStatus
 
+        reader = getattr(component, "aget_run_output", None)
+        if not callable(reader) or getattr(component, "db", None) is None:
+            # Nothing persisted to consult: the component keeps no run rows, so there is no
+            # classification to honor and the reclaim executes as it always did.
+            return False
         try:
-            run = await component.aget_run_output(job["id"], job["session_id"], user_id=job.get("user_id"))
+            run = await reader(job["id"], job["session_id"], user_id=job.get("user_id"))
         except Exception as e:
             # Fail closed: without the row we cannot tell a transient failure from one the
             # component refused to retry. Do not execute; leave the claim unsettled so the
