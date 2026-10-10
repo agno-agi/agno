@@ -35,7 +35,7 @@ def _patch_client(payload):
     client.__enter__.return_value = client
     client.__exit__.return_value = False
     client.get.return_value = _mock_response(payload)
-    return patch("agno.tools.youcom.httpx.Client", return_value=client), client
+    return patch("agno.tools.youcom.search.httpx.Client", return_value=client), client
 
 
 def test_init_with_api_key():
@@ -397,8 +397,8 @@ def test_search_http_error_returns_message(youcom_tools):
     client.__exit__.return_value = False
     client.get.side_effect = httpx.ConnectError("connection failed")
     with (
-        patch("agno.tools.youcom.httpx.Client", return_value=client),
-        patch("agno.tools.youcom.log_error") as mock_log_error,
+        patch("agno.tools.youcom.search.httpx.Client", return_value=client),
+        patch("agno.tools.youcom.search.log_error") as mock_log_error,
     ):
         result = youcom_tools.you_search("query")
     assert result.startswith("Error:")
