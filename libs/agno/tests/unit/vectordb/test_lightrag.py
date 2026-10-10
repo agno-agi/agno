@@ -1,3 +1,4 @@
+import httpx
 import pytest
 
 from agno.vectordb.lightrag import LightRag
@@ -144,3 +145,65 @@ def test_format_response_string(lightrag_db):
     assert len(documents) == 1
     assert documents[0].content == "Just a plain string response"
     assert documents[0].meta_data["source"] == "lightrag"
+
+
+# -- async_search: a search that could not run is not a search that matched nothing --
+#
+# VectorDb.async_search declares -> List[Document]. LightRag declared
+# Optional[List[Document]] and returned [] for two httpx errors and None for anything
+# else, while the sync search() folded None back into []. So every failure - a refused
+# connection, a 500, an unreadable body - reached the caller as an empty result set,
+# which is what a query that genuinely matched nothing returns.
+
+
+class _FakeAsyncClient:
+    """Stands in for httpx.AsyncClient as an async context manager."""
+
+    def __init__(self, on_post):
+        self._on_post = on_post
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return False
+
+    async def post(self, *args, **kwargs):
+        return self._on_post()
+
+
+@pytest.mark.asyncio
+async def test_async_search_raises_when_the_server_is_unreachable(lightrag_db, monkeypatch):
+    def refuse():
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **k: _FakeAsyncClient(refuse))
+
+    with pytest.raises(httpx.ConnectError):
+        await lightrag_db.async_search("anything")
+
+
+@pytest.mark.asyncio
+async def test_async_search_raises_on_a_server_error(lightrag_db, monkeypatch):
+    def five_hundred():
+        request = httpx.Request("POST", f"{TEST_SERVER_URL}/query")
+        return httpx.Response(status_code=500, request=request, json={"detail": "boom"})
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **k: _FakeAsyncClient(five_hundred))
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await lightrag_db.async_search("anything")
+
+
+@pytest.mark.asyncio
+async def test_async_search_returns_documents_when_the_server_answers(lightrag_db, monkeypatch):
+    """The other half: a server that answered still produces documents, not an exception."""
+
+    def ok():
+        request = httpx.Request("POST", f"{TEST_SERVER_URL}/query")
+        return httpx.Response(status_code=200, request=request, json={"response": "an answer"})
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **k: _FakeAsyncClient(ok))
+
+    documents = await lightrag_db.async_search("anything")
+    assert [d.content for d in documents] == ["an answer"]

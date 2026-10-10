@@ -173,8 +173,7 @@ class LightRag(VectorDb):
         Returns:
             List[Document]: A list of relevant documents matching the query.
         """
-        result = asyncio.run(self.async_search(query, limit=limit, filters=filters, user_id=user_id))
-        return result if result is not None else []
+        return asyncio.run(self.async_search(query, limit=limit, filters=filters, user_id=user_id))
 
     async def async_search(
         self,
@@ -182,7 +181,13 @@ class LightRag(VectorDb):
         limit: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
-    ) -> Optional[List[Document]]:
+    ) -> List[Document]:
+        """Returns relevant documents matching the query.
+
+        Raises whatever the LightRAG call raises - a connection error, a non-2xx status, an
+        unreadable body. An empty list means the server answered and matched nothing, which a
+        caller cannot tell apart from a failure otherwise.
+        """
         mode: str = "hybrid"  # Default mode, can be "local", "global", or "hybrid"
         if filters is not None:
             log_warning("Filters are not supported in LightRAG. No filters will be applied.")
@@ -192,28 +197,17 @@ class LightRag(VectorDb):
                 "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
                 "so results are not scoped to the caller."
             )
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{self.server_url}/query",
-                    json={"query": query, "mode": "hybrid", "include_references": True},
-                    headers=self._get_headers(),
-                )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{self.server_url}/query",
+                json={"query": query, "mode": "hybrid", "include_references": True},
+                headers=self._get_headers(),
+            )
 
-                response.raise_for_status()
-                result = response.json()
+            response.raise_for_status()
+            result = response.json()
 
-                return self._format_lightrag_response(result, query, mode)
-
-        except httpx.RequestError as e:
-            log_error(f"HTTP Request Error: {str(e)}")
-            return []
-        except httpx.HTTPStatusError as e:
-            log_error(f"HTTP Status Error: {str(e)}")
-            return []
-        except Exception as e:
-            log_error(f"Unexpected error during LightRAG server search: {str(e)}")
-            return None
+            return self._format_lightrag_response(result, query, mode)
 
     def drop(self) -> None:
         """Drop the vector database"""
