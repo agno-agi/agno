@@ -31,6 +31,26 @@ of the consolidated paths.
 
 ## 2026-10-09
 
+### compaction.py (transcript read API)
+
+**Status:** PASS
+
+**Description:** Reran after replacing the cookbook's raw SQL on `agno_transcripts` with `db.get_transcript_entries(framework, project_key, session_id)`, keyed by the Claude session id stored on the Agno session.
+
+**Result:** 29 rows before `/compact`, 39 after; the `compact_boundary` and summary entries were found at positions 33 and 34; replica B recalled the fact.
+
+---
+
+### compaction.py
+
+**Status:** PASS
+
+**Description:** Seeds a fact, adds three turns including a 1200-line filler document, sends `/compact` as the run input with a `PreCompact` hook registered through `options_kwargs`, prints the transcript rows the compaction produced, then resumes the session from a second agent instance with a different working directory.
+
+**Result:** 35 transcript rows before, 45 after. The hook fired with trigger `manual`. Rows 39 and 40 were the `compact_boundary` system entry and the `isCompactSummary` user entry. Replica B resumed from the database alone and answered `tangerine-walrus-88` from the summary. A conversation of one turn returns "Not enough messages to compact", which is why the cookbook adds turns first.
+
+---
+
 ### continue_from.py (finished runs always fork)
 
 **Status:** PASS
@@ -137,7 +157,6 @@ of the consolidated paths.
 **Result:** 736 unit/regression tests passed; 5 integration tests passed, none skipped. One existing AsyncMock warning arose in the unchanged native save-fencing test. Required format and validation scripts passed with SQLAlchemy 2.0.52.
 
 ---
-
 
 ### Transcript mirror failure regression (2026-10-08)
 
@@ -433,6 +452,46 @@ evidence and limits. This does not rerun this directory's advanced examples.
 
 **Result:** All ten live acceptance cases pass in 60.88s. Additional live structured-output and transcript runs pass. Full format/validation, compile, whitespace and starting-example pattern checks pass. See the [shared test log](../TEST_LOG.md#streaming-examples--2026-10-09) for commands, versions, evidence and the corrected transcript test-wrapper failure.
 
+
+---
+
+### claude_retries.py (review follow-up)
+
+**Status:** PASS
+
+**Description:** Reran after two base-class changes from the review: a streamed retry now emits a `retry` warning event between the failed attempt's output and the new attempt (also stored in the run's warnings), and a non-streamed retry keeps the tool calls of failed attempts, which the adapters leave in `run_state["tools"]`. Live check with an injected failure after a Bash call.
+
+**Result:** Non-streamed: two attempts, same SDK session, stored run has both Bash calls (before the change it had one, while the streamed run had two). Streamed: unchanged, both calls kept. The four cookbook cases pass as before.
+
+---
+
+### claude_retries.py (demonstration rewrite)
+
+**Status:** PASS
+
+**Description:** The cookbook now injects the failure itself: the first attempt is cut off with a simulated transient error at the SDK result message, after the session started. Runs four cases with `retries=2`, `delay_between_retries=1`, `exponential_backoff=True`: one failure then success, more failures than retries, `max_turns=1` with retries left, and the default `retries=0`.
+
+**Result:** Case 1: two attempts, the retry resumed the same SDK session id and answered. Case 2: three attempts with 1s then 2s backoff, run ended in ERROR with the last error. Case 3: one attempt, `error_max_turns` logged as not retryable. Case 4: one attempt, ERROR. Separately verified streaming with the same injection: two attempts, same session id, RunCompleted, and the stored run kept the tool calls from both attempts.
+
+---
+
+### claude_retries.py
+
+**Status:** PASS
+
+**Description:** Ran the cookbook with claude-agent-sdk from the demo environment, then a fault-injection run with the real SDK: the first attempt's result message was made to raise after the SDK session had started, with `retries=2`.
+
+**Result:** The cookbook answered normally. In both streaming and non-streaming runs the first attempt failed, the retry resumed the SDK session the failed attempt started (same session id stored on the Agno session) and completed with `pong`.
+
+---
+
+### claude_retries.py (non-retryable errors)
+
+**Status:** PASS
+
+**Description:** Reran with error classification added. Live run with `max_turns=1`, `retries=2` and a prompt that needs two tool calls, then the fault-injection run that raises a generic error after the SDK session starts.
+
+**Result:** The `max_turns` run ended after one attempt with `error_max_turns` and logged that it was not retried (before the change it ran three attempts, three turns against a limit of one). The injected transient error was still retried, resumed the same SDK session and completed with `pong`.
 
 ---
 

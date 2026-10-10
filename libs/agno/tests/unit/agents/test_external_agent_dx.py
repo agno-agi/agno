@@ -222,7 +222,10 @@ def test_public_typing_contract(tmp_path):
         str(fixture),
         "--config-file",
         str(root / "libs/agno/pyproject.toml"),
+        "--follow-imports=silent",
     ]
+    # Check the public calls in this fixture while retaining imported type information.
+    # Dependency implementation diagnostics belong to the repository-wide mypy check.
     # A cold check follows the adapter and native SDK type graphs. CI can take longer
     # than 90 seconds; use a private cache to exercise that path and reuse it below.
     env = dict(os.environ, MYPYPATH=str(root / "libs/agno"), MYPY_CACHE_DIR=str(tmp_path / "mypy-cache"))

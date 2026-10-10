@@ -1043,7 +1043,11 @@ class QueueWorker:
             # would close cleanly and the client would never see the retry's
             # output. Leave the stream open; the retry attempt continues it
             # (dead-producer TTL detection bounds the wait if no retry comes).
-            will_retry = status == RunStatus.error and job.get("attempt", 1) < job.get("max_attempts", 1)
+            will_retry = (
+                status == RunStatus.error
+                and job.get("attempt", 1) < job.get("max_attempts", 1)
+                and not self._run_is_not_retryable(final_output)
+            )
             if not will_retry:
                 with contextlib.suppress(Exception):
                     await asyncio.shield(event_stream.complete_run(job_id, status, generation=stream_generation))
@@ -1243,6 +1247,51 @@ class QueueWorker:
             return 0  # explicit no-backoff configuration (tests, dev loops)
         ceiling = min(base * (2 ** max(0, attempt - 1)), base * 10)
         return random.randint(0, ceiling)
+
+    async def _ahonor_non_retryable_row(self, component: Any, job: Dict[str, Any]) -> bool:
+        """A reclaimed job whose earlier attempt persisted an ERROR run the component marked
+        non-retryable. The worker that wrote that row crashed before settling the ticket, so the
+        classification lives only on the row: honor it here instead of re-executing a failure
+        that would repeat. Settles the ticket failed and closes the stream view. Returns True
+        when the job must not execute now: handled this way, or the row could not be read and
+        execution is deferred to a later reclaim."""
+        from agno.run.base import RunStatus
+
+        reader = getattr(component, "aget_run_output", None)
+        if not callable(reader) or getattr(component, "db", None) is None:
+            # Nothing persisted to consult: the component keeps no run rows, so there is no
+            # classification to honor and the reclaim executes as it always did.
+            return False
+        try:
+            run = await reader(job["id"], job["session_id"], user_id=job.get("user_id"))
+        except Exception as e:
+            # Fail closed: without the row we cannot tell a transient failure from one the
+            # component refused to retry. Do not execute; leave the claim unsettled so the
+            # lease goes stale and a later reclaim reads the row again.
+            log_warning(
+                f"Job queue: reclaimed job {job['id']} (attempt {job['attempt']}) could not read its run row "
+                f"to check retryability ({e}); deferring execution until the row can be read"
+            )
+            return True
+        raw = getattr(run, "status", None)
+        status = raw.value if isinstance(raw, RunStatus) else raw
+        if run is None or str(status).upper() != RunStatus.error.value or not self._run_is_not_retryable(run):
+            return False
+        error = str(getattr(run, "content", "") or "run errored")
+        log_warning(
+            f"Job queue: reclaimed job {job['id']} (attempt {job['attempt']}) has a run row marked "
+            f"non-retryable by its component; failing the ticket without re-executing: {error}"
+        )
+        await self._asettle_ticket(job["id"], job["attempt"], "failed", error)
+        await self._terminate_stream_view(job, "error")
+        return True
+
+    @staticmethod
+    def _run_is_not_retryable(run: Any) -> bool:
+        """A run row whose component marked the failure as one that would repeat
+        (``metadata["retryable"] is False``, set by external agents from their error classification)."""
+        metadata = getattr(run, "metadata", None)
+        return isinstance(metadata, dict) and metadata.get("retryable") is False
 
     @staticmethod
     def _is_permanent_failure(exc: BaseException, continuation_component: Optional[str] = None) -> bool:
@@ -1548,6 +1597,14 @@ class QueueWorker:
         payload = job.get("payload") or {}
         component_for_stamp = self.resolve_component(job.get("component_type"), job.get("component_id"))
         if (
+            attempt > 1
+            and job_type == "run"
+            and component_for_stamp is not None
+            and not payload.get("continue")
+            and await self._ahonor_non_retryable_row(component_for_stamp, job)
+        ):
+            return
+        if (
             job_type == "run"
             and component_for_stamp is not None
             and not payload.get("continue")
@@ -1730,7 +1787,17 @@ class QueueWorker:
                 await self._asettle_ticket(job_id, attempt, "cancelled")
             elif status == RunStatus.error:
                 error_content = str(getattr(result, "content", "") or "run errored")
-                await self._aretry_or_fail_ticket(job_id, attempt, error_content, self._retry_delay(attempt))
+                if self._run_is_not_retryable(result):
+                    # The component already classified this failure as one that repeats
+                    # (a limit, authentication, billing, a bad request): re-driving it would
+                    # spend the remaining attempts on the same error.
+                    log_warning(
+                        f"Job queue: run {job_id} failed with a non-retryable error; "
+                        f"failing the ticket without retry: {error_content}"
+                    )
+                    await self._asettle_ticket(job_id, attempt, "failed", error_content)
+                else:
+                    await self._aretry_or_fail_ticket(job_id, attempt, error_content, self._retry_delay(attempt))
             else:
                 await self._asettle_ticket(job_id, attempt, "completed")
         except asyncio.CancelledError:

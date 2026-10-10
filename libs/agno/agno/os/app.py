@@ -963,6 +963,7 @@ class AgentOS:
             if isinstance(entry, BaseExternalAgent):
                 if self.db is not None and entry.db is None:
                     entry.db = self.db
+                entry.store_events = True
 
         if not self._agents:
             return

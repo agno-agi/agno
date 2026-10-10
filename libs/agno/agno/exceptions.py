@@ -130,6 +130,9 @@ class ModelAuthenticationError(AgnoError):
 class ModelProviderError(AgnoError):
     """Exception raised when a model provider returns an error."""
 
+    # HTTP statuses for requests that fail the same way on every attempt
+    NON_RETRYABLE_STATUS_CODES = frozenset({400, 401, 403, 404, 413, 422})
+
     # Patterns that indicate a context window / token limit exceeded error
     CONTEXT_WINDOW_PATTERNS = [
         "context_length_exceeded",

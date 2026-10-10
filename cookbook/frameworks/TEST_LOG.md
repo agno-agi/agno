@@ -351,3 +351,30 @@ AGNO_TEST_CLAUDE_SDK=1 AGNO_TEST_CODEX_SDK=1 python -m pytest \
 python cookbook/frameworks/codex/codex_structured_output.py
 python cookbook/frameworks/claude-agent-sdk/transcript_store.py
 ```
+
+## DX/media integration with current main — 2026-10-10
+
+**Status:** PASS (deterministic checks; no new live-provider calls)
+
+**Source:** DX/media head `d5ee0a5037c649a7ba7a7367e40d2368443a4fb9`
+combined with main `24bc39f137f7f5fb5b1df89e3065914e01c0e901`.
+Preserves retries, compaction, metrics and stored events alongside media and DX.
+
+**Description:** Resolved the adapter and test conflicts, and extended both
+providers' failed-attempt tool-history regressions to stage a file on every
+attempt, retain it in the stored input, and clean the workspace afterward.
+The public typing fixture retains imported types while suppressing dependency
+implementation diagnostics; full repository mypy remains a separate gate.
+
+**Result:** 433 external-agent tests pass with `.venv/bin/python`. Another 20
+schema, background-stream and historical cancellation regression cases pass.
+The earlier classification-read regression assumes immediate queue settlement
+and times out under the new deferred-lease behavior; the current replacement
+regression passes within the 433-case suite and checks no re-execution before
+reclaim and final permanent failure after lease expiry.
+
+Full format and validation pass with `.venvs/claude-dx-validation` activated.
+The general `.venv` full validation instead reports 26 typing errors across five
+unrelated model integration files with its installed dependencies; these were
+not changed. No live SDK calls, new soak, provider-authentication claim, or
+final release certification is included in this result.

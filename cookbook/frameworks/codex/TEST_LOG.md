@@ -314,6 +314,24 @@ multi-replica execution, retries or deployment readiness.
 **Result:** All ten live acceptance cases pass in 60.88s. Additional live structured-output and transcript runs pass. Full format/validation, compile, whitespace and starting-example pattern checks pass. See the [shared test log](../TEST_LOG.md#streaming-examples--2026-10-09) for commands, versions, evidence and the corrected transcript test-wrapper failure.
 
 
+### codex_compaction.py
+
+**Status:** PASS (2026-10-09, openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Seeds a fact, adds three turns including a 1200-line filler document, calls `CodexAgent.acompact(session_id)`, then asks for the fact on the same session. `acompact` returns False before any thread exists, then resumes the thread on the low-level client, sends `thread/compact/start` and waits for the thread status to go active and back to idle on the global notification queue.
+
+**Result:** `acompact` returned False before the first run and True after; the thread went idle again in about eight seconds and the rollout gained a `compacted` entry. The next turn answered `tangerine-walrus-88`. The `thread/compacted` notification itself is routed to a per-turn queue the caller never registered, which is why the adapter waits on thread status instead.
+
+---
+
+### codex_compaction.py (review fixes, cookbook extended)
+
+**Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Review found that `acompact` resumed the thread on the low-level client with the adapter's high-level kwargs, which are sent verbatim: `sandbox="full-access"` was rejected (`unknown variant full-access`) and instructions and approval mode were silently dropped. Replicated with a probe against the app-server. The resume now goes through `AsyncCodex.thread_resume` exactly as runs do, and only `thread/compact/start` uses the low-level client. Also: a missing rollout returns False and forgets the stored thread id; compaction refuses while a run on the session is pending or running; the wait maps `asyncio.TimeoutError` to the builtin.
+
+**Result:** The cookbook now uses `sandbox="full-access"`, `instructions` and `approval_mode="deny_all"`, the configuration the first version could not compact. It compacted after three turns and recalled the fact on the next turn. With a background run pending on the session, `acompact` raised `RuntimeError` naming the run; after the run finished it compacted again. Pointing the session at a nonexistent thread id returned False with a warning and removed the id.
+
 ### codex_metrics.py
 
 **Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
