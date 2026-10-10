@@ -221,12 +221,14 @@ def test_public_typing_contract(tmp_path):
         "--config-file",
         str(root / "libs/agno/pyproject.toml"),
     ]
-    env = dict(os.environ, MYPYPATH=str(root / "libs/agno"))
-    result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True, timeout=90)
+    # A cold check follows the adapter and native SDK type graphs. CI can take longer
+    # than 90 seconds; use a private cache to exercise that path and reuse it below.
+    env = dict(os.environ, MYPYPATH=str(root / "libs/agno"), MYPY_CACHE_DIR=str(tmp_path / "mypy-cache"))
+    result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True, timeout=300)
     assert result.returncode == 0, result.stdout + result.stderr
     invalid = tmp_path / "positional.py"
     invalid.write_text('from agno.agents.claude import ClaudeAgent\nClaudeAgent("positional")\n')
     command[3] = str(invalid)
-    result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True, timeout=90)
+    result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True, timeout=300)
     assert result.returncode != 0
     assert "Too many positional arguments" in result.stdout
