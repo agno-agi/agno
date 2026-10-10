@@ -4,7 +4,9 @@ from importlib import import_module
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Set, Tuple
 from uuid import uuid4
 
-from agno.agents.base import BaseExternalAgent, ExternalRunResult
+from agno.agents.base import BaseExternalAgent, ExternalRunMetricsEvent, ExternalRunResult
+from agno.exceptions import RunCancelledException
+from agno.metrics import ModelMetrics, RunMetrics
 from agno.models.response import ToolExecution
 from agno.run.agent import (
     RunContentEvent,
@@ -79,6 +81,20 @@ class _StreamState:
     emitted_text: bool = False
     tool_info: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     error: Optional[str] = None
+    usage_first: Any = None
+    usage_last: Any = None
+
+
+@dataclass
+class _TurnOutcome:
+    """What a non-streaming turn produced, collected from the app-server notifications."""
+
+    status: Optional[str] = None
+    error: Optional[str] = None
+    items: List[Any] = field(default_factory=list)
+    final_response: Optional[str] = None
+    usage_first: Any = None
+    usage_last: Any = None
 
 
 @dataclass
@@ -328,16 +344,79 @@ class CodexAgent(BaseExternalAgent):
         async with self._new_client() as codex:
             thread, resumed = await self._open_thread(codex, sdk, session, session_id)
             prompt = self._build_prompt(input, history, resumed)
-            result = await thread.run(prompt, **self._turn_kwargs(sdk))
+            run_id = kwargs.get("run_id") or str(uuid4())
+            handle = await thread.turn(prompt, **self._turn_kwargs(sdk))
+            self._set_run_handle(run_id, handle)
+            try:
+                result = await self._acollect_turn(handle)
+            finally:
+                self._clear_run_handle(run_id)
+            if result.status == "interrupted":
+                raise RunCancelledException(run_id)
+            if result.status == "failed":
+                raise RuntimeError(f"Codex turn failed: {result.error}")
 
         tools = []
-        for item in getattr(result, "items", None) or []:
+        for item in result.items:
             item = _item_root(item)
             tool = self._tool_from_item(item)
             if tool is not None:
                 tool.result = self._tool_result_from_item(item)
                 tools.append(tool)
-        return ExternalRunResult(self._final_text(result), tools or None)
+        return ExternalRunResult(
+            self._final_text(result),
+            tools or None,
+            metrics=self._metrics_from_usage(result.usage_first, result.usage_last),
+        )
+
+    @staticmethod
+    async def _acollect_turn(handle: Any) -> _TurnOutcome:
+        """Consume a turn's notification stream the way the SDK's run() does, keeping every
+        token usage update rather than only the last one.
+
+        A turn with tool calls makes several model requests and the app-server reports usage
+        after each, so the first and last reports are both needed to size the whole turn.
+        """
+        outcome = _TurnOutcome()
+        async for notification in handle.stream():
+            method = getattr(notification, "method", "") or ""
+            payload = getattr(notification, "payload", None)
+            if payload is None:
+                continue
+            if method == "thread/tokenUsage/updated":
+                usage = getattr(payload, "token_usage", None)
+                if usage is not None:
+                    if outcome.usage_first is None:
+                        outcome.usage_first = usage
+                    outcome.usage_last = usage
+            elif method == "item/completed":
+                item = getattr(payload, "item", None)
+                if item is not None:
+                    outcome.items.append(item)
+            elif method == "turn/completed":
+                turn = getattr(payload, "turn", None)
+                status = getattr(turn, "status", None)
+                outcome.status = getattr(status, "value", status)
+                error = getattr(turn, "error", None)
+                outcome.error = getattr(error, "message", None) or (str(error) if error else None)
+                break
+        # The SDK's final_response rule: the final-answer phase message, else the last message
+        # without a phase.
+        unphased: Optional[str] = None
+        for item in reversed(outcome.items):
+            root = _item_root(item)
+            if getattr(root, "type", None) != "agentMessage":
+                continue
+            phase = getattr(root, "phase", None)
+            phase = getattr(phase, "value", phase)
+            if phase == "final_answer":
+                outcome.final_response = getattr(root, "text", None)
+                break
+            if phase is None and unphased is None:
+                unphased = getattr(root, "text", None)
+        if outcome.final_response is None:
+            outcome.final_response = unphased
+        return outcome
 
     @staticmethod
     def _final_text(result: Any) -> str:
@@ -371,16 +450,58 @@ class CodexAgent(BaseExternalAgent):
             thread, resumed = await self._open_thread(codex, sdk, session, session_id)
             prompt = self._build_prompt(input, history, resumed)
             handle = await thread.turn(prompt, **self._turn_kwargs(sdk))
-            async for notification in handle.stream():
-                for event in self._translate_notification(notification, run_id=run_id, state=state):
-                    yield event
+            self._set_run_handle(run_id, handle)
+            try:
+                async for notification in handle.stream():
+                    for event in self._translate_notification(notification, run_id=run_id, state=state):
+                        yield event
+            finally:
+                self._clear_run_handle(run_id)
 
         if state.error:
             raise RuntimeError(f"Codex turn failed: {state.error}")
+        metrics = self._metrics_from_usage(state.usage_first, state.usage_last)
+        if metrics is not None:
+            yield ExternalRunMetricsEvent(run_id=run_id, agent_id=self.get_id(), metrics=metrics)
+
+    # Codex usage field -> Agno metrics field
+    _USAGE_FIELDS = (
+        ("input_tokens", "input_tokens"),
+        ("output_tokens", "output_tokens"),
+        ("total_tokens", "total_tokens"),
+        ("cached_input_tokens", "cache_read_tokens"),
+        ("cache_write_input_tokens", "cache_write_tokens"),
+        ("reasoning_output_tokens", "reasoning_tokens"),
+    )
+
+    def _metrics_from_usage(self, first: Any, last: Any) -> Optional[RunMetrics]:
+        """Map a turn's token usage to RunMetrics from its first and last usage reports.
+
+        Each thread/tokenUsage/updated carries ``last`` (one model request) and ``total`` (the
+        thread so far). A turn with tool calls makes several requests, so the turn's usage is
+        the growth of the thread total over the turn: the final total minus the total before
+        the turn, which is the first report's total minus its own request. Reading only
+        ``last`` would count a single request. Codex reports input_tokens inclusive of the
+        cached prefix, like the OpenAI API, and reports no cost.
+        """
+        first_last = getattr(first, "last", None)
+        first_total = getattr(first, "total", None)
+        final_total = getattr(last, "total", None)
+        if first_last is None or first_total is None or final_total is None:
+            return None
+        counts: Dict[str, Any] = {}
+        for codex_field, agno_field in self._USAGE_FIELDS:
+            before_turn = int(getattr(first_total, codex_field, 0) or 0) - int(getattr(first_last, codex_field, 0) or 0)
+            counts[agno_field] = max(0, int(getattr(final_total, codex_field, 0) or 0) - before_turn)
+        model = ModelMetrics(id=self.model or "codex", provider="openai", **counts)
+        return self._build_metrics(model, [model])
 
     # ---------------------------------------------------------------------------
     # Notification translation
     # ---------------------------------------------------------------------------
+
+    async def _ainterrupt_run(self, handle: Any) -> None:
+        await handle.interrupt()
 
     def _content_event(self, run_id: str, content: str, reasoning: Optional[str] = None) -> RunContentEvent:
         return RunContentEvent(
@@ -397,6 +518,14 @@ class CodexAgent(BaseExternalAgent):
         method = getattr(notification, "method", "") or ""
         payload = getattr(notification, "payload", None)
         if payload is None:
+            return
+
+        if method == "thread/tokenUsage/updated":
+            usage = getattr(payload, "token_usage", None)
+            if usage is not None:
+                if state.usage_first is None:
+                    state.usage_first = usage
+                state.usage_last = usage
             return
 
         if method == "item/agentMessage/delta":
@@ -465,7 +594,7 @@ class CodexAgent(BaseExternalAgent):
                 error = getattr(turn, "error", None)
                 state.error = getattr(error, "message", None) or "turn failed"
             elif status_value == "interrupted":
-                log_warning("Codex: turn was interrupted before completion")
+                raise RunCancelledException(run_id)
 
         elif method == "error":
             error = getattr(payload, "error", None)

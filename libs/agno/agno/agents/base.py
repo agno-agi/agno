@@ -1,16 +1,21 @@
 import asyncio
 import json
+from contextlib import asynccontextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 from time import time
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Union
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+from agno.exceptions import RunCancelledException
 from agno.media import Audio, File, Image, Video
+from agno.metrics import BaseMetrics, ModelMetrics, RunMetrics, SessionMetrics
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.run.agent import (
     CustomEvent,
+    RunCancelledEvent,
     RunCompletedEvent,
     RunContentEvent,
     RunErrorEvent,
@@ -40,10 +45,34 @@ _HISTORY_MAX_CHARS = 24000
 
 
 @dataclass
+class _LiveHandle:
+    agent: "BaseExternalAgent"
+    handle: Any
+    loop: asyncio.AbstractEventLoop
+    # The attempt that registered the handle, so a retry's cleanup never removes the
+    # handle a newer attempt registered under the same run id.
+    owner: Optional[object] = None
+    interrupted: bool = False
+
+
+_live_handles: Dict[str, _LiveHandle] = {}
+# Identifies the attempt currently inside _run_cancellation on this task, so handle cleanup can
+# tell its own registration from one a retry of the same run id made in the meantime.
+_handle_owner: ContextVar[Optional[object]] = ContextVar("agno_external_handle_owner", default=None)
+
+
+@dataclass
 class ExternalRunWarningEvent(CustomEvent):
     """Nonfatal adapter warning emitted to streaming consumers."""
 
     warning: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class ExternalRunMetricsEvent(CustomEvent):
+    """Token usage and cost reported by a streaming adapter; consumed by the base, not forwarded."""
+
+    metrics: Optional[RunMetrics] = None
 
 
 @dataclass
@@ -53,6 +82,20 @@ class ExternalRunResult:
     content: str
     tools: Optional[List[ToolExecution]] = None
     warnings: Optional[List[Dict[str, Any]]] = None
+    metrics: Optional[RunMetrics] = None
+
+
+@dataclass
+class ExternalContinuation:
+    """Replay of a stored run from one of its message boundaries."""
+
+    messages: List[Message]
+    tools: Optional[List[ToolExecution]]
+    source_input: Optional[RunInput]
+    record_input: Any
+    anchor: Dict[str, Any]
+    forked_from_run_id: Optional[str] = None
+    forked_from_message_index: Optional[int] = None
 
 
 @dataclass
@@ -71,7 +114,7 @@ class BaseExternalAgent:
     - Session persistence via Agno's DB (when db is configured)
 
     Subclasses must implement:
-    - _arun_adapter(input, **kwargs) -> str  (non-streaming)
+    - _arun_adapter(input, **kwargs) -> str | ExternalRunResult  (non-streaming)
     - _arun_adapter_stream(input, **kwargs) -> AsyncIterator[RunOutputEvent]  (streaming)
     """
 
@@ -130,23 +173,23 @@ class BaseExternalAgent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream_events: Optional[bool] = None,
+        background: bool = False,
+        run_id: Optional[str] = None,
+        yield_run_output: bool = False,
         **kwargs: Any,
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
+        run_id = run_id or str(uuid4())
+        session_id = session_id or str(uuid4())
+        kwargs.update(run_id=run_id, session_id=session_id, user_id=user_id)
+        if background:
+            if self.db is None:
+                raise ValueError("Background execution requires a database")
+            if stream:
+                return self._arun_background_stream(input, yield_run_output=yield_run_output, **kwargs)
+            return self._astart_background(input, stream=False, yield_run_output=yield_run_output, **kwargs)  # type: ignore[return-value]
         if stream:
-            return self._arun_stream(
-                input,
-                session_id=session_id,
-                user_id=user_id,
-                **kwargs,
-            )
-        else:
-            # Returns a coroutine that the caller (router) awaits
-            return self._arun_non_stream(  # type: ignore[return-value]
-                input,
-                session_id=session_id,
-                user_id=user_id,
-                **kwargs,
-            )
+            return self._arun_stream(input, yield_run_output=yield_run_output, **kwargs)
+        return self._arun_non_stream(input, **kwargs)  # type: ignore[return-value]
 
     # ---------------------------------------------------------------------------
     # Public sync API (convenience wrappers)
@@ -162,6 +205,8 @@ class BaseExternalAgent:
         **kwargs: Any,
     ) -> Union[RunOutput, Iterator[RunOutputEvent]]:
         """Synchronous run. Dispatches to the async internals."""
+        if kwargs.pop("background", False):
+            raise ValueError("Use arun(background=True) on a persistent event loop")
         if stream:
             return self._run_stream(input, session_id=session_id, user_id=user_id, **kwargs)
         else:
@@ -486,20 +531,35 @@ class BaseExternalAgent:
         elif isinstance(self.db, BaseDb):
             self.db.upsert_session(session)
 
-    async def _apersist_run_in_session(self, session: AgentSession, run_output: RunOutput) -> None:
+    async def _apersist_run_in_session(
+        self, session: AgentSession, run_output: RunOutput, *, strict: bool = False
+    ) -> None:
         """Append the run to the session and persist both (v3 denormalized storage).
 
         upsert_session writes only the session row — runs live in their own
         table and must be written via upsert_run, or history is silently lost.
-        Swallows DB failures so the caller still receives the RunOutput.
+        Worker-owned writes propagate failures so the queue cannot settle an unpersisted run.
         """
-        if session.runs is None:
-            session.runs = []
-        session.runs.append(run_output)
+        from agno.run.concurrency import get_worker_ownership
+
+        session.upsert_run(run=run_output)
+        self._update_session_metrics(session, run_output)
+        worker_owned = get_worker_ownership(run_output.run_id or "") is not None
         try:
-            await self.aupsert_session(session)
             if self.db is not None:
-                run_index = len(session.runs) - 1
+                from agno.run.status_persist import apersist_worker_owned_run
+                from agno.session._utils import resolve_run_index
+
+                if await apersist_worker_owned_run(
+                    self.db,
+                    run_output,
+                    session.session_id,
+                    run_output.user_id or session.user_id,
+                    session_data=session.session_data or {},
+                ):
+                    return
+                await self.aupsert_session(session)
+                run_index = resolve_run_index(session, run_output)
                 user_id = run_output.user_id or session.user_id
                 try:
                     if isinstance(self.db, AsyncBaseDb):
@@ -515,6 +575,225 @@ class BaseExternalAgent:
                     pass
         except Exception as upsert_err:
             log_warning(f"Failed to persist run for {self.framework} agent '{self.id}': {upsert_err}")
+            if strict or worker_owned:
+                raise
+
+    def get_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
+        """Read a session scoped to this agent and, when supplied, its user."""
+        if self.db is None:
+            return None
+        if isinstance(self.db, AsyncBaseDb):
+            raise ValueError("Use aget_session with an async database")
+        session = self.db.get_session(session_id=session_id, session_type=SessionType.AGENT, user_id=user_id)
+        if isinstance(session, dict):
+            session = AgentSession.from_dict(session)
+        if not isinstance(session, AgentSession) or session.agent_id != self.get_id():
+            return None
+        return session
+
+    async def aget_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
+        """Read a persisted session without creating a missing session."""
+        if self.db is None:
+            return None
+        if isinstance(self.db, BaseDb):
+            # Match the synchronous persistence path, including thread-local in-memory SQLite.
+            return self.get_session(session_id, user_id)
+        session = await self.db.get_session(session_id=session_id, session_type=SessionType.AGENT, user_id=user_id)
+        if isinstance(session, dict):
+            session = AgentSession.from_dict(session)
+        if not isinstance(session, AgentSession) or session.agent_id != self.get_id():
+            return None
+        return session
+
+    def cancel_run(self, run_id: str) -> bool:
+        """Store cancellation intent and interrupt a live local SDK handle."""
+        from agno.run.cancel import cancel_run
+
+        registered = cancel_run(run_id)
+        live = _live_handles.get(run_id)
+        if live is not None and not live.loop.is_closed():
+            asyncio.run_coroutine_threadsafe(live.agent._ainterrupt_live_handle(run_id), live.loop)
+        return registered
+
+    async def acancel_run(self, run_id: str) -> bool:
+        """Store cancellation intent and interrupt the owning process's handle."""
+        from agno.run.cancel import acancel_run
+
+        registered = await acancel_run(run_id)
+        live = _live_handles.get(run_id)
+        if live is not None and not live.loop.is_closed():
+            if live.loop is asyncio.get_running_loop():
+                await live.agent._ainterrupt_live_handle(run_id)
+            else:
+                await asyncio.wrap_future(
+                    asyncio.run_coroutine_threadsafe(live.agent._ainterrupt_live_handle(run_id), live.loop)
+                )
+        return registered
+
+    def _set_run_handle(self, run_id: str, handle: Any) -> None:
+        _live_handles[run_id] = _LiveHandle(self, handle, asyncio.get_running_loop(), owner=_handle_owner.get())
+
+    def _clear_run_handle(self, run_id: str) -> None:
+        """Drop this attempt's handle. A handle a newer attempt registered for the same run is kept."""
+        live = _live_handles.get(run_id)
+        owner = _handle_owner.get()
+        if live is not None and (owner is None or live.owner is owner):
+            _live_handles.pop(run_id, None)
+
+    async def _ainterrupt_run(self, handle: Any) -> None:
+        """Interrupt an adapter's active SDK handle."""
+        raise NotImplementedError
+
+    async def _ainterrupt_live_handle(self, run_id: str) -> None:
+        live = _live_handles.get(run_id)
+        if live is None or live.interrupted:
+            return
+        live.interrupted = True
+        try:
+            await live.agent._ainterrupt_run(live.handle)
+        except Exception as error:
+            live.interrupted = False
+            log_warning(f"Could not interrupt external run {run_id}: {error}")
+
+    @asynccontextmanager
+    async def _run_cancellation(self, run_id: str) -> AsyncIterator[None]:
+        from agno.run.cancel import acleanup_run, ais_cancelled, araise_if_cancelled, aregister_run
+
+        await aregister_run(run_id)
+        owner_token = _handle_owner.set(object())
+
+        async def watch() -> None:
+            while True:
+                try:
+                    if await ais_cancelled(run_id):
+                        await self._ainterrupt_live_handle(run_id)
+                except Exception as error:
+                    log_warning(f"Cancellation check failed for external run {run_id}: {error}")
+                await asyncio.sleep(0.5)
+
+        watcher = asyncio.create_task(watch())
+        try:
+            await araise_if_cancelled(run_id)
+            yield
+            await araise_if_cancelled(run_id)
+        except Exception:
+            await araise_if_cancelled(run_id)
+            raise
+        finally:
+            watcher.cancel()
+            with suppress(asyncio.CancelledError):
+                await watcher
+            self._clear_run_handle(run_id)
+            _handle_owner.reset(owner_token)
+            await acleanup_run(run_id)
+
+    async def _aprepare_pending_run(
+        self, run_id: str, session_id: str, user_id: Optional[str], input: Any
+    ) -> RunOutput:
+        """Persist an idempotent PENDING row before background or queued execution."""
+        from agno.os.job_queue import _aappend_pending_run
+
+        run = RunOutput(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            agent_id=self.get_id(),
+            agent_name=self.name,
+            input=RunInput(input_content=input),
+            status=RunStatus.pending,
+        )
+        session = await _aappend_pending_run(
+            self, session_id, run.to_dict(), user_id, lambda: self.aread_or_create_session(session_id, user_id)
+        )
+        if session is not None and session.get_run(run_id) is None:
+            await self._apersist_run_in_session(session, run, strict=True)
+        return run
+
+    async def _apersist_run_fallback(
+        self, session_id: str, run_response: RunOutput, user_id: Optional[str] = None
+    ) -> None:
+        """Re-read the session and persist one run; completed or cancelled rows win."""
+        session = await self.aread_or_create_session(session_id, user_id)
+        existing = session.get_run(run_response.run_id or "")
+        if existing is not None and existing.status in (RunStatus.completed, RunStatus.cancelled):
+            return
+        await self._apersist_run_in_session(session, run_response, strict=True)
+
+    async def _astart_background(
+        self,
+        input: Any,
+        *,
+        run_id: str,
+        session_id: str,
+        user_id: Optional[str],
+        stream: bool,
+        yield_run_output: bool,
+        **kwargs: Any,
+    ) -> Any:
+        from agno.run.background import _BackgroundStream, _execute_background, _spawn_background
+        from agno.run.cancel import aregister_run
+        from agno.run.status_persist import apersist_run_transition
+
+        run = await self._aprepare_pending_run(run_id, session_id, user_id, input)
+        await aregister_run(run_id)
+        transport = _BackgroundStream(run, yield_run_output=yield_run_output) if stream else None
+        if transport is not None:
+            await transport.register()
+
+        async def transition(full_run: bool) -> None:
+            await apersist_run_transition(self, "agent", session_id, run, user_id=user_id, full_run=full_run)
+
+        async def execute() -> None:
+            if transport is None:
+                result = await self._arun_non_stream(
+                    input, run_id=run_id, session_id=session_id, user_id=user_id, **kwargs
+                )
+                run.__dict__.update(result.__dict__)
+            else:
+                async for event in self._arun_stream(
+                    input, run_id=run_id, session_id=session_id, user_id=user_id, yield_run_output=True, **kwargs
+                ):
+                    if isinstance(event, RunOutput):
+                        run.__dict__.update(event.__dict__)
+                    else:
+                        await transport.publish(event)
+            await transition(True)
+
+        async def failure() -> None:
+            if transport is not None:
+                if run.status == RunStatus.cancelled:
+                    event: RunOutputEvent = RunCancelledEvent(
+                        run_id=run_id, session_id=session_id, agent_id=self.get_id(), reason="Run cancelled"
+                    )
+                else:
+                    event = RunErrorEvent(
+                        run_id=run_id,
+                        session_id=session_id,
+                        agent_id=self.get_id(),
+                        content=str(run.content or "Background run failed"),
+                    )
+                await transport.publish(event)
+
+        _spawn_background(
+            _execute_background(
+                run,
+                execute,
+                transition,
+                on_running=transport.running if transport else None,
+                on_terminal=transport.complete if transport else None,
+                on_failure=failure,
+            )
+        )
+        return transport if transport is not None else run
+
+    async def _arun_background_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        transport = await self._astart_background(input, stream=True, **kwargs)
+        pump = transport.pump()
+        try:
+            async for item in pump:
+                yield item
+        finally:
+            await pump.aclose()
 
     # Run inspection (used by AgentOS /agents/{id}/runs/{run_id} for external agents)
 
@@ -524,19 +803,23 @@ class BaseExternalAgent:
         run = session.get_run(run_id)
         return run if isinstance(run, RunOutput) else None
 
-    def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
+    def get_run_output(
+        self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> Optional[RunOutput]:
         """Get a persisted RunOutput for this adapter."""
         if not session_id:
             return None
-        session = self.read_or_create_session(session_id)
-        return self._find_run_in_session(session, run_id)
+        session = self.get_session(session_id, user_id)
+        return self._find_run_in_session(session, run_id) if session else None
 
-    async def aget_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
+    async def aget_run_output(
+        self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> Optional[RunOutput]:
         """Get a persisted RunOutput for this adapter."""
         if not session_id:
             return None
-        session = await self.aread_or_create_session(session_id)
-        return self._find_run_in_session(session, run_id)
+        session = await self.aget_session(session_id, user_id)
+        return self._find_run_in_session(session, run_id) if session else None
 
     def _build_run_output(
         self,
@@ -547,6 +830,7 @@ class BaseExternalAgent:
         content: Any,
         status: RunStatus,
         tools: Optional[List[ToolExecution]] = None,
+        metrics: Optional[RunMetrics] = None,
     ) -> RunOutput:
         """Build a RunOutput with properly populated messages for chat history."""
         now = int(time())
@@ -600,10 +884,79 @@ class BaseExternalAgent:
             messages=messages,
             tools=tools,
             status=status,
+            metrics=metrics,
             created_at=now,
         )
 
-    def _get_history_from_session(self, session: AgentSession) -> List[Dict[str, Any]]:
+    @staticmethod
+    def _build_metrics(
+        totals: BaseMetrics,
+        models: Sequence[ModelMetrics],
+        additional_metrics: Optional[Dict[str, Any]] = None,
+    ) -> RunMetrics:
+        """Assemble RunMetrics from a framework's turn totals and its per-model entries.
+
+        Adapters only parse their SDK's usage object into these two pieces; the totals are
+        the framework's own figures for the turn and are not recomputed from the models,
+        because frameworks may count helper models separately from the main conversation.
+        """
+        return RunMetrics(
+            input_tokens=totals.input_tokens,
+            output_tokens=totals.output_tokens,
+            total_tokens=totals.total_tokens,
+            cache_read_tokens=totals.cache_read_tokens,
+            cache_write_tokens=totals.cache_write_tokens,
+            reasoning_tokens=totals.reasoning_tokens,
+            cost=totals.cost,
+            details={"model": list(models)} if models else None,
+            additional_metrics=additional_metrics or None,
+        )
+
+    @staticmethod
+    def _finish_metrics(timer: RunMetrics, adapter_metrics: Optional[RunMetrics]) -> Optional[RunMetrics]:
+        """Stop the run timer and merge its timing into the metrics the adapter reported.
+
+        Token counts and cost come from the framework; wall-clock duration and time to
+        first token are measured here so every external agent reports them the same way.
+        """
+        timer.stop_timer()
+        metrics = adapter_metrics if adapter_metrics is not None else RunMetrics()
+        if metrics.duration is None:
+            metrics.duration = timer.duration
+        if metrics.time_to_first_token is None:
+            metrics.time_to_first_token = timer.time_to_first_token
+        return metrics
+
+    @staticmethod
+    def _update_session_metrics(session: AgentSession, run_output: RunOutput) -> None:
+        """Add a completed run's metrics to the session totals AgentOS reads from session_data."""
+        if run_output.metrics is None or run_output.status != RunStatus.completed:
+            return
+        if session.session_data is None:
+            session.session_data = {}
+        stored = session.session_data.get("session_metrics")
+        session_metrics = SessionMetrics.from_dict(stored) if isinstance(stored, dict) else SessionMetrics()
+        session_metrics.accumulate_from_run(run_output.metrics)
+        session.session_data["session_metrics"] = session_metrics.to_dict()
+
+    def _finish_run_output(
+        self, run: RunOutput, run_state: Dict[str, Any], continuation: Optional[ExternalContinuation]
+    ) -> None:
+        """Prepend a continuation's kept transcript, then let the adapter annotate messages."""
+        if continuation is not None:
+            run.messages = continuation.messages + (run.messages or [])
+            run.tools = (continuation.tools or []) + (run.tools or []) or None
+            run.input = continuation.source_input
+            run.forked_from_run_id = continuation.forked_from_run_id
+            run.forked_from_message_index = continuation.forked_from_message_index
+        self._annotate_run_output(run, run_state)
+
+    def _annotate_run_output(self, run: RunOutput, run_state: Dict[str, Any]) -> None:
+        """Attach adapter-specific per-message data recorded in run_state during the run."""
+
+    def _get_history_from_session(
+        self, session: AgentSession, exclude_run_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """Extract conversation history from session runs for adapters to use.
 
         Includes user, assistant, and tool messages so adapters have full
@@ -618,10 +971,35 @@ class BaseExternalAgent:
         history: List[Dict[str, Any]] = []
         if not session.runs:
             return history
+        # A fork already contains the retained prefix of its source run. Its
+        # predecessor is the source's predecessor, not the most recent sibling.
+        # Keep predecessor links so forks of older branches also discard any
+        # intervening turns, without copying the entire history for every run.
+        runs: List[RunOutput] = []
+        predecessors: List[Optional[int]] = []
+        indexes: Dict[str, int] = {}
+        head: Optional[int] = None
         for run in session.runs:
-            if not isinstance(run, RunOutput) or not run.messages:
+            if not isinstance(run, RunOutput) or not run.messages or run.run_id == exclude_run_id:
                 continue
-            for msg in run.messages:
+            predecessor = head
+            if run.forked_from_run_id:
+                source_index = indexes.get(run.forked_from_run_id)
+                # If the source was deleted, its earlier ancestry is unknown;
+                # only the prefix retained in the fork is safe to replay.
+                predecessor = predecessors[source_index] if source_index is not None else None
+            head = len(runs)
+            runs.append(run)
+            predecessors.append(predecessor)
+            if run.run_id:
+                indexes[run.run_id] = head
+
+        branch: List[RunOutput] = []
+        while head is not None:
+            branch.append(runs[head])
+            head = predecessors[head]
+        for run in reversed(branch):
+            for msg in run.messages or []:
                 if msg.role == "assistant" and msg.tool_calls:
                     # Assistant message with tool calls (no text content)
                     history.append(
@@ -710,139 +1088,145 @@ class BaseExternalAgent:
     # ---------------------------------------------------------------------------
 
     async def _arun_non_stream(self, input: Any, **kwargs: Any) -> RunOutput:
-        run_id = str(uuid4())
+        run_id = kwargs.pop("run_id", None) or str(uuid4())
         session_id = kwargs.get("session_id") or str(uuid4())
+        kwargs["session_id"] = session_id
         user_id = kwargs.get("user_id")
-
-        # Load session and extract history for the adapter
-        session = None
-        history: Optional[List[Dict[str, Any]]] = None
-        if self.db is not None:
-            session = await self.aread_or_create_session(session_id, user_id)
-            history = self._get_history_from_session(session)
-
+        continuation: Optional[ExternalContinuation] = kwargs.get("continuation")
+        record_input = input if continuation is None else continuation.record_input
+        run_state: Dict[str, Any] = {}
+        session = await self.aread_or_create_session(session_id, user_id) if self.db else None
+        history = (
+            self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
+        )
+        timer = RunMetrics()
+        timer.start_timer()
         try:
-            content = await self._arun_adapter(input, history=history, run_id=run_id, session=session, **kwargs)
+            async with self._run_cancellation(run_id):
+                content = await self._arun_adapter(
+                    input, history=history, run_id=run_id, session=session, run_state=run_state, **kwargs
+                )
             run_output = self._build_run_output(
-                run_id=run_id,
-                session_id=session_id,
-                user_id=user_id,
-                input_text=input,
-                content=content.content if isinstance(content, ExternalRunResult) else content,
+                run_id,
+                session_id,
+                user_id,
+                record_input,
+                content.content if isinstance(content, ExternalRunResult) else content,
+                RunStatus.completed,
                 tools=content.tools if isinstance(content, ExternalRunResult) else None,
-                status=RunStatus.completed,
+                metrics=self._finish_metrics(
+                    timer, content.metrics if isinstance(content, ExternalRunResult) else None
+                ),
             )
             if isinstance(content, ExternalRunResult) and content.warnings:
                 run_output.metadata = {"warnings": content.warnings}
-        except Exception as e:
-            log_exception(f"Error in {self.framework} agent '{self.id}': {e}")
+        except RunCancelledException:
             run_output = self._build_run_output(
-                run_id=run_id,
-                session_id=session_id,
-                user_id=user_id,
-                input_text=input,
-                content=str(e),
-                status=RunStatus.error,
+                run_id,
+                session_id,
+                user_id,
+                record_input,
+                "Run cancelled",
+                RunStatus.cancelled,
+                tools=list(run_state.get("tools", {}).values()) or None,
             )
-
-        # Persist the session row and the run row (v3 denormalized storage)
+        except Exception as error:
+            log_exception(f"Error in {self.framework} agent '{self.id}': {error}")
+            run_output = self._build_run_output(
+                run_id,
+                session_id,
+                user_id,
+                record_input,
+                str(error),
+                RunStatus.error,
+                tools=list(run_state.get("tools", {}).values()) or None,
+            )
+        self._finish_run_output(run_output, run_state, continuation)
         if session is not None:
             await self._apersist_run_in_session(session, run_output)
-
         return run_output
 
-    # ---------------------------------------------------------------------------
-    # Internal: streaming
-    # ---------------------------------------------------------------------------
-
-    async def _arun_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
-        run_id = str(uuid4())
+    async def _arun_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        run_id = kwargs.pop("run_id", None) or str(uuid4())
         session_id = kwargs.get("session_id") or str(uuid4())
+        kwargs["session_id"] = session_id
         user_id = kwargs.get("user_id")
-
-        # Load session and extract history for the adapter
-        session = None
-        history: Optional[List[Dict[str, Any]]] = None
-        if self.db is not None:
-            session = await self.aread_or_create_session(session_id, user_id)
-            history = self._get_history_from_session(session)
-
-        yield RunStartedEvent(
-            run_id=run_id,
-            agent_id=self.get_id(),
-            agent_name=self.name or "",
-            session_id=session_id,
+        yield_run_output = kwargs.pop("yield_run_output", False)
+        continuation: Optional[ExternalContinuation] = kwargs.get("continuation")
+        run_state: Dict[str, Any] = {}
+        session = await self.aread_or_create_session(session_id, user_id) if self.db else None
+        history = (
+            self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
         )
-
+        yield RunStartedEvent(run_id=run_id, agent_id=self.get_id(), agent_name=self.name or "", session_id=session_id)
         accumulated_content = ""
         warnings: List[Dict[str, Any]] = []
-        accumulated_tools: List[ToolExecution] = []
+        tools: Dict[str, ToolExecution] = {}
+        status = RunStatus.completed
         run_error: Optional[Exception] = None
-
+        adapter_metrics: Optional[RunMetrics] = None
+        timer = RunMetrics()
+        timer.start_timer()
         try:
-            # Map tool_call_id -> ToolExecution for merging started+completed
-            tool_map: Dict[str, ToolExecution] = {}
-
-            async for event in self._arun_adapter_stream(
-                input, history=history, run_id=run_id, session=session, **kwargs
-            ):
-                if isinstance(event, ExternalRunWarningEvent) and event.warning is not None:
-                    warnings.append(event.warning)
-                if isinstance(event, RunContentEvent):
-                    accumulated_content += event.content or ""
-                elif isinstance(event, ToolCallStartedEvent) and event.tool:
-                    tool = ToolExecution(
-                        tool_call_id=event.tool.tool_call_id,
-                        tool_name=event.tool.tool_name,
-                        tool_args=event.tool.tool_args,
-                    )
-                    tool_map[event.tool.tool_call_id or ""] = tool
-                    accumulated_tools.append(tool)
-                elif isinstance(event, ToolCallCompletedEvent) and event.tool:
-                    # Merge result into the existing tool entry
-                    existing = tool_map.get(event.tool.tool_call_id or "")
-                    if existing:
-                        existing.result = event.tool.result
-                    else:
-                        accumulated_tools.append(event.tool)
-                yield event
-        except Exception as e:
-            log_exception(f"Error in {self.framework} agent '{self.id}': {e}")
-            run_error = e
-
-        # Persist the run to the session. Swallow DB failures so the consumer
-        # still receives the terminal RunCompletedEvent / RunErrorEvent below.
+            async with self._run_cancellation(run_id):
+                async for event in self._arun_adapter_stream(
+                    input, history=history, run_id=run_id, session=session, run_state=run_state, **kwargs
+                ):
+                    if isinstance(event, ExternalRunMetricsEvent):
+                        adapter_metrics = event.metrics
+                        continue
+                    if isinstance(event, ExternalRunWarningEvent) and event.warning is not None:
+                        warnings.append(event.warning)
+                    if isinstance(event, RunContentEvent):
+                        if event.content:
+                            timer.set_time_to_first_token()
+                        accumulated_content += event.content or ""
+                    elif isinstance(event, (ToolCallStartedEvent, ToolCallCompletedEvent)) and event.tool:
+                        key = event.tool.tool_call_id or str(uuid4())
+                        if key not in tools:
+                            tools[key] = event.tool
+                        elif isinstance(event, ToolCallCompletedEvent):
+                            tools[key].result = event.tool.result
+                            tools[key].tool_call_error = event.tool.tool_call_error
+                    yield event
+        except RunCancelledException:
+            status = RunStatus.cancelled
+        except Exception as error:
+            log_exception(f"Error in {self.framework} agent '{self.id}': {error}")
+            run_error = error
+            status = RunStatus.error
+        run = self._build_run_output(
+            run_id,
+            session_id,
+            user_id,
+            input if continuation is None else continuation.record_input,
+            str(run_error) if run_error else accumulated_content,
+            status,
+            list(tools.values()) or None,
+            metrics=self._finish_metrics(timer, adapter_metrics) if status == RunStatus.completed else None,
+        )
+        if warnings:
+            run.metadata = {"warnings": warnings}
+        self._finish_run_output(run, run_state, continuation)
         if session is not None:
-            run_output = self._build_run_output(
-                run_id=run_id,
-                session_id=session_id,
-                user_id=user_id,
-                input_text=input,
-                content=str(run_error) if run_error is not None else accumulated_content,
-                status=RunStatus.error if run_error is not None else RunStatus.completed,
-                tools=accumulated_tools if accumulated_tools else None,
+            await self._apersist_run_in_session(session, run)
+        fields: Dict[str, Any] = dict(
+            run_id=run_id,
+            session_id=session_id,
+            agent_id=self.get_id(),
+            agent_name=self.name or "",
+            content=run.content,
+        )
+        if status == RunStatus.cancelled:
+            yield RunCancelledEvent(
+                run_id=run_id, session_id=session_id, agent_id=self.get_id(), reason="Run cancelled"
             )
-            if warnings:
-                run_output.metadata = {"warnings": warnings}
-            await self._apersist_run_in_session(session, run_output)
-
-        if run_error is not None:
-            yield RunErrorEvent(
-                run_id=run_id,
-                agent_id=self.get_id(),
-                agent_name=self.name or "",
-                session_id=session_id,
-                content=str(run_error),
-                error_type=error_type_of(run_error),
-            )
+        elif run_error is not None:
+            yield RunErrorEvent(**fields, error_type=error_type_of(run_error))
         else:
-            yield RunCompletedEvent(
-                run_id=run_id,
-                agent_id=self.get_id(),
-                agent_name=self.name or "",
-                session_id=session_id,
-                content=accumulated_content,
-            )
+            yield RunCompletedEvent(**fields, metrics=run.metrics)
+        if yield_run_output:
+            yield run
 
     def _run_stream(self, input: Any, **kwargs: Any) -> Iterator[RunOutputEvent]:
         """Sync streaming wrapper. Runs the async stream on a background thread."""
@@ -884,8 +1268,10 @@ class BaseExternalAgent:
     # Subclass hooks (must be implemented by adapters)
     # ---------------------------------------------------------------------------
 
-    async def _arun_adapter(self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any) -> Any:
-        """Non-streaming execution. Return the response content.
+    async def _arun_adapter(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> Union[str, ExternalRunResult]:
+        """Non-streaming execution. Return content and optional tool executions.
 
         kwargs includes `session` (the loaded AgentSession, or None if no db).
         Mutate `session.session_data` in place to persist adapter-specific

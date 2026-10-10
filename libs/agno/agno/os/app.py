@@ -23,7 +23,6 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.job_queue import QueueConfig
 from agno.knowledge.knowledge import Knowledge
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
-from agno.os.middleware.cors import OriginPolicy
 from agno.os.config import (
     AgentOSConfig,
     AuthorizationConfig,
@@ -50,6 +49,7 @@ from agno.os.config import (
 from agno.os.event_streams import BaseEventStream, set_event_stream
 from agno.os.interfaces.base import BaseInterface
 from agno.os.job_queue import apply_queue_config, queue_lifespan
+from agno.os.middleware.cors import OriginPolicy
 from agno.os.router import get_base_router, get_info_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
 from agno.os.routers.approvals import get_approval_router
