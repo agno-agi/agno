@@ -4,8 +4,9 @@ from importlib import import_module
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Set, Tuple
 from uuid import uuid4
 
-from agno.agents.base import BaseExternalAgent, ExternalRunResult
+from agno.agents.base import BaseExternalAgent, ExternalRunMetricsEvent, ExternalRunResult
 from agno.exceptions import RunCancelledException
+from agno.metrics import ModelMetrics, RunMetrics
 from agno.models.response import ToolExecution
 from agno.run.agent import (
     RunContentEvent,
@@ -110,6 +111,8 @@ class _StreamState:
     tool_info: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     error: Optional[str] = None
     error_info: Optional[str] = None
+    usage_first: Any = None
+    usage_last: Any = None
 
 
 @dataclass
@@ -120,6 +123,8 @@ class _TurnOutcome:
     error: Any = None
     items: List[Any] = field(default_factory=list)
     final_response: Optional[str] = None
+    usage_first: Any = None
+    usage_last: Any = None
 
 
 @dataclass
@@ -389,14 +394,20 @@ class CodexAgent(BaseExternalAgent):
                     _error_info(result.error),
                 )
 
-        return ExternalRunResult(self._final_text(result), self._tools_from_items(result.items) or None)
+        return ExternalRunResult(
+            self._final_text(result),
+            self._tools_from_items(result.items) or None,
+            metrics=self._metrics_from_usage(result.usage_first, result.usage_last),
+        )
 
     async def _acollect_turn(self, handle: Any, run_state: Optional[Dict[str, Any]] = None) -> _TurnOutcome:
         """Consume a turn's notification stream the way the SDK's run() does.
 
         Unlike run(), which returns items only once the turn ends, this records each tool call
-        in run_state["tools"] as it completes. A transport error later in the turn then still
-        leaves the work that was done for the base class to keep when it retries or gives up.
+        in run_state["tools"] as it completes, so a transport error later in the turn still
+        leaves the work that was done for the base class to keep. It also keeps the first and
+        last token usage report: a turn with tool calls makes several model requests and the
+        app-server reports usage after each, so both are needed to size the whole turn.
         """
         outcome = _TurnOutcome()
         async for notification in handle.stream():
@@ -404,7 +415,13 @@ class CodexAgent(BaseExternalAgent):
             payload = getattr(notification, "payload", None)
             if payload is None:
                 continue
-            if method == "item/completed":
+            if method == "thread/tokenUsage/updated":
+                usage = getattr(payload, "token_usage", None)
+                if usage is not None:
+                    if outcome.usage_first is None:
+                        outcome.usage_first = usage
+                    outcome.usage_last = usage
+            elif method == "item/completed":
                 item = getattr(payload, "item", None)
                 if item is None:
                     continue
@@ -490,6 +507,42 @@ class CodexAgent(BaseExternalAgent):
 
         if state.error:
             raise CodexTurnError(f"Codex turn failed: {state.error}", state.error_info)
+            raise RuntimeError(f"Codex turn failed: {state.error}")
+        metrics = self._metrics_from_usage(state.usage_first, state.usage_last)
+        if metrics is not None:
+            yield ExternalRunMetricsEvent(run_id=run_id, agent_id=self.get_id(), metrics=metrics)
+
+    # Codex usage field -> Agno metrics field
+    _USAGE_FIELDS = (
+        ("input_tokens", "input_tokens"),
+        ("output_tokens", "output_tokens"),
+        ("total_tokens", "total_tokens"),
+        ("cached_input_tokens", "cache_read_tokens"),
+        ("cache_write_input_tokens", "cache_write_tokens"),
+        ("reasoning_output_tokens", "reasoning_tokens"),
+    )
+
+    def _metrics_from_usage(self, first: Any, last: Any) -> Optional[RunMetrics]:
+        """Map a turn's token usage to RunMetrics from its first and last usage reports.
+
+        Each thread/tokenUsage/updated carries ``last`` (one model request) and ``total`` (the
+        thread so far). A turn with tool calls makes several requests, so the turn's usage is
+        the growth of the thread total over the turn: the final total minus the total before
+        the turn, which is the first report's total minus its own request. Reading only
+        ``last`` would count a single request. Codex reports input_tokens inclusive of the
+        cached prefix, like the OpenAI API, and reports no cost.
+        """
+        first_last = getattr(first, "last", None)
+        first_total = getattr(first, "total", None)
+        final_total = getattr(last, "total", None)
+        if first_last is None or first_total is None or final_total is None:
+            return None
+        counts: Dict[str, Any] = {}
+        for codex_field, agno_field in self._USAGE_FIELDS:
+            before_turn = int(getattr(first_total, codex_field, 0) or 0) - int(getattr(first_last, codex_field, 0) or 0)
+            counts[agno_field] = max(0, int(getattr(final_total, codex_field, 0) or 0) - before_turn)
+        model = ModelMetrics(id=self.model or "codex", provider="openai", **counts)
+        return self._build_metrics(model, [model])
 
     # ---------------------------------------------------------------------------
     # Notification translation
@@ -525,6 +578,14 @@ class CodexAgent(BaseExternalAgent):
         method = getattr(notification, "method", "") or ""
         payload = getattr(notification, "payload", None)
         if payload is None:
+            return
+
+        if method == "thread/tokenUsage/updated":
+            usage = getattr(payload, "token_usage", None)
+            if usage is not None:
+                if state.usage_first is None:
+                    state.usage_first = usage
+                state.usage_last = usage
             return
 
         if method == "item/agentMessage/delta":

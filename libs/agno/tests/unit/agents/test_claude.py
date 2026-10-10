@@ -61,6 +61,11 @@ class ResultMessage:
     is_error: bool = False
     errors: Optional[List[str]] = None
     api_error_status: Optional[int] = None
+    usage: Optional[Dict[str, Any]] = None
+    total_cost_usd: Optional[float] = None
+    model_usage: Optional[Dict[str, Any]] = None
+    num_turns: Optional[int] = None
+    duration_api_ms: Optional[int] = None
 
 
 class StreamEvent:
@@ -93,6 +98,8 @@ class FakeState:
         self.session_counter = 0
         self.calls: List[Dict[str, Any]] = []
         self.reply = "ok"
+        # Extra ResultMessage fields (usage, cost, model_usage) for metrics tests
+        self.result_fields: Dict[str, Any] = {}
 
 
 @pytest.fixture
@@ -112,7 +119,7 @@ def fake_sdk(monkeypatch) -> FakeState:
             state.known_sessions.add(sdk_session_id)
         yield SystemMessage(subtype="init", data={"session_id": sdk_session_id})
         yield AssistantMessage(content=[TextBlock(text=state.reply)])
-        yield ResultMessage(session_id=sdk_session_id, result=state.reply)
+        yield ResultMessage(session_id=sdk_session_id, result=state.reply, **state.result_fields)
 
     module = ModuleType("claude_agent_sdk")
 
@@ -1259,3 +1266,78 @@ async def test_fork_failures_are_not_continuable_and_not_retried(fake_sdk):
     with pytest.raises(RunNotContinuableError):
         await agent._afork_sdk_session({"session_id": "sdk-1", "uuid": "u-1"}, None)
     assert agent._is_retryable_error(RunNotContinuableError("transcript entry not found")) is False
+
+
+# ---------------------------------------------------------------------------
+# Metrics
+# ---------------------------------------------------------------------------
+
+USAGE = {"input_tokens": 3, "output_tokens": 5, "cache_read_input_tokens": 14334, "cache_creation_input_tokens": 5369}
+MODEL_USAGE = {
+    "claude-sonnet-4-6": {
+        "inputTokens": 3,
+        "outputTokens": 5,
+        "cacheReadInputTokens": 14334,
+        "cacheCreationInputTokens": 5369,
+        "costUSD": 0.0365982,
+        "contextWindow": 200000,
+    }
+}
+
+
+def _bill(state: FakeState) -> None:
+    state.result_fields = dict(
+        usage=dict(USAGE),
+        total_cost_usd=0.0365982,
+        model_usage={k: dict(v) for k, v in MODEL_USAGE.items()},
+        num_turns=1,
+        duration_api_ms=1782,
+    )
+
+
+def test_run_metrics_come_from_the_result_message(fake_sdk, tmp_db):
+    _bill(fake_sdk)
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, model="claude-sonnet-4-6")
+    run = agent.run("hi", session_id="s")
+    metrics = run.metrics
+    assert metrics is not None
+    assert (metrics.input_tokens, metrics.output_tokens, metrics.total_tokens) == (3, 5, 8)
+    assert (metrics.cache_read_tokens, metrics.cache_write_tokens) == (14334, 5369)
+    assert metrics.cost == pytest.approx(0.0365982)
+    assert metrics.duration is not None and metrics.duration >= 0
+    assert metrics.additional_metrics == {"num_turns": 1, "api_duration": 1.782}
+    [model] = metrics.details["model"]
+    assert (model.id, model.provider) == ("claude-sonnet-4-6", "anthropic")
+    assert model.cost == pytest.approx(0.0365982)
+    stored = agent.get_run_output(run.run_id, "s")
+    assert stored is not None and stored.metrics is not None and stored.metrics.total_tokens == 8
+
+
+def test_streamed_runs_report_metrics_without_forwarding_the_event(fake_sdk, tmp_db):
+    _bill(fake_sdk)
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, model="claude-sonnet-4-6")
+    events = _collect(agent, "hi", session_id="s")
+    assert not [e for e in events if type(e).__name__ == "ExternalRunMetricsEvent"]
+    completed = [e for e in events if isinstance(e, RunCompletedEvent)][-1]
+    assert completed.metrics is not None and completed.metrics.total_tokens == 8
+    assert completed.metrics.time_to_first_token is not None
+
+
+def test_session_metrics_accumulate_across_runs(fake_sdk, tmp_db):
+    _bill(fake_sdk)
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, model="claude-sonnet-4-6")
+    agent.run("one", session_id="s")
+    agent.run("two", session_id="s")
+    totals = agent.get_session("s").session_data["session_metrics"]
+    assert (totals["input_tokens"], totals["output_tokens"], totals["total_tokens"]) == (6, 10, 16)
+    assert totals["cache_read_tokens"] == 2 * 14334
+    assert totals["cost"] == pytest.approx(2 * 0.0365982)
+    assert totals["additional_metrics"]["num_turns"] == 2
+    [model] = totals["details"]["model"]
+    assert model["id"] == "claude-sonnet-4-6" and model["total_tokens"] == 16
+
+
+def test_runs_without_usage_still_report_duration(fake_sdk, tmp_db):
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db)
+    run = agent.run("hi", session_id="s")
+    assert run.metrics is not None and run.metrics.total_tokens == 0 and run.metrics.duration is not None
