@@ -1097,7 +1097,9 @@ def update_session_state_util(
     if session is None:
         raise Exception("Session not found")
 
-    if session.session_data is not None and "session_state" not in session.session_data:
+    if session.session_data is None:
+        session.session_data = {}
+    if "session_state" not in session.session_data:
         session.session_data["session_state"] = {}
 
     for key, value in session_state_updates.items():
@@ -1123,7 +1125,9 @@ async def aupdate_session_state_util(
     if session is None:
         raise Exception("Session not found")
 
-    if session.session_data is not None and "session_state" not in session.session_data:
+    if session.session_data is None:
+        session.session_data = {}
+    if "session_state" not in session.session_data:
         session.session_data["session_state"] = {}
 
     for key, value in session_state_updates.items():
