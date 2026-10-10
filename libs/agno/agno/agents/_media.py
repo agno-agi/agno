@@ -201,38 +201,33 @@ def prior_attachments(
     limit: Optional[int] = RESTORED_RUNS_LIMIT,
     until_run_id: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    """Attachments recorded on the last `limit` earlier runs of the session, keyed by run.
+    """Attachments on the last `limit` runs of the conversation branch, keyed by the run that received them.
 
-    They are re-staged under that run's own folder, so the paths the harness's transcript
-    already names resolve again on whichever replica runs the next turn. A continued run's
-    transcript ends at its source run, so until_run_id ends the window there, source included.
+    The branch follows fork ancestry, as history replay does, and ends at until_run_id when a
+    continued run's transcript ends there. A fork carries its source's input, so its media is
+    keyed by the original run, whose folder the transcript names.
     """
-    found: Dict[str, Dict[str, Any]] = {}
+    from agno.agents.base import session_branch
+
     runs = list(getattr(session, "runs", None) or [])
-    if until_run_id is not None:
-        ids = [getattr(run, "run_id", None) for run in runs]
-        if until_run_id in ids:
-            runs = runs[: ids.index(until_run_id) + 1]
-    runs = [
-        run for run in runs if getattr(run, "run_id", None) not in (exclude_run_id, None) or run.run_id == until_run_id
-    ]
+    branch = session_branch(runs, exclude_run_id=exclude_run_id, until_run_id=until_run_id)
     if limit is not None:
-        runs = runs[-limit:] if limit > 0 else []
-    for run in runs:
-        run_id = getattr(run, "run_id", None)
-        run_input = getattr(run, "input", None)
-        if not run_id or run_input is None:
+        branch = branch[-limit:] if limit > 0 else []
+    forked_from = {run.run_id: run.forked_from_run_id for run in runs if getattr(run, "run_id", None)}
+    found: Dict[str, Dict[str, Any]] = {}
+    for run in branch:
+        if not run.run_id or run.input is None:
             continue
+        owner = run.run_id
+        seen = {owner}
+        while forked_from.get(owner) and forked_from[owner] not in seen:
+            owner = forked_from[owner]  # type: ignore[assignment]
+            seen.add(owner)
         media = {
-            key: list(values)
-            for key, values in (
-                ("images", getattr(run_input, "images", None)),
-                ("files", getattr(run_input, "files", None)),
-            )
-            if values
+            key: list(values) for key, values in (("images", run.input.images), ("files", run.input.files)) if values
         }
-        if media:
-            found[run_id] = media
+        if media and owner not in found:
+            found[owner] = media
     return found
 
 
