@@ -1,12 +1,15 @@
+import asyncio
 import json
 from dataclasses import dataclass, field
 from importlib import import_module
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Set, Tuple
 from uuid import uuid4
 
-from agno.agents.base import BaseExternalAgent, ExternalRunResult
+from agno.agents.base import BaseExternalAgent, ExternalRunMetricsEvent, ExternalRunResult, run_coroutine_sync
 from agno.exceptions import RunCancelledException
+from agno.metrics import ModelMetrics, RunMetrics
 from agno.models.response import ToolExecution
+from agno.run.base import RunStatus
 from agno.run.agent import (
     RunContentEvent,
     RunOutputEvent,
@@ -36,13 +39,43 @@ _SANDBOX_ALIASES: Dict[str, str] = {
     "danger_full_access": "full-access",
 }
 
+
 # thread_start-only options that thread_resume does not accept.
 _START_ONLY_KEYS = {"ephemeral", "service_name", "session_start_source", "thread_source"}
+
+# codexErrorInfo values that fail the same way on every attempt, or are limits a retry would bypass.
+_PERMANENT_TURN_ERRORS = {
+    "contextWindowExceeded",
+    "sessionBudgetExceeded",
+    "usageLimitExceeded",
+    "unauthorized",
+    "badRequest",
+    "cyberPolicy",
+    "misalignmentPolicyViolation",
+    "tooManyDenials",
+}
+# JSON-RPC codes for requests the app-server rejects as malformed.
+_PERMANENT_RPC_CODES = {-32700, -32600, -32601, -32602}
+
+
+class CodexTurnError(RuntimeError):
+    """A failed Codex turn, with the app-server's codexErrorInfo value when it sent a plain one."""
+
+    def __init__(self, message: str, codex_error_info: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.codex_error_info = codex_error_info
 
 
 def _item_root(item: Any) -> Any:
     """Unwrap a pydantic RootModel (ThreadItem) to the concrete item."""
     return getattr(item, "root", item)
+
+
+def _error_info(error: Any) -> Optional[str]:
+    """The plain codexErrorInfo value of a TurnError. Structured variants (connection failures) give None."""
+    info = _item_root(getattr(error, "codex_error_info", None))
+    value = getattr(info, "value", info)
+    return value if isinstance(value, str) else None
 
 
 def _coerce_args(raw: Any) -> Optional[Dict[str, Any]]:
@@ -80,6 +113,21 @@ class _StreamState:
     emitted_text: bool = False
     tool_info: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     error: Optional[str] = None
+    error_info: Optional[str] = None
+    usage_first: Any = None
+    usage_last: Any = None
+
+
+@dataclass
+class _TurnOutcome:
+    """What a non-streaming turn produced, collected from the app-server notifications."""
+
+    status: Optional[str] = None
+    error: Any = None
+    items: List[Any] = field(default_factory=list)
+    final_response: Optional[str] = None
+    usage_first: Any = None
+    usage_last: Any = None
 
 
 @dataclass
@@ -111,6 +159,10 @@ class CodexAgent(BaseExternalAgent):
         env: Environment variables for the Codex process.
         thread_kwargs: Extra kwargs forwarded to thread_start / thread_resume.
         turn_kwargs: Extra kwargs forwarded to each turn.
+        retries: Number of times to retry a failed run. Cancelled runs, budget and usage limits and errors
+            that would fail again (context window, authentication, bad requests, policy) are not retried.
+        delay_between_retries: Seconds to wait before each retry.
+        exponential_backoff: Double the delay after each failed attempt.
 
     Example:
         from agno.agents.codex import CodexAgent
@@ -166,6 +218,109 @@ class CodexAgent(BaseExternalAgent):
         sdk = _sdk()
         async with sdk.AsyncCodex(self._codex_config(sdk)) as codex:
             await codex.login_api_key(api_key)
+
+    # ---------------------------------------------------------------------------
+    # Context compaction
+    # ---------------------------------------------------------------------------
+
+    def compact(self, session_id: str, user_id: Optional[str] = None, timeout: float = 120.0) -> bool:
+        """Sync version of acompact."""
+        return run_coroutine_sync(self.acompact(session_id, user_id=user_id, timeout=timeout))
+
+    async def acompact(self, session_id: str, user_id: Optional[str] = None, timeout: float = 120.0) -> bool:
+        """Compact the Codex thread behind an Agno session.
+
+        Codex keeps the conversation in its own thread. Compaction asks the app-server to
+        replace the older turns with a summary so later turns fit the context window; the
+        next run on the session continues from that summary. The thread, its rollout and the
+        summary stay on the machine running Codex.
+
+        Returns False when the session has no Codex thread, or its thread can no longer be
+        resumed (the stored id is then forgotten, as a run would). Waits until the thread is
+        idle again and raises TimeoutError if that takes longer than timeout seconds.
+
+        Compaction opens its own app-server on the thread, so it must not overlap a run on the
+        same session: two processes would append to one rollout. A run recorded as pending or
+        running for the session raises RuntimeError.
+        """
+        sdk = _sdk()
+        session = await self.aget_session(session_id, user_id)
+        thread_id = self._get_thread_id(session, session_id)
+        if not thread_id:
+            return False
+        self._check_no_run_in_flight(session, session_id)
+        async with self._new_client() as codex:
+            # Resume through the high-level client: it translates the adapter's options
+            # (sandbox names, approval mode, instructions) into the wire parameters that the
+            # low-level thread_resume would otherwise send verbatim.
+            try:
+                thread = await codex.thread_resume(thread_id, **self._thread_kwargs(sdk, resume=True))
+            except Exception as e:
+                if not self._is_missing_thread(e):
+                    raise
+                log_warning(f"Codex: cannot compact thread {thread_id} for session {session_id}: {e}. Forgetting it.")
+                self._forget_thread(session, session_id)
+                if session is not None and self.db is not None:
+                    await self.aupsert_session(session)
+                return False
+            await thread.compact()
+            await self._await_thread_idle(self._app_server_client(codex), thread_id, timeout)
+        log_debug(f"Codex: compacted thread {thread_id} for session {session_id}")
+        return True
+
+    @staticmethod
+    def _check_no_run_in_flight(session: Any, session_id: str) -> None:
+        for run in getattr(session, "runs", None) or []:
+            status = getattr(run.status, "value", run.status)
+            if status in (RunStatus.pending.value, RunStatus.running.value):
+                raise RuntimeError(
+                    f"Cannot compact session {session_id}: run {run.run_id} is {status}. Wait for it to finish."
+                )
+
+    @staticmethod
+    def _app_server_client(codex: Any) -> Any:
+        """The low-level client behind an AsyncCodex, the only way to read the global
+        notification queue: the SDK has no public signal for when compaction finishes."""
+        client = getattr(codex, "_client", None)
+        if client is None or not hasattr(client, "next_notification"):
+            raise RuntimeError("This openai-codex version does not expose app-server notifications; cannot compact")
+        return client
+
+    @staticmethod
+    async def _await_thread_idle(client: Any, thread_id: str, timeout: float) -> None:
+        """Wait for the compaction to finish: the thread goes active, then idle again.
+
+        The app-server reports thread/compacted on a per-turn queue the caller never
+        registered, so the thread status notifications on the global queue are used instead.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        active = False
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError(f"Codex thread {thread_id} did not finish compacting within {timeout}s")
+            try:
+                notification = await asyncio.wait_for(client.next_notification(), timeout=remaining)
+            except asyncio.TimeoutError as e:
+                # asyncio.TimeoutError is only an alias of the builtin from Python 3.11.
+                raise TimeoutError(f"Codex thread {thread_id} did not finish compacting within {timeout}s") from e
+            method = getattr(notification, "method", "")
+            payload = getattr(notification, "payload", None)
+            if getattr(payload, "thread_id", thread_id) != thread_id:
+                continue
+            if method == "thread/compacted":
+                # Today the app-server routes this to a per-turn queue the caller never
+                # registered, so it is never seen here; kept in case that routing changes.
+                return
+            if method != "thread/status/changed":
+                continue
+            status = getattr(payload, "status", None)
+            kind = getattr(getattr(status, "root", status), "type", None)
+            if kind == "active":
+                active = True
+            elif kind == "idle" and active:
+                return
 
     # ---------------------------------------------------------------------------
     # SDK option builders
@@ -333,23 +488,88 @@ class CodexAgent(BaseExternalAgent):
             handle = await thread.turn(prompt, **self._turn_kwargs(sdk))
             self._set_run_handle(run_id, handle)
             try:
-                result = await handle.run()
+                result = await self._acollect_turn(handle, kwargs.get("run_state"))
             finally:
                 self._clear_run_handle(run_id)
-            status = getattr(result, "status", None)
-            if getattr(status, "value", status) == "interrupted":
+            if result.status == "interrupted":
                 raise RunCancelledException(run_id)
-            if getattr(status, "value", status) == "failed":
-                raise RuntimeError(f"Codex turn failed: {getattr(result, 'error', None)}")
+            if result.status == "failed":
+                # The tools that completed are already in run_state for the base class to keep.
+                raise CodexTurnError(
+                    f"Codex turn failed: {getattr(result.error, 'message', None) or result.error}",
+                    _error_info(result.error),
+                )
 
+        return ExternalRunResult(
+            self._final_text(result),
+            self._tools_from_items(result.items) or None,
+            metrics=self._metrics_from_usage(result.usage_first, result.usage_last),
+        )
+
+    async def _acollect_turn(self, handle: Any, run_state: Optional[Dict[str, Any]] = None) -> _TurnOutcome:
+        """Consume a turn's notification stream the way the SDK's run() does.
+
+        Unlike run(), which returns items only once the turn ends, this records each tool call
+        in run_state["tools"] as it completes, so a transport error later in the turn still
+        leaves the work that was done for the base class to keep. It also keeps the first and
+        last token usage report: a turn with tool calls makes several model requests and the
+        app-server reports usage after each, so both are needed to size the whole turn.
+        """
+        outcome = _TurnOutcome()
+        async for notification in handle.stream():
+            method = getattr(notification, "method", "") or ""
+            payload = getattr(notification, "payload", None)
+            if payload is None:
+                continue
+            if method == "thread/tokenUsage/updated":
+                usage = getattr(payload, "token_usage", None)
+                if usage is not None:
+                    if outcome.usage_first is None:
+                        outcome.usage_first = usage
+                    outcome.usage_last = usage
+            elif method == "item/completed":
+                item = getattr(payload, "item", None)
+                if item is None:
+                    continue
+                outcome.items.append(item)
+                if run_state is not None:
+                    tool = self._tool_from_item(_item_root(item))
+                    if tool is not None:
+                        tool.result = self._tool_result_from_item(_item_root(item))
+                        run_state.setdefault("tools", {})[tool.tool_call_id or str(uuid4())] = tool
+            elif method == "turn/completed":
+                turn = getattr(payload, "turn", None)
+                status = getattr(turn, "status", None)
+                outcome.status = getattr(status, "value", status)
+                outcome.error = getattr(turn, "error", None)
+                break
+        # The SDK's final_response rule: the final-answer phase message, else the last message
+        # without a phase.
+        unphased: Optional[str] = None
+        for item in reversed(outcome.items):
+            root = _item_root(item)
+            if getattr(root, "type", None) != "agentMessage":
+                continue
+            phase = getattr(root, "phase", None)
+            phase = getattr(phase, "value", phase)
+            if phase == "final_answer":
+                outcome.final_response = getattr(root, "text", None)
+                break
+            if phase is None and unphased is None:
+                unphased = getattr(root, "text", None)
+        if outcome.final_response is None:
+            outcome.final_response = unphased
+        return outcome
+
+    def _tools_from_items(self, items: List[Any]) -> List[ToolExecution]:
         tools = []
-        for item in getattr(result, "items", None) or []:
+        for item in items:
             item = _item_root(item)
             tool = self._tool_from_item(item)
             if tool is not None:
                 tool.result = self._tool_result_from_item(item)
                 tools.append(tool)
-        return ExternalRunResult(self._final_text(result), tools or None)
+        return tools
 
     @staticmethod
     def _final_text(result: Any) -> str:
@@ -392,7 +612,43 @@ class CodexAgent(BaseExternalAgent):
                 self._clear_run_handle(run_id)
 
         if state.error:
+            raise CodexTurnError(f"Codex turn failed: {state.error}", state.error_info)
             raise RuntimeError(f"Codex turn failed: {state.error}")
+        metrics = self._metrics_from_usage(state.usage_first, state.usage_last)
+        if metrics is not None:
+            yield ExternalRunMetricsEvent(run_id=run_id, agent_id=self.get_id(), metrics=metrics)
+
+    # Codex usage field -> Agno metrics field
+    _USAGE_FIELDS = (
+        ("input_tokens", "input_tokens"),
+        ("output_tokens", "output_tokens"),
+        ("total_tokens", "total_tokens"),
+        ("cached_input_tokens", "cache_read_tokens"),
+        ("cache_write_input_tokens", "cache_write_tokens"),
+        ("reasoning_output_tokens", "reasoning_tokens"),
+    )
+
+    def _metrics_from_usage(self, first: Any, last: Any) -> Optional[RunMetrics]:
+        """Map a turn's token usage to RunMetrics from its first and last usage reports.
+
+        Each thread/tokenUsage/updated carries ``last`` (one model request) and ``total`` (the
+        thread so far). A turn with tool calls makes several requests, so the turn's usage is
+        the growth of the thread total over the turn: the final total minus the total before
+        the turn, which is the first report's total minus its own request. Reading only
+        ``last`` would count a single request. Codex reports input_tokens inclusive of the
+        cached prefix, like the OpenAI API, and reports no cost.
+        """
+        first_last = getattr(first, "last", None)
+        first_total = getattr(first, "total", None)
+        final_total = getattr(last, "total", None)
+        if first_last is None or first_total is None or final_total is None:
+            return None
+        counts: Dict[str, Any] = {}
+        for codex_field, agno_field in self._USAGE_FIELDS:
+            before_turn = int(getattr(first_total, codex_field, 0) or 0) - int(getattr(first_last, codex_field, 0) or 0)
+            counts[agno_field] = max(0, int(getattr(final_total, codex_field, 0) or 0) - before_turn)
+        model = ModelMetrics(id=self.model or "codex", provider="openai", **counts)
+        return self._build_metrics(model, [model])
 
     # ---------------------------------------------------------------------------
     # Notification translation
@@ -400,6 +656,18 @@ class CodexAgent(BaseExternalAgent):
 
     async def _ainterrupt_run(self, handle: Any) -> None:
         await handle.interrupt()
+
+    def _is_retryable_error(self, error: Exception) -> bool:
+        if not super()._is_retryable_error(error):
+            return False
+        if getattr(error, "codex_error_info", None) in _PERMANENT_TURN_ERRORS:
+            return False
+        rpc_error = getattr(_sdk(), "JsonRpcError", None)
+        return not (
+            rpc_error is not None
+            and isinstance(error, rpc_error)
+            and getattr(error, "code", None) in _PERMANENT_RPC_CODES
+        )
 
     def _content_event(self, run_id: str, content: str, reasoning: Optional[str] = None) -> RunContentEvent:
         return RunContentEvent(
@@ -416,6 +684,14 @@ class CodexAgent(BaseExternalAgent):
         method = getattr(notification, "method", "") or ""
         payload = getattr(notification, "payload", None)
         if payload is None:
+            return
+
+        if method == "thread/tokenUsage/updated":
+            usage = getattr(payload, "token_usage", None)
+            if usage is not None:
+                if state.usage_first is None:
+                    state.usage_first = usage
+                state.usage_last = usage
             return
 
         if method == "item/agentMessage/delta":
@@ -483,6 +759,7 @@ class CodexAgent(BaseExternalAgent):
             if status_value == "failed":
                 error = getattr(turn, "error", None)
                 state.error = getattr(error, "message", None) or "turn failed"
+                state.error_info = _error_info(error) or state.error_info
             elif status_value == "interrupted":
                 raise RunCancelledException(run_id)
 
@@ -493,6 +770,7 @@ class CodexAgent(BaseExternalAgent):
                 log_debug(f"Codex: transient error, retrying: {message}")
             else:
                 state.error = message
+                state.error_info = _error_info(error) or state.error_info
 
     @staticmethod
     def _tool_from_item(item: Any) -> Optional[ToolExecution]:

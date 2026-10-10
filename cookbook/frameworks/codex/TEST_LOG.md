@@ -101,3 +101,51 @@ Tested 2026-10-08 with openai-codex 0.161.0 (bundled Codex CLI 0.161.0), model g
 **Result:** 736 unit/regression tests passed; 5 integration tests passed, none skipped. One existing AsyncMock warning arose in the unchanged native save-fencing test. Required format and validation scripts passed with SQLAlchemy 2.0.52.
 
 ---
+
+### codex_compaction.py
+
+**Status:** PASS (2026-10-09, openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Seeds a fact, adds three turns including a 1200-line filler document, calls `CodexAgent.acompact(session_id)`, then asks for the fact on the same session. `acompact` returns False before any thread exists, then resumes the thread on the low-level client, sends `thread/compact/start` and waits for the thread status to go active and back to idle on the global notification queue.
+
+**Result:** `acompact` returned False before the first run and True after; the thread went idle again in about eight seconds and the rollout gained a `compacted` entry. The next turn answered `tangerine-walrus-88`. The `thread/compacted` notification itself is routed to a per-turn queue the caller never registered, which is why the adapter waits on thread status instead.
+
+---
+
+### codex_compaction.py (review fixes, cookbook extended)
+
+**Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Review found that `acompact` resumed the thread on the low-level client with the adapter's high-level kwargs, which are sent verbatim: `sandbox="full-access"` was rejected (`unknown variant full-access`) and instructions and approval mode were silently dropped. Replicated with a probe against the app-server. The resume now goes through `AsyncCodex.thread_resume` exactly as runs do, and only `thread/compact/start` uses the low-level client. Also: a missing rollout returns False and forgets the stored thread id; compaction refuses while a run on the session is pending or running; the wait maps `asyncio.TimeoutError` to the builtin.
+
+**Result:** The cookbook now uses `sandbox="full-access"`, `instructions` and `approval_mode="deny_all"`, the configuration the first version could not compact. It compacted after three turns and recalled the fact on the next turn. With a background run pending on the session, `acompact` raised `RuntimeError` naming the run; after the run finished it compacted again. Pointing the session at a nonexistent thread id returned False with a warning and removed the id.
+
+### codex_metrics.py
+
+**Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** One plain turn, one streamed turn, then the session totals. Checks that `RunOutput.metrics` and the `RunCompleted` event carry the turn's token usage and duration, and that `session_data["session_metrics"]` equals the sum of the two runs.
+
+**Result:** Run 1: 14693 input (14080 cached), 5 output, 14698 total, 4.5s. Run 2 (streamed): 15875 total, 4.7s. Session totals: 30573 tokens across 2 runs. Cost is unset because Codex does not report one.
+
+---
+
+### codex_metrics_agentos.py --verify
+
+**Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Through the AgentOS test client: a non-streamed run, a streamed run, then `GET /sessions/{id}`, `GET /sessions` and `GET /metrics`. Asserts the session total equals the two runs and that the daily aggregation counts both runs.
+
+**Result:** Run 1: 14700 tokens (11008 cached). Run 2 (RunCompleted event): 15877 tokens. Session: 30577; sessions list column 30577; metrics page agent_runs_count 2, total_tokens 30577.
+
+---
+
+### Codex turn usage across several model requests (review fix)
+
+**Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Review finding: `usage.last` is one model request, not the turn, and `TurnResult.usage` is only the latest report, so a turn with tool calls under-counted on both paths. Replicated with a prompt that makes two shell calls, tapping every `thread/tokenUsage/updated` as (last, total). Fixed by computing the turn as the final thread total minus the thread total before the turn (first report's total minus its own request); the non-streaming path now consumes the notification stream itself instead of `handle.run()`. Reran `codex_metrics.py`, `codex_metrics_agentos.py --verify`, `codex_structured_output.py` and `codex_tools.py` to check the non-streaming path is unchanged.
+
+**Result:** Before: streamed turn recorded 14972 of 44739 actual, non-streamed 14502 of 43341. After: streamed 44725 of 44725, non-streamed 43289 of 43289 (three requests each). Other cookbooks unchanged.
+
+---

@@ -1,5 +1,68 @@
 # Test log
 
+## 2026-10-10
+
+### metrics_agentos.py --verify
+
+**Status:** PASS
+
+**Description:** Through the AgentOS test client: a non-streamed run, a streamed run with a Bash call, then `GET /sessions/{id}`, `GET /sessions` and `GET /metrics`. Asserts the session total equals the two runs and that the daily aggregation counts both runs.
+
+**Result:** Run 1: 7 tokens, $0.0195. Run 2 (RunCompleted event): 123 tokens, $0.0348, time to first token 6.1s. Session: 130 tokens, $0.0543; sessions list column 130; metrics page agent_runs_count 2, total_tokens 130.
+
+---
+
+### metrics.py
+
+**Status:** PASS
+
+**Description:** One plain turn, one streamed turn with a Bash call, then the session totals. Checks that `RunOutput.metrics` and the `RunCompleted` event carry tokens, cache usage, cost and duration, and that `session_data["session_metrics"]` equals the sum of the two runs.
+
+**Result:** Run 1: 3 input, 4 output, 13802 cache read, 2665 cache write, $0.0208, 4.4s, with per-model entries for claude-sonnet-4-6 and the claude-haiku-4-5 helper model. Run 2 (streamed): 125 tokens, $0.0341, time to first token 5.5s. Session totals: 132 tokens, $0.0548 across 2 runs.
+
+---
+
+## 2026-10-09
+
+### compaction.py (transcript read API)
+
+**Status:** PASS
+
+**Description:** Reran after replacing the cookbook's raw SQL on `agno_transcripts` with `db.get_transcript_entries(framework, project_key, session_id)`, keyed by the Claude session id stored on the Agno session.
+
+**Result:** 29 rows before `/compact`, 39 after; the `compact_boundary` and summary entries were found at positions 33 and 34; replica B recalled the fact.
+
+---
+
+### compaction.py
+
+**Status:** PASS
+
+**Description:** Seeds a fact, adds three turns including a 1200-line filler document, sends `/compact` as the run input with a `PreCompact` hook registered through `options_kwargs`, prints the transcript rows the compaction produced, then resumes the session from a second agent instance with a different working directory.
+
+**Result:** 35 transcript rows before, 45 after. The hook fired with trigger `manual`. Rows 39 and 40 were the `compact_boundary` system entry and the `isCompactSummary` user entry. Replica B resumed from the database alone and answered `tangerine-walrus-88` from the summary. A conversation of one turn returns "Not enough messages to compact", which is why the cookbook adds turns first.
+
+---
+
+### continue_from.py (finished runs always fork)
+
+**Status:** PASS
+
+**Description:** Reran after `continue_run(fork=False)` on a completed run was changed to behave like native agents: the continuation becomes a new sibling run with fork lineage instead of rewriting the source run. Also exercised live with `background=True` on a completed run (ALPHA -> BETA -> GAMMA, three runs in the session, source run untouched).
+
+**Result:** Checkpoints listed at 3, 5 and 6; branch from step 3 kept only `echo alpha`; replayed turn returned DONE. The in-place-with-background ValueError is gone.
+
+---
+
+### continue_from.py (review fixes)
+
+**Status:** PASS
+
+**Description:** Reran after the review fixes: checkpoints are exposed per tool batch (one per sequential step, one per parallel batch, anchored at the batch's last transcript entry), `continue_from=0` starts a branch before the prompt, `continue_from="last_user"` replays the selected user turn rather than only the first, cancelled runs are rejected, and in-place continuation refuses `background=True`. The cookbook now asserts on the tool results the branch carries instead of on the model's wording, so a run where Claude batches both commands still passes.
+
+**Result:** Sequential run: checkpoints at messages 3, 5 and the end; the branch from step 3 carried only the first result and answered with the first command. Replay of the whole turn completed. A separate parallel run exposed a single checkpoint at the batch end.
+
+---
 ## 2026-10-09
 
 ### transcript_store.py
@@ -88,7 +151,6 @@
 
 ---
 
-
 ### Transcript mirror failure regression (2026-10-08)
 
 **Status:** PASS
@@ -116,8 +178,6 @@ checks; the earlier live provider cancellation runs were not repeated.
 
 ---
 
----
-
 ### session_store.py (transcript schema revision)
 
 **Status:** PASS
@@ -125,3 +185,53 @@ checks; the earlier live provider cancellation runs were not repeated.
 **Description:** Reran the two-process verification after scoping transcript rows by framework, project, session and subpath, numbering positions per transcript and recording the owning Agno session. Used claude-agent-sdk 0.2.95 from the demo environment, the `ANTHROPIC_API_KEY` from `.envrc` and empty config directories.
 
 **Result:** Process A replied `OK`; process B, with its Agno run deleted, replied `cobalt orchard 742`. The PostgreSQL contract test (PostgresDb and AsyncPostgresDb) passed against PostgreSQL 14.
+
+---
+
+### claude_retries.py (review follow-up)
+
+**Status:** PASS
+
+**Description:** Reran after two base-class changes from the review: a streamed retry now emits a `retry` warning event between the failed attempt's output and the new attempt (also stored in the run's warnings), and a non-streamed retry keeps the tool calls of failed attempts, which the adapters leave in `run_state["tools"]`. Live check with an injected failure after a Bash call.
+
+**Result:** Non-streamed: two attempts, same SDK session, stored run has both Bash calls (before the change it had one, while the streamed run had two). Streamed: unchanged, both calls kept. The four cookbook cases pass as before.
+
+---
+
+### claude_retries.py (demonstration rewrite)
+
+**Status:** PASS
+
+**Description:** The cookbook now injects the failure itself: the first attempt is cut off with a simulated transient error at the SDK result message, after the session started. Runs four cases with `retries=2`, `delay_between_retries=1`, `exponential_backoff=True`: one failure then success, more failures than retries, `max_turns=1` with retries left, and the default `retries=0`.
+
+**Result:** Case 1: two attempts, the retry resumed the same SDK session id and answered. Case 2: three attempts with 1s then 2s backoff, run ended in ERROR with the last error. Case 3: one attempt, `error_max_turns` logged as not retryable. Case 4: one attempt, ERROR. Separately verified streaming with the same injection: two attempts, same session id, RunCompleted, and the stored run kept the tool calls from both attempts.
+
+---
+
+### claude_retries.py
+
+**Status:** PASS
+
+**Description:** Ran the cookbook with claude-agent-sdk from the demo environment, then a fault-injection run with the real SDK: the first attempt's result message was made to raise after the SDK session had started, with `retries=2`.
+
+**Result:** The cookbook answered normally. In both streaming and non-streaming runs the first attempt failed, the retry resumed the SDK session the failed attempt started (same session id stored on the Agno session) and completed with `pong`.
+
+---
+
+### claude_retries.py (non-retryable errors)
+
+**Status:** PASS
+
+**Description:** Reran with error classification added. Live run with `max_turns=1`, `retries=2` and a prompt that needs two tool calls, then the fault-injection run that raises a generic error after the SDK session starts.
+
+**Result:** The `max_turns` run ended after one attempt with `error_max_turns` and logged that it was not retried (before the change it ran three attempts, three turns against a limit of one). The injected transient error was still retried, resumed the same SDK session and completed with `pong`.
+
+---
+
+### continue_from.py (2026-10-08)
+
+**Status:** PASS
+
+**Description:** Live run with claude-agent-sdk 0.2.95 and `claude-sonnet-4-6` on SQLite transcript storage. A two-step Bash turn listed checkpoints at both tool results and the end. Continuing from the first tool result with a question produced a branch that only knew `echo alpha`; `continue_from="last_user"` replayed the turn as a forked sibling. Separately, with `claude-haiku-4-5`, exercised AgentOS `/checkpoints` and `/continue` (non-stream and SSE), an in-place streamed continue, and a replay of a non-first turn that kept earlier context.
+
+**Result:** Continue and checkpoints work end to end against the real SDK. Files touched after a checkpoint are not rewound.
