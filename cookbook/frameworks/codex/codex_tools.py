@@ -46,4 +46,3 @@ if __name__ == "__main__":
     assert any(tool.result and not tool.tool_call_error for tool in result.tools), (
         "No successful tool result"
     )
-    print(f"\nRun: {result.run_id} | Status: {result.status.value}")
