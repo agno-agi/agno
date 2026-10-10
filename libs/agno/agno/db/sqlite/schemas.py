@@ -145,6 +145,36 @@ METRICS_TABLE_SCHEMA = {
     ],
 }
 
+OS_METRICS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "date": {"type": Date, "nullable": False, "index": True},
+    "aggregation_period": {"type": String, "nullable": False},
+    # Owner and component of this row. Empty string, not NULL, for none:
+    # SQL treats multiple NULLs as distinct, which would break the unique constraint below.
+    "user_id": {"type": String, "nullable": False, "default": ""},
+    "agent_id": {"type": String, "nullable": False, "default": ""},
+    "team_id": {"type": String, "nullable": False, "default": ""},
+    "workflow_id": {"type": String, "nullable": False, "default": ""},
+    # The agent, team or workflow whose run started the runs of this row
+    "parent_id": {"type": String, "nullable": False, "default": ""},
+    "sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "status_metrics": {"type": JSON, "nullable": False, "default": "{}"},
+    "token_metrics": {"type": JSON, "nullable": False, "default": "{}"},
+    "duration_metrics": {"type": JSON, "nullable": False, "default": "{}"},
+    "model_metrics": {"type": JSON, "nullable": False, "default": "[]"},
+    "metadata": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": True, "index": True},
+    "completed": {"type": Boolean, "nullable": False, "default": False},
+    "_unique_constraints": [
+        {
+            "name": "uq_os_metrics_user_date_period_component",
+            "columns": ["user_id", "date", "aggregation_period", "agent_id", "team_id", "workflow_id", "parent_id"],
+        }
+    ],
+}
+
 TRACE_TABLE_SCHEMA = {
     "trace_id": {"type": String, "primary_key": True, "nullable": False},
     "name": {"type": String, "nullable": False},
@@ -494,6 +524,7 @@ def get_table_schema_definition(
         # "runs" is handled by _get_run_table_schema above (needs session_table_name)
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
+        "os_metrics": OS_METRICS_TABLE_SCHEMA,
         "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
