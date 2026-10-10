@@ -5,8 +5,11 @@ CodexAgent accepts the same retry settings as an Agno Agent. A failed turn
 (for example a model error the Codex CLI does not retry itself) is retried
 with the same run id. The Codex thread is saved when it starts, so the retry
 resumes that thread and Codex sees the work the failed attempt already did.
-Cancelled runs are never retried, and a cancel during the backoff wait ends
-the run.
+
+Errors that would fail the same way again are not retried: session budget
+and usage limits, context window overflows, authentication, bad requests and
+policy blocks. Cancelled runs are never retried, and a cancel during the
+backoff wait ends the run.
 
 Requirements:
     pip install openai-codex

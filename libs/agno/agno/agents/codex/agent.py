@@ -39,10 +39,39 @@ _SANDBOX_ALIASES: Dict[str, str] = {
 # thread_start-only options that thread_resume does not accept.
 _START_ONLY_KEYS = {"ephemeral", "service_name", "session_start_source", "thread_source"}
 
+# codexErrorInfo values that fail the same way on every attempt, or are limits a retry would bypass.
+_PERMANENT_TURN_ERRORS = {
+    "contextWindowExceeded",
+    "sessionBudgetExceeded",
+    "usageLimitExceeded",
+    "unauthorized",
+    "badRequest",
+    "cyberPolicy",
+    "misalignmentPolicyViolation",
+    "tooManyDenials",
+}
+# JSON-RPC codes for requests the app-server rejects as malformed.
+_PERMANENT_RPC_CODES = {-32700, -32600, -32601, -32602}
+
+
+class CodexTurnError(RuntimeError):
+    """A failed Codex turn, with the app-server's codexErrorInfo value when it sent a plain one."""
+
+    def __init__(self, message: str, codex_error_info: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.codex_error_info = codex_error_info
+
 
 def _item_root(item: Any) -> Any:
     """Unwrap a pydantic RootModel (ThreadItem) to the concrete item."""
     return getattr(item, "root", item)
+
+
+def _error_info(error: Any) -> Optional[str]:
+    """The plain codexErrorInfo value of a TurnError. Structured variants (connection failures) give None."""
+    info = _item_root(getattr(error, "codex_error_info", None))
+    value = getattr(info, "value", info)
+    return value if isinstance(value, str) else None
 
 
 def _coerce_args(raw: Any) -> Optional[Dict[str, Any]]:
@@ -80,6 +109,7 @@ class _StreamState:
     emitted_text: bool = False
     tool_info: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     error: Optional[str] = None
+    error_info: Optional[str] = None
 
 
 @dataclass
@@ -111,7 +141,8 @@ class CodexAgent(BaseExternalAgent):
         env: Environment variables for the Codex process.
         thread_kwargs: Extra kwargs forwarded to thread_start / thread_resume.
         turn_kwargs: Extra kwargs forwarded to each turn.
-        retries: Number of times to retry a failed run. Cancelled runs are never retried.
+        retries: Number of times to retry a failed run. Cancelled runs, budget and usage limits and errors
+            that would fail again (context window, authentication, bad requests, policy) are not retried.
         delay_between_retries: Seconds to wait before each retry.
         exponential_backoff: Double the delay after each failed attempt.
 
@@ -343,7 +374,10 @@ class CodexAgent(BaseExternalAgent):
             if getattr(status, "value", status) == "interrupted":
                 raise RunCancelledException(run_id)
             if getattr(status, "value", status) == "failed":
-                raise RuntimeError(f"Codex turn failed: {getattr(result, 'error', None)}")
+                error = getattr(result, "error", None)
+                raise CodexTurnError(
+                    f"Codex turn failed: {getattr(error, 'message', None) or error}", _error_info(error)
+                )
 
         tools = []
         for item in getattr(result, "items", None) or []:
@@ -395,7 +429,7 @@ class CodexAgent(BaseExternalAgent):
                 self._clear_run_handle(run_id)
 
         if state.error:
-            raise RuntimeError(f"Codex turn failed: {state.error}")
+            raise CodexTurnError(f"Codex turn failed: {state.error}", state.error_info)
 
     # ---------------------------------------------------------------------------
     # Notification translation
@@ -403,6 +437,18 @@ class CodexAgent(BaseExternalAgent):
 
     async def _ainterrupt_run(self, handle: Any) -> None:
         await handle.interrupt()
+
+    def _is_retryable_error(self, error: Exception) -> bool:
+        if not super()._is_retryable_error(error):
+            return False
+        if getattr(error, "codex_error_info", None) in _PERMANENT_TURN_ERRORS:
+            return False
+        rpc_error = getattr(_sdk(), "JsonRpcError", None)
+        return not (
+            rpc_error is not None
+            and isinstance(error, rpc_error)
+            and getattr(error, "code", None) in _PERMANENT_RPC_CODES
+        )
 
     def _content_event(self, run_id: str, content: str, reasoning: Optional[str] = None) -> RunContentEvent:
         return RunContentEvent(
@@ -486,6 +532,7 @@ class CodexAgent(BaseExternalAgent):
             if status_value == "failed":
                 error = getattr(turn, "error", None)
                 state.error = getattr(error, "message", None) or "turn failed"
+                state.error_info = _error_info(error) or state.error_info
             elif status_value == "interrupted":
                 raise RunCancelledException(run_id)
 
@@ -496,6 +543,7 @@ class CodexAgent(BaseExternalAgent):
                 log_debug(f"Codex: transient error, retrying: {message}")
             else:
                 state.error = message
+                state.error_info = _error_info(error) or state.error_info
 
     @staticmethod
     def _tool_from_item(item: Any) -> Optional[ToolExecution]:

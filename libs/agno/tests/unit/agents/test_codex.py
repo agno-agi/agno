@@ -55,6 +55,13 @@ class CodexConfig:
     env: Optional[Dict[str, str]] = None
 
 
+class JsonRpcError(Exception):
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(f"JSON-RPC error {code}: {message}")
+        self.code = code
+        self.message = message
+
+
 class FakeState:
     """Shared, scripted behaviour for the fake SDK."""
 
@@ -130,6 +137,7 @@ def fake_sdk(monkeypatch) -> FakeState:
     module.ApprovalMode = ApprovalMode  # type: ignore[attr-defined]
     module.CodexConfig = CodexConfig  # type: ignore[attr-defined]
     module.AsyncCodex = FakeAsyncCodex  # type: ignore[attr-defined]
+    module.JsonRpcError = JsonRpcError  # type: ignore[attr-defined]
     module.types = SimpleNamespace(ReasoningEffort=ReasoningEffort)  # type: ignore[attr-defined]
     monkeypatch.setattr(codex_module, "_sdk", lambda: module)
     return state
@@ -167,10 +175,10 @@ def _delta(item_id: str, text: str) -> Any:
     return SimpleNamespace(method="item/agentMessage/delta", payload=SimpleNamespace(item_id=item_id, delta=text))
 
 
-def _turn_completed(status: str = "completed", error: Optional[str] = None) -> Any:
+def _turn_completed(status: str = "completed", error: Optional[str] = None, info: Any = None) -> Any:
     turn = SimpleNamespace(
         status=SimpleNamespace(value=status),
-        error=SimpleNamespace(message=error) if error else None,
+        error=SimpleNamespace(message=error, codex_error_info=info) if error else None,
     )
     return SimpleNamespace(method="turn/completed", payload=SimpleNamespace(turn=turn))
 
@@ -666,3 +674,59 @@ def test_retry_resumes_the_thread_of_the_failed_attempt(fake_sdk, tmp_db, monkey
     ops = [(c["op"], c.get("thread_id")) for c in fake_sdk.calls if c["op"] in ("thread_start", "thread_resume")]
     assert ops == [("thread_start", "thread-1"), ("thread_resume", "thread-1")]
     assert [c["prompt"] for c in fake_sdk.calls if c["op"] == "turn"] == ["go", "go"]
+
+
+class CodexErrorInfoValue(str, Enum):
+    usage_limit_exceeded = "usageLimitExceeded"
+    server_overloaded = "serverOverloaded"
+
+
+@pytest.mark.parametrize(
+    "info, retried",
+    [
+        # Shapes mirror CodexErrorInfo: a RootModel over an enum, or over a structured variant
+        (SimpleNamespace(root=CodexErrorInfoValue.usage_limit_exceeded), False),
+        ("sessionBudgetExceeded", False),
+        ("contextWindowExceeded", False),
+        ("unauthorized", False),
+        (SimpleNamespace(root=CodexErrorInfoValue.server_overloaded), True),
+        (SimpleNamespace(root=SimpleNamespace(http_connection_failed=SimpleNamespace(http_status_code=502))), True),
+        (None, True),
+    ],
+    ids=["usage_limit", "session_budget", "context_window", "unauthorized", "overloaded", "connection", "none"],
+)
+@pytest.mark.parametrize("stream", [True, False])
+def test_retry_skips_limits_and_permanent_turn_errors(fake_sdk, monkeypatch, info, retried, stream):
+    agent = CodexAgent(name="Codex", id="codex", retries=2, delay_between_retries=0)
+    turns: List[int] = []
+
+    async def run_failing(self):
+        turns.append(1)
+        error = SimpleNamespace(message="turn failed", codex_error_info=info)
+        return SimpleNamespace(final_response=None, items=[], status="failed", error=error, usage=None)
+
+    async def stream_failing(self):
+        turns.append(1)
+        yield _turn_completed("failed", error="turn failed", info=info)
+
+    monkeypatch.setattr(FakeHandle, "run", run_failing)
+    monkeypatch.setattr(FakeHandle, "stream", stream_failing)
+    if stream:
+        assert isinstance(_collect(agent, "go")[-1], RunErrorEvent)
+    else:
+        assert agent.run("go").status == RunStatus.error
+    assert len(turns) == (3 if retried else 1)
+
+
+@pytest.mark.parametrize("code, retried", [(-32602, False), (-32600, False), (-32001, True)])
+def test_retry_skips_rejected_rpc_requests(fake_sdk, monkeypatch, code, retried):
+    agent = CodexAgent(name="Codex", id="codex", retries=2, delay_between_retries=0)
+    starts: List[int] = []
+
+    async def thread_start(self, **kwargs: Any):
+        starts.append(1)
+        raise JsonRpcError(code, "rejected")
+
+    monkeypatch.setattr(FakeAsyncCodex, "thread_start", thread_start)
+    assert agent.run("go").status == RunStatus.error
+    assert len(starts) == (3 if retried else 1)

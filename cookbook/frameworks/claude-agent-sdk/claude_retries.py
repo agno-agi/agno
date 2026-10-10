@@ -5,8 +5,12 @@ ClaudeAgent accepts the same retry settings as an Agno Agent. A failed run
 (for example an API error that outlasts the Claude Code CLI's own retries) is
 retried with the same run id. Because the SDK session id is saved as soon as
 the run starts, the retry resumes that session, so Claude sees the work the
-failed attempt already did. Cancelled runs are never retried, and a cancel
-during the backoff wait ends the run.
+failed attempt already did.
+
+Errors that would fail the same way again are not retried: max_turns and
+max_budget_usd limits (a retry would grant a fresh allowance), authentication
+and billing errors, and invalid requests. Cancelled runs are never retried,
+and a cancel during the backoff wait ends the run.
 
 Requirements:
     pip install claude-agent-sdk

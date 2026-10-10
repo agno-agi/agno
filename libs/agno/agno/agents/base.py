@@ -676,6 +676,19 @@ class BaseExternalAgent:
             return self.delay_between_retries * (2**attempt)
         return self.delay_between_retries
 
+    def _is_retryable_error(self, error: Exception) -> bool:
+        """Whether a failed attempt is worth retrying. Unknown errors are retried; adapters
+        override this for errors that fail the same way every time or would bypass a limit."""
+        return not isinstance(error, ImportError)
+
+    def _should_retry(self, error: Exception, attempt: int, num_attempts: int) -> bool:
+        if attempt >= num_attempts - 1:
+            return False
+        if not self._is_retryable_error(error):
+            log_warning(f"{self.framework} agent '{self.id}' hit a non-retryable error, not retrying: {error}")
+            return False
+        return True
+
     async def _await_retry(self, run_id: str, attempt: int, num_attempts: int, error: Exception) -> None:
         """Wait out the backoff before the next attempt, ending early if the run is cancelled."""
         from agno.run.cancel import araise_if_cancelled
@@ -1018,7 +1031,7 @@ class BaseExternalAgent:
                     except RunCancelledException:
                         raise
                     except Exception as error:
-                        if attempt == num_attempts - 1:
+                        if not self._should_retry(error, attempt, num_attempts):
                             raise
                         await self._await_retry(run_id, attempt, num_attempts, error)
             run_output = self._build_run_output(
@@ -1083,7 +1096,7 @@ class BaseExternalAgent:
                     except RunCancelledException:
                         raise
                     except Exception as error:
-                        if attempt == num_attempts - 1:
+                        if not self._should_retry(error, attempt, num_attempts):
                             raise
                         await self._await_retry(run_id, attempt, num_attempts, error)
         except RunCancelledException:

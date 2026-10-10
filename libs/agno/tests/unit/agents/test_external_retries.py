@@ -141,3 +141,32 @@ def test_retry_delay_backoff():
     assert [agent._retry_delay(a) for a in range(3)] == [2, 2, 2]
     agent.exponential_backoff = True
     assert [agent._retry_delay(a) for a in range(3)] == [2, 4, 8]
+
+
+@dataclass
+class PickyAgent(FlakyAgent):
+    def _is_retryable_error(self, error: Exception) -> bool:
+        return "permanent" not in str(error)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    "agent_cls, error, retried",
+    [
+        (PickyAgent, ValueError("permanent failure"), False),
+        (PickyAgent, ValueError("transient failure"), True),
+        (FlakyAgent, ImportError("sdk missing"), False),
+    ],
+    ids=["adapter_permanent", "adapter_transient", "import_error"],
+)
+def test_non_retryable_errors_stop_retrying(agent_cls, error, retried, stream):
+    agent = agent_cls(id="flaky", retries=2, failures=5)
+
+    async def adapter(input: Any, **kwargs: Any) -> str:
+        agent.attempts.append(kwargs)
+        raise error
+
+    agent._arun_adapter = adapter  # type: ignore[method-assign]
+    status = _stream(agent)[-1].status if stream else agent.run("go").status
+    assert status == RunStatus.error
+    assert len(agent.attempts) == (3 if retried else 1)

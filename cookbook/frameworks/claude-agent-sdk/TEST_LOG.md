@@ -137,3 +137,13 @@ checks; the earlier live provider cancellation runs were not repeated.
 **Result:** The cookbook answered normally. In both streaming and non-streaming runs the first attempt failed, the retry resumed the SDK session the failed attempt started (same session id stored on the Agno session) and completed with `pong`.
 
 ---
+
+### claude_retries.py (non-retryable errors)
+
+**Status:** PASS
+
+**Description:** Reran with error classification added. Live run with `max_turns=1`, `retries=2` and a prompt that needs two tool calls, then the fault-injection run that raises a generic error after the SDK session starts.
+
+**Result:** The `max_turns` run ended after one attempt with `error_max_turns` and logged that it was not retried (before the change it ran three attempts, three turns against a limit of one). The injected transient error was still retried, resumed the same SDK session and completed with `pong`.
+
+---

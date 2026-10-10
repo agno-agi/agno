@@ -21,7 +21,7 @@ The `agno_transcripts` table is created on first use. A development database tha
 
 ## Retries
 
-`claude_retries.py` sets `retries`, `delay_between_retries` and `exponential_backoff`, the same settings an Agno `Agent` takes. A failed run is retried with the same run id and resumes the SDK session the failed attempt started, so Claude sees the work already done. Cancelled runs are not retried, and cancelling during the backoff wait ends the run.
+`claude_retries.py` sets `retries`, `delay_between_retries` and `exponential_backoff`, the same settings an Agno `Agent` takes. A failed run is retried with the same run id and resumes the SDK session the failed attempt started, so Claude sees the work already done. Errors that would fail again are not retried: `max_turns` and `max_budget_usd` limits, authentication and billing errors, and invalid requests. Cancelled runs are not retried, and cancelling during the backoff wait ends the run.
 
 ## Background runs and cancellation
 

@@ -33,7 +33,7 @@ CodexAgent(name="Codex").login_api_key("sk-...")
 - `codex_session.py` — multi-turn session; the Codex thread is resumed across turns via Agno's DB
 - `codex_mcp_tools.py` — connect Codex to an MCP server through `config` overrides
 - `codex_structured_output.py` — constrain the final answer with a JSON Schema
-- `codex_retries.py` — retry failed runs with exponential backoff; the retry resumes the failed attempt's thread
+- `codex_retries.py` — retry failed runs with exponential backoff; the retry resumes the failed attempt's thread, and limits or permanent errors are not retried
 - `codex_agentos.py` — serve Codex through AgentOS
 - `codex_session_agentos.py` — same with SQLite-backed sessions
 

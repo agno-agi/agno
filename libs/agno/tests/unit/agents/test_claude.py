@@ -50,6 +50,7 @@ class TextBlock:
 @dataclass
 class AssistantMessage:
     content: List[Any]
+    error: Optional[str] = None
 
 
 @dataclass
@@ -58,6 +59,8 @@ class ResultMessage:
     result: str
     subtype: str = "success"
     is_error: bool = False
+    errors: Optional[List[str]] = None
+    api_error_status: Optional[int] = None
 
 
 class StreamEvent:
@@ -504,3 +507,56 @@ def test_retry_resumes_the_sdk_session_of_the_failed_attempt(fake_sdk, tmp_db, m
     else:
         assert agent.run("go", session_id="s1").content == "recovered"
     assert calls == [{"prompt": "go", "resume": None}, {"prompt": "go", "resume": "sdk-1"}]
+
+
+def _sdk_result_error(**fields: Any) -> ResultError:
+    error = ResultError("Claude Code returned an error result")
+    error.__dict__.update(fields)
+    return error
+
+
+@pytest.mark.parametrize(
+    "failure, retried",
+    [
+        (ResultMessage("sdk-1", "", subtype="error_max_turns", is_error=True), False),
+        (ResultMessage("sdk-1", "", subtype="error_max_budget_usd", is_error=True), False),
+        (ResultMessage("sdk-1", "", subtype="error_max_structured_output_retries", is_error=True), False),
+        (ResultMessage("sdk-1", "API Error: 401", is_error=True, api_error_status=401), False),
+        (AssistantMessage(content=[], error="billing_error"), False),
+        (_sdk_result_error(subtype="error_max_turns"), False),
+        (ResultMessage("sdk-1", "API Error: 529 Overloaded", is_error=True, api_error_status=529), True),
+        (ResultMessage("sdk-1", "", subtype="error_during_execution", is_error=True), True),
+        (_sdk_result_error(subtype="success", api_error_status=500), True),
+    ],
+    ids=[
+        "max_turns",
+        "max_budget",
+        "max_structured_output_retries",
+        "status_401",
+        "billing",
+        "sdk_result_error_max_turns",
+        "status_529",
+        "during_execution",
+        "sdk_result_error_500",
+    ],
+)
+@pytest.mark.parametrize("stream", [True, False])
+def test_retry_skips_limits_and_permanent_errors(fake_sdk, monkeypatch, failure, retried, stream):
+    agent = ClaudeAgent(name="Claude", id="claude", retries=2, delay_between_retries=0)
+    attempts: List[Any] = []
+
+    async def failing(prompt, options):
+        attempts.append(options.resume)
+        yield SystemMessage("init", {"session_id": "sdk-1"})
+        if isinstance(failure, Exception):
+            raise failure
+        yield failure
+        if isinstance(failure, AssistantMessage):
+            yield ResultMessage("sdk-1", "API Error: billing", is_error=True)
+
+    monkeypatch.setattr(claude_module._sdk(), "query", failing)
+    if stream:
+        assert isinstance(_collect(agent, "go", session_id="s1")[-1], RunErrorEvent)
+    else:
+        assert agent.run("go", session_id="s1").status == RunStatus.error
+    assert len(attempts) == (3 if retried else 1)
