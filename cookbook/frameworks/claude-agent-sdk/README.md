@@ -19,6 +19,22 @@ Use PostgreSQL in production. Transcript storage supports PostgresDb, AsyncPostg
 
 The `agno_transcripts` table is created on first use. A development database that ran an earlier build of this feature has an older table shape and raises a schema mismatch; drop the table and it is recreated.
 
+## Retries
+
+`ClaudeAgent` takes `retries`, `delay_between_retries` and `exponential_backoff`, the same settings an Agno `Agent` takes. A failed run is retried with the same run id and resumes the SDK session the failed attempt started, so Claude sees the work already done. Errors that would fail again are not retried: `max_turns` and `max_budget_usd` limits, authentication and billing errors, and invalid requests. Cancelled runs are not retried, and cancelling during the backoff wait ends the run.
+
+Three things to know before turning retries on:
+
+- **Combined budget with the job queue.** The durable queue retries a job up to its `max_attempts`, and this setting retries attempts inside each job, so the SDK can be invoked up to `max_attempts × (retries + 1)` times for one run. Set one of the two unless you want that product. On top of both, Claude Code retries transient API errors on its own before reporting a failure, so one Agno attempt can already be several model requests. An error the agent classifies as permanent (limits, authentication, billing, invalid requests) is marked on the run, and the queue fails the job at once instead of re-driving it.
+- **Streaming clients see the failed attempt's output first.** The events of a failed attempt have already been sent when the retry starts. The stream then emits a warning event with `type: "retry"` and the new attempt's events follow. Treat everything before that event as superseded: reset the text you have buffered for the run and start again from the event; keep the tool events, since those tools ran. The event carries `attempt` (the attempt that failed, counting from 1), `attempts` (the total allowed) and `delay`, and a run that was retried stores `metadata["attempts"]`. Everything before that event is superseded: either discard it or label it as a failed attempt. The final `RunCompleted` content and the stored run hold only the last attempt's answer; tool calls from every attempt are kept because they ran.
+- **Tools are not exactly-once.** The retry resumes the same SDK session and re-sends the prompt, so Claude sees what the failed attempt did but may run a tool again. A tool that completed before the failure is not undone. The same holds when the durable queue re-drives a job after a worker crash: the job restarts from the beginning and tools that already ran run again. Anything a tool changes outside the workspace (an API call, a message, a payment) must be idempotent, or keyed so a repeat is a no-op, before enabling agent retries or queue `max_attempts` above 1.
+
+`claude_retries.py` makes the failure happen on purpose so the retry can be watched: it cuts the first attempt off with a simulated transient error after Claude has answered, then shows the retry resuming the same SDK session, a run that exhausts its retries, a `max_turns` limit that is not retried, and the default of no retries.
+
+```bash
+.venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/claude_retries.py
+```
+
 ## Continue from a step
 
 The `continue_from/` folder has one cookbook per scenario: continue a finished run with a new instruction, fork from a tool checkpoint, replay or rewrite the prompt, continue in the background, and the same flow over the AgentOS API. See `continue_from/README.md`.
