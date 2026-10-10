@@ -13,6 +13,7 @@ twin `acli()`) is a pure consumer of that public API.
 import asyncio
 import json
 import time
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from inspect import isawaitable, iscoroutine, iscoroutinefunction
@@ -24,7 +25,9 @@ from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.agent_as_judge import AgentAsJudgeEval
 from agno.eval.reliability import ReliabilityEval
+from agno.filters import FilterExpr
 from agno.models.base import Model
+from agno.models.message import Message
 from agno.run.agent import RunErrorEvent, RunOutput, RunOutputEvent
 from agno.run.base import RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
@@ -62,7 +65,8 @@ class Case:
     """One eval case: an input to one agent or team, plus optional judge/reliability checks."""
 
     name: str
-    input: str
+    # The run input: a str, or a Message, e.g. to attach an image by url or filepath to the turn.
+    input: Union[str, Message]
     # The agent or team under test: pass exactly one of agent= or team= (separate fields,
     # mirroring AccuracyEval, so a Team never rides in a param named 'agent'). A Team routes
     # reliability through team_response=.
@@ -107,6 +111,17 @@ class Case:
     scorer: Optional[Scorer] = None
     expected: Optional[Any] = None
 
+    # Run arguments - the session, user, state, dependencies, metadata and knowledge filters of
+    # the run, forwarded as-is except session_state, which is copied per run. session_id runs the
+    # case in that session instead of a generated one, e.g. to continue the turns its setup ran;
+    # the suite never clears it.
+    session_id: Optional[str] = None
+    user_id: Optional[str] = None
+    session_state: Optional[Dict[str, Any]] = None
+    dependencies: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+
     def __post_init__(self) -> None:
         # Exactly one of agent/team: neither has anything to run, both is ambiguous.
         if self.agent is None and self.team is None:
@@ -136,8 +151,8 @@ class CaseResult:
     # stays None.
     agent_id: Optional[str] = None
     team_id: Optional[str] = None
-    # The generated eval session id - links the case to its stored session/trace when
-    # db= is set. Empty for skipped cases: no session was created.
+    # The eval session id (Case.session_id, else generated) - links the case to its stored
+    # session/trace when db= is set. Empty for skipped cases: no session was created.
     session_id: str = ""
     duration_seconds: float = 0.0
     judge_passed: Optional[bool] = None  # None = check not configured
@@ -246,6 +261,10 @@ _STATUS_ERRORS = {
 }
 
 
+def _input_text(case: Case) -> str:
+    return case.input if isinstance(case.input, str) else case.input.get_content_string()
+
+
 def _component_id(case: Case) -> str:
     # Exactly one of agent/team is set (enforced at construction); fall back to the case name.
     if case.agent is not None:
@@ -340,6 +359,11 @@ async def _run_case_body(
             stream_events=True,
             yield_run_output=True,
             session_id=result.session_id,
+            user_id=case.user_id,
+            session_state=deepcopy(case.session_state),
+            dependencies=case.dependencies,
+            metadata=case.metadata,
+            knowledge_filters=case.knowledge_filters,
         ):
             if isinstance(event, (RunOutput, TeamRunOutput)):
                 # The final run output arrives in-stream (yield_run_output=True). It is
@@ -413,7 +437,7 @@ async def _run_case_body(
                 # Preserve EvalSuite's existing policy: its internally-created evals
                 # do not emit hidden telemetry, and the suite has no telemetry option.
                 telemetry=False,
-            ).arun(input=case.input, output=result.output or "")
+            ).arun(input=_input_text(case), output=result.output or "")
         except Exception as exc:
             _append_error(result, f"judge: {type(exc).__name__}: {exc}")
         else:
@@ -473,7 +497,7 @@ async def _arun_case(
         agent_id=_component_id(case) if case.agent is not None else None,
         team_id=_component_id(case) if case.team is not None else None,
         # Dedicated session per case so eval traffic doesn't pollute the agent or team's history
-        session_id=f"eval-{case.name}-{uuid4().hex[:8]}",
+        session_id=case.session_id or f"eval-{case.name}-{uuid4().hex[:8]}",
     )
     timeout = case.timeout_seconds if case.timeout_seconds is not None else default_timeout
 
