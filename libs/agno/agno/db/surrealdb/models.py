@@ -20,6 +20,7 @@ TableType = Literal[
     "knowledge",
     "memories",
     "metrics",
+    "os_metrics",
     "runs",
     "sessions",
     "spans",
@@ -245,6 +246,7 @@ def get_schema(table_type: TableType, table_name: str) -> str:
             {define_table}
             DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE INDEX idx_created_at ON {table_name} FIELDS created_at;
             """)
     elif table_type == "traces":
         return dedent(f"""
@@ -275,12 +277,22 @@ def get_schema(table_type: TableType, table_name: str) -> str:
             DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
             DEFINE INDEX idx_run_id ON {table_name} FIELDS run_id UNIQUE;
+            DEFINE INDEX idx_created_at ON {table_name} FIELDS created_at;
             DEFINE INDEX idx_session_id ON {table_name} FIELDS session_id;
             DEFINE INDEX idx_user_id ON {table_name} FIELDS user_id;
             DEFINE INDEX idx_agent_id ON {table_name} FIELDS agent_id;
             DEFINE INDEX idx_team_id ON {table_name} FIELDS team_id;
             DEFINE INDEX idx_workflow_id ON {table_name} FIELDS workflow_id;
             DEFINE INDEX idx_status ON {table_name} FIELDS status;
+            """)
+    elif table_type == "os_metrics":
+        # Rows with no owner use the empty-string user_id
+        return dedent(f"""
+            {define_table}
+            DEFINE INDEX idx_aggregation_period_date ON {table_name} FIELDS aggregation_period, date;
+            DEFINE INDEX idx_date ON {table_name} FIELDS date;
+            DEFINE INDEX idx_user_id_date ON {table_name} FIELDS user_id, date;
+            DEFINE INDEX idx_updated_at ON {table_name} FIELDS updated_at;
             """)
     else:
         return define_table
