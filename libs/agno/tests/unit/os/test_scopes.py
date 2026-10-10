@@ -44,6 +44,56 @@ class TestCheckRouteScopes:
         result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", "/metrics/refresh/status")
         assert result.allowed is True
 
+    def test_os_model_metrics_needs_the_metrics_read_scope(self):
+        # OS metrics carry every user's run counts per model. Unmapped routes are open, so without
+        # this entry a token scoped to running one agent reads them.
+        result = check_route_scopes(
+            ["agents:agent-openai:run"], get_default_scope_mappings(), "GET", "/os/metrics/models"
+        )
+        assert result.allowed is False
+        result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", "/os/metrics/models")
+        assert result.allowed is True
+
+    def test_os_session_metrics_needs_the_metrics_read_scope(self):
+        result = check_route_scopes(
+            ["agents:agent-openai:run"], get_default_scope_mappings(), "GET", "/os/metrics/sessions"
+        )
+        assert result.allowed is False
+        result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", "/os/metrics/sessions")
+        assert result.allowed is True
+
+    def test_os_token_metrics_needs_the_metrics_read_scope(self):
+        result = check_route_scopes(
+            ["agents:agent-openai:run"], get_default_scope_mappings(), "GET", "/os/metrics/tokens"
+        )
+        assert result.allowed is False
+        result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", "/os/metrics/tokens")
+        assert result.allowed is True
+
+    def test_os_run_metrics_needs_the_metrics_read_scope(self):
+        result = check_route_scopes(
+            ["agents:agent-openai:run"], get_default_scope_mappings(), "GET", "/os/metrics/runs"
+        )
+        assert result.allowed is False
+        result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", "/os/metrics/runs")
+        assert result.allowed is True
+
+    def test_os_latency_metrics_needs_the_metrics_read_scope(self):
+        result = check_route_scopes(
+            ["agents:agent-openai:run"], get_default_scope_mappings(), "GET", "/os/metrics/latency"
+        )
+        assert result.allowed is False
+        result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", "/os/metrics/latency")
+        assert result.allowed is True
+
+    def test_os_metrics_refresh_needs_the_metrics_write_scope(self):
+        result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "POST", "/os/metrics/refresh")
+        assert result.allowed is False
+        result = check_route_scopes(["metrics:write"], get_default_scope_mappings(), "POST", "/os/metrics/refresh")
+        assert result.allowed is True
+        result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", "/os/metrics/refresh/status")
+        assert result.allowed is True
+
 
 class TestParseScope:
     def test_parses_global_scope(self):
