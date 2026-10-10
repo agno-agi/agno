@@ -1,6 +1,10 @@
 import asyncio
+import hashlib
+import json
 import logging
+from collections import OrderedDict
 from datetime import date, datetime, timedelta, timezone
+from functools import partial
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple, Union
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Request, Response
@@ -65,6 +69,10 @@ DEFAULT_WINDOW_DAYS = 30
 # The /os/metrics routes read every database of the AgentOS at the same time, this many at once. A database
 # that has not answered within the timeout is left out of the response and named in skipped_db_ids.
 _MAX_CONCURRENT_OS_METRICS_READS = 8
+
+_MAX_OS_METRICS_RESPONSES = 256
+# An answer for a longer window is returned but not kept
+_MAX_OS_METRICS_KEPT_WINDOW_DAYS = 366
 
 
 def _window(starting_date: Optional[date], ending_date: Optional[date]) -> Tuple[date, date]:
@@ -656,6 +664,109 @@ def attach_routes(
             return results[0], databases
         return merge_os_metrics_totals(results, fields), databases
 
+    # Answers of the read routes. Only read and written on the event loop, so no lock is needed.
+    # Per-process: every server asks the databases for their state before it reuses an answer.
+    os_metrics_responses: "OrderedDict[str, Any]" = OrderedDict()
+
+    def _seconds_left(deadline: float) -> float:
+        """The seconds a request has left before its deadline."""
+        return max(deadline - asyncio.get_running_loop().time(), 0.0)
+
+    async def _os_metrics_response_key(
+        route: str,
+        os_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+        effective_user_id: Optional[str],
+        starting_date: date,
+        ending_date: date,
+        timeout_seconds: float,
+    ) -> Optional[str]:
+        """The key an answer of a read route is kept under, or None when the answer may not be reused.
+
+        A route gives this half the time of its request, so the rows can still be read within the other half.
+        """
+        # Reading the state also runs the lazy refresh, so a reused answer is never older than the rows
+
+        async def _state_of(db: Union[BaseDb, AsyncBaseDb, RemoteDb], seconds_left: float) -> Any:
+            if isinstance(db, RemoteDb) or not _stores_os_metrics(db):
+                return "unsupported"
+            if isinstance(db, AsyncBaseDb):
+                task = asyncio.ensure_future(db.get_os_metrics_state(ending_date))
+            else:
+                task = asyncio.ensure_future(run_in_threadpool(db.get_os_metrics_state, ending_date))
+            try:
+                return await asyncio.wait_for(asyncio.shield(task), timeout=seconds_left)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                # The read finishes in the background, so a rebuild it started is not rolled
+                # back; retrieve its eventual result so it never warns
+                task.add_done_callback(lambda t: t.cancelled() or t.exception())
+                raise
+
+        sources = [(db_id, db) for db_id, db_list in os_dbs.items() for db in db_list]
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        states: List[Any] = []
+        # In the batches of _read_os_dbs, so no more rebuilds are started at once than a read without this starts
+        for start in range(0, len(sources), _MAX_CONCURRENT_OS_METRICS_READS):
+            if _seconds_left(deadline) <= 0:
+                return None
+            batch = sources[start : start + _MAX_CONCURRENT_OS_METRICS_READS]
+            outcomes = await asyncio.gather(
+                *(_state_of(db, _seconds_left(deadline)) for _, db in batch), return_exceptions=True
+            )
+            # A database that cannot say its state, or did not answer, has no answer kept for it
+            if any(isinstance(outcome, BaseException) for outcome in outcomes):
+                return None
+            states.extend(outcomes)
+        try:
+            for state in states:
+                if state == "unsupported":
+                    continue
+                updated_at, _ = state
+                # Having no state is the one state a database reports again: before its first rebuild, once
+                # its state is lost, and while its rows may be ahead of its state
+                if updated_at is None:
+                    return None
+            return json.dumps(
+                [
+                    route,
+                    starting_date.isoformat(),
+                    ending_date.isoformat(),
+                    effective_user_id,
+                    [[db_id, state] for (db_id, _), state in zip(sources, states)],
+                ]
+            )
+        except (TypeError, ValueError):
+            return None
+
+    async def _keep_os_metrics_response(
+        key: Optional[str],
+        os_metrics_response: Any,
+        key_of: Callable[[float], Awaitable[Optional[str]]],
+        timeout_seconds: float,
+    ) -> None:
+        """Keep the answer of a read route under its key, when no database changed while it was read."""
+        if key is None or os_metrics_response.window_days > _MAX_OS_METRICS_KEPT_WINDOW_DAYS:
+            return
+        # A database that timed out or failed may answer the next request, so an answer without it is not kept
+        if any(reason != "unsupported" for reason in os_metrics_response.skipped_db_ids.values()):
+            return
+        # A rebuild that landed between the state read and the rows read would be kept under the older state
+        if await key_of(timeout_seconds) != key:
+            return
+        os_metrics_responses[key] = os_metrics_response
+        os_metrics_responses.move_to_end(key)
+        while len(os_metrics_responses) > _MAX_OS_METRICS_RESPONSES:
+            os_metrics_responses.popitem(last=False)
+
+    def _os_metrics_answer(request: Request, response: Response, os_metrics_response: Any) -> Any:
+        """The answer of a read route with its ETag, or 304 with no body for a caller that already holds it."""
+        etag = f'"{hashlib.sha256(os_metrics_response.model_dump_json().encode()).hexdigest()[:32]}"'
+        # If-None-Match lists the ETags a caller holds, each maybe marked weak, or * for any of them
+        held_etags = [held_etag.strip() for held_etag in request.headers.get("if-none-match", "").split(",")]
+        if "*" in held_etags or etag in [held_etag.removeprefix("W/") for held_etag in held_etags]:
+            return Response(status_code=304, headers={"ETag": etag})
+        response.headers["ETag"] = etag
+        return os_metrics_response
+
     def _days(starting_date: date, ending_date: date) -> List[date]:
         """Every day of the window, a day without rows included."""
         return [starting_date + timedelta(days=offset) for offset in range((ending_date - starting_date).days + 1)]
@@ -745,6 +856,7 @@ def attach_routes(
     )
     async def get_os_session_metrics(
         request: Request,
+        response: Response,
         starting_date: Optional[date] = Query(
             default=None,
             description="Starting date for the window (YYYY-MM-DD format). Defaults to 29 days before ending_date",
@@ -760,10 +872,18 @@ def attach_routes(
             description="Database ID to read OS metrics from. Repeat it to read several. Defaults to every database",
         ),
         timeout_seconds: float = Query(default=30, gt=0, description="Seconds to wait for each database to answer"),
-    ) -> OSSessionMetricsResponse:
+    ) -> Union[OSSessionMetricsResponse, Response]:
         try:
             os_dbs = _os_dbs(db_id)
             starting_date, ending_date = _window(starting_date, ending_date)
+            deadline = asyncio.get_running_loop().time() + timeout_seconds
+            response_key_of = partial(
+                _os_metrics_response_key, "sessions", os_dbs, _owner(request, user_id), starting_date, ending_date
+            )
+            response_key = await response_key_of(timeout_seconds / 2)
+            if response_key is not None and response_key in os_metrics_responses:
+                os_metrics_responses.move_to_end(response_key)
+                return _os_metrics_answer(request, response, os_metrics_responses[response_key])
             previous_starting_date = _previous_starting_date(starting_date, ending_date)
             totals, databases = await _os_metrics_by_day(
                 os_dbs,
@@ -771,7 +891,7 @@ def attach_routes(
                 previous_starting_date,
                 ending_date,
                 ["sessions_count"],
-                timeout_seconds,
+                _seconds_left(deadline),
             )
 
             metrics = [
@@ -784,7 +904,7 @@ def attach_routes(
             previous_total_sessions = sum(
                 day_totals["sessions_count"] for day, day_totals in totals.items() if day < starting_date
             )
-            return OSSessionMetricsResponse(
+            os_metrics_response = OSSessionMetricsResponse(
                 metrics=metrics,
                 total_sessions=total_sessions,
                 previous_total_sessions=previous_total_sessions,
@@ -792,6 +912,8 @@ def attach_routes(
                 window_days=(ending_date - starting_date).days + 1,
                 **databases,
             )
+            await _keep_os_metrics_response(response_key, os_metrics_response, response_key_of, _seconds_left(deadline))
+            return _os_metrics_answer(request, response, os_metrics_response)
 
         except HTTPException:
             raise
@@ -840,6 +962,7 @@ def attach_routes(
     )
     async def get_os_token_metrics(
         request: Request,
+        response: Response,
         starting_date: Optional[date] = Query(
             default=None,
             description="Starting date for the window (YYYY-MM-DD format). Defaults to 29 days before ending_date",
@@ -855,10 +978,18 @@ def attach_routes(
             description="Database ID to read OS metrics from. Repeat it to read several. Defaults to every database",
         ),
         timeout_seconds: float = Query(default=30, gt=0, description="Seconds to wait for each database to answer"),
-    ) -> OSTokenMetricsResponse:
+    ) -> Union[OSTokenMetricsResponse, Response]:
         try:
             os_dbs = _os_dbs(db_id)
             starting_date, ending_date = _window(starting_date, ending_date)
+            deadline = asyncio.get_running_loop().time() + timeout_seconds
+            response_key_of = partial(
+                _os_metrics_response_key, "tokens", os_dbs, _owner(request, user_id), starting_date, ending_date
+            )
+            response_key = await response_key_of(timeout_seconds / 2)
+            if response_key is not None and response_key in os_metrics_responses:
+                os_metrics_responses.move_to_end(response_key)
+                return _os_metrics_answer(request, response, os_metrics_responses[response_key])
             previous_starting_date = _previous_starting_date(starting_date, ending_date)
             totals, databases = await _os_metrics_by_day(
                 os_dbs,
@@ -866,7 +997,7 @@ def attach_routes(
                 previous_starting_date,
                 ending_date,
                 ["token_metrics"],
-                timeout_seconds,
+                _seconds_left(deadline),
             )
 
             metrics = []
@@ -881,7 +1012,7 @@ def attach_routes(
                 for day, day_totals in totals.items()
                 if day < starting_date
             )
-            return OSTokenMetricsResponse(
+            os_metrics_response = OSTokenMetricsResponse(
                 metrics=metrics,
                 total_tokens=total_tokens,
                 previous_total_tokens=previous_total_tokens,
@@ -889,6 +1020,8 @@ def attach_routes(
                 window_days=(ending_date - starting_date).days + 1,
                 **databases,
             )
+            await _keep_os_metrics_response(response_key, os_metrics_response, response_key_of, _seconds_left(deadline))
+            return _os_metrics_answer(request, response, os_metrics_response)
 
         except HTTPException:
             raise
@@ -1041,6 +1174,7 @@ def attach_routes(
     )
     async def get_os_model_metrics(
         request: Request,
+        response: Response,
         starting_date: Optional[date] = Query(
             default=None,
             description="Starting date for the window (YYYY-MM-DD format). Defaults to 29 days before ending_date",
@@ -1056,12 +1190,20 @@ def attach_routes(
             description="Database ID to read OS metrics from. Repeat it to read several. Defaults to every database",
         ),
         timeout_seconds: float = Query(default=30, gt=0, description="Seconds to wait for each database to answer"),
-    ) -> OSModelMetricsResponse:
+    ) -> Union[OSModelMetricsResponse, Response]:
         try:
             os_dbs = _os_dbs(db_id)
             starting_date, ending_date = _window(starting_date, ending_date)
+            deadline = asyncio.get_running_loop().time() + timeout_seconds
+            response_key_of = partial(
+                _os_metrics_response_key, "models", os_dbs, _owner(request, user_id), starting_date, ending_date
+            )
+            response_key = await response_key_of(timeout_seconds / 2)
+            if response_key is not None and response_key in os_metrics_responses:
+                os_metrics_responses.move_to_end(response_key)
+                return _os_metrics_answer(request, response, os_metrics_responses[response_key])
             totals, databases = await _os_metrics_totals(
-                os_dbs, _owner(request, user_id), starting_date, ending_date, ["model_metrics"], timeout_seconds
+                os_dbs, _owner(request, user_id), starting_date, ending_date, ["model_metrics"], _seconds_left(deadline)
             )
 
             # One entry per model and caller, so the runs add up per model
@@ -1071,7 +1213,7 @@ def attach_routes(
                 run_counts[key] = run_counts.get(key, 0) + model_metric["count"]
 
             total_model_runs = sum(run_counts.values())
-            return OSModelMetricsResponse(
+            os_metrics_response = OSModelMetricsResponse(
                 models=[
                     ModelUsage(
                         model_id=model_id,
@@ -1087,6 +1229,8 @@ def attach_routes(
                 window_days=(ending_date - starting_date).days + 1,
                 **databases,
             )
+            await _keep_os_metrics_response(response_key, os_metrics_response, response_key_of, _seconds_left(deadline))
+            return _os_metrics_answer(request, response, os_metrics_response)
 
         except HTTPException:
             raise
@@ -1143,6 +1287,7 @@ def attach_routes(
     )
     async def get_os_run_metrics(
         request: Request,
+        response: Response,
         starting_date: Optional[date] = Query(
             default=None,
             description="Starting date for the window (YYYY-MM-DD format). Defaults to 29 days before ending_date",
@@ -1158,10 +1303,18 @@ def attach_routes(
             description="Database ID to read OS metrics from. Repeat it to read several. Defaults to every database",
         ),
         timeout_seconds: float = Query(default=30, gt=0, description="Seconds to wait for each database to answer"),
-    ) -> OSRunMetricsResponse:
+    ) -> Union[OSRunMetricsResponse, Response]:
         try:
             os_dbs = _os_dbs(db_id)
             starting_date, ending_date = _window(starting_date, ending_date)
+            deadline = asyncio.get_running_loop().time() + timeout_seconds
+            response_key_of = partial(
+                _os_metrics_response_key, "runs", os_dbs, _owner(request, user_id), starting_date, ending_date
+            )
+            response_key = await response_key_of(timeout_seconds / 2)
+            if response_key is not None and response_key in os_metrics_responses:
+                os_metrics_responses.move_to_end(response_key)
+                return _os_metrics_answer(request, response, os_metrics_responses[response_key])
             previous_starting_date = _previous_starting_date(starting_date, ending_date)
             totals, databases = await _os_metrics_by_day(
                 os_dbs,
@@ -1169,7 +1322,7 @@ def attach_routes(
                 previous_starting_date,
                 ending_date,
                 ["runs_count", "status_metrics"],
-                timeout_seconds,
+                _seconds_left(deadline),
             )
 
             metrics = []
@@ -1195,7 +1348,7 @@ def attach_routes(
                 status_metrics.get(status, 0)
                 for status in (RunStatus.completed.value, RunStatus.error.value, RunStatus.cancelled.value)
             )
-            return OSRunMetricsResponse(
+            os_metrics_response = OSRunMetricsResponse(
                 metrics=metrics,
                 total_runs=total_runs,
                 status_metrics=status_metrics,
@@ -1207,6 +1360,8 @@ def attach_routes(
                 window_days=(ending_date - starting_date).days + 1,
                 **databases,
             )
+            await _keep_os_metrics_response(response_key, os_metrics_response, response_key_of, _seconds_left(deadline))
+            return _os_metrics_answer(request, response, os_metrics_response)
 
         except HTTPException:
             raise
@@ -1282,6 +1437,7 @@ def attach_routes(
     )
     async def get_os_latency_metrics(
         request: Request,
+        response: Response,
         starting_date: Optional[date] = Query(
             default=None,
             description="Starting date for the window (YYYY-MM-DD format). Defaults to 29 days before ending_date",
@@ -1297,10 +1453,18 @@ def attach_routes(
             description="Database ID to read OS metrics from. Repeat it to read several. Defaults to every database",
         ),
         timeout_seconds: float = Query(default=30, gt=0, description="Seconds to wait for each database to answer"),
-    ) -> OSLatencyMetricsResponse:
+    ) -> Union[OSLatencyMetricsResponse, Response]:
         try:
             os_dbs = _os_dbs(db_id)
             starting_date, ending_date = _window(starting_date, ending_date)
+            deadline = asyncio.get_running_loop().time() + timeout_seconds
+            response_key_of = partial(
+                _os_metrics_response_key, "latency", os_dbs, _owner(request, user_id), starting_date, ending_date
+            )
+            response_key = await response_key_of(timeout_seconds / 2)
+            if response_key is not None and response_key in os_metrics_responses:
+                os_metrics_responses.move_to_end(response_key)
+                return _os_metrics_answer(request, response, os_metrics_responses[response_key])
             # The medians and p95s are read from each day's bucket counts
             totals, databases = await _os_metrics_by_day(
                 os_dbs,
@@ -1308,7 +1472,7 @@ def attach_routes(
                 starting_date,
                 ending_date,
                 ["duration_metrics", "duration_buckets"],
-                timeout_seconds,
+                _seconds_left(deadline),
             )
 
             metrics = []
@@ -1321,12 +1485,14 @@ def attach_routes(
                 merge_os_metrics_json(window_duration_metrics, duration_metrics)
                 merge_os_metrics_json(window_buckets, buckets)
 
-            return OSLatencyMetricsResponse(
+            os_metrics_response = OSLatencyMetricsResponse(
                 metrics=metrics,
                 window_days=(ending_date - starting_date).days + 1,
                 **databases,
                 **_latency(window_duration_metrics, window_buckets),
             )
+            await _keep_os_metrics_response(response_key, os_metrics_response, response_key_of, _seconds_left(deadline))
+            return _os_metrics_answer(request, response, os_metrics_response)
 
         except HTTPException:
             raise

@@ -111,7 +111,9 @@ async def _stored_total_rows(db: AsyncPostgresDb) -> Dict[tuple, Dict]:
     """Every total row and month row in the table, keyed by its date, period, owner and component"""
     table = await db._get_table("os_metrics", create_table_if_not_found=True)
     async with db.async_session_factory() as sess:
-        result = await sess.execute(select(table).where(table.c.aggregation_period != "daily"))
+        result = await sess.execute(
+            select(table).where(table.c.aggregation_period.in_(["daily_total", "monthly", "monthly_total"]))
+        )
         return {
             (
                 row.date,
@@ -1237,6 +1239,42 @@ async def test_refresh_os_metrics_reports_what_changed(
     assert latest_updated_at >= updated_at
     assert changed is True
     assert (await _stored_rows(async_postgres_db_real))[(_utc_date(0), "alice", "agent-1", "", "")]["runs_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_get_os_metrics_state_changes_only_when_a_rebuild_writes_or_deletes(
+    async_postgres_db_real: AsyncPostgresDb, sample_sessions_for_os_metrics
+):
+    """Ensure get_os_metrics_state is the same again until a rebuild writes or deletes a row"""
+    for session in sample_sessions_for_os_metrics:
+        await _persist(async_postgres_db_real, session)
+    await async_postgres_db_real.refresh_os_metrics()
+
+    updated_at, state_hash = await async_postgres_db_real.get_os_metrics_state()
+    assert updated_at is not None
+    assert state_hash
+
+    # Nothing new: no row is written, so the state is the same
+    await async_postgres_db_real.refresh_os_metrics()
+    assert await async_postgres_db_real.get_os_metrics_state() == (updated_at, state_hash)
+
+    # A window that ends on a day still open is told the whole state, one that ends on a completed day the
+    # state of the completed days
+    assert await async_postgres_db_real.get_os_metrics_state(_utc_date(1)) == (updated_at, state_hash)
+    completed_updated_at, completed_state_hash = await async_postgres_db_real.get_os_metrics_state(_utc_date(2))
+    assert completed_updated_at is not None
+    assert completed_state_hash
+
+    # The only session of today is gone: its row is deleted and none is written, and the state still moves
+    assert await async_postgres_db_real.delete_session(sample_sessions_for_os_metrics[4].session_id) is True
+    await async_postgres_db_real.refresh_os_metrics()
+    _, latest_state_hash = await async_postgres_db_real.get_os_metrics_state()
+    assert latest_state_hash != state_hash
+    # The state of the completed days is not moved by a day still open
+    assert await async_postgres_db_real.get_os_metrics_state(_utc_date(2)) == (
+        completed_updated_at,
+        completed_state_hash,
+    )
 
 
 @pytest.mark.asyncio

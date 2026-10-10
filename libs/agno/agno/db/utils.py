@@ -12,6 +12,7 @@ from agno.models.message import Message
 from agno.run.base import HISTORY_SKIP_STATUSES as _RUN_HISTORY_SKIP_STATUSES
 from agno.run.base import RunStatus
 from agno.utils.log import log_error, log_warning
+from agno.utils.string import generate_id
 
 if TYPE_CHECKING:
     from agno.db.base import AsyncBaseDb, BaseDb, SessionType
@@ -959,6 +960,9 @@ def resolve_os_metrics_fields(fields: Optional[Sequence[str]]) -> List[str]:
 # rows it totals. A month row is dated the first day of its month.
 OS_METRICS_DAY_PERIODS = ("daily_total", "daily")
 
+# The id and the period of the row holding when OS metrics rows were last written or deleted, and their hash
+OS_METRICS_STATE_ID = "os_metrics_state"
+
 
 def _os_metrics_row_key(row: Dict[str, Any]) -> Tuple[int, str, str, str, str, str]:
     """The period, owner, component and parent a row is unique by within its day, a total row ordered first."""
@@ -1398,6 +1402,119 @@ def build_os_metrics_total_row(
         "duration_metrics": {**row_totals["duration_metrics"], **row_totals["duration_buckets"]},
         "model_metrics": row_totals["model_metrics"],
         "metadata": None,
+    }
+
+
+def os_metrics_state_hash(previous_hash: str, changed_rows: Sequence[Dict[str, Any]], stale_ids: Sequence[str]) -> str:
+    """Hash the rows a rebuild wrote and the ids of the rows it deleted, onto the hash of the state before.
+
+    The hash before is part of it, so no state is the same as an earlier one, even when its rows are.
+
+    Args:
+        previous_hash (str): The hash of the state before the rebuild. Empty when there is none.
+        changed_rows (Sequence[Dict[str, Any]]): The rows the rebuild wrote.
+        stale_ids (Sequence[str]): The ids of the rows the rebuild deleted.
+
+    Returns:
+        str: The hash of the state after the rebuild.
+    """
+    return generate_id(json.dumps([previous_hash, changed_rows, stale_ids], default=str))
+
+
+def build_os_metrics_state(
+    previous_state: Dict[str, Any],
+    updated_at: int,
+    changed_rows: Sequence[Dict[str, Any]],
+    stale_ids: Sequence[str],
+    day: Optional[date] = None,
+) -> Dict[str, Any]:
+    """Build the state of the OS metrics after a rebuild wrote or deleted rows.
+
+    The state has two parts. One moves with every row a rebuild writes or deletes. The other moves only with the
+    rows of completed days, so what was read from completed days alone is not taken as changed by a day still open.
+
+    Args:
+        previous_state (Dict[str, Any]): The state before the rebuild. Empty when there is none.
+        updated_at (int): When the rebuild wrote or deleted the rows.
+        changed_rows (Sequence[Dict[str, Any]]): The rows the rebuild wrote.
+        stale_ids (Sequence[str]): The ids of the rows the rebuild deleted.
+        day (Optional[date]): The day the rows are of. ``None`` for rows of no single day, which are taken as
+            rows of completed days.
+
+    Returns:
+        Dict[str, Any]: The state after the rebuild.
+    """
+    state_hash = os_metrics_state_hash(previous_state.get("hash") or "", changed_rows, stale_ids)
+    completed_date = previous_state.get("completed_date")
+    state = {
+        "updated_at": updated_at,
+        "hash": state_hash,
+        "completed_date": completed_date,
+        "completed_updated_at": previous_state.get("completed_updated_at"),
+        "completed_hash": previous_state.get("completed_hash") or "",
+    }
+    completed = any(row.get("completed") for row in changed_rows)
+    # A day at or before the latest completed one is not rebuilt, so rows written there count as rows of it
+    if day is None or completed or (completed_date is not None and day.isoformat() <= completed_date):
+        state["completed_updated_at"] = updated_at
+        state["completed_hash"] = state_hash
+    if day is not None and completed and (completed_date is None or day.isoformat() > completed_date):
+        state["completed_date"] = day.isoformat()
+    return state
+
+
+def os_metrics_state_of(
+    state: Optional[Dict[str, Any]], ending_date: Optional[date] = None
+) -> Tuple[Optional[int], str]:
+    """What get_os_metrics_state reports from the stored state: when it last moved, and its hash.
+
+    Args:
+        state (Optional[Dict[str, Any]]): The stored state, from build_os_metrics_state. Empty when there is none.
+        ending_date (Optional[date]): The last day that is read. When it is a completed day, the part of the
+            state that only moves with the rows of completed days is reported.
+
+    Returns:
+        Tuple[Optional[int], str]: The state. ``None`` and an empty hash when there is none, and while a rebuild
+            that marked it is writing rows, which may be ahead of it.
+    """
+    if not state or state.get("rebuilding"):
+        return None, ""
+    completed_date = state.get("completed_date")
+    if ending_date is not None and completed_date is not None and ending_date.isoformat() <= completed_date:
+        return state.get("completed_updated_at"), state.get("completed_hash") or ""
+    return state.get("updated_at"), state.get("hash") or ""
+
+
+def build_os_metrics_state_row(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the row that holds the state of the OS metrics table.
+
+    Args:
+        state (Dict[str, Any]): The state, from build_os_metrics_state.
+
+    Returns:
+        Dict[str, Any]: The row, in the shape calculate_date_os_metrics writes. It is dated the day of the
+            rebuild, and is no row of that day.
+    """
+    updated_at = state["updated_at"]
+    return {
+        "id": OS_METRICS_STATE_ID,
+        "date": datetime.fromtimestamp(updated_at, tz=timezone.utc).date(),
+        "completed": False,
+        "created_at": updated_at,
+        "updated_at": updated_at,
+        "aggregation_period": OS_METRICS_STATE_ID,
+        "user_id": "",
+        "agent_id": "",
+        "team_id": "",
+        "workflow_id": "",
+        "parent_id": "",
+        "sessions_count": 0,
+        "runs_count": 0,
+        "status_metrics": {},
+        "token_metrics": {},
+        "duration_metrics": {},
+        "model_metrics": [],
+        "metadata": {key: value for key, value in state.items() if key != "updated_at"},
     }
 
 

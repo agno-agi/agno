@@ -40,8 +40,10 @@ from agno.db.postgres.utils import (
     create_schema,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    get_stored_os_metrics_state,
     is_table_available,
     is_valid_table,
+    update_os_metrics_state,
 )
 from agno.db.schemas.authz import (
     AUTHZ_AUDIT,
@@ -72,6 +74,7 @@ from agno.db.sql import mcp_oauth as mcp_oauth_sql
 from agno.db.utils import (
     HISTORY_SKIP_STATUSES,
     OS_METRICS_DAY_PERIODS,
+    OS_METRICS_STATE_ID,
     SessionRunObjectCache,
     build_single_run_row,
     calculate_date_os_metrics,
@@ -89,6 +92,7 @@ from agno.db.utils import (
     os_metrics_full_months,
     os_metrics_month_end,
     os_metrics_rows_to_write,
+    os_metrics_state_of,
     resolve_os_metrics_fields,
     table_schema_mismatch_error,
     validate_pagination,
@@ -2855,7 +2859,10 @@ class PostgresDb(BaseDb):
             # be rebuilt
             latest_completed = sess.execute(select(func.max(table.c.date)).where(table.c.completed.is_(True))).scalar()
 
-            incomplete_stmt = select(func.min(table.c.date)).where(table.c.completed.is_(False))
+            # The state row of the OS metrics table is no day
+            incomplete_stmt = select(func.min(table.c.date)).where(
+                table.c.completed.is_(False), table.c.aggregation_period != OS_METRICS_STATE_ID
+            )
             if latest_completed is not None:
                 incomplete_stmt = incomplete_stmt.where(table.c.date > latest_completed)
             earliest_incomplete = sess.execute(incomplete_stmt).scalar()
@@ -3043,14 +3050,18 @@ class PostgresDb(BaseDb):
             if table is None:
                 return None, None, False
 
+            # The state row is stamped when it is written, a time no row of a day reports
+            updated_at_stmt = select(func.max(table.c.updated_at)).where(
+                table.c.aggregation_period != OS_METRICS_STATE_ID
+            )
             with self.Session() as sess:
-                previous_updated_at = sess.execute(select(func.max(table.c.updated_at))).scalar()
+                previous_updated_at = sess.execute(updated_at_stmt).scalar()
 
             changed_ids: List[str] = []
             self._calculate_os_metrics(wait_for_rebuild=True, changed_ids=changed_ids)
 
             with self.Session() as sess:
-                latest_updated_at = sess.execute(select(func.max(table.c.updated_at))).scalar()
+                latest_updated_at = sess.execute(updated_at_stmt).scalar()
 
             return previous_updated_at, latest_updated_at, bool(changed_ids)
 
@@ -3178,6 +3189,15 @@ class PostgresDb(BaseDb):
                             table.delete().where(table.c.id.in_(stale_ids[start : start + OS_METRICS_IN_LIST_LIMIT]))
                         )
                     bulk_upsert_os_metrics(session=sess, table=table, os_metrics_records=changed_rows)
+                    # The state moves in the day's transaction, so it is never read without the rows it tells of
+                    if changed_rows or stale_ids:
+                        update_os_metrics_state(
+                            session=sess,
+                            table=table,
+                            changed_rows=changed_rows,
+                            stale_ids=stale_ids,
+                            day=date_to_process,
+                        )
                     results.extend(records)
                     if changed_ids is not None:
                         changed_ids.extend([*stale_ids, *(row["id"] for row in changed_rows)])
@@ -3226,6 +3246,8 @@ class PostgresDb(BaseDb):
                 month_rows = calculate_month_os_metrics(month_start, stored_rows)
                 bulk_upsert_os_metrics(session=sess, table=table, os_metrics_records=month_rows)
                 results.extend(month_rows)
+            if results:
+                update_os_metrics_state(session=sess, table=table, changed_rows=results, stale_ids=[])
 
         return results
 
@@ -3318,6 +3340,40 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting OS metrics totals: {str(e)}")
+            raise e
+
+    def get_os_metrics_state(self, ending_date: Optional[date] = None) -> Tuple[Optional[int], str]:
+        """Get when any OS metrics row was last written or deleted, and the hash of the state.
+
+        OS metrics are refreshed lazily, as in get_os_metrics.
+
+        Args:
+            ending_date (Optional[date]): The last day that is read. When it is a completed day, the state of
+                the rows of completed days is returned, which a day still open does not move.
+
+        Returns:
+            Tuple[Optional[int], str]: When any row was last written or deleted, and the hash of the state. Both
+                are the same again only while no rebuild wrote or deleted a row.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    self._calculate_os_metrics(wait_for_rebuild=False)
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            table = self._get_table(table_type="os_metrics", create_table_if_not_found=True)
+            if table is None:
+                return None, ""
+
+            with self.Session() as sess:
+                return os_metrics_state_of(get_stored_os_metrics_state(session=sess, table=table), ending_date)
+
+        except Exception as e:
+            log_error(f"Exception getting OS metrics state: {str(e)}")
             raise e
 
     def _get_os_metrics_totals_by_date(

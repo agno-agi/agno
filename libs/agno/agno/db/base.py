@@ -797,6 +797,16 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    def get_os_metrics_state(self, ending_date: Optional[date] = None) -> Tuple[Optional[int], str]:
+        """When any OS metrics row was last written or deleted, and the hash of the rows written and deleted.
+
+        Cheap to read, and different after every rebuild that wrote or deleted a row, so an answer built from
+        the OS metrics can be reused while it is the same. Given an ending_date that is a completed day, it is
+        the state of the rows of completed days, which a day still open does not move. OS metrics are refreshed
+        lazily, as in get_os_metrics.
+        """
+        raise NotImplementedError
+
     # --- Knowledge ---
     # ``user_id`` scopes reads to that user's rows plus shared (``user_id IS NULL``) rows;
     # ``None`` applies no scoping. Deletes are stricter — see ``delete_knowledge_content``.
@@ -2754,6 +2764,16 @@ class AsyncBaseDb(ABC):
 
         Returns when the OS metrics were last updated before the calculation and after it, and whether it
         wrote or deleted any row.
+        """
+        raise NotImplementedError
+
+    async def get_os_metrics_state(self, ending_date: Optional[date] = None) -> Tuple[Optional[int], str]:
+        """When any OS metrics row was last written or deleted, and the hash of the rows written and deleted.
+
+        Cheap to read, and different after every rebuild that wrote or deleted a row, so an answer built from
+        the OS metrics can be reused while it is the same. Given an ending_date that is a completed day, it is
+        the state of the rows of completed days, which a day still open does not move. OS metrics are refreshed
+        lazily, as in get_os_metrics.
         """
         raise NotImplementedError
 

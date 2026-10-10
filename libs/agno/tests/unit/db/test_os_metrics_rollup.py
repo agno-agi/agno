@@ -17,6 +17,7 @@ from agno.db.utils import (
     OS_METRICS_DAY_PERIODS,
     OS_METRICS_FIXED_KEYS,
     _os_metrics_row_key,
+    build_os_metrics_state,
     calculate_date_os_metrics,
     calculate_month_os_metrics,
     get_months_to_calculate_os_metrics_for,
@@ -30,6 +31,8 @@ from agno.db.utils import (
     os_metrics_nested_run_ids,
     os_metrics_percentile,
     os_metrics_rows_to_write,
+    os_metrics_state_hash,
+    os_metrics_state_of,
     resolve_os_metrics_fields,
     total_os_metrics_records,
 )
@@ -1065,6 +1068,45 @@ def test_fixed_keys_cover_every_status():
 
 
 # Postgres row shaping
+
+
+def test_state_hash_is_never_the_same_as_an_earlier_one():
+    """The same rows written again give another hash, since the hash before is part of it"""
+    rows = [{"id": "row-1", "date": date(2026, 1, 1), "runs_count": 3}]
+
+    first = os_metrics_state_hash("", rows, [])
+    second = os_metrics_state_hash(first, rows, [])
+
+    assert first == os_metrics_state_hash("", rows, [])
+    assert second != first
+    assert os_metrics_state_hash(first, [], ["row-1"]) not in [first, second]
+
+
+def test_state_of_completed_days_moves_only_with_the_rows_of_completed_days():
+    """A window that ends on a completed day is told a state that a day still open does not move"""
+    completed_day, open_day = date(2026, 1, 1), date(2026, 1, 3)
+    state = build_os_metrics_state({}, 100, [{"id": "row-1", "completed": True}], [], completed_day)
+    assert os_metrics_state_of(state, completed_day) == os_metrics_state_of(state) == (100, state["hash"])
+
+    # A row of an open day moves the whole state only
+    opened = build_os_metrics_state(state, 200, [{"id": "row-2", "completed": False}], [], open_day)
+    assert os_metrics_state_of(opened) == (200, opened["hash"])
+    assert os_metrics_state_of(opened, open_day) == (200, opened["hash"])
+    assert os_metrics_state_of(opened, completed_day) == (100, state["hash"])
+
+    # A row written on a completed day, and the rows of a month, move both
+    for day in (completed_day, None):
+        rewritten = build_os_metrics_state(opened, 300, [{"id": "row-1", "completed": True}], [], day)
+        assert (
+            os_metrics_state_of(rewritten, completed_day) == os_metrics_state_of(rewritten) == (300, rewritten["hash"])
+        )
+
+    # The open day becomes the latest completed one
+    completed = build_os_metrics_state(opened, 400, [{"id": "row-2", "completed": True}], [], open_day)
+    assert os_metrics_state_of(completed, open_day) == (400, completed["hash"])
+
+    # No state, and a state whose rebuild is still writing rows, are no state
+    assert os_metrics_state_of({}) == os_metrics_state_of({**completed, "rebuilding": True}) == (None, "")
 
 
 class _Row:

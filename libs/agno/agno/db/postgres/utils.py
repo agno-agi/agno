@@ -9,7 +9,14 @@ from sqlalchemy import Engine
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from agno.db.postgres.schemas import get_table_schema_definition
-from agno.db.utils import OS_METRICS_FIXED_KEYS, os_metrics_day_ranges, os_metrics_nested_run_ids
+from agno.db.utils import (
+    OS_METRICS_FIXED_KEYS,
+    OS_METRICS_STATE_ID,
+    build_os_metrics_state,
+    build_os_metrics_state_row,
+    os_metrics_day_ranges,
+    os_metrics_nested_run_ids,
+)
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
@@ -543,6 +550,109 @@ async def abulk_upsert_os_metrics(
         set_=update_columns,
     )
     await session.execute(stmt, os_metrics_records)
+
+
+def get_stored_os_metrics_state(session: Session, table: Table) -> Dict[str, Any]:
+    """Get the state of the OS metrics table, from the state row.
+
+    Args:
+        session (Session): The session to read with.
+        table (Table): The OS metrics table.
+
+    Returns:
+        Dict[str, Any]: The state, as build_os_metrics_state builds it. Empty for a table no rebuild has
+            written to.
+    """
+    state = session.execute(
+        select(table.c.updated_at, table.c.metadata).where(table.c.id == OS_METRICS_STATE_ID)
+    ).first()
+    if state is None:
+        return {}
+    updated_at, state_metadata = state
+    return {**(state_metadata or {}), "updated_at": updated_at}
+
+
+def update_os_metrics_state(
+    session: Session,
+    table: Table,
+    changed_rows: Sequence[Dict[str, Any]],
+    stale_ids: Sequence[str],
+    day: Optional[date] = None,
+) -> None:
+    """Save the state row of the OS metrics table, in the session's transaction.
+
+    Called after a rebuild wrote or deleted rows in the session, so the state moves with them or not at all.
+
+    Args:
+        session (Session): The session to save with.
+        table (Table): The OS metrics table.
+        changed_rows (Sequence[Dict[str, Any]]): The rows the rebuild wrote in the session.
+        stale_ids (Sequence[str]): The ids of the rows the rebuild deleted in the session.
+        day (Optional[date]): The day the rows are of. ``None`` for the rows of a month.
+    """
+    previous_state = get_stored_os_metrics_state(session, table)
+    state_row = build_os_metrics_state_row(
+        build_os_metrics_state(previous_state, int(time.time()), changed_rows, stale_ids, day)
+    )
+    # The row is found by its id: it is dated the day of the rebuild, and the date is part of the unique key
+    stmt = postgresql.insert(table).values(state_row)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["id"],
+        set_={column: stmt.excluded[column] for column in ["date", "updated_at", "metadata"]},
+    )
+    session.execute(stmt)
+
+
+async def aget_stored_os_metrics_state(session: AsyncSession, table: Table) -> Dict[str, Any]:
+    """Get the state of the OS metrics table, from the state row.
+
+    Args:
+        session (AsyncSession): The session to read with.
+        table (Table): The OS metrics table.
+
+    Returns:
+        Dict[str, Any]: The state, as build_os_metrics_state builds it. Empty for a table no rebuild has
+            written to.
+    """
+    result = await session.execute(
+        select(table.c.updated_at, table.c.metadata).where(table.c.id == OS_METRICS_STATE_ID)
+    )
+    state = result.first()
+    if state is None:
+        return {}
+    updated_at, state_metadata = state
+    return {**(state_metadata or {}), "updated_at": updated_at}
+
+
+async def aupdate_os_metrics_state(
+    session: AsyncSession,
+    table: Table,
+    changed_rows: Sequence[Dict[str, Any]],
+    stale_ids: Sequence[str],
+    day: Optional[date] = None,
+) -> None:
+    """Save the state row of the OS metrics table, in the session's transaction.
+
+    Called after a rebuild wrote or deleted rows in the session, so the state moves with them or not at all.
+
+    Args:
+        session (AsyncSession): The session to save with.
+        table (Table): The OS metrics table.
+        changed_rows (Sequence[Dict[str, Any]]): The rows the rebuild wrote in the session.
+        stale_ids (Sequence[str]): The ids of the rows the rebuild deleted in the session.
+        day (Optional[date]): The day the rows are of. ``None`` for the rows of a month.
+    """
+    previous_state = await aget_stored_os_metrics_state(session, table)
+    state_row = build_os_metrics_state_row(
+        build_os_metrics_state(previous_state, int(time.time()), changed_rows, stale_ids, day)
+    )
+    # The row is found by its id: it is dated the day of the rebuild, and the date is part of the unique key
+    stmt = postgresql.insert(table).values(state_row)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["id"],
+        set_={column: stmt.excluded[column] for column in ["date", "updated_at", "metadata"]},
+    )
+    await session.execute(stmt)
 
 
 def _os_metrics_run_metrics(run_data: Any, keys: Sequence[str] = ()) -> Any:
