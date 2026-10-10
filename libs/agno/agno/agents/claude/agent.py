@@ -875,13 +875,22 @@ class ClaudeAgent(BaseExternalAgent):
                         assistant_text += block.text
                     elif isinstance(block, sdk.ToolUseBlock):
                         tools[block.id] = ToolExecution(
-                            tool_call_id=block.id, tool_name=block.name, tool_args=block.input
+                            tool_call_id=block.id,
+                            tool_name=block.name,
+                            tool_args=block.input,
+                            parent_tool_call_id=getattr(message, "parent_tool_use_id", None),
                         )
 
             elif isinstance(message, sdk.UserMessage) and isinstance(message.content, list):
                 for block in message.content:
                     if isinstance(block, sdk.ToolResultBlock):
-                        tool = tools.setdefault(block.tool_use_id, ToolExecution(tool_call_id=block.tool_use_id))
+                        tool = tools.setdefault(
+                            block.tool_use_id,
+                            ToolExecution(
+                                tool_call_id=block.tool_use_id,
+                                parent_tool_call_id=getattr(message, "parent_tool_use_id", None),
+                            ),
+                        )
                         result = block.content
                         tool.result = (
                             " ".join(getattr(item, "text", str(item)) for item in result)
@@ -919,7 +928,7 @@ class ClaudeAgent(BaseExternalAgent):
         got_stream_events = False
         # Track tool call IDs already emitted via AssistantMessage to avoid duplicates
         emitted_tool_ids: set = set()
-        # Map tool_use_id -> (tool_name, tool_args) for carrying forward to ToolCallCompleted
+        # Carry tool identity and delegation lineage forward to ToolCallCompleted.
         tool_info_map: Dict[str, Dict[str, Any]] = {}
 
         async for message in self._aquery(input, history, streaming=True, **kwargs):
@@ -970,7 +979,12 @@ class ClaudeAgent(BaseExternalAgent):
                         if tool_id not in emitted_tool_ids:
                             emitted_tool_ids.add(tool_id)
                             tool_args = tool_input if isinstance(tool_input, dict) else {"input": tool_input}
-                            tool_info_map[tool_id] = {"name": tool_name, "args": tool_args}
+                            parent_tool_call_id = getattr(message, "parent_tool_use_id", None)
+                            tool_info_map[tool_id] = {
+                                "name": tool_name,
+                                "args": tool_args,
+                                "parent_tool_call_id": parent_tool_call_id,
+                            }
                             yield ToolCallStartedEvent(
                                 run_id=run_id,
                                 agent_id=self.get_id(),
@@ -979,6 +993,7 @@ class ClaudeAgent(BaseExternalAgent):
                                     tool_call_id=tool_id,
                                     tool_name=tool_name,
                                     tool_args=tool_args,
+                                    parent_tool_call_id=parent_tool_call_id,
                                 ),
                             )
 
@@ -1005,5 +1020,9 @@ class ClaudeAgent(BaseExternalAgent):
                                     tool_name=info.get("name", ""),
                                     tool_args=info.get("args"),
                                     result=result_str,
+                                    tool_call_error=bool(getattr(block, "is_error", False)),
+                                    parent_tool_call_id=info.get(
+                                        "parent_tool_call_id", getattr(message, "parent_tool_use_id", None)
+                                    ),
                                 ),
                             )
