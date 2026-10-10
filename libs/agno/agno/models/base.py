@@ -3,7 +3,7 @@ import collections.abc
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from hashlib import md5
+from hashlib import md5, sha256
 from pathlib import Path
 from time import sleep, time
 from types import AsyncGeneratorType, GeneratorType
@@ -443,14 +443,78 @@ class Model(ABC):
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
 
+    @staticmethod
+    def _get_input_media_cache_data(media: Union[Audio, File, Video]) -> Dict[str, Any]:
+        """Identify input media without fetching URLs or including tracking metadata."""
+        content = media.content
+        if isinstance(content, str):
+            # Text and its UTF-8 bytes intentionally identify the same provider input.
+            content = content.encode("utf-8")
+        media_data: Dict[str, Any] = {
+            "url": media.url,
+            "filepath": str(media.filepath) if media.filepath is not None else None,
+            "content_hash": sha256(content).hexdigest() if isinstance(content, bytes) else None,
+            "format": media.format,
+            "mime_type": media.mime_type,
+        }
+        if media.filepath is not None:
+            try:
+                file_hash = sha256()
+                with Path(media.filepath).open("rb") as media_file:
+                    while chunk := media_file.read(1024 * 1024):
+                        file_hash.update(chunk)
+                media_data["file_content_hash"] = file_hash.hexdigest()
+            except (OSError, ValueError):
+                # Preserve provider handling of unreadable inputs, but do not confuse them
+                # with a later readable file at the same path.
+                media_data["file_content_hash"] = None
+        if media.media_reference is not None:
+            media_data["media_reference"] = media.media_reference.model_dump(
+                include={
+                    "storage_backend",
+                    "storage_key",
+                    "bucket",
+                    "region",
+                    "url",
+                    "content_hash",
+                    "mime_type",
+                    "filename",
+                },
+                exclude_none=True,
+            )
+        if isinstance(media, Audio):
+            media_data.update(sample_rate=media.sample_rate, channels=media.channels)
+        elif isinstance(media, Video):
+            media_data["fps"] = media.fps
+        elif isinstance(media, File):
+            media_data.update(
+                filename=media.filename, name=media.name, file_type=media.file_type, citations=media.citations
+            )
+            if media.external is not None:
+                # Provider file handles have stable remote identities, unlike tracking IDs.
+                media_data["external"] = {
+                    field: getattr(media.external, field, None) for field in ("id", "name", "uri", "mime_type")
+                }
+            if all(
+                source is None
+                for source in (media.url, media.filepath, media.content, media.external, media.media_reference)
+            ):
+                media_data["id"] = media.id
+        return media_data
+
     def _get_model_cache_key(self, messages: List[Message], stream: bool, **kwargs: Any) -> str:
         """Generate a cache key based on model messages and core parameters."""
         message_data = []
         for msg in messages:
-            msg_dict = {
+            msg_dict: Dict[str, Any] = {
                 "role": msg.role,
                 "content": msg.content,
             }
+            for field_name in ("audio", "files", "videos"):
+                media = getattr(msg, field_name)
+                if media:
+                    # Keep text-only cache keys unchanged and preserve input ordering.
+                    msg_dict[field_name] = [self._get_input_media_cache_data(item) for item in media]
             message_data.append(msg_dict)
 
         # Include tools parameter in cache key
@@ -907,7 +971,9 @@ class Model(ABC):
 
         # Check cache if enabled
         if self.cache_response:
-            cache_key = self._get_model_cache_key(messages, stream=False, response_format=response_format, tools=tools)
+            cache_key = await asyncio.to_thread(
+                self._get_model_cache_key, messages, stream=False, response_format=response_format, tools=tools
+            )
             cached_data = self._get_cached_model_response(cache_key)
 
             if cached_data:
@@ -1672,7 +1738,9 @@ class Model(ABC):
         # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
         cache_key = None
         if self.cache_response:
-            cache_key = self._get_model_cache_key(messages, stream=True, response_format=response_format, tools=tools)
+            cache_key = await asyncio.to_thread(
+                self._get_model_cache_key, messages, stream=True, response_format=response_format, tools=tools
+            )
             cached_data = self._get_cached_model_response(cache_key)
 
             if cached_data:
