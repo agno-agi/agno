@@ -11,14 +11,23 @@ from agno.db.base import BaseDb, SessionType
 from agno.db.gcs_json.utils import (
     apply_sorting,
     calculate_date_metrics,
+    deserialize_os_metrics_records,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    get_dates_to_calculate_os_metrics_for,
+    get_os_metrics_records_by_day,
+    get_os_metrics_records_to_read,
+    serialize_os_metrics_records,
+    upsert_os_metrics_records,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    OS_METRICS_DAY_PERIODS,
+    build_os_metrics_state,
     build_single_run_row,
+    calculate_date_os_metrics,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
@@ -26,6 +35,11 @@ from agno.db.utils import (
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_records,
+    os_metrics_nested_run_ids,
+    os_metrics_rows_to_write,
+    os_metrics_state_of,
+    resolve_os_metrics_fields,
+    total_os_metrics_records,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -50,6 +64,7 @@ class GcsJsonDb(BaseDb):
         runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
+        os_metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
@@ -68,6 +83,7 @@ class GcsJsonDb(BaseDb):
             runs_table (Optional[str]): Name of the JSON file to store runs (one entry per run).
             memory_table (Optional[str]): Name of the JSON file to store user memories.
             metrics_table (Optional[str]): Name of the JSON file to store metrics.
+            os_metrics_table (Optional[str]): Name of the JSON file to store OS metrics.
             eval_table (Optional[str]): Name of the JSON file to store evaluation runs.
             knowledge_table (Optional[str]): Name of the JSON file to store knowledge content.
             traces_table (Optional[str]): Name of the JSON file to store traces.
@@ -88,6 +104,7 @@ class GcsJsonDb(BaseDb):
             runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
+            os_metrics_table=os_metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             traces_table=traces_table,
@@ -102,6 +119,11 @@ class GcsJsonDb(BaseDb):
         # Initialize GCS client and bucket
         self.client = gcs.Client(project=project, credentials=credentials)
         self.bucket = self.client.bucket(self.bucket_name)
+
+        # The JSON file get_os_metrics_state reads in place of the OS metrics
+        self._os_metrics_state_table_name = f"{self.os_metrics_table_name}_state"
+        # Zero means never refreshed; get_os_metrics uses this to refresh lazily, at most once per minute
+        self._os_metrics_refreshed_at: float = 0.0
 
     def table_exists(self, table_name: str) -> bool:
         """JSON implementation, always returns True."""
@@ -1273,6 +1295,211 @@ class GcsJsonDb(BaseDb):
 
         except Exception as e:
             log_warning(f"Exception getting metrics: {str(e)}")
+            raise e
+
+    # -- OS metrics methods --
+    def calculate_os_metrics(self) -> Optional[List[Dict[str, Any]]]:
+        """Calculate OS metrics for all dates without complete OS metrics.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: The calculated OS metrics.
+
+        Raises:
+            Exception: If an error occurs during OS metrics calculation.
+        """
+        try:
+            return self._calculate_os_metrics()
+
+        except Exception as e:
+            log_error(f"Exception refreshing OS metrics: {str(e)}")
+            raise e
+
+    def refresh_os_metrics(self) -> Tuple[Optional[int], Optional[int], bool]:
+        """Calculate OS metrics for all dates without complete OS metrics, and report whether any record changed.
+
+        Returns:
+            Tuple[Optional[int], Optional[int], bool]: When the OS metrics were last updated before the
+                calculation and after it, and whether it wrote or deleted any record.
+
+        Raises:
+            Exception: If an error occurs during OS metrics calculation.
+        """
+        try:
+            previous_updated_at = self._get_stored_os_metrics_state().get("updated_at")
+
+            changed_ids: List[str] = []
+            self._calculate_os_metrics(changed_ids=changed_ids)
+
+            latest_updated_at = self._get_stored_os_metrics_state().get("updated_at")
+
+            return previous_updated_at, latest_updated_at, bool(changed_ids)
+
+        except Exception as e:
+            log_error(f"Exception refreshing OS metrics: {str(e)}")
+            raise e
+
+    def _calculate_os_metrics(self, changed_ids: Optional[List[str]] = None) -> Optional[List[Dict[str, Any]]]:
+        """Calculate OS metrics for all dates without complete OS metrics.
+
+        Args:
+            changed_ids (Optional[List[str]]): When given, the ids of the records deleted and of the calculated
+                records written are added to it.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: The calculated OS metrics.
+        """
+        # Stamp first so failed runs are throttled too instead of retried on every read
+        self._os_metrics_refreshed_at = time.time()
+
+        os_metrics = deserialize_os_metrics_records(
+            self._read_json_file(self.os_metrics_table_name, create_table_if_not_found=True)
+        )
+        # A rebuild that saved records and not the state left its mark, so the state moves for it
+        state = self._get_stored_os_metrics_state()
+        if state.get("rebuilding"):
+            state = build_os_metrics_state(state, int(time.time()), [], [])
+            self._write_json_file(self._os_metrics_state_table_name, [state])
+
+        starting_date = self._get_metrics_calculation_starting_date(os_metrics)
+        if starting_date is None:
+            log_info("No session data found. Won't calculate OS metrics.")
+            return None
+
+        today = datetime.now(timezone.utc).date()
+        if starting_date > today:
+            log_info("OS metrics already calculated for all relevant dates.")
+            return None
+
+        start_timestamp = int(
+            datetime.combine(starting_date, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+        )
+        end_timestamp = int(
+            datetime.combine(today + timedelta(days=1), datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+        )
+        sessions_by_day = get_os_metrics_records_by_day(
+            self._read_json_file(self.session_table_name), start_timestamp, end_timestamp
+        )
+        all_runs = self._read_runs_file(create_table_if_not_found=False)
+        runs_by_day = get_os_metrics_records_by_day(all_runs, start_timestamp, end_timestamp)
+        run_ids = {run["run_id"] for run in all_runs if run.get("run_id")}
+
+        dates_to_process = get_dates_to_calculate_os_metrics_for(
+            os_metrics, sessions_by_day, runs_by_day, starting_date
+        )
+
+        stored_rows_by_day: Dict[date, List[Dict[str, Any]]] = {}
+        for record in os_metrics:
+            if record["aggregation_period"] in OS_METRICS_DAY_PERIODS:
+                stored_rows_by_day.setdefault(record["date"], []).append(record)
+
+        results = []
+        changed = False
+        previous_state = state
+        try:
+            for date_to_process in dates_to_process:
+                runs = runs_by_day.get(date_to_process, [])
+                # A nested run also stored as a run of its own is counted from that record
+                stored_run_ids = os_metrics_nested_run_ids(runs) & run_ids
+
+                records = calculate_date_os_metrics(
+                    date_to_process, sessions_by_day.get(date_to_process, []), runs, stored_run_ids
+                )
+                changed_rows, stale_ids = os_metrics_rows_to_write(records, stored_rows_by_day.get(date_to_process, []))
+                if changed_rows or stale_ids:
+                    os_metrics = upsert_os_metrics_records(os_metrics, date_to_process, changed_rows, stale_ids)
+                    state = build_os_metrics_state(state, int(time.time()), changed_rows, stale_ids, date_to_process)
+                    changed = True
+                results.extend(records)
+                if changed_ids is not None:
+                    changed_ids.extend([*stale_ids, *(row["id"] for row in changed_rows)])
+        finally:
+            if changed:
+                # The state is marked before the records are written, so records saved without it are not taken as unchanged
+                self._write_json_file(self._os_metrics_state_table_name, [{**previous_state, "rebuilding": True}])
+                self._write_json_file(self.os_metrics_table_name, serialize_os_metrics_records(os_metrics))
+                self._write_json_file(self._os_metrics_state_table_name, [state])
+
+        log_debug("Updated OS metrics calculations")
+
+        return results
+
+    def _get_stored_os_metrics_state(self) -> Dict[str, Any]:
+        """Get the state of the OS metrics, from the state record.
+
+        Returns:
+            Dict[str, Any]: The state, as build_os_metrics_state builds it. Empty when no rebuild has written it.
+        """
+        state = self._read_json_file(self._os_metrics_state_table_name, create_table_if_not_found=False)
+        return state[0] if state else {}
+
+    def get_os_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Get the OS metrics totals of each day in the given date range.
+
+        OS metrics are refreshed lazily, at most once per minute per process.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's records. ``None`` totals every owner.
+            fields (Optional[List[str]]): The fields to total. ``None`` totals all.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each day, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_os_metrics_fields(fields)
+
+            # Refresh at most once per minute per process
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    self._calculate_os_metrics()
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            os_metrics = deserialize_os_metrics_records(self._read_json_file(self.os_metrics_table_name))
+            records = get_os_metrics_records_to_read(os_metrics, starting_date, ending_date, user_id)
+            return total_os_metrics_records(records, fields)
+
+        except Exception as e:
+            log_error(f"Exception getting OS metrics: {str(e)}")
+            raise e
+
+    def get_os_metrics_state(self, ending_date: Optional[date] = None) -> Tuple[Optional[int], str]:
+        """Get when any OS metrics record was last written or deleted, and the hash of the state.
+
+        OS metrics are refreshed lazily, as in get_os_metrics.
+
+        Args:
+            ending_date (Optional[date]): The last day that is read. When it is a completed day, the state of
+                the records of completed days is returned, which a day still open does not move.
+
+        Returns:
+            Tuple[Optional[int], str]: When any record was last written or deleted, and the hash of the state.
+                Both are the same again only while no rebuild wrote or deleted a record.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    self._calculate_os_metrics()
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            return os_metrics_state_of(self._get_stored_os_metrics_state(), ending_date)
+
+        except Exception as e:
+            log_error(f"Exception getting OS metrics state: {str(e)}")
             raise e
 
     # -- Knowledge methods --
