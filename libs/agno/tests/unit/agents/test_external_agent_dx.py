@@ -177,14 +177,16 @@ def test_sdk_metadata_keeps_legacy_session_and_api_values(tmp_path):
     from agno.os.schema import AgentSummaryResponse
 
     agent = ClaudeAgent(id="claude", db=SqliteDb(db_file=str(tmp_path / "runs.db")))
-    expected = {"sdk": "claude-agent-sdk", "framework": "claude-agent-sdk"}
+    expected = {"sdk": "claude-agent-sdk"}
     assert AgentSummaryResponse.from_agent(agent).metadata == expected
     session = agent._create_session("session", None)
     assert all(session.agent_data[key] == value for key, value in expected.items())
-    # Old persisted sessions remain readable without requiring the new metadata key.
-    session.agent_data.pop("sdk")
+    assert "framework" not in session.agent_data, "only sdk is stored"
+    # Sessions persisted before the rename carry framework instead of sdk and stay readable.
+    session.agent_data = {"agent_id": "claude", "framework": "claude-agent-sdk"}
     agent.db.upsert_session(session)
-    assert agent.read_or_create_session("session").agent_data["framework"] == "claude-agent-sdk"
+    legacy = agent.read_or_create_session("session").agent_data
+    assert (legacy.get("sdk") or legacy.get("framework")) == "claude-agent-sdk"
     with TestClient(AgentOS(agents=[agent]).get_app()) as client:
         listing = client.get("/agents")
         assert listing.status_code == 200
@@ -201,7 +203,7 @@ def test_legacy_custom_adapter_metadata():
 
     agent = CustomAgent()
     assert agent.sdk == agent.framework == "custom-sdk"
-    assert agent._create_session("session", None).agent_data["framework"] == "custom-sdk"
+    assert agent._create_session("session", None).agent_data["sdk"] == "custom-sdk"
 
 
 def test_public_typing_contract(tmp_path):

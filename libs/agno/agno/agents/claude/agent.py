@@ -5,7 +5,15 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, ClassVar, Dict, List, Lite
 from uuid import uuid4
 
 from agno.agents._config import agent_dataclass
-from agno.agents._media import accept_media, cleanup_media, media_prompt_block, stage_media, stage_prior_media
+from agno.agents._media import (
+    accept_media,
+    cleanup_media,
+    media_prompt_block,
+    remember_uploads_root,
+    remove_upload_folder,
+    stage_media,
+    stage_prior_media,
+)
 from agno.agents.base import BaseExternalAgent, ExternalRunResult, ExternalRunWarningEvent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.models.response import ToolExecution
@@ -318,6 +326,8 @@ class ClaudeAgent(BaseExternalAgent):
         run_id = kwargs.get("run_id") or str(uuid4())
         kwargs["run_id"] = run_id
         staged = stage_media(self.cwd, run_id, media) if media else []
+        if staged:
+            remember_uploads_root(kwargs.get("session"), self.cwd)
         if staged and input is not None:
             input = f"{input}{media_prompt_block(staged)}"
         # Earlier turns' attachments come back under their original paths, so Claude can
@@ -330,8 +340,10 @@ class ClaudeAgent(BaseExternalAgent):
                 yield message
         finally:
             if not self.keep_uploads:
-                for staged_run_id in ([run_id] if staged else []) + restaged:
-                    cleanup_media(self.cwd, staged_run_id)
+                if staged:
+                    cleanup_media(self.cwd, run_id)
+                for folder in restaged:
+                    remove_upload_folder(folder)
 
     async def _aquery_sdk(
         self, input: Any, history: Optional[List[Dict[str, Any]]], *, streaming: bool, **kwargs: Any

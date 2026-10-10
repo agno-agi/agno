@@ -598,7 +598,7 @@ class BaseExternalAgent:
             agent_id=self.get_id(),
             user_id=user_id,
             session_data={},
-            agent_data={"agent_id": self.id, "agent_name": self.name, "sdk": self.sdk, "framework": self.sdk},
+            agent_data={"agent_id": self.id, "agent_name": self.name, "sdk": self.sdk},
             metadata={},
             runs=[],
             created_at=int(time()),

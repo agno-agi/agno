@@ -6,8 +6,9 @@ a person at a terminal: Agno writes each image or file under
 cwd/.agno/uploads/<run_id>/ and names the paths in the prompt. Claude opens
 them with its Read tool, which handles images and PDFs. The folder is
 removed when the run ends unless keep_uploads=True, and re-created from the
-recorded run before any later turn of the session, so Claude can open the
-same files again on whichever replica runs that turn. Audio and video are
+recorded run before any later turn of the session, at the paths Claude
+already knows, so it can open the same files again on whichever replica
+runs that turn. Audio and video are
 rejected before the run starts, since Claude Code has no way to use them.
 
 The same works through AgentOS: attach files in the UI or post them as
@@ -87,7 +88,8 @@ def main():
         # 2. A later turn can open the same files again: they are re-staged from the recorded
         #    run before each turn, at the paths Claude already knows, on whichever replica runs
         #    it. A second agent instance with its own working directory stands in for another
-        #    replica; when the path differs, the prompt tells Claude where the files are now.
+        #    replica; the files are written back to the folder the session recorded, so the
+        #    paths in Claude's transcript resolve again.
         other_workdir = Path(workdir) / "replica-b"
         other_workdir.mkdir()
         other = ClaudeAgent(

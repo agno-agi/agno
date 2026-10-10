@@ -639,19 +639,44 @@ def test_earlier_attachments_are_restaged_for_later_turns(fake_sdk, tmp_db, tmp_
     assert "now at" not in seen["prompt"], "same workspace: the known path still resolves"
     assert not expected.exists(), "re-staged files are removed after the turn"
 
-    # A replica with a different workspace cannot recreate the old path; it names the new one.
+    # A replica with a different workspace still puts the file back at the recorded path, so
+    # the path the transcript names resolves and nothing needs to be announced.
     elsewhere = tmp_path / "replica-b"
     elsewhere.mkdir()
-    moved_to = elsewhere / ".agno" / "uploads" / first.run_id / "spec.txt"
 
     async def query_elsewhere(prompt, options):
-        seen.update(prompt=prompt, exists=moved_to.exists())
+        seen.update(prompt=prompt, exists=expected.exists())
         yield SystemMessage("init", {"session_id": options.resume or "sdk-1"})
         yield ResultMessage(options.resume or "sdk-1", "again")
 
     monkeypatch.setattr(claude_module._sdk(), "query", query_elsewhere)
     replica_b = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(elsewhere))
     assert replica_b.run("read it once more", session_id="s").status == RunStatus.completed
-    assert seen["exists"]
-    assert "have moved" in seen["prompt"] and f"- {moved_to} (was {expected})" in seen["prompt"]
-    assert not moved_to.exists()
+    assert seen["exists"] and "have moved" not in seen["prompt"]
+    assert not expected.exists() and not (elsewhere / ".agno").exists()
+
+
+def test_prior_attachments_fall_back_to_the_workspace_when_the_recorded_root_is_unwritable(tmp_path):
+    """Only when the uploads folder recorded on the session cannot be written (another machine,
+    another layout) do the files go under this workspace, and then the harness is told."""
+    from types import SimpleNamespace
+
+    from agno.agents._media import stage_prior_media
+    from agno.media import File
+
+    blocked = tmp_path / "blocked"
+    blocked.write_text("a regular file, so nothing can be created below it")
+    recorded_root = blocked / ".agno" / "uploads"
+    attachment = File(content=b"v1", filename="spec.txt", mime_type="text/plain")
+    session = SimpleNamespace(
+        session_data={"uploads_root": str(recorded_root)},
+        runs=[SimpleNamespace(run_id="run-1", input=SimpleNamespace(images=None, files=[attachment]))],
+    )
+    workspace = tmp_path / "replica-b"
+
+    folders, note = stage_prior_media(workspace, session)
+
+    new_path = workspace / ".agno" / "uploads" / "run-1" / "spec.txt"
+    assert new_path.read_bytes() == b"v1"
+    assert folders == [new_path.parent]
+    assert "have moved" in note and f"- {new_path} (was {recorded_root / 'run-1' / 'spec.txt'})" in note

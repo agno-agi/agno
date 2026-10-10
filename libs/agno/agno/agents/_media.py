@@ -88,13 +88,33 @@ def _name_for(item: Any, kind: str, index: int) -> str:
     return f"{kind}-{index}.{extension}"
 
 
-def stage_media(workspace: Optional[Any], run_id: str, media: Dict[str, Any]) -> List[StagedMedia]:
+UPLOADS_ROOT_KEY = "uploads_root"
+
+
+def remember_uploads_root(session: Any, workspace: Optional[Any]) -> None:
+    """Record, once per session, the uploads folder the harness's transcript will name.
+
+    Later turns restore earlier attachments there, so the paths already in the transcript
+    resolve again on any replica that can write that location.
+    """
+    if session is None:
+        return
+    data = getattr(session, "session_data", None)
+    if data is None:
+        data = {}
+        session.session_data = data
+    data.setdefault(UPLOADS_ROOT_KEY, str(Path(workspace or Path.cwd()) / UPLOADS_DIR))
+
+
+def stage_media(
+    workspace: Optional[Any], run_id: str, media: Dict[str, Any], root: Optional[Path] = None
+) -> List[StagedMedia]:
     """Write each attachment under <workspace>/.agno/uploads/<run_id>/ and describe it.
 
     Bytes come from the media object's content, file path or base64 payload. A URL with no
     bytes is not downloaded; it is passed to the harness as a reference instead.
     """
-    root = uploads_root(workspace, run_id)
+    root = root if root is not None else uploads_root(workspace, run_id)
     staged: List[StagedMedia] = []
     for kind, key in (("image", "images"), ("file", "files")):
         for index, item in enumerate(media.get(key) or [], start=1):
@@ -121,12 +141,6 @@ def stage_media(workspace: Optional[Any], run_id: str, media: Dict[str, Any]) ->
                 target = root / f"{target.stem}-{counter}{target.suffix}"
             target.write_bytes(data)
             staged.append(StagedMedia(kind, target.name, str(target), _mime_for(item), len(data)))
-            # Remember where it was placed; the run records the object, so a later turn on a
-            # replica with a different workspace can tell the harness the new path.
-            try:
-                item.metadata = {**(getattr(item, "metadata", None) or {}), "staged_path": str(target)}
-            except Exception:
-                pass
     return staged
 
 
@@ -194,35 +208,55 @@ def prior_attachments(session: Any, exclude_run_id: Optional[str] = None) -> Dic
     return found
 
 
+def remove_upload_folder(folder: Any) -> None:
+    """Remove one run's upload folder and the uploads folders above it if nothing else is left."""
+    folder = Path(folder)
+    shutil.rmtree(folder, ignore_errors=True)
+    for parent in (folder.parent, folder.parent.parent):
+        try:
+            parent.rmdir()
+        except OSError:
+            break
+
+
 def stage_prior_media(
     workspace: Optional[Any], session: Any, exclude_run_id: Optional[str] = None
-) -> Tuple[List[str], str]:
-    """Re-stage earlier runs' attachments under their original run folders.
+) -> Tuple[List[Path], str]:
+    """Put earlier runs' attachments back where the harness's transcript expects them.
 
-    Returns the run ids whose folders were written and a note for the prompt. The note is
-    empty when every file is back at the path the harness already knows; when this turn runs
-    in a different workspace than the one that received a file, it lists the new location.
+    The session remembers the uploads folder used when the first attachment was staged. Each
+    earlier run's files are restored under that folder, so the paths the harness already knows
+    resolve again, on the same machine or on a replica with the same layout. When that folder
+    cannot be written, the files go under this workspace instead and the returned note tells
+    the harness where they are now. Returns the folders written, for cleanup, and the note.
     """
-    staged_runs: List[str] = []
+    attachments = prior_attachments(session, exclude_run_id)
+    if not attachments:
+        return [], ""
+    recorded = (getattr(session, "session_data", None) or {}).get(UPLOADS_ROOT_KEY)
+    current = Path(workspace or Path.cwd()) / UPLOADS_DIR
+    target_root = current
+    if recorded and Path(recorded) != current:
+        try:
+            Path(recorded).mkdir(parents=True, exist_ok=True)
+            target_root = Path(recorded)
+        except OSError:
+            target_root = current
+    folders: List[Path] = []
     moved: List[str] = []
-    for run_id, media in prior_attachments(session, exclude_run_id).items():
-        previous = {
-            id(item): (getattr(item, "metadata", None) or {}).get("staged_path")
-            for values in media.values()
-            for item in values
-        }
-        staged = stage_media(workspace, run_id, media)
+    for run_id, media in attachments.items():
+        staged = stage_media(workspace, run_id, media, root=target_root / run_id)
         if not staged:
             continue
-        staged_runs.append(run_id)
-        for item, placed in zip([item for values in media.values() for item in values], staged):
-            before = previous.get(id(item))
-            if placed.path and before and before != placed.path:
-                moved.append(f"- {placed.path} (was {before})")
+        folders.append(target_root / run_id)
+        if recorded and target_root != Path(recorded):
+            for item in staged:
+                if item.path:
+                    moved.append(f"- {item.path} (was {Path(recorded) / run_id / item.name})")
     note = ""
     if moved:
         note = (
             "\n\nThe files attached earlier in this conversation have moved. Their old paths no longer exist; "
             "use these paths instead:\n" + "\n".join(moved)
         )
-    return staged_runs, note
+    return folders, note

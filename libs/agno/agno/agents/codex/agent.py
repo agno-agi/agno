@@ -7,7 +7,15 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, ClassVar, Dict, Iterator, 
 from uuid import uuid4
 
 from agno.agents._config import agent_dataclass
-from agno.agents._media import accept_media, cleanup_media, media_prompt_block, stage_media, stage_prior_media
+from agno.agents._media import (
+    accept_media,
+    cleanup_media,
+    media_prompt_block,
+    remember_uploads_root,
+    remove_upload_folder,
+    stage_media,
+    stage_prior_media,
+)
 from agno.agents.base import BaseExternalAgent, ExternalRunResult
 from agno.agents.codex.options import ThreadOptions, TurnOptions
 from agno.exceptions import RunCancelledException
@@ -434,13 +442,17 @@ class CodexAgent(BaseExternalAgent):
         run_id = kwargs.get("run_id") or str(uuid4())
         kwargs["run_id"] = run_id
         kwargs["staged_media"] = stage_media(self.cwd, run_id, media) if media else []
+        if kwargs["staged_media"]:
+            remember_uploads_root(kwargs.get("session"), self.cwd)
         restaged, kwargs["moved_note"] = stage_prior_media(self.cwd, kwargs.get("session"), exclude_run_id=run_id)
         try:
             return await self._arun_adapter_sdk(input, history=history, **kwargs)
         finally:
             if not self.keep_uploads:
-                for staged_run_id in ([run_id] if kwargs["staged_media"] else []) + restaged:
-                    cleanup_media(self.cwd, staged_run_id)
+                if kwargs["staged_media"]:
+                    cleanup_media(self.cwd, run_id)
+                for folder in restaged:
+                    remove_upload_folder(folder)
 
     async def _arun_adapter_stream(
         self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
@@ -449,14 +461,18 @@ class CodexAgent(BaseExternalAgent):
         run_id = kwargs.get("run_id") or str(uuid4())
         kwargs["run_id"] = run_id
         kwargs["staged_media"] = stage_media(self.cwd, run_id, media) if media else []
+        if kwargs["staged_media"]:
+            remember_uploads_root(kwargs.get("session"), self.cwd)
         restaged, kwargs["moved_note"] = stage_prior_media(self.cwd, kwargs.get("session"), exclude_run_id=run_id)
         try:
             async for event in self._arun_adapter_stream_sdk(input, history=history, **kwargs):
                 yield event
         finally:
             if not self.keep_uploads:
-                for staged_run_id in ([run_id] if kwargs["staged_media"] else []) + restaged:
-                    cleanup_media(self.cwd, staged_run_id)
+                if kwargs["staged_media"]:
+                    cleanup_media(self.cwd, run_id)
+                for folder in restaged:
+                    remove_upload_folder(folder)
 
     async def _arun_adapter_sdk(
         self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any

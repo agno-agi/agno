@@ -2060,8 +2060,7 @@ def get_agent_router(
                             description=getattr(agent, "description", None),
                             db_id=agent_db.id if agent_db else None,
                             sessions=sessions,
-                            metadata=AgentSummaryResponse.from_agent(agent).metadata
-                            or {"sdk": "external", "framework": "external"},
+                            metadata=AgentSummaryResponse.from_agent(agent).metadata or {"sdk": "external"},
                         )
                     )
 
@@ -2164,8 +2163,7 @@ def get_agent_router(
                 id=agent.id,
                 name=agent.name,
                 description=getattr(agent, "description", None),
-                metadata=AgentSummaryResponse.from_agent(agent).metadata
-                or {"sdk": "external", "framework": "external"},
+                metadata=AgentSummaryResponse.from_agent(agent).metadata or {"sdk": "external"},
             )
 
     @router.get(
