@@ -373,18 +373,18 @@ def _owner_filter(session_type: SessionType, user_id: Optional[str]) -> Optional
 
 
 def _visible_to(session: Any, session_type: SessionType, user_id: Optional[str]) -> Any:
-    from agno.session.sharing import can_access_session
+    from agno.session.sharing import can_read_session
 
-    if session is None or session_type != SessionType.AGENT or can_access_session(session, user_id):
+    if session is None or session_type != SessionType.AGENT or can_read_session(session, user_id):
         return session
     return None
 
 
 def _claim_or_refuse(session: AgentSession, user_id: Optional[str]) -> AgentSession:
     """An unclaimed session becomes the caller's; one the caller cannot access is refused."""
-    from agno.session.sharing import can_access_session
+    from agno.session.sharing import can_run_in_session
 
-    if not can_access_session(session, user_id):
+    if not can_run_in_session(session, user_id):
         # Writing here would add this run to another user's history.
         raise ValueError(f"Session {session.session_id} belongs to another user")
     if session.user_id is None and user_id is not None:

@@ -43,7 +43,7 @@ from agno.os.settings import AgnoAPISettings
 from agno.os.utils import AgnoHTTPException
 from agno.remote.base import RemoteDb
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.session.sharing import ashare_session, can_access_session, keep_sharing, without_sharing
+from agno.session.sharing import ashare_session, can_read_session, keep_sharing, without_sharing
 from agno.utils.log import log_debug
 from agno.utils.media_offload import adelete_media_keys, session_media_keys
 
@@ -52,7 +52,7 @@ async def _member_read_scope(
     db: Any, session_id: str, session_type: Optional[SessionType], user_id: Optional[str]
 ) -> Optional[str]:
     """Read scope for one session: unscoped when the caller is a member of a shared agent session."""
-    from agno.session.sharing import can_access_session, session_members
+    from agno.session.sharing import can_read_session
 
     if user_id is None or isinstance(db, RemoteDb) or session_type not in (None, SessionType.AGENT):
         return user_id
@@ -60,7 +60,7 @@ async def _member_read_scope(
         row = await db.get_session(session_id=session_id, session_type=SessionType.AGENT, deserialize=False)
     else:
         row = db.get_session(session_id=session_id, session_type=SessionType.AGENT, deserialize=False)
-    if row and user_id in session_members(row) and can_access_session(row, user_id):
+    if row and can_read_session(row, user_id):
         return None
     return user_id
 
@@ -1305,7 +1305,7 @@ def attach_routes(
             existing = await db.get_session(session_id=session_id, session_type=SessionType.AGENT)
         else:
             existing = db.get_session(session_id=session_id, session_type=SessionType.AGENT)
-        if existing is None or not can_access_session(existing, scoped_user_id):
+        if existing is None or not can_read_session(existing, scoped_user_id):
             raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")
         try:
             shared = await ashare_session(

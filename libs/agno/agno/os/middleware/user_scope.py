@@ -541,10 +541,10 @@ async def assert_session_writable(
     if owner is None or owner == effective_user_id:
         return
     from agno.db.base import SessionType
-    from agno.session.sharing import can_access_session
+    from agno.session.sharing import can_read_session
 
     shareable = session_type in (None, SessionType.AGENT)
-    if effective_user_id is not None and shareable and can_access_session(row, effective_user_id):
+    if effective_user_id is not None and shareable and can_read_session(row, effective_user_id):
         return
 
     log_warning(

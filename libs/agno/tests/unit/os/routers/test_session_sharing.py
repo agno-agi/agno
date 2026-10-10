@@ -105,3 +105,10 @@ async def test_chat_senders_join_the_thread_session(db):
     await ajoin_shared_session(agent, "missing", "dave")
     assert session_members(db.get_session(session_id="team", session_type=SessionType.AGENT)) == ["bob"]
     assert db.get_session(session_id="missing", session_type=SessionType.AGENT) is None
+
+
+def test_unowned_session_cannot_be_claimed_through_sharing(db):
+    db.upsert_session(AgentSession(session_id="anon", agent_id="a1"))
+    response = client(db, "mallory").put("/sessions/anon/sharing", json={"members": ["eve"]})
+    assert response.status_code == 404
+    assert db.get_session(session_id="anon", session_type=SessionType.AGENT).user_id is None

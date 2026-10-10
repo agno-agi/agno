@@ -485,12 +485,12 @@ class BaseExternalAgent:
 
     def _owned_session_or_new(self, row: Any, session_id: str, user_id: Optional[str]) -> AgentSession:
         """The stored session, claimed by the caller when unowned, or a new one. Refuses one the caller cannot access."""
-        from agno.session.sharing import can_access_session
+        from agno.session.sharing import can_run_in_session
 
         session = AgentSession.from_dict(row) if isinstance(row, dict) else row
         if not isinstance(session, AgentSession):
             return self._create_session(session_id, user_id)
-        if not can_access_session(session, user_id):
+        if not can_run_in_session(session, user_id):
             # Writing here would add this run to another user's history.
             raise ValueError(f"Session {session_id} belongs to another user")
         if session.user_id is None and user_id is not None:
@@ -579,12 +579,12 @@ class BaseExternalAgent:
                 raise
 
     def _visible_session(self, row: Any, user_id: Optional[str]) -> Optional[AgentSession]:
-        from agno.session.sharing import can_access_session
+        from agno.session.sharing import can_read_session
 
         session = AgentSession.from_dict(row) if isinstance(row, dict) else row
         if not isinstance(session, AgentSession) or session.agent_id != self.get_id():
             return None
-        return session if can_access_session(session, user_id) else None
+        return session if can_read_session(session, user_id) else None
 
     def get_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
         """Read a session scoped to this agent; with user_id, only one that user owns or is shared with."""

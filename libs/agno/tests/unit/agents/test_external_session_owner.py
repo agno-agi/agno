@@ -105,3 +105,10 @@ async def test_caller_without_user_id_is_not_restricted(agent):
     await agent.arun("mine", session_id="s", user_id="alice")
     assert (await agent.aread_or_create_session("s")).user_id == "alice"
     assert (await agent.aget_session("s")).user_id == "alice"
+
+
+@pytest.mark.asyncio
+async def test_unowned_session_is_not_readable_by_identified_users(agent):
+    run = await agent.arun("anonymous", session_id="anon")
+    assert await agent.aget_session("anon", user_id="mallory") is None
+    assert await agent.aget_run_output(run.run_id, "anon", user_id="mallory") is None

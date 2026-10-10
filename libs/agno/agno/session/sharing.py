@@ -24,12 +24,17 @@ def session_members(session: Any) -> List[str]:
     return [str(member) for member in sharing.get("members") or []]
 
 
-def can_access_session(session: Any, user_id: Optional[str]) -> bool:
-    """Whether user_id may read or run in the session. A caller without a user_id is trusted."""
+def can_read_session(session: Any, user_id: Optional[str]) -> bool:
+    """Whether user_id may read the session: its owner or a member. A caller without a user_id is trusted."""
     owner = _field(session, "user_id")
-    if user_id is None or owner is None or owner_key(owner) == owner_key(user_id):
+    if user_id is None or (owner is not None and owner_key(owner) == owner_key(user_id)):
         return True
-    return owner_key(user_id) in session_members(session)
+    return owner is not None and owner_key(user_id) in session_members(session)
+
+
+def can_run_in_session(session: Any, user_id: Optional[str]) -> bool:
+    """Whether user_id may run in the session: a reader, or anyone for an unclaimed session they then claim."""
+    return _field(session, "user_id") is None or can_read_session(session, user_id)
 
 
 def can_share_session(session: Any, user_id: Optional[str], is_admin: bool = False) -> bool:
