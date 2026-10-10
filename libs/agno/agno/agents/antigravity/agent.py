@@ -55,7 +55,7 @@ class AntigravityAgent(BaseExternalAgent):
 
     api_key: Optional[str] = None
     base_url: str = DEFAULT_BASE_URL
-    agent: str = "antigravity-preview-05-2026"
+    agent: str = "antigravity-preview-09-2026"
     sources: Optional[List[Dict[str, Any]]] = None
     timeout: int = 600
     framework: str = "antigravity"
