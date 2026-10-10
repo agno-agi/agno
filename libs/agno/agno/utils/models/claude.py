@@ -715,6 +715,7 @@ def format_messages(
                     "type": "tool_result",
                     "tool_use_id": message.tool_call_id,
                     "content": tool_payload,
+                    **({"is_error": True} if message.tool_call_error else {}),
                 }
             )
 
