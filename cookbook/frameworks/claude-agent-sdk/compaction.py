@@ -24,12 +24,11 @@ import asyncio
 import tempfile
 from pathlib import Path
 
-from claude_agent_sdk import HookMatcher
-
 from agno.agents.claude import ClaudeAgent
 from agno.agents.claude.session_store import AgnoSessionStore
 from agno.db.sqlite import SqliteDb
 from agno.run.base import RunStatus
+from claude_agent_sdk import HookMatcher
 
 SESSION_ID = "compaction-demo"
 FACT = "The release codename is tangerine-walrus-88."

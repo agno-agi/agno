@@ -55,6 +55,21 @@ class CodexConfig:
     env: Optional[Dict[str, str]] = None
 
 
+@dataclass
+class TextInput:
+    text: str
+
+
+@dataclass
+class LocalImageInput:
+    path: str
+
+
+@dataclass
+class ImageInput:
+    url: str
+
+
 class JsonRpcError(Exception):
     def __init__(self, code: int, message: str) -> None:
         super().__init__(f"JSON-RPC error {code}: {message}")
@@ -89,8 +104,19 @@ class FakeThread:
         self._state = state
         self.id = thread_id
 
-    async def turn(self, prompt: str, **kwargs: Any) -> FakeHandle:
-        self._state.calls.append({"op": "turn", "thread_id": self.id, "prompt": prompt, "kwargs": kwargs})
+    async def turn(self, prompt: Any, **kwargs: Any) -> FakeHandle:
+        import os
+
+        paths = [getattr(item, "path", None) for item in prompt] if isinstance(prompt, list) else []
+        self._state.calls.append(
+            {
+                "op": "turn",
+                "thread_id": self.id,
+                "prompt": prompt,
+                "kwargs": kwargs,
+                "paths_exist": [os.path.exists(p) for p in paths if p],
+            }
+        )
         return FakeHandle(self._state)
 
     async def run(self, prompt: str, **kwargs: Any) -> Any:
@@ -140,6 +166,10 @@ def fake_sdk(monkeypatch) -> FakeState:
     module.ApprovalMode = ApprovalMode  # type: ignore[attr-defined]
     module.CodexConfig = CodexConfig  # type: ignore[attr-defined]
     module.AsyncCodex = FakeAsyncCodex  # type: ignore[attr-defined]
+    module.TextInput = TextInput  # type: ignore[attr-defined]
+    module.LocalImageInput = LocalImageInput  # type: ignore[attr-defined]
+    module.ImageInput = ImageInput  # type: ignore[attr-defined]
+
     module.JsonRpcError = JsonRpcError  # type: ignore[attr-defined]
     module.types = SimpleNamespace(ReasoningEffort=ReasoningEffort)  # type: ignore[attr-defined]
     monkeypatch.setattr(codex_module, "_sdk", lambda: module)
@@ -209,7 +239,7 @@ def test_thread_kwargs_map_to_sdk_options(fake_sdk):
         cwd="/repo",
         ephemeral=True,
         config={"mcp_servers": {"docs": {"url": "https://example.com/mcp"}}},
-        thread_kwargs={"service_tier": "fast", "thread_source": "agno"},
+        thread_options={"service_tier": "fast", "service_name": "agno"},
     )
     sdk = codex_module._sdk()
 
@@ -223,11 +253,11 @@ def test_thread_kwargs_map_to_sdk_options(fake_sdk):
     assert start["ephemeral"] is True
     assert start["config"] == {"mcp_servers": {"docs": {"url": "https://example.com/mcp"}}}
     assert start["service_tier"] == "fast"
-    assert start["thread_source"] == "agno"
+    assert start["service_name"] == "agno"
 
     resume = agent._thread_kwargs(sdk, resume=True)
     assert "ephemeral" not in resume
-    assert "thread_source" not in resume
+    assert "service_name" not in resume
     assert resume["service_tier"] == "fast"
 
 
@@ -243,7 +273,7 @@ def test_sandbox_aliases_and_validation(fake_sdk):
 
 def test_turn_kwargs_include_effort_and_schema(fake_sdk):
     schema = {"type": "object", "properties": {"a": {"type": "string"}}}
-    agent = CodexAgent(name="Codex", reasoning_effort="high", output_schema=schema, turn_kwargs={"source": "test"})
+    agent = CodexAgent(name="Codex", reasoning_effort="high", output_schema=schema, turn_options={"source": "test"})
     turn = agent._turn_kwargs(codex_module._sdk())
     assert turn["effort"] is ReasoningEffort.high
     assert turn["output_schema"] == schema
@@ -676,15 +706,23 @@ def test_retry_resumes_the_thread_of_the_failed_attempt(fake_sdk, tmp_db, monkey
 
 
 @pytest.mark.parametrize("failure", ["failed_turn", "exception_mid_turn"])
-def test_non_stream_retry_keeps_the_failed_attempts_tool_calls(fake_sdk, tmp_db, monkeypatch, failure):
+@pytest.mark.parametrize("with_media", [False, True])
+def test_non_stream_retry_keeps_the_failed_attempts_tool_calls(
+    fake_sdk, tmp_db, monkeypatch, failure, tmp_path, with_media
+):
     """A tool that completed in the failed attempt stays in the run, whether the turn ended with a
     failed status or died with an exception before the turn completed."""
-    agent = CodexAgent(name="Codex", id="codex", db=tmp_db, retries=1, delay_between_retries=0)
+    from agno.media import File
+
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db, cwd=str(tmp_path), retries=1, delay_between_retries=0)
     turns: List[int] = []
     tool_item = _item(type="commandExecution", id="call", command="pwd", aggregated_output="/workspace", exit_code=0)
 
     async def tool_then_failure_then_success(self):
         turns.append(1)
+        if with_media:
+            [attachment] = list(tmp_path.glob(".agno/uploads/*/retry.txt"))
+            assert attachment.read_bytes() == b"retry payload"
         if len(turns) == 1:
             yield _completed(tool_item)
             if failure == "failed_turn":
@@ -695,7 +733,10 @@ def test_non_stream_retry_keeps_the_failed_attempts_tool_calls(fake_sdk, tmp_db,
         yield _turn_completed()
 
     monkeypatch.setattr(FakeHandle, "stream", tool_then_failure_then_success)
-    out = agent.run("go", session_id="s1")
+    out = agent.run(
+        "go", session_id="s1", files=[File(content=b"retry payload", filename="retry.txt")] if with_media else None
+    )
+    assert not list(tmp_path.glob(".agno/uploads/*/retry.txt"))
     assert out.status == RunStatus.completed and out.content == "recovered"
     assert len(turns) == 2
     [tool] = out.tools or []
@@ -703,6 +744,9 @@ def test_non_stream_retry_keeps_the_failed_attempts_tool_calls(fake_sdk, tmp_db,
     stored = agent.get_run_output(out.run_id, "s1")
     assert [m.role for m in stored.messages or []].count("tool") == 1
     assert any(m.role == "tool" and m.content == "/workspace" for m in stored.messages or [])
+
+    if with_media:
+        assert stored.input.files[0].content == b"retry payload"
 
 
 def test_non_stream_exhausted_retries_keep_tools_from_every_attempt(fake_sdk, tmp_db, monkeypatch):
@@ -801,6 +845,204 @@ def test_retry_skips_rejected_rpc_requests(fake_sdk, monkeypatch, code, retried)
 
 
 # ---------------------------------------------------------------------------
+# Configuration DX and lifecycle regressions
+# ---------------------------------------------------------------------------
+
+
+def test_named_settings_win_in_both_option_layers(fake_sdk):
+    agent = CodexAgent(
+        model="named",
+        instructions="",
+        sandbox="read-only",
+        approval_mode="deny_all",
+        cwd="/named",
+        service_tier="default",
+        reasoning_effort="low",
+        output_schema={},
+        thread_options={
+            "model": "thread",
+            "developer_instructions": "old",
+            "sandbox": "full-access",
+            "approval_mode": "auto_review",
+            "cwd": "/thread",
+            "service_tier": "fast",
+        },
+        turn_options={
+            "model": "turn",
+            "sandbox": "full-access",
+            "approval_mode": "auto_review",
+            "cwd": "/turn",
+            "service_tier": "fast",
+            "effort": "high",
+            "output_schema": {"type": "object"},
+        },
+    )
+    sdk = codex_module._sdk()
+    for options in (agent._thread_kwargs(sdk, resume=False), agent._turn_kwargs(sdk)):
+        assert options["model"] == "named"
+        assert options["cwd"] == "/named"
+        assert options["sandbox"] is Sandbox.read_only
+        assert options["approval_mode"] is ApprovalMode.deny_all
+        assert options["service_tier"] == "default"
+    assert agent._thread_kwargs(sdk, resume=False)["developer_instructions"] == ""
+    assert agent._turn_kwargs(sdk)["output_schema"] == {}
+    assert agent._turn_kwargs(sdk)["effort"] is ReasoningEffort.low
+
+
+def test_native_option_enums_and_operation_specific_keys(fake_sdk):
+    agent = CodexAgent(
+        thread_options={
+            "sandbox": "read_only",
+            "approval_mode": "deny-all",
+            "ephemeral": False,
+            "include_turns": True,
+            "service_name": "agno",
+        },
+        turn_options={
+            "sandbox": Sandbox.workspace_write,
+            "approval_mode": ApprovalMode.deny_all,
+            "effort": ReasoningEffort.low,
+        },
+    )
+    sdk = codex_module._sdk()
+    start = agent._thread_kwargs(sdk, resume=False)
+    resume = agent._thread_kwargs(sdk, resume=True)
+    assert start["sandbox"] is Sandbox.read_only
+    assert start["approval_mode"] is ApprovalMode.deny_all
+    assert "include_turns" not in start and resume["include_turns"] is True
+    assert "ephemeral" not in resume and "service_name" not in resume
+    assert agent._turn_kwargs(sdk)["sandbox"] is Sandbox.workspace_write
+    assert agent._turn_kwargs(sdk)["effort"] is ReasoningEffort.low
+
+
+@pytest.mark.parametrize("name", ["thread", "turn"])
+def test_option_aliases_warn_and_conflicts_fail(fake_sdk, name):
+    with pytest.warns(DeprecationWarning, match=f"{name}_options"):
+        agent = CodexAgent(model="named", **{f"{name}_kwargs": {"model": "legacy"}})
+    sdk = codex_module._sdk()
+    resolved = agent._thread_kwargs(sdk, resume=False) if name == "thread" else agent._turn_kwargs(sdk)
+    assert resolved["model"] == "named"
+    with pytest.raises(ValueError, match="not both"):
+        CodexAgent(**{f"{name}_options": {}, f"{name}_kwargs": {"model": "legacy"}})
+    with pytest.raises(ValueError, match=f"Unknown {name} options: typo"):
+        CodexAgent(**{f"{name}_options": {"typo": True}})
+
+
+def test_client_and_nested_options_are_not_mutated(fake_sdk):
+    native = CodexConfig(codex_bin="/original", env={"CUSTOM": "value"})
+    thread = {"config": {"mcp_servers": {"old": {"url": "https://old.example"}}, "nested": [1]}}
+    schema = {"properties": {"answer": {"type": "string"}}}
+    agent = CodexAgent(
+        client_options=native,
+        codex_bin="/override",
+        env={},
+        thread_options=thread,
+        mcp_servers={},
+        turn_options={"output_schema": schema},
+    )
+    sdk = codex_module._sdk()
+    config = agent._codex_config(sdk)
+    assert config is not native and config.codex_bin == "/override" and config.env == {}
+    assert native.codex_bin == "/original" and native.env == {"CUSTOM": "value"}
+    inherited = CodexAgent(client_options=native)._codex_config(sdk)
+    inherited.env["CUSTOM"] = "changed"
+    assert native.env == {"CUSTOM": "value"}
+    resolved = agent._thread_kwargs(sdk, resume=False)["config"]
+    assert resolved["mcp_servers"] == {}
+    resolved["nested"].append(2)
+    assert thread["config"]["nested"] == [1]
+    agent._turn_kwargs(sdk)["output_schema"]["properties"].clear()
+    assert "answer" in schema["properties"]
+    assert CodexAgent(config={}, thread_options=thread)._thread_kwargs(sdk, resume=False)["config"] == {}
+    with pytest.raises(TypeError, match="CodexConfig"):
+        CodexAgent(client_options={})._codex_config(sdk)
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_ephemeral_option_does_not_save_or_resume_thread(fake_sdk, tmp_db, legacy):
+    options = {"thread_kwargs" if legacy else "thread_options": {"ephemeral": True}}
+    if legacy:
+        with pytest.warns(DeprecationWarning):
+            agent = CodexAgent(db=tmp_db, **options)
+    else:
+        agent = CodexAgent(db=tmp_db, **options)
+    for prompt in ("remember blue", "what color?"):
+        assert agent.run(prompt, session_id="ephemeral").status == RunStatus.completed
+    assert [c["op"] for c in fake_sdk.calls].count("thread_start") == 2
+    assert not any(c["op"] == "thread_resume" for c in fake_sdk.calls)
+    assert agent._thread_ids == {}
+    session = tmp_db.get_session(session_id="ephemeral")
+    assert "codex_thread_id" not in (session.session_data or {})
+    prompts = [c["prompt"] for c in fake_sdk.calls if c["op"] == "turn"]
+    assert "remember blue" in prompts[1]
+
+
+def test_explicit_false_overrides_ephemeral_option(fake_sdk):
+    agent = CodexAgent(ephemeral=False, thread_options={"ephemeral": True})
+    agent.run("one", session_id="s")
+    agent.run("two", session_id="s")
+    assert any(c["op"] == "thread_resume" for c in fake_sdk.calls)
+    assert next(c for c in fake_sdk.calls if c["op"] == "thread_start")["kwargs"]["ephemeral"] is False
+
+
+def test_switching_to_ephemeral_clears_previous_mapping(fake_sdk, tmp_db):
+    agent = CodexAgent(db=tmp_db)
+    agent.run("one", session_id="s")
+    agent.thread_options = {"ephemeral": True}
+    agent.run("two", session_id="s")
+    assert not any(c["op"] == "thread_resume" for c in fake_sdk.calls)
+    assert not agent._thread_ids
+    assert "codex_thread_id" not in (tmp_db.get_session(session_id="s").session_data or {})
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_native_inputs_fail_before_client_launch(fake_sdk, stream, asynchronous):
+    agent = CodexAgent()
+    input = [SimpleNamespace(text="hello")]
+    if asynchronous:
+
+        async def execute():
+            if stream:
+                return [event async for event in agent.arun(input, stream=True)]
+            return await agent.arun(input)
+
+        result = asyncio.run(execute())
+    elif stream:
+        result = list(agent.run(input, stream=True))
+    else:
+        result = agent.run(input)
+    if stream:
+        error = next(event for event in result if isinstance(event, RunErrorEvent))
+        assert "input must be a string" in error.content
+    else:
+        assert result.status == RunStatus.error
+        assert "input must be a string" in result.content
+    assert not fake_sdk.calls
+
+
+def test_mutated_invalid_options_fail_before_client_launch(fake_sdk):
+    agent = CodexAgent(turn_options={})
+    agent.turn_options["typo"] = True
+    result = agent.run("hello")
+    assert result.status == RunStatus.error and "Unknown turn options" in result.content
+    assert not fake_sdk.calls
+
+
+def test_typed_option_keys_match_installed_sdk():
+    """Catch drift between Agno's public option keys and native SDK signatures."""
+    import inspect
+
+    sdk = pytest.importorskip("openai_codex")
+    from agno.agents.codex import ThreadOptions, TurnOptions
+
+    start = set(inspect.signature(sdk.AsyncCodex.thread_start).parameters) - {"self"}
+    resume = set(inspect.signature(sdk.AsyncCodex.thread_resume).parameters) - {"self", "thread_id"}
+    turn = set(inspect.signature(sdk.AsyncThread.turn).parameters) - {"self", "input"}
+    assert set(ThreadOptions.__annotations__) == start | resume
+    assert set(TurnOptions.__annotations__) == turn
+
+
 # Compaction
 # ---------------------------------------------------------------------------
 
@@ -1104,3 +1346,87 @@ def test_run_without_usage_reports_has_duration_only(fake_sdk, tmp_db):
     agent = CodexAgent(name="Codex", id="codex", db=tmp_db)
     metrics = asyncio.run(agent._arun_non_stream("go", session_id="s1")).metrics
     assert metrics is not None and metrics.total_tokens == 0 and metrics.duration is not None
+
+
+# ---------------------------------------------------------------------------
+# Media: images as native inputs, files staged in the workspace
+# ---------------------------------------------------------------------------
+
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + bytes(32)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_images_go_to_codex_natively_and_files_through_the_workspace(fake_sdk, tmp_db, tmp_path, stream):
+    from agno.media import File, Image
+
+    fake_sdk.notifications = [_delta("m1", "seen"), _turn_completed()]
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db, cwd=str(tmp_path))
+    media = dict(
+        images=[Image(content=PNG_BYTES, format="png")],
+        files=[File(content=b"a,b", filename="data.csv", mime_type="text/csv")],
+    )
+    if stream:
+        # Through the public call, where media is validated and converted before the stream starts.
+        events = list(agent.run("What is attached?", stream=True, session_id="s", **media))
+        assert isinstance(events[-1], RunCompletedEvent)
+        run_id = events[-1].run_id
+    else:
+        out = agent.run("What is attached?", session_id="s", **media)
+        assert out.status == RunStatus.completed
+        run_id = out.run_id
+
+    turn = [c for c in fake_sdk.calls if c["op"] == "turn"][-1]
+    items = turn["prompt"]
+    assert isinstance(items, list) and isinstance(items[0], TextInput)
+    assert items[0].text.startswith("What is attached?") and "data.csv" in items[0].text and "text/csv" in items[0].text
+    assert "image-1.png" not in items[0].text, "images are native inputs, not prompt lines"
+    [image] = [item for item in items if isinstance(item, LocalImageInput)]
+    uploads = tmp_path / ".agno" / "uploads" / run_id
+    assert image.path == str(uploads / "image-1.png") and turn["paths_exist"] == [True]
+    assert not uploads.exists(), "attachments are removed after the run"
+    stored = agent.get_run_output(run_id, "s")
+    assert stored.input.files[0].filename == "data.csv" and len(stored.input.images) == 1
+
+
+def test_plain_runs_still_send_a_string_prompt(fake_sdk, tmp_db):
+    fake_sdk.notifications = [_delta("m1", "ok"), _turn_completed()]
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db)
+    agent.run("hello", session_id="s")
+    assert [c for c in fake_sdk.calls if c["op"] == "turn"][-1]["prompt"] == "hello"
+
+
+def test_codex_rejects_audio(fake_sdk, tmp_db):
+    from agno.exceptions import UnsupportedMediaError
+    from agno.media import Audio
+
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db)
+    with pytest.raises(UnsupportedMediaError, match="audio"):
+        agent.run("listen", audio=[Audio(content=b"RIFF", format="wav")])
+
+
+def test_earlier_attachments_are_restaged_for_later_codex_turns(fake_sdk, tmp_db, tmp_path):
+    from agno.media import File
+
+    fake_sdk.notifications = [_delta("m1", "ok"), _turn_completed()]
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db, cwd=str(tmp_path))
+    first = agent.run(
+        "read it", session_id="s", files=[File(content=b"a,b", filename="data.csv", mime_type="text/csv")]
+    )
+    expected = tmp_path / ".agno" / "uploads" / first.run_id / "data.csv"
+    assert not expected.exists()
+
+    original_turn = FakeThread.turn
+    seen = {}
+
+    async def turn(self, prompt, **kwargs):
+        seen["exists"] = expected.exists()
+        return await original_turn(self, prompt, **kwargs)
+
+    FakeThread.turn = turn  # type: ignore[method-assign]
+    try:
+        out = agent.run("read it again", session_id="s")
+    finally:
+        FakeThread.turn = original_turn  # type: ignore[method-assign]
+    assert out.status == RunStatus.completed and seen["exists"]
+    assert [c for c in fake_sdk.calls if c["op"] == "turn"][-1]["prompt"] == "read it again"
+    assert not expected.exists()

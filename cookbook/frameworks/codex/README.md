@@ -1,45 +1,180 @@
-# Codex
+# Codex: SDK to AgentOS
 
-Examples for running [OpenAI Codex](https://developers.openai.com/codex) as an Agno agent.
-
-`CodexAgent` wraps the official [Codex Python SDK](https://github.com/openai/codex/tree/main/sdk/python)
-(`pip install openai-codex`). The SDK ships the Codex CLI, which runs locally as an
-app-server subprocess and executes the full agent loop: shell commands, file edits,
-web search and MCP tool calls. Agno adds sessions, streaming, the AgentOS API and the UI.
-
-## Setup
+Start with the [shared setup](../README.md#start-here), then install the tested
+SDK version in that environment:
 
 ```bash
-pip install openai-codex
-
-# Authenticate once. Either sign in with ChatGPT through the Codex CLI...
-codex login
-# ...or use an API key
-export CODEX_API_KEY=sk-...   # OPENAI_API_KEY also works
+uv pip install 'openai-codex==0.162.1'
 ```
 
-If the `codex` CLI is not on your PATH you can also authenticate from Python:
+Authenticate through your existing Codex CLI login (`codex login`), or use
+the SDK's API-key login once. If the CLI is not on your PATH, export
+`OPENAI_API_KEY` in your shell and run:
+
+```bash
+python - <<'PY'
+import os
+from openai_codex import Codex
+
+with Codex() as codex:
+    codex.login_api_key(os.environ["OPENAI_API_KEY"])
+PY
+```
+
+This stores authentication using the SDK's login mechanism. Do not put
+credentials in the example files. The examples default to `gpt-5.6-luna`;
+`CODEX_MODEL` overrides it.
+The Python SDK supplies a pinned Codex app-server runtime.
+
+## 1. Run the smallest example
+
+```bash
+python cookbook/frameworks/codex/codex_basic.py
+```
+
+Inspect the answer and Agno run ID. An order of exactly 100 dollars qualifies
+for free shipping. This prompt contains the policy, so no file read is needed.
+The script uses `print_response(..., stream=True)`, which displays the terminal status and raises
+on failed or cancelled runs, so errors exit nonzero. The method returns the final
+`RunOutput`; its async equivalent is `aprint_response()`. See the shared
+[3.2 migration notes](../README.md#adapter-api-changes-for-32).
+
+## 2. Compare with the native SDK
+
+```bash
+python cookbook/frameworks/codex/codex_native_sdk.py
+```
+
+The prompt, model and corresponding execution settings match `codex_basic.py`.
+The native example creates an `AsyncCodex` client, a thread and a turn, then
+prints text deltas from `turn.stream()`.
+Agno manages those calls and returns a `RunOutput`. Codex still executes the
+agent loop; its native thread ID is distinct from an Agno run/session ID.
+
+The comparison is about API shape, not identical prose or latency. These
+one-shot scripts do not configure an Agno database or establish durable resume.
+
+Official reference: [Codex Python SDK](https://learn.chatgpt.com/docs/codex-sdk#python-library).
+
+## Configure the adapter and native SDK
+
+Use named settings for common configuration, including `mcp_servers`,
+`model_provider` and `service_tier`. Advanced settings have three distinct scopes:
 
 ```python
-from agno.agents.codex import CodexAgent
+from openai_codex import CodexConfig
+from agno.agents.codex import CodexAgent, ThreadOptions, TurnOptions
 
-CodexAgent(name="Codex").login_api_key("sk-...")
+thread_options: ThreadOptions = {"ephemeral": True}
+turn_options: TurnOptions = {"effort": "low"}
+
+agent = CodexAgent(
+    model="gpt-5.6-luna",
+    sandbox="read-only",
+    approval_mode="deny_all",
+    client_options=CodexConfig(client_name="shipping_review"),
+    thread_options=thread_options,
+    turn_options=turn_options,
+)
+agent.print_response("Explain when a shipping fee should be waived.", stream=True)
 ```
 
-## Files
+- `client_options` accepts the native `CodexConfig`: executable, process environment,
+  launch arguments and client identity. Named `codex_bin` and `env` override it.
+- `thread_options` configures thread creation/resume. Agno filters start-only and
+  resume-only keys for the relevant operation. Ephemeral threads are never saved
+  as resumable, including when configured through this dictionary.
+- `turn_options` configures each turn. Both option dictionaries expose typed keys
+  for editor completion; they use native SDK parameter names.
+- `config` remains the native **thread** configuration dictionary. `mcp_servers`
+  replaces its `mcp_servers` entry; use `mcp_servers={}` to clear that entry.
 
-- `codex_basic.py` — minimal standalone run with `.print_response()`
-- `codex_tools.py` — shell commands in a read-only sandbox, surfaced as Agno tool calls
-- `codex_session.py` — multi-turn session; the Codex thread is resumed across turns via Agno's DB
-- `codex_mcp_tools.py` — connect Codex to an MCP server through `config` overrides
-- `codex_structured_output.py` — constrain the final answer with a JSON Schema
-- `codex_retries.py` — retry failed runs with exponential backoff. The cookbook injects a transient failure so the retry can be watched resuming the failed attempt's thread, then shows exhaustion and the default of no retries. Limits and permanent errors are not retried
-- `codex_agentos.py` — serve Codex through AgentOS
-- `codex_session_agentos.py` — same with SQLite-backed sessions
-- `codex_compaction.py` — compact the Codex thread behind a session with `CodexAgent.acompact` (a full-access agent with instructions and an approval mode), continue from the summary, then the guards: compaction refuses while a background run on the session is in flight, and a stored thread id whose rollout is gone is forgotten
+Explicit non-`None` named settings win over matching thread and turn options,
+including empty strings, empty dictionaries and `False`. `None` inherits the
+option/SDK default. Options are copied before use; the adapter does not mutate
+caller-owned dictionaries or `CodexConfig`.
 
-- `codex_metrics.py` — token usage per run on `RunOutput.metrics` and session totals for AgentOS
-- `codex_metrics_agentos.py` — the same through the AgentOS API (`--verify` prints run, session, sessions list and `/metrics`)
+`thread_kwargs` and `turn_kwargs` are deprecated aliases. Rename them to
+`thread_options` and `turn_options`; do not pass both forms. Named settings now
+win over aliases too, which changes calls that previously supplied conflicting
+values. Unknown option keys fail clearly.
+
+Agno currently accepts **string prompts** for Codex. Native `TextInput`, image,
+skill, mention and external-message objects are rejected instead of being silently
+stringified. Use the native SDK for those input types. This restriction applies
+to both streaming and non-streaming, sync and async runs.
+
+## 3. Watch actual tools
+
+```bash
+python cookbook/frameworks/codex/codex_tools.py
+```
+
+This time the policy is not supplied in the prompt: the harness must read
+`shipping.py` and `orders.json`. The script uses `print_response(..., stream=True)` to render the answer and
+Tool Calls panel, and returns the final `RunOutput` with tool results. Expect fees of 8, 0 and 0 dollars.
+The script checks that at least one tool succeeded; the live test also checks
+fixture contents in the returned tool results. Inspect the final explanation yourself.
+
+The thread uses `sandbox="read-only"` and `approval_mode="deny_all"`.
+Shell reads are translated into Agno tool events. Codex can inherit other local
+configuration; this is a local integration exercise, not a tenant-isolation
+demonstration. We do not use full-access mode or auto-approve escalation.
+
+## 4. Serve the same review through AgentOS
+
+```bash
+python cookbook/frameworks/codex/codex_agentos.py
+```
+
+In another terminal:
+
+```bash
+curl -fsS http://127.0.0.1:7777/health
+curl -fsS http://127.0.0.1:7777/agents
+curl --no-buffer -fsS http://127.0.0.1:7777/agents/codex-reviewer/runs \
+  -F 'message=Read shipping.py and orders.json. Explain the fee for each order. Do not modify files.' \
+  -F 'session_id=codex-shipping-review' -F 'stream=true'
+```
+
+This streams SSE. Use `stream=false` for a single JSON response. Run one provider
+server at a time, or set `PORT=7778` for the second server.
+
+Copy the returned `run_id` and read the stored result:
+
+```bash
+curl -fsS 'http://127.0.0.1:7777/agents/codex-reviewer/runs/RUN_ID?session_id=codex-shipping-review'
+```
+
+Agno stores product-facing run/tool data in `tmp/harnesses/codex/runs.db`.
+The Agno session stores `codex_thread_id`; Codex's authoritative rollout
+files remain in its local Codex home, not this SQLite database. A stored thread
+ID alone is insufficient on a different machine. See the
+[existing session examples](#how-sessions-work).
+
+The local server has no authentication. Use PostgreSQL and explicit
+authorization for production. Background jobs, disconnects and recovery are
+follow-up exercises, not guarantees demonstrated here.
+
+## Validate and continue
+
+Use [TEST_PROMPT.md](../TEST_PROMPT.md) for reproducible live tests and
+[TEST_LOG.md](TEST_LOG.md) for observations. Continue with the session, MCP and background examples below.
+
+
+## More Codex examples
+
+- [codex_session.py](codex_session.py): multi-turn conversations.
+- [codex_session_agentos.py](codex_session_agentos.py): sessions through AgentOS.
+- [codex_mcp_tools.py](codex_mcp_tools.py): connect native MCP tools.
+- [codex_structured_output.py](codex_structured_output.py): JSON Schema output.
+- [codex_metrics.py](codex_metrics.py): per-run token usage and session totals.
+- [codex_metrics_agentos.py](codex_metrics_agentos.py): metrics through the AgentOS API.
+- [codex_retries.py](codex_retries.py): transient failures, retry limits and permanent errors.
+- [codex_compaction.py](codex_compaction.py): compact and resume a stored thread.
+- [background_cancel.py](background_cancel.py): background execution and cancellation.
+
+Each exercise has its own setup and validation history in [TEST_LOG.md](TEST_LOG.md).
 
 ## How sessions work
 
@@ -63,6 +198,10 @@ persisted chat history to the prompt so context is not lost.
 ## Metrics
 
 Every run reports the token usage for the whole turn on `RunOutput.metrics` (input, cached input, output, reasoning and total), plus wall-clock `duration` measured by Agno and `time_to_first_token` when streaming. A turn with tool calls makes several model requests; Codex reports usage after each one, and the adapter sums them by taking the growth of the thread total over the turn, so a two-tool turn reports all three requests rather than only the last. Like the OpenAI API, `input_tokens` includes the cached prefix. Codex reports no cost. Completed runs are added to `session_data["session_metrics"]`, which AgentOS reads for the sessions list, the session view and the metrics page.
+
+## Images and files
+
+Images passed to `run` / `arun`, or uploaded through the AgentOS API and UI, go to Codex as native image inputs on the turn, so the model sees them directly. Files are written under `cwd/.agno/uploads/<run_id>/` and named in the prompt; Codex reads them with its shell, so text formats work everywhere and PDFs need a reader such as `pdftotext` on the machine. The folder is removed when the run ends unless `keep_uploads=True`. Before any later turn of the session, the attachments of earlier runs are written back to the uploads folder the session recorded when they were first staged, so the paths Codex already knows resolve again on whichever replica runs that turn (replicas normally share the same layout). If that folder cannot be written there, the files go under the replica's own working directory and the prompt names the new location. A continued or forked run gets the same treatment. The run's `input` records what was attached. Audio and video are rejected before the run starts.
 
 ## Sandbox and approvals
 

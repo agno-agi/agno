@@ -2,7 +2,7 @@
 Codex with structured output.
 
 Pass a JSON Schema as `output_schema` and Codex constrains its final answer
-to that schema. The run content is the JSON string, ready for json.loads().
+to that schema. Stream the response, then parse the completed JSON string.
 
 Requirements:
     pip install openai-codex
@@ -14,7 +14,6 @@ Usage:
 import json
 
 from agno.agents.codex import CodexAgent
-from agno.run.agent import RunOutput
 
 # ----- JSON Schema for the final answer -----
 movie_schema = {
@@ -36,8 +35,9 @@ agent = CodexAgent(
     output_schema=movie_schema,
 )
 
-run_output = agent.run("Invent a science fiction movie set on Mars.")
-assert isinstance(run_output, RunOutput)
+run_output = agent.print_response(
+    "Invent a science fiction movie set on Mars.", stream=True
+)
 
 movie = json.loads(str(run_output.content))
 print(json.dumps(movie, indent=2))

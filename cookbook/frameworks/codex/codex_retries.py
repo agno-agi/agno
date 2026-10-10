@@ -28,11 +28,10 @@ Usage:
 
 import tempfile
 
-from openai_codex.api import AsyncTurnHandle
-
 from agno.agents.codex import CodexAgent
 from agno.db.sqlite import SqliteDb
 from agno.run.base import RunStatus
+from openai_codex.api import AsyncTurnHandle
 
 outage = {"remaining": 0, "attempts": 0, "threads": []}
 _stream = AsyncTurnHandle.stream

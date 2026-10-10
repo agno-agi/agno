@@ -1,27 +1,38 @@
 """
-Standalone usage of the Codex SDK with Agno's .run() and .print_response() methods.
+CodexAgent: First Run
+=======================
+Run one shipping-policy question and print the answer, run ID and terminal status.
 
-Codex (OpenAI's coding agent) runs locally through the Codex CLI that ships
-with the openai-codex Python package. Authenticate once with the Codex CLI
-(`codex login`) or set CODEX_API_KEY / OPENAI_API_KEY.
-
-Requirements:
-    pip install openai-codex
-
-Usage:
-    .venvs/demo/bin/python cookbook/frameworks/codex/codex_basic.py
+No Agno database is configured. This proves a model round trip, not session
+recovery. Compare codex_native_sdk.py for the same prompt without the Agno adapter.
+Try changing the order amount in the prompt. See README.md for setup.
 """
+
+import os
+from pathlib import Path
 
 from agno.agents.codex import CodexAgent
 
-# ----- Wrap Codex for Agno -----
+# ---------------------------------------------------------------------------
+# Configure the Example
+# ---------------------------------------------------------------------------
+workspace = Path(__file__).resolve().parents[1] / "sample_project"
+prompt = "Shipping costs 8 dollars below 100 dollars and is free at or above 100 dollars. What is the shipping fee for an order of exactly 100 dollars? Answer in one sentence. Do not use tools."
+
+# ---------------------------------------------------------------------------
+# Create the Agent
+# ---------------------------------------------------------------------------
 agent = CodexAgent(
-    name="Codex Assistant",
-    model="gpt-5.6-luna",
+    id="codex-basic",
+    model=os.getenv("CODEX_MODEL", "gpt-5.6-luna"),
+    cwd=str(workspace),
     sandbox="read-only",
+    approval_mode="deny_all",
+    reasoning_effort="low",
 )
 
-# Use .print_response() just like a native Agno agent
-agent.print_response(
-    "What is quantum computing? Explain in 2-3 sentences.", stream=True
-)
+# ---------------------------------------------------------------------------
+# Run the Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(prompt, stream=True)

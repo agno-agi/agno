@@ -482,16 +482,70 @@ def test_user_session_store_and_file_checkpointing_disable_injection(fake_sdk, t
     monkeypatch.setattr(claude_module, "log_warning", warnings.append)
     db = SqliteDb(db_file=str(tmp_path / "db"))
     own_store = object()
-    custom = ClaudeAgent(id="a", db=db, options_kwargs={"session_store": own_store})
+    with pytest.warns(DeprecationWarning, match="options_kwargs"):
+        custom = ClaudeAgent(id="a", db=db, options_kwargs={"session_store": own_store})
     assert custom._build_options(agno_session_id="agno-session").extra["session_store"] is own_store
 
-    checkpointing = ClaudeAgent(id="a", db=db, options_kwargs={"enable_file_checkpointing": True})
+    with pytest.warns(DeprecationWarning, match="options_kwargs"):
+        checkpointing = ClaudeAgent(id="a", db=db, options_kwargs={"enable_file_checkpointing": True})
     opts = checkpointing._build_options(agno_session_id="agno-session")
     assert "session_store" not in opts.extra
     assert opts.extra["enable_file_checkpointing"] is True
     checkpointing._build_options(agno_session_id="agno-session")
     assert len(warnings) == 1
     assert "enable_file_checkpointing" in warnings[0]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("use_async", [False, True])
+def test_typed_options_flow_through_run_and_preserve_resume(fake_sdk, monkeypatch, stream, use_async):
+    @dataclass
+    class NativeOptions:
+        model: Optional[str] = None
+        tools: Optional[List[str]] = None
+        resume: Optional[str] = None
+        include_partial_messages: bool = False
+        extra_args: Dict[str, Any] = field(default_factory=dict)
+
+    sdk = claude_module._sdk()
+    monkeypatch.setattr(sdk, "ClaudeAgentOptions", NativeOptions)
+    captured = []
+    original_query = sdk.query
+
+    async def query(prompt, options):
+        captured.append(options)
+        async for message in original_query(prompt, options):
+            yield message
+
+    monkeypatch.setattr(sdk, "query", query)
+    source = NativeOptions(model="base-model", tools=["Bash"], extra_args={"custom-flag": "value"})
+    agent = ClaudeAgent(id="typed", options=source, model="named-model", tools=[])
+
+    async def async_run(prompt):
+        if stream:
+            return [event async for event in agent.arun(prompt, session_id="session", stream=True)][-1]
+        return await agent.arun(prompt, session_id="session")
+
+    def run(prompt):
+        if use_async:
+            return asyncio.run(async_run(prompt))
+        if stream:
+            return list(agent.run(prompt, session_id="session", stream=True))[-1]
+        return agent.run(prompt, session_id="session")
+
+    first = run("first")
+    second = run("second")
+    if stream:
+        assert isinstance(first, RunCompletedEvent) and isinstance(second, RunCompletedEvent)
+    else:
+        assert first.status == second.status == RunStatus.completed
+    assert captured[0].resume is None
+    assert captured[1].resume == "sdk-1"
+    assert all(item.model == "named-model" and item.tools == [] for item in captured)
+    assert all(item.include_partial_messages == stream for item in captured)
+    assert all(item.extra_args == {"replay-user-messages": None, "custom-flag": "value"} for item in captured)
+    assert source.extra_args == {"custom-flag": "value"}
+    assert source.model == "base-model" and source.tools == ["Bash"] and source.resume is None
 
 
 @pytest.mark.parametrize("stream", [True, False])
@@ -516,13 +570,19 @@ def test_retry_resumes_the_sdk_session_of_the_failed_attempt(fake_sdk, tmp_db, m
     assert calls == [{"prompt": "go", "resume": None}, {"prompt": "go", "resume": "sdk-1"}]
 
 
-def test_non_stream_retry_keeps_the_failed_attempts_tool_calls(fake_sdk, tmp_db, monkeypatch):
+@pytest.mark.parametrize("with_media", [False, True])
+def test_non_stream_retry_keeps_the_failed_attempts_tool_calls(fake_sdk, tmp_db, monkeypatch, tmp_path, with_media):
     """A tool that ran in the failed attempt stays in the run; the retry resumes the session and finishes."""
-    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, retries=1, delay_between_retries=0)
+    from agno.media import File
+
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path), retries=1, delay_between_retries=0)
     calls: List[Any] = []
 
     async def tool_then_outage(prompt, options):
         calls.append(options.resume)
+        if with_media:
+            [attachment] = list(tmp_path.glob(".agno/uploads/*/retry.txt"))
+            assert attachment.read_bytes() == b"retry payload"
         sdk_session_id = options.resume or "sdk-1"
         yield SystemMessage("init", {"session_id": sdk_session_id})
         if len(calls) == 1:
@@ -538,13 +598,19 @@ def test_non_stream_retry_keeps_the_failed_attempts_tool_calls(fake_sdk, tmp_db,
         yield ResultMessage(sdk_session_id, "recovered")
 
     monkeypatch.setattr(claude_module._sdk(), "query", tool_then_outage)
-    out = agent.run("go", session_id="s1")
+    out = agent.run(
+        "go", session_id="s1", files=[File(content=b"retry payload", filename="retry.txt")] if with_media else None
+    )
+    assert not list(tmp_path.glob(".agno/uploads/*/retry.txt"))
     assert out.status == RunStatus.completed and out.content == "recovered"
     assert calls == [None, "sdk-1"]
     [tool] = out.tools or []
     assert (tool.tool_call_id, tool.tool_name, tool.result) == ("call-1", "Bash", "alpha")
     stored = agent.get_run_output(out.run_id, "s1")
     assert any(m.role == "tool" and m.content == "alpha" for m in stored.messages or [])
+
+    if with_media:
+        assert stored.input.files[0].content == b"retry payload"
 
 
 def _sdk_result_error(**fields: Any) -> ResultError:
@@ -1341,3 +1407,280 @@ def test_runs_without_usage_still_report_duration(fake_sdk, tmp_db):
     agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db)
     run = agent.run("hi", session_id="s")
     assert run.metrics is not None and run.metrics.total_tokens == 0 and run.metrics.duration is not None
+
+
+# Media: attachments staged in the workspace
+# ---------------------------------------------------------------------------
+
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + bytes(32)
+
+
+def _attachment_paths(prompt: str) -> List[str]:
+    return [line[2:].split(" (")[0] for line in prompt.splitlines() if line.startswith("- ")]
+
+
+def _stored_run(run_id: str, with_file: bool = True, forked_from: Optional[str] = None):
+    from agno.media import File
+    from agno.models.message import Message
+    from agno.run.agent import RunInput, RunOutput
+
+    files = [File(content=b"x", filename="a.txt", mime_type="text/plain")] if with_file else None
+    return RunOutput(
+        run_id=run_id,
+        input=RunInput(input_content="x", files=files),
+        messages=[Message(role="user", content="x")],
+        forked_from_run_id=forked_from,
+    )
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_images_and_files_are_staged_and_named_in_the_prompt(fake_sdk, tmp_db, tmp_path, monkeypatch, stream):
+    import os
+
+    from agno.media import File, Image
+
+    seen: Dict[str, Any] = {}
+
+    async def query(prompt, options):
+        paths = _attachment_paths(prompt)
+        seen.update(prompt=prompt, paths=paths, exists=[os.path.exists(p) for p in paths])
+        yield SystemMessage("init", {"session_id": "sdk-1"})
+        yield ResultMessage("sdk-1", "seen")
+
+    monkeypatch.setattr(claude_module._sdk(), "query", query)
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path))
+    media = dict(
+        images=[Image(content=PNG_BYTES, format="png")],
+        files=[File(content=b"hello", filename="notes.txt", mime_type="text/plain")],
+    )
+    if stream:
+        # Through the public call, where media is validated and converted before the stream starts.
+        events = list(agent.run("What is attached?", stream=True, session_id="s", **media))
+        assert isinstance(events[-1], RunCompletedEvent)
+        run_id = events[-1].run_id
+    else:
+        out = agent.run("What is attached?", session_id="s", **media)
+        assert out.status == RunStatus.completed
+        run_id = out.run_id
+
+    assert seen["prompt"].startswith("What is attached?") and "Attached files" in seen["prompt"]
+    assert len(seen["paths"]) == 2 and seen["exists"] == [True, True]
+    uploads = tmp_path / ".agno" / "uploads"
+    assert all(p.startswith(str(uploads / run_id)) for p in seen["paths"])
+    assert seen["paths"][0].endswith("image-1.png") and seen["paths"][1].endswith("notes.txt")
+    assert "image/png" in seen["prompt"] and "text/plain" in seen["prompt"]
+    assert not (uploads / run_id).exists(), "attachments are removed after the run"
+    stored = agent.get_run_output(run_id, "s")
+    assert stored.input.files[0].filename == "notes.txt" and len(stored.input.images) == 1
+
+
+def test_keep_uploads_leaves_attachments_in_the_workspace(fake_sdk, tmp_db, tmp_path):
+    from agno.media import File
+
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path), keep_uploads=True)
+    out = agent.run("read it", session_id="s", files=[File(content=b"x", filename="a.txt", mime_type="text/plain")])
+    kept = list((tmp_path / ".agno" / "uploads" / out.run_id).iterdir())
+    assert [p.name for p in kept] == ["a.txt"]
+
+
+def test_audio_and_video_are_still_rejected(fake_sdk, tmp_db, tmp_path):
+    from agno.exceptions import UnsupportedMediaError
+    from agno.media import Audio
+
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path))
+    with pytest.raises(UnsupportedMediaError, match="audio"):
+        agent.run("listen", audio=[Audio(content=b"RIFF", format="wav")])
+    assert not [c for c in fake_sdk.calls]
+
+
+def test_earlier_attachments_are_restaged_for_later_turns(fake_sdk, tmp_db, tmp_path, monkeypatch):
+    """A later turn, possibly on another replica, finds the files an earlier run was given,
+    at the paths the transcript already names, and they are removed again afterwards."""
+    import os
+
+    from agno.media import File
+
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path))
+    first = agent.run(
+        "read it", session_id="s", files=[File(content=b"v1", filename="spec.txt", mime_type="text/plain")]
+    )
+    expected = tmp_path / ".agno" / "uploads" / first.run_id / "spec.txt"
+    assert not expected.exists()
+
+    seen: Dict[str, Any] = {}
+
+    async def query(prompt, options):
+        seen.update(
+            prompt=prompt, exists=os.path.exists(expected), content=expected.read_bytes() if expected.exists() else None
+        )
+        yield SystemMessage("init", {"session_id": options.resume or "sdk-1"})
+        yield ResultMessage(options.resume or "sdk-1", "again")
+
+    monkeypatch.setattr(claude_module._sdk(), "query", query)
+    # A fresh agent object with a different working directory stands in for another replica.
+    other = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path))
+    out = other.run("read it again", session_id="s")
+    assert out.status == RunStatus.completed
+    assert seen["exists"] and seen["content"] == b"v1"
+    assert "Attached files" not in seen["prompt"], "earlier attachments are not announced again"
+    assert "now at" not in seen["prompt"], "same workspace: the known path still resolves"
+    assert not expected.exists(), "re-staged files are removed after the turn"
+
+    # A replica with a different workspace still puts the file back at the recorded path, so
+    # the path the transcript names resolves and nothing needs to be announced.
+    elsewhere = tmp_path / "replica-b"
+    elsewhere.mkdir()
+
+    async def query_elsewhere(prompt, options):
+        seen.update(prompt=prompt, exists=expected.exists())
+        yield SystemMessage("init", {"session_id": options.resume or "sdk-1"})
+        yield ResultMessage(options.resume or "sdk-1", "again")
+
+    monkeypatch.setattr(claude_module._sdk(), "query", query_elsewhere)
+    replica_b = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(elsewhere))
+    assert replica_b.run("read it once more", session_id="s").status == RunStatus.completed
+    assert seen["exists"] and "have moved" not in seen["prompt"]
+    assert not expected.exists() and not (elsewhere / ".agno").exists()
+
+
+def test_prior_attachments_fall_back_to_the_workspace_when_the_recorded_root_is_unwritable(tmp_path):
+    """Only when the uploads folder recorded on the session cannot be written (another machine,
+    another layout) do the files go under this workspace, and then the harness is told."""
+    from types import SimpleNamespace
+
+    from agno.agents._media import stage_prior_media
+    from agno.media import File
+
+    blocked = tmp_path / "blocked"
+    blocked.write_text("a regular file, so nothing can be created below it")
+    recorded_root = blocked / ".agno" / "uploads"
+    from agno.models.message import Message
+    from agno.run.agent import RunInput, RunOutput
+
+    attachment = File(content=b"v1", filename="spec.txt", mime_type="text/plain")
+    run = RunOutput(
+        run_id="run-1",
+        input=RunInput(input_content="x", files=[attachment]),
+        messages=[Message(role="user", content="x")],
+    )
+    session = SimpleNamespace(session_data={"uploads_root": str(recorded_root)}, runs=[run])
+    workspace = tmp_path / "replica-b"
+
+    folders, note = stage_prior_media(workspace, session)
+
+    new_path = workspace / ".agno" / "uploads" / "run-1" / "spec.txt"
+    assert new_path.read_bytes() == b"v1"
+    assert folders == [new_path.parent]
+    assert "have moved" in note and f"- {new_path} (was {recorded_root / 'run-1' / 'spec.txt'})" in note
+
+
+def test_only_recent_runs_attachments_are_restaged(tmp_path):
+    """Restoring is bounded: attachments of runs older than the limit stay in the session only."""
+    from types import SimpleNamespace
+
+    from agno.agents._media import stage_prior_media
+
+    runs = [_stored_run(f"run-{i}") for i in range(5)]
+    session = SimpleNamespace(session_data={}, runs=runs + [_stored_run("current", with_file=False)])
+
+    folders, _ = stage_prior_media(tmp_path, session, exclude_run_id="current", limit=2)
+
+    uploads = tmp_path / ".agno" / "uploads"
+    assert sorted(f.name for f in folders) == ["run-3", "run-4"]
+    assert sorted(p.name for p in uploads.iterdir()) == ["run-3", "run-4"]
+
+
+def test_kept_attachments_are_not_duplicated_on_later_turns(fake_sdk, tmp_db, tmp_path):
+    """With keep_uploads, a later turn reuses the files already on disk instead of writing
+    renamed copies next to them, and same-named files in one run keep their original names."""
+    from agno.media import File
+
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path), keep_uploads=True)
+    first = agent.run(
+        "read them",
+        session_id="s",
+        files=[
+            File(content=b"one", filename="notes.txt", mime_type="text/plain"),
+            File(content=b"two", filename="notes.txt", mime_type="text/plain"),
+        ],
+    )
+    folder = tmp_path / ".agno" / "uploads" / first.run_id
+    assert sorted(p.name for p in folder.iterdir()) == ["notes-2.txt", "notes.txt"]
+
+    # The harness edited a kept file between turns; the edit must survive later restores.
+    (folder / "notes.txt").write_bytes(b"edited by the harness")
+    agent.run("again", session_id="s")
+    agent.run("and again", session_id="s")
+
+    assert sorted(p.name for p in folder.iterdir()) == ["notes-2.txt", "notes.txt"]
+    assert (folder / "notes.txt").read_bytes() == b"edited by the harness"
+    assert (folder / "notes-2.txt").read_bytes() == b"two"
+
+
+def test_restore_window_ends_at_the_continued_run(tmp_path):
+    """A continued run's transcript ends at its source, so the window ends there, source included,
+    even when the source is the run being continued in place."""
+    from types import SimpleNamespace
+
+    from agno.agents._media import stage_prior_media
+
+    session = SimpleNamespace(session_data={}, runs=[_stored_run(f"run-{i}") for i in range(5)])
+
+    forked, _ = stage_prior_media(tmp_path / "fork", session, exclude_run_id="new-run", limit=2, until_run_id="run-1")
+    assert sorted(f.name for f in forked) == ["run-0", "run-1"]
+
+    in_place, _ = stage_prior_media(tmp_path / "same", session, exclude_run_id="run-1", limit=2, until_run_id="run-1")
+    assert sorted(f.name for f in in_place) == ["run-0", "run-1"]
+
+
+def test_continuing_an_old_run_restores_its_attachments(scripted, tmp_db, tmp_path, monkeypatch):
+    """Forking a run older than the restore limit still brings back the files its transcript names."""
+    from agno.media import File
+
+    turns, calls, _ = scripted
+    for _ in range(3):
+        turns.append(_tool_turn("go"))
+    turns.append(
+        [
+            SystemMessage("init", {"session_id": "fork-1"}),
+            _msg(AssistantMessage([TextBlock("branched")]), "v-final"),
+            ResultMessage("fork-1", "branched"),
+        ]
+    )
+    restored: List[List[str]] = []
+    real_stage_prior_media = claude_module.stage_prior_media
+
+    def recording(*args, **kwargs):
+        folders, note = real_stage_prior_media(*args, **kwargs, limit=1)
+        restored.append(sorted(f.name for f in folders))
+        return folders, note
+
+    monkeypatch.setattr(claude_module, "stage_prior_media", recording)
+    agent = ClaudeAgent(db=tmp_db, cwd=str(tmp_path))
+    source = agent.run("go", session_id="s", files=[File(content=b"v1", filename="spec.txt", mime_type="text/plain")])
+    agent.run("go", session_id="s")
+    agent.run("go", session_id="s")
+
+    agent.continue_run(run_id=source.run_id, session_id="s", continue_from=3, fork=True, input="next")
+
+    assert restored[-1] == [source.run_id]
+
+
+@pytest.mark.parametrize("until_run_id", [None, "fork"])
+def test_restore_follows_fork_ancestry_to_the_run_that_received_the_file(tmp_path, until_run_id):
+    """A fork carries its source's input; the transcript names the source's folder, and the
+    runs between the source and the fork are not on the branch."""
+    from types import SimpleNamespace
+
+    from agno.agents._media import stage_prior_media
+
+    runs = [_stored_run("source")]
+    runs += [_stored_run(f"between-{i}") for i in range(3)]
+    runs += [_stored_run("fork", forked_from="source"), _stored_run("nested", forked_from="fork")]
+    session = SimpleNamespace(session_data={}, runs=runs)
+
+    folders, _ = stage_prior_media(tmp_path, session, exclude_run_id="current", limit=1, until_run_id=until_run_id)
+
+    uploads = tmp_path / ".agno" / "uploads"
+    assert [f.name for f in folders] == ["source"]
+    assert sorted(p.name for p in uploads.iterdir()) == ["source"]

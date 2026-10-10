@@ -1,22 +1,38 @@
 import asyncio
 import json
-from dataclasses import dataclass, field
+import warnings
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from importlib import import_module
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, AsyncIterator, ClassVar, Dict, Iterator, List, Optional, Set, Tuple
 from uuid import uuid4
 
+from agno.agents._config import agent_dataclass
+from agno.agents._media import (
+    accept_media,
+    cleanup_media,
+    media_prompt_block,
+    remember_uploads_root,
+    remove_upload_folder,
+    stage_media,
+    stage_prior_media,
+)
 from agno.agents.base import BaseExternalAgent, ExternalRunMetricsEvent, ExternalRunResult, run_coroutine_sync
+from agno.agents.codex.options import ThreadOptions, TurnOptions
 from agno.exceptions import RunCancelledException
 from agno.metrics import ModelMetrics, RunMetrics
 from agno.models.response import ToolExecution
-from agno.run.base import RunStatus
 from agno.run.agent import (
     RunContentEvent,
     RunOutputEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
+from agno.run.base import RunStatus
 from agno.utils.log import log_debug, log_warning
+
+if TYPE_CHECKING:
+    from openai_codex import CodexConfig
 
 
 def _sdk() -> Any:
@@ -130,7 +146,7 @@ class _TurnOutcome:
     usage_last: Any = None
 
 
-@dataclass
+@agent_dataclass
 class CodexAgent(BaseExternalAgent):
     """Adapter for OpenAI Codex via the official Codex Python SDK (openai-codex).
 
@@ -152,17 +168,27 @@ class CodexAgent(BaseExternalAgent):
         approval_mode: "auto_review" or "deny_all" for escalated permission requests.
         reasoning_effort: "minimal", "low", "medium", "high" or "xhigh".
         cwd: Working directory for the agent.
+        keep_uploads: Keep files attached to a run under cwd/.agno/uploads/<run_id>/ after the run.
         ephemeral: Do not persist Codex thread files. Ephemeral threads cannot be resumed.
         output_schema: JSON Schema constraining the final answer. Content is the JSON string.
-        config: Codex config overrides applied to every thread (e.g. {"mcp_servers": {...}}).
+        model_provider: Native Codex model provider name.
+        service_tier: Service tier used for threads and turns.
+        mcp_servers: Native MCP server configuration, replacing config["mcp_servers"].
+        config: Native thread config overrides; unrelated to client process configuration.
+        client_options: Native CodexConfig for the app-server process.
+        thread_options: Typed native thread settings. Named non-None settings take precedence.
+        turn_options: Typed native turn settings. Named non-None settings take precedence.
         codex_bin: Path to a specific Codex executable. Defaults to the bundled one.
         env: Environment variables for the Codex process.
-        thread_kwargs: Extra kwargs forwarded to thread_start / thread_resume.
-        turn_kwargs: Extra kwargs forwarded to each turn.
+        thread_kwargs: Deprecated alias for thread_options.
+        turn_kwargs: Deprecated alias for turn_options.
         retries: Number of times to retry a failed run. Cancelled runs, budget and usage limits and errors
             that would fail again (context window, authentication, bad requests, policy) are not retried.
         delay_between_retries: Seconds to wait before each retry.
         exponential_backoff: Double the delay after each failed attempt.
+
+    Input must be a string. Native SDK input objects (including images, skills and
+    external tool messages) are not supported by Agno's text history adapter.
 
     Example:
         from agno.agents.codex import CodexAgent
@@ -181,31 +207,69 @@ class CodexAgent(BaseExternalAgent):
         AgentOS(agents=[agent])
     """
 
+    # Model and instructions
     model: Optional[str] = None
     instructions: Optional[str] = None
     base_instructions: Optional[str] = None
+    model_provider: Optional[str] = None
+    reasoning_effort: Optional[str] = None
+    service_tier: Optional[str] = None
+    output_schema: Optional[Dict[str, Any]] = None
+    # Native tools
+    mcp_servers: Optional[Dict[str, Any]] = None
+    # Workspace and settings
+    cwd: Optional[str] = None
+    # Keep attachments staged under cwd/.agno/uploads/<run_id>/ after the run instead of deleting them.
+    keep_uploads: bool = False
     sandbox: Optional[str] = None
     approval_mode: Optional[str] = None
-    reasoning_effort: Optional[str] = None
-    cwd: Optional[str] = None
     ephemeral: Optional[bool] = None
-    output_schema: Optional[Dict[str, Any]] = None
+    # Native runtime configuration
+    client_options: Optional["CodexConfig"] = None
+    thread_options: Optional[ThreadOptions] = None
+    turn_options: Optional[TurnOptions] = None
     config: Optional[Dict[str, Any]] = None
     codex_bin: Optional[str] = None
     env: Optional[Dict[str, str]] = None
     thread_kwargs: Dict[str, Any] = field(default_factory=dict)
     turn_kwargs: Dict[str, Any] = field(default_factory=dict)
-    framework: str = "codex"
 
-    # Key under which the Codex thread id is stored in the Agno session's session_data.
+    _sdk_name: ClassVar[str] = "codex"
+    # Key under which the Codex thread id is stored in the Agno session.
     _THREAD_KEY = "codex_thread_id"
 
     # Fallback Agno session_id -> Codex thread id map, used when no db is configured.
     _thread_ids: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
-    # ---------------------------------------------------------------------------
-    # Authentication helpers
-    # ---------------------------------------------------------------------------
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self._validate_options()
+        for name in ("thread", "turn"):
+            if getattr(self, f"{name}_kwargs"):
+                warnings.warn(
+                    f"{name}_kwargs is deprecated; use {name}_options. Named settings take precedence.",
+                    DeprecationWarning,
+                    stacklevel=3,
+                )
+
+    def _validate_options(self) -> None:
+        for name, schema in (("thread", ThreadOptions), ("turn", TurnOptions)):
+            options = getattr(self, f"{name}_options")
+            legacy = getattr(self, f"{name}_kwargs")
+            if options is not None and legacy:
+                raise ValueError(f"Use {name}_options or {name}_kwargs, not both")
+            values = options if options is not None else legacy
+            unknown = set(values) - set(schema.__annotations__)
+            if unknown:
+                raise ValueError(f"Unknown {name} options: {', '.join(sorted(unknown))}")
+
+    @staticmethod
+    def _validate_input(input: Any) -> None:
+        if not isinstance(input, str):
+            raise TypeError(
+                "CodexAgent input must be a string. Native Codex input objects are not supported; "
+                "use the native SDK for images, skills or external tool messages."
+            )
 
     def login_api_key(self, api_key: str) -> None:
         """Store an API key in the Codex CLI auth so future runs are authenticated."""
@@ -327,12 +391,16 @@ class CodexAgent(BaseExternalAgent):
     # ---------------------------------------------------------------------------
 
     def _codex_config(self, sdk: Any) -> Any:
-        kwargs: Dict[str, Any] = {}
-        if self.codex_bin:
-            kwargs["codex_bin"] = self.codex_bin
-        if self.env:
-            kwargs["env"] = dict(self.env)
-        return sdk.CodexConfig(**kwargs)
+        if self.client_options is not None and not isinstance(self.client_options, sdk.CodexConfig):
+            raise TypeError("client_options must be an openai_codex.CodexConfig")
+        config = replace(self.client_options) if self.client_options is not None else sdk.CodexConfig()
+        if self.codex_bin is not None:
+            config.codex_bin = self.codex_bin
+        if self.env is not None:
+            config.env = dict(self.env)
+        elif config.env is not None:
+            config.env = dict(config.env)
+        return config
 
     def _new_client(self) -> Any:
         """Create an AsyncCodex client. One app-server process per run keeps the
@@ -365,39 +433,66 @@ class CodexAgent(BaseExternalAgent):
             types_module = import_module(f"{sdk.__name__}.types")
         return types_module.ReasoningEffort(value.lower())
 
+    def _resolved_thread_options(self) -> Dict[str, Any]:
+        self._validate_options()
+        options = dict(self.thread_options if self.thread_options is not None else self.thread_kwargs)
+        for key, value in {
+            "model": self.model,
+            "model_provider": self.model_provider,
+            "developer_instructions": self.instructions,
+            "base_instructions": self.base_instructions,
+            "sandbox": self.sandbox,
+            "approval_mode": self.approval_mode,
+            "cwd": self.cwd,
+            "config": self.config,
+            "ephemeral": self.ephemeral,
+            "service_tier": self.service_tier,
+        }.items():
+            if value is not None:
+                options[key] = value
+        if options.get("config") is not None:
+            options["config"] = deepcopy(options["config"])
+        if self.mcp_servers is not None:
+            config = options.setdefault("config", {})
+            if config is None:
+                config = options["config"] = {}
+            config["mcp_servers"] = deepcopy(self.mcp_servers)
+        return options
+
     def _thread_kwargs(self, sdk: Any, *, resume: bool) -> Dict[str, Any]:
-        """Build kwargs for thread_start (resume=False) or thread_resume (resume=True)."""
-        kwargs: Dict[str, Any] = {}
-        if self.model:
-            kwargs["model"] = self.model
-        if self.instructions:
-            kwargs["developer_instructions"] = self.instructions
-        if self.base_instructions:
-            kwargs["base_instructions"] = self.base_instructions
-        if self.sandbox:
-            kwargs["sandbox"] = self._to_sandbox(sdk, self.sandbox)
-        if self.approval_mode:
-            kwargs["approval_mode"] = self._to_approval_mode(sdk, self.approval_mode)
-        if self.cwd:
-            kwargs["cwd"] = self.cwd
-        if self.config:
-            kwargs["config"] = self.config
-        if self.ephemeral is not None and not resume:
-            kwargs["ephemeral"] = self.ephemeral
-        for key, value in self.thread_kwargs.items():
-            if resume and key in _START_ONLY_KEYS:
-                continue
-            kwargs[key] = value
-        return kwargs
+        """Build native options from the settings used for Agno session bookkeeping."""
+        excluded = _START_ONLY_KEYS if resume else {"include_turns"}
+        options = {k: v for k, v in self._resolved_thread_options().items() if v is not None and k not in excluded}
+        self._normalize_permissions(sdk, options)
+        return options
+
+    def _normalize_permissions(self, sdk: Any, options: Dict[str, Any]) -> None:
+        if "sandbox" in options:
+            options["sandbox"] = self._to_sandbox(sdk, options["sandbox"])
+        if "approval_mode" in options:
+            options["approval_mode"] = self._to_approval_mode(sdk, options["approval_mode"])
 
     def _turn_kwargs(self, sdk: Any) -> Dict[str, Any]:
-        kwargs: Dict[str, Any] = {}
-        if self.reasoning_effort:
-            kwargs["effort"] = self._to_reasoning_effort(sdk, self.reasoning_effort)
-        if self.output_schema:
-            kwargs["output_schema"] = self.output_schema
-        kwargs.update(self.turn_kwargs)
-        return kwargs
+        self._validate_options()
+        options = dict(self.turn_options if self.turn_options is not None else self.turn_kwargs)
+        for key, value in {
+            "model": self.model,
+            "cwd": self.cwd,
+            "sandbox": self.sandbox,
+            "approval_mode": self.approval_mode,
+            "service_tier": self.service_tier,
+            "effort": self.reasoning_effort,
+            "output_schema": self.output_schema,
+        }.items():
+            if value is not None:
+                options[key] = value
+        options = {k: v for k, v in options.items() if v is not None}
+        self._normalize_permissions(sdk, options)
+        if "effort" in options:
+            options["effort"] = self._to_reasoning_effort(sdk, options["effort"])
+        if "output_schema" in options:
+            options["output_schema"] = deepcopy(options["output_schema"])
+        return options
 
     # ---------------------------------------------------------------------------
     # Session <-> Codex thread mapping
@@ -415,7 +510,7 @@ class CodexAgent(BaseExternalAgent):
     def _remember_thread(self, session: Any, session_id: Optional[str], thread_id: Optional[str]) -> None:
         """Stash the Codex thread id on the session (persisted by the base class)
         and in memory. Ephemeral threads are never resumable, so skip them."""
-        if not thread_id or self.ephemeral:
+        if not thread_id or self._resolved_thread_options().get("ephemeral"):
             return
         if session is not None:
             if session.session_data is None:
@@ -450,6 +545,8 @@ class CodexAgent(BaseExternalAgent):
         transport, bad cwd) is raised as-is and keeps the stored thread id, so a
         transient problem cannot unlink the session from its conversation.
         """
+        if self._resolved_thread_options().get("ephemeral"):
+            self._forget_thread(session, session_id)
         thread_id = self._get_thread_id(session, session_id)
         if thread_id:
             try:
@@ -473,11 +570,73 @@ class CodexAgent(BaseExternalAgent):
     # Adapter hooks
     # ---------------------------------------------------------------------------
 
+    def _media_kwargs(self, **media: Any) -> Dict[str, Any]:
+        """Images go to Codex as native local-image inputs; files are written under
+        cwd/.agno/uploads/<run_id>/ and named in the prompt. Audio and video are rejected."""
+        return accept_media(media)
+
+    def _turn_input(self, sdk: Any, prompt: str, staged: Any, moved_note: str = "") -> Any:
+        """The turn input: plain text, or text plus native image items when media was attached."""
+        if not staged:
+            return f"{prompt}{moved_note}"
+        files = [item for item in staged if item.kind == "file"]
+        text = f"{prompt}{media_prompt_block(files)}{moved_note}" if files or moved_note else prompt
+        items: List[Any] = [sdk.TextInput(text=text)]
+        for item in staged:
+            if item.kind == "image" and item.path:
+                items.append(sdk.LocalImageInput(path=item.path))
+            elif item.kind == "image" and item.url:
+                items.append(sdk.ImageInput(url=item.url))
+        return items
+
     async def _arun_adapter(
         self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
     ) -> ExternalRunResult:
+        """Stage attachments for the run, execute, then remove them unless keep_uploads is set."""
+        media = kwargs.pop("media", None)
+        run_id = kwargs.get("run_id") or str(uuid4())
+        kwargs["run_id"] = run_id
+        kwargs["staged_media"] = stage_media(self.cwd, run_id, media) if media else []
+        if kwargs["staged_media"]:
+            remember_uploads_root(kwargs.get("session"), self.cwd)
+        restaged, kwargs["moved_note"] = stage_prior_media(self.cwd, kwargs.get("session"), exclude_run_id=run_id)
+        try:
+            return await self._arun_adapter_sdk(input, history=history, **kwargs)
+        finally:
+            if not self.keep_uploads:
+                if kwargs["staged_media"]:
+                    cleanup_media(self.cwd, run_id)
+                for folder in restaged:
+                    remove_upload_folder(folder)
+
+    async def _arun_adapter_stream(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> AsyncIterator[RunOutputEvent]:
+        media = kwargs.pop("media", None)
+        run_id = kwargs.get("run_id") or str(uuid4())
+        kwargs["run_id"] = run_id
+        kwargs["staged_media"] = stage_media(self.cwd, run_id, media) if media else []
+        if kwargs["staged_media"]:
+            remember_uploads_root(kwargs.get("session"), self.cwd)
+        restaged, kwargs["moved_note"] = stage_prior_media(self.cwd, kwargs.get("session"), exclude_run_id=run_id)
+        try:
+            async for event in self._arun_adapter_stream_sdk(input, history=history, **kwargs):
+                yield event
+        finally:
+            if not self.keep_uploads:
+                if kwargs["staged_media"]:
+                    cleanup_media(self.cwd, run_id)
+                for folder in restaged:
+                    remove_upload_folder(folder)
+
+    async def _arun_adapter_sdk(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> ExternalRunResult:
         """Non-streaming: run one turn and return the final answer."""
+        self._validate_input(input)
         sdk = _sdk()
+        self._thread_kwargs(sdk, resume=False)
+        turn_options = self._turn_kwargs(sdk)
         session = kwargs.get("session")
         session_id = kwargs.get("session_id")
 
@@ -485,7 +644,9 @@ class CodexAgent(BaseExternalAgent):
             thread, resumed = await self._open_thread(codex, sdk, session, session_id)
             prompt = self._build_prompt(input, history, resumed)
             run_id = kwargs.get("run_id") or str(uuid4())
-            handle = await thread.turn(prompt, **self._turn_kwargs(sdk))
+            handle = await thread.turn(
+                self._turn_input(sdk, prompt, kwargs.get("staged_media"), kwargs.get("moved_note", "")), **turn_options
+            )
             self._set_run_handle(run_id, handle)
             try:
                 result = await self._acollect_turn(handle, kwargs.get("run_state"))
@@ -583,7 +744,7 @@ class CodexAgent(BaseExternalAgent):
                 parts.append(str(root.text))
         return "\n\n".join(parts)
 
-    async def _arun_adapter_stream(
+    async def _arun_adapter_stream_sdk(
         self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
     ) -> AsyncIterator[RunOutputEvent]:
         """Streaming: translate Codex app-server notifications into Agno events.
@@ -593,7 +754,10 @@ class CodexAgent(BaseExternalAgent):
         item/started and item/completed notifications. turn/completed closes
         the stream and carries the failure status, if any.
         """
+        self._validate_input(input)
         sdk = _sdk()
+        self._thread_kwargs(sdk, resume=False)
+        turn_options = self._turn_kwargs(sdk)
         run_id = kwargs.get("run_id", str(uuid4()))
         session = kwargs.get("session")
         session_id = kwargs.get("session_id")
@@ -602,7 +766,9 @@ class CodexAgent(BaseExternalAgent):
         async with self._new_client() as codex:
             thread, resumed = await self._open_thread(codex, sdk, session, session_id)
             prompt = self._build_prompt(input, history, resumed)
-            handle = await thread.turn(prompt, **self._turn_kwargs(sdk))
+            handle = await thread.turn(
+                self._turn_input(sdk, prompt, kwargs.get("staged_media"), kwargs.get("moved_note", "")), **turn_options
+            )
             self._set_run_handle(run_id, handle)
             try:
                 async for notification in handle.stream():

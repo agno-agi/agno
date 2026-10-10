@@ -375,6 +375,19 @@ class InputCheckError(Exception):
         self.additional_data = additional_data
 
 
+class UnsupportedMediaError(InputCheckError, ValueError):
+    """Raised when media (images, audio, videos, files) is passed to an agent that cannot take it.
+
+    An input check error, so AgentOS answers with a 400 or a RunError event instead of a
+    server error; also a ValueError for callers that validated inputs that way before.
+    """
+
+    def __init__(self, message: str, media: Optional[List[str]] = None):
+        super().__init__(
+            message, check_trigger=CheckTrigger.INPUT_NOT_ALLOWED, additional_data={"unsupported_media": media or []}
+        )
+
+
 class OutputCheckError(Exception):
     """Exception raised when an output check fails."""
 

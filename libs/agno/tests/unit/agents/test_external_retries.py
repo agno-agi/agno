@@ -244,6 +244,7 @@ class PermanentAgent(FlakyAgent):
 @pytest.mark.parametrize("permanent", [True, False], ids=["permanent", "transient"])
 async def test_queue_fails_a_permanent_failure_without_redriving_it(tmp_path, stream, permanent):
     from agno.db.sqlite import SqliteDb
+
     from ._queue_harness import run_through_queue
 
     agent_cls = PermanentAgent if permanent else FlakyAgent
