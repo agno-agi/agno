@@ -702,6 +702,37 @@ class BaseExternalAgent:
             return False
         return True
 
+    @staticmethod
+    def _collect_attempt_tools(run_state: Dict[str, Any], carried: Dict[str, ToolExecution]) -> None:
+        """Take the tool calls a failed attempt left in run_state["tools"] (a dict keyed by call id,
+        or a list) so the run keeps them. Adapters set it as tools complete."""
+        recorded = run_state.pop("tools", None)
+        values = recorded.values() if isinstance(recorded, dict) else (recorded or [])
+        for tool in values:
+            carried[tool.tool_call_id or str(uuid4())] = tool
+
+    @staticmethod
+    def _merge_tools(
+        carried: Dict[str, ToolExecution], final: Optional[List[ToolExecution]]
+    ) -> Optional[List[ToolExecution]]:
+        if not carried:
+            return final
+        merged = dict(carried)
+        for tool in final or []:
+            merged[tool.tool_call_id or str(uuid4())] = tool
+        return list(merged.values())
+
+    def _retry_warning(self, attempt: int, num_attempts: int, error: Exception) -> Dict[str, Any]:
+        return {
+            "type": "retry",
+            "attempt": attempt + 1,
+            "attempts": num_attempts,
+            "delay": self._retry_delay(attempt),
+            "error": str(error),
+            "message": f"Attempt {attempt + 1} of {num_attempts} failed and is being retried; "
+            "output streamed before this point came from the failed attempt.",
+        }
+
     async def _await_retry(self, run_id: str, attempt: int, num_attempts: int, error: Exception) -> None:
         """Wait out the backoff before the next attempt, ending early if the run is cancelled."""
         from agno.run.cancel import araise_if_cancelled
@@ -1077,6 +1108,8 @@ class BaseExternalAgent:
         history = (
             self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
         )
+        # Tool calls from attempts that failed; they ran, so the stored run keeps them.
+        carried_tools: Dict[str, ToolExecution] = {}
         try:
             async with self._run_cancellation(run_id):
                 num_attempts = self.retries + 1
@@ -1089,6 +1122,7 @@ class BaseExternalAgent:
                     except RunCancelledException:
                         raise
                     except Exception as error:
+                        self._collect_attempt_tools(run_state, carried_tools)
                         if not self._should_retry(error, attempt, num_attempts):
                             raise
                         await self._await_retry(run_id, attempt, num_attempts, error)
@@ -1099,7 +1133,9 @@ class BaseExternalAgent:
                 record_input,
                 content.content if isinstance(content, ExternalRunResult) else content,
                 RunStatus.completed,
-                tools=content.tools if isinstance(content, ExternalRunResult) else None,
+                tools=self._merge_tools(
+                    carried_tools, content.tools if isinstance(content, ExternalRunResult) else None
+                ),
             )
             if isinstance(content, ExternalRunResult) and content.warnings:
                 run_output.metadata = {"warnings": content.warnings}
@@ -1122,7 +1158,7 @@ class BaseExternalAgent:
                 record_input,
                 str(error),
                 RunStatus.error,
-                tools=list(run_state.get("tools", {}).values()) or None,
+                tools=list(carried_tools.values()) or None,
             )
         self._finish_run_output(run_output, run_state, continuation)
         if session is not None:
@@ -1175,6 +1211,11 @@ class BaseExternalAgent:
                     except Exception as error:
                         if not self._should_retry(error, attempt, num_attempts):
                             raise
+                        # The failed attempt's events already reached the consumer. Say so before
+                        # the retry streams a fresh answer, and keep it in the stored run's warnings.
+                        warning = self._retry_warning(attempt, num_attempts, error)
+                        warnings.append(warning)
+                        yield ExternalRunWarningEvent(run_id=run_id, agent_id=self.get_id(), warning=warning)
                         await self._await_retry(run_id, attempt, num_attempts, error)
         except RunCancelledException:
             status = RunStatus.cancelled

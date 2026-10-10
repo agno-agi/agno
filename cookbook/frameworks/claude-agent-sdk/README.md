@@ -21,7 +21,15 @@ The `agno_transcripts` table is created on first use. A development database tha
 
 ## Retries
 
-`claude_retries.py` sets `retries`, `delay_between_retries` and `exponential_backoff`, the same settings an Agno `Agent` takes. A failed run is retried with the same run id and resumes the SDK session the failed attempt started, so Claude sees the work already done. Errors that would fail again are not retried: `max_turns` and `max_budget_usd` limits, authentication and billing errors, and invalid requests. Cancelled runs are not retried, and cancelling during the backoff wait ends the run.
+`ClaudeAgent` takes `retries`, `delay_between_retries` and `exponential_backoff`, the same settings an Agno `Agent` takes. A failed run is retried with the same run id and resumes the SDK session the failed attempt started, so Claude sees the work already done. Errors that would fail again are not retried: `max_turns` and `max_budget_usd` limits, authentication and billing errors, and invalid requests. Cancelled runs are not retried, and cancelling during the backoff wait ends the run.
+
+With the durable job queue, the queue retries a job and this setting retries attempts inside one job, so set one of them rather than both unless you want the product of the two.
+
+`claude_retries.py` makes the failure happen on purpose so the retry can be watched: it cuts the first attempt off with a simulated transient error after Claude has answered, then shows the retry resuming the same SDK session, a run that exhausts its retries, a `max_turns` limit that is not retried, and the default of no retries.
+
+```bash
+.venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/claude_retries.py
+```
 
 ## Continue from a step
 

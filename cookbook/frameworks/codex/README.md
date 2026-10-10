@@ -33,7 +33,7 @@ CodexAgent(name="Codex").login_api_key("sk-...")
 - `codex_session.py` — multi-turn session; the Codex thread is resumed across turns via Agno's DB
 - `codex_mcp_tools.py` — connect Codex to an MCP server through `config` overrides
 - `codex_structured_output.py` — constrain the final answer with a JSON Schema
-- `codex_retries.py` — retry failed runs with exponential backoff; the retry resumes the failed attempt's thread, and limits or permanent errors are not retried
+- `codex_retries.py` — retry failed runs with exponential backoff. The cookbook injects a transient failure so the retry can be watched resuming the failed attempt's thread, then shows exhaustion and the default of no retries. Limits and permanent errors are not retried
 - `codex_agentos.py` — serve Codex through AgentOS
 - `codex_session_agentos.py` — same with SQLite-backed sessions
 
@@ -47,6 +47,10 @@ the lifetime of the agent object.
 If a thread cannot be resumed (for example `ephemeral=True`, or the Codex
 session files were removed), the adapter starts a fresh thread and prepends the
 persisted chat history to the prompt so context is not lost.
+
+## Retries
+
+With the durable job queue, the queue retries a job and this setting retries attempts inside one job, so set one of them rather than both unless you want the product of the two. A streamed run that is retried emits a `retry` warning event before the new attempt, so clients know the output before it came from the failed attempt.
 
 ## Sandbox and approvals
 

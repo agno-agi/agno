@@ -676,6 +676,29 @@ def test_retry_resumes_the_thread_of_the_failed_attempt(fake_sdk, tmp_db, monkey
     assert [c["prompt"] for c in fake_sdk.calls if c["op"] == "turn"] == ["go", "go"]
 
 
+def test_non_stream_retry_keeps_the_failed_turns_tool_calls(fake_sdk, tmp_db, monkeypatch):
+    """A failed turn's tool calls ran; the run keeps them next to the retry's result."""
+    agent = CodexAgent(name="Codex", id="codex", db=tmp_db, retries=1, delay_between_retries=0)
+    turns: List[int] = []
+
+    async def failed_turn_with_a_tool_then_success(self):
+        turns.append(1)
+        if len(turns) == 1:
+            item = _item(type="commandExecution", id="call", command="pwd", aggregated_output="/workspace", exit_code=0)
+            return SimpleNamespace(
+                final_response=None, items=[item], status="failed", error=SimpleNamespace(message="overloaded")
+            )
+        return SimpleNamespace(final_response="recovered", items=[], status="completed", error=None)
+
+    monkeypatch.setattr(FakeHandle, "run", failed_turn_with_a_tool_then_success)
+    out = agent.run("go", session_id="s1")
+    assert out.status == RunStatus.completed and out.content == "recovered"
+    [tool] = out.tools or []
+    assert tool.tool_args == {"command": "pwd"} and tool.result == "/workspace"
+    stored = agent.get_run_output(out.run_id, "s1")
+    assert any(m.role == "tool" and m.content == "/workspace" for m in stored.messages or [])
+
+
 class CodexErrorInfoValue(str, Enum):
     usage_limit_exceeded = "usageLimitExceeded"
     server_overloaded = "serverOverloaded"

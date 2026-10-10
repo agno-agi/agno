@@ -509,6 +509,37 @@ def test_retry_resumes_the_sdk_session_of_the_failed_attempt(fake_sdk, tmp_db, m
     assert calls == [{"prompt": "go", "resume": None}, {"prompt": "go", "resume": "sdk-1"}]
 
 
+def test_non_stream_retry_keeps_the_failed_attempts_tool_calls(fake_sdk, tmp_db, monkeypatch):
+    """A tool that ran in the failed attempt stays in the run; the retry resumes the session and finishes."""
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, retries=1, delay_between_retries=0)
+    calls: List[Any] = []
+
+    async def tool_then_outage(prompt, options):
+        calls.append(options.resume)
+        sdk_session_id = options.resume or "sdk-1"
+        yield SystemMessage("init", {"session_id": sdk_session_id})
+        if len(calls) == 1:
+            tool = ToolUseBlock()
+            tool.id, tool.name, tool.input = "call-1", "Bash", {"command": "echo alpha"}
+            yield AssistantMessage([tool])
+            result = ToolResultBlock()
+            result.tool_use_id, result.content = "call-1", "alpha"
+            user = UserMessage()
+            user.content = [result]
+            yield user
+            raise ResultError("Claude Code returned an error result: API Error: 529 Overloaded")
+        yield ResultMessage(sdk_session_id, "recovered")
+
+    monkeypatch.setattr(claude_module._sdk(), "query", tool_then_outage)
+    out = agent.run("go", session_id="s1")
+    assert out.status == RunStatus.completed and out.content == "recovered"
+    assert calls == [None, "sdk-1"]
+    [tool] = out.tools or []
+    assert (tool.tool_call_id, tool.tool_name, tool.result) == ("call-1", "Bash", "alpha")
+    stored = agent.get_run_output(out.run_id, "s1")
+    assert any(m.role == "tool" and m.content == "alpha" for m in stored.messages or [])
+
+
 def _sdk_result_error(**fields: Any) -> ResultError:
     error = ResultError("Claude Code returned an error result")
     error.__dict__.update(fields)

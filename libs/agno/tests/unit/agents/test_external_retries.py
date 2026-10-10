@@ -6,7 +6,7 @@ from typing import Any, List
 
 import pytest
 
-from agno.agents.base import BaseExternalAgent
+from agno.agents.base import BaseExternalAgent, ExternalRunResult, ExternalRunWarningEvent
 from agno.exceptions import RunCancelledException
 from agno.models.response import ToolExecution
 from agno.run.agent import (
@@ -170,3 +170,49 @@ def test_non_retryable_errors_stop_retrying(agent_cls, error, retried, stream):
     status = _stream(agent)[-1].status if stream else agent.run("go").status
     assert status == RunStatus.error
     assert len(agent.attempts) == (3 if retried else 1)
+
+
+@dataclass
+class ToolyAgent(FlakyAgent):
+    """Runs a tool on every attempt and, like the real adapters, leaves it in run_state when the attempt fails."""
+
+    async def _arun_adapter(self, input: Any, **kwargs: Any) -> Any:
+        attempt = len(self.attempts) + 1
+        tool = ToolExecution(tool_call_id=f"t{attempt}", tool_name="shell", tool_args={"command": "ls"}, result="ok")
+        kwargs["run_state"]["tools"] = {tool.tool_call_id: tool}
+        content = await super()._arun_adapter(input, **kwargs)
+        # On success the adapter returns its tools; on failure they are only in run_state.
+        return ExternalRunResult(content, tools=[tool])
+
+
+def test_non_stream_retry_keeps_tools_from_the_failed_attempt():
+    agent = ToolyAgent(id="tooly", retries=1, failures=1)
+    out = agent.run("go", session_id="s1")
+    assert out.status == RunStatus.completed and out.content == "answer 2"
+    assert [t.tool_call_id for t in out.tools or []] == ["t1", "t2"]
+    assert [m.role for m in out.messages or []].count("tool") == 2
+
+
+def test_non_stream_gives_up_with_tools_from_every_attempt():
+    agent = ToolyAgent(id="tooly", retries=1, failures=5)
+    out = agent.run("go")
+    assert out.status == RunStatus.error
+    assert [t.tool_call_id for t in out.tools or []] == ["t1", "t2"]
+
+
+def test_stream_retry_announces_the_retry_to_the_consumer():
+    agent = FlakyAgent(id="flaky", retries=1, failures=1)
+    events = _stream(agent)
+    retry_events = [
+        e for e in events if isinstance(e, ExternalRunWarningEvent) and (e.warning or {}).get("type") == "retry"
+    ]
+    assert len(retry_events) == 1
+    warning = retry_events[0].warning
+    assert (warning["attempt"], warning["attempts"], warning["error"]) == (1, 2, "attempt 1 failed")
+    # It arrives after the failed attempt's output and before the retry's.
+    contents = [e.content for e in events if isinstance(e, RunContentEvent)]
+    assert contents == ["partial 1 ", "partial 2 ", "answer 2"]
+    position = events.index(retry_events[0])
+    assert isinstance(events[position - 1], ToolCallCompletedEvent) and events[position + 1].content == "partial 2 "
+    run = events[-1]
+    assert run.metadata["warnings"] == [warning]

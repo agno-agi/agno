@@ -373,20 +373,28 @@ class CodexAgent(BaseExternalAgent):
             status = getattr(result, "status", None)
             if getattr(status, "value", status) == "interrupted":
                 raise RunCancelledException(run_id)
+            tools = self._tools_from_items(getattr(result, "items", None) or [])
             if getattr(status, "value", status) == "failed":
+                # The tools ran even though the turn failed; leave them for the base class to
+                # keep in the run if it retries or gives up.
+                if kwargs.get("run_state") is not None and tools:
+                    kwargs["run_state"]["tools"] = {tool.tool_call_id or str(uuid4()): tool for tool in tools}
                 error = getattr(result, "error", None)
                 raise CodexTurnError(
                     f"Codex turn failed: {getattr(error, 'message', None) or error}", _error_info(error)
                 )
 
+        return ExternalRunResult(self._final_text(result), tools or None)
+
+    def _tools_from_items(self, items: List[Any]) -> List[ToolExecution]:
         tools = []
-        for item in getattr(result, "items", None) or []:
+        for item in items:
             item = _item_root(item)
             tool = self._tool_from_item(item)
             if tool is not None:
                 tool.result = self._tool_result_from_item(item)
                 tools.append(tool)
-        return ExternalRunResult(self._final_text(result), tools or None)
+        return tools
 
     @staticmethod
     def _final_text(result: Any) -> str:

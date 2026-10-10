@@ -104,10 +104,20 @@ Tested 2026-10-08 with openai-codex 0.161.0 (bundled Codex CLI 0.161.0), model g
 
 ### codex_retries.py
 
-**Status:** NOT RUN
+**Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
 
-**Description:** openai-codex is not installed in the demo environment, so the cookbook was not run live. Retry behaviour is covered by unit tests against the fake SDK: a failed turn is retried and resumes the thread the failed attempt started, in both streaming and non-streaming runs.
+**Description:** Ran live with the demo environment. The cookbook injects the failure itself: the first attempt is cut off with a simulated transient error at the turn's completion notification. Four cases with `retries=2`, `delay_between_retries=1`, `exponential_backoff=True`: one failure then success (non-streaming), one failure then success (streaming), more failures than retries, and the default `retries=0`.
 
-**Result:** Unit tests pass; live run pending.
+**Result:** Non-streaming: two attempts, the retry resumed the same Codex thread and answered `51`. Streaming: two attempts, stream closed with RunCompleted. Exhaustion: three attempts with 1s then 2s backoff, run ended in ERROR with the last error. Default: one attempt, ERROR.
+
+---
+
+### codex_retries.py (review follow-up)
+
+**Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Reran after the base-class changes from the review (retry warning event on streamed retries; tool calls of failed non-streamed attempts kept). A failed Codex turn now leaves its tool calls in `run_state["tools"]` before raising.
+
+**Result:** All four cookbook cases pass as before: retry resumed the same thread, streaming closed with RunCompleted, exhaustion after three attempts, default of no retries.
 
 ---
