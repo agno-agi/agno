@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import re
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
@@ -99,6 +100,7 @@ if TYPE_CHECKING:
     # runtime here would break `import agno.os` when the extra is not installed.
     from fastmcp.server.auth import AuthProvider
 
+    from agno.voice.pipe import VoicePipe
     from agno.os.authz.audit import AuditSink
     from agno.os.authz.authorization import Authorization
     from agno.os.authz.provider import AuthorizationProvider
@@ -326,6 +328,7 @@ class AgentOS:
         scheduler_base_url: Optional[str] = None,
         internal_service_token: Optional[str] = None,
         public: Optional[Any] = None,
+        live_sockets: Optional[List["VoicePipe"]] = None,
     ):
         """Initialize AgentOS.
 
@@ -344,6 +347,7 @@ class AgentOS:
             workflows: List of workflows to include in the OS
             knowledge: List of knowledge bases to include in the OS
             interfaces: List of interfaces to include in the OS
+            live_sockets: Voice pipes to serve over the WebSocket route /voice/{id}/ws, listed at GET /voice.
             a2a_interface: Whether to expose the OS agents and teams in an A2A server
             config: Configuration file path or AgentOSConfig instance
             settings: API settings for the OS
@@ -417,6 +421,19 @@ class AgentOS:
             scheduler_base_url: Base URL for scheduler HTTP calls (default: http://127.0.0.1:7777)
             internal_service_token: Token for scheduler-to-OS auth (auto-generated if not provided)
         """
+        self.live_sockets = list(live_sockets or [])
+        if self.live_sockets:
+            agents = list(agents or [])
+            socket_ids: Set[str] = set()
+            for pipe in self.live_sockets:
+                if not isinstance(pipe.id, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", pipe.id) is None:
+                    raise ValueError("Voice pipe IDs must be URL-safe names of 1 to 64 characters.")
+                if pipe.id in socket_ids:
+                    raise ValueError(f"Duplicate voice pipe ID: {pipe.id}")
+                socket_ids.add(pipe.id)
+                if not any(agent is pipe.agent for agent in agents):
+                    agents.append(pipe.agent)
+
         if not agents and not workflows and not teams and not knowledge and not db:
             raise ValueError("Either agents, teams, workflows, knowledge bases or a database must be provided.")
 
@@ -869,6 +886,10 @@ class AgentOS:
         self._add_router(app, get_team_router(self, settings=self.settings, registry=self.registry))
         self._add_router(app, get_workflow_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
+        if self.live_sockets:
+            from agno.os.routers.voice import get_voice_router
+
+            self._add_router(app, get_voice_router(self, settings=self.settings))
 
         # Job queue operations surface (DLQ, requeue, stats) - only meaningful
         # when the durable queue is enabled

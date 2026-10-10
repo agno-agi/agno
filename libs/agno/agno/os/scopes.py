@@ -439,6 +439,9 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "POST /agents/*/runs": ["agents:run"],
         "POST /agents/*/runs/*/continue": ["agents:run"],
         "POST /agents/*/runs/*/cancel": ["agents:run"],
+        # The handler filters voice pipes by agent read access, like GET /agents.
+        # /voice is not an agents path, so a scope here would reject per-agent tokens.
+        "GET /voice": [],
         # Team endpoints
         "GET /teams": ["teams:read"],
         "GET /teams/*": ["teams:read"],

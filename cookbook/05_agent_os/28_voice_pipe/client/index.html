@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Agno Voice</title>
+  <style>
+    :root { font-family: Geist, Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #fafafa; background: #111113; --background: #111113; --surface: #18181b; --secondary: #27272a; --muted: #a1a1aa; --subtle: #71717a; --brand: #ff4017; --border: rgb(255 255 255 / 12%); --mono: "DM Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-synthesis: none; -webkit-font-smoothing: antialiased; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    button:disabled { opacity: .4; cursor: default; }
+    button, input, select, summary { -webkit-tap-highlight-color: transparent; }
+    button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--brand); outline-offset: 4px; }
+    [hidden] { display: none !important; }
+    .shell { display: grid; grid-template-columns: 236px minmax(0, 1fr); min-height: 100svh; }
+    .sidebar { display: flex; flex-direction: column; gap: 30px; padding: 28px 20px 22px; border-right: 1px solid var(--border); }
+    .brand { display: flex; align-items: center; gap: 11px; padding: 0 2px; }
+    .brand-mark { color: var(--brand); width: 27px; height: 27px; flex-shrink: 0; }
+    .brand-name { font-size: 24px; font-weight: 650; letter-spacing: -1.1px; }
+    .brand-mode { font-family: var(--mono); font-size: 10px; letter-spacing: .8px; text-transform: uppercase; color: var(--muted); border-left: 1px solid var(--border); padding-left: 11px; margin-left: 1px; }
+    .eyebrow { margin: 0; font-family: var(--mono); font-size: 10px; font-weight: 400; letter-spacing: .9px; text-transform: uppercase; color: var(--muted); }
+    .sidebar-label { margin-bottom: 10px; }
+    .field label { display: block; margin-bottom: 10px; }
+    .field input { font-family: var(--mono); font-size: 11px; }
+    input:disabled { color: var(--muted); opacity: .65; }
+    select, input { width: 100%; min-width: 0; height: 40px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: #d4d4d8; padding: 0 10px; font-size: 12px; }
+    select { text-overflow: ellipsis; }
+    select:disabled { color: var(--muted); opacity: .65; }
+    .sidebar-note { margin-top: auto; padding-top: 24px; border-top: 1px solid var(--border); }
+    .sidebar-note p { margin: 10px 0 0; color: var(--subtle); font-size: 12px; line-height: 1.8; }
+    .sidebar-footer { display: flex; align-items: center; gap: 7px; color: var(--subtle); font-family: var(--mono); font-size: 10px; }
+    .sidebar-footer svg { color: var(--muted); }
+    .workspace { display: flex; flex-direction: column; height: 100svh; min-width: 0; }
+    .topbar { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 0 36px; border-bottom: 1px solid var(--border); }
+    .breadcrumb { display: flex; align-items: center; gap: 12px; font-size: 12px; }
+    .breadcrumb span { color: var(--subtle); }
+    .breadcrumb strong { font-weight: 450; color: #d4d4d8; }
+    .connection { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 10px; color: var(--muted); white-space: nowrap; }
+    .connection::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--subtle); }
+    .connection[data-connected="true"]::before { background: var(--brand); }
+    .workspace-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 48px; scrollbar-width: thin; scrollbar-color: #3f3f46 transparent; }
+    .content { width: min(830px, 100%); min-height: 100%; margin: 0 auto; display: flex; flex-direction: column; }
+    .call { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 40px 0 32px; }
+    .visual { position: relative; width: 72px; height: 64px; display: grid; place-items: center; margin-bottom: 20px; }
+    .wave { height: 48px; display: flex; align-items: center; gap: 4px; }
+    .wave i { display: block; width: 4px; height: 12px; border-radius: 4px; background: var(--brand); transition: height .1s, opacity .2s; }
+    .wave i:nth-child(2), .wave i:nth-child(8) { height: 19px; }
+    .wave i:nth-child(3), .wave i:nth-child(7) { height: 30px; }
+    .wave i:nth-child(4), .wave i:nth-child(6) { height: 40px; }
+    .wave i:nth-child(5) { height: 48px; }
+    .status-spinner { display: none; position: absolute; width: 34px; height: 34px; border: 2px solid #3a2421; border-top-color: var(--brand); border-right-color: var(--brand); border-radius: 50%; animation: spin .9s linear infinite; }
+    .call[data-state="connecting"] .status-spinner, .call[data-state="thinking"] .status-spinner { display: block; }
+    .call[data-state="connecting"] .wave, .call[data-state="thinking"] .wave { visibility: hidden; }
+    .call[data-state="speaking"] .wave i { animation: speak .8s ease-in-out infinite alternate; }
+    .call[data-state="speaking"] .wave i:nth-child(2n) { animation-delay: -.4s; }
+    .call[data-state="speaking"] .wave i:nth-child(3n) { animation-delay: -.2s; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes speak { from { transform: scaleY(.45); } to { transform: scaleY(1); } }
+    h1 { font-size: clamp(24px, 2.5vw, 30px); font-weight: 450; line-height: 1.25; letter-spacing: -.8px; margin: 0 0 12px; }
+    #hint { margin: 0; min-height: 42px; max-width: 380px; font-size: 13px; line-height: 1.7; color: var(--muted); }
+    .controls { display: flex; justify-content: center; gap: 8px; margin-top: 22px; }
+    #call-button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-width: 176px; height: 40px; padding: 0 17px; border: 1px solid #fafafa; border-radius: 10px; background: #fafafa; color: #111113; font-size: 12px; font-weight: 550; transition: background .16s, border-color .16s; }
+    #call-button:hover { background: #dedee2; border-color: #dedee2; }
+    #call-button[data-active="true"] { background: var(--surface); border-color: #49403e; color: #f4a998; }
+    #call-button[data-active="true"]:hover { background: #2b211f; }
+    .button-spinner { display: none; width: 13px; height: 13px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+    .call[data-state="connecting"] .button-spinner { display: inline-block; }
+    #mute-button { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--border); border-radius: 10px; color: #e4e4e7; background: var(--surface); }
+    #mute-button:hover:not(:disabled) { background: var(--secondary); }
+    #mute-button[aria-pressed="true"] { color: #ff997f; border-color: #6d3325; background: #2b1d19; }
+    .transcript { display: flex; flex-direction: column; flex: 1; min-width: 0; border-top: 1px solid var(--border); }
+    .transcript-top { display: flex; justify-content: space-between; align-items: center; min-height: 60px; gap: 16px; }
+    .transcript-heading { display: flex; align-items: center; gap: 9px; }
+    .transcript-heading svg { color: var(--subtle); }
+    .small-button { border: 0; background: none; padding: 6px 0 6px 8px; color: var(--subtle); font-size: 11px; }
+    .small-button:hover { color: #fafafa; }
+    #messages { flex: 1; min-height: 165px; max-height: 400px; height: clamp(165px, calc(100svh - 530px), 400px); overflow-y: auto; padding: 10px 14px 24px 0; scrollbar-width: thin; scrollbar-color: #3f3f46 transparent; }
+    .empty { min-height: 155px; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 5px; font-size: 12px; line-height: 1.8; color: var(--subtle); text-align: center; }
+    .empty strong { font-weight: 400; color: var(--muted); }
+    .message { margin: 0 0 26px; padding: 0 0 0 28px; overflow-wrap: anywhere; position: relative; }
+    .message:last-child { margin-bottom: 0; }
+    .message::before { content: ""; position: absolute; left: 2px; top: 4px; width: 6px; height: 6px; border: 1px solid #71717a; border-radius: 50%; }
+    .message[data-role="assistant"]::before { background: var(--brand); border-color: var(--brand); border-radius: 1px; }
+    .message-label { color: var(--muted); font-family: var(--mono); font-size: 10px; line-height: 1.5; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
+    .message[data-role="assistant"] .message-label { color: #d4d4d8; }
+    .message p { margin: 0; font-size: 14px; line-height: 1.8; color: #e4e4e7; white-space: pre-wrap; }
+    .message[data-partial="true"] p { color: var(--muted); }
+    .message small { display: block; color: var(--subtle); font-size: 10px; line-height: 1.6; margin-top: 8px; }
+    #error { margin: 0 0 16px; padding: 12px 14px; border: 1px solid #72352d; border-radius: 10px; color: #ffb4a3; background: #271a18; font-size: 12px; line-height: 1.6; }
+    #auth { display: flex; align-items: flex-end; gap: 10px; margin: 0 0 20px; }
+    #auth label { flex: 1; font-size: 12px; color: var(--muted); }
+    #auth input { margin-top: 8px; }
+    #auth button { height: 40px; padding: 0 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--secondary); color: #fafafa; font-size: 12px; }
+    .details { border-top: 1px solid var(--border); padding: 18px 0 20px; }
+    summary { width: fit-content; color: var(--muted); font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .7px; cursor: pointer; }
+    summary::marker { color: var(--subtle); }
+    .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; margin: 22px 0 16px; }
+    .metrics dt { margin-bottom: 8px; color: var(--muted); font-size: 11px; }
+    .metrics dd { margin: 0; color: #e4e4e7; font-family: var(--mono); font-size: 17px; font-variant-numeric: tabular-nums; }
+    .detail-note { margin: 0; color: var(--subtle); font-size: 10px; line-height: 1.8; }
+    .workspace-footer { border-top: 1px solid var(--border); padding: 14px 28px; text-align: center; color: var(--subtle); font-size: 10px; line-height: 1.6; }
+    @media (min-width: 1500px) { .call { padding-top: 64px; padding-bottom: 42px; } #messages { max-height: 460px; } }
+    @media (max-width: 1050px) { .shell { grid-template-columns: 212px minmax(0, 1fr); } .sidebar { padding: 26px 16px 20px; } .workspace-body { padding: 0 30px; } .topbar { padding: 0 28px; } }
+    @media (max-width: 720px) {
+      .shell { grid-template-columns: 1fr; }
+      .sidebar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px 14px; padding: 20px; border-right: 0; border-bottom: 1px solid var(--border); }
+      .brand { grid-column: 1 / -1; padding: 0; }
+      .brand-name { font-size: 22px; }
+      .brand-mark { width: 24px; height: 24px; }
+      .sidebar-note, .sidebar-footer { display: none; }
+      .workspace { height: auto; min-height: calc(100svh - 178px); }
+      .topbar { min-height: 54px; padding: 0 20px; border-bottom: 0; gap: 14px; }
+      .breadcrumb { gap: 8px; font-size: 11px; }
+      .breadcrumb span { display: none; }
+      .connection { font-size: 9px; }
+      .workspace-body { overflow-y: visible; padding: 0 20px; }
+      .call { padding: 22px 0 30px; }
+      .visual { margin-bottom: 18px; }
+      h1 { font-size: 25px; }
+      #hint { max-width: 285px; font-size: 12px; }
+      .controls { margin-top: 20px; }
+      #messages { height: 220px; min-height: 180px; max-height: 340px; }
+      .message { padding-left: 23px; }
+      .message p { font-size: 13px; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 22px; }
+      .workspace-footer { padding: 14px 20px; font-size: 9px; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } .status-spinner { border-style: dotted; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Voice settings">
+      <div class="brand"><svg class="brand-mark" viewBox="0 0 28 28" fill="none" aria-hidden="true"><path d="M3 22 10 6h5l-7 16H3Zm10 0 7-16h5l-7 16h-5Z" fill="currentColor"/></svg><span class="brand-name">agno</span><span class="brand-mode">Voice</span></div>
+      <div class="field"><label class="eyebrow" for="server">AgentOS URL</label><input id="server" type="url" value="http://localhost:7777" autocomplete="off" spellcheck="false"></div>
+      <div class="field"><label class="eyebrow" for="pipe">Voice pipe ID</label><input id="pipe" list="pipe-ids" value="assistant" autocomplete="off" spellcheck="false"><datalist id="pipe-ids"><option value="assistant"></option><option value="tools"></option><option value="knowledge"></option><option value="reasoning"></option><option value="computer"></option></datalist></div>
+      <div class="field"><label class="eyebrow" for="device">Microphone</label><select id="device"><option value="">System default</option></select></div>
+      <div class="sidebar-note"><span class="eyebrow">A natural conversation</span><p>Talk at your own pace.<br>Interrupt whenever you need to.<br>Your words appear as you speak.</p></div>
+      <div class="sidebar-footer"><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M10 2 3 5v5c0 4 7 8 7 8s7-4 7-8V5l-7-3Z"/><path d="m7 10 2 2 4-4"/></svg>Powered by AgentOS</div>
+    </aside>
+    <main class="workspace">
+      <header class="topbar"><div class="breadcrumb"><span>AgentOS</span><span aria-hidden="true">/</span><strong>Voice conversation</strong></div><div id="connection" class="connection">Not connected</div></header>
+      <div class="workspace-body"><div class="content">
+        <section id="call" class="call" data-state="idle" aria-labelledby="status">
+          <div class="visual" aria-hidden="true"><div class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="status-spinner"></span></div>
+          <h1 id="status" role="status">Ready when you are</h1>
+          <p id="hint">Start a conversation, then speak naturally.<br>You can interrupt at any time.</p>
+          <div class="controls">
+            <button id="call-button" type="button"><span class="button-spinner" aria-hidden="true"></span><span id="call-button-label">Start conversation</span></button>
+            <button id="mute-button" type="button" aria-label="Mute microphone" aria-pressed="false" title="Mute microphone" disabled><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8"/><path id="mute-slash" d="m3 3 18 18" hidden/></svg></button>
+          </div>
+        </section>
+        <div id="error" role="alert" hidden></div>
+        <form id="auth" hidden><label for="token">AgentOS access token<input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your access token"></label><button type="submit">Authenticate</button></form>
+        <section class="transcript" aria-label="Conversation transcript">
+          <div class="transcript-top"><div class="transcript-heading"><svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M4 4h12v9H8l-4 3V4Z"/><path d="M7 7h6M7 10h4"/></svg><h2 class="eyebrow">Transcript</h2></div><button id="clear-button" class="small-button" type="button" title="Clear the displayed transcript">Clear display</button></div>
+          <div id="messages" role="log" aria-label="Live transcript" aria-live="polite" aria-relevant="additions text"><div id="empty" class="empty"><strong>The conversation will appear here.</strong><span>Say hello to get things started.</span></div></div>
+        </section>
+        <details class="details"><summary>Response timing</summary><dl class="metrics"><div><dt>Final transcript</dt><dd id="metric-transcript_final">—</dd></div><div><dt>First token</dt><dd id="metric-first_token">—</dd></div><div><dt>First audio sent</dt><dd id="metric-first_audio_sent">—</dd></div><div><dt>Playback (estimated)</dt><dd id="metric-total_to_playback">—</dd></div></dl><p class="detail-note">Latest turn, measured from detected speech end. Silence detection adds time before these measurements. Playback is estimated from the browser's output clock and includes acknowledgment timing.</p></details>
+      </div></div>
+      <footer class="workspace-footer">AI-generated voice. While connected, audio is sent to your configured speech provider.</footer>
+    </main>
+  </div>
+  <script type="module" src="./voice-client.js"></script>
+</body>
+</html>
