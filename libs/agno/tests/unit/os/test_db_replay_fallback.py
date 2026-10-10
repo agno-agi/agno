@@ -68,6 +68,15 @@ class TestStoredEventReplayFrames:
         frames = stored_event_replay_frames(run, "r1", last_event_index=1)
         assert frame_indices(frames) == [0, 1, 2]
 
+    def test_unstamped_event_after_stamped_ones_keeps_the_order(self):
+        """A terminal event persisted before it was published has no index; replaying it at its
+        position (3) after stamped events (7, 8) would send the client backwards."""
+        from agno.os.utils import stored_event_replay_frames
+
+        run = SimpleNamespace(events=make_events([0, 7, 8, None]), status=RunStatus.completed)
+        assert frame_indices(stored_event_replay_frames(run, "r1")) == [0, 7, 8, 9]
+        assert frame_indices(stored_event_replay_frames(run, "r1", last_event_index=7)) == [8, 9]
+
     def test_mixed_row_filters_only_stamped_events(self):
         from agno.os.utils import stored_event_replay_frames
 

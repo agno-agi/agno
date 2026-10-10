@@ -505,12 +505,20 @@ def stored_event_replay_dicts(
     """
     floor = last_event_index if last_event_index is not None else -1
     dicts: List[Dict[str, Any]] = []
+    last_index = -1
     for position, event in enumerate(getattr(run_output, "events", None) or []):
         event_dict = event.to_dict()
         stored_index = event_dict.get("event_index")
         if stored_index is not None and int(stored_index) <= floor:
             continue
-        event_dict["event_index"] = int(stored_index) if stored_index is not None else position
+        if stored_index is not None:
+            index = int(stored_index)
+        else:
+            # Positional fallback, but never behind a stamped event that came before it in the
+            # row (an unstamped terminal event after stamped ones), so the replay stays ordered.
+            index = max(position, last_index + 1)
+        last_index = max(last_index, index)
+        event_dict["event_index"] = index
         if "run_id" not in event_dict:
             event_dict["run_id"] = run_id
         dicts.append(event_dict)
