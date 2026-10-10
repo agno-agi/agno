@@ -9,7 +9,7 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from agno.exceptions import UnsupportedMediaError
 
@@ -89,6 +89,8 @@ def _name_for(item: Any, kind: str, index: int) -> str:
 
 
 UPLOADS_ROOT_KEY = "uploads_root"
+# Earlier runs whose attachments are restored before a turn; older ones stay in the session only.
+RESTORED_RUNS_LIMIT = 10
 
 
 def remember_uploads_root(session: Any, workspace: Optional[Any]) -> None:
@@ -107,15 +109,21 @@ def remember_uploads_root(session: Any, workspace: Optional[Any]) -> None:
 
 
 def stage_media(
-    workspace: Optional[Any], run_id: str, media: Dict[str, Any], root: Optional[Path] = None
+    workspace: Optional[Any],
+    run_id: str,
+    media: Dict[str, Any],
+    root: Optional[Path] = None,
+    reuse_existing: bool = False,
 ) -> List[StagedMedia]:
     """Write each attachment under <workspace>/.agno/uploads/<run_id>/ and describe it.
 
     Bytes come from the media object's content, file path or base64 payload. A URL with no
-    bytes is not downloaded; it is passed to the harness as a reference instead.
+    bytes is not downloaded; it is passed to the harness as a reference instead. With
+    reuse_existing, a file already at its target path is left as is instead of written again.
     """
     root = root if root is not None else uploads_root(workspace, run_id)
     staged: List[StagedMedia] = []
+    claimed: Set[str] = set()
     for kind, key in (("image", "images"), ("file", "files")):
         for index, item in enumerate(media.get(key) or [], start=1):
             name = _name_for(item, kind, index)
@@ -136,10 +144,14 @@ def stage_media(
             root.mkdir(parents=True, exist_ok=True)
             target = root / name
             counter = 1
-            while target.exists():
+            # Names are deduplicated within the call, so restaging a run reproduces its original paths.
+            while target.name in claimed or (not reuse_existing and target.exists()):
                 counter += 1
                 target = root / f"{target.stem}-{counter}{target.suffix}"
-            target.write_bytes(data)
+            claimed.add(target.name)
+            # A kept file may have been edited by the harness since; never overwrite it.
+            if not (reuse_existing and target.exists()):
+                target.write_bytes(data)
             staged.append(StagedMedia(kind, target.name, str(target), _mime_for(item), len(data)))
     return staged
 
@@ -183,28 +195,39 @@ def cleanup_media(workspace: Optional[Any], run_id: str) -> None:
             break
 
 
-def prior_attachments(session: Any, exclude_run_id: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
-    """Attachments recorded on earlier runs of the session, keyed by the run that received them.
+def prior_attachments(
+    session: Any,
+    exclude_run_id: Optional[str] = None,
+    limit: Optional[int] = RESTORED_RUNS_LIMIT,
+    until_run_id: Optional[str] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Attachments on the last `limit` runs of the conversation branch, keyed by the run that received them.
 
-    They are re-staged under that run's own folder, so the paths the harness's transcript
-    already names resolve again on whichever replica runs the next turn.
+    The branch follows fork ancestry, as history replay does, and ends at until_run_id when a
+    continued run's transcript ends there. A fork carries its source's input, so its media is
+    keyed by the original run, whose folder the transcript names.
     """
+    from agno.agents.base import session_branch
+
+    runs = list(getattr(session, "runs", None) or [])
+    branch = session_branch(runs, exclude_run_id=exclude_run_id, until_run_id=until_run_id)
+    if limit is not None:
+        branch = branch[-limit:] if limit > 0 else []
+    forked_from = {run.run_id: run.forked_from_run_id for run in runs if getattr(run, "run_id", None)}
     found: Dict[str, Dict[str, Any]] = {}
-    for run in getattr(session, "runs", None) or []:
-        run_id = getattr(run, "run_id", None)
-        run_input = getattr(run, "input", None)
-        if not run_id or run_id == exclude_run_id or run_input is None:
+    for run in branch:
+        if not run.run_id or run.input is None:
             continue
+        owner = run.run_id
+        seen = {owner}
+        while forked_from.get(owner) and forked_from[owner] not in seen:
+            owner = forked_from[owner]  # type: ignore[assignment]
+            seen.add(owner)
         media = {
-            key: list(values)
-            for key, values in (
-                ("images", getattr(run_input, "images", None)),
-                ("files", getattr(run_input, "files", None)),
-            )
-            if values
+            key: list(values) for key, values in (("images", run.input.images), ("files", run.input.files)) if values
         }
-        if media:
-            found[run_id] = media
+        if media and owner not in found:
+            found[owner] = media
     return found
 
 
@@ -220,7 +243,11 @@ def remove_upload_folder(folder: Any) -> None:
 
 
 def stage_prior_media(
-    workspace: Optional[Any], session: Any, exclude_run_id: Optional[str] = None
+    workspace: Optional[Any],
+    session: Any,
+    exclude_run_id: Optional[str] = None,
+    limit: Optional[int] = RESTORED_RUNS_LIMIT,
+    until_run_id: Optional[str] = None,
 ) -> Tuple[List[Path], str]:
     """Put earlier runs' attachments back where the harness's transcript expects them.
 
@@ -228,9 +255,10 @@ def stage_prior_media(
     earlier run's files are restored under that folder, so the paths the harness already knows
     resolve again, on the same machine or on a replica with the same layout. When that folder
     cannot be written, the files go under this workspace instead and the returned note tells
-    the harness where they are now. Returns the folders written, for cleanup, and the note.
+    the harness where they are now. Only the last `limit` earlier runs are restored, ending at
+    until_run_id when given, and files still on disk are not written again. Returns the folders created, for cleanup, and the note.
     """
-    attachments = prior_attachments(session, exclude_run_id)
+    attachments = prior_attachments(session, exclude_run_id, limit, until_run_id)
     if not attachments:
         return [], ""
     recorded = (getattr(session, "session_data", None) or {}).get(UPLOADS_ROOT_KEY)
@@ -245,10 +273,14 @@ def stage_prior_media(
     folders: List[Path] = []
     moved: List[str] = []
     for run_id, media in attachments.items():
-        staged = stage_media(workspace, run_id, media, root=target_root / run_id)
+        folder = target_root / run_id
+        existed = folder.exists()
+        staged = stage_media(workspace, run_id, media, root=folder, reuse_existing=True)
         if not staged:
             continue
-        folders.append(target_root / run_id)
+        # A folder that was already there (keep_uploads) belongs to its run, not to this turn.
+        if not existed:
+            folders.append(folder)
         if recorded and target_root != Path(recorded):
             for item in staged:
                 if item.path:

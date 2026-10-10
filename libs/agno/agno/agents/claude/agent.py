@@ -363,7 +363,13 @@ class ClaudeAgent(BaseExternalAgent):
             input = f"{input}{media_prompt_block(staged)}"
         # Earlier turns' attachments come back under their original paths, so Claude can
         # open again a file it was given before, on whichever replica runs this turn.
-        restaged, moved_note = stage_prior_media(self.cwd, kwargs.get("session"), exclude_run_id=run_id)
+        continuation: Optional[ExternalContinuation] = kwargs.get("continuation")
+        restaged, moved_note = stage_prior_media(
+            self.cwd,
+            kwargs.get("session"),
+            exclude_run_id=run_id,
+            until_run_id=continuation.source_run_id if continuation is not None else None,
+        )
         if moved_note and input is not None:
             input = f"{input}{moved_note}"
         try:
@@ -692,6 +698,7 @@ class ClaudeAgent(BaseExternalAgent):
             anchor={"session_id": ref["session_id"], "uuid": ref["uuid"], "before": before},
             forked_from_run_id=source.run_id if fork else source.forked_from_run_id,
             forked_from_message_index=index if fork else source.forked_from_message_index,
+            source_run_id=source.run_id,
         )
         return prompt, str(uuid4()) if fork else str(source.run_id), continuation
 

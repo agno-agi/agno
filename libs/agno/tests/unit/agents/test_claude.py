@@ -1220,6 +1220,20 @@ def _attachment_paths(prompt: str) -> List[str]:
     return [line[2:].split(" (")[0] for line in prompt.splitlines() if line.startswith("- ")]
 
 
+def _stored_run(run_id: str, with_file: bool = True, forked_from: Optional[str] = None):
+    from agno.media import File
+    from agno.models.message import Message
+    from agno.run.agent import RunInput, RunOutput
+
+    files = [File(content=b"x", filename="a.txt", mime_type="text/plain")] if with_file else None
+    return RunOutput(
+        run_id=run_id,
+        input=RunInput(input_content="x", files=files),
+        messages=[Message(role="user", content="x")],
+        forked_from_run_id=forked_from,
+    )
+
+
 @pytest.mark.parametrize("stream", [False, True])
 def test_images_and_files_are_staged_and_named_in_the_prompt(fake_sdk, tmp_db, tmp_path, monkeypatch, stream):
     import os
@@ -1341,11 +1355,16 @@ def test_prior_attachments_fall_back_to_the_workspace_when_the_recorded_root_is_
     blocked = tmp_path / "blocked"
     blocked.write_text("a regular file, so nothing can be created below it")
     recorded_root = blocked / ".agno" / "uploads"
+    from agno.models.message import Message
+    from agno.run.agent import RunInput, RunOutput
+
     attachment = File(content=b"v1", filename="spec.txt", mime_type="text/plain")
-    session = SimpleNamespace(
-        session_data={"uploads_root": str(recorded_root)},
-        runs=[SimpleNamespace(run_id="run-1", input=SimpleNamespace(images=None, files=[attachment]))],
+    run = RunOutput(
+        run_id="run-1",
+        input=RunInput(input_content="x", files=[attachment]),
+        messages=[Message(role="user", content="x")],
     )
+    session = SimpleNamespace(session_data={"uploads_root": str(recorded_root)}, runs=[run])
     workspace = tmp_path / "replica-b"
 
     folders, note = stage_prior_media(workspace, session)
@@ -1354,3 +1373,115 @@ def test_prior_attachments_fall_back_to_the_workspace_when_the_recorded_root_is_
     assert new_path.read_bytes() == b"v1"
     assert folders == [new_path.parent]
     assert "have moved" in note and f"- {new_path} (was {recorded_root / 'run-1' / 'spec.txt'})" in note
+
+
+def test_only_recent_runs_attachments_are_restaged(tmp_path):
+    """Restoring is bounded: attachments of runs older than the limit stay in the session only."""
+    from types import SimpleNamespace
+
+    from agno.agents._media import stage_prior_media
+
+    runs = [_stored_run(f"run-{i}") for i in range(5)]
+    session = SimpleNamespace(session_data={}, runs=runs + [_stored_run("current", with_file=False)])
+
+    folders, _ = stage_prior_media(tmp_path, session, exclude_run_id="current", limit=2)
+
+    uploads = tmp_path / ".agno" / "uploads"
+    assert sorted(f.name for f in folders) == ["run-3", "run-4"]
+    assert sorted(p.name for p in uploads.iterdir()) == ["run-3", "run-4"]
+
+
+def test_kept_attachments_are_not_duplicated_on_later_turns(fake_sdk, tmp_db, tmp_path):
+    """With keep_uploads, a later turn reuses the files already on disk instead of writing
+    renamed copies next to them, and same-named files in one run keep their original names."""
+    from agno.media import File
+
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path), keep_uploads=True)
+    first = agent.run(
+        "read them",
+        session_id="s",
+        files=[
+            File(content=b"one", filename="notes.txt", mime_type="text/plain"),
+            File(content=b"two", filename="notes.txt", mime_type="text/plain"),
+        ],
+    )
+    folder = tmp_path / ".agno" / "uploads" / first.run_id
+    assert sorted(p.name for p in folder.iterdir()) == ["notes-2.txt", "notes.txt"]
+
+    # The harness edited a kept file between turns; the edit must survive later restores.
+    (folder / "notes.txt").write_bytes(b"edited by the harness")
+    agent.run("again", session_id="s")
+    agent.run("and again", session_id="s")
+
+    assert sorted(p.name for p in folder.iterdir()) == ["notes-2.txt", "notes.txt"]
+    assert (folder / "notes.txt").read_bytes() == b"edited by the harness"
+    assert (folder / "notes-2.txt").read_bytes() == b"two"
+
+
+def test_restore_window_ends_at_the_continued_run(tmp_path):
+    """A continued run's transcript ends at its source, so the window ends there, source included,
+    even when the source is the run being continued in place."""
+    from types import SimpleNamespace
+
+    from agno.agents._media import stage_prior_media
+
+    session = SimpleNamespace(session_data={}, runs=[_stored_run(f"run-{i}") for i in range(5)])
+
+    forked, _ = stage_prior_media(tmp_path / "fork", session, exclude_run_id="new-run", limit=2, until_run_id="run-1")
+    assert sorted(f.name for f in forked) == ["run-0", "run-1"]
+
+    in_place, _ = stage_prior_media(tmp_path / "same", session, exclude_run_id="run-1", limit=2, until_run_id="run-1")
+    assert sorted(f.name for f in in_place) == ["run-0", "run-1"]
+
+
+def test_continuing_an_old_run_restores_its_attachments(scripted, tmp_db, tmp_path, monkeypatch):
+    """Forking a run older than the restore limit still brings back the files its transcript names."""
+    from agno.media import File
+
+    turns, calls, _ = scripted
+    for _ in range(3):
+        turns.append(_tool_turn("go"))
+    turns.append(
+        [
+            SystemMessage("init", {"session_id": "fork-1"}),
+            _msg(AssistantMessage([TextBlock("branched")]), "v-final"),
+            ResultMessage("fork-1", "branched"),
+        ]
+    )
+    restored: List[List[str]] = []
+    real_stage_prior_media = claude_module.stage_prior_media
+
+    def recording(*args, **kwargs):
+        folders, note = real_stage_prior_media(*args, **kwargs, limit=1)
+        restored.append(sorted(f.name for f in folders))
+        return folders, note
+
+    monkeypatch.setattr(claude_module, "stage_prior_media", recording)
+    agent = ClaudeAgent(db=tmp_db, cwd=str(tmp_path))
+    source = agent.run("go", session_id="s", files=[File(content=b"v1", filename="spec.txt", mime_type="text/plain")])
+    agent.run("go", session_id="s")
+    agent.run("go", session_id="s")
+
+    agent.continue_run(run_id=source.run_id, session_id="s", continue_from=3, fork=True, input="next")
+
+    assert restored[-1] == [source.run_id]
+
+
+@pytest.mark.parametrize("until_run_id", [None, "fork"])
+def test_restore_follows_fork_ancestry_to_the_run_that_received_the_file(tmp_path, until_run_id):
+    """A fork carries its source's input; the transcript names the source's folder, and the
+    runs between the source and the fork are not on the branch."""
+    from types import SimpleNamespace
+
+    from agno.agents._media import stage_prior_media
+
+    runs = [_stored_run("source")]
+    runs += [_stored_run(f"between-{i}") for i in range(3)]
+    runs += [_stored_run("fork", forked_from="source"), _stored_run("nested", forked_from="fork")]
+    session = SimpleNamespace(session_data={}, runs=runs)
+
+    folders, _ = stage_prior_media(tmp_path, session, exclude_run_id="current", limit=1, until_run_id=until_run_id)
+
+    uploads = tmp_path / ".agno" / "uploads"
+    assert [f.name for f in folders] == ["source"]
+    assert sorted(p.name for p in uploads.iterdir()) == ["source"]
