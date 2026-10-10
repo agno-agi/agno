@@ -33,8 +33,8 @@ from agno.agent import (
     _tools,
     _utils,
 )
-from agno.compaction.compaction import Compaction
 from agno.agent.followup import FollowupConfig, resolve_followup_settings
+from agno.compaction.compaction import Compaction
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval

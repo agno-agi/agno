@@ -109,7 +109,9 @@ supported by the adapter layer; each native SDK has its own Python requirements.
 The integration is identified by read-only `agent.sdk`, selected by the agent class.
 For example, Claude uses `"claude-agent-sdk"` and Codex uses `"codex"`. Neither `sdk`
 nor `framework` is a constructor option. `agent.framework` remains a compatibility
-alias. API metadata and new session metadata include both keys; existing transcript
+alias for reads; calls such as `ClaudeAgent(framework="claude-agent-sdk")` must
+remove that argument and select the corresponding adapter class instead.
+API metadata and new session metadata include both keys; existing transcript
 storage namespaces and database columns keep their original names and values.
 
 `print_response()` and `aprint_response()` return the final `RunOutput`, including

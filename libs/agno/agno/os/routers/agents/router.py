@@ -307,20 +307,27 @@ async def agent_continue_response_streamer(
         # continue-streamer parity): this response is otherwise their only
         # copy - after an inline continue of a formerly-queued/streamed run,
         # /resume would replay just the pre-pause prefix and the stream
-        # status would stay PAUSED forever. Skipped for remote agents (the
-        # remote OS owns that run's stream) and for fork/regenerate (they
-        # mint a NEW run_id; publishing under the original would corrupt it).
-        _sync_stream = not isinstance(agent, RemoteAgent) and not fork and not regenerate
-        if _sync_stream:
-            await amark_continue_stream_running(run_id, component=agent, session_id=session_id, user_id=user_id)
+        # status would stay PAUSED forever. Resolve the stream identity from
+        # the emitted run: completed runs can fork even when fork=False.
+        # Remote agents own their event streams on the remote OS.
+        _sync_stream = not isinstance(agent, RemoteAgent)
+        _stream_run_id: Optional[str] = None
         try:
             async for run_response_chunk in continue_response:
-                if _sync_stream and not isinstance(run_response_chunk, RunOutput):
+                if _sync_stream and _stream_run_id is None:
+                    _stream_run_id = getattr(run_response_chunk, "run_id", None)
+                    if not _stream_run_id and not fork and not regenerate:
+                        _stream_run_id = run_id
+                    if _stream_run_id:
+                        await amark_continue_stream_running(
+                            _stream_run_id, component=agent, session_id=session_id, user_id=user_id
+                        )
+                if _stream_run_id and not isinstance(run_response_chunk, RunOutput):
                     with contextlib.suppress(Exception):
-                        await get_event_stream().add_event(run_id, run_response_chunk)
+                        await get_event_stream().add_event(_stream_run_id, run_response_chunk)
                 yield format_sse_event(run_response_chunk)  # type: ignore
         finally:
-            if _sync_stream:
+            if _stream_run_id:
                 # Stream close + paused-ticket settle as one cancellation-
                 # proof unit: a client disconnect cancels this generator,
                 # and an interrupted finalizer abandoned the stream view as
@@ -336,9 +343,9 @@ async def agent_continue_response_streamer(
                 _cancelled = _exc is not None and issubclass(_exc, (asyncio.CancelledError, GeneratorExit))
                 await afinalize_continue_stream(
                     agent,
-                    run_id,
+                    _stream_run_id,
                     session_id,
-                    queue_worker=queue_worker,
+                    queue_worker=queue_worker if _stream_run_id == run_id else None,
                     final_status=RunStatus.cancelled if _cancelled else None,
                 )
     except (InputCheckError, OutputCheckError) as e:
@@ -1738,7 +1745,7 @@ def get_agent_router(
                 # continue settles - only_if_tracked leaves never-streamed
                 # runs alone. Skipped for remote agents and fork/regenerate
                 # (they mint a NEW run_id).
-                if not isinstance(agent, RemoteAgent) and not fork and not regenerate:
+                if not isinstance(agent, RemoteAgent) and run_response_obj.run_id == run_id:
                     # Stream close + paused-ticket settle as one
                     # cancellation-proof unit (see the streaming twin)
                     await afinalize_continue_stream(
