@@ -312,3 +312,13 @@ multi-replica execution, retries or deployment readiness.
 **Description:** codex_basic.py and codex_native_sdk.py stream their text. codex_structured_output.py uses the streaming printer and parses its returned final JSON. codex_tools.py already used print_response(prompt, stream=True).
 
 **Result:** All ten live acceptance cases pass in 60.88s. Additional live structured-output and transcript runs pass. Full format/validation, compile, whitespace and starting-example pattern checks pass. See the [shared test log](../TEST_LOG.md#streaming-examples--2026-10-09) for commands, versions, evidence and the corrected transcript test-wrapper failure.
+
+### codex_media.py
+
+**Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Attaches a solid blue PNG and a CSV to one run via `images=` and `files=`. The image is sent as a native local-image input, the CSV is staged in the workspace and named in the prompt. Checks the answer names the colour and the column total, that the run's `input` records the attachments, and that `cwd/.agno/uploads` is gone afterwards.
+
+**Result:** "Blue; total amount: 200." Attachments recorded on the run, staging folder removed.
+
+---

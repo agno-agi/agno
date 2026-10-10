@@ -183,6 +183,10 @@ If a thread cannot be resumed (for example `ephemeral=True`, or the Codex
 session files were removed), the adapter starts a fresh thread and prepends the
 persisted chat history to the prompt so context is not lost.
 
+## Images and files
+
+Images passed to `run` / `arun`, or uploaded through the AgentOS API and UI, go to Codex as native image inputs on the turn, so the model sees them directly. Files are written under `cwd/.agno/uploads/<run_id>/` and named in the prompt; Codex reads them with its shell, so text formats work everywhere and PDFs need a reader such as `pdftotext` on the machine. The folder is removed when the run ends unless `keep_uploads=True`. The run's `input` records what was attached. Audio and video are rejected before the run starts.
+
 ## Sandbox and approvals
 
 | Setting | Values | Notes |

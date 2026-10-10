@@ -533,3 +533,107 @@ def test_typed_options_flow_through_run_and_preserve_resume(fake_sdk, monkeypatc
     assert all(item.model == "named-model" and item.tools == [] for item in captured)
     assert all(item.include_partial_messages == stream for item in captured)
     assert source.model == "base-model" and source.tools == ["Bash"] and source.resume is None
+
+
+# ---------------------------------------------------------------------------
+# Media: attachments staged in the workspace
+# ---------------------------------------------------------------------------
+
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + bytes(32)
+
+
+def _attachment_paths(prompt: str) -> List[str]:
+    return [line[2:].split(" (")[0] for line in prompt.splitlines() if line.startswith("- ")]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_images_and_files_are_staged_and_named_in_the_prompt(fake_sdk, tmp_db, tmp_path, monkeypatch, stream):
+    import os
+
+    from agno.media import File, Image
+
+    seen: Dict[str, Any] = {}
+
+    async def query(prompt, options):
+        paths = _attachment_paths(prompt)
+        seen.update(prompt=prompt, paths=paths, exists=[os.path.exists(p) for p in paths])
+        yield SystemMessage("init", {"session_id": "sdk-1"})
+        yield ResultMessage("sdk-1", "seen")
+
+    monkeypatch.setattr(claude_module._sdk(), "query", query)
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path))
+    media = dict(
+        images=[Image(content=PNG_BYTES, format="png")],
+        files=[File(content=b"hello", filename="notes.txt", mime_type="text/plain")],
+    )
+    if stream:
+        # Through the public call, where media is validated and converted before the stream starts.
+        events = list(agent.run("What is attached?", stream=True, session_id="s", **media))
+        assert isinstance(events[-1], RunCompletedEvent)
+        run_id = events[-1].run_id
+    else:
+        out = agent.run("What is attached?", session_id="s", **media)
+        assert out.status == RunStatus.completed
+        run_id = out.run_id
+
+    assert seen["prompt"].startswith("What is attached?") and "Attached files" in seen["prompt"]
+    assert len(seen["paths"]) == 2 and seen["exists"] == [True, True]
+    uploads = tmp_path / ".agno" / "uploads"
+    assert all(p.startswith(str(uploads / run_id)) for p in seen["paths"])
+    assert seen["paths"][0].endswith("image-1.png") and seen["paths"][1].endswith("notes.txt")
+    assert "image/png" in seen["prompt"] and "text/plain" in seen["prompt"]
+    assert not (uploads / run_id).exists(), "attachments are removed after the run"
+    stored = agent.get_run_output(run_id, "s")
+    assert stored.input.files[0].filename == "notes.txt" and len(stored.input.images) == 1
+
+
+def test_keep_uploads_leaves_attachments_in_the_workspace(fake_sdk, tmp_db, tmp_path):
+    from agno.media import File
+
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path), keep_uploads=True)
+    out = agent.run("read it", session_id="s", files=[File(content=b"x", filename="a.txt", mime_type="text/plain")])
+    kept = list((tmp_path / ".agno" / "uploads" / out.run_id).iterdir())
+    assert [p.name for p in kept] == ["a.txt"]
+
+
+def test_audio_and_video_are_still_rejected(fake_sdk, tmp_db, tmp_path):
+    from agno.exceptions import UnsupportedMediaError
+    from agno.media import Audio
+
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path))
+    with pytest.raises(UnsupportedMediaError, match="audio"):
+        agent.run("listen", audio=[Audio(content=b"RIFF", format="wav")])
+    assert not [c for c in fake_sdk.calls]
+
+
+def test_earlier_attachments_are_restaged_for_later_turns(fake_sdk, tmp_db, tmp_path, monkeypatch):
+    """A later turn, possibly on another replica, finds the files an earlier run was given,
+    at the paths the transcript already names, and they are removed again afterwards."""
+    import os
+
+    from agno.media import File
+
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path))
+    first = agent.run(
+        "read it", session_id="s", files=[File(content=b"v1", filename="spec.txt", mime_type="text/plain")]
+    )
+    expected = tmp_path / ".agno" / "uploads" / first.run_id / "spec.txt"
+    assert not expected.exists()
+
+    seen: Dict[str, Any] = {}
+
+    async def query(prompt, options):
+        seen.update(
+            prompt=prompt, exists=os.path.exists(expected), content=expected.read_bytes() if expected.exists() else None
+        )
+        yield SystemMessage("init", {"session_id": options.resume or "sdk-1"})
+        yield ResultMessage(options.resume or "sdk-1", "again")
+
+    monkeypatch.setattr(claude_module._sdk(), "query", query)
+    # A fresh agent object with a different working directory stands in for another replica.
+    other = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path))
+    out = other.run("read it again", session_id="s")
+    assert out.status == RunStatus.completed
+    assert seen["exists"] and seen["content"] == b"v1"
+    assert "Attached files" not in seen["prompt"], "earlier attachments are not announced again"
+    assert not expected.exists(), "re-staged files are removed after the turn"

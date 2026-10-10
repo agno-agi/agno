@@ -391,3 +391,13 @@ evidence and limits. This does not rerun this directory's advanced examples.
 **Description:** claude_basic.py and claude_native_sdk.py stream their text. transcript_store.py uses streaming printers for both turns, the requested claude-sonnet-5-5 model, and no explicit turn/budget limits.
 
 **Result:** All ten live acceptance cases pass in 60.88s. Additional live structured-output and transcript runs pass. Full format/validation, compile, whitespace and starting-example pattern checks pass. See the [shared test log](../TEST_LOG.md#streaming-examples--2026-10-09) for commands, versions, evidence and the corrected transcript test-wrapper failure.
+
+### claude_media.py
+
+**Status:** PASS (2026-10-10, claude-sonnet-4-6)
+
+**Description:** Attaches a solid red PNG and a text file with a codename to one run via `images=` and `files=`. Checks the answer names both, that the run's `input` records the attachments, and that `cwd/.agno/uploads` is gone afterwards. Also verified through the AgentOS API with multipart uploads of a PNG and a text file, non-streamed and background-streamed.
+
+**Result:** "The image is red, and the release codename in the notes is tangerine-walrus-88." Attachments recorded on the run, staging folder removed. Over HTTP: the non-streamed run answered both questions and recorded the files; the background stream completed with the answer. Audio attachments return a 400 or a `RunError` event instead of the earlier 500 or broken stream.
+
+---

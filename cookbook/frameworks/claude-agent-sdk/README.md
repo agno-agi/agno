@@ -187,6 +187,14 @@ Use PostgreSQL in production. Transcript storage supports PostgresDb, AsyncPostg
 
 The `agno_transcripts` table is created on first use. A development database that ran an earlier build of this feature has an older table shape and raises a schema mismatch; drop the table and it is recreated.
 
+## Images and files
+
+Claude Code reads files itself, so attachments reach it the way they reach a person at a terminal. `ClaudeAgent` writes each image or file passed to `run` / `arun` (or uploaded through the AgentOS API and UI) under `cwd/.agno/uploads/<run_id>/` and names the paths in the prompt; Claude opens them with its Read tool, which handles images and PDFs. The folder is removed when the run ends unless `keep_uploads=True`. The run's `input` records what was attached. Audio and video are rejected before the run starts, with a 400 or a `RunError` event through AgentOS, because Claude Code has no way to use them. The Read tool must be allowed for attachments to be useful.
+
+```bash
+.venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/claude_media.py
+```
+
 ## Background runs and cancellation
 
 `background_cancel.py` serves the agent through AgentOS. Submit runs with `background=true`, poll the run endpoint, or use `stream=true` for indexed SSE. Runs continue after disconnects; the resume endpoint reads the configured event stream. Cancel through the run cancellation endpoint.

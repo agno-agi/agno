@@ -23,7 +23,7 @@ from uuid import uuid4
 
 from agno.agents._config import agent_dataclass
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
-from agno.exceptions import RunCancelledException
+from agno.exceptions import RunCancelledException, UnsupportedMediaError
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.response import ToolExecution
@@ -488,9 +488,10 @@ class BaseExternalAgent:
         """Adapters supporting media must override this and forward it to their SDK."""
         provided = [name for name, values in media.items() if values]
         if provided:
-            raise ValueError(
+            raise UnsupportedMediaError(
                 f"{type(self).__name__} does not support separate {', '.join(provided)} inputs. "
-                "Use text input or the adapter's documented native input format."
+                "Use text input or the adapter's documented native input format.",
+                media=provided,
             )
         return {}
 
@@ -949,6 +950,7 @@ class BaseExternalAgent:
         content: Any,
         status: RunStatus,
         tools: Optional[List[ToolExecution]] = None,
+        media: Optional[Dict[str, Any]] = None,
     ) -> RunOutput:
         """Build a RunOutput with properly populated messages for chat history."""
         now = int(time())
@@ -997,7 +999,15 @@ class BaseExternalAgent:
             agent_name=self.name,
             session_id=session_id,
             user_id=user_id,
-            input=RunInput(input_content=str(input_text)) if input_text is not None else None,
+            input=(
+                RunInput(
+                    input_content=str(input_text),
+                    images=(media or {}).get("images"),
+                    files=(media or {}).get("files"),
+                )
+                if input_text is not None
+                else None
+            ),
             content=content,
             messages=messages,
             tools=tools,
@@ -1131,16 +1141,19 @@ class BaseExternalAgent:
                 content.content if isinstance(content, ExternalRunResult) else content,
                 RunStatus.completed,
                 tools=content.tools if isinstance(content, ExternalRunResult) else None,
+                media=kwargs.get("media"),
             )
             if isinstance(content, ExternalRunResult) and content.warnings:
                 run_output.metadata = {"warnings": content.warnings}
         except RunCancelledException:
             run_output = self._build_run_output(
-                run_id, session_id, user_id, input, "Run cancelled", RunStatus.cancelled
+                run_id, session_id, user_id, input, "Run cancelled", RunStatus.cancelled, media=kwargs.get("media")
             )
         except Exception as error:
             log_exception(f"Error in {self.sdk} agent '{self.id}': {error}")
-            run_output = self._build_run_output(run_id, session_id, user_id, input, str(error), RunStatus.error)
+            run_output = self._build_run_output(
+                run_id, session_id, user_id, input, str(error), RunStatus.error, media=kwargs.get("media")
+            )
         if session is not None:
             await self._apersist_run_in_session(session, run_output)
         return run_output
@@ -1190,6 +1203,7 @@ class BaseExternalAgent:
             str(run_error) if run_error else accumulated_content,
             status,
             list(tools.values()) or None,
+            media=kwargs.get("media"),
         )
         if warnings:
             run.metadata = {"warnings": warnings}
