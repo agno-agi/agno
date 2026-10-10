@@ -473,7 +473,7 @@ async def aget_tools(
 def parse_tools(
     agent: Agent,
     tools: List[Union[Toolkit, Callable, Function, Dict]],
-    model: Model,
+    model: Optional[Model],
     run_context: Optional[RunContext] = None,
     async_mode: bool = False,
 ) -> List[Union[Function, dict]]:
@@ -520,6 +520,7 @@ def parse_tools(
         output_schema is not None
         and agent.parser_model is None
         and (agent.structured_outputs or (not agent.use_json_mode))
+        and model is not None
         and model.supports_native_structured_outputs
     ):
         strict = True
