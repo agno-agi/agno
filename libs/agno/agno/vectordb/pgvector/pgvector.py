@@ -1137,8 +1137,17 @@ class PgVector(VectorDb):
                     results = sess.execute(stmt).fetchall()
             except Exception as e:
                 log_error(f"Error performing semantic search: {str(e)}")
-                log_error(f"Table might not exist, creating for future use: {str(e)}")
-                self.create()
+                if self.table_exists():
+                    raise
+                log_error(f"Table does not exist, creating for future use: {str(e)}")
+                try:
+                    self.create()
+                except Exception:
+                    # table_exists() swallows its own errors and answers False, so a dead connection lands
+                    # here too and create() fails against the same connection. Raised by @VANDRANKI in review:
+                    # the caller should see the ORIGINAL query failure, not a create error that misdirects
+                    # diagnosis. The create failure stays attached as context.
+                    raise e
                 return []
 
             search_results: List[Document] = []
@@ -1171,8 +1180,11 @@ class PgVector(VectorDb):
             # of returning an empty result set that looks like "no matches".
             raise
         except Exception as e:
+            # A store that could not answer is not a store with nothing in it. Surfacing this
+            # matches what EmbeddingError already does above, and what every other vector db in
+            # this package does with a failed query embedding.
             log_error(f"Error during vector search: {str(e)}")
-            return []
+            raise
 
     def _build_ts_query(self, query: str):
         """
@@ -1221,6 +1233,14 @@ class PgVector(VectorDb):
             List[Document]: List of matching documents.
         """
         try:
+            # Build the ts_query — routes through to_tsquery with :* per token
+            # when prefix_match is on, websearch_to_tsquery otherwise. Ahead of the statement
+            # below: with no usable tokens there is nothing to select for.
+            ts_query = self._build_ts_query(query)
+            if ts_query is None:
+                # Prefix mode with no usable tokens (e.g. empty query): nothing to match
+                return []
+
             # Define the columns to select
             columns = [
                 self.table.c.id,
@@ -1240,12 +1260,6 @@ class PgVector(VectorDb):
 
             # Build the text search vector
             ts_vector = func.to_tsvector(self.content_language, self.table.c.content)
-            # Build the ts_query — routes through to_tsquery with :* per token
-            # when prefix_match is on, websearch_to_tsquery otherwise.
-            ts_query = self._build_ts_query(query)
-            if ts_query is None:
-                # Prefix mode with no usable tokens (e.g. empty query): nothing to match
-                return []
             # Compute the text rank
             text_rank = func.ts_rank_cd(ts_vector, ts_query)
 
@@ -1284,8 +1298,17 @@ class PgVector(VectorDb):
                     results = sess.execute(stmt).fetchall()
             except Exception as e:
                 log_error(f"Error performing keyword search: {str(e)}")
-                log_error(f"Table might not exist, creating for future use: {str(e)}")
-                self.create()
+                if self.table_exists():
+                    raise
+                log_error(f"Table does not exist, creating for future use: {str(e)}")
+                try:
+                    self.create()
+                except Exception:
+                    # table_exists() swallows its own errors and answers False, so a dead connection lands
+                    # here too and create() fails against the same connection. Raised by @VANDRANKI in review:
+                    # the caller should see the ORIGINAL query failure, not a create error that misdirects
+                    # diagnosis. The create failure stays attached as context.
+                    raise e
                 return []
 
             # Process the results and convert to Document objects
@@ -1306,8 +1329,11 @@ class PgVector(VectorDb):
             log_info(f"Found {len(search_results)} documents")
             return search_results
         except Exception as e:
+            # A store that could not answer is not a store with nothing in it. Surfacing this
+            # matches what EmbeddingError already does above, and what every other vector db in
+            # this package does with a failed query embedding.
             log_error(f"Error during keyword search: {str(e)}")
-            return []
+            raise
 
     def hybrid_search(
         self,
@@ -1444,6 +1470,17 @@ class PgVector(VectorDb):
                     results = sess.execute(stmt).fetchall()
             except Exception as e:
                 log_error(f"Error performing hybrid search: {str(e)}")
+                if self.table_exists():
+                    raise
+                log_error(f"Table does not exist, creating for future use: {str(e)}")
+                try:
+                    self.create()
+                except Exception:
+                    # table_exists() swallows its own errors and answers False, so a dead connection lands
+                    # here too and create() fails against the same connection. Raised by @VANDRANKI in review:
+                    # the caller should see the ORIGINAL query failure, not a create error that misdirects
+                    # diagnosis. The create failure stays attached as context.
+                    raise e
                 return []
 
             search_results: List[Document] = []
@@ -1474,8 +1511,11 @@ class PgVector(VectorDb):
             # of returning an empty result set that looks like "no matches".
             raise
         except Exception as e:
+            # A store that could not answer is not a store with nothing in it. Surfacing this
+            # matches what EmbeddingError already does above, and what every other vector db in
+            # this package does with a failed query embedding.
             log_error(f"Error during hybrid search: {str(e)}")
-            return []
+            raise
 
     def drop(self) -> None:
         """
