@@ -131,6 +131,7 @@ class Toolkit:
         cache_dir: Optional[str] = None,
         timeout: Optional[int] = None,
         auto_register: bool = True,
+        tool_name_prefix: Optional[str] = None,
     ):
         """Initialize a new Toolkit.
 
@@ -159,6 +160,9 @@ class Toolkit:
             auto_register (bool): Whether to automatically register all methods in the class.
             stop_after_tool_call_tools (Optional[List[str]]): List of function names that should stop the agent after execution.
             show_result_tools (Optional[List[str]]): List of function names whose results should be shown.
+            tool_name_prefix (Optional[str]): Register every function as ``<prefix>_<name>`` so two toolkits
+                exposing the same function names can be mounted on one agent. The include, exclude and
+                per-tool lists above keep using the unprefixed names.
         """
         self.name: str = name
         self.id: str = id if id is not None else generate_id_from_name(name)
@@ -176,6 +180,7 @@ class Toolkit:
 
         self.stop_after_tool_call_tools: list[str] = stop_after_tool_call_tools or []
         self.show_result_tools: list[str] = show_result_tools or []
+        self.tool_name_prefix: Optional[str] = tool_name_prefix
 
         self._check_tools_filters(
             available_tools=[self._get_tool_name(tool) for tool in self.tools],
@@ -212,6 +217,10 @@ class Toolkit:
         if isinstance(tool, Function):
             return tool.name
         return tool.__name__
+
+    def _prefixed_name(self, tool_name: str) -> str:
+        """The name a function is registered and exposed to the model under."""
+        return f"{self.tool_name_prefix}_{tool_name}" if self.tool_name_prefix else tool_name
 
     def _check_tools_filters(
         self,
@@ -303,7 +312,7 @@ class Toolkit:
                 return
 
             f = Function(
-                name=tool_name,
+                name=self._prefixed_name(tool_name),
                 entrypoint=function,
                 cache_results=self.cache_results,
                 cache_dir=self.cache_dir,
@@ -407,7 +416,7 @@ class Toolkit:
 
         # Create new Function with bound method, preserving decorator settings
         f = Function(
-            name=tool_name,
+            name=self._prefixed_name(tool_name),
             description=function.description,
             title=function.title,
             annotations=function.annotations,
