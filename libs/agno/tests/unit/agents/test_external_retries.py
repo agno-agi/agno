@@ -184,6 +184,19 @@ class ToolyAgent(FlakyAgent):
         # On success the adapter returns its tools; on failure they are only in run_state.
         return ExternalRunResult(content, tools=[tool])
 
+    async def _arun_adapter_stream(self, input: Any, **kwargs: Any):
+        # Like a real adapter: tool events are streamed as the tool completes, before the
+        # attempt can still fail; the base keeps them from the events.
+        attempt = len(self.attempts) + 1
+        run_id = kwargs["run_id"]
+        tool = ToolExecution(tool_call_id=f"t{attempt}", tool_name="shell", tool_args={"command": "ls"})
+        yield ToolCallStartedEvent(run_id=run_id, tool=tool)
+        yield ToolCallCompletedEvent(
+            run_id=run_id, tool=ToolExecution(tool_call_id=f"t{attempt}", tool_name="shell", result="ok")
+        )
+        result = await self._arun_adapter(input, **kwargs)
+        yield RunContentEvent(run_id=run_id, content=result.content)
+
 
 def test_non_stream_retry_keeps_tools_from_the_failed_attempt():
     agent = ToolyAgent(id="tooly", retries=1, failures=1)
@@ -252,3 +265,108 @@ def test_error_runs_record_retryability():
     assert permanent.status == RunStatus.error and permanent.metadata["retryable"] is False
     transient = FlakyAgent(id="t", failures=5).run("go")
     assert transient.status == RunStatus.error and transient.metadata["retryable"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_queued_retry_keeps_tools_from_the_failed_attempt_exactly_once(tmp_path, stream):
+    from agno.db.sqlite import SqliteDb
+
+    from ._queue_harness import run_through_queue
+
+    agent = ToolyAgent(id="tooly", db=SqliteDb(db_file=str(tmp_path / "runs.db")), retries=1, failures=1)
+    job = await run_through_queue(agent, stream=stream, max_attempts=1)
+    assert job["status"] == "completed" and job["attempt"] == 1, "the agent retried inside one queue attempt"
+    run = await agent.aget_run_output(job["id"], "s")
+    assert run.status == RunStatus.completed
+    assert [t.tool_call_id for t in run.tools or []] == ["t1", "t2"]
+    assert [m.tool_call_id for m in run.messages or [] if m.role == "tool"] == ["t1", "t2"]
+    assert run.metadata["attempts"] == 2
+
+
+def test_retried_runs_record_the_attempt_count():
+    assert FlakyAgent(id="f", retries=2, failures=1).run("go").metadata["attempts"] == 2
+    assert "attempts" not in (FlakyAgent(id="f", retries=2, failures=0).run("go").metadata or {})
+
+
+@pytest.mark.asyncio
+async def test_reclaimed_job_honors_a_persisted_non_retryable_run(tmp_path):
+    """The worker that classified the failure crashed after writing the run row but before
+    settling the ticket. The worker that reclaims the job must read the classification from the
+    row and fail the ticket instead of re-executing."""
+    from uuid import uuid4
+
+    from agno.db.schemas.jobs import QueuedJob
+    from agno.db.sqlite import SqliteDb
+    from agno.job_queue.config import QueueConfig
+    from agno.job_queue.store import InMemoryQueueStore
+    from agno.os.job_queue import QueueWorker
+
+    agent = PermanentAgent(id="permanent", db=SqliteDb(db_file=str(tmp_path / "runs.db")), failures=5)
+    store = InMemoryQueueStore()
+    run_id = str(uuid4())
+    await store.enqueue_job(
+        QueuedJob(
+            id=run_id,
+            component_type="agent",
+            component_id=agent.id,
+            session_id="s",
+            payload={"input": "go"},
+            max_attempts=3,
+        ).to_dict()
+    )
+
+    async def wait_until(predicate, timeout=5):
+        async def poll():
+            while not await predicate():
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(poll(), timeout)
+
+    # Worker one runs the job and "crashes" before settling the ticket.
+    crashing = QueueWorker(
+        store=store,
+        resolve_component=lambda *_: agent,
+        config=QueueConfig(durable=True, poll_interval=0.01, retry_delay_seconds=0),
+        worker_id="worker-one",
+    )
+
+    async def lost_settle(*args, **kwargs):
+        return False
+
+    crashing._asettle_ticket = lost_settle  # type: ignore[method-assign]
+    crashing._aretry_or_fail_ticket = lost_settle  # type: ignore[method-assign]
+    await crashing.start()
+    try:
+
+        async def row_is_error():
+            run = await agent.aget_run_output(run_id, "s")
+            return run is not None and run.status == RunStatus.error
+
+        await wait_until(row_is_error)
+    finally:
+        await crashing.stop()
+    assert len(agent.attempts) == 1
+    assert (await store.get_job(run_id))["status"] == "running", "the ticket was never settled"
+
+    # Worker two reclaims the stale ticket. It must not run the agent again.
+    # Age the dead worker's lease so the ticket is reclaimable at once.
+    store._jobs[run_id]["locked_at"] -= 3600
+    reclaiming = QueueWorker(
+        store=store,
+        resolve_component=lambda *_: agent,
+        config=QueueConfig(durable=True, poll_interval=0.01, retry_delay_seconds=0),
+        worker_id="worker-two",
+    )
+    await reclaiming.start()
+    try:
+
+        async def ticket_settled():
+            return (await store.get_job(run_id))["status"] in ("failed", "completed")
+
+        await wait_until(ticket_settled)
+    finally:
+        await reclaiming.stop()
+    job = await store.get_job(run_id)
+    assert job["status"] == "failed" and job["attempt"] == 2
+    assert len(agent.attempts) == 1, "the permanent failure was not re-executed after the restart"

@@ -1116,10 +1116,12 @@ class BaseExternalAgent:
         )
         # Tool calls from attempts that failed; they ran, so the stored run keeps them.
         carried_tools: Dict[str, ToolExecution] = {}
+        attempts_made = 0
         try:
             async with self._run_cancellation(run_id):
                 num_attempts = self.retries + 1
                 for attempt in range(num_attempts):
+                    attempts_made = attempt + 1
                     try:
                         content = await self._arun_adapter(
                             input, history=history, run_id=run_id, session=session, run_state=run_state, **kwargs
@@ -1167,6 +1169,8 @@ class BaseExternalAgent:
                 tools=list(carried_tools.values()) or None,
             )
             run_output.metadata = self._failure_metadata(error)
+        if attempts_made > 1:
+            run_output.metadata = {**(run_output.metadata or {}), "attempts": attempts_made}
         self._finish_run_output(run_output, run_state, continuation)
         if session is not None:
             await self._apersist_run_in_session(session, run_output)
@@ -1190,10 +1194,12 @@ class BaseExternalAgent:
         tools: Dict[str, ToolExecution] = {}
         status = RunStatus.completed
         run_error: Optional[Exception] = None
+        attempts_made = 0
         try:
             async with self._run_cancellation(run_id):
                 num_attempts = self.retries + 1
                 for attempt in range(num_attempts):
+                    attempts_made = attempt + 1
                     # Content is the final attempt's answer; tool calls from every attempt ran, so they are kept.
                     accumulated_content = ""
                     try:
@@ -1243,6 +1249,8 @@ class BaseExternalAgent:
             run.metadata = {"warnings": warnings}
         if run_error is not None:
             run.metadata = {**(run.metadata or {}), **self._failure_metadata(run_error)}
+        if attempts_made > 1:
+            run.metadata = {**(run.metadata or {}), "attempts": attempts_made}
         self._finish_run_output(run, run_state, continuation)
         if session is not None:
             await self._apersist_run_in_session(session, run)

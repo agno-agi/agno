@@ -1248,6 +1248,31 @@ class QueueWorker:
         ceiling = min(base * (2 ** max(0, attempt - 1)), base * 10)
         return random.randint(0, ceiling)
 
+    async def _ahonor_non_retryable_row(self, component: Any, job: Dict[str, Any]) -> bool:
+        """A reclaimed job whose earlier attempt persisted an ERROR run the component marked
+        non-retryable. The worker that wrote that row crashed before settling the ticket, so the
+        classification lives only on the row: honor it here instead of re-executing a failure
+        that would repeat. Settles the ticket failed and closes the stream view. Returns True
+        when the job was handled this way."""
+        from agno.run.base import RunStatus
+
+        try:
+            run = await component.aget_run_output(job["id"], job["session_id"], user_id=job.get("user_id"))
+        except Exception:
+            return False
+        raw = getattr(run, "status", None)
+        status = raw.value if isinstance(raw, RunStatus) else raw
+        if run is None or str(status).upper() != RunStatus.error.value or not self._run_is_not_retryable(run):
+            return False
+        error = str(getattr(run, "content", "") or "run errored")
+        log_warning(
+            f"Job queue: reclaimed job {job['id']} (attempt {job['attempt']}) has a run row marked "
+            f"non-retryable by its component; failing the ticket without re-executing: {error}"
+        )
+        await self._asettle_ticket(job["id"], job["attempt"], "failed", error)
+        await self._terminate_stream_view(job, "error")
+        return True
+
     @staticmethod
     def _run_is_not_retryable(run: Any) -> bool:
         """A run row whose component marked the failure as one that would repeat
@@ -1558,6 +1583,14 @@ class QueueWorker:
         job_type = job.get("job_type", "run")
         payload = job.get("payload") or {}
         component_for_stamp = self.resolve_component(job.get("component_type"), job.get("component_id"))
+        if (
+            attempt > 1
+            and job_type == "run"
+            and component_for_stamp is not None
+            and not payload.get("continue")
+            and await self._ahonor_non_retryable_row(component_for_stamp, job)
+        ):
+            return
         if (
             job_type == "run"
             and component_for_stamp is not None
