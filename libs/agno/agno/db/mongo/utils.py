@@ -3,14 +3,21 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 from uuid import uuid4
 
 from agno.db.mongo.schemas import get_collection_indexes
+from agno.db.utils import (
+    OS_METRICS_DAY_PERIODS,
+    OS_METRICS_FIXED_KEYS,
+    OS_METRICS_STATE_ID,
+    build_os_metrics_state,
+    os_metrics_day_ranges,
+)
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
-    from pymongo import ReturnDocument
+    from pymongo import ReturnDocument, UpdateOne
     from pymongo.collection import Collection
     from pymongo.errors import OperationFailure
 except ImportError:
@@ -355,3 +362,405 @@ async def abulk_upsert_metrics(
             continue
 
     return results
+
+
+# -- OS metrics util methods --
+
+# Keeps a query far below the 16MB a document can hold
+OS_METRICS_IN_LIST_LIMIT = 10000
+
+_OS_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses")
+
+# A run nested deeper than this is read whole
+_OS_METRICS_NESTED_RUNS_DEPTH = 6
+
+_OS_METRICS_RUN_DATA_FIELDS = (
+    "metrics",
+    "model",
+    "model_provider",
+    "messages.role",
+    "messages.from_history",
+    "messages.metrics.duration",
+)
+
+
+def _os_metrics_runs_projection() -> Dict[str, int]:
+    """The fields of a stored run that OS metrics count, of the run and of the runs nested inside it."""
+    projection = {"_id": 0}
+    for field in ["run_id", "run_type", "agent_id", "team_id", "workflow_id", "user_id", "parent_run_id", "status"]:
+        projection[field] = 1
+    for field in _OS_METRICS_RUN_DATA_FIELDS:
+        projection[f"run_data.{field}"] = 1
+    paths = ["run_data"]
+    for _ in range(_OS_METRICS_NESTED_RUNS_DEPTH):
+        paths = [f"{path}.{key}" for path in paths for key in _OS_METRICS_NESTED_RUN_KEYS]
+        for path in paths:
+            for field in ["run_id", "agent_id", "team_id", *_OS_METRICS_RUN_DATA_FIELDS]:
+                projection[f"{path}.{field}"] = 1
+    for path in paths:
+        for key in _OS_METRICS_NESTED_RUN_KEYS:
+            projection[f"{path}.{key}"] = 1
+    return projection
+
+
+_OS_METRICS_RUNS_PROJECTION = _os_metrics_runs_projection()
+
+_OS_METRICS_SESSIONS_PROJECTION = {
+    "_id": 0,
+    "session_type": 1,
+    "user_id": 1,
+    "agent_id": 1,
+    "team_id": 1,
+    "workflow_id": 1,
+}
+
+# The fields of a record its unique index is on
+_OS_METRICS_KEY_FIELDS = ("user_id", "date", "aggregation_period", "agent_id", "team_id", "workflow_id", "parent_id")
+
+
+def _build_os_metrics_upserts(os_metrics_records: List[Dict[str, Any]]) -> List[UpdateOne]:
+    """Build the upsert of each of the given OS metrics records, the total record of a day last."""
+    upserts = []
+    for record in sorted(os_metrics_records, key=lambda record: record["aggregation_period"] != "daily"):
+        # The filter matches every field of the unique index, so the server retries an upsert that races another
+        key_filter = {
+            field: record[field].isoformat() if field == "date" else record[field] for field in _OS_METRICS_KEY_FIELDS
+        }
+        # id and created_at belong to the first write, so only $set the fields that change
+        fields = {
+            key: value for key, value in record.items() if key not in ["id", "created_at", *_OS_METRICS_KEY_FIELDS]
+        }
+        identity = {"id": record["id"], "created_at": record["created_at"]}
+        upserts.append(UpdateOne(key_filter, {"$set": fields, "$setOnInsert": identity}, upsert=True))
+    return upserts
+
+
+def bulk_upsert_os_metrics(collection: Collection, os_metrics_records: List[Dict[str, Any]]) -> None:
+    """Bulk upsert OS metrics into the database.
+
+    Args:
+        collection (Collection): The collection to upsert the OS metrics into.
+        os_metrics_records (List[Dict[str, Any]]): The OS metrics records to upsert.
+    """
+    if not os_metrics_records:
+        return
+
+    collection.bulk_write(_build_os_metrics_upserts(os_metrics_records))
+
+
+async def abulk_upsert_os_metrics(
+    collection: "AsyncMongoCollectionType", os_metrics_records: List[Dict[str, Any]]
+) -> None:
+    """Async bulk upsert OS metrics into the database.
+
+    Args:
+        collection (AsyncMongoCollectionType): The async collection to upsert the OS metrics into.
+        os_metrics_records (List[Dict[str, Any]]): The OS metrics records to upsert.
+    """
+    if not os_metrics_records:
+        return
+
+    await collection.bulk_write(_build_os_metrics_upserts(os_metrics_records))
+
+
+def get_stored_os_metrics_state(collection: Collection) -> Dict[str, Any]:
+    """Get the state of the OS metrics, from the state record.
+
+    Args:
+        collection (Collection): The OS metrics collection.
+
+    Returns:
+        Dict[str, Any]: The state, as build_os_metrics_state builds it. Empty for a collection no rebuild has
+            written to.
+    """
+    return collection.find_one({"id": OS_METRICS_STATE_ID}, {"_id": 0}) or {}
+
+
+def mark_os_metrics_state(collection: Collection, rebuild_id: str) -> None:
+    """Mark the state record before a rebuild writes or deletes records of a day.
+
+    A day saved without its state leaves the mark, so the state is not taken as the state of its records.
+
+    Args:
+        collection (Collection): The OS metrics collection.
+        rebuild_id (str): The id the rebuild marks the state with. Its state write takes the mark off.
+    """
+    collection.update_one(
+        {"id": OS_METRICS_STATE_ID},
+        {"$set": {"aggregation_period": OS_METRICS_STATE_ID}, "$addToSet": {"rebuilding": rebuild_id}},
+        upsert=True,
+    )
+
+
+def update_os_metrics_state(
+    collection: Collection,
+    changed_rows: Sequence[Dict[str, Any]],
+    stale_ids: Sequence[str],
+    day: Optional[date] = None,
+    rebuild_ids: Optional[List[str]] = None,
+) -> None:
+    """Write the state record after a rebuild wrote or deleted records of a day.
+
+    Args:
+        collection (Collection): The OS metrics collection.
+        changed_rows (Sequence[Dict[str, Any]]): The records the rebuild wrote.
+        stale_ids (Sequence[str]): The ids of the records the rebuild deleted.
+        day (Optional[date]): The day the records are of. ``None`` when they may not all be saved.
+        rebuild_ids (Optional[List[str]]): The marks to take off the state.
+    """
+    previous_state = get_stored_os_metrics_state(collection)
+    state = build_os_metrics_state(previous_state, int(time.time()), changed_rows, stale_ids, day)
+    update: Dict[str, Any] = {"$set": {"aggregation_period": OS_METRICS_STATE_ID, **state}}
+    if rebuild_ids:
+        update["$pullAll"] = {"rebuilding": rebuild_ids}
+    collection.update_one({"id": OS_METRICS_STATE_ID}, update, upsert=True)
+
+
+async def aget_stored_os_metrics_state(collection: "AsyncMongoCollectionType") -> Dict[str, Any]:
+    """Get the state of the OS metrics, from the state record.
+
+    Args:
+        collection (AsyncMongoCollectionType): The OS metrics collection.
+
+    Returns:
+        Dict[str, Any]: The state, as build_os_metrics_state builds it. Empty for a collection no rebuild has
+            written to.
+    """
+    return (await collection.find_one({"id": OS_METRICS_STATE_ID}, {"_id": 0})) or {}
+
+
+async def amark_os_metrics_state(collection: "AsyncMongoCollectionType", rebuild_id: str) -> None:
+    """Mark the state record before a rebuild writes or deletes records of a day.
+
+    A day saved without its state leaves the mark, so the state is not taken as the state of its records.
+
+    Args:
+        collection (AsyncMongoCollectionType): The OS metrics collection.
+        rebuild_id (str): The id the rebuild marks the state with. Its state write takes the mark off.
+    """
+    await collection.update_one(
+        {"id": OS_METRICS_STATE_ID},
+        {"$set": {"aggregation_period": OS_METRICS_STATE_ID}, "$addToSet": {"rebuilding": rebuild_id}},
+        upsert=True,
+    )
+
+
+async def aupdate_os_metrics_state(
+    collection: "AsyncMongoCollectionType",
+    changed_rows: Sequence[Dict[str, Any]],
+    stale_ids: Sequence[str],
+    day: Optional[date] = None,
+    rebuild_ids: Optional[List[str]] = None,
+) -> None:
+    """Write the state record after a rebuild wrote or deleted records of a day.
+
+    Args:
+        collection (AsyncMongoCollectionType): The OS metrics collection.
+        changed_rows (Sequence[Dict[str, Any]]): The records the rebuild wrote.
+        stale_ids (Sequence[str]): The ids of the records the rebuild deleted.
+        day (Optional[date]): The day the records are of. ``None`` when they may not all be saved.
+        rebuild_ids (Optional[List[str]]): The marks to take off the state.
+    """
+    previous_state = await aget_stored_os_metrics_state(collection)
+    state = build_os_metrics_state(previous_state, int(time.time()), changed_rows, stale_ids, day)
+    update: Dict[str, Any] = {"$set": {"aggregation_period": OS_METRICS_STATE_ID, **state}}
+    if rebuild_ids:
+        update["$pullAll"] = {"rebuilding": rebuild_ids}
+    await collection.update_one({"id": OS_METRICS_STATE_ID}, update, upsert=True)
+
+
+def build_os_metrics_runs_pipeline(start_timestamp: int, end_timestamp: int) -> List[Dict[str, Any]]:
+    """Build the pipeline that reads the runs created in the given time range, with only what OS metrics count."""
+    return [
+        {"$match": {"created_at": {"$gte": start_timestamp, "$lt": end_timestamp}}},
+        {"$project": _OS_METRICS_RUNS_PROJECTION},
+    ]
+
+
+def build_os_metrics_sessions_pipeline(start_timestamp: int, end_timestamp: int) -> List[Dict[str, Any]]:
+    """Build the pipeline that reads the sessions created in the given time range, with only what OS metrics count."""
+    return [
+        {"$match": {"created_at": {"$gte": start_timestamp, "$lt": end_timestamp}}},
+        {"$project": _OS_METRICS_SESSIONS_PROJECTION},
+    ]
+
+
+def build_os_metrics_stored_rows_filter(date_to_process: date) -> Dict[str, Any]:
+    """Build the filter that reads the records stored for a day."""
+    return {"date": date_to_process.isoformat(), "aggregation_period": {"$in": list(OS_METRICS_DAY_PERIODS)}}
+
+
+def build_os_metrics_total_dates_filter(
+    starting_date: Optional[date] = None, ending_date: Optional[date] = None
+) -> Dict[str, Any]:
+    """Build the filter that reads the total record of every completed day in the given date range."""
+    # A total record that is not completed belongs to a day whose write failed part way
+    total_dates_filter: Dict[str, Any] = {"user_id": "", "aggregation_period": "daily_total", "completed": True}
+    if starting_date is not None:
+        total_dates_filter.setdefault("date", {})["$gte"] = starting_date.isoformat()
+    if ending_date is not None:
+        total_dates_filter.setdefault("date", {})["$lte"] = ending_date.isoformat()
+    return total_dates_filter
+
+
+def deserialize_os_metrics_record(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Deserialize a stored document to an OS metrics record, in the shape calculate_date_os_metrics writes."""
+    return {**doc, "date": datetime.strptime(doc["date"], "%Y-%m-%d").date()}
+
+
+def build_os_metrics_totals_pipelines(
+    starting_date: date,
+    ending_date: date,
+    user_id: Optional[str],
+    fields: Sequence[str],
+    total_days: Optional[Sequence[date]] = None,
+    row_days: Optional[Sequence[date]] = None,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Build the pipelines that total the OS metrics records of each day in the given date range."""
+    match_stage: Dict[str, Any] = {"aggregation_period": "daily"}
+    if row_days is None:
+        match_stage["date"] = {"$gte": starting_date.isoformat(), "$lte": ending_date.isoformat()}
+    elif row_days:
+        # Days that follow one another are looked up as one range
+        match_stage["$or"] = [
+            {"date": {"$gte": first_day.isoformat(), "$lte": last_day.isoformat()}}
+            for first_day, last_day in os_metrics_day_ranges(row_days)
+        ]
+    else:
+        match_stage["date"] = {"$in": []}
+    if user_id is not None:
+        match_stage["user_id"] = user_id
+    if total_days:
+        match_stage = {
+            "$or": [
+                match_stage,
+                {
+                    "user_id": "",
+                    "aggregation_period": "daily_total",
+                    "date": {"$in": [day.isoformat() for day in total_days]},
+                },
+            ]
+        }
+
+    group_stage: Dict[str, Any] = {"_id": "$date", "updated_at": {"$max": "$updated_at"}}
+    for field in fields:
+        if field in ["sessions_count", "runs_count"]:
+            group_stage[field] = {"$sum": f"${field}"}
+        elif field in OS_METRICS_FIXED_KEYS:
+            # $sum gives 0 for a key no record reported, so how many reported it is counted too
+            for key in OS_METRICS_FIXED_KEYS[field]:
+                is_max = key in ["max_duration_ms", "max_time_to_first_token_ms", "max_model_call_ms"]
+                group_stage[f"{field}__{key}"] = {"$max" if is_max else "$sum": f"${field}.{key}"}
+                group_stage[f"{field}__{key}__records"] = {
+                    "$sum": {"$cond": [{"$gt": [f"${field}.{key}", None]}, 1, 0]}
+                }
+    pipelines: Dict[str, List[Dict[str, Any]]] = {"totals": [{"$match": match_stage}, {"$group": group_stage}]}
+
+    if "duration_buckets" in fields:
+        pipelines["duration_buckets"] = [
+            {"$match": match_stage},
+            {
+                "$project": {
+                    "date": 1,
+                    "buckets": {
+                        "$concatArrays": [
+                            {
+                                "$map": {
+                                    "input": {"$objectToArray": {"$ifNull": [f"$duration_metrics.{bucket_field}", {}]}},
+                                    "in": {"bucket_field": bucket_field, "bucket": "$$this.k", "count": "$$this.v"},
+                                }
+                            }
+                            for bucket_field in [
+                                "duration_ms_buckets",
+                                "time_to_first_token_ms_buckets",
+                                "model_call_ms_buckets",
+                            ]
+                        ]
+                    },
+                }
+            },
+            {"$unwind": "$buckets"},
+            {
+                "$group": {
+                    "_id": {"date": "$date", "bucket_field": "$buckets.bucket_field", "bucket": "$buckets.bucket"},
+                    "count": {"$sum": "$buckets.count"},
+                }
+            },
+        ]
+
+    if "model_metrics" in fields:
+        pipelines["model_metrics"] = [
+            {"$match": match_stage},
+            {"$unwind": "$model_metrics"},
+            {
+                "$group": {
+                    "_id": {
+                        "date": "$date",
+                        "model_id": {"$ifNull": ["$model_metrics.model_id", ""]},
+                        "model_provider": {"$ifNull": ["$model_metrics.model_provider", ""]},
+                        "agent_id": {"$ifNull": ["$model_metrics.agent_id", ""]},
+                        "team_id": {"$ifNull": ["$model_metrics.team_id", ""]},
+                        "workflow_id": {"$ifNull": ["$model_metrics.workflow_id", ""]},
+                    },
+                    "count": {"$sum": "$model_metrics.count"},
+                }
+            },
+        ]
+
+    return pipelines
+
+
+def build_os_metrics_totals(
+    fields: Sequence[str],
+    results_by_pipeline: Dict[str, List[Dict[str, Any]]],
+) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+    """Build the OS metrics totals of each day from the results of the totals pipelines."""
+    totals_by_date: Dict[date, Dict[str, Any]] = {}
+    latest_updated_at: Optional[int] = None
+    for result in results_by_pipeline["totals"]:
+        day = datetime.strptime(result["_id"], "%Y-%m-%d").date()
+        day_totals: Dict[str, Any] = {"date": day}
+        for field in fields:
+            if field in ["sessions_count", "runs_count"]:
+                day_totals[field] = int(result.get(field) or 0)
+            elif field in OS_METRICS_FIXED_KEYS:
+                # A key no record reported stays out, as it would in a stored record
+                day_totals[field] = {
+                    key: int(result[f"{field}__{key}"] or 0)
+                    for key in OS_METRICS_FIXED_KEYS[field]
+                    if result[f"{field}__{key}__records"]
+                }
+            elif field == "model_metrics":
+                day_totals[field] = []
+            else:
+                day_totals[field] = {}
+        totals_by_date[day] = day_totals
+        updated_at = result.get("updated_at")
+        if updated_at is not None and (latest_updated_at is None or updated_at > latest_updated_at):
+            latest_updated_at = updated_at
+
+    for result in results_by_pipeline.get("duration_buckets", []):
+        bucket_totals = totals_by_date.get(datetime.strptime(result["_id"]["date"], "%Y-%m-%d").date())
+        if bucket_totals is not None:
+            bucket_totals["duration_buckets"].setdefault(result["_id"]["bucket_field"], {})[result["_id"]["bucket"]] = (
+                int(result["count"])
+            )
+
+    for result in results_by_pipeline.get("model_metrics", []):
+        model_totals = totals_by_date.get(datetime.strptime(result["_id"]["date"], "%Y-%m-%d").date())
+        if model_totals is None:
+            continue
+        model: Dict[str, Any] = {
+            "model_id": result["_id"]["model_id"],
+            "model_provider": result["_id"]["model_provider"],
+        }
+        if result["_id"]["agent_id"]:
+            model["agent_id"] = result["_id"]["agent_id"]
+        if result["_id"]["team_id"]:
+            model["team_id"] = result["_id"]["team_id"]
+        if result["_id"]["workflow_id"]:
+            model["workflow_id"] = result["_id"]["workflow_id"]
+        model["count"] = int(result["count"] or 0)
+        model_totals["model_metrics"].append(model)
+
+    return [totals_by_date[day] for day in sorted(totals_by_date)], latest_updated_at
