@@ -9,7 +9,7 @@ from sqlalchemy import Engine
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from agno.db.postgres.schemas import get_table_schema_definition
-from agno.db.utils import OS_METRICS_FIXED_KEYS, os_metrics_nested_run_ids
+from agno.db.utils import OS_METRICS_FIXED_KEYS, os_metrics_day_ranges, os_metrics_nested_run_ids
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
@@ -20,6 +20,7 @@ try:
         and_,
         cast,
         column,
+        false,
         func,
         literal,
         literal_column,
@@ -743,7 +744,13 @@ def build_os_metrics_totals_queries(
     if row_days is None:
         conditions.extend([table.c.date >= starting_date, table.c.date <= ending_date])
     else:
-        conditions.append(table.c.date.in_(row_days))
+        # Days that follow one another are looked up as one range, which is planned by the rows it holds,
+        # where a list of days is planned as if each day held rows
+        day_ranges = [
+            and_(table.c.date >= first_day, table.c.date <= last_day)
+            for first_day, last_day in os_metrics_day_ranges(row_days)
+        ]
+        conditions.append(or_(false(), *day_ranges))
     if user_id is not None:
         conditions.append(table.c.user_id == user_id)
     where = and_(*conditions)

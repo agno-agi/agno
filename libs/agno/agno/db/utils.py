@@ -1491,7 +1491,25 @@ def os_metrics_dates_to_read(
     ]
     days = [starting_date + timedelta(days=offset) for offset in range((ending_date - starting_date).days + 1)]
     days = [day for day in days if day.replace(day=1) not in month_starts]
-    return month_starts, [day for day in days if day in total_days], [day for day in days if day not in total_days]
+    days_with_total = [day for day in days if day in total_days]
+    row_days = [day for day in days if day not in total_days]
+    if days_with_total:
+        # A total row is of every owner, and a day before a completed one is never calculated again, so
+        # such a day without a total row has no rows to read
+        latest_completed = max([*days_with_total, *(os_metrics_month_end(month) for month in month_starts)])
+        row_days = [day for day in row_days if day > latest_completed]
+    return month_starts, days_with_total, row_days
+
+
+def os_metrics_day_ranges(days: Sequence[date]) -> List[Tuple[date, date]]:
+    """Group days, oldest first, into the first and last day of every run of days that follow one another."""
+    ranges: List[Tuple[date, date]] = []
+    for day in days:
+        if ranges and day - ranges[-1][1] == timedelta(days=1):
+            ranges[-1] = (ranges[-1][0], day)
+        else:
+            ranges.append((day, day))
+    return ranges
 
 
 def os_metrics_percentile(buckets: Dict[str, int], fraction: float, max_ms: Optional[int] = None) -> Optional[int]:

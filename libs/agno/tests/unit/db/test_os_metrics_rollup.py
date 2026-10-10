@@ -24,6 +24,7 @@ from agno.db.utils import (
     merge_os_metrics_totals,
     merge_os_model_metrics,
     os_metrics_dates_to_read,
+    os_metrics_day_ranges,
     os_metrics_full_months,
     os_metrics_month_end,
     os_metrics_nested_run_ids,
@@ -812,6 +813,33 @@ def test_day_with_a_total_row_is_read_from_it_and_no_other_period():
     assert month_starts == []
     assert total_days_to_read == [date(2026, 1, 30), date(2026, 1, 31), date(2026, 2, 1)]
     assert row_days == [date(2026, 2, 2)]
+
+
+def test_day_without_a_total_row_before_a_completed_day_is_not_read():
+    """A day without rows gets no total row, so only the days after the last completed one are read from rows."""
+    total_days = {date(2026, 1, 28), date(2026, 1, 31)}
+
+    month_starts, total_days_to_read, row_days = os_metrics_dates_to_read(
+        date(2026, 1, 27), date(2026, 2, 2), total_days, set()
+    )
+
+    assert month_starts == []
+    assert total_days_to_read == [date(2026, 1, 28), date(2026, 1, 31)]
+    assert row_days == [date(2026, 2, 1), date(2026, 2, 2)]
+
+
+def test_one_owner_has_no_total_rows_so_every_day_outside_a_month_is_read_from_its_rows():
+    month_starts, total_days_to_read, row_days = os_metrics_dates_to_read(
+        date(2026, 1, 30), date(2026, 3, 2), set(), {date(2026, 2, 1)}
+    )
+
+    assert month_starts == [date(2026, 2, 1)]
+    assert total_days_to_read == []
+    assert row_days == [date(2026, 1, 30), date(2026, 1, 31), date(2026, 3, 1), date(2026, 3, 2)]
+    assert os_metrics_day_ranges(row_days) == [
+        (date(2026, 1, 30), date(2026, 1, 31)),
+        (date(2026, 3, 1), date(2026, 3, 2)),
+    ]
 
 
 def test_month_inside_the_range_is_read_from_its_month_rows():
