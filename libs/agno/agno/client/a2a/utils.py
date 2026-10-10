@@ -5,16 +5,28 @@ This module provides bidirectional mapping between:
 - A2A StreamEvent ↔ Agno RunOutputEvent / TeamRunOutputEvent / WorkflowRunOutputEvent
 """
 
-from typing import AsyncIterator, List, Optional, Union
+import json
+from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 from agno.client.a2a.schemas import Artifact, StreamEvent, TaskResult
 from agno.media import Audio, File, Image, Video
+from agno.models.response import ToolExecution
 from agno.run.agent import (
+    RunCancelledEvent,
     RunCompletedEvent,
     RunContentEvent,
+    RunErrorEvent,
     RunOutput,
     RunOutputEvent,
+    RunPausedEvent,
     RunStartedEvent,
+    ToolCallCompletedEvent,
+    ToolCallStartedEvent,
+)
+from agno.run.base import RunStatus
+from agno.run.requirement import RunRequirement
+from agno.run.team import (
+    RunCancelledEvent as TeamRunCancelledEvent,
 )
 from agno.run.team import (
     RunCompletedEvent as TeamRunCompletedEvent,
@@ -23,18 +35,34 @@ from agno.run.team import (
     RunContentEvent as TeamRunContentEvent,
 )
 from agno.run.team import (
+    RunErrorEvent as TeamRunErrorEvent,
+)
+from agno.run.team import (
+    RunPausedEvent as TeamRunPausedEvent,
+)
+from agno.run.team import (
     RunStartedEvent as TeamRunStartedEvent,
 )
 from agno.run.team import (
     TeamRunOutput,
     TeamRunOutputEvent,
 )
+from agno.run.team import (
+    ToolCallCompletedEvent as TeamToolCallCompletedEvent,
+)
+from agno.run.team import (
+    ToolCallStartedEvent as TeamToolCallStartedEvent,
+)
 from agno.run.workflow import (
+    WorkflowCancelledEvent,
     WorkflowCompletedEvent,
+    WorkflowErrorEvent,
+    WorkflowPausedEvent,
     WorkflowRunOutput,
     WorkflowRunOutputEvent,
     WorkflowStartedEvent,
 )
+from agno.workflow.types import StepRequirement
 
 
 def map_task_result_to_run_output(
@@ -66,15 +94,62 @@ def map_task_result_to_run_output(
 
     return RunOutput(
         content=task_result.content,
+        requirements=_map_paused_requirements(task_result.data) if task_result.is_input_required else None,
         run_id=task_result.task_id,
         session_id=task_result.context_id,
         agent_id=agent_id,
         user_id=user_id,
+        status=_map_task_status_to_run_status(task_result.status),
         images=images if images else None,
         videos=videos if videos else None,
         audio=audio if audio else None,
         files=files if files else None,
         metadata=task_result.metadata,
+    )
+
+
+def _map_task_status_to_run_status(status: str) -> RunStatus:
+    """Map the status of an A2A task to Agno RunStatus."""
+    _mapping = {
+        "submitted": RunStatus.pending,
+        "working": RunStatus.running,
+        "completed": RunStatus.completed,
+        "failed": RunStatus.error,
+        "rejected": RunStatus.error,
+        "canceled": RunStatus.cancelled,
+        "input-required": RunStatus.paused,
+        "auth-required": RunStatus.paused,
+    }
+    return _mapping.get(status, RunStatus.completed)
+
+
+def _map_paused_requirements(data: Optional[Any]) -> Optional[List[RunRequirement]]:
+    """Map the requirements a paused A2A task waits on, as an Agno server sends them."""
+    if not isinstance(data, dict) or not data.get("requirements"):
+        return None
+    return [RunRequirement.from_dict(req) for req in data["requirements"] if isinstance(req, dict)]
+
+
+def _map_paused_step_requirements(data: Optional[Any]) -> Optional[List[StepRequirement]]:
+    """Map the step requirements a paused A2A workflow task waits on, as an Agno server sends them."""
+    if not isinstance(data, dict) or not data.get("step_requirements"):
+        return None
+    return [StepRequirement.from_dict(req) for req in data["step_requirements"] if isinstance(req, dict)]
+
+
+def _map_tool_execution(metadata: Optional[Dict[str, Any]]) -> ToolExecution:
+    """Map the tool call an A2A status update describes in its metadata."""
+    metadata = metadata or {}
+    tool_args = metadata.get("tool_args")
+    if isinstance(tool_args, str):
+        try:
+            tool_args = json.loads(tool_args)
+        except json.JSONDecodeError:
+            tool_args = None
+    return ToolExecution(
+        tool_call_id=metadata.get("tool_call_id"),
+        tool_name=metadata.get("tool_name"),
+        tool_args=tool_args if isinstance(tool_args, dict) else None,
     )
 
 
@@ -96,18 +171,21 @@ def _classify_artifact(
     """
     mime_type = artifact.mime_type or ""
     uri = artifact.uri
+    content = artifact.content
 
-    if not uri:
+    if not uri and not content:
         return
 
     if mime_type.startswith("image/"):
-        images.append(Image(url=uri, name=artifact.name))
+        images.append(Image(url=uri, name=artifact.name) if uri else Image(content=content, name=artifact.name))
     elif mime_type.startswith("video/"):
-        videos.append(Video(url=uri, name=artifact.name))
+        videos.append(Video(url=uri, name=artifact.name) if uri else Video(content=content, name=artifact.name))
     elif mime_type.startswith("audio/"):
-        audio.append(Audio(url=uri, name=artifact.name))
-    else:
+        audio.append(Audio(url=uri, name=artifact.name) if uri else Audio(content=content, name=artifact.name))
+    elif uri:
         files.append(File(url=uri, name=artifact.name, mime_type=mime_type or None))
+    else:
+        files.append(File(content=content, name=artifact.name, mime_type=mime_type or None))
 
 
 async def map_stream_events_to_run_events(
@@ -130,6 +208,8 @@ async def map_stream_events_to_run_events(
     run_id: Optional[str] = None
     session_id: Optional[str] = None
     accumulated_content = ""
+    final_content: Optional[str] = None
+    run_started = False
 
     async for event in stream:
         # Capture IDs from events
@@ -140,11 +220,36 @@ async def map_stream_events_to_run_events(
 
         # Map event types
         if event.event_type == "working":
-            yield RunStartedEvent(
+            # The server reports "working" for every step of the run; the run starts once
+            if not run_started:
+                run_started = True
+                yield RunStartedEvent(
+                    run_id=run_id,
+                    session_id=session_id,
+                    agent_id=agent_id,
+                )
+
+        elif event.event_type == "tool_call_started":
+            yield ToolCallStartedEvent(
+                tool=_map_tool_execution(event.metadata),
                 run_id=run_id,
                 session_id=session_id,
                 agent_id=agent_id,
             )
+
+        elif event.event_type == "tool_call_completed":
+            yield ToolCallCompletedEvent(
+                tool=_map_tool_execution(event.metadata),
+                run_id=run_id,
+                session_id=session_id,
+                agent_id=agent_id,
+            )
+
+        elif event.event_type == "artifact" or (event.event_type == "content" and not event.content):
+            # The complete response, sent once the agent is done writing it. Structured
+            # content has no text chunks, and is given as its JSON string.
+            if event.content or event.data is not None:
+                final_content = event.content or json.dumps(event.data)
 
         elif event.is_content and event.content:
             accumulated_content += event.content
@@ -154,13 +259,50 @@ async def map_stream_events_to_run_events(
                 session_id=session_id,
                 agent_id=agent_id,
             )
+            # A single message is the whole response: there is no final event to follow
+            if event.is_final:
+                yield RunCompletedEvent(
+                    content=accumulated_content,
+                    metadata=event.metadata,
+                    run_id=run_id,
+                    session_id=session_id,
+                    agent_id=agent_id,
+                )
+                break
 
         elif event.is_final:
+            if event.status in ("failed", "rejected"):
+                yield RunErrorEvent(
+                    content=event.content or "Run failed",
+                    run_id=run_id,
+                    session_id=session_id,
+                    agent_id=agent_id,
+                )
+                break
+
+            if event.status == "canceled":
+                yield RunCancelledEvent(
+                    reason=event.content,
+                    run_id=run_id,
+                    session_id=session_id,
+                    agent_id=agent_id,
+                )
+                break
+
+            if event.status in ("input-required", "auth-required"):
+                yield RunPausedEvent(
+                    content=event.content,
+                    requirements=_map_paused_requirements(event.data),
+                    run_id=run_id,
+                    session_id=session_id,
+                    agent_id=agent_id,
+                )
+                break
+
             # final=true marks the end of the stream; forward any metadata the
             # server attached to it onto the completed event.
-            final_content = event.content if event.content else accumulated_content
             yield RunCompletedEvent(
-                content=final_content,
+                content=final_content or event.content or accumulated_content,
                 metadata=event.metadata,
                 run_id=run_id,
                 session_id=session_id,
@@ -171,7 +313,7 @@ async def map_stream_events_to_run_events(
         # Some A2A servers (e.g. Google ADK) close the stream without a final event;
         # emit a terminal event so consumers always see a completed run.
         yield RunCompletedEvent(
-            content=accumulated_content,
+            content=final_content or accumulated_content,
             run_id=run_id,
             session_id=session_id,
             agent_id=agent_id,
@@ -211,10 +353,12 @@ def map_task_result_to_team_run_output(
 
     return TeamRunOutput(
         content=task_result.content,
+        requirements=_map_paused_requirements(task_result.data) if task_result.is_input_required else None,
         run_id=task_result.task_id,
         session_id=task_result.context_id,
         team_id=team_id,
         user_id=user_id,
+        status=_map_task_status_to_run_status(task_result.status),
         images=images if images else None,
         videos=videos if videos else None,
         audio=audio if audio else None,
@@ -242,6 +386,8 @@ async def map_stream_events_to_team_run_events(
     run_id: Optional[str] = None
     session_id: Optional[str] = None
     accumulated_content = ""
+    final_content: Optional[str] = None
+    run_started = False
 
     async for event in stream:
         # Capture IDs from events
@@ -252,11 +398,36 @@ async def map_stream_events_to_team_run_events(
 
         # Map event types
         if event.event_type == "working":
-            yield TeamRunStartedEvent(
+            # The server reports "working" for every step of the run; the run starts once
+            if not run_started:
+                run_started = True
+                yield TeamRunStartedEvent(
+                    run_id=run_id,
+                    session_id=session_id,
+                    team_id=team_id,
+                )
+
+        elif event.event_type == "tool_call_started":
+            yield TeamToolCallStartedEvent(
+                tool=_map_tool_execution(event.metadata),
                 run_id=run_id,
                 session_id=session_id,
                 team_id=team_id,
             )
+
+        elif event.event_type == "tool_call_completed":
+            yield TeamToolCallCompletedEvent(
+                tool=_map_tool_execution(event.metadata),
+                run_id=run_id,
+                session_id=session_id,
+                team_id=team_id,
+            )
+
+        elif event.event_type == "artifact" or (event.event_type == "content" and not event.content):
+            # The complete response, sent once the agent is done writing it. Structured
+            # content has no text chunks, and is given as its JSON string.
+            if event.content or event.data is not None:
+                final_content = event.content or json.dumps(event.data)
 
         elif event.is_content and event.content:
             accumulated_content += event.content
@@ -266,13 +437,50 @@ async def map_stream_events_to_team_run_events(
                 session_id=session_id,
                 team_id=team_id,
             )
+            # A single message is the whole response: there is no final event to follow
+            if event.is_final:
+                yield TeamRunCompletedEvent(
+                    content=accumulated_content,
+                    metadata=event.metadata,
+                    run_id=run_id,
+                    session_id=session_id,
+                    team_id=team_id,
+                )
+                break
 
         elif event.is_final:
+            if event.status in ("failed", "rejected"):
+                yield TeamRunErrorEvent(
+                    content=event.content or "Run failed",
+                    run_id=run_id,
+                    session_id=session_id,
+                    team_id=team_id,
+                )
+                break
+
+            if event.status == "canceled":
+                yield TeamRunCancelledEvent(
+                    reason=event.content,
+                    run_id=run_id,
+                    session_id=session_id,
+                    team_id=team_id,
+                )
+                break
+
+            if event.status in ("input-required", "auth-required"):
+                yield TeamRunPausedEvent(
+                    content=event.content,
+                    requirements=_map_paused_requirements(event.data),
+                    run_id=run_id,
+                    session_id=session_id,
+                    team_id=team_id,
+                )
+                break
+
             # final=true marks the end of the stream; forward any metadata the
             # server attached to it onto the completed event.
-            final_content = event.content if event.content else accumulated_content
             yield TeamRunCompletedEvent(
-                content=final_content,
+                content=final_content or event.content or accumulated_content,
                 metadata=event.metadata,
                 run_id=run_id,
                 session_id=session_id,
@@ -283,7 +491,7 @@ async def map_stream_events_to_team_run_events(
         # Some A2A servers (e.g. Google ADK) close the stream without a final event;
         # emit a terminal event so consumers always see a completed run.
         yield TeamRunCompletedEvent(
-            content=accumulated_content,
+            content=final_content or accumulated_content,
             run_id=run_id,
             session_id=session_id,
             team_id=team_id,
@@ -323,10 +531,12 @@ def map_task_result_to_workflow_run_output(
 
     return WorkflowRunOutput(
         content=task_result.content,
+        step_requirements=_map_paused_step_requirements(task_result.data) if task_result.is_input_required else None,
         run_id=task_result.task_id,
         session_id=task_result.context_id,
         workflow_id=workflow_id,
         user_id=user_id,
+        status=_map_task_status_to_run_status(task_result.status),
         images=images if images else None,
         videos=videos if videos else None,
         audio=audio if audio else None,
@@ -353,6 +563,8 @@ async def map_stream_events_to_workflow_run_events(
     run_id: Optional[str] = None
     session_id: Optional[str] = None
     accumulated_content = ""
+    final_content: Optional[str] = None
+    run_started = False
 
     async for event in stream:
         # Capture IDs from events
@@ -363,11 +575,20 @@ async def map_stream_events_to_workflow_run_events(
 
         # Map event types
         if event.event_type == "working":
-            yield WorkflowStartedEvent(
-                run_id=run_id,
-                session_id=session_id,
-                workflow_id=workflow_id,
-            )
+            # The server reports "working" for every step of the run; the run starts once
+            if not run_started:
+                run_started = True
+                yield WorkflowStartedEvent(
+                    run_id=run_id,
+                    session_id=session_id,
+                    workflow_id=workflow_id,
+                )
+
+        elif event.event_type == "artifact" or (event.event_type == "content" and not event.content):
+            # The complete response, sent once the agent is done writing it. Structured
+            # content has no text chunks, and is given as its JSON string.
+            if event.content or event.data is not None:
+                final_content = event.content or json.dumps(event.data)
 
         elif event.is_content and event.content:
             accumulated_content += event.content
@@ -378,13 +599,49 @@ async def map_stream_events_to_workflow_run_events(
                 session_id=session_id,
                 agent_id=workflow_id,
             )
+            # A single message is the whole response: there is no final event to follow
+            if event.is_final:
+                yield WorkflowCompletedEvent(
+                    content=accumulated_content,
+                    metadata=event.metadata,
+                    run_id=run_id,
+                    session_id=session_id,
+                    workflow_id=workflow_id,
+                )
+                break
 
         elif event.is_final:
+            if event.status in ("failed", "rejected"):
+                yield WorkflowErrorEvent(
+                    error=event.content or "Run failed",
+                    run_id=run_id,
+                    session_id=session_id,
+                    workflow_id=workflow_id,
+                )
+                break
+
+            if event.status == "canceled":
+                yield WorkflowCancelledEvent(
+                    reason=event.content,
+                    run_id=run_id,
+                    session_id=session_id,
+                    workflow_id=workflow_id,
+                )
+                break
+
+            if event.status in ("input-required", "auth-required"):
+                yield WorkflowPausedEvent(
+                    step_requirements=_map_paused_step_requirements(event.data),
+                    run_id=run_id,
+                    session_id=session_id,
+                    workflow_id=workflow_id,
+                )
+                break
+
             # final=true marks the end of the stream; forward any metadata the
             # server attached to it onto the completed event.
-            final_content = event.content if event.content else accumulated_content
             yield WorkflowCompletedEvent(
-                content=final_content,
+                content=final_content or event.content or accumulated_content,
                 metadata=event.metadata,
                 run_id=run_id,
                 session_id=session_id,
@@ -395,7 +652,7 @@ async def map_stream_events_to_workflow_run_events(
         # Some A2A servers (e.g. Google ADK) close the stream without a final event;
         # emit a terminal event so consumers always see a completed run.
         yield WorkflowCompletedEvent(
-            content=accumulated_content,
+            content=final_content or accumulated_content,
             run_id=run_id,
             session_id=session_id,
             workflow_id=workflow_id,

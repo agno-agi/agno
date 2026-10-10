@@ -72,6 +72,33 @@ async def test_remote_team_a2a_forwards_metadata() -> None:
     }
 
 
+@pytest.mark.asyncio
+async def test_remote_agent_a2a_continue_run_sends_requirements_to_task() -> None:
+    """RemoteAgent.acontinue_run(protocol="a2a") must send the resolved requirements to the paused task."""
+    remote_agent = RemoteAgent(base_url="http://fake-host", agent_id="test_agent", protocol="a2a")
+
+    mock_client = MagicMock()
+    mock_client.send_message = AsyncMock(return_value=MagicMock())
+    remote_agent.a2a_client = mock_client
+
+    requirement = MagicMock()
+    requirement.to_dict.return_value = {"id": "req-1", "confirmation": True}
+
+    await remote_agent.acontinue_run(
+        run_id="run-123",
+        requirements=[requirement],
+        stream=False,
+        session_id="session-abc",
+    )
+
+    mock_client.send_message.assert_called_once()
+    assert mock_client.send_message.call_args.kwargs["task_id"] == "run-123"
+    assert mock_client.send_message.call_args.kwargs["context_id"] == "session-abc"
+    assert mock_client.send_message.call_args.kwargs["data"] == {
+        "requirements": [{"id": "req-1", "confirmation": True}]
+    }
+
+
 def test_remote_agent_role_is_a_property() -> None:
     """RemoteAgent.role must resolve to the configured role string, not a bound method.
 

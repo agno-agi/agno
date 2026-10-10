@@ -697,7 +697,7 @@ class TestInterfaceSessionWriteOwnership:
 
     def _a2a_send(self, client, text, user_id, context_id):
         return client.post(
-            f"/a2a/agents/{history_agent_id()}/v1/message:send",
+            f"/a2a/agents/{history_agent_id()}",
             json={
                 "jsonrpc": "2.0",
                 "id": "1",

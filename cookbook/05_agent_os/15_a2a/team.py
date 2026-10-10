@@ -7,7 +7,7 @@ routes live under `/a2a/teams/{id}`, not the Agent namespace.
 
 Prerequisites: OPENAI_API_KEY and the `agno[a2a]` extra
 Run: .venvs/demo/bin/python cookbook/05_agent_os/15_a2a/team.py
-Try: With the server running, rerun this file with --demo to call POST http://127.0.0.1:7779/a2a/teams/research-team/v1/message:send
+Try: With the server running, rerun this file with --demo to call POST http://127.0.0.1:7779/a2a/teams/research-team
 """
 
 import asyncio
