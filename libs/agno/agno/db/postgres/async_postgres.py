@@ -21,6 +21,15 @@ from agno.db.postgres.utils import (
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
 )
+from agno.db.schemas.authz import (
+    AUTHZ_AUDIT,
+    AUTHZ_DECISIONS,
+    AUTHZ_GROUPING,
+    AUTHZ_POLICY,
+    AUTHZ_ROLES,
+    AUTHZ_TABLE_NAME_ATTRS,
+    AUTHZ_USERS,
+)
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -28,6 +37,7 @@ from agno.db.schemas.service_accounts import (
     resolve_service_account_sort_column,
     validate_service_account_update,
 )
+from agno.db.sql import authz as authz_sql
 from agno.db.utils import (
     HISTORY_SKIP_STATUSES,
     SessionRunObjectCache,
@@ -422,6 +432,13 @@ class AsyncPostgresDb(AsyncBaseDb):
             raise
 
     async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
+        if table_type == "transcripts":
+            return await self._get_or_create_table(
+                table_name=self.transcripts_table_name,
+                table_type="transcripts",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
         if table_type == "sessions":
             self.session_table = await self._get_or_create_table(
                 table_name=self.session_table_name,
@@ -560,6 +577,13 @@ class AsyncPostgresDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.service_accounts_table
+
+        if table_type in AUTHZ_TABLE_NAME_ATTRS:
+            return await self._get_or_create_table(
+                table_name=getattr(self, AUTHZ_TABLE_NAME_ATTRS[table_type]),
+                table_type=table_type,
+                create_table_if_not_found=create_table_if_not_found,
+            )
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -1034,7 +1058,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
-            return False
+            raise e
 
     async def delete_runs(self, run_ids: List[str]) -> None:
         """Delete all given runs from the runs table.
@@ -1055,6 +1079,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Error deleting runs: {str(e)}")
+            raise e
 
     # -- Session methods --
     async def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
@@ -1076,6 +1101,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             if table is None:
                 return False
             runs_table = await self._get_table(table_type="runs")
+            transcripts_table = await self._get_table(table_type="transcripts")
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
@@ -1090,6 +1116,11 @@ class AsyncPostgresDb(AsyncBaseDb):
                 # Also delete the runs belonging to the session
                 if runs_table is not None:
                     await sess.execute(runs_table.delete().where(runs_table.c.session_id == session_id))
+                # And external-agent transcripts, which also hold the conversation verbatim.
+                if transcripts_table is not None:
+                    await sess.execute(
+                        transcripts_table.delete().where(transcripts_table.c.agno_session_id == session_id)
+                    )
 
                 log_debug(f"Successfully deleted session with session_id: {session_id} in table {table.name}")
 
@@ -1119,6 +1150,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             if table is None:
                 return
             runs_table = await self._get_table(table_type="runs")
+            transcripts_table = await self._get_table(table_type="transcripts")
 
             async with self.async_session_factory() as sess, sess.begin():
                 # The ids a user_id-scoped delete is allowed to touch. The
@@ -1144,6 +1176,11 @@ class AsyncPostgresDb(AsyncBaseDb):
                     if user_id is not None:
                         runs_delete_stmt = runs_delete_stmt.where(runs_table.c.user_id == user_id)
                     await sess.execute(runs_delete_stmt)
+                # And external-agent transcripts, which also hold the conversation verbatim.
+                if transcripts_table is not None:
+                    await sess.execute(
+                        transcripts_table.delete().where(transcripts_table.c.agno_session_id.in_(cascade_ids))
+                    )
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")  # type: ignore
 
@@ -4539,9 +4576,10 @@ class AsyncPostgresDb(AsyncBaseDb):
         expected_attempt: Optional[int] = None,
         user_id: Optional[str] = None,
         content_if_absent: Optional[str] = None,
+        session_data: Optional[Dict[str, Any]] = None,
     ) -> "RunPersistOutcome":
         """Atomically patch fields of ONE run - ported to the denormalized
-        runs table (v3.0). Same signature and typed-outcome contract as the
+        runs table (v3.0). Same typed-outcome contract as the
         session-JSON original; the implementation is now a single row-locked
         UPDATE on agno_runs instead of a session-blob rewrite, which is the
         shape the P1 fencing design always wanted.
@@ -4551,6 +4589,9 @@ class AsyncPostgresDb(AsyncBaseDb):
         reclaimed job's later attempt owns the row). Terminal guard: a
         completed/cancelled run is never rewritten to a different status.
         The indexed ``status`` column is kept in sync with run_data.
+        Optional session_data replaces session metadata in the same transaction,
+        only after the run fence accepts the write. A failed session write rolls
+        back the run update as well.
         Exceptions PROPAGATE - a DB failure must never read as a
         fallback-permitting outcome.
         """
@@ -4566,6 +4607,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             runs_table = await self._get_table(table_type="runs")
             if runs_table is None:
                 return RunPersistOutcome.MISSING
+            sessions_table = None
+            if session_data is not None:
+                sessions_table = await self._get_table(table_type="sessions")
+                if sessions_table is None:
+                    raise RuntimeError("Cannot persist run metadata without its session table")
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     row = (
@@ -4607,6 +4653,16 @@ class AsyncPostgresDb(AsyncBaseDb):
                     if fields.get("status") is not None:
                         values["status"] = fields["status"]
                     await sess.execute(update(runs_table).where(runs_table.c.run_id == run_id).values(**values))
+                    if sessions_table is not None:
+                        session_write = await sess.execute(
+                            update(sessions_table)
+                            .where(sessions_table.c.session_id == session_id)
+                            .where((sessions_table.c.user_id == user_id) | sessions_table.c.user_id.is_(None))
+                            .values(session_data=sanitize_postgres_strings(session_data), updated_at=int(time.time()))
+                            .returning(sessions_table.c.session_id)
+                        )
+                        if session_write.scalar_one_or_none() is None:
+                            raise RuntimeError("Cannot persist run metadata without its owned session")
                     return RunPersistOutcome.UPDATED
         except Exception as e:
             log_warning(f"Error updating run in runs table: {e}")
@@ -5432,8 +5488,11 @@ class AsyncPostgresDb(AsyncBaseDb):
                 results = (await sess.execute(stmt)).fetchall()
                 return [dict(row._mapping) for row in results], total
         except Exception as e:
-            log_debug(f"Error listing approvals: {e}")
-            return [], 0
+            # Raise rather than return an empty page: the continue-run approval gate reads
+            # "no pending approval" as permission to continue, so a failed read must not
+            # look like one.
+            log_error(f"Error listing approvals: {e}")
+            raise e
 
     async def update_approval(
         self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
@@ -5725,3 +5784,279 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error deleting service account: {e}")
             return False
+
+    # --- Authorization ---
+    # Async twins of the sync Postgres authz delegations: each resolves its table via the
+    # normal schema-aware _get_table path (created on first use, honouring configured
+    # schema/table-name overrides) and delegates to the shared agno.db.sql.authz async
+    # functions over this backend's AsyncEngine.
+
+    async def get_authz_policies(self, roles: List[str]) -> List[Tuple[str, str, str, str]]:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        return await authz_sql.aget_policies(self.db_engine, table, roles)
+
+    async def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        return await authz_sql.aget_role_policies(self.db_engine, table, role)
+
+    async def set_authz_role_policies(self, role: str, rows: List[Tuple[str, str, str]]) -> None:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        await authz_sql.aset_role_policies(self.db_engine, table, role, rows)
+
+    async def upsert_authz_policy(self, *, role: str, resource: str, action: str, effect: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        await authz_sql.aupsert_policy(
+            self.db_engine, table, role=role, resource=resource, action=action, effect=effect
+        )
+
+    async def delete_authz_policy(
+        self, *, role: str, resource: Optional[str] = None, action: Optional[str] = None
+    ) -> None:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        await authz_sql.adelete_policy(self.db_engine, table, role=role, resource=resource, action=action)
+
+    async def get_authz_direct_roles(self, subject: str) -> List[str]:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_sql.aget_direct_roles(self.db_engine, table, subject)
+
+    async def get_authz_direct_roles_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_sql.aget_direct_roles_many(self.db_engine, table, subjects)
+
+    async def list_authz_role_subjects(self, role: str) -> List[str]:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_sql.aget_role_subjects(self.db_engine, table, role)
+
+    async def authz_name_is_role(self, name: str) -> bool:
+        policy = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        grouping = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_sql.aname_is_role(self.db_engine, policy, grouping, name)
+
+    async def assign_authz_role(self, subject: str, role: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        await authz_sql.aassign_role(self.db_engine, table, subject, role)
+
+    async def unassign_authz_role(self, subject: str, role: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        await authz_sql.aunassign_role(self.db_engine, table, subject, role)
+
+    async def replace_authz_subject_roles(self, subject: str, role: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        await authz_sql.areplace_subject_roles(self.db_engine, table, subject, role)
+
+    async def list_authz_roles(self) -> List[str]:
+        policy = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        grouping = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_sql.alist_roles(self.db_engine, policy, grouping)
+
+    async def delete_authz_role(self, role: str) -> None:
+        policy = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        grouping = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        meta = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        await authz_sql.adelete_role(self.db_engine, policy, grouping, meta, role)
+
+    async def get_authz_role_meta(self, slug: str) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        return await authz_sql.aget_role_meta(self.db_engine, table, slug)
+
+    async def list_authz_role_meta(self) -> List[Dict[str, Any]]:
+        table = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        return await authz_sql.alist_role_meta(self.db_engine, table)
+
+    async def upsert_authz_role_meta(self, slug: str, values: Dict[str, Any]) -> None:
+        table = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        await authz_sql.aupsert_role_meta(self.db_engine, table, slug, values)
+
+    async def delete_authz_role_meta(self, slug: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        await authz_sql.adelete_role_meta(self.db_engine, table, slug)
+
+    async def get_authz_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.aget_user(self.db_engine, table, user_id)
+
+    async def list_authz_users(
+        self,
+        limit: int = 1000,
+        offset: int = 0,
+        include_disabled: bool = True,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+    ) -> List[Dict[str, Any]]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.alist_users(
+            self.db_engine, table, limit, offset, include_disabled, search, sort_by, order
+        )
+
+    async def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.acount_users(self.db_engine, table, include_disabled, search)
+
+    async def count_authz_users_by_status(self) -> Dict[str, int]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.acount_users_by_status(self.db_engine, table)
+
+    async def list_authz_user_ids(self, include_disabled: bool = True) -> List[str]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.alist_user_ids(self.db_engine, table, include_disabled)
+
+    async def count_authz_users_by_day(
+        self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+    ) -> List[Dict[str, int]]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.acount_users_by_day(self.db_engine, table, starting_at, ending_before)
+
+    async def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        await authz_sql.aupsert_user(self.db_engine, table, user_id, values)
+
+    async def set_authz_user_disabled(self, user_id: str, disabled: bool) -> None:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        await authz_sql.aset_user_disabled(self.db_engine, table, user_id, disabled)
+
+    async def delete_authz_user(self, user_id: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        await authz_sql.adelete_user(self.db_engine, table, user_id)
+
+    async def is_authz_user_disabled(self, user_id: str) -> bool:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.ais_user_disabled(self.db_engine, table, user_id)
+
+    async def record_authz_audit_event(self, values: Dict[str, Any]) -> None:
+        table = await self._get_table(table_type=AUTHZ_AUDIT, create_table_if_not_found=True)
+        await authz_sql.arecord_event(self.db_engine, table, values)
+
+    async def record_authz_decision(self, values: Dict[str, Any]) -> None:
+        table = await self._get_table(table_type=AUTHZ_DECISIONS, create_table_if_not_found=True)
+        await authz_sql.arecord_event(self.db_engine, table, values)
+
+    async def read_authz_audit_events(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+        decisions: bool = False,
+    ) -> List[Dict[str, Any]]:
+        table_type = AUTHZ_DECISIONS if decisions else AUTHZ_AUDIT
+        columns = ["actor", "action", "target"]
+        table = await self._get_table(table_type=table_type, create_table_if_not_found=True)
+        return await authz_sql.aread_events(
+            self.db_engine, table, limit, offset, search, sort_by, order, search_columns=columns
+        )
+
+    async def count_authz_audit_events(self, search: Optional[str] = None, decisions: bool = False) -> int:
+        table_type = AUTHZ_DECISIONS if decisions else AUTHZ_AUDIT
+        columns = ["actor", "action", "target"]
+        table = await self._get_table(table_type=table_type, create_table_if_not_found=True)
+        return await authz_sql.acount_events(self.db_engine, table, search, search_columns=columns)
+
+    # --- External agent transcripts ---
+
+    async def append_transcript_entries(
+        self,
+        framework: str,
+        project_key: str,
+        session_id: str,
+        entries: List[Dict[str, Any]],
+        agno_session_id: str,
+        subpath: Optional[str] = None,
+    ) -> None:
+        if not entries:
+            return
+        from sqlalchemy.dialects.postgresql import insert as transcript_insert
+
+        from agno.db.transcripts import transcript_lock_id, transcript_rows
+
+        table = await self._get_table("transcripts", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Could not create transcript table")
+        stmt = transcript_insert(table).on_conflict_do_nothing(
+            index_elements=["framework", "project_key", "session_id", "subpath", "entry_uuid"]
+        )
+        async with self.async_session_factory() as sess, sess.begin():
+            await sess.execute(
+                select(func.pg_advisory_xact_lock(transcript_lock_id(framework, project_key, session_id, subpath)))
+            )
+            previous = await sess.execute(
+                select(func.max(table.c.position)).where(
+                    table.c.framework == framework,
+                    table.c.project_key == project_key,
+                    table.c.session_id == session_id,
+                    table.c.subpath == (subpath or ""),
+                )
+            )
+            rows = transcript_rows(
+                framework, project_key, session_id, subpath, agno_session_id, entries, previous.scalar() or 0
+            )
+            await sess.execute(stmt, rows)
+
+    async def get_transcript_entries(
+        self, framework: str, project_key: str, session_id: str, subpath: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        import json
+
+        table = await self._get_table("transcripts")
+        if table is None:
+            return []
+        stmt = (
+            select(table.c.entry)
+            .where(
+                table.c.framework == framework,
+                table.c.project_key == project_key,
+                table.c.session_id == session_id,
+                table.c.subpath == (subpath or ""),
+            )
+            .order_by(table.c.position)
+        )
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(stmt)
+            return [json.loads(row[0]) for row in result.fetchall()]
+
+    async def list_transcript_sessions(self, framework: str, project_key: str) -> List[Dict[str, Any]]:
+        table = await self._get_table("transcripts")
+        if table is None:
+            return []
+        stmt = (
+            select(table.c.session_id, func.max(table.c.created_at).label("mtime"))
+            .where(table.c.framework == framework, table.c.project_key == project_key, table.c.subpath == "")
+            .group_by(table.c.session_id)
+        )
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(stmt)
+            return [dict(row._mapping) for row in result.fetchall()]
+
+    async def list_transcript_subpaths(self, framework: str, project_key: str, session_id: str) -> List[str]:
+        table = await self._get_table("transcripts")
+        if table is None:
+            return []
+        stmt = (
+            select(table.c.subpath)
+            .where(
+                table.c.framework == framework,
+                table.c.project_key == project_key,
+                table.c.session_id == session_id,
+                table.c.subpath != "",
+            )
+            .distinct()
+            .order_by(table.c.subpath)
+        )
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(stmt)
+            return [row[0] for row in result.fetchall()]
+
+    async def delete_transcript(
+        self, framework: str, project_key: str, session_id: str, subpath: Optional[str] = None
+    ) -> None:
+        table = await self._get_table("transcripts")
+        if table is None:
+            return
+        stmt = table.delete().where(
+            table.c.framework == framework, table.c.project_key == project_key, table.c.session_id == session_id
+        )
+        if subpath is not None:
+            stmt = stmt.where(table.c.subpath == subpath)
+        async with self.async_session_factory() as sess, sess.begin():
+            await sess.execute(stmt)

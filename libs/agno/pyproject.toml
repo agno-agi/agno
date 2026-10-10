@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "3.0.11"
+version = "3.1.2"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -77,8 +77,10 @@ dev = [
 ]
 
 # AgentOS server bundle
-os = ["fastapi", "python-multipart>=0.0.18", "uvicorn", "websockets", "sqlalchemy", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "agno[scheduler]"]
+os = ["fastapi", "python-multipart>=0.0.18", "uvicorn", "websockets", "sqlalchemy[asyncio]", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "agno[scheduler]"]
 mcp = ["mcp>=2.1.0,<3.0.0", "fastmcp>=4.0.0,<5"]
+# Optional extra for fine-grained / relationship-based authorization (ReBAC) via OpenFGA.
+fga = ["openfga-sdk>=0.9"]
 scheduler = ["croniter>=1.3", "pytz>=2023.3"]
 
 # Dependencies for Telemetry
@@ -117,6 +119,7 @@ cel = ["cel-python"]
 
 # Dependencies for Tools
 agentql = ["agentql"]
+anakin = []  # uses httpx, already a core dependency
 apify = ["apify-client"]
 arxiv = ["arxiv"]
 brave = ["brave-search"]
@@ -193,13 +196,13 @@ async-mongo = ["pymongo>=4.9", "motor"]
 async-postgres = ["asyncpg"]
 firestore = ["google-cloud-firestore"]
 gcs = ["google-cloud-storage"]
-mysql = ["pymysql", "asyncmy"]
-postgres = ["sqlalchemy", "psycopg[binary]"]
+mysql = ["sqlalchemy[asyncio]", "pymysql", "asyncmy"]
+postgres = ["sqlalchemy[asyncio]", "psycopg[binary]"]
 pages = ["agno[postgres]", "agno[pgvector]", "dnspython>=2.6.1", "beautifulsoup4", "regex>=2024.5.15"]
 redis = ["redis>=4.5.4", "redisvl>=0.12.1"]  # >=4.5.4: safe cancellation of blocking commands (XREAD in event stream tail)
 s3 = ["boto3", "aioboto3"]
-sql = ["sqlalchemy"]
-sqlite = ["sqlalchemy", "aiosqlite"]
+sql = ["sqlalchemy[asyncio]"]
+sqlite = ["sqlalchemy[asyncio]", "aiosqlite"]
 valkey = ["valkey-glide-sync>=2.1.0"]
 
 # Dependencies for Vector databases
@@ -297,6 +300,7 @@ models = [
 # All tools
 tools = [
   "agno[agentql]",
+  "agno[anakin]",
   "agno[apify]",
   "agno[arxiv]",
   # "agno[brave]",  # Excluded: brave-search 0.2.0 ships invalid metadata (bad httpx specifier) that uv cannot parse; test_setup.sh installs it with --no-deps
@@ -423,6 +427,7 @@ embedders = [
 
 # All libraries for testing
 tests = [
+    "claude-agent-sdk>=0.2.148",
   "agno[pages]",
     "agno[a2a]",
     "agno[slack]",
@@ -449,7 +454,7 @@ integration-tests = [
     "exa_py>=2.0.0",
     "ddgs",
     "yfinance",
-    "sqlalchemy",
+    "sqlalchemy[asyncio]",
     "Pillow",
     "agno[mcp]",
     "PyJWT",
@@ -488,10 +493,11 @@ demo = [
     "pillow",
     "psycopg[binary]",
     "pypdf",
-    "sqlalchemy",
+    "sqlalchemy[asyncio]",
     "yfinance",
     "youtube-transcript-api",
     "claude-agent-sdk",
+    "openai-codex",
     "langgraph",
     "langchain-openai",
     "dspy",
@@ -635,6 +641,8 @@ module = [
   "newspaper.*",
   "numpy.*",
   "ollama.*",
+  "openai_codex.*",
+  "openfga_sdk.*",
   "openpyxl.*",
   "openai.*",
   "opensearchpy.*",

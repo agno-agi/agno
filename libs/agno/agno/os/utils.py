@@ -1330,25 +1330,72 @@ def draft_preview_identity(request: Any) -> tuple:
     """(actor, privileged) for the draft-preview gate.
 
     ``privileged`` is True only for a caller allowed to preview anyone's
-    draft: the admin scope, or no authentication at all (no request, or no
-    auth middleware ran). A plain authenticated caller keeps its raw
-    identity even when ``user_isolation`` is off - that flag widens reads,
-    never the right to run another owner's draft.
+    draft: an admin, or no authentication at all (no request, or no auth
+    middleware ran). A plain authenticated caller keeps its raw identity
+    even when ``user_isolation`` is off - that flag widens reads, never the
+    right to run another owner's draft.
+
+    "Admin" is decided the way every other gate decides it: the token's admin
+    scope counts only when the caller's scopes are their authority
+    (:func:`~agno.os.middleware.user_scope.caller_is_admin`), and under managed
+    roles an admin ROLE counts (the store's ``can_manage``, as on the ``/authz``
+    gate). Under a managed-roles or ReBAC plane a JWT's ``scopes`` claim is inert
+    everywhere else, so reading it raw here let any validly-signed token carrying
+    ``agent_os:admin`` preview every owner's drafts while being denied every
+    other admin action. Prefer :func:`adraft_preview_identity` on an async path:
+    the store may be bound to an async database, which its sync read refuses (a
+    managed-role admin then reads as a plain caller here).
     """
     if request is None:
         return None, True
-    from agno.os.middleware.user_scope import _has_admin_scope
+    from agno.os.middleware.user_scope import caller_is_admin
 
     user_id = getattr(request.state, "user_id", None)
     scopes = getattr(request.state, "scopes", None)
-    admin_scope_raw = getattr(request.state, "admin_scope", None)
-    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
     if scopes is None and user_id is None:
         # No auth middleware ran: authorization is off.
         return None, True
-    if _has_admin_scope(list(scopes or []), admin_scope=admin_scope):
+    if caller_is_admin(request):
         return None, True
+    role_store = _deciding_role_store(request)
+    if role_store is not None:
+        try:
+            if role_store.can_manage(user_id, getattr(request.state, "claims", None) or {}):
+                return None, True
+        except Exception:
+            pass  # an async-bound store refuses a sync read; a read failure is never a privilege
     return (user_id if isinstance(user_id, str) else None), False
+
+
+async def adraft_preview_identity(request: Any) -> tuple:
+    """Async twin of :func:`draft_preview_identity`: the managed-admin check awaits the store, so
+    it works against an async database."""
+    if request is None:
+        return None, True
+    from agno.os.middleware.user_scope import caller_is_admin
+
+    user_id = getattr(request.state, "user_id", None)
+    scopes = getattr(request.state, "scopes", None)
+    if scopes is None and user_id is None:
+        return None, True
+    if caller_is_admin(request):
+        return None, True
+    role_store = _deciding_role_store(request)
+    if role_store is not None:
+        try:
+            if await role_store.acan_manage(user_id, getattr(request.state, "claims", None) or {}):
+                return None, True
+        except Exception:
+            pass
+    return (user_id if isinstance(user_id, str) else None), False
+
+
+def _deciding_role_store(request: Any) -> Any:
+    """The Authorization object on the app, only when its managed-role engine is the plane that
+    decides (``roles_decide``); under an authorization_provider= override roles never took part."""
+    state = getattr(getattr(request, "app", None), "state", None)
+    role_store = getattr(state, "role_store", None) if state is not None else None
+    return role_store if role_store is not None and getattr(role_store, "roles_decide", False) else None
 
 
 def may_read_draft_configs(
@@ -1981,6 +2028,11 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
                     user_id_claim=kwargs.get("user_id_claim", "sub"),
                     session_id_claim=kwargs.get("session_id_claim", "session_id"),
                     audience_claim=kwargs.get("audience_claim", "aud"),
+                    # Thread the issuer pin so the WebSocket validator enforces it too --
+                    # otherwise a token from an untrusted issuer that REST rejects would be
+                    # accepted on the WS handshake (the pin held only on the HTTP path).
+                    issuer=kwargs.get("issuer"),
+                    issuer_claim=kwargs.get("issuer_claim", "iss"),
                 )
             except Exception as e:
                 log_warning(f"Could not lazily construct JWTValidator for WebSocket auth: {e}")
@@ -2019,38 +2071,56 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
     return blank
 
 
-def update_cors_middleware(app: FastAPI, new_origins: list):
-    existing_origins: List[str] = []
+def _is_cors_middleware(middleware: Any) -> bool:
+    return isinstance(middleware.cls, type) and issubclass(middleware.cls, CORSMiddleware)
 
-    # TODO: Allow more options where CORS is properly merged and user can disable this behaviour
 
-    # Extract existing origins from current CORS middleware
-    for middleware in app.user_middleware:
-        if middleware.cls == CORSMiddleware:
-            if hasattr(middleware, "kwargs"):
-                origins_value = middleware.kwargs.get("allow_origins", [])
-                if isinstance(origins_value, list):
-                    existing_origins = origins_value
-                else:
-                    existing_origins = []
-            break
-    # Merge origins
-    merged_origins = list(set(new_origins + existing_origins))
-    final_origins = [origin for origin in merged_origins if origin != "*"]
+def update_cors_middleware(
+    app: FastAPI, new_origins: list, *, origin_regex: Optional[str] = None, merge_existing: bool = True
+):
+    from agno.os.middleware.cors import OriginPolicy, OriginPolicyCORSMiddleware
 
-    # Remove existing CORS
-    app.user_middleware = [m for m in app.user_middleware if m.cls != CORSMiddleware]
+    origins = list(new_origins)
+    patterns = [origin_regex] if origin_regex is not None else []
+    if merge_existing:
+        for middleware in app.user_middleware:
+            if not _is_cors_middleware(middleware):
+                continue
+            existing_policy = middleware.kwargs.get("origin_policy")
+            if isinstance(existing_policy, OriginPolicy):
+                origins.extend(existing_policy.origins)
+                patterns.extend(existing_policy.patterns)
+                continue
+            existing_origins = middleware.kwargs.get("allow_origins", [])
+            if isinstance(existing_origins, (list, tuple)):
+                origins.extend(existing_origins)
+            existing_pattern = middleware.kwargs.get("allow_origin_regex")
+            if isinstance(existing_pattern, str):
+                patterns.append(existing_pattern)
+    final_origins = list(dict.fromkeys(origin for origin in origins if origin != "*"))
+    policy = OriginPolicy(final_origins, list(dict.fromkeys(patterns)))
+    app.user_middleware = [m for m in app.user_middleware if not _is_cors_middleware(m)]
     app.middleware_stack = None
-
-    # Add updated CORS
-    app.add_middleware(
-        CORSMiddleware,  # type: ignore
-        allow_origins=final_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["*"],
-    )
+    if len(policy.patterns) > 1:
+        app.add_middleware(
+            OriginPolicyCORSMiddleware,
+            origin_policy=policy,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+            expose_headers=["*"],
+        )
+    else:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=final_origins,
+            allow_origin_regex=policy.patterns[0] if policy.patterns else None,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+            expose_headers=["*"],
+        )
+    return policy
 
 
 def flatten_routes(routes: Sequence[Any]) -> List[Any]:
@@ -2312,6 +2382,9 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
     registry.add_schema(getattr(agent, "input_schema", None))
     registry.add_schema(getattr(agent, "output_schema", None))
     registry.add_db(getattr(agent, "db", None))
+    for filesystem, _read_only in getattr(agent, "filesystems", []):
+        filesystem_backend = getattr(filesystem, "backend", None)
+        registry.add_db(getattr(filesystem_backend, "db", None))
     _collect_components_from_knowledge(getattr(agent, "knowledge", None), registry)
     # A named LearningMachine on a code-defined component is a registry
     # resource: its stored config references it by name, so the registry the
@@ -2804,7 +2877,7 @@ async def resolve_agent(
 
         scoped_user_id = get_scoped_user_id(request)
     # An explicit draft version is a control-plane preview: owner/admin only.
-    preview_actor, preview_privileged = draft_preview_identity(request)
+    preview_actor, preview_privileged = await adraft_preview_identity(request)
     if not allow_draft_preview(db, agent_id, version, preview_actor, privileged=preview_privileged):
         # Byte-identical to the route's plain not-found: the denial must not
         # read differently from the component being absent.
@@ -2859,6 +2932,11 @@ async def resolve_agent(
 
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
+    if isinstance(agent, Agent) and request is not None and (agent.filesystem or agent.tools):
+        # An agent rebuilt from the database gets the OS isolation policy like a configured one.
+        from agno.agent import _init as agent_init
+
+        agent_init.apply_filesystem_user_isolation(agent, bool(getattr(request.state, "user_isolation_enabled", False)))
     return agent
 
 
@@ -2883,7 +2961,7 @@ async def resolve_team(
 
         scoped_user_id = get_scoped_user_id(request)
     # An explicit draft version is a control-plane preview: owner/admin only.
-    preview_actor, preview_privileged = draft_preview_identity(request)
+    preview_actor, preview_privileged = await adraft_preview_identity(request)
     if not allow_draft_preview(db, team_id, version, preview_actor, privileged=preview_privileged):
         # Byte-identical to the route's plain not-found: the denial must not
         # read differently from the component being absent.
@@ -2962,7 +3040,7 @@ async def resolve_workflow(
 
         scoped_user_id = get_scoped_user_id(request)
     # An explicit draft version is a control-plane preview: owner/admin only.
-    preview_actor, preview_privileged = draft_preview_identity(request)
+    preview_actor, preview_privileged = await adraft_preview_identity(request)
     if not allow_draft_preview(db, workflow_id, version, preview_actor, privileged=preview_privileged):
         # Byte-identical to the route's plain not-found: the denial must not
         # read differently from the component being absent.
