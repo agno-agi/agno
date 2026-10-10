@@ -848,8 +848,14 @@ class ValkeyDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
         create_index_if_not_found: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions matching the given filters.
+
+        Pass ``include_runs=False`` to skip attaching each session's run history —
+        a large, usually-unnecessary read for list views. The runs are untouched
+        in storage; a single ``get_session`` still returns them. Defaults to True
+        to preserve existing behavior.
 
         Args:
             session_type (Optional[SessionType]): The type of session to filter by.
@@ -910,10 +916,18 @@ class ValkeyDb(BaseDb):
             sorted_sessions = apply_sorting(records=filtered_sessions, sort_by=sort_by, sort_order=sort_order)
             sessions = apply_pagination(records=sorted_sessions, limit=limit, page=page)
 
-            # Attach runs from the runs keys, merged with any legacy `runs` blob
-            runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in sessions])
-            for s in sessions:
-                s["runs"] = merge_runs_table_with_legacy_blob(runs_by_session.get(s["session_id"], []), s.get("runs"))
+            # Attach runs from the runs keys, merged with any legacy `runs` blob.
+            # Skipped entirely for list views (include_runs=False): runs are never
+            # surfaced there and the per-key reads are pure overhead.
+            if include_runs:
+                runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in sessions])
+                for s in sessions:
+                    s["runs"] = merge_runs_table_with_legacy_blob(
+                        runs_by_session.get(s["session_id"], []), s.get("runs")
+                    )
+            else:
+                for s in sessions:
+                    s["runs"] = None
 
             if not deserialize:
                 return sessions, len(filtered_sessions)
