@@ -322,7 +322,9 @@ class ClaudeAgent(BaseExternalAgent):
             input = f"{input}{media_prompt_block(staged)}"
         # Earlier turns' attachments come back under their original paths, so Claude can
         # open again a file it was given before, on whichever replica runs this turn.
-        restaged = stage_prior_media(self.cwd, kwargs.get("session"), exclude_run_id=run_id)
+        restaged, moved_note = stage_prior_media(self.cwd, kwargs.get("session"), exclude_run_id=run_id)
+        if moved_note and input is not None:
+            input = f"{input}{moved_note}"
         try:
             async for message in self._aquery_sdk(input, history, streaming=streaming, **kwargs):
                 yield message

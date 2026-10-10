@@ -636,4 +636,22 @@ def test_earlier_attachments_are_restaged_for_later_turns(fake_sdk, tmp_db, tmp_
     assert out.status == RunStatus.completed
     assert seen["exists"] and seen["content"] == b"v1"
     assert "Attached files" not in seen["prompt"], "earlier attachments are not announced again"
+    assert "now at" not in seen["prompt"], "same workspace: the known path still resolves"
     assert not expected.exists(), "re-staged files are removed after the turn"
+
+    # A replica with a different workspace cannot recreate the old path; it names the new one.
+    elsewhere = tmp_path / "replica-b"
+    elsewhere.mkdir()
+    moved_to = elsewhere / ".agno" / "uploads" / first.run_id / "spec.txt"
+
+    async def query_elsewhere(prompt, options):
+        seen.update(prompt=prompt, exists=moved_to.exists())
+        yield SystemMessage("init", {"session_id": options.resume or "sdk-1"})
+        yield ResultMessage(options.resume or "sdk-1", "again")
+
+    monkeypatch.setattr(claude_module._sdk(), "query", query_elsewhere)
+    replica_b = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(elsewhere))
+    assert replica_b.run("read it once more", session_id="s").status == RunStatus.completed
+    assert seen["exists"]
+    assert "have moved" in seen["prompt"] and f"- {moved_to} (was {expected})" in seen["prompt"]
+    assert not moved_to.exists()

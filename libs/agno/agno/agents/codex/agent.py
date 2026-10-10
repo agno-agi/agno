@@ -412,12 +412,12 @@ class CodexAgent(BaseExternalAgent):
         cwd/.agno/uploads/<run_id>/ and named in the prompt. Audio and video are rejected."""
         return accept_media(media)
 
-    def _turn_input(self, sdk: Any, prompt: str, staged: Any) -> Any:
+    def _turn_input(self, sdk: Any, prompt: str, staged: Any, moved_note: str = "") -> Any:
         """The turn input: plain text, or text plus native image items when media was attached."""
         if not staged:
-            return prompt
+            return f"{prompt}{moved_note}"
         files = [item for item in staged if item.kind == "file"]
-        text = f"{prompt}{media_prompt_block(files)}" if files else prompt
+        text = f"{prompt}{media_prompt_block(files)}{moved_note}" if files or moved_note else prompt
         items: List[Any] = [sdk.TextInput(text=text)]
         for item in staged:
             if item.kind == "image" and item.path:
@@ -434,7 +434,7 @@ class CodexAgent(BaseExternalAgent):
         run_id = kwargs.get("run_id") or str(uuid4())
         kwargs["run_id"] = run_id
         kwargs["staged_media"] = stage_media(self.cwd, run_id, media) if media else []
-        restaged = stage_prior_media(self.cwd, kwargs.get("session"), exclude_run_id=run_id)
+        restaged, kwargs["moved_note"] = stage_prior_media(self.cwd, kwargs.get("session"), exclude_run_id=run_id)
         try:
             return await self._arun_adapter_sdk(input, history=history, **kwargs)
         finally:
@@ -449,7 +449,7 @@ class CodexAgent(BaseExternalAgent):
         run_id = kwargs.get("run_id") or str(uuid4())
         kwargs["run_id"] = run_id
         kwargs["staged_media"] = stage_media(self.cwd, run_id, media) if media else []
-        restaged = stage_prior_media(self.cwd, kwargs.get("session"), exclude_run_id=run_id)
+        restaged, kwargs["moved_note"] = stage_prior_media(self.cwd, kwargs.get("session"), exclude_run_id=run_id)
         try:
             async for event in self._arun_adapter_stream_sdk(input, history=history, **kwargs):
                 yield event
@@ -473,7 +473,9 @@ class CodexAgent(BaseExternalAgent):
             thread, resumed = await self._open_thread(codex, sdk, session, session_id)
             prompt = self._build_prompt(input, history, resumed)
             run_id = kwargs.get("run_id") or str(uuid4())
-            handle = await thread.turn(self._turn_input(sdk, prompt, kwargs.get("staged_media")), **turn_options)
+            handle = await thread.turn(
+                self._turn_input(sdk, prompt, kwargs.get("staged_media"), kwargs.get("moved_note", "")), **turn_options
+            )
             self._set_run_handle(run_id, handle)
             try:
                 result = await handle.run()
@@ -528,7 +530,9 @@ class CodexAgent(BaseExternalAgent):
         async with self._new_client() as codex:
             thread, resumed = await self._open_thread(codex, sdk, session, session_id)
             prompt = self._build_prompt(input, history, resumed)
-            handle = await thread.turn(self._turn_input(sdk, prompt, kwargs.get("staged_media")), **turn_options)
+            handle = await thread.turn(
+                self._turn_input(sdk, prompt, kwargs.get("staged_media"), kwargs.get("moved_note", "")), **turn_options
+            )
             self._set_run_handle(run_id, handle)
             try:
                 async for notification in handle.stream():

@@ -9,7 +9,7 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from agno.exceptions import UnsupportedMediaError
 
@@ -121,6 +121,12 @@ def stage_media(workspace: Optional[Any], run_id: str, media: Dict[str, Any]) ->
                 target = root / f"{target.stem}-{counter}{target.suffix}"
             target.write_bytes(data)
             staged.append(StagedMedia(kind, target.name, str(target), _mime_for(item), len(data)))
+            # Remember where it was placed; the run records the object, so a later turn on a
+            # replica with a different workspace can tell the harness the new path.
+            try:
+                item.metadata = {**(getattr(item, "metadata", None) or {}), "staged_path": str(target)}
+            except Exception:
+                pass
     return staged
 
 
@@ -188,10 +194,35 @@ def prior_attachments(session: Any, exclude_run_id: Optional[str] = None) -> Dic
     return found
 
 
-def stage_prior_media(workspace: Optional[Any], session: Any, exclude_run_id: Optional[str] = None) -> List[str]:
-    """Re-stage earlier runs' attachments; returns the run ids whose folders were written."""
+def stage_prior_media(
+    workspace: Optional[Any], session: Any, exclude_run_id: Optional[str] = None
+) -> Tuple[List[str], str]:
+    """Re-stage earlier runs' attachments under their original run folders.
+
+    Returns the run ids whose folders were written and a note for the prompt. The note is
+    empty when every file is back at the path the harness already knows; when this turn runs
+    in a different workspace than the one that received a file, it lists the new location.
+    """
     staged_runs: List[str] = []
+    moved: List[str] = []
     for run_id, media in prior_attachments(session, exclude_run_id).items():
-        if stage_media(workspace, run_id, media):
-            staged_runs.append(run_id)
-    return staged_runs
+        previous = {
+            id(item): (getattr(item, "metadata", None) or {}).get("staged_path")
+            for values in media.values()
+            for item in values
+        }
+        staged = stage_media(workspace, run_id, media)
+        if not staged:
+            continue
+        staged_runs.append(run_id)
+        for item, placed in zip([item for values in media.values() for item in values], staged):
+            before = previous.get(id(item))
+            if placed.path and before and before != placed.path:
+                moved.append(f"- {placed.path} (was {before})")
+    note = ""
+    if moved:
+        note = (
+            "\n\nThe files attached earlier in this conversation have moved. Their old paths no longer exist; "
+            "use these paths instead:\n" + "\n".join(moved)
+        )
+    return staged_runs, note

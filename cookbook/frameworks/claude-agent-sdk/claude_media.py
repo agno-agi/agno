@@ -5,7 +5,9 @@ Claude Code reads files itself, so attachments reach it the way they reach
 a person at a terminal: Agno writes each image or file under
 cwd/.agno/uploads/<run_id>/ and names the paths in the prompt. Claude opens
 them with its Read tool, which handles images and PDFs. The folder is
-removed when the run ends unless keep_uploads=True. Audio and video are
+removed when the run ends unless keep_uploads=True, and re-created from the
+recorded run before any later turn of the session, so Claude can open the
+same files again on whichever replica runs that turn. Audio and video are
 rejected before the run starts, since Claude Code has no way to use them.
 
 The same works through AgentOS: attach files in the UI or post them as
@@ -81,6 +83,31 @@ def main():
             f"Recorded attachments: {[f.filename for f in run.input.files]} and {len(run.input.images)} image"
         )
         assert not (Path(workdir) / ".agno" / "uploads").exists()
+
+        # 2. A later turn can open the same files again: they are re-staged from the recorded
+        #    run before each turn, at the paths Claude already knows, on whichever replica runs
+        #    it. A second agent instance with its own working directory stands in for another
+        #    replica; when the path differs, the prompt tells Claude where the files are now.
+        other_workdir = Path(workdir) / "replica-b"
+        other_workdir.mkdir()
+        other = ClaudeAgent(
+            id="media-demo",
+            model="claude-sonnet-4-6",
+            db=SqliteDb(db_file=str(Path(workdir) / "runs.db")),
+            cwd=str(other_workdir),
+            allowed_tools=["Read"],
+            permission_mode="bypassPermissions",
+            max_turns=4,
+            max_budget_usd=0.5,
+        )
+        later = other.run(
+            "Read the release notes file again with the Read tool and quote the owner line exactly.",
+            session_id="media",
+        )
+        assert later.status == RunStatus.completed, later.content
+        print(f"Later turn on another replica, file re-read: {later.content}")
+        assert "platform team" in (later.content or "")
+        assert not (other_workdir / ".agno" / "uploads").exists()
 
 
 if __name__ == "__main__":
