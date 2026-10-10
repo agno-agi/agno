@@ -220,7 +220,7 @@ class CodexAgent(BaseExternalAgent):
             # (sandbox names, approval mode, instructions) into the wire parameters that the
             # low-level thread_resume would otherwise send verbatim.
             try:
-                await codex.thread_resume(thread_id, **self._thread_kwargs(sdk, resume=True))
+                thread = await codex.thread_resume(thread_id, **self._thread_kwargs(sdk, resume=True))
             except Exception as e:
                 if not self._is_missing_thread(e):
                     raise
@@ -229,9 +229,8 @@ class CodexAgent(BaseExternalAgent):
                 if session is not None and self.db is not None:
                     await self.aupsert_session(session)
                 return False
-            client = self._app_server_client(codex)
-            await client.thread_compact(thread_id)
-            await self._await_thread_idle(client, thread_id, timeout)
+            await thread.compact()
+            await self._await_thread_idle(self._app_server_client(codex), thread_id, timeout)
         log_debug(f"Codex: compacted thread {thread_id} for session {session_id}")
         return True
 
@@ -246,11 +245,11 @@ class CodexAgent(BaseExternalAgent):
 
     @staticmethod
     def _app_server_client(codex: Any) -> Any:
-        """The low-level app-server client behind an AsyncCodex. It exposes
-        thread/compact/start and the global notification queue the high-level API hides."""
+        """The low-level client behind an AsyncCodex, the only way to read the global
+        notification queue: the SDK has no public signal for when compaction finishes."""
         client = getattr(codex, "_client", None)
-        if client is None or not hasattr(client, "thread_compact"):
-            raise RuntimeError("This openai-codex version does not expose thread/compact/start; cannot compact")
+        if client is None or not hasattr(client, "next_notification"):
+            raise RuntimeError("This openai-codex version does not expose app-server notifications; cannot compact")
         return client
 
     @staticmethod
