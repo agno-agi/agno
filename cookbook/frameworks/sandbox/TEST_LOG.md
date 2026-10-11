@@ -203,3 +203,13 @@ Python 3.9 follow-up: 76 sandbox unit tests, 40 real Postgres cases and 12 Agent
 **Result:** 5 passed. Required format/validation passed after correcting a test import-order issue. Live image, gVisor process-freeze and native harness acceptance remain pending.
 
 ---
+
+### Vercel installed-SDK and protected staging contract
+
+**Status:** PASS
+
+**Description:** Five tests against Vercel Sandbox 0.9.0 with actual runtime-session handles and replaced network endpoints verify no automatic resume/replay, exact-session and project checks, creation parameters, and client cleanup. Real Linux staging tests reject tampered bytes and source symlinks and verify root-owned imports.
+
+**Result:** 5 SDK tests passed. Local hosted runtime/transfer plus staging suite passed across both Postgres adapters. No Vercel account or live model calls were made; VCR and platform acceptance remain pending.
+
+---

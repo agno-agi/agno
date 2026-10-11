@@ -22,7 +22,7 @@ from agno.sandbox.postgres import PostgresSandboxStore
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--provider", choices=("e2b", "daytona", "modal"), required=True
+        "--provider", choices=("e2b", "daytona", "modal", "vercel"), required=True
     )
     parser.add_argument(
         "--image",
@@ -57,7 +57,7 @@ def main() -> None:
         provider = DaytonaSandboxProvider(
             namespace, journal, max_allocations=2, lifetime=600
         )
-    else:
+    elif args.provider == "modal":
         from agno.sandbox.modal import ModalSandboxProvider
 
         provider = ModalSandboxProvider(
@@ -67,8 +67,20 @@ def main() -> None:
             max_allocations=2,
             lifetime=600,
         )
+    else:
+        from agno.sandbox.vercel import VercelSandboxProvider
+
+        provider = VercelSandboxProvider(
+            namespace, journal, max_allocations=2, lifetime=600
+        )
     spec = SandboxSpec(
-        "coder", "acceptance", 1, args.image, pids_limit=None, workspace_mb=None
+        "coder",
+        "acceptance",
+        1,
+        args.image,
+        pids_limit=None,
+        workspace_mb=None,
+        memory_mb=4096 if args.provider == "vercel" else 2048,
     )
     script = Path(__file__).with_name("workload_fixture.py").read_text()
     handles = []

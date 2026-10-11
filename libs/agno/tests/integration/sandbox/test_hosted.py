@@ -204,3 +204,64 @@ async def test_restore_rejects_used_computer_and_stops_it(hosted):
     with pytest.raises(SandboxError, match="unused"):
         await transfer.arestore(target, reference)
     assert await provider._get(target.provider_ref) is None
+
+
+async def test_vercel_staging_bridge_rejects_tampering_and_preserves_root_ownership(hosted):
+    import hashlib
+
+    from agno.sandbox.vercel import _EXPORT, _IMPORT
+
+    provider, create, _ = hosted
+    handle = await create()
+    payload = b"exact bytes from service"
+    staging = "/tmp/upload"
+    target = "/var/lib/agno-control/" + uuid4().hex + ".json"
+    await provider._write(handle.provider_ref, staging, b"tampered")
+    args = ["python", "-I", "-c", _IMPORT, staging, target, str(len(payload)), hashlib.sha256(payload).hexdigest()]
+    bad = await provider._command(handle.provider_ref, args, timeout=5)
+    assert bad.exit_code != 0 and "digest mismatch" in bad.stderr
+    await provider._write(handle.provider_ref, staging, payload)
+    good = await provider._command(handle.provider_ref, args, timeout=5)
+    assert good.exit_code == 0, good.stderr
+    verify = await provider._command(
+        handle.provider_ref,
+        [
+            "python",
+            "-I",
+            "-c",
+            "import os,stat,sys; s=os.stat(sys.argv[1]); assert s.st_uid == 0 and stat.S_IMODE(s.st_mode) == 0o600",
+            target,
+        ],
+        timeout=5,
+    )
+    assert verify.exit_code == 0, verify.stderr
+    export = await provider._command(
+        handle.provider_ref, ["python", "-I", "-c", _EXPORT, target, "/tmp/download", str(len(payload))], timeout=5
+    )
+    assert export.exit_code == 0, export.stderr
+    assert await provider._read(handle.provider_ref, "/tmp/download", max_bytes=len(payload)) == payload
+
+
+async def test_vercel_staging_bridge_rejects_source_symlinks(hosted):
+    import hashlib
+
+    from agno.sandbox.vercel import _IMPORT
+
+    provider, create, _ = hosted
+    handle = await create()
+    await provider.aexec(handle, ["ln", "-s", "/etc/passwd", "/tmp/upload-link"])
+    result = await provider._command(
+        handle.provider_ref,
+        [
+            "python",
+            "-I",
+            "-c",
+            _IMPORT,
+            "/tmp/upload-link",
+            "/var/lib/agno-control/target",
+            "1",
+            hashlib.sha256(b"x").hexdigest(),
+        ],
+        timeout=5,
+    )
+    assert result.exit_code != 0 and "Too many levels" in result.stderr

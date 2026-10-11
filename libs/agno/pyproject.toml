@@ -43,6 +43,7 @@ dependencies = [
 e2b-sandbox = ["e2b==2.55.1"]
 daytona-sandbox = ["daytona==0.223.1"]
 modal-sandbox = ["modal==1.6.1"]
+vercel-sandbox = ["vercel-sandbox==0.9.0"]
 dev = [
   "mypy==2.1.0",
   "ruff==0.15.20",
@@ -591,6 +592,7 @@ module = [
   "e2b_code_interpreter.*",
   "e2b.*",
   "modal.*",
+  "vercel.*",
   "ipykernel.*",
   "jupyter_client.*",
   "eth_account.*",

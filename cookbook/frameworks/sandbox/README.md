@@ -240,3 +240,37 @@ A lost application-level response still follows the durable allocation journal.
 Contract tests cover SDK signatures/settings, terminated-compute refusal, deletion
 waits, scoped inventory, and file-size checks. Live gVisor privilege handling,
 image behavior, limits and both native harnesses remain acceptance gates.
+
+### Vercel (live acceptance required)
+
+Install `agno[vercel-sandbox]` with Python 3.10+ (SDK pinned to 0.9.0). Set
+`VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID` on the service, and publish
+a prepared runtime image to Vercel Container Registry (VCR). The current SDK
+accepts VCR image references; a local Docker tag is insufficient.
+
+```bash
+python cookbook/frameworks/sandbox/hosted_workload.py --provider vercel --image YOUR_VCR_IMAGE
+```
+
+The example requests 2 vCPUs and 4096 MiB. `VercelSandboxProvider(namespace,
+journal)` also accepts explicit credentials and region. It creates non-persistent
+compute with an execution limit and no native snapshots or mounts. AgentOS owns
+the durable portable checkpoint.
+
+Each provider reference includes project, sandbox name and exact execution-session
+ID. Commands and files use the SDK's runtime-session handle, bypassing the
+sandbox-level automatic resume/replay behavior. A changed or stopped execution
+session fails instead of continuing implicitly. Short-lived SDK clients avoid
+sharing HTTP pools between unrelated sync/async event loops.
+
+Uploads stage in the computer's temporary directory and root control imports only
+bytes matching the service's expected size and SHA-256. Downloads are bounded and
+verified again by checkpoint transfer. This avoids depending on provider file APIs
+being able to write root-only control storage directly. Temporary staging disappears
+with compute teardown; it is not durable state.
+
+Installed-SDK tests cover actual session handles, no lifecycle-error replay, changed
+session/project rejection, create settings and client cleanup. Local Linux tests
+exercise the staging scripts against tampered files and symlinks. VCR readiness,
+provider permissions, resource/network controls, transfer and native harnesses still
+require live acceptance. The workload creates billable compute.
