@@ -319,3 +319,36 @@ def test_invoke_stream_strips_background_flag():
     _, kwargs = fake_client.responses.create.call_args
     assert "background" not in kwargs
     assert kwargs.get("stream") is True
+
+
+def test_background_forced_store_keeps_request_and_formatting_in_step():
+    """background=True forces store=True on the wire, so chaining, history slicing,
+    and reasoning capture must all follow the forced value, not the raw store field."""
+    model = OpenAIResponses(id="gpt-5.4", background=True, store=False)
+    messages = [
+        Message(role="user", content="first"),
+        Message(
+            role="assistant",
+            provider_data={
+                "response_id": "resp_1",
+                "reasoning_output": {"id": "rs_1", "type": "reasoning", "summary": []},
+            },
+            tool_calls=[
+                {
+                    "id": "fc_1",
+                    "call_id": "call_1",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": "{}"},
+                }
+            ],
+        ),
+        Message(role="tool", tool_call_id="call_1", content="ok"),
+    ]
+
+    params = model.get_request_params(messages=messages)
+    assert params["store"] is True
+    assert params["previous_response_id"] == "resp_1"
+    assert "reasoning.encrypted_content" not in (params.get("include") or [])
+
+    # The chained request must only carry the items after the stored response.
+    assert model._format_messages(messages) == [{"type": "function_call_output", "call_id": "call_1", "output": "ok"}]

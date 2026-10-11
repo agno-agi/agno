@@ -1,9 +1,28 @@
 """Shared isolation for the unit suite."""
 
+from pathlib import Path
+
 import pytest
 
 import agno.run.cancel as cancel_module
 from agno.run.cancellation_management.in_memory_cancellation_manager import InMemoryRunCancellationManager
+
+
+@pytest.fixture
+def cp1252_default_encoding(monkeypatch):
+    """Run the test as if on a Windows machine whose default text encoding is cp1252, so a
+    file read or write that does not name an encoding would mangle non-ASCII text."""
+    read_text = Path.read_text
+    write_text = Path.write_text
+
+    def read_text_cp1252(self, encoding=None, **kwargs):
+        return read_text(self, encoding=encoding or "cp1252", **kwargs)
+
+    def write_text_cp1252(self, data, encoding=None, **kwargs):
+        return write_text(self, data, encoding=encoding or "cp1252", **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text_cp1252)
+    monkeypatch.setattr(Path, "write_text", write_text_cp1252)
 
 
 @pytest.fixture(autouse=True)

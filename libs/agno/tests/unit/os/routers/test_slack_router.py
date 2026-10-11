@@ -1,11 +1,16 @@
 import asyncio
+import hashlib
+import hmac
 import json
 import time
-from typing import Any, Dict
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator
 from unittest.mock import AsyncMock, Mock, patch
 
+import httpx
 import pytest
 from fastapi import APIRouter, FastAPI
+from fastapi.testclient import TestClient
 
 from agno.agent import RunEvent
 from agno.models.response import ToolExecution
@@ -23,6 +28,7 @@ from agno.os.interfaces.slack.state import StreamState
 from agno.run.requirement import RunRequirement
 
 from .conftest import (
+    SIGNING_SECRET,
     build_app,
     content_chunk,
     make_agent_mock,
@@ -137,6 +143,60 @@ def _make_check_status_payload(
             }
         ],
     }
+
+
+def _event_body(
+    event_id: Any,
+    text: str = "hello",
+    channel_type: str = "im",
+    thread_ts: str | None = None,
+    include_event_id: bool = True,
+) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "type": "event_callback",
+        "team_id": "T123",
+        "event": {
+            "type": "message",
+            "channel_type": channel_type,
+            "text": text,
+            "user": "U456",
+            "channel": "C123",
+            "ts": "1708123456.000200",
+        },
+    }
+    if include_event_id:
+        body["event_id"] = event_id
+    if thread_ts:
+        body["event"]["thread_ts"] = thread_ts
+    return body
+
+
+def _slack_headers(
+    body_bytes: bytes, retry_num: int | None = None, signing_secret: str = SIGNING_SECRET
+) -> dict[str, str]:
+    timestamp = str(int(time.time()))
+    sig_base = f"v0:{timestamp}:{body_bytes.decode()}"
+    signature = "v0=" + hmac.new(signing_secret.encode(), sig_base.encode(), hashlib.sha256).hexdigest()
+    headers = {
+        "Content-Type": "application/json",
+        "X-Slack-Request-Timestamp": timestamp,
+        "X-Slack-Signature": signature,
+    }
+    if retry_num is not None:
+        headers["X-Slack-Retry-Num"] = str(retry_num)
+        headers["X-Slack-Retry-Reason"] = "http_timeout"
+    return headers
+
+
+@contextmanager
+def _routed_app(agent_mock: Any, **kwargs: Any) -> Iterator[FastAPI]:
+    """Real router, real signature check, mocked Slack client. Patches stay active for the requests."""
+    kwargs.setdefault("signing_secret", SIGNING_SECRET)
+    with (
+        patch("agno.os.interfaces.slack.router.SlackTools", return_value=make_slack_mock(token="xoxb-test")),
+        patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
+    ):
+        yield build_app(agent_mock, **kwargs)
 
 
 class TestEventHandlerHelpers:
@@ -690,6 +750,225 @@ class TestRouterWiring:
 
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
+        agent_mock.arun.assert_not_called()
+
+
+class TestEventRetryDedupe:
+    """Slack retries any delivery not acked within 3s (immediately, +1 min, +5 min) with
+    X-Slack-Retry-Num set. The route must dedupe on event_id rather than drop every retry,
+    otherwise a delivery whose original never got through is lost."""
+
+    @pytest.mark.asyncio
+    async def test_first_delivery_is_processed(self):
+        agent_mock = make_agent_mock()
+
+        with _routed_app(agent_mock) as app:
+            client = TestClient(app)
+            body = json.dumps(_event_body("Ev001")).encode()
+            resp = client.post("/events", content=body, headers=_slack_headers(body))
+
+        assert resp.status_code == 200
+        await wait_for_call(agent_mock.arun)
+        agent_mock.arun.assert_awaited_once()
+        assert agent_mock.arun.call_args.args[0] == "hello"
+
+    @pytest.mark.asyncio
+    async def test_retry_of_seen_event_id_is_skipped(self):
+        agent_mock = make_agent_mock()
+
+        with _routed_app(agent_mock) as app:
+            client = TestClient(app)
+            body = json.dumps(_event_body("Ev002")).encode()
+            first = client.post("/events", content=body, headers=_slack_headers(body))
+            retry = client.post("/events", content=body, headers=_slack_headers(body, retry_num=1))
+
+        assert first.status_code == 200
+        assert retry.status_code == 200
+        assert retry.json()["status"] == "ok"
+        await asyncio.sleep(0.1)
+        agent_mock.arun.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_retry_of_unseen_event_id_is_processed(self):
+        """The original delivery never reached the handler; Slack's retry is the only copy."""
+        agent_mock = make_agent_mock()
+
+        with _routed_app(agent_mock) as app:
+            client = TestClient(app)
+            body = json.dumps(_event_body("Ev003", text="only the retry arrived")).encode()
+            resp = client.post("/events", content=body, headers=_slack_headers(body, retry_num=2))
+
+        assert resp.status_code == 200
+        await wait_for_call(agent_mock.arun)
+        agent_mock.arun.assert_awaited_once()
+        assert agent_mock.arun.call_args.args[0] == "only the retry arrived"
+
+    @pytest.mark.asyncio
+    async def test_distinct_event_ids_are_both_processed(self):
+        agent_mock = make_agent_mock()
+
+        with _routed_app(agent_mock) as app:
+            client = TestClient(app)
+            statuses = []
+            for event_id in ("Ev004a", "Ev004b"):
+                body = json.dumps(_event_body(event_id, text=event_id)).encode()
+                statuses.append(client.post("/events", content=body, headers=_slack_headers(body)).status_code)
+
+        assert statuses == [200, 200]
+        await wait_for_call(agent_mock.arun)
+        assert agent_mock.arun.await_count == 2
+        assert [call.args[0] for call in agent_mock.arun.await_args_list] == ["Ev004a", "Ev004b"]
+
+    @pytest.mark.asyncio
+    async def test_retry_during_in_flight_run_is_skipped(self):
+        """Marked on receipt: a retry that lands while the first run is still executing must not start a second run.
+
+        TestClient is synchronous and blocks the test coroutine, so no second request can be in flight
+        concurrently. The first request is driven through ASGITransport as a task instead, and held open
+        with an Event while the retry arrives.
+        """
+        agent_mock = make_agent_mock()
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def slow_run(*args: Any, **kwargs: Any) -> Mock:
+            started.set()
+            await release.wait()
+            return Mock(
+                status="OK", content="done", reasoning_content=None, images=None, files=None, videos=None, audio=None
+            )
+
+        agent_mock.arun = AsyncMock(side_effect=slow_run)
+
+        with _routed_app(agent_mock) as app:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://slack.test"
+            ) as client:
+                body = json.dumps(_event_body("Ev005")).encode()
+                first = asyncio.create_task(client.post("/events", content=body, headers=_slack_headers(body)))
+                await asyncio.wait_for(started.wait(), timeout=5)
+
+                # Timeout: a duplicate dispatch would wait on `release` forever instead of failing
+                retry = await asyncio.wait_for(
+                    client.post("/events", content=body, headers=_slack_headers(body, retry_num=1)), timeout=5
+                )
+                assert retry.status_code == 200
+                assert agent_mock.arun.call_count == 1
+
+                release.set()
+                assert (await first).status_code == 200
+
+        assert agent_mock.arun.await_count == 1
+
+    def test_seen_set_is_bounded(self):
+        from agno.os.interfaces.slack.helpers import EventDeduplicator
+
+        with patch.object(EventDeduplicator, "DEDUP_MAX_ENTRIES", 3):
+            dedupe = EventDeduplicator()
+            assert [dedupe.is_duplicate(i) for i in ("a", "b", "c")] == [False, False, False]
+            # Past the cap: the oldest id is evicted without error
+            assert dedupe.is_duplicate("d") is False
+            # Recent ids still dedupe
+            assert dedupe.is_duplicate("d") is True
+            assert dedupe.is_duplicate("b") is True
+            # The evicted id is forgotten early: a late retry of it would run again (documented trade-off)
+            assert dedupe.is_duplicate("a") is False
+
+    def test_seen_ids_expire_after_ttl(self):
+        from agno.os.interfaces.slack import helpers
+        from agno.os.interfaces.slack.helpers import EventDeduplicator
+
+        fake_time = Mock()
+        fake_time.monotonic.return_value = 1000.0
+        with patch.object(helpers, "time", fake_time):
+            dedupe = EventDeduplicator()
+            # Slack's last retry is at +5 min; the window must outlive it
+            assert dedupe.DEDUP_TTL_SECONDS >= 5 * 60
+            assert dedupe.is_duplicate("e") is False
+            fake_time.monotonic.return_value = 1000.0 + 5 * 60
+            assert dedupe.is_duplicate("e") is True
+            fake_time.monotonic.return_value = 1000.0 + dedupe.DEDUP_TTL_SECONDS + 1
+            assert dedupe.is_duplicate("e") is False
+
+    @pytest.mark.asyncio
+    async def test_missing_or_malformed_event_id_does_not_crash(self):
+        agent_mock = make_agent_mock()
+        variants = [
+            _event_body(None, include_event_id=False),
+            _event_body(None),
+            _event_body(""),
+            _event_body(12345),
+            _event_body({"nested": "object"}),
+        ]
+
+        with _routed_app(agent_mock) as app:
+            client = TestClient(app)
+            statuses = []
+            for variant in variants:
+                body = json.dumps(variant).encode()
+                statuses.append(client.post("/events", content=body, headers=_slack_headers(body)).status_code)
+                statuses.append(
+                    client.post("/events", content=body, headers=_slack_headers(body, retry_num=1)).status_code
+                )
+
+        assert statuses == [200] * 10
+        await wait_for_call(agent_mock.arun)
+        # First deliveries are never lost because of a bad id; id-less retries stay dropped
+        assert agent_mock.arun.await_count == len(variants)
+
+    @pytest.mark.asyncio
+    async def test_non_json_body_is_acked_without_dedupe_or_run(self):
+        """Slack retries any non-2xx, so an unparseable body must be acked, not 500'd."""
+        from agno.os.interfaces.slack.helpers import EventDeduplicator
+
+        agent_mock = make_agent_mock()
+        body = b"this is not json"
+
+        with (
+            _routed_app(agent_mock) as app,
+            patch.object(EventDeduplicator, "is_duplicate", return_value=False) as is_duplicate,
+        ):
+            client = TestClient(app, raise_server_exceptions=False)
+            first = client.post("/events", content=body, headers=_slack_headers(body))
+            retry = client.post("/events", content=body, headers=_slack_headers(body, retry_num=1))
+
+        assert (first.status_code, retry.status_code) == (200, 200)
+        assert first.json()["status"] == "ok"
+        await asyncio.sleep(0.1)
+        agent_mock.arun.assert_not_called()
+        is_duplicate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bad_signature_is_rejected_and_never_marks_the_id_seen(self):
+        agent_mock = make_agent_mock()
+
+        with _routed_app(agent_mock) as app:
+            client = TestClient(app)
+            body = json.dumps(_event_body("Ev009")).encode()
+            forged = client.post("/events", content=body, headers=_slack_headers(body, signing_secret="not-the-secret"))
+            forged_retry = client.post(
+                "/events", content=body, headers=_slack_headers(body, retry_num=1, signing_secret="not-the-secret")
+            )
+            agent_mock.arun.assert_not_called()
+            # The genuine delivery of the same event_id must still be processed
+            genuine = client.post("/events", content=body, headers=_slack_headers(body))
+
+        assert forged.status_code == 403
+        assert forged_retry.status_code == 403
+        assert genuine.status_code == 200
+        await wait_for_call(agent_mock.arun)
+        agent_mock.arun.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_non_mention_thread_reply_still_dropped(self):
+        agent_mock = make_agent_mock()
+
+        with _routed_app(agent_mock, reply_to_mentions_only=True) as app:
+            client = TestClient(app)
+            body = json.dumps(_event_body("Ev010", channel_type="channel", thread_ts="1708123456.000100")).encode()
+            resp = client.post("/events", content=body, headers=_slack_headers(body))
+
+        assert resp.status_code == 200
+        await asyncio.sleep(0.1)
         agent_mock.arun.assert_not_called()
 
 

@@ -32,3 +32,14 @@ def test_long_document_still_chunks_with_overlap_and_no_duplication():
 
     assert len(chunks) == 7
     assert [len(c.content) for c in chunks] == [20, 20, 20, 20, 20, 20, 10]
+
+
+def test_repeated_whitespace_collapses_without_flattening_lines():
+    """Test that cleaning keeps newlines and tabs while collapsing repeated whitespace."""
+    strategy = FixedSizeChunking(chunk_size=100)
+    doc = Document(name="structured", content="Steps:\n\n\n- Open a ticket\n\t- Attach   the receipt")
+
+    chunks = strategy.chunk(doc)
+
+    assert len(chunks) == 1
+    assert chunks[0].content == "Steps:\n- Open a ticket\n\t- Attach the receipt"

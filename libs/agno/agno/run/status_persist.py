@@ -17,7 +17,7 @@ refused by the primitive instead of clobbering through bare upsert_run.
 import asyncio
 import inspect
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 
 class RunPersistOutcome(str, Enum):
@@ -96,6 +96,13 @@ async def apersist_run_status(
     return RunPersistOutcome.MISSING
 
 
+def component_hook(component: Any, name: str) -> Optional[Callable[..., Awaitable[Any]]]:
+    """Return a persistence hook the component's class defines; mocks and plain objects never match."""
+    if getattr(type(component), name, None) is None:
+        return None
+    return getattr(component, name)
+
+
 def fallback_allowed(result: RunPersistOutcome) -> bool:
     """Whether the unfenced whole-session fallback may run after the atomic
     primitive's outcome.
@@ -139,6 +146,27 @@ async def apersist_run_transition(
         fields = {"status": getattr(status, "value", status)}
     if extra_fields:
         fields.update(extra_fields)
+    # The cancellation stage rides the same patch as the status. Without this
+    # the stage set on the run object reached only the whole-run fallback, and
+    # adapters with the atomic primitive persisted CANCELLED with no stage. A
+    # non-cancelled transition clears a stage the run object still carries
+    # (a cancelled run being re-driven), so the stored row cannot keep a
+    # stage that contradicts its status.
+    from agno.run.base import RunStatus
+
+    stage = getattr(run_response, "cancellation_stage", None)
+    # Typed check, not a truthiness check: this helper also receives partial
+    # run doubles, and an attribute that merely exists is not a stage
+    # (CancellationStage is a str enum, so str covers both forms)
+    if isinstance(stage, str):
+        if fields.get("status") == RunStatus.cancelled.value:
+            fields["cancellation_stage"] = getattr(stage, "value", stage)
+        else:
+            # Clear it on the object too: the whole-run fallback serializes
+            # the object, and a stage beside a non-cancelled status is a
+            # contradiction whichever path lands it
+            fields["cancellation_stage"] = None
+            run_response.cancellation_stage = None
 
     run_id = getattr(run_response, "run_id", None)
     if run_id:
@@ -151,7 +179,10 @@ async def apersist_run_transition(
     # Fallback: fresh-read + whole-session save (narrows, does not close, the
     # concurrent-write window - see module docstring). This path writes the whole run, so its
     # media is offloaded first.
-    if component_type == "agent":
+    persist_fallback = component_hook(component, "_apersist_run_fallback")
+    if component_type == "agent" and persist_fallback is not None:
+        await persist_fallback(session_id, run_response, user_id)
+    elif component_type == "agent":
         from agno.agent._session import asave_run, asave_session
         from agno.agent._storage import aread_or_create_session
         from agno.utils.agent import abuild_offloaded_storage_copy
@@ -219,6 +250,7 @@ async def apersist_worker_owned_run(
     run: Any,
     session_id: str,
     user_id: Optional[str] = None,
+    session_data: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Fence a worker-owned run's save through the atomic primitive.
 
@@ -230,6 +262,9 @@ async def apersist_worker_owned_run(
     the row - is refused by the row-locked primitive instead of clobbering
     wholesale through bare ``upsert_run``. This closes the "run's own final
     save is unfenced" gap the module docstring describes.
+
+    When session_data is supplied, the adapter saves it in the same transaction
+    as the fenced run. Callers must not follow this with an unfenced session save.
 
     Returns True when the save was handled here: applied, or finally refused
     by the fence/terminal guard (refusals are dropped by design - retrying
@@ -259,8 +294,12 @@ async def apersist_worker_owned_run(
         expected_attempt=ownership.attempt,
         user_id=user_id,
     )
+    if session_data is not None:
+        kwargs["session_data"] = session_data
     outcome = _coerce_outcome(await _acall_update(method, kwargs), ownership.attempt)
     if outcome is RunPersistOutcome.MISSING:
+        if session_data is not None:
+            raise RuntimeError("Cannot atomically save session metadata without the prepared worker run")
         append = getattr(db, "append_run_to_session_if_absent", None)
         if not callable(append):
             return False
@@ -294,6 +333,7 @@ def persist_worker_owned_run(
     run: Any,
     session_id: str,
     user_id: Optional[str] = None,
+    session_data: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Sync twin of ``apersist_worker_owned_run`` for the sync save helpers.
 
@@ -320,8 +360,12 @@ def persist_worker_owned_run(
         expected_attempt=ownership.attempt,
         user_id=user_id,
     )
+    if session_data is not None:
+        kwargs["session_data"] = session_data
     outcome = _coerce_outcome(method(**kwargs), ownership.attempt)
     if outcome is RunPersistOutcome.MISSING:
+        if session_data is not None:
+            raise RuntimeError("Cannot atomically save session metadata without the prepared worker run")
         append = getattr(db, "append_run_to_session_if_absent", None)
         if not callable(append) or inspect.iscoroutinefunction(append):
             return False

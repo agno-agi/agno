@@ -736,3 +736,29 @@ def test_envelope_previews_a_tail_even_for_one_huge_line(store):
     assert "omitted ...]" in envelope
     rows = [r for r in store.db.get_tool_results_for_session("S1") if r["tool_call_id"] == "huge-1"]
     assert "omitted ...]" in rows[0]["preview"]
+
+
+def test_payloads_stay_in_the_shared_partition_whatever_the_user(store):
+    ref = _offload(store, "user payload\n" * 20, user_id="alice")
+    row = store.get_row(ref.result_id)
+    assert row["user_id"] == "alice"
+    # The session namespace isolates the payload; it is not split further by user.
+    assert FileSystem(backend=store.fs.backend, namespace=row["namespace"]).read(row["path"]) is not None
+    assert store.read(ref.result_id).text.startswith("user payload")
+
+
+def test_result_offloaded_before_partitions_stays_readable_and_deletable(store):
+    # 3.0 recorded the user on the index row but wrote the payload to the shared
+    # partition, which is where the 3.1 table upgrade leaves every existing row.
+    ref = _offload(store, "old payload\n" * 20)
+    from sqlalchemy import text
+
+    from agno.offload.store import namespace_for
+
+    with store.db.db_engine.begin() as conn:
+        conn.execute(text("UPDATE agno_tool_results SET user_id = 'alice'"))
+
+    assert store.read(ref.result_id).text.startswith("old payload")
+    assert store.delete_for_sessions(["S1"]) == 1
+    row_namespace = namespace_for("S1")
+    assert FileSystem(backend=store.fs.backend, namespace=row_namespace).list() == []

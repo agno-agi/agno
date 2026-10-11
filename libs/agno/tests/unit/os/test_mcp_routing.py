@@ -7,7 +7,7 @@ from fastapi import FastAPI
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.os import AgentOS, MCPConfig
+from agno.os import AgentOS, CORSConfig, MCPConfig
 from agno.os.config import AuthorizationConfig
 from agno.os.public import PublicSurface
 from agno.os.public._limits import Admission
@@ -32,12 +32,13 @@ class Limiter:
 
 
 @asynccontextmanager
-async def client(*, host="mcp.example.com", mounted=False, **options):
-    surface = PublicSurface(mcp=True)
+async def client(*, host="mcp.example.com", mounted=False, origin_regex=None, enforce_origins=False, **options):
+    surface = PublicSurface(mcp=True, enforce_browser_origins=enforce_origins)
     limiter = Limiter()
     surface._limiter = limiter
     server = AgentOS(
         id="mcp-routing",
+        cors=CORSConfig(origin_regex=origin_regex),
         agents=[Agent(id="docs", telemetry=False)],
         db=PostgresDb(db_url="postgresql+psycopg://unused:unused@127.0.0.1:1/unused"),
         authorization=True,
@@ -151,11 +152,13 @@ async def test_unknown_and_duplicate_hosts_and_forwarding_headers():
 )
 def test_invalid_configuration(options):
     with pytest.raises(ValueError):
-        MCPConfig(**options)
+        MCPConfig(default_tools=True, **options)
 
 
 def test_transport_cannot_hide_rest_routes():
-    server = AgentOS(agents=[Agent(id="docs", telemetry=False)], mcp=MCPConfig(path="/health"), telemetry=False)
+    server = AgentOS(
+        agents=[Agent(id="docs", telemetry=False)], mcp=MCPConfig(default_tools=True, path="/health"), telemetry=False
+    )
     with pytest.raises(ValueError, match="conflicts"):
         server.get_app()
 
@@ -185,7 +188,7 @@ def test_custom_oauth_routing_fails_before_serving_incorrect_metadata():
 
     server = AgentOS(
         agents=[Agent(id="docs", telemetry=False)],
-        mcp=MCPConfig(root_host="mcp.example.com"),
+        mcp=MCPConfig(default_tools=True, root_host="mcp.example.com"),
         mcp_auth=InMemoryOAuthProvider(base_url="https://mcp.example.com"),
         telemetry=False,
     )
@@ -206,10 +209,87 @@ def test_route_conflicts_respect_included_router_prefixes(prefix, path, conflict
 
     base.include_router(router, prefix=prefix)
     server = AgentOS(
-        agents=[Agent(id="docs", telemetry=False)], base_app=base, mcp=MCPConfig(path=path), telemetry=False
+        agents=[Agent(id="docs", telemetry=False)],
+        base_app=base,
+        mcp=MCPConfig(default_tools=True, path=path),
+        telemetry=False,
     )
     if conflict:
         with pytest.raises(ValueError, match="conflicts"):
             server.get_app()
     else:
         server.get_app()
+
+
+@asynccontextmanager
+async def bare_client(*, mounted=False):
+    """``mcp=True`` with no ``MCPConfig``: the routing layer must still apply."""
+    server = AgentOS(
+        id="mcp-routing-bare",
+        agents=[Agent(id="docs", telemetry=False)],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[KEY], algorithm="HS256"),
+        mcp=True,
+        telemetry=False,
+    )
+    app = server.get_app()
+    if mounted:
+        parent = FastAPI()
+        parent.mount("/runtime", app)
+        app = parent
+    async with server._mcp_app.lifespan(server._mcp_app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://localhost") as http:
+            yield http
+
+
+async def test_bare_mcp_true_rejects_a_malformed_host_like_a_configured_server():
+    """The card is publicly cacheable; a Host carrying a path must never be echoed into it."""
+    async with bare_client() as http:
+        response = await http.get("/mcp/server-card", headers={"host": "evil.example/x?y="})
+        assert response.status_code == 400, response.text
+        assert "evil.example" not in response.text
+
+
+async def test_bare_mcp_true_advertises_the_mount_prefix():
+    async with bare_client(mounted=True) as http:
+        card = await http.get("/runtime/mcp/server-card")
+        assert card.status_code == 200, card.text
+        assert card.json()["remotes"][0]["url"] == "http://localhost/runtime/mcp"
+        # The endpoint itself is behind auth, but the redirect must still stay inside the mount.
+        browser = await http.get("/runtime/mcp", headers={"Accept": "text/html", "Authorization": "Bearer bad"})
+        if browser.status_code == 302:
+            assert browser.headers["location"] == "/runtime/mcp/server-card"
+
+
+async def test_host_check_is_scoped_to_mcp_routes_and_allows_underscores():
+    async with bare_client() as http:
+        # Docker Compose service names carry underscores; they must reach every route.
+        assert (await http.get("/health", headers={"host": "agent_os:8000"})).status_code == 200
+        card = await http.get("/mcp/server-card", headers={"host": "agent_os:8000"})
+        assert card.status_code == 200, card.text
+        assert card.json()["remotes"][0]["url"] == "http://agent_os:8000/mcp"
+        # A malformed Host is only the MCP routes' problem.
+        assert (await http.get("/health", headers={"host": "evil.example/x?y="})).status_code == 200
+        assert (await http.get("/mcp/server-card", headers={"host": "evil.example/x?y="})).status_code == 400
+
+
+async def test_public_browser_policy_reaches_mcp_alias_and_error_headers():
+    origin = "https://docs-feature.example.com"
+    async with client(origin_regex=r"https://docs-[a-z]+\.example\.com", enforce_origins=True) as (http, limiter):
+        headers = {**HEADERS, "Origin": origin}
+        preflight = await http.options("/", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
+        assert preflight.status_code == 200
+        response = await http.post("/", headers=headers, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        assert "tools" in result(response)["result"]
+        assert response.headers["access-control-allow-origin"] == origin
+        bad = await http.post(
+            "/",
+            headers={**HEADERS, "Origin": origin + ".evil.test"},
+            json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        )
+        assert bad.status_code == 400
+        assert "access-control-allow-origin" not in bad.headers
+        limiter.allowed = False
+        denied = await http.post("/", headers=headers, json={"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
+        assert denied.status_code == 429
+        assert denied.headers["access-control-allow-origin"] == origin

@@ -22,9 +22,11 @@ knowledge_primary = Knowledge(
         table_name="agno_docs_primary",
         search_type=SearchType.hybrid,
         embedder=CohereEmbedder(id="embed-v4.0"),
-        reranker=InfinityReranker(
-            base_url="http://localhost:7997/rerank", model="BAAI/bge-reranker-base"
-        ),
+    ),
+    # Reranking belongs on Knowledge: it applies to every vector db and can
+    # widen the candidate pool for rerankers that need one.
+    reranker=InfinityReranker(
+        base_url="http://localhost:7997/rerank", model="BAAI/bge-reranker-base"
     ),
 )
 
@@ -34,9 +36,11 @@ knowledge_secondary = Knowledge(
         table_name="agno_docs_secondary",
         search_type=SearchType.hybrid,
         embedder=CohereEmbedder(id="embed-v4.0"),
-        reranker=InfinityReranker(
-            base_url="http://localhost:7997/rerank", model="BAAI/bge-reranker-base"
-        ),
+    ),
+    # Reranking belongs on Knowledge: it applies to every vector db and can
+    # widen the candidate pool for rerankers that need one.
+    reranker=InfinityReranker(
+        base_url="http://localhost:7997/rerank", model="BAAI/bge-reranker-base"
     ),
 )
 

@@ -63,7 +63,7 @@ class BaiduSearchTools(Toolkit):
         Returns:
             str: A JSON formatted string containing the search results.
         """
-        max_results = self.fixed_max_results or max_results
+        max_results = max_results if self.fixed_max_results is None else self.fixed_max_results
         language = self.fixed_language or language
 
         if len(language) != 2:

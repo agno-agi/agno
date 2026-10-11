@@ -87,3 +87,36 @@ def test_run_indexes_are_sequential(agent):
         asyncio.run(agent._arun_non_stream(text, session_id="s1", user_id="u1"))
     rows, _ = agent.db.get_runs(session_id="s1", deserialize=False)
     assert sorted(r["run_index"] for r in rows) == [0, 1, 2]
+
+
+@pytest.mark.parametrize("source", ["source", "branch", "missing"])
+def test_history_follows_fork_ancestry_and_subsequent_turns(agent, source):
+    from agno.models.message import Message
+    from agno.run.agent import RunOutput
+    from agno.session.agent import AgentSession
+
+    def run(run_id, content, forked_from=None):
+        return RunOutput(
+            run_id=run_id,
+            messages=[Message(role="user", content=content)],
+            forked_from_run_id=forked_from,
+        )
+
+    session = AgentSession(
+        session_id="s",
+        runs=[
+            run("earlier", "earlier turn"),
+            run("source", "original turn"),
+            run("discarded", "discarded later turn"),
+            run("branch", "first branch", "source"),
+            run("later", "first branch follow-up"),
+            run("second-branch", "second branch", source),
+            run("follow-up", "active follow-up"),
+            run("current", "exclude current input"),
+        ],
+    )
+    history = agent._get_history_from_session(session, exclude_run_id="current")
+    expected = ["second branch", "active follow-up"]
+    if source != "missing":
+        expected.insert(0, "earlier turn")
+    assert [message["content"] for message in history] == expected

@@ -388,6 +388,51 @@ class RunStatus(str, Enum):
     regenerated = "REGENERATED"
 
 
+class CancellationStage(str, Enum):
+    """Where a CANCELLED run was when it was cancelled.
+
+    A machine-readable companion to the CANCELLED status: the same status
+    covers a run that never started, a run stopped mid-execution with partial
+    output, and a run stopped while parked for a human-in-the-loop
+    continuation, and a UI treats those differently. The human-readable
+    reason stays on ``content``.
+
+    The stage is the status the run held when CANCELLED was written:
+    ``pending`` for a run that never started (a queued ticket, or a fresh
+    background run still waiting for a concurrency slot), ``executing`` for
+    a run stopped mid-execution (including a retry waiting out its backoff,
+    since an attempt already ran), ``paused`` for a run parked for a
+    human-in-the-loop continuation (including a continuation cancelled while
+    waiting for a slot, and a rejected confirmation that ends the run).
+
+    Absent (``None``) means unknown. Deliberately unstamped: runs written
+    before the field existed, and task-level interrupts (an event-loop
+    shutdown, a disconnected streaming task, a KeyboardInterrupt), which are
+    neither a user cancel nor a never-started run. Consumers must therefore
+    hide only on ``pending`` and never "show only on ``executing``".
+    Values are a wire contract: extend, never rename.
+    """
+
+    pending = "PENDING"
+    executing = "EXECUTING"
+    paused = "PAUSED"
+
+    @classmethod
+    def coerce(cls, value: Any) -> Any:
+        """A stored value as the enum when it is a known member, else as is.
+
+        Loading is tolerant by design: a newer server may have written a
+        stage this version does not know, and it must survive a round trip
+        unchanged rather than raise or be dropped.
+        """
+        if isinstance(value, str) and not isinstance(value, cls):
+            try:
+                return cls(value)
+            except ValueError:
+                return value
+        return value
+
+
 # Canonical set of run statuses excluded when rebuilding message history/context.
 # Single source of truth: session.get_messages (agent + team) and the DB-level
 # bounded-history read (agno.db.utils.HISTORY_SKIP_STATUSES) both derive from this,

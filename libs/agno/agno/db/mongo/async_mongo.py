@@ -1,4 +1,5 @@
 import asyncio
+import re
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
@@ -992,7 +993,7 @@ class AsyncMongoDb(AsyncBaseDb):
             page (Optional[int]): The page number to get.
             sort_by (Optional[str]): The field to sort the sessions by.
             sort_order (Optional[str]): The order to sort the sessions by.
-            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
 
         Returns:
             Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
@@ -1035,7 +1036,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 else:
                     query["created_at"] = {"$lte": end_timestamp}
             if session_name is not None:
-                query["session_data.session_name"] = {"$regex": session_name, "$options": "i"}
+                query["session_data.session_name"] = {"$regex": re.escape(session_name), "$options": "i"}
 
             # Get total count
             total_count = await collection.count_documents(query)
@@ -1516,7 +1517,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
         Args:
             memory_id (str): The ID of the memory to get.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
             user_id (Optional[str]): The ID of the user to verify ownership. If provided, only return the memory if it belongs to this user.
 
         Returns:
@@ -1573,7 +1574,7 @@ class AsyncMongoDb(AsyncBaseDb):
             page (Optional[int]): The page number to get.
             sort_by (Optional[str]): The field to sort the memories by.
             sort_order (Optional[str]): The order to sort the memories by.
-            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
 
         Returns:
             Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
@@ -1598,7 +1599,7 @@ class AsyncMongoDb(AsyncBaseDb):
             if topics is not None:
                 query["topics"] = {"$in": topics}
             if search_content is not None:
-                query["memory"] = {"$regex": search_content, "$options": "i"}
+                query["memory"] = {"$regex": re.escape(search_content), "$options": "i"}
 
             # Get total count
             total_count = await collection.count_documents(query)
@@ -1703,7 +1704,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
         Args:
             memory (UserMemory): The memory to upsert.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -2313,7 +2314,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
             user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
@@ -2375,7 +2376,7 @@ class AsyncMongoDb(AsyncBaseDb):
             user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type of eval to filter by.
             filter_type (Optional[EvalFilterType]): The type of filter to apply.
-            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -2452,7 +2453,7 @@ class AsyncMongoDb(AsyncBaseDb):
         Args:
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
             user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:

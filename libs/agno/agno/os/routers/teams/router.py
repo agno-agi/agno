@@ -55,6 +55,8 @@ from agno.os.middleware.user_scope import (
     caller_is_admin,
     get_scoped_user_id,
     run_matches_component,
+    sync_directory_from_request,
+    verify_run_belongs_to_component,
     verify_run_in_session,
     verify_run_in_session_via_db,
 )
@@ -68,11 +70,11 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    adraft_preview_identity,
     afinalize_continue_stream,
     allow_draft_preview,
     amark_continue_stream_running,
     classify_upload_file,
-    draft_preview_identity,
     find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
@@ -287,16 +289,9 @@ async def _resume_stream_generator(
                     yield frame
                 return
             elif run_output:
-                meta = {
-                    "event": "replay",
-                    "run_id": run_id,
-                    "status": run_output.status.value
-                    if hasattr(run_output.status, "value")
-                    else (run_output.status or "unknown"),
-                    "total_events": 0,
-                    "message": "Run completed but no events stored.",
-                }
-                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
+                from agno.os.utils import no_stored_events_replay_meta
+
+                yield f"event: replay\ndata: {json.dumps(no_stored_events_replay_meta(run_output, run_id))}\n\n"
                 return
 
         # Run not found anywhere
@@ -655,6 +650,9 @@ def get_team_router(
             if user_id and user_id != state_user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = state_user_id
+        # No-auth roster: an unauthenticated run's user_id still registers the person in the
+        # directory (no-op when auth is on -- the middleware already provisioned/enforced).
+        sync_directory_from_request(request, user_id)
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")
@@ -1138,6 +1136,16 @@ def get_team_router(
                     component_type="teams",
                     component_id=team_id,
                 )
+            else:
+                # RBAC without isolation: the run must still belong to the gated component.
+                await verify_run_belongs_to_component(
+                    request,
+                    getattr(factory, "db", None) or os.db,
+                    component_type="teams",
+                    component_id=team_id,
+                    run_id=run_id,
+                    session_id=session_id,
+                )
 
             # Tombstone a still-queued durable ticket first: intent alone
             # does not stop a job no task is executing yet
@@ -1180,6 +1188,16 @@ def get_team_router(
                 component_type="teams",
                 component_id=team_id,
             )
+        else:
+            # RBAC without isolation: the run must still belong to the gated component.
+            await verify_run_belongs_to_component(
+                request,
+                getattr(team, "db", None) or os.db,
+                component_type="teams",
+                component_id=team_id,
+                run_id=run_id,
+                session_id=session_id,
+            )
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
@@ -1204,6 +1222,10 @@ def get_team_router(
             "1. **Run still active**: Sends catch-up events + continues live streaming\n"
             "2. **Run completed (in buffer)**: Replays missed buffered events\n"
             "3. **Run completed (in database)**: Replays events from database\n\n"
+            "A run submitted with `stream=false`, inline or with `background=true`, has no event stream: "
+            "nothing is published while it runs and no events are stored with it. For such a run this "
+            "endpoint sends one `replay` frame with `total_events: 0` and its current status; poll the "
+            "run endpoint for the result instead.\n\n"
             "**Client usage:**\n"
             "Track `event_index` from each SSE event. On reconnection, pass the last "
             "received `event_index` as `last_event_index`."
@@ -1244,6 +1266,16 @@ def get_team_router(
                     component_type="teams",
                     component_id=team_id,
                 )
+            else:
+                # RBAC without isolation: the run must still belong to the gated component.
+                await verify_run_belongs_to_component(
+                    request,
+                    getattr(factory, "db", None) or os.db,
+                    component_type="teams",
+                    component_id=team_id,
+                    run_id=run_id,
+                    session_id=session_id,
+                )
             raise HTTPException(
                 status_code=400,
                 detail="Stream resumption is not supported for factory teams",
@@ -1273,6 +1305,16 @@ def get_team_router(
                 scoped_user_id,
                 component_type="teams",
                 component_id=team_id,
+            )
+        else:
+            # RBAC without isolation: the run must still belong to the gated component.
+            await verify_run_belongs_to_component(
+                request,
+                getattr(team, "db", None) or os.db,
+                component_type="teams",
+                component_id=team_id,
+                run_id=run_id,
+                session_id=session_id,
             )
 
         return StreamingResponse(
@@ -1422,6 +1464,16 @@ def get_team_router(
                 component_type="teams",
                 component_id=team_id,
             )
+        elif not isinstance(team, RemoteTeam):
+            # RBAC without isolation: the run must still belong to the gated component.
+            await verify_run_belongs_to_component(
+                request,
+                getattr(team, "db", None) or os.db,
+                component_type="teams",
+                component_id=team_id,
+                run_id=run_id,
+                session_id=session_id,
+            )
 
         # Version-stable continuation: a run started with an explicitly pinned
         # version (draft preview) recorded it in its run metadata; continue on
@@ -1437,7 +1489,7 @@ def get_team_router(
                 # must not resolve (defense against a forged/leaked stamp).
                 # Same 404 the run-start route raises, so a denial is
                 # indistinguishable from the component being absent.
-                if not allow_draft_preview(os.db, team_id, stamped_version, *draft_preview_identity(request)):
+                if not allow_draft_preview(os.db, team_id, stamped_version, *await adraft_preview_identity(request)):
                     raise HTTPException(status_code=404, detail="Team not found")
                 try:
                     stamped_team = get_team_by_id(
@@ -1744,6 +1796,16 @@ def get_team_router(
         scoped_user_id = get_scoped_user_id(request)
         effective_user_id = scoped_user_id or user_id
 
+        # The source session must belong to this team: the per-resource gate authorised
+        # team_id, not whichever session id the client named.
+        await verify_run_belongs_to_component(
+            request,
+            getattr(team, "db", None) or os.db,
+            component_type="teams",
+            component_id=team_id,
+            session_id=session_id,
+        )
+
         try:
             new_session_id = await team.afork_session(  # type: ignore[union-attr]
                 source_session_id=session_id,
@@ -1840,13 +1902,13 @@ def get_team_router(
         # Filter teams based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
             from agno.os.auth import (
+                afilter_resources_by_access,
+                aget_accessible_resources,
                 build_insufficient_permissions_detail,
-                filter_resources_by_access,
-                get_accessible_resources,
             )
 
             # Check if user has any team scopes at all
-            accessible_ids = get_accessible_resources(request, "teams")
+            accessible_ids = await aget_accessible_resources(request, "teams")
             if not accessible_ids:
                 required_scopes = getattr(request.state, "required_scopes", None)
                 raise HTTPException(
@@ -1854,7 +1916,7 @@ def get_team_router(
                     detail=build_insufficient_permissions_detail(required_scopes),
                 )
 
-            accessible_teams = filter_resources_by_access(request, os.teams or [], "teams")
+            accessible_teams = await afilter_resources_by_access(request, os.teams or [], "teams")
         else:
             accessible_teams = os.teams or []
 
@@ -1887,7 +1949,7 @@ def get_team_router(
                 # it, a caller whose scope excludes a team still saw its
                 # config here (the agents endpoint already filters)
                 if getattr(request.state, "authorization_enabled", False):
-                    db_teams = filter_resources_by_access(request, db_teams, "teams")
+                    db_teams = await afilter_resources_by_access(request, db_teams, "teams")
                 for db_team in db_teams:
                     team_response = await TeamResponse.from_team(team=db_team, is_component=True)
                     teams.append(team_response)

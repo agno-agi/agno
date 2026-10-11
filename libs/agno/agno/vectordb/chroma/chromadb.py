@@ -85,7 +85,7 @@ class ChromaDb(VectorDb):
             (per original RRF paper by Cormack et al.).
         batch_size: Maximum number of documents per batch operation. If not provided,
             automatically detects ChromaDB's maximum batch size limit.
-        reranker: The reranker to use when reranking documents.
+        reranker: The reranker to use when reranking documents. Deprecated: pass the reranker to Knowledge instead.
         **kwargs: Additional arguments to pass to the ChromaDB client.
     """
 
@@ -1202,6 +1202,7 @@ class ChromaDb(VectorDb):
                     name=name,
                     meta_data=doc_metadata,
                     content=content,
+                    embedder=self.embedder,
                     embedding=embedding,
                     content_id=content_id,
                 )
@@ -1297,6 +1298,7 @@ class ChromaDb(VectorDb):
                         name=name,
                         meta_data=doc_metadata,
                         content=content,
+                        embedder=self.embedder,
                         embedding=embedding,
                         content_id=content_id,
                     )
@@ -1384,6 +1386,7 @@ class ChromaDb(VectorDb):
                         name=name,
                         meta_data=doc_metadata,
                         content=content,
+                        embedder=self.embedder,
                         embedding=embedding,
                         content_id=content_id,
                     )
