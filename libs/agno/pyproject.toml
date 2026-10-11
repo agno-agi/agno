@@ -40,6 +40,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+e2b-sandbox = ["e2b==2.55.1"]
 dev = [
   "mypy==2.1.0",
   "ruff==0.15.20",
@@ -586,6 +587,7 @@ module = [
   "elasticsearch.*",
   "email_validator.*",
   "e2b_code_interpreter.*",
+  "e2b.*",
   "ipykernel.*",
   "jupyter_client.*",
   "eth_account.*",

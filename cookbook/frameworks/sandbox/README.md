@@ -156,3 +156,36 @@ customer-operated trusted teams; it is not a hostile multitenant security claim.
 The provider adapter must never auto-resume a stopped execution during inspection.
 Local acceptance exercises the helper with real Linux processes through a Docker
 test bridge; each hosted provider still requires live acceptance.
+
+### E2B (live acceptance required)
+
+Install `agno[e2b-sandbox]` with Python 3.10+ (SDK pinned to 2.55.1). Set
+`E2B_API_KEY` on the service and prepare an E2B template from a published image
+containing the hosted runtime and native SDKs. For example, with the installed
+E2B SDK: `Template.build(Template().from_image(image), alias=alias, cpu_count=2,
+memory_mb=2048)`. Building a template and running the following command can incur
+provider charges. Do not put service credentials in the image or template.
+
+```bash
+python cookbook/frameworks/sandbox/hosted_workload.py --provider e2b --image YOUR_TEMPLATE_ID
+```
+
+Set `AGNO_TEST_SANDBOX_DB_URL` to a dedicated Postgres database. The workload
+creates two successive computers, clones/edits/tests/runs a local application,
+checkpoints it, destroys compute, and verifies restoration/application restart.
+It uses no model calls. Test allocation tables are retained for reconciliation
+rather than deleting uncertain intents during cleanup.
+
+For AgentOS wiring, create `E2BSandboxProvider(namespace, journal)` and
+`HostedCheckpointTransfer(provider, object_store)`, then pass them to
+`SandboxCoordinator` and `SandboxAgent` as in the Docker example. Set the agent's
+`pids_limit=None`, `workspace_mb=None`, image to the template ID, and CPU/memory to
+the template's actual resources. Set `network="internet"` explicitly for remote
+model/MCP calls. The account/template must support the configured lifetime.
+
+E2B transport uses a read-only SDK endpoint to retrieve the secure connection
+information; it does not call `connect`, which can resume paused computers.
+Allocation and control HTTP retries are disabled. Expiry kills compute and the
+next turn restores from the last completed checkpoint. SDK contract tests run
+without network; live account, template, filesystem permissions and both native
+harnesses still need acceptance.

@@ -173,3 +173,13 @@ Python 3.9 follow-up: 76 sandbox unit tests, 40 real Postgres cases and 12 Agent
 **Result:** 6 real Linux/Postgres cases passed across sync/async database adapters; hosted contract tests passed within the sandbox unit suite. No hosted platform or native-model calls were made.
 
 ---
+
+### E2B installed-SDK contract
+
+**Status:** PASS
+
+**Description:** Five tests against E2B 2.55.1 with network endpoints replaced: read-only secure transport construction, paused-compute refusal, create settings, SDK inventory serialization/pagination, and bounded stream cleanup.
+
+**Result:** 5 passed. Format/validation passed. `hosted_workload.py --provider e2b` is prepared but has not run against an E2B account; template permissions, quotas, networking, and native harness behavior remain live acceptance gates.
+
+---
