@@ -1,37 +1,48 @@
 """
-Codex with built-in tool calls, wrapped in Agno's CodexAgent.
+CodexAgent: Stream a Code Review
+==================================
+Inspect the bundled shipping project and stream text plus tool lifecycle events.
 
-Codex has built-in tools (shell commands, file edits, web search, MCP) that
-are executed by the Codex runtime. You control what it may touch with the
-sandbox setting:
-
-    read-only        read files and run read-only commands (default)
-    workspace-write  also edit files inside the working directory
-    full-access      no filesystem restrictions
-
-Shell commands, file changes and MCP calls show up as Agno tool call events,
-so they render in print_response() and stream over AgentOS.
-
-Requirements:
-    pip install openai-codex
-
-Usage:
-    .venvs/demo/bin/python cookbook/frameworks/codex/codex_tools.py
+The harness owns tool execution; Agno translates it into RunContent,
+ToolCallStarted and ToolCallCompleted events. The final RunOutput retains tool
+results. Expect shipping fees of 8, 0 and 0 dollars, including the boundary order.
+This reads files; it does not demonstrate edits, approvals or tenant isolation.
+See README.md for setup and permission details.
 """
 
-from agno.agents.codex import CodexAgent
+import os
+from pathlib import Path
 
-# ----- Agent with built-in tools -----
+from agno.agents.codex import CodexAgent
+from agno.run.base import RunStatus
+
+# ---------------------------------------------------------------------------
+# Configure the Workspace
+# ---------------------------------------------------------------------------
+workspace = Path(__file__).resolve().parents[1] / "sample_project"
+prompt = "Read shipping.py and orders.json with your file or shell tools. Explain the shipping fee for each order and the boundary condition. Do not modify files or use the network."
+
+# ---------------------------------------------------------------------------
+# Create the Agent
+# ---------------------------------------------------------------------------
 agent = CodexAgent(
-    name="Codex Coder",
-    model="gpt-5.6-luna",
+    id="codex-tools",
+    model=os.getenv("CODEX_MODEL", "gpt-5.6-luna"),
+    cwd=str(workspace),
     sandbox="read-only",
-    cwd=".",
+    approval_mode="deny_all",
     reasoning_effort="low",
 )
 
-# Streaming with tool calls visible
-agent.print_response(
-    "List the Python files in the current directory and summarize what this project does",
-    stream=True,
-)
+# ---------------------------------------------------------------------------
+# Run the Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    result = agent.print_response(prompt, stream=True)
+
+    assert result.status == RunStatus.completed, result.content
+    assert result.content, "The harness completed without an answer"
+    assert result.tools, "Expected the harness to inspect the fixture using tools"
+    assert any(tool.result and not tool.tool_call_error for tool in result.tools), (
+        "No successful tool result"
+    )

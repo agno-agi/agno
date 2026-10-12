@@ -27,6 +27,7 @@ from agno.os.config import AgentOSConfig
 from agno.registry import Registry, ToolSource
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
+from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import RemoteTeam, Team, TeamFactory
@@ -119,6 +120,23 @@ def drop_media_references(media_dicts: Any) -> Any:
     return media_dicts
 
 
+def _check_object_json_schema(schema: Dict[str, Any]) -> None:
+    """Raise HTTP 422 unless schema is a structurally valid JSON Schema with an explicit object root."""
+    if schema.get("type") != "object":
+        raise HTTPException(status_code=422, detail='Invalid output_schema: root must declare "type": "object"')
+    try:
+        from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+        from jsonschema.exceptions import SchemaError  # type: ignore[import-untyped]
+    except ImportError:
+        raise ImportError("`jsonschema` not installed. Please install using `pip install jsonschema`")
+    try:
+        Draft202012Validator.check_schema(schema)
+    except SchemaError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid output_schema: {exc.message}") from exc
+    except RecursionError as exc:
+        raise HTTPException(status_code=422, detail="Invalid output_schema: schema is nested too deeply") from exc
+
+
 async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
     """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
 
@@ -199,16 +217,23 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
         "input_files": ("files", reconstruct_files),
     }
     for form_key, (kwarg_key, reconstructor) in media_params.items():
-        media_value = kwargs.get(form_key)
-        if not media_value or not isinstance(media_value, str):
+        if form_key not in kwargs:
             continue
-        kwargs.pop(form_key)
+        media_value = kwargs.pop(form_key)
         try:
-            reconstructed_media = reconstructor(drop_media_references(json.loads(media_value)))
-            if reconstructed_media:
-                kwargs[kwarg_key] = reconstructed_media
-        except json.JSONDecodeError as e:
-            log_warning(f"Invalid {form_key} parameter couldn't be loaded: {str(e)}")
+            decoded_media = json.loads(media_value) if isinstance(media_value, str) else media_value
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise HTTPException(
+                status_code=422, detail=f"Invalid {form_key}: expected a JSON array of objects"
+            ) from exc
+        if not isinstance(decoded_media, list) or any(not isinstance(item, dict) for item in decoded_media):
+            raise HTTPException(status_code=422, detail=f"Invalid {form_key}: expected a JSON array of objects")
+        # Storage reconstruction tolerates damaged historical entries. Incoming requests
+        # must instead fail as a whole, before a run can execute with missing inputs.
+        reconstructed_media = reconstructor(drop_media_references(decoded_media)) or []
+        if len(reconstructed_media) != len(decoded_media):
+            raise HTTPException(status_code=422, detail=f"Invalid {form_key}: could not reconstruct every media item")
+        kwargs[kwarg_key] = reconstructed_media
 
     if knowledge_filters := kwargs.get("knowledge_filters"):
         try:
@@ -250,24 +275,36 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
     if isinstance(use_json_schema, str):
         use_json_schema = use_json_schema.lower() == "true"
 
-    if output_schema := kwargs.get("output_schema"):
+    if "output_schema" in kwargs:
+        output_schema = kwargs["output_schema"]
         try:
-            if isinstance(output_schema, str):
-                schema_dict = json.loads(output_schema)
-
-                if use_json_schema:
-                    # Keep as dict schema for direct JSON output
-                    kwargs["output_schema"] = schema_dict
-                else:
-                    # Convert to Pydantic model (default behavior)
-                    dynamic_model = json_schema_to_pydantic_model(schema_dict)
-                    kwargs["output_schema"] = dynamic_model
-        except json.JSONDecodeError as e:
-            kwargs.pop("output_schema")
-            log_warning(f"Invalid output_schema JSON: {output_schema}: {str(e)}")
-        except Exception as e:
-            kwargs.pop("output_schema")
-            log_warning(f"Failed to create output_schema model: {str(e)}")
+            schema_dict = json.loads(output_schema) if isinstance(output_schema, str) else output_schema
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise HTTPException(status_code=422, detail="Invalid output_schema: expected a JSON object schema") from exc
+        if not isinstance(schema_dict, dict):
+            raise HTTPException(status_code=422, detail="Invalid output_schema: expected a JSON object schema")
+        # Raw mode also accepts provider response formats: {"type": "json_object"} and {"type": "json_schema", ...}
+        object_schema: Optional[Any] = schema_dict
+        if use_json_schema and schema_dict.get("type") == "json_object":
+            object_schema = None
+        elif use_json_schema and schema_dict.get("type") == "json_schema":
+            wrapped = schema_dict.get("json_schema")
+            object_schema = wrapped.get("schema") if isinstance(wrapped, dict) else None
+            if not isinstance(object_schema, dict):
+                raise HTTPException(
+                    status_code=422, detail="Invalid output_schema: json_schema.schema must be an object"
+                )
+        if object_schema is not None:
+            _check_object_json_schema(object_schema)
+        try:
+            if use_json_schema:
+                kwargs["output_schema"] = schema_dict
+            else:
+                kwargs["output_schema"] = json_schema_to_pydantic_model(schema_dict)
+        except (TypeError, ValueError, AttributeError, RecursionError) as exc:
+            raise HTTPException(
+                status_code=422, detail="Invalid output_schema: could not construct output model"
+            ) from exc
 
     # Parse boolean and null values
     for key, value in kwargs.items():
@@ -504,16 +541,43 @@ def stored_event_replay_dicts(
     """
     floor = last_event_index if last_event_index is not None else -1
     dicts: List[Dict[str, Any]] = []
+    last_index = -1
     for position, event in enumerate(getattr(run_output, "events", None) or []):
         event_dict = event.to_dict()
         stored_index = event_dict.get("event_index")
         if stored_index is not None and int(stored_index) <= floor:
             continue
-        event_dict["event_index"] = int(stored_index) if stored_index is not None else position
+        if stored_index is not None:
+            index = int(stored_index)
+        else:
+            # Positional fallback, but never behind a stamped event that came before it in the
+            # row (an unstamped terminal event after stamped ones), so the replay stays ordered.
+            index = max(position, last_index + 1)
+        last_index = max(last_index, index)
+        event_dict["event_index"] = index
         if "run_id" not in event_dict:
             event_dict["run_id"] = run_id
         dicts.append(event_dict)
     return dicts
+
+
+def no_stored_events_replay_meta(run_output: Any, run_id: str) -> Dict[str, Any]:
+    """The replay meta for a run found in the database with no stored events.
+
+    A run submitted with stream=false, inline or in the background, never publishes to the
+    event stream and stores no events, so there is nothing to attach to: the message says
+    whether the run is still going (poll the run endpoint) or finished with only its final
+    output, instead of claiming it completed.
+    """
+    status = run_output.status.value if hasattr(run_output.status, "value") else (run_output.status or "unknown")
+    if status in (RunStatus.pending.value, RunStatus.running.value):
+        message = (
+            f"Run is {status} and was submitted without streaming, so it has no event stream to attach to. "
+            "Poll the run endpoint for its result."
+        )
+    else:
+        message = f"Run {status} with no stored events: a run submitted without streaming keeps only its final output."
+    return {"event": "replay", "run_id": run_id, "status": status, "total_events": 0, "message": message}
 
 
 def stored_event_replay_frames(run_output: Any, run_id: str, last_event_index: Optional[int] = None) -> List[str]:

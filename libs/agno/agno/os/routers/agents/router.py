@@ -67,6 +67,7 @@ from agno.os.middleware.user_scope import (
 )
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.schema import (
+    AgentSummaryResponse,
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
@@ -152,11 +153,16 @@ async def agent_response_streamer(
         async for run_response_chunk in run_response:  # type: ignore[union-attr]
             yield format_sse_event(run_response_chunk)  # type: ignore
     except (InputCheckError, OutputCheckError) as e:
+        # Carry the run identity so clients can attach the error to the message they sent.
         error_response = RunErrorEvent(
             content=str(e),
             error_type=e.type,
             error_id=e.error_id,
             additional_data=e.additional_data,
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
         )
         yield format_sse_event(error_response)
     except asyncio.CancelledError:
@@ -167,6 +173,12 @@ async def agent_response_streamer(
         traceback.print_exc(limit=3)
         error_response = RunErrorEvent(
             content=str(e),
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
+            error_type=getattr(e, "type", None),
+            error_id=getattr(e, "error_id", None),
         )
         yield format_sse_event(error_response)
 
@@ -237,11 +249,16 @@ async def agent_resumable_response_streamer(
                     )
                 yield format_sse_event(sse_data)
     except (InputCheckError, OutputCheckError) as e:
+        # Carry the run identity so clients can attach the error to the message they sent.
         error_response = RunErrorEvent(
             content=str(e),
             error_type=e.type,
             error_id=e.error_id,
             additional_data=e.additional_data,
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
         )
         yield format_sse_event(error_response)
     except asyncio.CancelledError:
@@ -252,6 +269,12 @@ async def agent_resumable_response_streamer(
         traceback.print_exc(limit=3)
         error_response = RunErrorEvent(
             content=str(e),
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
+            error_type=getattr(e, "type", None),
+            error_id=getattr(e, "error_id", None),
         )
         yield format_sse_event(error_response)
 
@@ -348,11 +371,16 @@ async def agent_continue_response_streamer(
                     final_status=RunStatus.cancelled if _cancelled else None,
                 )
     except (InputCheckError, OutputCheckError) as e:
+        # Carry the run identity so clients can attach the error to the message they sent.
         error_response = RunErrorEvent(
             content=str(e),
             error_type=e.type,
             error_id=e.error_id,
             additional_data=e.additional_data,
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
         )
         yield format_sse_event(error_response)
 
@@ -426,11 +454,16 @@ async def agent_resumable_continue_response_streamer(
         ):
             yield sse_data
     except (InputCheckError, OutputCheckError) as e:
+        # Carry the run identity so clients can attach the error to the message they sent.
         error_response = RunErrorEvent(
             content=str(e),
             error_type=e.type,
             error_id=e.error_id,
             additional_data=e.additional_data,
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
         )
         yield format_sse_event(error_response)
     except asyncio.CancelledError:
@@ -441,6 +474,12 @@ async def agent_resumable_continue_response_streamer(
         traceback.print_exc(limit=3)
         error_response = RunErrorEvent(
             content=str(e),
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
+            error_type=getattr(e, "type", None),
+            error_id=getattr(e, "error_id", None),
         )
         yield format_sse_event(error_response)
 
@@ -486,16 +525,9 @@ async def _resume_stream_generator(
                     yield frame
                 return
             elif run_output:
-                meta = {
-                    "event": "replay",
-                    "run_id": run_id,
-                    "status": run_output.status.value
-                    if hasattr(run_output.status, "value")
-                    else (run_output.status or "unknown"),
-                    "total_events": 0,
-                    "message": "Run completed but no events stored.",
-                }
-                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
+                from agno.os.utils import no_stored_events_replay_meta
+
+                yield f"event: replay\ndata: {json.dumps(no_stored_events_replay_meta(run_output, run_id))}\n\n"
                 return
 
         # Run not found anywhere
@@ -852,7 +884,14 @@ def get_agent_router(
                 # RUN (complete output guaranteed via the run row); the live
                 # stream is the best-effort view.
                 queue_worker = getattr(request.app.state, "queue_worker", None)
-                queued_stream_payload = {"input": message, "kwargs": kwargs, "stream": True}
+                from agno.agents.base import BaseExternalAgent
+
+                queued_stream_payload = {
+                    "input": message,
+                    "kwargs": kwargs,
+                    "stream": True,
+                    "serialize_session": isinstance(agent, BaseExternalAgent),
+                }
                 stream_queueable = (
                     queue_worker is not None
                     and getattr(agent, "db", None) is not None
@@ -975,7 +1014,13 @@ def get_agent_router(
                 getattr(candidate, "id", None) == agent_id and not isinstance(candidate, AgentFactory)
                 for candidate in (os.agents or [])
             )
-            queued_payload = {"input": message, "kwargs": kwargs}
+            from agno.agents.base import BaseExternalAgent
+
+            queued_payload = {
+                "input": message,
+                "kwargs": kwargs,
+                "serialize_session": isinstance(agent, BaseExternalAgent),
+            }
             if (
                 queue_worker is not None
                 and agent_is_queueable
@@ -2034,7 +2079,7 @@ def get_agent_router(
                             description=getattr(agent, "description", None),
                             db_id=agent_db.id if agent_db else None,
                             sessions=sessions,
-                            metadata={"framework": getattr(agent, "framework", "external")},
+                            metadata=AgentSummaryResponse.from_agent(agent).metadata or {"sdk": "external"},
                         )
                     )
 
@@ -2137,7 +2182,7 @@ def get_agent_router(
                 id=agent.id,
                 name=agent.name,
                 description=getattr(agent, "description", None),
-                metadata={"framework": getattr(agent, "framework", "external")},
+                metadata=AgentSummaryResponse.from_agent(agent).metadata or {"sdk": "external"},
             )
 
     @router.get(
@@ -2397,6 +2442,10 @@ def get_agent_router(
             "1. **Run still active**: Sends catch-up events + continues live streaming\n"
             "2. **Run completed (in buffer)**: Replays missed buffered events\n"
             "3. **Run completed (in database)**: Replays events from database\n\n"
+            "A run submitted with `stream=false`, inline or with `background=true`, has no event stream: "
+            "nothing is published while it runs and no events are stored with it. For such a run this "
+            "endpoint sends one `replay` frame with `total_events: 0` and its current status; poll the "
+            "run endpoint for the result instead.\n\n"
             "**Client usage:**\n"
             "Track `event_index` from each SSE event. On reconnection, pass the last "
             "received `event_index` as `last_event_index`."

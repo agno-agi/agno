@@ -56,8 +56,7 @@ def make_agent(db: BaseDb, replica: str) -> ClaudeAgent:
         db=db,
         cwd=str(cwd),
         allowed_tools=[],
-        max_turns=2,
-        max_budget_usd=0.5,
+        model="claude-sonnet-5-5",
     )
 
 
@@ -148,10 +147,11 @@ def main() -> None:
     print()
     print("Step 1: replica A runs the first turn")
     replica_a = make_agent(db, "replica-a")
-    first = replica_a.run(
+    first = replica_a.print_response(
         f"Remember this: the deploy password is {SECRET}. Reply with exactly: OK",
         session_id=agno_session_id,
         user_id="demo-user",
+        stream=True,
     )
     assert first.status == RunStatus.completed, first.content
     print(f"Reply: {first.content}")
@@ -176,10 +176,11 @@ def main() -> None:
         "Step 2: replica B resumes the same Agno session from another working directory"
     )
     replica_b = make_agent(db, "replica-b")
-    second = replica_b.run(
+    second = replica_b.print_response(
         "What is the deploy password? Reply with only the password.",
         session_id=agno_session_id,
         user_id="demo-user",
+        stream=True,
     )
     assert second.status == RunStatus.completed, second.content
     print(f"Reply: {second.content}")

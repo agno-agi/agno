@@ -968,6 +968,7 @@ class AgentOS:
             if isinstance(entry, BaseExternalAgent):
                 if self.db is not None and entry.db is None:
                     entry.db = self.db
+                entry.store_events = True
 
         if not self._agents:
             return
@@ -1404,8 +1405,8 @@ class AgentOS:
         # Fall back to finding the first available database
         db: Optional[Union[BaseDb, AsyncBaseDb, RemoteDb]] = None
 
-        for agent in self._agents:
-            if agent.db:
+        for agent in self.agents or []:
+            if isinstance(agent, (Agent, BaseExternalAgent)) and agent.db is not None:
                 db = agent.db
                 break
 

@@ -762,3 +762,43 @@ async def test_retry_cleanup_keeps_the_newer_attempts_handle():
     proceed["second"].set()
     await second
     assert run_id not in _live_handles
+
+
+def test_adapters_without_structured_output_reject_output_schema():
+    with pytest.raises(ValueError, match="does not support output_schema"):
+        BlockingAgent(id="external", output_schema={"type": "object"})
+
+    agent = BlockingAgent(id="external")
+    with pytest.raises(ValueError, match="does not support output_schema"):
+        agent.run("hi", output_schema={"type": "object"})
+    assert agent.calls == []
+
+
+def test_decoded_answers_are_validated_as_they_are():
+    """A framework that already decoded the JSON hands a dict, list or scalar; those are validated
+    directly instead of being stringified and re-parsed (str(['a']) is not JSON)."""
+    from typing import Dict, List
+
+    from pydantic import BaseModel, RootModel
+
+    class Counts(RootModel[Dict[str, int]]):
+        pass
+
+    class Pair(BaseModel):
+        left: List[str]
+        right: int
+
+    agent = BlockingAgent(id="external")
+    agent._supports_output_schema = True  # type: ignore[misc]
+    run = RunOutput(run_id="r", content="prose", status=RunStatus.completed)
+    agent._apply_output_schema(run, Counts, {"a": 1})
+    assert run.content == Counts({"a": 1}) and run.content_type == "Counts"
+    run = RunOutput(run_id="r", content="prose", status=RunStatus.completed)
+    agent._apply_output_schema(run, Pair, {"left": ["a", "b"], "right": 2})
+    assert run.content == Pair(left=["a", "b"], right=2)
+    run = RunOutput(run_id="r", content="prose", status=RunStatus.completed)
+    agent._apply_output_schema(run, {"type": "object"}, {"k": [1, 2]})
+    assert run.content == {"k": [1, 2]} and run.content_type == "dict"
+    run = RunOutput(run_id="r", content='{"left": ["a"], "right": 1}', status=RunStatus.completed)
+    agent._apply_output_schema(run, Pair, None)
+    assert run.content == Pair(left=["a"], right=1), "text is still parsed"

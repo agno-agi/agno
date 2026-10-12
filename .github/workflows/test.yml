@@ -212,3 +212,14 @@ jobs:
           # run against the service above instead of importorskip-ing away.
           uv pip install pytest-split "psycopg[binary]" --quiet
           python -m pytest --splits 5 --group ${{ matrix.group }} ./libs/agno/tests/unit --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
+      # The serialized session queue's claim and enqueue paths are Postgres SQL;
+      # they skip without AGNO_TEST_POSTGRES_URL, so point them at the service above.
+      - name: Run queue store Postgres tests
+        if: matrix.group == 1
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+          AGNO_TEST_POSTGRES_URL: postgresql+psycopg://ai:ai@localhost:5532/ai
+        run: |
+          source .venv/bin/activate
+          python -m pytest -rs libs/agno/tests/integration/db/test_serialized_session_queue.py
