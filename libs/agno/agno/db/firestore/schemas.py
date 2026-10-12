@@ -169,6 +169,18 @@ METRICS_COLLECTION_SCHEMA = [
     },
 ]
 
+OS_METRICS_COLLECTION_SCHEMA = [
+    {"key": "id", "unique": True},
+    {"key": "date"},
+    {"key": "aggregation_period"},
+    # Rows with no owner use the empty-string sentinel, so one owner's rows are read by equality
+    {"key": "user_id"},
+    # The rows of one period by day, read newest first
+    {"key": [("aggregation_period", "ASCENDING"), ("date", "DESCENDING")], "collection_group": False},
+    # One owner's days: an equality on user_id with a range on date needs a composite index
+    {"key": [("user_id", "ASCENDING"), ("date", "ASCENDING")], "collection_group": False},
+]
+
 TRACE_COLLECTION_SCHEMA = [
     {"key": "trace_id", "unique": True},
     {"key": "name"},
@@ -215,6 +227,7 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
         "runs": RUNS_COLLECTION_SCHEMA,
         "memories": USER_MEMORY_COLLECTION_SCHEMA,
         "metrics": METRICS_COLLECTION_SCHEMA,
+        "os_metrics": OS_METRICS_COLLECTION_SCHEMA,
         "evals": EVAL_COLLECTION_SCHEMA,
         "knowledge": KNOWLEDGE_COLLECTION_SCHEMA,
         "traces": TRACE_COLLECTION_SCHEMA,

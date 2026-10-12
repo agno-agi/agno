@@ -1,8 +1,9 @@
+import asyncio
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, cast
 from uuid import uuid4
 
 from sqlalchemy import and_, or_
@@ -32,26 +33,47 @@ from agno.db.sql import authz as authz_sql
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
     abulk_upsert_metrics,
+    abulk_upsert_os_metrics,
+    aget_stored_os_metrics_state,
     ais_table_available,
     ais_valid_table,
     apply_sorting,
+    aupdate_os_metrics_state,
+    build_os_metrics_runs,
+    build_os_metrics_runs_query,
+    build_os_metrics_total_dates_query,
+    build_os_metrics_totals,
+    build_os_metrics_totals_queries,
     calculate_date_metrics,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    os_metrics_values,
 )
 from agno.db.utils import (
     HISTORY_SKIP_STATUSES,
+    OS_METRICS_DAY_PERIODS,
+    OS_METRICS_STATE_ID,
     SessionRunObjectCache,
     build_single_run_row,
+    calculate_date_os_metrics,
+    calculate_month_os_metrics,
     deserialize_run,
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
     filter_context_runs,
+    get_months_to_calculate_os_metrics_for,
     json_serializer,
+    merge_os_metrics_totals,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
+    os_metrics_dates_to_read,
+    os_metrics_full_months,
+    os_metrics_month_end,
+    os_metrics_rows_to_write,
+    os_metrics_state_of,
     owner_key,
+    resolve_os_metrics_fields,
     table_schema_mismatch_error,
     validate_pagination,
 )
@@ -82,6 +104,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
+        os_metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
@@ -113,6 +136,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             runs_table (Optional[str]): Name of the table to store the runs of each session.
             memory_table (Optional[str]): Name of the table to store user memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
+            os_metrics_table (Optional[str]): Name of the table to store OS metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge documents data.
             traces_table (Optional[str]): Name of the table to store run traces.
@@ -139,6 +163,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
+            os_metrics_table=os_metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             traces_table=traces_table,
@@ -222,6 +247,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_debug("Table cache: disabled for in-memory SQLite (per-thread private databases)")
         # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute
         self._metrics_refreshed_at: float = 0.0
+        # Zero means never refreshed; get_os_metrics uses this the same way
+        self._os_metrics_refreshed_at: float = 0.0
 
     async def close(self) -> None:
         """Close database connections and dispose of the connection pool.
@@ -252,6 +279,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             (self.runs_table_name, "runs"),
             (self.memory_table_name, "memories"),
             (self.metrics_table_name, "metrics"),
+            (self.os_metrics_table_name, "os_metrics"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
             (self.versions_table_name, "versions"),
@@ -465,6 +493,14 @@ class AsyncSqliteDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.metrics_table
+
+        elif table_type == "os_metrics":
+            self.os_metrics_table = await self._get_or_create_table(
+                table_name=self.os_metrics_table_name,
+                table_type="os_metrics",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.os_metrics_table
 
         elif table_type == "evals":
             self.eval_table = await self._get_or_create_table(
@@ -2539,7 +2575,10 @@ class AsyncSqliteDb(AsyncBaseDb):
                 await sess.execute(select(func.max(table.c.date)).where(table.c.completed.is_(True)))
             ).scalar()
 
-            incomplete_stmt = select(func.min(table.c.date)).where(table.c.completed.is_(False))
+            # The state row of the OS metrics table is no day
+            incomplete_stmt = select(func.min(table.c.date)).where(
+                table.c.completed.is_(False), table.c.aggregation_period != OS_METRICS_STATE_ID
+            )
             if latest_completed is not None:
                 incomplete_stmt = incomplete_stmt.where(table.c.date > latest_completed)
             earliest_incomplete = (await sess.execute(incomplete_stmt)).scalar()
@@ -2698,6 +2737,398 @@ class AsyncSqliteDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error getting metrics: {str(e)}")
             raise e
+
+    # -- OS metrics methods --
+    async def calculate_os_metrics(self) -> Optional[List[Dict[str, Any]]]:
+        """Calculate OS metrics for all dates without complete OS metrics.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: The calculated OS metrics.
+
+        Raises:
+            Exception: If an error occurs during OS metrics calculation.
+        """
+        try:
+            return await self._calculate_os_metrics()
+
+        except Exception as e:
+            log_error(f"Error refreshing OS metrics: {str(e)}")
+            raise e
+
+    async def refresh_os_metrics(self) -> Tuple[Optional[int], Optional[int], bool]:
+        """Calculate OS metrics for all dates without complete OS metrics, and report whether any row changed.
+
+        Returns:
+            Tuple[Optional[int], Optional[int], bool]: When the OS metrics were last updated before the
+                calculation and after it, and whether it wrote or deleted any row.
+
+        Raises:
+            Exception: If an error occurs during OS metrics calculation.
+        """
+        try:
+            table = await self._get_table(table_type="os_metrics", create_table_if_not_found=True)
+            if table is None:
+                return None, None, False
+
+            # The state row is stamped when it is written, a time no row of a day reports
+            updated_at_stmt = select(func.max(table.c.updated_at)).where(
+                table.c.aggregation_period != OS_METRICS_STATE_ID
+            )
+            async with self.async_session_factory() as sess:
+                previous_updated_at = (await sess.execute(updated_at_stmt)).scalar()
+
+            changed_ids: List[str] = []
+            await self._calculate_os_metrics(changed_ids=changed_ids)
+
+            async with self.async_session_factory() as sess:
+                latest_updated_at = (await sess.execute(updated_at_stmt)).scalar()
+
+            return previous_updated_at, latest_updated_at, bool(changed_ids)
+
+        except Exception as e:
+            log_error(f"Error refreshing OS metrics: {str(e)}")
+            raise e
+
+    async def _calculate_os_metrics(self, changed_ids: Optional[List[str]] = None) -> Optional[List[Dict[str, Any]]]:
+        """Calculate OS metrics for all dates without complete OS metrics.
+
+        Args:
+            changed_ids (Optional[List[str]]): When given, the ids of the rows deleted and of the calculated
+                rows written are added to it.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: The calculated OS metrics.
+        """
+        # Stamp first so failed runs are throttled too instead of retried on every read
+        self._os_metrics_refreshed_at = time.time()
+
+        table = await self._get_table(table_type="os_metrics", create_table_if_not_found=True)
+        if table is None:
+            return None
+
+        starting_date = await self._get_metrics_calculation_starting_date(table)
+        if starting_date is None:
+            log_info("No session data found. Won't calculate OS metrics.")
+            return None
+
+        dates_to_process = get_dates_to_calculate_metrics_for(starting_date)
+        if not dates_to_process:
+            log_info("OS metrics already calculated for all relevant dates.")
+            return None
+
+        sessions_table = await self._get_table(table_type="sessions")
+        if sessions_table is None:
+            return None
+        runs_table = await self._get_table(table_type="runs")
+
+        results = []
+        for date_to_process in dates_to_process:
+            # Each day is its own transaction, so a day that fails never holds back the rows of the days before it
+            async with self.async_session_factory() as sess, sess.begin():
+                # Skip a day another rebuild has completed since the days were picked
+                latest_completed = (
+                    await sess.execute(select(func.max(table.c.date)).where(table.c.completed.is_(True)))
+                ).scalar()
+                if latest_completed is not None and date_to_process <= latest_completed:
+                    continue
+
+                start_timestamp = int(
+                    datetime.combine(date_to_process, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+                )
+                end_timestamp = int(
+                    datetime.combine(date_to_process + timedelta(days=1), datetime.min.time())
+                    .replace(tzinfo=timezone.utc)
+                    .timestamp()
+                )
+
+                sessions_stmt = select(
+                    sessions_table.c.session_type,
+                    sessions_table.c.user_id,
+                    sessions_table.c.agent_id,
+                    sessions_table.c.team_id,
+                    sessions_table.c.workflow_id,
+                ).where(sessions_table.c.created_at >= start_timestamp, sessions_table.c.created_at < end_timestamp)
+                result = (await sess.execute(sessions_stmt)).fetchall()
+                sessions = [dict(record._mapping) for record in result]
+
+                runs: List[Dict[str, Any]] = []
+                stored_run_ids: Set[str] = set()
+                if runs_table is not None:
+                    result = (
+                        await sess.execute(build_os_metrics_runs_query(runs_table, start_timestamp, end_timestamp))
+                    ).fetchall()
+                    # Calculation steps run in a thread so they never block the event loop
+                    runs, nested_run_ids = await asyncio.to_thread(build_os_metrics_runs, result)
+
+                    # A nested run also stored as a run of its own is counted from that row, whatever day it is on
+                    if nested_run_ids:
+                        stored_stmt = select(runs_table.c.run_id).where(
+                            runs_table.c.run_id.in_(os_metrics_values(sorted(nested_run_ids)))
+                        )
+                        result = (await sess.execute(stored_stmt)).fetchall()
+                        stored_run_ids.update(record.run_id for record in result)
+
+                records = await asyncio.to_thread(
+                    calculate_date_os_metrics, date_to_process, sessions, runs, stored_run_ids
+                )
+                # A month row is dated the first day of its month, and is no row of that day
+                result = (
+                    await sess.execute(
+                        select(table).where(
+                            table.c.date == date_to_process, table.c.aggregation_period.in_(OS_METRICS_DAY_PERIODS)
+                        )
+                    )
+                ).fetchall()
+                stored_rows = [dict(record._mapping) for record in result]
+
+                changed_rows, stale_ids = os_metrics_rows_to_write(records, stored_rows)
+                if stale_ids:
+                    await sess.execute(table.delete().where(table.c.id.in_(os_metrics_values(stale_ids))))
+                await abulk_upsert_os_metrics(session=sess, table=table, os_metrics_records=changed_rows)
+                # The state moves in the day's transaction, so it is never read without the rows it tells of
+                if changed_rows or stale_ids:
+                    await aupdate_os_metrics_state(
+                        session=sess, table=table, changed_rows=changed_rows, stale_ids=stale_ids, day=date_to_process
+                    )
+                results.extend(records)
+                if changed_ids is not None:
+                    changed_ids.extend([*stale_ids, *(row["id"] for row in changed_rows)])
+
+        month_rows = await self._calculate_month_os_metrics(table)
+        if changed_ids is not None:
+            changed_ids.extend(row["id"] for row in month_rows)
+
+        log_debug("Updated OS metrics calculations")
+
+        return results
+
+    async def _calculate_month_os_metrics(self, table: Table) -> List[Dict[str, Any]]:
+        """Calculate the month rows of every completed month that has none.
+
+        A completed month gets its month rows once, whichever rebuild completed its days. They are written
+        after the days' own transactions, so a month that fails to calculate never holds back the rows of a day.
+
+        Args:
+            table (Table): The OS metrics table.
+
+        Returns:
+            List[Dict[str, Any]]: The month rows written.
+        """
+        results = []
+        async with self.async_session_factory() as sess, sess.begin():
+            total_dates = (
+                await sess.execute(build_os_metrics_total_dates_query(table, ["daily_total", "monthly_total"]))
+            ).fetchall()
+            total_days = [record.date for record in total_dates if record.aggregation_period == "daily_total"]
+            calculated_months = [record.date for record in total_dates if record.aggregation_period == "monthly_total"]
+            for month_start in get_months_to_calculate_os_metrics_for(total_days, calculated_months):
+                result = (
+                    await sess.execute(
+                        select(table).where(
+                            table.c.date >= month_start,
+                            table.c.date <= os_metrics_month_end(month_start),
+                            table.c.aggregation_period == "daily",
+                        )
+                    )
+                ).fetchall()
+                stored_rows = [dict(record._mapping) for record in result]
+
+                month_rows = calculate_month_os_metrics(month_start, stored_rows)
+                await abulk_upsert_os_metrics(session=sess, table=table, os_metrics_records=month_rows)
+                results.extend(month_rows)
+            if results:
+                await aupdate_os_metrics_state(session=sess, table=table, changed_rows=results, stale_ids=[])
+
+        return results
+
+    async def get_os_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Get the OS metrics totals of each day in the given date range.
+
+        OS metrics are refreshed lazily, at most once per minute per process.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each day, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_os_metrics_fields(fields)
+
+            # Refresh at most once per minute per process
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    await self._calculate_os_metrics()
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            table = await self._get_table(table_type="os_metrics", create_table_if_not_found=True)
+            if table is None:
+                return [], None
+
+            return await self._get_os_metrics_totals_by_date(table, starting_date, ending_date, user_id, fields)
+
+        except Exception as e:
+            log_error(f"Error getting OS metrics: {str(e)}")
+            raise e
+
+    async def get_os_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """Get the OS metrics totals of the whole given date range.
+
+        OS metrics are refreshed lazily, as in get_os_metrics.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[Dict[str, Any], Optional[int]]: The totals of the date range, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_os_metrics_fields(fields)
+
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    await self._calculate_os_metrics()
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            table = await self._get_table(table_type="os_metrics", create_table_if_not_found=True)
+            if table is None:
+                return merge_os_metrics_totals([], fields), None
+
+            totals, latest_updated_at = await self._get_os_metrics_totals_by_date(
+                table, starting_date, ending_date, user_id, fields, use_month_rows=True
+            )
+            return merge_os_metrics_totals(totals, fields), latest_updated_at
+
+        except Exception as e:
+            log_error(f"Error getting OS metrics totals: {str(e)}")
+            raise e
+
+    async def get_os_metrics_state(self, ending_date: Optional[date] = None) -> Tuple[Optional[int], str]:
+        """Get when any OS metrics row was last written or deleted, and the hash of the state.
+
+        OS metrics are refreshed lazily, as in get_os_metrics.
+
+        Args:
+            ending_date (Optional[date]): The last day that is read. When it is a completed day, the state of
+                the rows of completed days is returned, which a day still open does not move.
+
+        Returns:
+            Tuple[Optional[int], str]: When any row was last written or deleted, and the hash of the state. Both
+                are the same again only while no rebuild wrote or deleted a row.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    await self._calculate_os_metrics()
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            table = await self._get_table(table_type="os_metrics", create_table_if_not_found=True)
+            if table is None:
+                return None, ""
+
+            async with self.async_session_factory() as sess:
+                return os_metrics_state_of(await aget_stored_os_metrics_state(session=sess, table=table), ending_date)
+
+        except Exception as e:
+            log_error(f"Error getting OS metrics state: {str(e)}")
+            raise e
+
+    async def _get_os_metrics_totals_by_date(
+        self,
+        table: Table,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str],
+        fields: List[str],
+        use_month_rows: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Total the OS metrics of the given date range, every day from one period.
+
+        Args:
+            table (Table): The OS metrics table.
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner.
+            fields (List[str]): The columns to total.
+            use_month_rows (bool): Total a calendar month inside the date range from its month rows, as one date.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
+        """
+        aggregation_periods = []
+        if user_id is None:
+            aggregation_periods.append("daily_total")
+        if use_month_rows and os_metrics_full_months(starting_date, ending_date):
+            aggregation_periods.append("monthly_total")
+
+        month_starts: List[date] = []
+        total_days: List[date] = []
+        row_days: Optional[List[date]] = None
+        rows_by_query = {}
+        async with self.async_session_factory() as sess, sess.begin():
+            if aggregation_periods:
+                total_dates = (
+                    await sess.execute(
+                        build_os_metrics_total_dates_query(
+                            table, aggregation_periods, starting_date=starting_date, ending_date=ending_date
+                        )
+                    )
+                ).fetchall()
+                stored_total_days = {
+                    record.date for record in total_dates if record.aggregation_period == "daily_total"
+                }
+                calculated_months = {
+                    record.date for record in total_dates if record.aggregation_period == "monthly_total"
+                }
+                month_starts, total_days, row_days = os_metrics_dates_to_read(
+                    starting_date, ending_date, stored_total_days, calculated_months
+                )
+            if not month_starts and not total_days:
+                row_days = None
+            queries = build_os_metrics_totals_queries(
+                table,
+                starting_date,
+                ending_date,
+                user_id,
+                fields,
+                month_starts=month_starts,
+                total_days=total_days,
+                row_days=row_days,
+            )
+            for name, query in queries.items():
+                rows_by_query[name] = (await sess.execute(query)).fetchall()
+
+        return build_os_metrics_totals(fields, rows_by_query)
 
     # -- Knowledge methods --
 

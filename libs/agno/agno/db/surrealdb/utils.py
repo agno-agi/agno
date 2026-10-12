@@ -7,6 +7,10 @@ from agno.utils.log import logger
 
 RecordType = TypeVar("RecordType")
 
+# Kept small: the time and memory a statement takes grow faster than the records it is given
+OS_METRICS_BATCH_SIZE = 500
+OS_METRICS_WRITE_ATTEMPTS = 5
+
 
 def build_client(
     url: str, creds: dict[str, str], ns: str, db: str

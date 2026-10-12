@@ -6,9 +6,10 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.db.utils import get_sort_value
+from agno.db.utils import OS_METRICS_FIXED_KEYS, get_sort_value
 from agno.session import Session
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.string import generate_id
 
 
 def batch_write_with_retry(
@@ -595,6 +596,134 @@ def deserialize_metrics_date(value: Any) -> Any:
         except ValueError:
             return value
     return value
+
+
+# -- OS metrics utils --
+
+# The record holding when OS metrics records were last written or deleted, and their hash
+OS_METRICS_STATE_ID = "os_metrics_state"
+
+# batch_get_item reads 100 keys at most
+OS_METRICS_BATCH_SIZE = 100
+
+# The indexes OS metrics records are read from follow a write a moment later. A state younger than this is not
+# reported, so what is read from them is not taken as the records of that state
+OS_METRICS_INDEX_LAG_SECONDS = 10
+
+_OS_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses")
+
+
+def os_metrics_record_id(record: Dict[str, Any]) -> str:
+    """The id an OS metrics record is stored under: one per day, period, owner, component and parent."""
+    day = record["date"]
+    return generate_id(
+        json.dumps(
+            [
+                day.isoformat() if isinstance(day, date) else day,
+                record["aggregation_period"],
+                record.get("user_id") or "",
+                record.get("agent_id") or "",
+                record.get("team_id") or "",
+                record.get("workflow_id") or "",
+                record.get("parent_id") or "",
+            ]
+        )
+    )
+
+
+def _build_os_metrics_run_data(run_data: Dict[str, Any]) -> Dict[str, Any]:
+    """The run_data of a stored run, or of a run nested inside it, with only what OS metrics count."""
+    metrics = run_data.get("metrics") or {}
+    trimmed_metrics = {
+        key: metrics[key]
+        for key in (*OS_METRICS_FIXED_KEYS["token_metrics"], "duration", "time_to_first_token")
+        if metrics.get(key) is not None
+    }
+    # Only whether the model call reported details is counted
+    if metrics.get("details"):
+        trimmed_metrics["details"] = True
+    trimmed: Dict[str, Any] = {
+        "metrics": trimmed_metrics,
+        "model": run_data.get("model"),
+        "model_provider": run_data.get("model_provider"),
+        # Only each request's duration, skipping messages carried over from an earlier run
+        "messages": [
+            {"role": "assistant", "metrics": {"duration": message["metrics"]["duration"]}}
+            for message in run_data.get("messages") or []
+            if isinstance(message, dict)
+            and message.get("role") == "assistant"
+            and not message.get("from_history")
+            and (message.get("metrics") or {}).get("duration") is not None
+        ],
+    }
+    for key in _OS_METRICS_NESTED_RUN_KEYS:
+        nested_runs = [nested_run for nested_run in run_data.get(key) or [] if isinstance(nested_run, dict)]
+        if nested_runs:
+            trimmed[key] = [
+                {
+                    "run_id": nested_run.get("run_id"),
+                    "agent_id": nested_run.get("agent_id"),
+                    "team_id": nested_run.get("team_id"),
+                    **_build_os_metrics_run_data(nested_run),
+                }
+                for nested_run in nested_runs
+            ]
+    return trimmed
+
+
+def build_os_metrics_run(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a run with only what OS metrics count from a record of the runs table.
+
+    Args:
+        record (Dict[str, Any]): A record of the runs table.
+
+    Returns:
+        Dict[str, Any]: The run, with the run_data calculate_date_os_metrics reads.
+    """
+    run_data = record.get("run_data")
+    return {
+        "run_id": record.get("run_id"),
+        "run_type": record.get("run_type"),
+        "agent_id": record.get("agent_id"),
+        "team_id": record.get("team_id"),
+        "workflow_id": record.get("workflow_id"),
+        "user_id": record.get("user_id"),
+        "parent_run_id": record.get("parent_run_id"),
+        "status": record.get("status"),
+        "run_data": _build_os_metrics_run_data(run_data if isinstance(run_data, dict) else {}),
+    }
+
+
+def serialize_os_metrics_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Serialize an OS metrics record to a DynamoDB item.
+
+    Args:
+        record: The OS metrics record, as calculate_date_os_metrics writes it.
+
+    Returns:
+        A DynamoDB-ready dict. The day is written as an ISO string, and a record with no owner without
+        user_id, since a key attribute cannot be an empty string.
+    """
+    data = {key: value for key, value in record.items() if key != "user_id" or value}
+    data["date"] = record["date"].isoformat()
+    return serialize_to_dynamo_item(data)
+
+
+def deserialize_os_metrics_record(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Deserialize a DynamoDB item to an OS metrics record, in the shape calculate_date_os_metrics writes.
+
+    Args:
+        item (Dict[str, Any]): The DynamoDB item.
+
+    Returns:
+        Dict[str, Any]: The record, with what the write left out put back: the day as a date, the user_id of
+            a record with no owner, and a metadata of None.
+    """
+    record = deserialize_from_dynamodb_item(item)
+    record["date"] = deserialize_metrics_date(record.get("date"))
+    record.setdefault("user_id", "")
+    record.setdefault("metadata", None)
+    return record
 
 
 # -- Query utils --

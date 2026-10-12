@@ -128,6 +128,56 @@ METRICS_TABLE_SCHEMA = {
     # alongside the ``id`` primary key (error 1706). ``bulk_upsert_metrics`` enforces the triple instead.
 }
 
+OS_METRICS_TABLE_SCHEMA = {
+    # Not the primary key: SingleStore takes one unique key only, and it has to hold the shard key, so the
+    # owner, day and component make the primary key and an upsert updates the row it already has.
+    "id": {"type": lambda: String(128), "nullable": False, "index": True},
+    # Owner and component of this row. ``""`` instead of ``NULL`` for none, since a key column cannot be NULL.
+    "user_id": {
+        "type": lambda: String(128, collation="utf8mb4_bin"),
+        "primary_key": True,
+        "nullable": False,
+        "default": "",
+    },
+    "date": {"type": Date, "primary_key": True, "nullable": False, "index": True},
+    "aggregation_period": {"type": lambda: String(20), "primary_key": True, "nullable": False},
+    "agent_id": {
+        "type": lambda: String(128, collation="utf8mb4_bin"),
+        "primary_key": True,
+        "nullable": False,
+        "default": "",
+    },
+    "team_id": {
+        "type": lambda: String(128, collation="utf8mb4_bin"),
+        "primary_key": True,
+        "nullable": False,
+        "default": "",
+    },
+    "workflow_id": {
+        "type": lambda: String(128, collation="utf8mb4_bin"),
+        "primary_key": True,
+        "nullable": False,
+        "default": "",
+    },
+    # The agent, team or workflow whose run started the runs of this row
+    "parent_id": {
+        "type": lambda: String(128, collation="utf8mb4_bin"),
+        "primary_key": True,
+        "nullable": False,
+        "default": "",
+    },
+    "sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "status_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "token_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "duration_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "model_metrics": {"type": JSON, "nullable": False, "default": []},
+    "metadata": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": True, "index": True},
+    "completed": {"type": Boolean, "nullable": False, "default": False},
+}
+
 VERSIONS_TABLE_SCHEMA = {
     "table_name": {"type": lambda: String(128), "nullable": False, "primary_key": True},
     "version": {"type": lambda: String(10), "nullable": False},
@@ -213,6 +263,7 @@ def get_table_schema_definition(
         # "runs" is handled by _get_run_table_schema above (needs session_table_name)
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
+        "os_metrics": OS_METRICS_TABLE_SCHEMA,
         "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,

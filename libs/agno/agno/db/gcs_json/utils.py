@@ -2,9 +2,13 @@
 
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from agno.db.utils import get_sort_value
+from agno.db.utils import (
+    OS_METRICS_DAY_PERIODS,
+    get_sort_value,
+    metric_record_day,
+)
 from agno.utils.log import log_debug
 
 
@@ -203,3 +207,163 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
     if days_diff <= 0:
         return []
     return [starting_date + timedelta(days=x) for x in range(days_diff)]
+
+
+# -- OS metrics util methods --
+def deserialize_os_metrics_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return the stored OS metrics records in the shape calculate_date_os_metrics writes.
+
+    Args:
+        records (List[Dict[str, Any]]): The OS metrics records as stored, their date an ISO string.
+
+    Returns:
+        List[Dict[str, Any]]: The records with their date as a date. A record whose date is not a day is left out.
+    """
+    os_metrics = []
+    for record in records:
+        day = metric_record_day(record)
+        if day is not None:
+            os_metrics.append({**record, "date": day})
+    return os_metrics
+
+
+def serialize_os_metrics_records(os_metrics: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return the OS metrics records as they are stored.
+
+    Args:
+        os_metrics (List[Dict[str, Any]]): The OS metrics records, their date a date.
+
+    Returns:
+        List[Dict[str, Any]]: The records with their date as an ISO string.
+    """
+    return [{**record, "date": record["date"].isoformat()} for record in os_metrics]
+
+
+def get_os_metrics_records_by_day(
+    records: List[Dict[str, Any]], start_timestamp: int, end_timestamp: int
+) -> Dict[date, List[Dict[str, Any]]]:
+    """Return the sessions or runs created in the given time range, by the day they were created on.
+
+    Args:
+        records (List[Dict[str, Any]]): The sessions or the runs, as stored.
+        start_timestamp (int): The start of the range, included.
+        end_timestamp (int): The end of the range, not included.
+
+    Returns:
+        Dict[date, List[Dict[str, Any]]]: The records of each UTC day that has any.
+    """
+    records_by_day: Dict[date, List[Dict[str, Any]]] = {}
+    for record in records:
+        created_at = record.get("created_at") or 0
+        if start_timestamp <= created_at < end_timestamp:
+            day = datetime.fromtimestamp(created_at, tz=timezone.utc).date()
+            records_by_day.setdefault(day, []).append(record)
+    return records_by_day
+
+
+def get_dates_to_calculate_os_metrics_for(
+    os_metrics: List[Dict[str, Any]],
+    sessions_by_day: Dict[date, List[Dict[str, Any]]],
+    runs_by_day: Dict[date, List[Dict[str, Any]]],
+    starting_date: date,
+) -> List[date]:
+    """Return the list of dates to calculate OS metrics for.
+
+    Args:
+        os_metrics (List[Dict[str, Any]]): The stored OS metrics records.
+        sessions_by_day (Dict[date, List[Dict[str, Any]]]): The sessions created on each day a rebuild looks at.
+        runs_by_day (Dict[date, List[Dict[str, Any]]]): The runs created on each of those days.
+        starting_date (date): The first day without complete OS metrics.
+
+    Returns:
+        List[date]: Today, then every day that ended and has a session, a run or an open record, oldest first.
+    """
+    today = datetime.now(timezone.utc).date()
+
+    open_days = [record["date"] for record in os_metrics if not record.get("completed")]
+    days_to_complete = {day for day in [*sessions_by_day, *runs_by_day, *open_days] if starting_date <= day < today}
+
+    return [today, *sorted(days_to_complete)]
+
+
+def upsert_os_metrics_records(
+    os_metrics: List[Dict[str, Any]],
+    date_to_process: date,
+    changed_rows: List[Dict[str, Any]],
+    stale_ids: List[str],
+) -> List[Dict[str, Any]]:
+    """Upsert a day's OS metrics records into the stored ones, and delete the records the day no longer has.
+
+    Args:
+        os_metrics (List[Dict[str, Any]]): The stored OS metrics records.
+        date_to_process (date): The day.
+        changed_rows (List[Dict[str, Any]]): The records of the day that are new or changed.
+        stale_ids (List[str]): The ids of the stored records the day no longer has.
+
+    Returns:
+        List[Dict[str, Any]]: The OS metrics records to store. The given list is left as it is.
+    """
+
+    def _record_key(record: Dict[str, Any]) -> Tuple[str, str, str, str, str, str]:
+        return (
+            record["aggregation_period"],
+            record.get("user_id") or "",
+            record.get("agent_id") or "",
+            record.get("team_id") or "",
+            record.get("workflow_id") or "",
+            record.get("parent_id") or "",
+        )
+
+    changed_by_key = {_record_key(row): row for row in changed_rows}
+    stale = set(stale_ids)
+    current_time = int(time.time())
+
+    records = []
+    for record in os_metrics:
+        if record["date"] != date_to_process or record["aggregation_period"] not in OS_METRICS_DAY_PERIODS:
+            records.append(record)
+            continue
+        if record["id"] in stale:
+            continue
+        changed_row = changed_by_key.pop(_record_key(record), None)
+        if changed_row is not None:
+            # The id and created_at of a stored record are never overwritten
+            record = {**changed_row, "id": record["id"], "created_at": record.get("created_at")}
+        # Stamp every record left when the day lost one, so its updated_at moves
+        if stale_ids:
+            record = {**record, "updated_at": current_time}
+        records.append(record)
+
+    for changed_row in changed_by_key.values():
+        records.append({**changed_row, "updated_at": current_time} if stale_ids else changed_row)
+
+    return records
+
+
+def get_os_metrics_records_to_read(
+    os_metrics: List[Dict[str, Any]], starting_date: date, ending_date: date, user_id: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Return the stored OS metrics records a read of the given date range totals, every day from one period.
+
+    Args:
+        os_metrics (List[Dict[str, Any]]): The stored OS metrics records.
+        starting_date (date): The first day to total.
+        ending_date (date): The last day to total.
+        user_id (Optional[str]): Total only this owner's records. ``None`` totals every owner.
+
+    Returns:
+        List[Dict[str, Any]]: For every owner, the total record of each day that has one and the records of
+            any other day. For one owner, that owner's records.
+    """
+    records = [record for record in os_metrics if starting_date <= record["date"] <= ending_date]
+    if user_id is not None:
+        return [
+            record for record in records if record["aggregation_period"] == "daily" and record["user_id"] == user_id
+        ]
+
+    total_days = {record["date"] for record in records if record["aggregation_period"] == "daily_total"}
+    return [
+        record
+        for record in records
+        if record["aggregation_period"] == ("daily_total" if record["date"] in total_days else "daily")
+    ]

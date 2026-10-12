@@ -1,7 +1,7 @@
 import time
 from datetime import date, datetime, timedelta, timezone
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union
 
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
@@ -16,11 +16,20 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.surrealdb import utils
 from agno.db.surrealdb.metrics import (
     bulk_upsert_metrics,
+    bulk_upsert_os_metrics,
     calculate_date_metrics,
     desurrealize_metric,
     fetch_all_sessions_data,
+    get_all_runs_for_os_metrics_calculation,
     get_all_sessions_for_metrics_calculation,
+    get_all_sessions_for_os_metrics_calculation,
     get_metrics_calculation_starting_date,
+    get_os_metrics_calculation_starting_date,
+    get_os_metrics_records,
+    get_run_days_for_os_metrics_calculation,
+    get_session_days_for_os_metrics_calculation,
+    get_stored_os_metrics_state,
+    os_metrics_record_id,
 )
 from agno.db.surrealdb.models import (
     TableType,
@@ -41,23 +50,29 @@ from agno.db.surrealdb.models import (
     serialize_user_memory,
 )
 from agno.db.surrealdb.queries import COUNT_QUERY, WhereClause, order_limit_start
-from agno.db.surrealdb.utils import build_client
+from agno.db.surrealdb.utils import OS_METRICS_BATCH_SIZE, build_client
 from agno.db.utils import (
     HISTORY_SKIP_STATUSES,
     build_single_run_row,
+    calculate_date_os_metrics,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
     drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    os_metrics_nested_run_ids,
+    os_metrics_rows_to_write,
+    os_metrics_state_of,
+    resolve_os_metrics_fields,
+    total_os_metrics_records,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
 from agno.session import Session
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
@@ -78,6 +93,7 @@ class SurrealDb(BaseDb):
         runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
+        os_metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
@@ -96,6 +112,7 @@ class SurrealDb(BaseDb):
             session_table: The name of the session table.
             memory_table: The name of the memory table.
             metrics_table: The name of the metrics table.
+            os_metrics_table: The name of the OS metrics table.
             eval_table: The name of the eval table.
             knowledge_table: The name of the knowledge table.
             traces_table: The name of the traces table.
@@ -113,6 +130,7 @@ class SurrealDb(BaseDb):
             runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
+            os_metrics_table=os_metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             traces_table=traces_table,
@@ -127,6 +145,11 @@ class SurrealDb(BaseDb):
         self._agents_table_name: str = "agno_agents"
         self._teams_table_name: str = "agno_teams"
         self._workflows_table_name: str = "agno_workflows"
+
+        # Zero means never refreshed; get_os_metrics uses this to refresh lazily, at most once per minute
+        self._os_metrics_refreshed_at: float = 0.0
+        # Whether this process has defined the indexes OS metrics read runs and sessions by
+        self._os_metrics_indexes_defined: bool = False
 
     @property
     def client(self) -> Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection]:
@@ -189,6 +212,8 @@ class SurrealDb(BaseDb):
             table_name = self.eval_table_name
         elif table_type == "metrics":
             table_name = self.metrics_table_name
+        elif table_type == "os_metrics":
+            table_name = self.os_metrics_table_name
         elif table_type == "traces":
             table_name = self.trace_table_name
         elif table_type == "spans":
@@ -1418,6 +1443,236 @@ class SurrealDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception refreshing metrics: {str(e)}")
+            raise e
+
+    # --- OS Metrics ---
+    def calculate_os_metrics(self) -> Optional[List[Dict[str, Any]]]:
+        """Calculate OS metrics for all dates without complete OS metrics.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: The calculated OS metrics.
+
+        Raises:
+            Exception: If an error occurs during OS metrics calculation.
+        """
+        try:
+            return self._calculate_os_metrics()
+
+        except Exception as e:
+            log_error(f"Exception refreshing OS metrics: {str(e)}")
+            raise e
+
+    def refresh_os_metrics(self) -> Tuple[Optional[int], Optional[int], bool]:
+        """Calculate OS metrics for all dates without complete OS metrics, and report whether any record changed.
+
+        Returns:
+            Tuple[Optional[int], Optional[int], bool]: When the OS metrics were last updated before the
+                calculation and after it, and whether it wrote or deleted any record.
+
+        Raises:
+            Exception: If an error occurs during OS metrics calculation.
+        """
+        try:
+            table = self._get_table("os_metrics")
+
+            previous_updated_at = get_stored_os_metrics_state(self.client, table).get("updated_at")
+
+            changed_ids: List[str] = []
+            self._calculate_os_metrics(changed_ids=changed_ids)
+
+            latest_updated_at = get_stored_os_metrics_state(self.client, table).get("updated_at")
+
+            return previous_updated_at, latest_updated_at, bool(changed_ids)
+
+        except Exception as e:
+            log_error(f"Exception refreshing OS metrics: {str(e)}")
+            raise e
+
+    def _calculate_os_metrics(self, changed_ids: Optional[List[str]] = None) -> Optional[List[Dict[str, Any]]]:
+        """Calculate OS metrics for all dates without complete OS metrics.
+
+        Args:
+            changed_ids (Optional[List[str]]): When given, the ids of the records deleted and of the calculated
+                records written are added to it.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: The calculated OS metrics.
+        """
+        # Stamp first so failed runs are throttled too instead of retried on every read
+        self._os_metrics_refreshed_at = time.time()
+
+        table = self._get_table("os_metrics")
+
+        starting_date = get_os_metrics_calculation_starting_date(self.client, table, self.get_sessions)
+
+        if starting_date is None:
+            log_info("No session data found. Won't calculate OS metrics.")
+            return None
+
+        today = datetime.now(timezone.utc).date()
+        if starting_date > today:
+            log_info("OS metrics already calculated for all relevant dates.")
+            return None
+
+        sessions_table = self._get_table("sessions")
+        runs_table = self._get_table("runs")
+        if not self._os_metrics_indexes_defined:
+            for indexed_table in [sessions_table, runs_table]:
+                self.client.query(
+                    f"DEFINE INDEX IF NOT EXISTS idx_created_at ON {indexed_table} FIELDS created_at CONCURRENTLY"
+                )
+            self._os_metrics_indexes_defined = True
+
+        start_timestamp = datetime.combine(starting_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+        end_timestamp = datetime.combine(today, datetime.min.time()).replace(tzinfo=timezone.utc)
+        run_days = get_run_days_for_os_metrics_calculation(self.client, runs_table, start_timestamp, end_timestamp)
+        session_days = get_session_days_for_os_metrics_calculation(
+            self.client, sessions_table, start_timestamp, end_timestamp
+        )
+        open_days = [
+            record["date"]
+            for record in get_os_metrics_records(
+                self.client, table, "daily", starting_date, today - timedelta(days=1), fields=["date"]
+            )
+        ]
+
+        # Today comes first, so a long first rebuild shows the current day early
+        dates_to_process = [today, *sorted({*run_days, *session_days, *open_days})]
+
+        results = []
+        for date_to_process in dates_to_process:
+            # Each day is written on its own, so a failed day never holds back the days before it
+            start_timestamp = datetime.combine(date_to_process, datetime.min.time()).replace(tzinfo=timezone.utc)
+            end_timestamp = start_timestamp + timedelta(days=1)
+
+            stored_rows = [
+                *get_os_metrics_records(self.client, table, "daily_total", date_to_process, date_to_process),
+                *get_os_metrics_records(self.client, table, "daily", date_to_process, date_to_process),
+            ]
+            sessions = get_all_sessions_for_os_metrics_calculation(
+                self.client, sessions_table, start_timestamp, end_timestamp
+            )
+            runs = get_all_runs_for_os_metrics_calculation(self.client, runs_table, start_timestamp, end_timestamp)
+
+            # A nested run also stored as a run of its own is counted from that record
+            stored_run_ids: Set[str] = set()
+            run_ids = sorted(os_metrics_nested_run_ids(runs))
+            for start in range(0, len(run_ids), OS_METRICS_BATCH_SIZE):
+                chunk = run_ids[start : start + OS_METRICS_BATCH_SIZE]
+                stored_run_ids.update(
+                    self._query(f"SELECT VALUE run_id FROM {runs_table} WHERE run_id IN $ids", {"ids": chunk}, str)
+                )
+
+            records = calculate_date_os_metrics(date_to_process, sessions, runs, stored_run_ids)
+            changed_rows, stale_ids = os_metrics_rows_to_write(records, stored_rows)
+            stored_by_id = {row["id"]: row for row in stored_rows}
+            for record in records:
+                record["id"] = os_metrics_record_id(record)
+            for row in changed_rows:
+                # Update the existing record while preserving created_at
+                if row["id"] in stored_by_id:
+                    row["created_at"] = stored_by_id[row["id"]].get("created_at", row["created_at"])
+                # Stamp every record left when the day lost one, so its updated_at moves
+                if stale_ids:
+                    row["updated_at"] = int(time.time())
+            bulk_upsert_os_metrics(self.client, table, changed_rows, stale_ids, date_to_process)
+            results.extend(records)
+            if changed_ids is not None:
+                changed_ids.extend([*stale_ids, *(row["id"] for row in changed_rows)])
+
+        log_debug("Updated OS metrics calculations")
+
+        return results
+
+    def get_os_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Get the OS metrics totals of each day in the given date range.
+
+        OS metrics are refreshed lazily, at most once per minute per process.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's records. ``None`` totals every owner.
+            fields (Optional[List[str]]): The fields to total. ``None`` totals all.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each day, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_os_metrics_fields(fields)
+
+            # Refresh at most once per minute per process
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    self._calculate_os_metrics()
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            table = self._get_table("os_metrics")
+
+            if user_id is not None:
+                records = get_os_metrics_records(self.client, table, "daily", starting_date, ending_date, user_id)
+                return total_os_metrics_records(records, fields)
+
+            records = get_os_metrics_records(self.client, table, "daily_total", starting_date, ending_date)
+            total_days = {record["date"] for record in records}
+            day = starting_date
+            while day <= ending_date:
+                if day in total_days:
+                    day += timedelta(days=1)
+                    continue
+                last_day = day
+                while last_day < ending_date and last_day + timedelta(days=1) not in total_days:
+                    last_day += timedelta(days=1)
+                records.extend(get_os_metrics_records(self.client, table, "daily", day, last_day))
+                if last_day == ending_date:
+                    break
+                day = last_day + timedelta(days=1)
+
+            return total_os_metrics_records(records, fields)
+
+        except Exception as e:
+            log_error(f"Exception getting OS metrics: {str(e)}")
+            raise e
+
+    def get_os_metrics_state(self, ending_date: Optional[date] = None) -> Tuple[Optional[int], str]:
+        """Get when any OS metrics record was last written or deleted, and the hash of the state.
+
+        OS metrics are refreshed lazily, as in get_os_metrics.
+
+        Args:
+            ending_date (Optional[date]): The last day that is read. When it is a completed day, the state of
+                the records of completed days is returned, which a day still open does not move.
+
+        Returns:
+            Tuple[Optional[int], str]: When any record was last written or deleted, and the hash of the state.
+                Both are the same again only while no rebuild wrote or deleted a record.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    self._calculate_os_metrics()
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            table = self._get_table("os_metrics")
+
+            return os_metrics_state_of(get_stored_os_metrics_state(self.client, table), ending_date)
+
+        except Exception as e:
+            log_error(f"Exception getting OS metrics state: {str(e)}")
             raise e
 
     # --- Knowledge ---
