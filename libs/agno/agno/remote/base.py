@@ -150,7 +150,7 @@ class RemoteDb:
         from agno.os.schema import SessionRunPreviewSchema
 
         try:
-            return await self.client.get_session_run_previews(session_id, **kwargs)
+            return await self.client.aget_session_run_previews(session_id, **kwargs)
         except HTTPStatusError as e:
             # An older AgentOS has no run-previews route; a missing session 404s again below.
             if e.response.status_code not in (404, 405):

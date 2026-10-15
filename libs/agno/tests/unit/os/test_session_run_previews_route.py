@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agno.agent.agent import Agent
+from agno.client.os import AgentOSClient
 from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 from agno.os.schema import RunSchema, SessionRunPreviewSchema
@@ -67,8 +68,9 @@ def _http_error(status: int) -> httpx.HTTPStatusError:
 
 def _remote(previews: Any = None, runs: Any = None) -> RemoteDb:
     remote = RemoteDb.__new__(RemoteDb)
-    remote.client = MagicMock()  # type: ignore[attr-defined]
-    remote.client.get_session_run_previews = AsyncMock(side_effect=previews)
+    # spec keeps the mock's sync/async method pairs honest: awaiting a sync method fails here too.
+    remote.client = MagicMock(spec=AgentOSClient)  # type: ignore[attr-defined]
+    remote.client.aget_session_run_previews = AsyncMock(side_effect=previews)
     remote.client.get_session_runs = AsyncMock(return_value=runs or [])
     return remote
 
