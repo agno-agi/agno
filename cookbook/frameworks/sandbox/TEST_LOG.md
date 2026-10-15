@@ -443,3 +443,15 @@ Coordinator review follow-up: native transcript-mirror warnings and lost pre-che
 **Description:** The AgentCore agent served by AgentOS with a durable queue (local Postgres and Redis) and an explicit checkpoint store, driven over HTTP against the staging runtime with `us.anthropic.claude-sonnet-5` through Bedrock and no API key. Turn 1 was a streamed submission; turn 2 a background submission with `stream=false`, polled to completion.
 
 **Result:** Passed. Turn 1 streamed RunStarted, two tool calls, content and RunCompleted with "hello". Turn 2 ran on a new microVM restored from turn 1's checkpoint, COMPLETED, and replied "hello.py". The server log had no errors or warnings.
+
+---
+
+### agentcore_session.py --resume and session storage regressions
+
+**Status:** PASS
+
+**Description:** Warm resume from AgentCore session storage. A spike on a throwaway staging runtime first found that the session storage mount enforces no permissions (UID 1000 read a root 0600 file, rewrote a root-only claim, renamed a root 0700 directory and chowned files to root), that every file on it appears owned by root, that SQLite fails there with "database is locked" and `lockf` with ENOLCK, that it survives a stop and is emptied by a runtime update, and that AgentCore sets `NoNewPrivs` on the container and every command, so a setuid file on it gives nothing. The design follows from that: the managed roots stay on local disk, each capture keeps a copy of its archive on the mount through a UID 1000 child, and `AgentCoreCheckpointTransfer.aresume` claims a replacement microVM with a fresh incarnation and imports the copy only when its SHA-256 and size match the reference. 12 new unit cases cover the kept copy, a resume, a tampered, deleted, linked or stale copy, a resume reaching a still-running generation, a retired replacement, a runtime that never starts, no session storage, a copy that cannot be written, and the original configuration. Breaking each new check in turn failed at least one test, except the early size check, which only short-cuts the hash check.
+
+**Result:** 319 sandbox unit tests pass. Live on a staging runtime deployed with `agentcore_setup.py deploy --session-storage`: the fixture session resumed and was ready for turn 2 in 1.1 s; Claude on Bedrock recalled the codeword after a resume, ready in 1.3 s, against 2.1 s for `--replace` with a 60 KB checkpoint; with a 200 MB file in the workspace, resume was ready in 2.8 s and cold restore in 37.9 s, and the file came back whole both ways. The runtime and its image tag were deleted afterwards.
+
+---

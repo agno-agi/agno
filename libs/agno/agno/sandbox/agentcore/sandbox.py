@@ -9,7 +9,7 @@ import random
 import shlex
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Sequence, Tuple
 from uuid import uuid4
 
 from agno.sandbox.agentcore.server import _MAX_STAGED
@@ -122,8 +122,13 @@ class AgentCoreSandbox(Sandbox):
     runtime's role model access.
 
     Stop and destroy end the microVM. Pause is not supported. Files live on the
-    microVM's disk; AgentCore session storage is not used because SQLite cannot
-    open a database on it.
+    microVM's disk, because SQLite cannot open a database on AgentCore session
+    storage. When the runtime mounts session storage at ``/mnt/agno``, each
+    checkpoint capture keeps a copy there, and
+    ``AgentCoreCheckpointTransfer.aresume`` brings an ended generation back from
+    it on a replacement microVM, with a new incarnation. That is the one way this
+    class claims an ended generation again, and only an exact copy of the
+    checkpoint the caller names is restored.
     """
 
     def __init__(
@@ -347,6 +352,19 @@ class AgentCoreSandbox(Sandbox):
             raise SandboxError("Existing generation has different compute configuration")
         return handle
 
+    def _claim_identity(
+        self, session_id: str, agent_id: Optional[str], generation: int, env: Optional[Mapping[str, str]]
+    ) -> Tuple[str, Dict[str, str], Dict[str, str]]:
+        values = _identity(session_id, agent_id, generation, env)
+        metadata = {
+            "namespace": self.namespace,
+            "agent": agent_id or "",
+            "session": session_id,
+            "generation": str(generation),
+            "config": self._digest(session_id, agent_id, generation, values),
+        }
+        return self._name(session_id, agent_id, generation), metadata, dict(values)
+
     async def acreate(
         self,
         session_id: str,
@@ -355,18 +373,9 @@ class AgentCoreSandbox(Sandbox):
         generation: int = 1,
         env: Optional[Mapping[str, str]] = None,
     ) -> SandboxHandle:
-        values = _identity(session_id, agent_id, generation, env)
-        name = self._name(session_id, agent_id, generation)
+        name, metadata, values = self._claim_identity(session_id, agent_id, generation, env)
         if name in self._stopped:
             raise SandboxError("Sandbox generation is not running; recovery requires a new generation")
-        digest = self._digest(session_id, agent_id, generation, values)
-        metadata = {
-            "namespace": self.namespace,
-            "agent": agent_id or "",
-            "session": session_id,
-            "generation": str(generation),
-            "config": digest,
-        }
         try:
             claim = await _thread(self._claim, name, metadata, values)
         except _Refusal as error:
@@ -376,6 +385,64 @@ class AgentCoreSandbox(Sandbox):
                 raise SandboxError("Sandbox generation is not usable; recovery requires a new generation") from error
             raise
         return self._handle(name, metadata, claim["incarnation"])
+
+    async def _aresume(
+        self,
+        session_id: str,
+        *,
+        agent_id: Optional[str],
+        generation: int,
+        env: Optional[Mapping[str, str]],
+        reference: Any,
+        limits: Mapping[str, Any],
+    ) -> Tuple[SandboxHandle, Dict[str, Any]]:
+        """Claim an ended generation on a replacement microVM and restore the
+        checkpoint kept on its session storage. ``AgentCoreCheckpointTransfer.aresume``
+        is the public entry point."""
+        name, metadata, values = self._claim_identity(session_id, agent_id, generation, env)
+
+        def resume() -> Any:
+            with self._session_lock(name):
+                # Calling an ended session starts a replacement microVM, which is
+                # what a resume wants; the digest check decides what it restores.
+                self._stopped.pop(name, None)
+                return self._invoke(
+                    name,
+                    "resume",
+                    idempotent=False,
+                    slow=True,
+                    metadata=metadata,
+                    env=values,
+                    lifetime=self.lifetime,
+                    sha256=reference.sha256,
+                    size=reference.size,
+                    limits=dict(limits),
+                )
+
+        for attempt in range(2):
+            try:
+                reply = await _thread(resume)
+                break
+            except _Refusal as error:
+                if error.code == "claimed":
+                    # Someone holds this generation's computer: leave it alone.
+                    raise SandboxError("Sandbox generation is still running; resume is for an ended one") from error
+                if error.code == "unusable" and attempt == 0:
+                    # A lookup reached the replacement first and retired it. Stopping
+                    # it means the next call to the session starts a fresh one.
+                    await self._stop(name)
+                    continue
+                await asyncio.shield(self._stop(name))
+                if error.code == "unkept":
+                    raise SandboxError(
+                        "No matching checkpoint on session storage; restore from the checkpoint store"
+                    ) from error
+                raise
+            except BaseException:
+                # The resume may have claimed or partly restored the computer.
+                await asyncio.shield(self._stop(name))
+                raise
+        return self._handle(name, metadata, reply["incarnation"]), reply["state"]
 
     async def arpc(self, handle: SandboxHandle, operation: str, payload: bytes) -> ExecResult:
         """Runtime start/poll through InvokeAgentRuntime to the in-computer runtime server.
