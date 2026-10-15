@@ -127,6 +127,7 @@ class InMemoryDb(BaseDb):
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
         runs_limit: Optional[int] = None,
+        run_preview: bool = False,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
         """Read a session from in-memory storage.
 

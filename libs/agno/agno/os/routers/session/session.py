@@ -38,6 +38,7 @@ from agno.os.schema import (
     WorkflowSessionDetailSchema,
 )
 from agno.os.services.sessions import SessionNotFoundError, get_sessions_page
+from agno.os.services.sessions import get_session_run_previews as get_session_run_previews_from_service
 from agno.os.services.sessions import get_session_runs as get_session_runs_from_service
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import AgnoHTTPException
@@ -572,7 +573,9 @@ def attach_routes(
         status: Optional[List[str]],
         db_id: Optional[str],
         table: Optional[str],
+        previews: bool = False,
     ) -> List[Any]:
+        """Runs (or, with ``previews``, run previews) of a session, status-filtered."""
         from agno.run.base import RunStatus
 
         wanted_statuses = None
@@ -587,10 +590,11 @@ def attach_routes(
                 )
         db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
 
+        runs: List[Any]
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
-            runs = await db.get_session_runs(
+            remote_kwargs: Dict[str, Any] = dict(
                 session_id=session_id,
                 session_type=session_type,
                 user_id=effective_user_id,
@@ -600,12 +604,17 @@ def attach_routes(
                 table=table,
                 headers=headers,
             )
+            if previews:
+                runs = await db.get_session_run_previews(**remote_kwargs, status=status)
+            else:
+                runs = await db.get_session_runs(**remote_kwargs)
         else:
             # Shared with the MCP get_session_runs tool: auto-detection, timestamp
             # filtering, per-run classification, and sync-db threadpool offload all
             # live in the service so the two surfaces cannot drift.
+            read: Any = get_session_run_previews_from_service if previews else get_session_runs_from_service
             try:
-                runs = await get_session_runs_from_service(
+                runs = await read(
                     db,
                     session_id=session_id,
                     session_type=session_type,
@@ -814,10 +823,19 @@ def attach_routes(
         db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),
         table: Optional[str] = Query(default=None, description="Table to query runs from"),
     ) -> List[SessionRunPreviewSchema]:
-        runs = await _fetch_session_runs(
-            request, session_id, session_type, user_id, created_after, created_before, status, db_id, table
+        previews = await _fetch_session_runs(
+            request,
+            session_id,
+            session_type,
+            user_id,
+            created_after,
+            created_before,
+            status,
+            db_id,
+            table,
+            previews=True,
         )
-        return [SessionRunPreviewSchema.from_run(r) for r in runs]
+        return cast(List[SessionRunPreviewSchema], previews)
 
     @router.get(
         "/sessions/{session_id}/runs/{run_id}",

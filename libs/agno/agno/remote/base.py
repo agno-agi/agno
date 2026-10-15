@@ -40,6 +40,7 @@ if TYPE_CHECKING:
         ConfigResponse,
         PaginatedResponse,
         RunSchema,
+        SessionRunPreviewSchema,
         SessionSchema,
         TeamRunSchema,
         TeamSessionDetailSchema,
@@ -141,6 +142,21 @@ class RemoteDb:
         self, session_id: str, **kwargs: Any
     ) -> List[Union["RunSchema", "TeamRunSchema", "WorkflowRunSchema"]]:
         return await self.client.get_session_runs(session_id, **kwargs)
+
+    async def get_session_run_previews(self, session_id: str, **kwargs: Any) -> List["SessionRunPreviewSchema"]:
+        """Run previews from the remote AgentOS, or fetch-then-project when it predates the endpoint."""
+        from httpx import HTTPStatusError
+
+        from agno.os.schema import SessionRunPreviewSchema
+
+        try:
+            return await self.client.aget_session_run_previews(session_id, **kwargs)
+        except HTTPStatusError as e:
+            # An older AgentOS has no run-previews route; a missing session 404s again below.
+            if e.response.status_code not in (404, 405):
+                raise
+        runs = await self.client.get_session_runs(session_id, **kwargs)
+        return [SessionRunPreviewSchema.from_run(run) for run in runs]
 
     async def create_session(
         self,
