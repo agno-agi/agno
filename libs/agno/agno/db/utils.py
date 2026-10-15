@@ -498,6 +498,21 @@ def merge_runs_table_with_legacy_blob(
     return merged
 
 
+# The run_data keys GET /sessions/{id}/run-previews reads; get_session(run_preview=True) returns only these.
+RUN_PREVIEW_FIELDS: Tuple[str, ...] = (
+    "run_id",
+    "parent_run_id",
+    "agent_id",
+    "team_id",
+    "workflow_id",
+    "user_id",
+    "status",
+    "created_at",
+    "content",
+    "input",
+)
+
+
 async def resolve_session_type(
     db: Union["BaseDb", "AsyncBaseDb"],
     session_id: str,

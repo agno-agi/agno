@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.utils import detect_session_type
-from agno.os.schema import RunSchema, TeamRunSchema, WorkflowRunSchema
+from agno.os.schema import RunSchema, SessionRunPreviewSchema, TeamRunSchema, WorkflowRunSchema
 from agno.utils.log import log_warning
 
 AnyRunSchema = Union[RunSchema, TeamRunSchema, WorkflowRunSchema]
@@ -146,25 +146,21 @@ async def _get_session_dict(
     session_id: str,
     session_type: Optional[SessionType],
     user_id: Optional[str],
+    run_preview: bool = False,
 ) -> Tuple[Dict[str, Any], SessionType]:
     """Fetch a session as a raw dict, auto-detecting its type when not given.
 
     Auto-detection matters: local ``get_session`` does not filter by type in SQL,
     so a wrong caller-supplied default silently misparses rather than 404s.
     """
+    kwargs: Dict[str, Any] = dict(session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False)
+    if run_preview:
+        # Passed only when set, so a custom adapter without the keyword keeps serving the full read.
+        kwargs["run_preview"] = True
     if isinstance(db, AsyncBaseDb):
-        session = await db.get_session(
-            session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
-        )
+        session = await db.get_session(**kwargs)
     else:
-        session = await run_in_threadpool(
-            lambda: db.get_session(
-                session_id=session_id,
-                session_type=session_type,
-                user_id=user_id,
-                deserialize=False,
-            )
-        )
+        session = await run_in_threadpool(lambda: db.get_session(**kwargs))
     if not session:
         raise SessionNotFoundError(session_id)
     if session_type is None:
@@ -213,10 +209,52 @@ async def get_session_runs(
     session, resolved_type = await _get_session_dict(
         db, session_id=session_id, session_type=session_type, user_id=user_id
     )
+    return _classify_runs(session, resolved_type, created_after, created_before)
 
-    runs = session.get("runs") or []
+
+async def get_session_run_previews(
+    db: Union[BaseDb, AsyncBaseDb],
+    *,
+    session_id: str,
+    session_type: Optional[SessionType] = None,
+    user_id: Optional[str] = None,
+    created_after: Optional[int] = None,
+    created_before: Optional[int] = None,
+) -> List[SessionRunPreviewSchema]:
+    """Run previews of a session: same runs, order and classification as
+    :func:`get_session_runs`, read with ``get_session(run_preview=True)``.
+
+    Raises :class:`SessionNotFoundError` when the session does not exist.
+    """
+    session, resolved_type = await _get_session_dict(
+        db, session_id=session_id, session_type=session_type, user_id=user_id, run_preview=True
+    )
+    runs = _classify_runs(session, resolved_type, created_after, created_before)
+    for index, run in enumerate(runs):
+        if not run.run_input:
+            # A run that stored no input previews its last user message, which the preview read leaves out.
+            full = await _get_run_data(db, run.run_id)
+            if full is not None:
+                runs[index] = classify_session_run(full, resolved_type, session=session) or run
+    return [SessionRunPreviewSchema.from_run(run) for run in runs]
+
+
+async def _get_run_data(db: Union[BaseDb, AsyncBaseDb], run_id: str) -> Optional[Dict[str, Any]]:
+    if isinstance(db, AsyncBaseDb):
+        row = await db.get_run(run_id=run_id, deserialize=False)
+    else:
+        row = await run_in_threadpool(lambda: db.get_run(run_id=run_id, deserialize=False))
+    return row.get("run_data") if isinstance(row, dict) else None
+
+
+def _classify_runs(
+    session: Dict[str, Any],
+    session_type: SessionType,
+    created_after: Optional[int],
+    created_before: Optional[int],
+) -> List[AnyRunSchema]:
     filtered: List[Dict[str, Any]] = []
-    for run in runs:
+    for run in session.get("runs") or []:
         created_at = run.get("created_at")
         # `is not None` (not truthiness): a bound of 0 is a real epoch timestamp, and a run
         # whose created_at is 0 must still be filtered rather than silently kept.
@@ -226,5 +264,5 @@ async def get_session_runs(
             continue
         filtered.append(run)
 
-    classified = (classify_session_run(run, resolved_type, session=session) for run in filtered)
+    classified = (classify_session_run(run, session_type, session=session) for run in filtered)
     return [run_schema for run_schema in classified if run_schema is not None]
