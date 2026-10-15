@@ -556,7 +556,7 @@ class BaseDb(ABC):
         # runs_limit: attach only the most recent N context-relevant runs. Adapters
         # that don't optimize this MUST still accept it and load the full history
         # (a safe, unbounded superset); adapters that can push it to the DB do so.
-        # run_preview: with deserialize=False, runs may carry only RUN_PREVIEW_FIELDS.
+        # run_preview: with deserialize=False, runs may carry only RUN_PREVIEW_FIELDS (see db.utils).
         # Same contract: adapters MUST accept it and may return full runs instead.
         raise NotImplementedError
 

@@ -342,6 +342,10 @@ class _StatementLog:
             assert "run_data" not in stripped, statement
 
 
+NO_INPUT_RUNS = {"a-no-input", "w-no-input"}
+FALLBACK_KEYS = {"messages", "step_executor_runs"}
+
+
 async def check_projected_query(db: Union[BaseDb, AsyncBaseDb], engine: Any) -> None:
     """get_session(run_preview=True) returns only RUN_PREVIEW_FIELDS, read key by key in SQL."""
     await seed(db)
@@ -349,7 +353,11 @@ async def check_projected_query(db: Union[BaseDb, AsyncBaseDb], engine: Any) -> 
     for session_id in ("s-agent", "s-team", "s-wf"):
         session = await _call(db, "get_session", session_id=session_id, deserialize=False, run_preview=True)
         for run in session["runs"]:
-            assert set(run) <= set(RUN_PREVIEW_FIELDS), (run["run_id"], sorted(set(run) - set(RUN_PREVIEW_FIELDS)))
+            allowed = set(RUN_PREVIEW_FIELDS) | (FALLBACK_KEYS if run["run_id"] in NO_INPUT_RUNS else set())
+            assert set(run) <= allowed, (run["run_id"], sorted(set(run) - allowed))
+            if run.get("workflow_id") is None and "input" in run:
+                # Media sits beside input_content; only workflow runs preview their raw input.
+                assert set(run["input"]) == {"input_content"}, run["run_id"]
     log.assert_run_data_projected()
 
 
@@ -368,3 +376,33 @@ async def test_run_preview_is_ignored_when_deserializing(sqlite_db):
     session = sqlite_db.get_session(session_id="s-team", run_preview=True)
     lead = next(run for run in session.runs if run.run_id == "t-lead")  # type: ignore[union-attr]
     assert lead.messages and lead.metrics
+
+
+async def test_previews_need_no_per_run_reads(monkeypatch, sqlite_db):
+    """Runs without stored input carry their fallback fields in the same projected read."""
+    await seed(sqlite_db)
+
+    def no_get_run(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("previews must not re-read runs one at a time")
+
+    monkeypatch.setattr(sqlite_db, "get_run", no_get_run)
+    for session_id in ("s-agent", "s-team", "s-wf"):
+        await assert_preview_parity(sqlite_db, session_id)
+
+
+async def test_previews_work_with_adapters_predating_run_preview():
+    """A custom adapter whose get_session lacks the keyword still serves /run-previews (full read)."""
+
+    class LegacySignatureDb(InMemoryDb):
+        def get_session(self, session_id, session_type=None, user_id=None, deserialize=True, runs_limit=None):  # type: ignore[override]
+            return super().get_session(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=user_id,
+                deserialize=deserialize,
+                runs_limit=runs_limit,
+            )
+
+    db = LegacySignatureDb()
+    await seed(db)
+    await assert_preview_parity(db, "s-agent")

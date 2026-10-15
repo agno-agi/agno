@@ -498,7 +498,9 @@ def merge_runs_table_with_legacy_blob(
     return merged
 
 
-# The run_data keys GET /sessions/{id}/run-previews reads; get_session(run_preview=True) returns only these.
+# The run_data keys GET /sessions/{id}/run-previews reads. get_session(run_preview=True) may return only
+# these, with input reduced to input_content outside workflow runs, plus messages / step_executor_runs
+# for runs that stored no input to preview.
 RUN_PREVIEW_FIELDS: Tuple[str, ...] = (
     "run_id",
     "parent_run_id",

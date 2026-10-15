@@ -9,6 +9,7 @@ Sync ``BaseDb`` calls are offloaded to a threadpool so an async surface (MCP or
 REST) never blocks its event loop on database I/O.
 """
 
+import inspect
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 from starlette.concurrency import run_in_threadpool
@@ -154,8 +155,8 @@ async def _get_session_dict(
     so a wrong caller-supplied default silently misparses rather than 404s.
     """
     kwargs: Dict[str, Any] = dict(session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False)
-    if run_preview:
-        # Passed only when set, so a custom adapter without the keyword keeps serving the full read.
+    if run_preview and _accepts_run_preview(db):
+        # A custom adapter whose get_session predates the keyword serves the full read instead.
         kwargs["run_preview"] = True
     if isinstance(db, AsyncBaseDb):
         session = await db.get_session(**kwargs)
@@ -230,21 +231,15 @@ async def get_session_run_previews(
         db, session_id=session_id, session_type=session_type, user_id=user_id, run_preview=True
     )
     runs = _classify_runs(session, resolved_type, created_after, created_before)
-    for index, run in enumerate(runs):
-        if not run.run_input:
-            # A run that stored no input previews its last user message, which the preview read leaves out.
-            full = await _get_run_data(db, run.run_id)
-            if full is not None:
-                runs[index] = classify_session_run(full, resolved_type, session=session) or run
     return [SessionRunPreviewSchema.from_run(run) for run in runs]
 
 
-async def _get_run_data(db: Union[BaseDb, AsyncBaseDb], run_id: str) -> Optional[Dict[str, Any]]:
-    if isinstance(db, AsyncBaseDb):
-        row = await db.get_run(run_id=run_id, deserialize=False)
-    else:
-        row = await run_in_threadpool(lambda: db.get_run(run_id=run_id, deserialize=False))
-    return row.get("run_data") if isinstance(row, dict) else None
+def _accepts_run_preview(db: Union[BaseDb, AsyncBaseDb]) -> bool:
+    try:
+        parameters = inspect.signature(db.get_session).parameters
+    except (TypeError, ValueError):
+        return False
+    return "run_preview" in parameters or any(p.kind is p.VAR_KEYWORD for p in parameters.values())
 
 
 def _classify_runs(
