@@ -14,6 +14,7 @@ through the same routes used by monitoring clients.
 | `filtering.py` | Build a `FilterExpr`, inspect the filter schema, and execute an advanced trace search. |
 | `traces_to_clickhouse.py` | Split transactional sessions from a batched ClickHouse trace store and select it with `db_id`. |
 | `metrics.py` | Refresh daily metrics from persisted sessions and read the aggregate back. |
+| `os_metrics.py` | Serve agents on two models and read their sessions, runs, tokens, latency and models from the `GET /os/metrics/*` routes. |
 
 ## Prerequisites
 
@@ -23,6 +24,12 @@ the OpenTelemetry packages used by Agno tracing:
 ```bash
 uv pip install --python .venvs/demo/bin/python \
   opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno
+```
+
+The `os_metrics.py` example needs a local PostgreSQL:
+
+```bash
+./cookbook/scripts/run_pgvector.sh
 ```
 
 The ClickHouse example additionally needs the Python driver and a local
@@ -49,6 +56,18 @@ After calling its served agent, inspect `GET /traces`,
 `GET /traces/{trace_id}`, `POST /traces/search`, and
 `GET /traces/filter-schema`. The same `tracing=True` switch instruments local
 agents, teams, and workflows registered with that OS.
+
+Serve two agents on different models to read the OS metrics:
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/13_observability/os_metrics.py
+```
+
+After running both agents, open `GET /os/metrics/sessions`, `/runs`, `/tokens`,
+`/latency`, or `/models` for the last 30 days, or narrow them with
+`?starting_date=YYYY-MM-DD&ending_date=YYYY-MM-DD`. `POST /os/metrics/refresh`
+rebuilds the OS metrics on the OS database, and `GET /os/metrics/refresh/status`
+reports when they were last updated.
 
 The other files generate and inspect their own data in one process:
 

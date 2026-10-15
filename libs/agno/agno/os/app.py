@@ -885,7 +885,12 @@ class AgentOS:
                 agents=self._agents or None,  # type: ignore[arg-type]
                 teams=self._teams or None,  # type: ignore[arg-type]
             ),
-            get_metrics_router(dbs=self.dbs),
+            get_metrics_router(
+                dbs=self.dbs,
+                os_db=self.db,
+                role_store=self._authz_role_store,
+                auth_enabled=self._auth_configured(),
+            ),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
@@ -1707,7 +1712,12 @@ class AgentOS:
                 agents=self._agents or None,  # type: ignore[arg-type]
                 teams=self._teams or None,  # type: ignore[arg-type]
             ),
-            get_metrics_router(dbs=self.dbs),
+            get_metrics_router(
+                dbs=self.dbs,
+                os_db=self.db,
+                role_store=self._authz_role_store,
+                auth_enabled=self._auth_configured(),
+            ),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
