@@ -2639,4 +2639,7 @@ def get_agent_router(
 
         return result
 
+    from agno.os.routers.agents.sandbox_artifacts import add_sandbox_artifact_routes
+
+    add_sandbox_artifact_routes(router, os)
     return router

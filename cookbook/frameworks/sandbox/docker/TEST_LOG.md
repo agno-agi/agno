@@ -357,3 +357,12 @@ Coordinator review follow-up: native transcript-mirror warnings and lost pre-che
 **Result:** `build_image.py` now ends with `Built agno-sandbox:review-fix (sha256:03733ba9...)` and the tag is in the image store, where the previous script exited 0 with no image. `runtime_resilience.py` passed all three sections on the overridden subnet. `test_runtime.py` passed 23 and skipped 5 with the override, matching the review's scratch-copy run, where the unmodified file failed every http and isolated case. AgentOS startup on the old table shape fails in the lifespan with `Sandbox table ai.<bindings> does not reference run table ai.<runs>; drop or rename that table, or pass PostgresDb(sandbox_table=...) to create a new one`; a submission on it returns 500 with the same message before any ticket exists, and a ticket enqueued past that check settles as `failed` within the 3 second lock grace instead of staying `running`. A submission with a `user_id` on a session created without one, and the two reverse cases, return 404 `Session not found` and leave no ticket and no container. `tests/unit/sandbox`: 378 passed. The full `tests/integration/sandbox` suite with the subnet override and every service variable set: 245 passed, 18 skipped (the hard-coded AsyncPostgresDb and transport skips) in 5m02s, no containers, volumes or tables left behind; the review's run of the unmodified branch had 1 failure and 13 errors, all the subnet cases.
 
 ---
+### download_artifact.py
+
+**Status:** PASS
+
+**Description:** Status, workspace listing and a bounded file download from a session's last completed checkpoint, over the AgentOS routes. Credential-free fixture harness, real Docker, local Postgres and Redis.
+
+**Result:** Passed. The turn published a checkpoint and left its computer paused for the warm-reuse window, which the status reported as a completed checkpoint with compute still allocated. The script printed that status, listed the two workspace files and wrote the completed run's exact bytes. Retiring the warm computer removed the container and left the status reporting no compute; the same download then returned identical bytes under the same checkpoint and run id. The download advertises `application/octet-stream` as its only successful content type in the served OpenAPI document.
+
+---
