@@ -25,9 +25,27 @@ def get_image_type(data: bytes) -> Optional[str]:
     # JPEG: SOI marker (Start of Image)
     if data[0:3] == b"\xff\xd8\xff":
         return "jpeg"
-    # HEIC/HEIF: ftyp box at offset 4
+    # ISO-BMFF uses ftyp for both images and video. Inspect image brands only
+    # within that box; bytes in later boxes must not affect classification.
     if data[4:8] == b"ftyp":
-        return "heic"
+        box_size = int.from_bytes(data[:4], "big")
+        header_size = 8
+        if box_size == 1:
+            box_size = int.from_bytes(data[8:16], "big")
+            header_size = 16
+        elif box_size == 0:
+            box_size = len(data)
+        if box_size < header_size + 8 or len(data) < box_size:
+            return None
+        brands = {data[header_size : header_size + 4]}
+        brands.update(data[i : i + 4] for i in range(header_size + 8, box_size - 3, 4))
+        if brands & {b"avif", b"avis"}:
+            return "avif"
+        if brands & {b"heic", b"heix", b"hevc", b"hevx"}:
+            return "heic"
+        if brands & {b"mif1", b"msf1"}:
+            return "heif"
+        return None
     # WebP: RIFF container with WEBP identifier
     if data[0:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "webp"
