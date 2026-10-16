@@ -51,6 +51,10 @@ def url_safe_string(input_string):
 
 
 def hash_string_sha256(input_string):
+    # None used to AttributeError on .encode; treat it like empty content so
+    # vectordb id fallbacks (doc.id or hash_string_sha256(doc.content)) work.
+    if input_string is None:
+        input_string = ""
     # Encode the input string to bytes
     encoded_string = input_string.encode("utf-8")
 
