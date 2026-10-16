@@ -1,5 +1,5 @@
 from dataclasses import asdict
-from typing import Any, List, Optional, Set, Type, Union, get_type_hints
+from typing import Any, List, Optional, Set, Type, get_type_hints
 
 
 def isinstanceany(obj: Any, class_list: List[Type]) -> bool:
@@ -57,6 +57,8 @@ def check_type_compatibility(value: Any, expected_type: Type) -> bool:
     """Basic type compatibility checking."""
     from typing import get_args, get_origin
 
+    from agno.utils.json_schema import is_origin_union_type
+
     # Handle None/Optional types
     if value is None:
         return (
@@ -65,7 +67,7 @@ def check_type_compatibility(value: Any, expected_type: Type) -> bool:
 
     # Handle Union types (including Optional)
     origin = get_origin(expected_type)
-    if origin is Union:
+    if is_origin_union_type(origin):
         return any(check_type_compatibility(value, arg) for arg in get_args(expected_type))
 
     # Handle List types
