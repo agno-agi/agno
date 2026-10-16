@@ -1601,9 +1601,9 @@ class Gemini(Model):
         metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.prompt_token_count or 0
-        metrics.output_tokens = response_usage.candidates_token_count or 0
-        if response_usage.thoughts_token_count is not None:
-            metrics.reasoning_tokens = response_usage.thoughts_token_count or 0
+        # Thoughts are billed as output, and the other adapters count reasoning inside output_tokens too
+        metrics.reasoning_tokens = response_usage.thoughts_token_count or 0
+        metrics.output_tokens = (response_usage.candidates_token_count or 0) + metrics.reasoning_tokens
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
         metrics.cache_read_tokens = response_usage.cached_content_token_count or 0
