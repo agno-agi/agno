@@ -1696,8 +1696,11 @@ class ChromaDb(VectorDb):
                     raise te
 
         except Exception:
+            # A failed lookup is not an absence. ``upsert`` clears the previous chunks only
+            # when this answers True, so returning False here turns a connection error into
+            # a skipped delete and leaves both the old and the new chunks under one hash.
             logger.exception(f"Error checking if content_hash '{content_hash}' exists")
-            return False
+            raise
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
         """
