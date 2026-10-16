@@ -249,6 +249,47 @@ class TestSupportsPrefillHelper:
         assert supports_prefill("gemini-2.0-flash") is True
 
 
+class TestBaseClaudeId:
+    """Tests for the shared base_claude_id() normalizer."""
+
+    @pytest.mark.parametrize(
+        "model_id,expected",
+        [
+            # Anthropic direct — returned unchanged
+            ("claude-sonnet-4-5-20250929", "claude-sonnet-4-5-20250929"),
+            ("claude-sonnet-4", "claude-sonnet-4"),
+            # Bedrock region prefixes + version suffix
+            ("global.anthropic.claude-sonnet-4-5-20250929-v1:0", "claude-sonnet-4-5-20250929"),
+            ("us.anthropic.claude-haiku-4-5-20251001-v1:0", "claude-haiku-4-5-20251001"),
+            ("eu.anthropic.claude-sonnet-4-5-20250929-v1:0", "claude-sonnet-4-5-20250929"),
+            ("apac.anthropic.claude-haiku-4-5-20251001-v1:0", "claude-haiku-4-5-20251001"),
+            # Bedrock without region prefix
+            ("anthropic.claude-3-5-sonnet-20240620-v1:0", "claude-3-5-sonnet-20240620"),
+            # Bedrock inference-profile ARN
+            (
+                "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-3-5-sonnet-20240620-v1:0",
+                "claude-3-5-sonnet-20240620",
+            ),
+            # Bedrock foundation-model ARN
+            (
+                "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0",
+                "claude-sonnet-4-5-20250929",
+            ),
+            # Vertex AI version suffix
+            ("claude-sonnet-4@20250514", "claude-sonnet-4"),
+            # LiteLLM provider prefix
+            ("anthropic/claude-sonnet-4-6", "claude-sonnet-4-6"),
+            # Edge cases — returned unchanged, no crash
+            ("", ""),
+            ("gpt-5.4", "gpt-5.4"),
+        ],
+    )
+    def test_normalization(self, model_id, expected):
+        from agno.utils.models.claude import base_claude_id
+
+        assert base_claude_id(model_id) == expected
+
+
 class TestAutoDetection:
     """Tests for automatic append_trailing_user_message detection."""
 
