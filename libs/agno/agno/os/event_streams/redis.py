@@ -26,38 +26,10 @@ import asyncio
 import contextlib
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Tuple, Union
 
+from agno.os.event_streams._redis_lua import fenced_incr, fenced_xadd
 from agno.os.event_streams.base import BaseEventStream
 from agno.run.base import RunStatus
 from agno.utils.log import log_debug, log_warning
-
-# Writer-generation fence scripts. The INCR script refuses when the stored generation is
-# NEWER than the writer's, establishes it when absent (first fenced writer, or
-# an expired key - fail-open restamp; the TTL hazard predates the fence), and
-# self-heals forward when the writer's is newer. The XADD script re-checks at
-# append time: index INCR and XADD are separate roundtrips (the SSE payload
-# embeds the index and is formatted client-side), and a newer attempt can
-# begin between them - a refused append leaves an index gap, covered by the
-# monotonic-not-gapless contract.
-_FENCED_INCR_LUA = """
-local gen = redis.call('GET', KEYS[1])
-if gen == false then
-  redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[2]))
-elseif tonumber(gen) > tonumber(ARGV[1]) then
-  return -1
-elseif tonumber(gen) < tonumber(ARGV[1]) then
-  redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[2]))
-end
-return redis.call('INCR', KEYS[2])
-"""
-
-_FENCED_XADD_LUA = """
-local gen = redis.call('GET', KEYS[1])
-if gen ~= false and tonumber(gen) > tonumber(ARGV[1]) then
-  return 0
-end
-redis.call('XADD', KEYS[2], 'MAXLEN', '~', ARGV[2], '*', 'idx', ARGV[3], 'sse', ARGV[4])
-return 1
-"""
 
 _redis_available = True
 _redis_import_error: Optional[str] = None
@@ -150,12 +122,10 @@ class RedisEventStream(BaseEventStream):
         self._active_runs: set = set()
         self._refresher_task: Optional["asyncio.Task"] = None
         # Writer-generation fence: Lua gives gen-check + INCR (and gen-check +
-        # XADD) single-roundtrip atomicity on the hot per-event path. Scripts
-        # register lazily; a server without scripting (fakeredis, restricted
+        # XADD) single-roundtrip atomicity on the hot per-event path (see
+        # _redis_lua). A server without scripting (fakeredis, restricted
         # managed Redis) degrades FAIL-OPEN to the unfenced legacy path with
         # one warning - the stream is coordination, not truth.
-        self._fenced_incr_script: Optional[Any] = None
-        self._fenced_xadd_script: Optional[Any] = None
         self._scripting_unavailable = False
         self._fence_refusals_logged: set = set()
 
@@ -477,12 +447,12 @@ class RedisEventStream(BaseEventStream):
         from agno.os.utils import format_sse_event_with_index
 
         try:
-            if self._fenced_incr_script is None:
-                self._fenced_incr_script = self._redis.register_script(_FENCED_INCR_LUA)
-                self._fenced_xadd_script = self._redis.register_script(_FENCED_XADD_LUA)
-            next_count = await self._fenced_incr_script(
-                keys=[self._gen_key(run_id), self._counter_key(run_id)],
-                args=[generation, self._ttl],
+            next_count = await fenced_incr(
+                self._redis,
+                gen_key=self._gen_key(run_id),
+                counter_key=self._counter_key(run_id),
+                generation=generation,
+                ttl=self._ttl,
             )
         except ResponseError as e:
             message = str(e).lower()
@@ -501,9 +471,14 @@ class RedisEventStream(BaseEventStream):
         with contextlib.suppress(Exception):
             event.event_index = event_index
         sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
-        appended = await self._fenced_xadd_script(  # type: ignore[misc]
-            keys=[self._gen_key(run_id), self._stream_key(run_id)],
-            args=[generation, self._maxlen, event_index, sse_data],
+        appended = await fenced_xadd(
+            self._redis,
+            gen_key=self._gen_key(run_id),
+            stream_key=self._stream_key(run_id),
+            generation=generation,
+            maxlen=self._maxlen,
+            idx=event_index,
+            sse=sse_data,
         )
         if self._ttl_refresh_due(run_id):
             pipe = self._redis.pipeline()
