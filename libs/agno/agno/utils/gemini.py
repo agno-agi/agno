@@ -276,6 +276,16 @@ def convert_schema(
     # Handle enum types
     if "enum" in schema_dict:
         enum_values = schema_dict["enum"]
+        if schema_type == "integer":
+            # Gemini takes integer enums as type INTEGER with format "enum" and the values as strings
+            return Schema(
+                type=GeminiType.INTEGER,
+                format="enum",
+                enum=[str(value) for value in enum_values],
+                description=description,
+                default=default,
+                title=title,
+            )
         return Schema(type=GeminiType.STRING, enum=enum_values, description=description, default=default, title=title)
 
     if schema_type == "object":
