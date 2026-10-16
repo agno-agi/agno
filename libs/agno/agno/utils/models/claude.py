@@ -39,8 +39,18 @@ _PREFILL_SUPPORTED_ALIASES = {
 }
 
 
-def supports_prefill(model_id: str) -> bool:
-    """Return True if the given model ID supports assistant message prefill.
+# Models that honour the temperature / top_p / top_k sampling parameters: the prefill set
+# plus the 4.6 generation. This is a closed set: Claude Opus 4.7, Claude Sonnet 5 and all
+# future models reject a non-default value on every request.
+_SAMPLING_SUPPORTED_PREFIXES = _PREFILL_SUPPORTED_PREFIXES + (
+    "claude-sonnet-4-6",
+    "claude-opus-4-6",
+    "claude-haiku-4-6",
+)
+
+
+def _core_model_id(model_id: str) -> str:
+    """Strip provider-specific decoration from a Claude model ID.
 
     Handles provider-specific ID formats:
       - Anthropic direct:  "claude-sonnet-4-5-20250929"
@@ -57,11 +67,79 @@ def supports_prefill(model_id: str) -> bool:
     # Strip Bedrock version suffix (e.g. "claude-sonnet-4-5-20250929-v1:0")
     if ":0" in core_id:
         core_id = core_id.split("-v")[0] if "-v" in core_id else core_id.split(":")[0]
+    return core_id
+
+
+def supports_prefill(model_id: str) -> bool:
+    """Return True if the given model ID supports assistant message prefill."""
+    core_id = _core_model_id(model_id)
 
     if not core_id.startswith("claude"):
         return True  # Non-Claude models are unaffected — don't inject trailing messages
 
     return core_id in _PREFILL_SUPPORTED_ALIASES or core_id.startswith(_PREFILL_SUPPORTED_PREFIXES)
+
+
+def supports_sampling_params(model_id: str) -> bool:
+    """Return True if the given model ID accepts temperature, top_p and top_k at all.
+
+    Claude Opus 4.7, Claude Sonnet 5 and later models reject any non-default sampling
+    value on every request, whether or not thinking is on.
+    """
+    core_id = _core_model_id(model_id)
+
+    if not core_id.startswith("claude"):
+        return True  # Non-Claude models are unaffected
+
+    # The family aliases resolve to 4-0, which supports sampling.
+    return core_id in _PREFILL_SUPPORTED_ALIASES or core_id.startswith(_SAMPLING_SUPPORTED_PREFIXES)
+
+
+def drop_unsupported_sampling_params(request_params: Dict[str, Any], model_id: str) -> Dict[str, Any]:
+    """Remove the sampling parameters Anthropic would reject for this request.
+
+    Runs on the ``extra_body`` that ``route_sampling_params_to_extra_body`` built, so it
+    sees the model's own fields and an explicit ``extra_body`` alike, ``thinking`` included
+    (the SDK merges ``extra_body`` over the request, so it wins there). ``temperature`` and
+    ``top_p`` are never accepted together. With thinking on (``enabled`` or ``adaptive``)
+    ``temperature`` may only be 1, ``top_p`` must be at least 0.95 and ``top_k`` must be
+    unset; models without sampling support apply that on every request and reject any
+    ``top_p``. A value that would have been rejected is dropped with a warning, so a
+    ``temperature=0`` carried over from an older configuration degrades to the API default
+    instead of failing every request with a 400.
+    """
+    sampling = request_params.get("extra_body") or {}
+    temperature, top_p, top_k = sampling.get("temperature"), sampling.get("top_p"), sampling.get("top_k")
+    thinking = sampling.get("thinking", request_params.get("thinking")) or {}
+    thinking_on = bool(thinking) and thinking.get("type") != "disabled"
+    locked = not supports_sampling_params(model_id)
+
+    why: Dict[str, str] = {}
+    if thinking_on or locked:
+        where = f"on {model_id}" if locked else "with thinking on"
+        if temperature is not None and temperature != 1:
+            why["temperature"] = f"must be 1 {where}"
+        if top_p is not None and (locked or top_p < 0.95):
+            why["top_p"] = f"must be unset {where}" if locked else f"must be at least 0.95 {where}"
+        if top_k is not None:
+            why["top_k"] = f"must be unset {where}"
+    if temperature is not None and top_p is not None and not why.keys() & {"temperature", "top_p"}:
+        # With thinking on temperature can only be the default, so top_p is the one carrying intent.
+        loser, winner = ("temperature", "top_p") if thinking_on else ("top_p", "temperature")
+        why[loser] = f"not accepted together with {winner}"
+    if not why:
+        return request_params
+
+    kept = {name: value for name, value in sampling.items() if name not in why}
+    if kept:
+        request_params["extra_body"] = kept
+    else:
+        del request_params["extra_body"]
+    dropped = ", ".join(f"{name}={sampling[name]} ({reason})" for name, reason in why.items())
+    log_warning(
+        f"Dropping {dropped} from the request, Anthropic rejects it with a 400. Unset the value to silence this warning."
+    )
+    return request_params
 
 
 @dataclass
