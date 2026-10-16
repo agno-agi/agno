@@ -29,7 +29,7 @@ rebuilt.
 import json
 import time
 from contextlib import asynccontextmanager, contextmanager
-from typing import Any, AsyncGenerator, Dict, Generator, List, Optional
+from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Tuple
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.migrations.utils import quote_db_identifier
@@ -37,7 +37,7 @@ from agno.db.utils import CustomJSONEncoder
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
-    from sqlalchemy import text
+    from sqlalchemy import select, text
     from sqlalchemy.dialects import mysql, postgresql, sqlite
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
@@ -500,6 +500,54 @@ def _build_run_rows(
     return rows
 
 
+def _split_copy_rows(
+    rows: List[Dict[str, Any]], stored: Dict[str, str]
+) -> Tuple[List[Dict[str, Any]], List[Tuple[str, str, str]]]:
+    """Split a page of legacy runs into the rows to insert and the ones another session already holds.
+
+    ``stored`` maps the page's run_ids that are already in the runs table to their session_id. A run_id
+    stored for the same session was copied by an earlier, interrupted attempt and is skipped. The runs
+    table keys on run_id alone, so a run_id stored for another session cannot be copied: it comes back
+    as (run_id, session that keeps it, session that loses it).
+    """
+    owners = dict(stored)
+    to_insert: List[Dict[str, Any]] = []
+    clashes: List[Tuple[str, str, str]] = []
+    for row in rows:
+        owner = owners.get(row["run_id"])
+        if owner is None:
+            owners[row["run_id"]] = row["session_id"]
+            to_insert.append(row)
+        elif owner != row["session_id"]:
+            clashes.append((row["run_id"], owner, row["session_id"]))
+    return to_insert, clashes
+
+
+def _run_owner_queries(runs_table: Any, rows: List[Dict[str, Any]]) -> List[Any]:
+    """SELECTs for the session each run_id of the page is already stored under, 500 ids per query
+    so SQLite builds with a 999 bind-parameter limit accept them."""
+    run_ids = sorted({row["run_id"] for row in rows})
+    return [
+        select(runs_table.c.run_id, runs_table.c.session_id).where(runs_table.c.run_id.in_(run_ids[i : i + 500]))
+        for i in range(0, len(run_ids), 500)
+    ]
+
+
+def _log_copy_result(table_name: str, copied: int, clashes: List[Tuple[str, str, str]]) -> None:
+    log_info(f"-- Copied {copied} runs from {table_name} into the runs table")
+    if clashes:
+        examples = ", ".join(f"{run_id} (kept for {kept}, not for {lost})" for run_id, kept, lost in clashes[:5])
+        log_warning(
+            f"-- {len(clashes)} run(s) were not copied because another session holds the same run_id and the "
+            f"runs table has one row per run_id: {examples}. They are still in the legacy '{table_name}.runs' "
+            "column; cleanup_legacy_runs_column(force=True) would drop them."
+        )
+    log_info(
+        f"-- The legacy '{table_name}.runs' column was preserved as a backup. "
+        "Once you have verified the migration, drop it via db.cleanup_legacy_runs_column()."
+    )
+
+
 def _forget_table(db, table_name: Optional[str], attribute: str) -> None:
     """Drop a table from the adapter's SQLAlchemy state after it goes away.
 
@@ -762,7 +810,7 @@ def _migrate_postgres_sessions(db: BaseDb, table_name: str) -> bool:
     if runs_table is None:
         return False
 
-    with db.Session() as sess, sess.begin():  # type: ignore
+    with db.Session() as sess:  # type: ignore
         table_exists = sess.execute(
             text(
                 "SELECT EXISTS ("
@@ -780,30 +828,41 @@ def _migrate_postgres_sessions(db: BaseDb, table_name: str) -> bool:
             log_info(f"Table {table_name} has no runs column, skipping migration")
             return False
 
-        # Move all runs into the runs table
-        result = sess.execute(text(f"SELECT session_id, user_id, runs FROM {full_table} WHERE runs IS NOT NULL"))
-        migrated_runs = 0
-        while True:
-            batch = result.fetchmany(BATCH_SIZE)
+    # Move the runs one page of sessions at a time, each page in its own transaction: memory stays
+    # at one page, and a rerun after a crash skips the runs an earlier page already copied.
+    first_page = text(
+        f"SELECT session_id, user_id, runs FROM {full_table} WHERE runs IS NOT NULL ORDER BY session_id LIMIT :limit"
+    )
+    next_page = text(
+        f"SELECT session_id, user_id, runs FROM {full_table} "
+        "WHERE runs IS NOT NULL AND session_id > :last ORDER BY session_id LIMIT :limit"
+    )
+    copied = 0
+    clashes: List[Tuple[str, str, str]] = []
+    last_session_id: Optional[str] = None
+    while True:
+        with db.Session() as sess, sess.begin():  # type: ignore
+            if last_session_id is None:
+                batch = sess.execute(first_page, {"limit": BATCH_SIZE}).fetchall()
+            else:
+                batch = sess.execute(next_page, {"last": last_session_id, "limit": BATCH_SIZE}).fetchall()
             if not batch:
                 break
+            last_session_id = batch[-1][0]
 
             rows: List[Dict[str, Any]] = []
             for session_id, user_id, runs in batch:
                 rows.extend(_build_run_rows(runs, session_id, user_id, run_data_as_string=False))
-
-            if rows:
+            stored = {run_id: owner for q in _run_owner_queries(runs_table, rows) for run_id, owner in sess.execute(q)}
+            to_insert, page_clashes = _split_copy_rows(rows, stored)
+            if to_insert:
                 insert_stmt = postgresql.insert(runs_table).on_conflict_do_nothing(index_elements=["run_id"])
-                sess.execute(insert_stmt, rows)
-                migrated_runs += len(rows)
+                sess.execute(insert_stmt, to_insert)
+            copied += len(to_insert)
+            clashes.extend(page_clashes)
 
-        log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs table")
-        log_info(
-            f"-- The legacy '{table_name}.runs' column was preserved as a backup. "
-            "Once you have verified the migration, drop it via db.cleanup_legacy_runs_column()."
-        )
-
-        return True
+    _log_copy_result(table_name, copied, clashes)
+    return True
 
 
 async def _migrate_async_postgres_sessions(db: AsyncBaseDb, table_name: str) -> bool:
@@ -819,7 +878,7 @@ async def _migrate_async_postgres_sessions(db: AsyncBaseDb, table_name: str) -> 
     if runs_table is None:
         return False
 
-    async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+    async with db.async_session_factory() as sess:  # type: ignore
         table_exists = (
             await sess.execute(
                 text(
@@ -840,30 +899,43 @@ async def _migrate_async_postgres_sessions(db: AsyncBaseDb, table_name: str) -> 
             log_info(f"Table {table_name} has no runs column, skipping migration")
             return False
 
-        # Move all runs into the runs table
-        result = await sess.execute(text(f"SELECT session_id, user_id, runs FROM {full_table} WHERE runs IS NOT NULL"))
-        migrated_runs = 0
-        while True:
-            batch = result.fetchmany(BATCH_SIZE)
+    # See _migrate_postgres_sessions: one page of sessions per transaction.
+    first_page = text(
+        f"SELECT session_id, user_id, runs FROM {full_table} WHERE runs IS NOT NULL ORDER BY session_id LIMIT :limit"
+    )
+    next_page = text(
+        f"SELECT session_id, user_id, runs FROM {full_table} "
+        "WHERE runs IS NOT NULL AND session_id > :last ORDER BY session_id LIMIT :limit"
+    )
+    copied = 0
+    clashes: List[Tuple[str, str, str]] = []
+    last_session_id: Optional[str] = None
+    while True:
+        async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+            if last_session_id is None:
+                result = await sess.execute(first_page, {"limit": BATCH_SIZE})
+            else:
+                result = await sess.execute(next_page, {"last": last_session_id, "limit": BATCH_SIZE})
+            batch = result.fetchall()
             if not batch:
                 break
+            last_session_id = batch[-1][0]
 
             rows: List[Dict[str, Any]] = []
             for session_id, user_id, runs in batch:
                 rows.extend(_build_run_rows(runs, session_id, user_id, run_data_as_string=False))
-
-            if rows:
+            stored: Dict[str, str] = {}
+            for query in _run_owner_queries(runs_table, rows):
+                stored.update((await sess.execute(query)).tuples().all())
+            to_insert, page_clashes = _split_copy_rows(rows, stored)
+            if to_insert:
                 insert_stmt = postgresql.insert(runs_table).on_conflict_do_nothing(index_elements=["run_id"])
-                await sess.execute(insert_stmt, rows)
-                migrated_runs += len(rows)
+                await sess.execute(insert_stmt, to_insert)
+            copied += len(to_insert)
+            clashes.extend(page_clashes)
 
-        log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs table")
-        log_info(
-            f"-- The legacy '{table_name}.runs' column was preserved as a backup. "
-            "Once you have verified the migration, drop it via db.cleanup_legacy_runs_column()."
-        )
-
-        return True
+    _log_copy_result(table_name, copied, clashes)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -878,7 +950,7 @@ def _migrate_sqlite_sessions(db: BaseDb, table_name: str) -> bool:
     if runs_table is None:
         return False
 
-    with db.Session() as sess, sess.begin():  # type: ignore
+    with db.Session() as sess:  # type: ignore
         table_exists = sess.execute(
             text("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:table_name"),
             {"table_name": table_name},
@@ -893,30 +965,40 @@ def _migrate_sqlite_sessions(db: BaseDb, table_name: str) -> bool:
             log_info(f"Table {table_name} has no runs column, skipping migration")
             return False
 
-        # Move all runs into the runs table
-        result = sess.execute(text(f"SELECT session_id, user_id, runs FROM {table_name} WHERE runs IS NOT NULL"))
-        migrated_runs = 0
-        while True:
-            batch = result.fetchmany(BATCH_SIZE)
+    # See _migrate_postgres_sessions: one page of sessions per transaction.
+    first_page = text(
+        f"SELECT session_id, user_id, runs FROM {table_name} WHERE runs IS NOT NULL ORDER BY session_id LIMIT :limit"
+    )
+    next_page = text(
+        f"SELECT session_id, user_id, runs FROM {table_name} "
+        "WHERE runs IS NOT NULL AND session_id > :last ORDER BY session_id LIMIT :limit"
+    )
+    copied = 0
+    clashes: List[Tuple[str, str, str]] = []
+    last_session_id: Optional[str] = None
+    while True:
+        with db.Session() as sess, sess.begin():  # type: ignore
+            if last_session_id is None:
+                batch = sess.execute(first_page, {"limit": BATCH_SIZE}).fetchall()
+            else:
+                batch = sess.execute(next_page, {"last": last_session_id, "limit": BATCH_SIZE}).fetchall()
             if not batch:
                 break
+            last_session_id = batch[-1][0]
 
             rows: List[Dict[str, Any]] = []
             for session_id, user_id, runs in batch:
                 rows.extend(_build_run_rows(runs, session_id, user_id, run_data_as_string=False))
-
-            if rows:
+            stored = {run_id: owner for q in _run_owner_queries(runs_table, rows) for run_id, owner in sess.execute(q)}
+            to_insert, page_clashes = _split_copy_rows(rows, stored)
+            if to_insert:
                 insert_stmt = sqlite.insert(runs_table).on_conflict_do_nothing(index_elements=["run_id"])
-                sess.execute(insert_stmt, rows)
-                migrated_runs += len(rows)
+                sess.execute(insert_stmt, to_insert)
+            copied += len(to_insert)
+            clashes.extend(page_clashes)
 
-        log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs table")
-        log_info(
-            f"-- The legacy '{table_name}.runs' column was preserved as a backup. "
-            "Once you have verified the migration, drop it via db.cleanup_legacy_runs_column()."
-        )
-
-        return True
+    _log_copy_result(table_name, copied, clashes)
+    return True
 
 
 async def _migrate_async_sqlite_sessions(db: AsyncBaseDb, table_name: str) -> bool:
@@ -926,7 +1008,7 @@ async def _migrate_async_sqlite_sessions(db: AsyncBaseDb, table_name: str) -> bo
     if runs_table is None:
         return False
 
-    async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+    async with db.async_session_factory() as sess:  # type: ignore
         table_exists = (
             await sess.execute(
                 text("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:table_name"),
@@ -943,30 +1025,43 @@ async def _migrate_async_sqlite_sessions(db: AsyncBaseDb, table_name: str) -> bo
             log_info(f"Table {table_name} has no runs column, skipping migration")
             return False
 
-        # Move all runs into the runs table
-        result = await sess.execute(text(f"SELECT session_id, user_id, runs FROM {table_name} WHERE runs IS NOT NULL"))
-        migrated_runs = 0
-        while True:
-            batch = result.fetchmany(BATCH_SIZE)
+    # See _migrate_postgres_sessions: one page of sessions per transaction.
+    first_page = text(
+        f"SELECT session_id, user_id, runs FROM {table_name} WHERE runs IS NOT NULL ORDER BY session_id LIMIT :limit"
+    )
+    next_page = text(
+        f"SELECT session_id, user_id, runs FROM {table_name} "
+        "WHERE runs IS NOT NULL AND session_id > :last ORDER BY session_id LIMIT :limit"
+    )
+    copied = 0
+    clashes: List[Tuple[str, str, str]] = []
+    last_session_id: Optional[str] = None
+    while True:
+        async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+            if last_session_id is None:
+                result = await sess.execute(first_page, {"limit": BATCH_SIZE})
+            else:
+                result = await sess.execute(next_page, {"last": last_session_id, "limit": BATCH_SIZE})
+            batch = result.fetchall()
             if not batch:
                 break
+            last_session_id = batch[-1][0]
 
             rows: List[Dict[str, Any]] = []
             for session_id, user_id, runs in batch:
                 rows.extend(_build_run_rows(runs, session_id, user_id, run_data_as_string=False))
-
-            if rows:
+            stored: Dict[str, str] = {}
+            for query in _run_owner_queries(runs_table, rows):
+                stored.update((await sess.execute(query)).tuples().all())
+            to_insert, page_clashes = _split_copy_rows(rows, stored)
+            if to_insert:
                 insert_stmt = sqlite.insert(runs_table).on_conflict_do_nothing(index_elements=["run_id"])
-                await sess.execute(insert_stmt, rows)
-                migrated_runs += len(rows)
+                await sess.execute(insert_stmt, to_insert)
+            copied += len(to_insert)
+            clashes.extend(page_clashes)
 
-        log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs table")
-        log_info(
-            f"-- The legacy '{table_name}.runs' column was preserved as a backup. "
-            "Once you have verified the migration, drop it via db.cleanup_legacy_runs_column()."
-        )
-
-        return True
+    _log_copy_result(table_name, copied, clashes)
+    return True
 
 
 # ---------------------------------------------------------------------------
