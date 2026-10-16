@@ -601,6 +601,7 @@ module = [
   "fastmcp.*",
   "filetype.*",
   "firecrawl.*",
+  "funasr.*",
   "github.*",
   "gitlab.*",
   "google.*",
