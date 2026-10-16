@@ -68,6 +68,16 @@ class TestInfoEndpointMcpDiscovery:
         body = client.get("/info").json()
         assert body["mcp"] == {"enabled": True, "path": "/mcp", "oauth": None}
 
+    def test_mcp_path_reports_the_configured_transport_path(self):
+        """The path is configurable; a client builds the card and runner URLs from it."""
+        pytest.importorskip("fastmcp")
+        from agno.os import MCPConfig
+
+        client = _build_client(mcp=MCPConfig(default_tools=True, path="/ai/mcp"))
+        body = client.get("/info").json()
+        # Reported verbatim: hardcoding "/mcp" sent clients to a path this OS does not serve.
+        assert body["mcp"]["path"] == "/ai/mcp"
+
 
 class TestInfoEndpointAuthMode:
     def test_auth_mode_none_by_default(self):
