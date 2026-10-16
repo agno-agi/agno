@@ -1910,8 +1910,8 @@ class JsonDb(BaseDb):
             filtered.sort(key=lambda x: x.get("start_time", ""), reverse=True)
 
             # Apply pagination
-            if limit and page:
-                start_idx = (page - 1) * limit
+            if limit is not None:
+                start_idx = max((page or 1) - 1, 0) * limit
                 filtered = filtered[start_idx : start_idx + limit]
 
             # Add total_spans and error_count to each trace
@@ -2015,8 +2015,8 @@ class JsonDb(BaseDb):
             stats_list.sort(key=lambda x: x.get("last_trace_at", ""), reverse=True)
 
             # Apply pagination
-            if limit and page:
-                start_idx = (page - 1) * limit
+            if limit is not None:
+                start_idx = max((page or 1) - 1, 0) * limit
                 stats_list = stats_list[start_idx : start_idx + limit]
 
             # Convert ISO strings to datetime objects
@@ -2124,7 +2124,7 @@ class JsonDb(BaseDb):
                 filtered.append(s)
 
             # Apply limit
-            if limit:
+            if limit is not None:
                 filtered = filtered[:limit]
 
             return [Span.from_dict(s) for s in filtered]
