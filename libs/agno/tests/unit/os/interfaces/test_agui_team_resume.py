@@ -117,16 +117,32 @@ async def test_agui_resume_team_member_pause_resumes_team_run(tmp_path):
             paused = True
     assert paused, "expected a member send_email pause"
 
-    # Resume through the AG-UI bridge with the confirmation ToolMessage.
-    tm = AGUIToolMessage(id="m1", role="tool", content=json.dumps({"accepted": True}), tool_call_id="tc-send")
+    # Resume the leader's delegation confirmation first.
+    delegation_confirmation = AGUIToolMessage(
+        id="m-delegation", role="tool", content=json.dumps({"accepted": True}), tool_call_id="tc-deleg"
+    )
     gen = await resume_paused_run(
         entity=team,
         session_id=session_id,
-        tool_messages=[tm],
+        tool_messages=[delegation_confirmation],
         run_context=RunContext(run_id="new", session_id=session_id),
         run_kwargs={},
     )
     async for _ in gen:  # today: raises AttributeError('RunOutput'...team_id); after fix: completes
+        pass
+
+    # The member then pauses on its own confirmation-gated tool.
+    member_confirmation = AGUIToolMessage(
+        id="m-member", role="tool", content=json.dumps({"accepted": True}), tool_call_id="tc-send"
+    )
+    gen = await resume_paused_run(
+        entity=team,
+        session_id=session_id,
+        tool_messages=[member_confirmation],
+        run_context=RunContext(run_id="new", session_id=session_id),
+        run_kwargs={},
+    )
+    async for _ in gen:
         pass
 
     # The TEAM run (not the member run) was resumed and completed.
