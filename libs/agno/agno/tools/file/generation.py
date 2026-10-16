@@ -284,15 +284,22 @@ class FileGenerationTools(Toolkit):
                 writer = csv.writer(output)
 
                 if isinstance(data[0], dict):
-                    # List of dictionaries - use keys as headers
-                    if data:
-                        fieldnames = list(data[0].keys())
-                        writer.writerow(fieldnames)
-                        for row in data:
-                            if isinstance(row, dict):
-                                writer.writerow([row.get(field, "") for field in fieldnames])
-                            else:
-                                writer.writerow([str(row)] + [""] * (len(fieldnames) - 1))
+                    # List of dictionaries - union keys across rows so later
+                    # columns are not dropped when the first row is a subset.
+                    fieldnames = []
+                    seen = set()
+                    for row in data:
+                        if isinstance(row, dict):
+                            for key in row.keys():
+                                if key not in seen:
+                                    seen.add(key)
+                                    fieldnames.append(key)
+                    writer.writerow(fieldnames)
+                    for row in data:
+                        if isinstance(row, dict):
+                            writer.writerow([row.get(field, "") for field in fieldnames])
+                        else:
+                            writer.writerow([str(row)] + [""] * (len(fieldnames) - 1))
                 elif isinstance(data[0], list):
                     # List of lists
                     if headers:
