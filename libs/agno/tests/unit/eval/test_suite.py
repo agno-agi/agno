@@ -1578,6 +1578,25 @@ class StubScorer:
         return self._score
 
 
+@pytest.mark.parametrize("value,passed", [(0.799999, False), (0.8, True)])
+def test_cli_displays_custom_score_and_reason(capsys, value, passed):
+    from agno.scorer import Score
+
+    reason = f"Correctness probability {value}; threshold 0.8 [reference]."
+    scorer = StubScorer(score=Score(value=value, passed=passed, reason=reason))
+    agent = StubAgent()
+    code = cli([Case(name="scored", agent=agent, input="q", scorer=scorer)], argv=[])
+
+    output = capsys.readouterr().out
+    assert code == (0 if passed else 1)
+    assert f"Score: {value}" in output
+    assert reason in output
+    summary = output.split("Eval Summary", 1)[1]
+    assert "Score" in summary and str(value) in summary
+    assert ("PASS" if passed else "FAIL") in summary
+    assert agent.run_count == len(scorer.calls) == 1
+
+
 def test_case_accepts_scorer_only(monkeypatch):
     # A Case with scorer= and neither criteria nor expected_tool_calls constructs and
     # runs; the scorer receives (result.response, case.expected).

@@ -717,6 +717,10 @@ class _CliRenderer:
     def _print_verdicts(self, case: Case, result: CaseResult) -> None:
         from rich.markup import escape
 
+        if result.score is not None:
+            self._console.print(f"\n[bold]Score:[/bold] {result.score.value}  {_check_cell(result.score.passed)}")
+            if result.score.reason:
+                self._console.print(f"[dim]  {escape(result.score.reason)}[/dim]")
         if result.judge_passed is not None:
             style = "green" if result.judge_passed else "red"
             verdict = "PASS" if result.judge_passed else "FAIL"
@@ -766,12 +770,16 @@ def _print_summary(console: "Console", suite: SuiteResult) -> None:
     table.add_column("Case", overflow="fold")
     table.add_column("Judge")
     table.add_column("Reliability")
+    show_scores = any(result.score is not None for result in suite.results)
+    if show_scores:
+        table.add_column("Score")
     table.add_column("Status")
     for result in suite.results:
         status = "[green]PASS[/green]" if result.passed else "[red]FAIL[/red]"
-        table.add_row(
-            escape(result.name), _check_cell(result.judge_passed), _check_cell(result.reliability_passed), status
-        )
+        cells = [escape(result.name), _check_cell(result.judge_passed), _check_cell(result.reliability_passed)]
+        if show_scores:
+            cells.append(str(result.score.value) if result.score is not None else "[dim]—[/dim]")
+        table.add_row(*cells, status)
 
     console.print()
     console.print(table)

@@ -81,3 +81,15 @@ Generated: 2026-02-08 16:39:09
 **Result:** Executed successfully. Completed in 8.4s
 
 ---
+
+## Jev integration — 2026-09-21
+
+Validation used `.venv/Scripts/python.exe` with mocked providers. No live API quality or latency claims are established.
+
+### router_jev_classifier.py
+
+**Status:** PASS (mocked)
+
+**Description:** Mocked typed classification followed by a Router-selected specialist and pretty-printed workflow output.
+
+**Result:** Cookbook smoke test passed.
