@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, List, Literal, NoReturn, Optional, Type,
 import httpx
 from pydantic import BaseModel, ValidationError
 
-from agno.exceptions import ModelProviderError, ModelRateLimitError
+from agno.exceptions import ModelProviderError, ModelRateLimitError, ModelRefusalError
 from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
@@ -735,6 +735,9 @@ class Claude(Model):
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
+        if isinstance(e, ModelProviderError):
+            # Raised by agno itself inside the call, e.g. ModelRefusalError from the parser.
+            raise e
         log_error(f"Unexpected error calling Claude API: {e}")
         raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
@@ -963,6 +966,17 @@ class Claude(Model):
             return tool_call_prompt
         return None
 
+    def _refusal_error(self, response: Union[AnthropicMessage, BetaMessage]) -> ModelRefusalError:
+        """Build the error for a response with stop_reason "refusal". A refused response is incomplete
+        and another model can usually answer it, so its partial text is not returned as the answer."""
+        details = getattr(response, "stop_details", None)
+        category = getattr(details, "category", None)
+        explanation = getattr(details, "explanation", None)
+        message = f"Claude declined the request (stop_reason: refusal, category: {category or 'none'})"
+        if explanation:
+            message = f"{message}: {explanation}"
+        return ModelRefusalError(message=message, model_name=self.name, model_id=self.id, category=category)
+
     def _parse_provider_response(
         self,
         response: Union[AnthropicMessage, BetaMessage],
@@ -979,6 +993,9 @@ class Claude(Model):
         Returns:
             ModelResponse: Parsed response data
         """
+        if response.stop_reason == "refusal":
+            raise self._refusal_error(response)
+
         model_response = ModelResponse()
 
         # Add role (Claude always uses 'assistant')
@@ -1174,6 +1191,9 @@ class Claude(Model):
 
         # Capture citations from the final response and handle structured outputs
         elif isinstance(response, (MessageStopEvent, ParsedBetaMessageStopEvent)):
+            final_message = getattr(response, "message", None)
+            if final_message is not None and final_message.stop_reason == "refusal":
+                raise self._refusal_error(final_message)
             # In streaming mode, content has already been emitted via ContentBlockDeltaEvent chunks
             # Setting content here would cause duplication since _populate_stream_data accumulates with +=
             # Keep content empty to avoid duplication
