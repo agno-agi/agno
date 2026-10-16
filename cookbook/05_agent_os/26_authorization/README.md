@@ -38,6 +38,7 @@ it runs offline against a simulated issuer.
 | `13_idp_workos_auth0.py` | Let WorkOS, Auth0, or Okta own identity while you enforce what a role may do |
 | `14_custom_policy_engine.py` | `Authorization(engine=...)`: keep managed roles, the audit trail and the `/authz` admin API, but store policy and decide in your own `PolicyEngine` |
 | `15_fga_relationship_based.py` | Relationship-based access (ReBAC): "alice may run this because she owns its folder" |
+| `16_tenant_registry.py` | A tenant-scoped registry with no new concept: `roles_claim="org_id"` makes the tenant a role, and `registry:<entry>:read` scopes decide which catalog entries it lists |
 | `console.html` | A small browser console for driving the `/authz` admin API by hand |
 
 ## Start Here
@@ -75,6 +76,7 @@ block: each serves an AgentOS on port 7777 so you can drive the admin API (or
 | Your own policy backend, but keep the `/authz` admin API | `14_custom_policy_engine.py` |
 | Audit events that belong in your SIEM or log pipeline | `11_custom_audit_sink.py` |
 | Permissions that depend on relationships, not roles | `15_fga_relationship_based.py` |
+| One catalog of tools and models, with a different view per tenant | `16_tenant_registry.py` |
 | An authorization service of your own | `12_custom_authorization_provider.py` |
 
 Providers compose: pass a list to run several planes at once (for example token
