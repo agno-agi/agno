@@ -280,6 +280,22 @@ def test_get_json_schema_dataclass_optional_field_without_type():
     assert "cfg" in schema["properties"]
 
 
+def test_get_json_schema_dataclass_optional_list_keeps_items():
+    """Optional list fields must keep items after anyOf is flattened to a type."""
+
+    @dataclass
+    class Profile:
+        tags: Optional[List[str]] = None
+        name: Optional[str] = None
+
+    arg_schema = get_json_schema_for_arg(Profile)
+    tags_schema = arg_schema["properties"]["tags"]
+    assert tags_schema["type"] == "array"
+    assert tags_schema["items"]["type"] == "string"
+    assert "anyOf" not in tags_schema
+    assert arg_schema["properties"]["name"]["type"] == "string"
+
+
 def test_get_json_schema_strict():
     type_hints = {"name": str, "age": int}
     schema = get_json_schema(type_hints, strict=True)
