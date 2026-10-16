@@ -283,8 +283,9 @@ def test_exists(couchbase_fts, mock_scope):
     assert couchbase_fts.exists() is False
 
     # Test exception handling
-    couchbase_fts._bucket.collections().get_all_scopes.side_effect = Exception("Test error")
-    assert couchbase_fts.exists() is False
+    couchbase_fts._bucket.collections().get_all_scopes.side_effect = RuntimeError("Test error")
+    with pytest.raises(RuntimeError, match="Test error"):
+        couchbase_fts.exists()
 
 
 def test_prepare_doc(couchbase_fts, mock_embedder):
@@ -1023,8 +1024,9 @@ async def test_async_exists(couchbase_fts):
         mock_collections_mgr.get_all_scopes.reset_mock()
 
         # Case 4: Exception during get_all_scopes
-        mock_collections_mgr.get_all_scopes.side_effect = Exception("Test error")
-        assert await couchbase_fts.async_exists() is False  # Should return False on error
+        mock_collections_mgr.get_all_scopes.side_effect = RuntimeError("Test error")
+        with pytest.raises(RuntimeError, match="Test error"):
+            await couchbase_fts.async_exists()
         mock_get_async_bucket.assert_called_once()
         mock_bucket_inst.collections.assert_called_once()
         mock_collections_mgr.get_all_scopes.assert_called_once()
