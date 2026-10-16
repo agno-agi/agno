@@ -39,7 +39,8 @@ from agno.knowledge.document.base import Document
 from agno.utils.markdown import FenceState, advance_code_fence
 
 DEFAULT_CHUNK_SIZE = 2000
-HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+# Closing hashes need preceding whitespace; a literal suffix such as C# is part of the title.
+HEADING = re.compile(r"^(#{1,6})\s+(.*?)(?:(?<=[ \t])#+)?\s*$")
 ANCHOR_SUFFIX = re.compile(r"\s*\[#[^\]]*\]\s*$")  # fumadocs '## Heading [#anchor]'
 TITLE_PATH_SUFFIX = re.compile(r"\s*\(/[^)\s]*\)\s*$")  # fumadocs '# Title (/docs/path)'
 
