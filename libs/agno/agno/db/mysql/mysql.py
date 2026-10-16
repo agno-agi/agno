@@ -1020,7 +1020,7 @@ class MySQLDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from session table: {str(e)}")
-            return None
+            raise e
 
     def get_sessions(
         self,
