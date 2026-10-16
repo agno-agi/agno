@@ -10,9 +10,10 @@ Explicit arguments keep the command deterministic for scripts and coding agents.
 
 import os
 import shutil
+import stat
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import questionary  # type: ignore[import-not-found]
 import typer
@@ -75,6 +76,16 @@ SETUP_PLATFORM_SKILL = Path(".agents/skills/setup-platform/SKILL.md")
 GIT_TIMEOUT = 300.0
 
 
+def _remove_readonly_git_file(function: Callable[..., Any], path: str, exc_info: Any) -> None:
+    error = exc_info[1]
+    if os.name == "nt" and isinstance(error, PermissionError) and not os.stat(path).st_mode & stat.S_IWRITE:
+        # Git marks its object files read-only on Windows.
+        os.chmod(path, stat.S_IWRITE)
+        function(path)
+    else:
+        raise error
+
+
 def _clone(repo_url: str, target: Path) -> None:
     if shutil.which("git") is None:
         raise CLIError("git is required to create a project from a template.", hint="Install git and re-run.")
@@ -91,7 +102,13 @@ def _clone(repo_url: str, target: Path) -> None:
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         raise CLIError("git clone failed: " + (detail or repo_url))
-    shutil.rmtree(target / ".git", ignore_errors=True)
+    try:
+        shutil.rmtree(target / ".git", onerror=_remove_readonly_git_file)
+    except OSError as e:
+        raise CLIError(
+            "Could not remove template Git history: " + str(e),
+            hint="Remove the leftover directory " + str(target) + ", then re-run.",
+        ) from e
 
 
 def _copy_example_env(project_dir: Path) -> None:

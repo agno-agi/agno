@@ -7,6 +7,7 @@ import stat
 import subprocess
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from prompt_toolkit.application import create_app_session
@@ -127,6 +128,59 @@ def test_create_scaffolds_project(fake_git, tmp_path, monkeypatch):
     assert "\x1b" not in result.output and "\r" not in result.output
     assert "AgentOS created" not in result.output
     assert "Next steps" not in result.output
+
+
+def test_create_removes_readonly_git_objects(fake_git, tmp_path, monkeypatch):
+    def clone_with_readonly_objects(args, **kwargs):
+        result = fake_git(args, **kwargs)
+        pack = Path(args[-1]) / ".git" / "objects" / "pack" / "template.pack"
+        pack.parent.mkdir(parents=True)
+        pack.write_bytes(b"template history")
+        pack.chmod(stat.S_IREAD)
+        return result
+
+    monkeypatch.setattr(create_module.subprocess, "run", clone_with_readonly_objects)
+    result = runner.invoke(app, ["create", "my-os", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert not (tmp_path / "my-os" / ".git").exists()
+    assert (tmp_path / "my-os" / "docker-compose.yml").exists()
+
+
+@pytest.mark.parametrize(
+    ("readonly", "error_type", "retry"),
+    [(True, PermissionError, True), (False, PermissionError, False), (True, OSError, False)],
+)
+def test_git_cleanup_retries_only_readonly_permission_errors(tmp_path, readonly, error_type, retry):
+    path = tmp_path / "template.pack"
+    path.write_bytes(b"template history")
+    path.chmod(stat.S_IREAD if readonly else stat.S_IREAD | stat.S_IWRITE)
+    error = error_type("denied")
+    removed = []
+    with patch.object(create_module.os, "name", "nt"):
+        if retry:
+            create_module._remove_readonly_git_file(removed.append, str(path), (error_type, error, None))
+        else:
+            with pytest.raises(error_type) as raised:
+                create_module._remove_readonly_git_file(removed.append, str(path), (error_type, error, None))
+            assert raised.value is error
+    assert removed == ([str(path)] if retry else [])
+    if retry:
+        assert path.stat().st_mode & stat.S_IWRITE
+
+
+def test_create_reports_git_cleanup_failure(fake_git, tmp_path, monkeypatch):
+    def fail_cleanup(path, **kwargs):
+        raise PermissionError("file is locked")
+
+    monkeypatch.setattr(create_module.shutil, "rmtree", fail_cleanup)
+    result = runner.invoke(app, ["create", "my-os", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert "file is locked" in payload["error"]
+    assert str(tmp_path / "my-os") in payload["hint"]
+    assert not (tmp_path / "my-os" / ".env").exists()
 
 
 def test_create_interactive_uses_defaults(fake_git, monkeypatch, tmp_path):
