@@ -620,9 +620,11 @@ class Cassandra(VectorDb):
                 if key not in row_metadata:
                     return False
 
-                # Handle boolean values specially
+                # Handle boolean values specially: insert()/update_metadata() store every
+                # metadata value with str(), so a bool arrives here as "True". Rows written
+                # outside those paths may keep the native bool, so accept either form.
                 if isinstance(value, bool):
-                    if row_metadata[key] != value:
+                    if row_metadata[key] != value and row_metadata[key] != str(value):
                         return False
                 else:
                     # For non-boolean values, convert to string for comparison
