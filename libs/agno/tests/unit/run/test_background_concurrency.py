@@ -1,6 +1,8 @@
 """Unit tests for the background run concurrency limiter."""
 
 import asyncio
+import gc
+import weakref
 
 import pytest
 
@@ -47,6 +49,56 @@ class TestConfiguration:
         set_background_max_concurrency(3)
         set_background_max_concurrency(None)
         assert get_background_max_concurrency() == 7
+
+
+class TestLoopLifetime:
+    @pytest.mark.parametrize("run_id", [None, "loop-lifetime-run"])
+    def test_contended_closed_loop_is_collectable(self, run_id):
+        set_background_max_concurrency(1)
+
+        async def job():
+            async with background_run_slot(run_id=run_id):
+                await asyncio.sleep(0)
+
+        async def compete():
+            await asyncio.gather(job(), job())
+
+        loop = asyncio.new_event_loop()
+        loop_ref = weakref.ref(loop)
+        try:
+            loop.run_until_complete(compete())
+        finally:
+            loop.close()
+        del loop
+        gc.collect()
+
+        assert loop_ref() is None
+        assert not concurrency._semaphores
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("run_id", [None, "active-lifetime-run"])
+    async def test_collection_does_not_drop_active_limit(self, run_id):
+        set_background_max_concurrency(1)
+        entered = []
+
+        async def waiter(number):
+            async with background_run_slot(run_id=run_id):
+                entered.append(number)
+                await asyncio.sleep(0)
+
+        async with background_run_slot(run_id=run_id):
+            first = asyncio.create_task(waiter(1))
+            # Let both the slot coroutine and its optional acquire task run.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            gc.collect()
+            second = asyncio.create_task(waiter(2))
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            assert entered == []
+
+        await asyncio.wait_for(asyncio.gather(first, second), timeout=2)
+        assert entered == [1, 2]
 
 
 class TestBackgroundRunSlot:

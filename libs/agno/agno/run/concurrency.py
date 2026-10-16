@@ -21,7 +21,7 @@ import os
 from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
 from typing import AsyncIterator, Dict, Iterator, Optional, Tuple
-from weakref import WeakKeyDictionary
+from weakref import ReferenceType, WeakKeyDictionary, ref
 
 from agno.exceptions import RunCancelledException
 from agno.utils.log import log_warning
@@ -34,9 +34,12 @@ SSE_KEEPALIVE_INTERVAL_SECONDS = 15.0
 
 _configured_limit: Optional[int] = None
 
-# Semaphores are bound to an event loop, so cache one per loop. Keyed weakly so
-# short-lived loops (e.g. in tests) do not accumulate.
-_semaphores: "WeakKeyDictionary[asyncio.AbstractEventLoop, Tuple[int, asyncio.Semaphore]]" = WeakKeyDictionary()
+# A contended semaphore retains its event loop, so both the loop key and the
+# semaphore must be weakly referenced. Active holders and waiters keep the
+# semaphore alive for as long as the shared limit is needed.
+_semaphores: "WeakKeyDictionary[asyncio.AbstractEventLoop, Tuple[int, ReferenceType[asyncio.Semaphore]]]" = (
+    WeakKeyDictionary()
+)
 
 
 def get_background_max_concurrency() -> int:
@@ -91,10 +94,10 @@ async def background_run_slot(
         return
     loop = asyncio.get_running_loop()
     cached = _semaphores.get(loop)
-    if cached is None or cached[0] != limit:
-        cached = (limit, asyncio.Semaphore(limit))
-        _semaphores[loop] = cached
-    semaphore = cached[1]
+    semaphore = cached[1]() if cached is not None and cached[0] == limit else None
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(limit)
+        _semaphores[loop] = (limit, ref(semaphore))
 
     if run_id is None:
         async with semaphore:
