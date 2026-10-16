@@ -195,6 +195,40 @@ def test_edit_file_path_escape():
         assert "outside" in result
 
 
+@pytest.mark.parametrize(
+    "content, old_text, count",
+    [
+        ("aaa", "aa", 2),
+        ("ababa", "aba", 2),
+        ("pass\npass\npass\n", "pass\npass\n", 2),
+        ("aaaaa", "aa", 4),
+        ("哈哈哈", "哈哈", 2),
+    ],
+)
+def test_edit_file_rejects_overlapping_matches(tmp_path, content, old_text, count):
+    file_path = tmp_path / "overlap.txt"
+    file_path.write_text(content, encoding="utf-8")
+    before = file_path.read_bytes()
+    tools = CodingTools(base_dir=tmp_path)
+
+    result = tools.edit_file("overlap.txt", old_text, "replacement")
+
+    assert f"Error: old_text matches {count} locations" in result
+    assert file_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("content, old_text", [("aba", "aba"), ("xaaa", "aaa")])
+def test_edit_file_accepts_unique_self_overlapping_pattern(tmp_path, content, old_text):
+    file_path = tmp_path / "unique.txt"
+    file_path.write_text(content, encoding="utf-8")
+    tools = CodingTools(base_dir=tmp_path)
+
+    result = tools.edit_file("unique.txt", old_text, "replacement")
+
+    assert "Error" not in result
+    assert file_path.read_text(encoding="utf-8") == content.replace(old_text, "replacement")
+
+
 # --- write_file tests ---
 
 
