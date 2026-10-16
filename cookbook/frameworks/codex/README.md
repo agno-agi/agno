@@ -169,6 +169,7 @@ Use [TEST_PROMPT.md](../TEST_PROMPT.md) for reproducible live tests and
 
 - [codex_session.py](codex_session.py): multi-turn conversations.
 - [codex_session_agentos.py](codex_session_agentos.py): sessions through AgentOS.
+- [codex_home.py](codex_home.py): run under a scratch home so tests stay out of your Codex history.
 - [codex_mcp_tools.py](codex_mcp_tools.py): connect native MCP tools.
 - [codex_structured_output.py](codex_structured_output.py): parsed Pydantic models or JSON Schema objects, configured on the agent or per run. Schemas require an object root. Streaming text may include commentary; the completed run carries the parsed answer.
 - [codex_metrics.py](codex_metrics.py): per-run token usage and session totals.
@@ -178,6 +179,30 @@ Use [TEST_PROMPT.md](../TEST_PROMPT.md) for reproducible live tests and
 - [background_cancel.py](background_cancel.py): background execution and cancellation.
 
 Each exercise has its own setup and validation history in [TEST_LOG.md](TEST_LOG.md).
+
+## Keep runs out of your Codex history
+
+The app-server writes every thread to `~/.codex/sessions`, which is also where
+your interactive sessions live. Give an agent its own directory with `codex_home`:
+
+```python
+agent = CodexAgent(model="gpt-5.6-luna", codex_home="tmp/harnesses/codex/home")
+```
+
+The adapter sets `CODEX_HOME` for the app-server process, creates the directory
+when missing, and resolves relative paths against the Python process. A named
+`codex_home` wins over a `CODEX_HOME` entry in `env` or `client_options`.
+
+The directory needs its own login. Run `CODEX_HOME=tmp/harnesses/codex/home codex login`
+once, or call `agent.login_api_key(os.environ["OPENAI_API_KEY"])`, which stores
+the key in that home.
+
+```bash
+python cookbook/frameworks/codex/codex_home.py
+```
+
+The example snapshots your personal session list before the run and exits
+non-zero if the run added to it.
 
 ## How sessions work
 

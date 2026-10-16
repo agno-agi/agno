@@ -3,11 +3,24 @@
 from dataclasses import dataclass, field
 from functools import wraps
 from inspect import Parameter, signature
-from typing import Any, Type, TypeVar
+from pathlib import Path
+from typing import Any, Type, TypeVar, Union
 
 from typing_extensions import dataclass_transform
 
 _T = TypeVar("_T")
+
+
+def native_home(path: Union[str, Path]) -> str:
+    """Resolve a harness home directory to an absolute path and create it when missing.
+
+    The harness runs as a subprocess with its own working directory, so a relative path
+    is resolved against the Python process first. Creating the directory lets a CLI that
+    refuses to start without its home (Codex) work on first use.
+    """
+    resolved = Path(path).expanduser().resolve()
+    resolved.mkdir(parents=True, exist_ok=True)
+    return str(resolved)
 
 
 @dataclass_transform(kw_only_default=True, field_specifiers=(field,))

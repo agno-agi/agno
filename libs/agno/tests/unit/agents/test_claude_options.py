@@ -36,6 +36,7 @@ class Options:
     include_partial_messages: bool = False
     session_store: Any = None
     enable_file_checkpointing: bool = False
+    env: dict = field(default_factory=dict)
 
 
 @pytest.fixture(autouse=True)
@@ -251,3 +252,44 @@ async def test_media_uses_resolved_sdk_workspace(tmp_path, monkeypatch, source):
     assert messages == ["ok"] and len(seen) == 1
     assert not seen[0].exists()
     assert not (tmp_path / ".agno").exists()
+
+
+# ---------------------------------------------------------------------------
+# config_dir: Claude Code's home directory
+# ---------------------------------------------------------------------------
+
+
+def test_config_dir_points_the_subprocess_at_its_own_home(tmp_path):
+    home = tmp_path / "scratch" / "claude"
+    source = Options(env={"KEEP": "1"})
+    agent = ClaudeAgent(options=source, config_dir=home)
+    resolved = agent._build_options()
+    assert resolved.env == {"KEEP": "1", "CLAUDE_CONFIG_DIR": str(home.resolve())}
+    assert home.is_dir()
+    assert source.env == {"KEEP": "1"}
+
+
+def test_config_dir_is_absent_by_default():
+    assert "CLAUDE_CONFIG_DIR" not in ClaudeAgent()._build_options().env
+    assert ClaudeAgent(options=Options(env={"CLAUDE_CONFIG_DIR": "/native"}))._build_options().env == {
+        "CLAUDE_CONFIG_DIR": "/native"
+    }
+
+
+def test_config_dir_wins_over_options_env_and_legacy_dictionary(tmp_path):
+    named = ClaudeAgent(options=Options(env={"CLAUDE_CONFIG_DIR": "/native"}), config_dir=tmp_path)
+    assert named._build_options().env["CLAUDE_CONFIG_DIR"] == str(tmp_path.resolve())
+    with pytest.warns(DeprecationWarning):
+        legacy = ClaudeAgent(options_kwargs={"env": {"CLAUDE_CONFIG_DIR": "/legacy"}}, config_dir=tmp_path)
+    assert legacy._build_options().env["CLAUDE_CONFIG_DIR"] == str(tmp_path.resolve())
+
+
+def test_config_dir_resolves_relative_paths_and_home(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert ClaudeAgent(config_dir="relative/home")._build_options().env["CLAUDE_CONFIG_DIR"] == str(
+        (tmp_path / "relative/home").resolve()
+    )
+    assert ClaudeAgent(config_dir="~/tilde")._build_options().env["CLAUDE_CONFIG_DIR"] == str(
+        (tmp_path / "tilde").resolve()
+    )

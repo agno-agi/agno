@@ -320,3 +320,17 @@ Framework source: `9e1f77f52a9bb16ee5dde3ccff9fa2491e86db5f`. Native SDK version
 **Description:** Same-session submissions are not protected by distributed mutual exclusion; queued busy turns can exhaust retries. Attachment staging on the pinned revision can leave partial files and restore to a writable historical root outside current cwd.
 
 **Result:** Application-level session serialization is required. Attachment defects need the separately reviewed fix before signing off changed-workspace or failure-cleanup behavior. A later fix must be verified on its own revision; these results do not imply it is merged.
+
+## config_dir per replica — 2026-10-12
+
+Source 6aee3eb079 plus the config_dir change, claude-agent-sdk 0.2.165, Claude Code 2.1.296, model claude-sonnet-5-5. `HARNESS_AUTH_MODE=oauth`, two isolated Claude homes seeded from the local login, no API key. `serve.py` now pops `CLAUDE_CONFIG_DIR` from the inherited environment and passes it as `ClaudeAgent(config_dir=...)`, so the typed parameter is what the replicas run under.
+
+### verify.py --provider claude --cases smoke,session,background,disconnect,cancel --concurrency 1
+
+**Status:** PASS (5 of 5)
+
+**Description:** Two replica processes on separate ports, separate workspaces and separate `config_dir` homes, shared Postgres and Redis. The session case stores a beacon on replica A and asks for it on replica B.
+
+**Result:** smoke 4.4s, session 5.2s, background 4.5s, disconnect 4.4s, cancel 3.8s. Session: `native_continuity: true`, the same Claude session id before and after the hop, beacon recalled on B. Transcript files appeared only under replica A's home; replica B resumed through the transcript store's temporary directory, which the SDK removes after the turn, so B's home held no transcript files. No warnings in either replica log.
+
+---

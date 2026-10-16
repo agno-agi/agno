@@ -5,10 +5,10 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncIterator, ClassVar, Dict, Iterator, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, AsyncIterator, ClassVar, Dict, Iterator, List, Optional, Set, Tuple, Union
 from uuid import uuid4
 
-from agno.agents._config import agent_dataclass
+from agno.agents._config import agent_dataclass, native_home
 from agno.agents._media import (
     accept_media,
     cleanup_run_media,
@@ -178,6 +178,11 @@ class CodexAgent(BaseExternalAgent):
         approval_mode: "auto_review" or "deny_all" for escalated permission requests.
         reasoning_effort: "minimal", "low", "medium", "high" or "xhigh".
         cwd: Working directory for the agent.
+        codex_home: Directory the Codex CLI uses for its config, credentials and thread files
+            (CODEX_HOME). Defaults to the CLI default, ~/.codex. Set a scratch directory to keep
+            this agent's threads out of your personal Codex history. The directory is created when
+            missing and must be authenticated: run `CODEX_HOME=<dir> codex login` once, or call
+            login_api_key() on the agent.
         keep_uploads: Keep files attached to a run under cwd/.agno/uploads/<run_id>/ after the run.
         ephemeral: Do not persist Codex thread files. Ephemeral threads cannot be resumed.
         output_schema: Pydantic model or JSON Schema for the final answer. The run content is the parsed
@@ -234,6 +239,8 @@ class CodexAgent(BaseExternalAgent):
     mcp_servers: Optional[Dict[str, Any]] = None
     # Workspace and settings
     cwd: Optional[str] = None
+    # The Codex CLI's own home (CODEX_HOME): config, credentials and local thread files.
+    codex_home: Optional[Union[str, Path]] = None
     # Keep attachments staged under cwd/.agno/uploads/<run_id>/ after the run instead of deleting them.
     keep_uploads: bool = False
     sandbox_mode: Optional[str] = None
@@ -445,6 +452,9 @@ class CodexAgent(BaseExternalAgent):
             config.env = dict(self.env)
         elif config.env is not None:
             config.env = dict(config.env)
+        # The named directory wins over env entries from client_options or env.
+        if self.codex_home is not None:
+            config.env = {**(config.env or {}), "CODEX_HOME": native_home(self.codex_home)}
         return config
 
     def _new_client(self) -> Any:

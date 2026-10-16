@@ -302,6 +302,31 @@ def test_codex_config_passes_bin_and_env(fake_sdk):
     assert config.env == {"CODEX_API_KEY": "sk-test"}
 
 
+def test_codex_home_points_the_app_server_at_its_own_home(fake_sdk, tmp_path):
+    home = tmp_path / "scratch" / "codex"
+    agent = CodexAgent(name="Codex", codex_home=home, env={"KEEP": "1"})
+    config = agent._codex_config(codex_module._sdk())
+    assert config.env == {"KEEP": "1", "CODEX_HOME": str(home.resolve())}
+    assert home.is_dir()
+    assert agent.env == {"KEEP": "1"}
+
+
+def test_codex_home_is_absent_by_default_and_wins_over_client_options(fake_sdk, tmp_path):
+    sdk = codex_module._sdk()
+    assert CodexAgent(name="Codex")._codex_config(sdk).env is None
+    native = CodexConfig(env={"CODEX_HOME": "/native"})
+    assert CodexAgent(name="Codex", client_options=native)._codex_config(sdk).env == {"CODEX_HOME": "/native"}
+    named = CodexAgent(name="Codex", client_options=native, codex_home=tmp_path)._codex_config(sdk)
+    assert named.env == {"CODEX_HOME": str(tmp_path.resolve())}
+    assert native.env == {"CODEX_HOME": "/native"}
+
+
+def test_codex_home_resolves_relative_paths(fake_sdk, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = CodexAgent(name="Codex", codex_home="relative/home")._codex_config(codex_module._sdk())
+    assert config.env == {"CODEX_HOME": str((tmp_path / "relative/home").resolve())}
+
+
 # ---------------------------------------------------------------------------
 # Streaming translation
 # ---------------------------------------------------------------------------

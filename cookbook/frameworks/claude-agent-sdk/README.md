@@ -164,11 +164,39 @@ Use [TEST_PROMPT.md](../TEST_PROMPT.md) for reproducible live tests and
 
 - [claude_session.py](claude_session.py): multi-turn conversations.
 - [claude_session_agentos.py](claude_session_agentos.py): sessions through AgentOS.
+- [claude_config_dir.py](claude_config_dir.py): run under a scratch home so tests stay out of your Claude history.
 - [claude_mcp_tools.py](claude_mcp_tools.py): connect native MCP tools.
 - [transcript_store.py](transcript_store.py): inspect transcript mirroring and restoration.
 - [background_cancel.py](background_cancel.py): background execution and cancellation.
 
 Each exercise has its own setup and validation history in [TEST_LOG.md](TEST_LOG.md).
+
+## Keep runs out of your Claude history
+
+Claude Code writes every conversation to its config directory, `~/.claude` by
+default, which is also where your interactive sessions live. Give an agent its
+own directory with `config_dir`:
+
+```python
+agent = ClaudeAgent(model="claude-sonnet-5-5", config_dir="tmp/harnesses/claude/home")
+```
+
+The adapter sets `CLAUDE_CONFIG_DIR` for the subprocess, creates the directory
+when missing, and resolves relative paths against the Python process. A named
+`config_dir` wins over an `env` entry in `options`.
+
+The directory needs its own login. Either export `ANTHROPIC_API_KEY` or
+`CLAUDE_CODE_OAUTH_TOKEN`, which the subprocess inherits, or run
+`CLAUDE_CONFIG_DIR=tmp/harnesses/claude/home claude login` once. On macOS a
+CLI login goes to the Keychain under a name derived from the directory, so a
+store-backed resume on another machine still needs the environment variable.
+
+```bash
+python cookbook/frameworks/claude-agent-sdk/claude_config_dir.py
+```
+
+The example snapshots your personal transcript list before the run and exits
+non-zero if the run added to it.
 
 ## Durable transcripts
 

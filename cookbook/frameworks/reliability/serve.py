@@ -41,6 +41,9 @@ if provider == "claude":
         model="claude-sonnet-5-5",
         db=db,
         cwd=str(workspace),
+        # The controller sets CLAUDE_CONFIG_DIR per replica; carry it through the typed parameter
+        # instead of the inherited environment so the parameter itself is what is exercised.
+        config_dir=os.environ.pop("CLAUDE_CONFIG_DIR", None),
         tools=[],
         allowed_tools=["mcp__fixture__checkpoint"],
         permission_mode="dontAsk",

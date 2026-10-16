@@ -682,3 +682,17 @@ Framework source: `9e1f77f52a9bb16ee5dde3ccff9fa2491e86db5f`. Python 3.12, Claud
 **Result:** Before the fix, the 409 for a busy session reached the catch-all exception handler, which re-raises after responding, so uvicorn logged a traceback and closed the connection: the second request on the same connection failed with `RemoteDisconnected`. After: both busy-time requests answered 409 with `error_id: session_busy` on the same connection with keep-alive intact, the first turn completed, and the next turn on that connection answered 200.
 
 ---
+
+## Own config directory — 2026-10-12
+
+Source 6aee3eb079 plus the uncommitted config_dir change, claude-agent-sdk 0.2.165, Claude Code 2.1.296, model claude-sonnet-5-5, macOS Keychain login. The scratch home was seeded from the local login with the SDK's own resume helper before the run; no API key was set.
+
+### claude_config_dir.py
+
+**Status:** PASS
+
+**Description:** `ClaudeAgent(config_dir="tmp/harnesses/claude/home")` answers the shipping question with no tools. The script snapshots the `*.jsonl` transcripts under `~/.claude/projects` before the run and compares after.
+
+**Result:** Run COMPLETED with the free-shipping answer. One transcript was written under `tmp/harnesses/claude/home/projects/<workspace key>/`, and the personal transcript list was unchanged. A first attempt failed after the run while printing the summary (`relative_to` against a resolved base); fixed in the example and rerun. With an empty scratch home and no API key the subprocess reports it is not logged in, as documented.
+
+---

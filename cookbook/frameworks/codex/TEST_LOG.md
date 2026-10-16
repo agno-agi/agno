@@ -503,3 +503,17 @@ Framework source: `9e1f77f52a9bb16ee5dde3ccff9fa2491e86db5f`. Python 3.12, Claud
 **Result:** Exit 0 in 29.7 seconds.
 
 ---
+
+## Own home directory — 2026-10-12
+
+Source 6aee3eb079 plus the uncommitted codex_home change, openai-codex 0.162.1 (bundled Codex CLI), model gpt-5.6-luna, API-key login stored in the scratch home through `agent.login_api_key()`.
+
+### codex_home.py
+
+**Status:** PASS
+
+**Description:** `CodexAgent(codex_home="tmp/harnesses/codex/home")` answers the shipping question with no tools. With `OPENAI_API_KEY` exported and no `auth.json` in the scratch home, the script logs that home in through the agent first. It snapshots the `*.jsonl` threads under `~/.codex/sessions` before the run and compares after.
+
+**Result:** Run COMPLETED with the free-shipping answer. One thread was written under `tmp/harnesses/codex/home/sessions/2026/10/12/`, and the personal session list was unchanged. A first attempt failed after the run while printing the summary (`relative_to` against a resolved base); fixed in the example and rerun.
+
+---

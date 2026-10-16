@@ -19,7 +19,7 @@ from typing import (
 )
 from uuid import uuid4
 
-from agno.agents._config import agent_dataclass
+from agno.agents._config import agent_dataclass, native_home
 from agno.agents._media import (
     accept_media,
     cleanup_run_media,
@@ -137,6 +137,11 @@ class ClaudeAgent(BaseExternalAgent):
         max_turns: Maximum number of turns.
         max_budget_usd: Maximum cost budget in USD.
         cwd: Working directory for the agent.
+        config_dir: Directory Claude Code uses for its settings, credentials and transcripts
+            (CLAUDE_CONFIG_DIR). Defaults to the CLI default, ~/.claude. Set a scratch directory to
+            keep this agent's conversations out of your personal Claude history. The directory is
+            created when missing and must be authenticated: export ANTHROPIC_API_KEY or
+            CLAUDE_CODE_OAUTH_TOKEN, or run `CLAUDE_CONFIG_DIR=<dir> claude login` once.
         keep_uploads: Keep files attached to a run under cwd/.agno/uploads/<run_id>/ after the run.
         mcp_servers: MCP server configurations for custom tools.
         output_schema: Pydantic model or JSON Schema for the final answer. The run content is the
@@ -185,6 +190,8 @@ class ClaudeAgent(BaseExternalAgent):
     system_prompt: Optional[Union[str, "SystemPromptPreset", "SystemPromptCustom", "SystemPromptFile"]] = None
     # Workspace and settings
     cwd: Optional[Union[str, Path]] = None
+    # Claude Code's own home (CLAUDE_CONFIG_DIR): settings, credentials and local transcripts.
+    config_dir: Optional[Union[str, Path]] = None
     # Keep attachments staged under cwd/.agno/uploads/<run_id>/ after the run instead of deleting them.
     keep_uploads: bool = False
     project_key: Optional[str] = None
@@ -364,6 +371,9 @@ class ClaudeAgent(BaseExternalAgent):
             raise ValueError("ClaudeAgent manages include_partial_messages; use run/arun(stream=...).")
         opts["include_partial_messages"] = streaming
         opts["resume"] = resume
+        # The named directory wins over env entries from options or the legacy dictionary.
+        if self.config_dir is not None:
+            opts["env"] = {**(opts.get("env") or {}), "CLAUDE_CONFIG_DIR": native_home(self.config_dir)}
         opts = _copy_config(opts)
         # Echo the prompt with its transcript uuid so a run can later be continued from it.
         opts["extra_args"] = {"replay-user-messages": None, **(opts.get("extra_args") or {})}
