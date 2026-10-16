@@ -1,7 +1,8 @@
+import base64
 import json
 from os import getenv
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
@@ -12,6 +13,8 @@ try:
     from telebot.types import ReactionTypeEmoji
 except ImportError as e:
     raise ImportError("`pyTelegramBotAPI` not installed. Please install using `pip install 'agno[telegram]'`") from e
+
+MAX_TELEGRAM_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
 
 class TelegramTools(Toolkit):
@@ -115,195 +118,346 @@ class TelegramTools(Toolkit):
             )
         return self.chat_id
 
-    def send_message(self, message: str) -> str:
+    def _resolve_chat_id(self, explicit_chat_id: Optional[Union[str, int]] = None) -> Union[str, int]:
+        """Return explicit chat_id or configured default. Raises ValueError if neither is set."""
+        if explicit_chat_id is not None:
+            return explicit_chat_id
+        if self.chat_id is not None:
+            return self.chat_id
+        raise ValueError(
+            "chat_id is required. Provide it as an argument, in the constructor, "
+            "or set the TELEGRAM_CHAT_ID environment variable."
+        )
+
+    def _resolve_media_payload(
+        self,
+        media: Union[str, bytes, Path],
+        explicit_filename: Optional[str] = None,
+    ) -> Tuple[Union[bytes, str], Optional[str]]:
+        """Resolve media input into bytes or a URL/file_id string.
+
+        Supports:
+        - bytes: returned as-is (with 50MB size validation).
+        - Path: read as bytes if existing file.
+        - str (data URI): base64-decoded if prefixed with `data:...;base64,`.
+        - str (URL): http/https URLs returned as string.
+        - str (local path): existing files read as bytes.
+        - str (file_id): Telegram file_ids returned as string.
+        """
+        if isinstance(media, bytes):
+            if len(media) > MAX_TELEGRAM_FILE_SIZE:
+                raise ValueError(f"Media size exceeds Telegram bot limit of 50 MB ({len(media)} bytes)")
+            return media, explicit_filename
+
+        if isinstance(media, Path):
+            path_obj = media.expanduser()
+            if not path_obj.is_file():
+                raise FileNotFoundError(f"File not found: {media}")
+            file_size = path_obj.stat().st_size
+            if file_size > MAX_TELEGRAM_FILE_SIZE:
+                raise ValueError(f"File size exceeds Telegram bot limit of 50 MB ({file_size} bytes)")
+            return path_obj.read_bytes(), explicit_filename or path_obj.name
+
+        if isinstance(media, str):
+            # 1. Data URI base64
+            if media.startswith("data:") and ";base64," in media:
+                _, encoded = media.split(";base64,", 1)
+                media_bytes = base64.b64decode(encoded)
+                if len(media_bytes) > MAX_TELEGRAM_FILE_SIZE:
+                    raise ValueError(f"Media size exceeds Telegram bot limit of 50 MB ({len(media_bytes)} bytes)")
+                return media_bytes, explicit_filename
+
+            # 2. Remote URL
+            if media.startswith(("http://", "https://")):
+                return media, explicit_filename
+
+            # 3. Local file path check
+            candidate_path: Optional[Path] = None
+            try:
+                candidate = Path(media).expanduser()
+                if candidate.is_file():
+                    candidate_path = candidate
+            except (OSError, ValueError):
+                candidate_path = None
+
+            if candidate_path is not None:
+                file_size = candidate_path.stat().st_size
+                if file_size > MAX_TELEGRAM_FILE_SIZE:
+                    raise ValueError(f"File size exceeds Telegram bot limit of 50 MB ({file_size} bytes)")
+                return candidate_path.read_bytes(), explicit_filename or candidate_path.name
+
+            if media.startswith(("/", "./", "../", "~/")):
+                raise FileNotFoundError(f"Local media file not found: {media}")
+
+            # 4. Telegram file_id fallback
+            return media, explicit_filename
+
+        raise ValueError(f"Unsupported media type: {type(media).__name__}. Expected str, bytes, or Path.")
+
+    def send_message(self, message: str, chat_id: Optional[Union[str, int]] = None) -> str:
         """Send a text message to a Telegram chat.
 
         Args:
             message: The message text to send.
+            chat_id: Optional target chat ID. Defaults to self.chat_id.
 
         Returns:
             JSON string with status and message_id.
         """
         log_debug(f"Sending telegram message: {message}")
         try:
-            result = self.bot.send_message(self._chat_id, message)
+            target_chat_id = self._resolve_chat_id(chat_id)
+            result = self.bot.send_message(target_chat_id, message)
             return json.dumps({"status": "success", "message_id": result.message_id})
-        except ApiTelegramException as e:
+        except (ApiTelegramException, ValueError) as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def send_photo(self, photo: bytes, caption: Optional[str] = None) -> str:
+    def send_photo(
+        self,
+        photo: Union[str, bytes, Path],
+        caption: Optional[str] = None,
+        chat_id: Optional[Union[str, int]] = None,
+    ) -> str:
         """Send a photo to a Telegram chat.
 
         Args:
-            photo: The photo as bytes.
+            photo: The photo as bytes, file path, URL, data URI, or Telegram file_id.
             caption: Optional caption for the photo.
+            chat_id: Optional target chat ID. Defaults to self.chat_id.
 
         Returns:
             JSON string with status and message_id.
         """
         try:
-            result = self.bot.send_photo(self._chat_id, photo, caption=caption)
+            target_chat_id = self._resolve_chat_id(chat_id)
+            payload, _ = self._resolve_media_payload(photo)
+            result = self.bot.send_photo(target_chat_id, payload, caption=caption)
             return json.dumps({"status": "success", "message_id": result.message_id})
-        except ApiTelegramException as e:
+        except (ApiTelegramException, ValueError, FileNotFoundError) as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def send_document(self, document: bytes, filename: str, caption: Optional[str] = None) -> str:
+    def send_document(
+        self,
+        document: Union[str, bytes, Path],
+        filename: Optional[str] = None,
+        caption: Optional[str] = None,
+        chat_id: Optional[Union[str, int]] = None,
+    ) -> str:
         """Send a document to a Telegram chat.
 
         Args:
-            document: The document as bytes.
-            filename: The filename for the document.
+            document: The document as bytes, file path, URL, data URI, or Telegram file_id.
+            filename: Optional filename for the document. Auto-inferred if document is a file path.
             caption: Optional caption for the document.
+            chat_id: Optional target chat ID. Defaults to self.chat_id.
 
         Returns:
             JSON string with status and message_id.
         """
         try:
-            result = self.bot.send_document(self._chat_id, (filename, document), caption=caption)
+            target_chat_id = self._resolve_chat_id(chat_id)
+            payload, resolved_filename = self._resolve_media_payload(document, explicit_filename=filename)
+            if isinstance(payload, bytes):
+                file_name = resolved_filename or "document"
+                result = self.bot.send_document(target_chat_id, (file_name, payload), caption=caption)
+            else:
+                kwargs: dict[str, Any] = {"caption": caption}
+                if filename is not None:
+                    kwargs["visible_file_name"] = filename
+                result = self.bot.send_document(target_chat_id, payload, **kwargs)
             return json.dumps({"status": "success", "message_id": result.message_id})
-        except ApiTelegramException as e:
+        except (ApiTelegramException, ValueError, FileNotFoundError) as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def send_video(self, video: bytes, caption: Optional[str] = None) -> str:
+    def send_video(
+        self,
+        video: Union[str, bytes, Path],
+        caption: Optional[str] = None,
+        chat_id: Optional[Union[str, int]] = None,
+    ) -> str:
         """Send a video to a Telegram chat.
 
         Args:
-            video: The video as bytes.
+            video: The video as bytes, file path, URL, data URI, or Telegram file_id.
             caption: Optional caption for the video.
+            chat_id: Optional target chat ID. Defaults to self.chat_id.
 
         Returns:
             JSON string with status and message_id.
         """
         try:
-            result = self.bot.send_video(self._chat_id, video, caption=caption)
+            target_chat_id = self._resolve_chat_id(chat_id)
+            payload, _ = self._resolve_media_payload(video)
+            result = self.bot.send_video(target_chat_id, payload, caption=caption)
             return json.dumps({"status": "success", "message_id": result.message_id})
-        except ApiTelegramException as e:
+        except (ApiTelegramException, ValueError, FileNotFoundError) as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def send_audio(self, audio: bytes, caption: Optional[str] = None, title: Optional[str] = None) -> str:
+    def send_audio(
+        self,
+        audio: Union[str, bytes, Path],
+        caption: Optional[str] = None,
+        title: Optional[str] = None,
+        chat_id: Optional[Union[str, int]] = None,
+    ) -> str:
         """Send an audio file to a Telegram chat.
 
         Args:
-            audio: The audio as bytes.
+            audio: The audio as bytes, file path, URL, data URI, or Telegram file_id.
             caption: Optional caption for the audio.
             title: Optional title for the audio track.
+            chat_id: Optional target chat ID. Defaults to self.chat_id.
 
         Returns:
             JSON string with status and message_id.
         """
         try:
-            result = self.bot.send_audio(self._chat_id, audio, caption=caption, title=title)
+            target_chat_id = self._resolve_chat_id(chat_id)
+            payload, _ = self._resolve_media_payload(audio)
+            result = self.bot.send_audio(target_chat_id, payload, caption=caption, title=title)
             return json.dumps({"status": "success", "message_id": result.message_id})
-        except ApiTelegramException as e:
+        except (ApiTelegramException, ValueError, FileNotFoundError) as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def send_animation(self, animation: bytes, caption: Optional[str] = None) -> str:
+    def send_animation(
+        self,
+        animation: Union[str, bytes, Path],
+        caption: Optional[str] = None,
+        chat_id: Optional[Union[str, int]] = None,
+    ) -> str:
         """Send an animation (GIF) to a Telegram chat.
 
         Args:
-            animation: The animation as bytes.
+            animation: The animation as bytes, file path, URL, data URI, or Telegram file_id.
             caption: Optional caption for the animation.
+            chat_id: Optional target chat ID. Defaults to self.chat_id.
 
         Returns:
             JSON string with status and message_id.
         """
         try:
-            result = self.bot.send_animation(self._chat_id, animation, caption=caption)
+            target_chat_id = self._resolve_chat_id(chat_id)
+            payload, _ = self._resolve_media_payload(animation)
+            result = self.bot.send_animation(target_chat_id, payload, caption=caption)
             return json.dumps({"status": "success", "message_id": result.message_id})
-        except ApiTelegramException as e:
+        except (ApiTelegramException, ValueError, FileNotFoundError) as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def send_sticker(self, sticker: bytes) -> str:
+    def send_sticker(
+        self,
+        sticker: Union[str, bytes, Path],
+        chat_id: Optional[Union[str, int]] = None,
+    ) -> str:
         """Send a sticker to a Telegram chat.
 
         Args:
-            sticker: The sticker as bytes.
+            sticker: The sticker as bytes, file path, URL, data URI, or Telegram file_id.
+            chat_id: Optional target chat ID. Defaults to self.chat_id.
 
         Returns:
             JSON string with status and message_id.
         """
         try:
-            result = self.bot.send_sticker(self._chat_id, sticker)
+            target_chat_id = self._resolve_chat_id(chat_id)
+            payload, _ = self._resolve_media_payload(sticker)
+            result = self.bot.send_sticker(target_chat_id, payload)
             return json.dumps({"status": "success", "message_id": result.message_id})
-        except ApiTelegramException as e:
+        except (ApiTelegramException, ValueError, FileNotFoundError) as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def edit_message(self, text: str, message_id: int) -> str:
+    def edit_message(self, text: str, message_id: int, chat_id: Optional[Union[str, int]] = None) -> str:
         """Edit a previously sent message in a Telegram chat.
 
         Args:
             text: The new message text.
             message_id: The ID of the message to edit.
+            chat_id: Optional target chat ID. Defaults to self.chat_id.
 
         Returns:
             JSON string with status and message_id.
         """
         try:
-            result = self.bot.edit_message_text(text, chat_id=self._chat_id, message_id=message_id)
+            target_chat_id = self._resolve_chat_id(chat_id)
+            result = self.bot.edit_message_text(text, chat_id=target_chat_id, message_id=message_id)
             msg_id = result.message_id if hasattr(result, "message_id") else message_id
             return json.dumps({"status": "success", "message_id": msg_id})
-        except ApiTelegramException as e:
+        except (ApiTelegramException, ValueError) as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def delete_message(self, message_id: int) -> str:
+    def delete_message(self, message_id: int, chat_id: Optional[Union[str, int]] = None) -> str:
         """Delete a message from a Telegram chat.
 
         Args:
             message_id: The ID of the message to delete.
+            chat_id: Optional target chat ID. Defaults to self.chat_id.
 
         Returns:
             JSON string with status and deleted flag.
         """
         try:
-            self.bot.delete_message(self._chat_id, message_id)
+            target_chat_id = self._resolve_chat_id(chat_id)
+            self.bot.delete_message(target_chat_id, message_id)
             return json.dumps({"status": "success", "deleted": True})
-        except ApiTelegramException as e:
+        except (ApiTelegramException, ValueError) as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def react_with_emoji(self, message_id: int, emoji: str) -> str:
+    def react_with_emoji(self, message_id: int, emoji: str, chat_id: Optional[Union[str, int]] = None) -> str:
         """React to a message with an emoji.
 
         Args:
             message_id: The ID of the message to react to.
             emoji: The emoji to react with.
+            chat_id: Optional target chat ID. Defaults to self.chat_id.
 
         Returns:
             JSON string with status.
         """
         try:
+            target_chat_id = self._resolve_chat_id(chat_id)
             self.bot.set_message_reaction(
-                chat_id=self._chat_id,
+                chat_id=target_chat_id,
                 message_id=message_id,
                 reaction=[ReactionTypeEmoji(emoji=emoji)],
             )
             return json.dumps({"status": "success", "message_id": message_id, "emoji": emoji})
-        except ApiTelegramException as e:
+        except (ApiTelegramException, ValueError) as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def pin_message(self, message_id: int, disable_notification: bool = False) -> str:
+    def pin_message(
+        self,
+        message_id: int,
+        disable_notification: bool = False,
+        chat_id: Optional[Union[str, int]] = None,
+    ) -> str:
         """Pin a message in the chat.
 
         Args:
             message_id: The ID of the message to pin.
             disable_notification: If True, no notification is sent to chat members.
+            chat_id: Optional target chat ID. Defaults to self.chat_id.
 
         Returns:
             JSON string with status and message_id.
         """
         try:
-            self.bot.pin_chat_message(self._chat_id, message_id, disable_notification=disable_notification)
+            target_chat_id = self._resolve_chat_id(chat_id)
+            self.bot.pin_chat_message(target_chat_id, message_id, disable_notification=disable_notification)
             return json.dumps({"status": "success", "pinned": True, "message_id": message_id})
-        except ApiTelegramException as e:
+        except (ApiTelegramException, ValueError) as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def get_chat(self) -> str:
-        """Get information about the current chat.
+    def get_chat(self, chat_id: Optional[Union[str, int]] = None) -> str:
+        """Get information about the current or specified chat.
+
+        Args:
+            chat_id: Optional target chat ID. Defaults to self.chat_id.
 
         Returns:
             JSON string with status and chat info.
         """
         try:
-            chat = self.bot.get_chat(self._chat_id)
+            target_chat_id = self._resolve_chat_id(chat_id)
+            chat = self.bot.get_chat(target_chat_id)
             return json.dumps(
                 {
                     "status": "success",
@@ -316,7 +470,7 @@ class TelegramTools(Toolkit):
                     "description": getattr(chat, "description", None),
                 }
             )
-        except ApiTelegramException as e:
+        except (ApiTelegramException, ValueError) as e:
             return json.dumps({"status": "error", "message": str(e)})
 
     def get_file(self, file_id: str) -> str:
