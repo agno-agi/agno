@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Union, cast
 from sqlalchemy import text
 
 from agno.db.base import BaseDb
-from agno.db.migrations.utils import quote_db_identifier
+from agno.db.migrations.utils import get_db_type, quote_db_identifier
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.utils.log import log_error, log_info, log_warning
@@ -453,7 +453,7 @@ def migrate_table_in_batches(
 def get_table_content_in_batches(db: BaseDb, db_schema: str, table_name: str, batch_size: int = 5000):
     """Get table content in batches to avoid memory issues with large tables"""
     try:
-        if type(db).__name__ == "MongoDb":
+        if get_db_type(db) == "MongoDb":
             from agno.db.mongo.mongo import MongoDb
 
             db = cast(MongoDb, db)
@@ -478,25 +478,25 @@ def get_table_content_in_batches(db: BaseDb, db_schema: str, table_name: str, ba
                 yield batch
         else:
             # SQL database implementations (PostgresDb, MySQLDb, SqliteDb)
-            if type(db).__name__ == "PostgresDb":
+            if get_db_type(db) == "PostgresDb":
                 from agno.db.postgres.postgres import PostgresDb
 
                 db = cast(PostgresDb, db)
 
-            elif type(db).__name__ == "MySQLDb":
+            elif get_db_type(db) == "MySQLDb":
                 from agno.db.mysql.mysql import MySQLDb
 
                 db = cast(MySQLDb, db)
 
-            elif type(db).__name__ == "SqliteDb":
+            elif get_db_type(db) == "SqliteDb":
                 from agno.db.sqlite.sqlite import SqliteDb
 
                 db = cast(SqliteDb, db)
 
             else:
-                raise ValueError(f"Invalid database type: {type(db).__name__}")
+                raise ValueError(f"Invalid database type: {get_db_type(db)}")
 
-            db_type = type(db).__name__
+            db_type = get_db_type(db)
             quoted_schema = (
                 quote_db_identifier(db_type=db_type, identifier=db_schema) if db_schema and db_schema.strip() else None
             )
