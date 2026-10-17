@@ -36,7 +36,7 @@ Loop iteration review:
 import pytest
 
 from agno.run.base import RunStatus
-from agno.run.workflow import StepOutputReviewEvent
+from agno.run.workflow import LoopIterationCompletedEvent, StepOutputReviewEvent
 from agno.workflow import Loop, OnReject, Router
 from agno.workflow.step import Step
 from agno.workflow.types import HumanReview, StepInput, StepOutput
@@ -978,6 +978,85 @@ class TestLoopIterationReviewSync:
         run.steps_requiring_output_review[0].confirm()
         run = wf.continue_run(run)
         assert run.status == RunStatus.completed
+
+
+# =============================================================================
+# LOOP iteration review — streaming
+# =============================================================================
+
+
+class TestLoopIterationReviewStreaming:
+    """Loop per-iteration output review: sync and async streaming."""
+
+    def test_streaming_reject_resumes_after_completed_iteration(self, shared_db):
+        global iteration_counter
+        iteration_counter = 0
+
+        wf = Workflow(
+            name="Streaming Loop Resume",
+            db=shared_db,
+            steps=[
+                Loop(
+                    name="refine",
+                    steps=[Step(name="analyze", executor=refine_analysis)],
+                    max_iterations=5,
+                    human_review=HumanReview(requires_iteration_review=True, on_reject=OnReject.retry),
+                ),
+            ],
+        )
+
+        list(wf.run("improve", stream=True, stream_events=True))
+        run = wf.get_session().runs[-1]
+        run.steps_requiring_output_review[0].reject()
+
+        continue_events = list(wf.continue_run(run, stream=True, stream_events=True))
+        run = wf.get_session().runs[-1]
+
+        assert run.is_paused
+        assert iteration_counter == 2
+        assert [event.iteration for event in continue_events if isinstance(event, LoopIterationCompletedEvent)] == [2]
+        loop_output = run.step_results[-1]
+        assert [step.content for step in loop_output.steps or []] == [
+            "Iteration 1: quality 70%",
+            "Iteration 2: quality 80%",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_async_streaming_reject_resumes_after_completed_iteration(self, async_shared_db):
+        global iteration_counter
+        iteration_counter = 0
+
+        wf = Workflow(
+            name="Async Streaming Loop Resume",
+            db=async_shared_db,
+            steps=[
+                Loop(
+                    name="refine",
+                    steps=[Step(name="analyze", executor=refine_analysis)],
+                    max_iterations=5,
+                    human_review=HumanReview(requires_iteration_review=True, on_reject=OnReject.retry),
+                ),
+            ],
+        )
+
+        async for _ in wf.arun("improve", stream=True, stream_events=True):
+            pass
+        run = (await wf.aget_session()).runs[-1]
+        run.steps_requiring_output_review[0].reject()
+
+        continue_events = []
+        async for event in await wf.acontinue_run(run, stream=True, stream_events=True):
+            continue_events.append(event)
+        run = (await wf.aget_session()).runs[-1]
+
+        assert run.is_paused
+        assert iteration_counter == 2
+        assert [event.iteration for event in continue_events if isinstance(event, LoopIterationCompletedEvent)] == [2]
+        loop_output = run.step_results[-1]
+        assert [step.content for step in loop_output.steps or []] == [
+            "Iteration 1: quality 70%",
+            "Iteration 2: quality 80%",
+        ]
 
 
 # =============================================================================
