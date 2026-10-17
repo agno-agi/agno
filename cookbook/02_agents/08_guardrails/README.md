@@ -5,6 +5,7 @@ Examples for input/output safety checks and policy enforcement.
 ## Files
 - `custom_guardrail.py` - Demonstrates custom guardrail.
 - `deepkeep_ai_firewall.py` - Demonstrates DeepKeep AI Firewall guardrails.
+- `little_canary_tool_results.py` - Demonstrates screening untrusted tool results with Little Canary's structural filter in a tool hook (`pip install little-canary==0.4.0`).
 - `openai_moderation.py` - Demonstrates openai moderation.
 - `output_guardrail.py` - Demonstrates output guardrail.
 - `pii_detection.py` - Demonstrates pii detection.
