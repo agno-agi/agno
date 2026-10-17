@@ -321,18 +321,73 @@ def test_disconnect_no_token_note_for_tokenless_entries_on_protected_os(monkeypa
     assert "stay valid" not in out
 
 
-def test_matches_targets_respects_base_path():
-    """Path-routed deployments: two AgentOS on one host must never match each other,
-    and a path prefix only matches on a segment boundary."""
+def test_matches_targets_requires_exact_mcp_path():
+    """An MCP endpoint only matches its own path, even on the same host."""
     from agnoctl.commands.disconnect import _matches_targets
 
-    assert _matches_targets("https://os.example.com/customer-a/mcp", ["https://os.example.com/customer-a"])
-    assert not _matches_targets("https://os.example.com/customer-b/mcp", ["https://os.example.com/customer-a"])
-    assert not _matches_targets("https://os.example.com/customer-abc/mcp", ["https://os.example.com/customer-a"])
-    # A pathless target (the usual base URL) matches any path on that host.
-    assert _matches_targets("http://localhost:7777/mcp", ["http://localhost:7777"])
-    assert _matches_targets("http://localhost:7777/custom/mcp", ["http://localhost:7777"])
-    assert not _matches_targets("http://localhost:7778/mcp", ["http://localhost:7777"])
+    assert _matches_targets("https://os.example.com/customer-a/mcp", ["https://os.example.com/customer-a/mcp"])
+    assert not _matches_targets("https://os.example.com/customer-b/mcp", ["https://os.example.com/customer-a/mcp"])
+    assert not _matches_targets(
+        "https://os.example.com/customer-a/tools/mcp", ["https://os.example.com/customer-a/mcp"]
+    )
+    assert _matches_targets("http://localhost:7777/mcp", ["http://localhost:7777/mcp"])
+    assert not _matches_targets("http://localhost:7777/custom/mcp", ["http://localhost:7777/mcp"])
+    assert not _matches_targets("http://localhost:7778/mcp", ["http://localhost:7777/mcp"])
+
+
+def test_disconnect_root_os_leaves_path_routed_entry(monkeypatch, fake_os, fake_clients):
+    """A live root OS must not remove another OS's MCP entry on the same host."""
+    (fake_clients / ".cursor" / "mcp.json").write_text(
+        json.dumps({"mcpServers": {"root": {"url": MCP_URL}, "team-b": {"url": "http://localhost:7777/team-b/mcp"}}})
+    )
+
+    result = _disconnect(["--clients", "cursor"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["results"][0]["removed"] == ["root"]
+    kept = json.loads((fake_clients / ".cursor" / "mcp.json").read_text())["mcpServers"]
+    assert list(kept) == ["team-b"]
+
+
+def test_disconnect_live_os_uses_advertised_custom_mcp_path(monkeypatch, fake_clients):
+    import agnoctl.commands.disconnect as disconnect_module
+    from agnoctl.discovery import OSInfo
+
+    monkeypatch.setattr(
+        disconnect_module,
+        "discover",
+        lambda url: OSInfo(
+            base_url="http://localhost:7777",
+            version=None,
+            mcp_enabled=True,
+            mcp_path="/custom/mcp",
+            auth_mode="none",
+            discovered_via="info",
+        ),
+    )
+    (fake_clients / ".cursor" / "mcp.json").write_text(
+        json.dumps({"mcpServers": {"custom": {"url": "http://localhost:7777/custom/mcp"}, "root": {"url": MCP_URL}}})
+    )
+
+    result = _disconnect(["--clients", "cursor"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["results"][0]["removed"] == ["custom"]
+    kept = json.loads((fake_clients / ".cursor" / "mcp.json").read_text())["mcpServers"]
+    assert list(kept) == ["root"]
+
+
+def test_disconnect_offline_root_os_leaves_path_routed_entry(monkeypatch, tmp_path, fake_clients):
+    """The offline fallback should use the default MCP path, not every host path."""
+    (fake_clients / ".cursor" / "mcp.json").write_text(
+        json.dumps({"mcpServers": {"root": {"url": MCP_URL}, "team-b": {"url": "http://localhost:7777/team-b/mcp"}}})
+    )
+    _refuse_all(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+
+    result = _disconnect(["--clients", "cursor"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["results"][0]["removed"] == ["root"]
+    kept = json.loads((fake_clients / ".cursor" / "mcp.json").read_text())["mcpServers"]
+    assert list(kept) == ["team-b"]
 
 
 def test_disconnect_path_routed_os_leaves_sibling_entries(monkeypatch, tmp_path, fake_clients):
