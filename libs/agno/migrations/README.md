@@ -9,8 +9,8 @@ This is a guide on how to handle migrations for your Agno database.
 
 Before attempting this, make sure you have read the [Agno v2 Migration Guide](https://docs.agno.com/how-to/v2-migration) and are familiar with the changes in the new version.
 
-- For migrating your "Storage" and "Memory" databases, use our migration script: `libs/agno/scripts/v1_to_v2/migrate_to_v2.py`
-- For migrating your Vector Database, use our migration script: `libs/agno/scripts/v1_to_v2/migrate_to_v2_vector_db.py`
+- For migrating your "Storage" and "Memory" databases, use our migration script: `libs/agno/migrations/v1_to_v2/migrate_to_v2.py`
+- For migrating your Vector Database, use our migration script: `libs/agno/migrations/v1_to_v2/migrate_vectordbs_to_v2.py`
   
 Notice:
 - The script won’t cleanup the old tables, in case you still need them.
