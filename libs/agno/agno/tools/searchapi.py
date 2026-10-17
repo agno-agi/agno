@@ -176,6 +176,9 @@ class SearchApiTools(Toolkit):
             "engine": "google_news",
             "q": query,
             "num": num_results or self.num_results,
+            # Without this the engine returns google.com/goto redirects, which
+            # an agent cannot fetch or cite.
+            "link": "resolved",
         }
         if language:
             params["hl"] = language
@@ -187,22 +190,30 @@ class SearchApiTools(Toolkit):
         if "error" in data:
             return json.dumps({"error": data["error"]})
 
-        result = {
-            "news_results": [
+        # The google_news engine splits articles across "organic_results" and
+        # "top_stories", and often returns nothing under "organic_results".
+        articles = [*data.get("organic_results", []), *data.get("top_stories", [])]
+
+        seen_links = set()
+        news_results = []
+        for r in articles:
+            link = r.get("link")
+            if not link or link in seen_links:
+                continue
+            seen_links.add(link)
+            news_results.append(
                 {
                     "position": r.get("position"),
                     "title": r.get("title"),
-                    "link": r.get("link"),
+                    "link": link,
                     "source": r.get("source", {}).get("name") if isinstance(r.get("source"), dict) else r.get("source"),
                     "date": r.get("date"),
                     "snippet": r.get("snippet"),
                     "thumbnail": r.get("thumbnail"),
                 }
-                for r in data.get("news_results", [])
-            ]
-        }
+            )
 
-        return json.dumps(result, indent=2)
+        return json.dumps({"news_results": news_results}, indent=2)
 
     def search_images(
         self,
@@ -239,21 +250,24 @@ class SearchApiTools(Toolkit):
         if "error" in data:
             return json.dumps({"error": data["error"]})
 
-        result = {
-            "image_results": [
+        # The google_images engine returns "images", where each entry nests the
+        # page under "source" and the full-size file under "original".
+        image_results = []
+        for r in data.get("images", []):
+            source = r.get("source") if isinstance(r.get("source"), dict) else {}
+            original = r.get("original") if isinstance(r.get("original"), dict) else {}
+            image_results.append(
                 {
                     "position": r.get("position"),
                     "title": r.get("title"),
-                    "link": r.get("link"),
-                    "original": r.get("original"),
+                    "link": source.get("link"),
+                    "original": original.get("link") or r.get("original"),
                     "thumbnail": r.get("thumbnail"),
-                    "source": r.get("source"),
+                    "source": source.get("name") or r.get("source"),
                 }
-                for r in data.get("image_results", [])
-            ]
-        }
+            )
 
-        return json.dumps(result, indent=2)
+        return json.dumps({"image_results": image_results}, indent=2)
 
     def search_youtube(
         self,
