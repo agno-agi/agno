@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
 from uuid import uuid4
@@ -37,9 +37,26 @@ class SessionSummary:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SessionSummary":
+        # Callers pass a dict they still hold: the session API hands over its request
+        # body, and ``AgentSession.from_dict`` hands over the row it was given.
+        data = dict(data)
         updated_at = data.get("updated_at")
-        if updated_at:
-            data["updated_at"] = datetime.fromisoformat(updated_at)
+        if updated_at is not None:
+            if isinstance(updated_at, datetime):
+                parsed = updated_at
+            elif isinstance(updated_at, str):
+                # Python 3.9 and 3.10, both inside ``requires-python``, cannot parse the
+                # trailing "Z" that pydantic and ``Date.toISOString()`` emit.
+                stamp = updated_at[:-1] + "+00:00" if updated_at.endswith("Z") else updated_at
+                parsed = datetime.fromisoformat(stamp)
+            elif isinstance(updated_at, (int, float)) and not isinstance(updated_at, bool):
+                parsed = datetime.fromtimestamp(updated_at, tz=timezone.utc)
+            else:
+                raise TypeError(
+                    "SessionSummary.updated_at must be a datetime, an ISO string or epoch "
+                    f"seconds, not {type(updated_at).__name__}"
+                )
+            data["updated_at"] = parsed
         return cls(**data)
 
 
