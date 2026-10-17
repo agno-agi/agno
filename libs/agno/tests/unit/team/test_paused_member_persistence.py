@@ -4072,6 +4072,7 @@ async def test_concurrent_async_saves_keep_the_live_member_responses(monkeypatch
 
     async def _slow_upsert(team, session):
         await asyncio.sleep(0.01)
+        return session
 
     monkeypatch.setattr(team_storage, "_aupsert_session", _slow_upsert)
     monkeypatch.setattr("agno.team._init._has_async_db", lambda t: True)
@@ -4100,6 +4101,7 @@ async def test_a_run_finishing_during_an_async_save_is_not_discarded(monkeypatch
 
     async def _slow_upsert(team, session):
         await asyncio.sleep(0.05)
+        return session
 
     monkeypatch.setattr(team_storage, "_aupsert_session", _slow_upsert)
     monkeypatch.setattr("agno.team._init._has_async_db", lambda t: True)

@@ -116,6 +116,18 @@ class AgnoError(Exception):
         return str(self.message)
 
 
+class SessionNotSavedError(AgnoError):
+    """Raised when a configured database does not confirm a session save.
+
+    This includes ownership conflicts and database errors; it does not imply
+    that the session belongs to another user.
+    """
+
+    def __init__(self, session_id: str):
+        super().__init__(f"Session {session_id!r} was not saved. Check session ownership and database logs.")
+        self.session_id = session_id
+
+
 class ModelAuthenticationError(AgnoError):
     """Raised when model authentication fails."""
 
