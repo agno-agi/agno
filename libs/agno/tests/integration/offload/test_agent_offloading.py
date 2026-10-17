@@ -168,6 +168,13 @@ def _tool_messages(run_output) -> List[Any]:
     return [m for m in (run_output.messages or []) if m.role == "tool"]
 
 
+def _drop_run_row(db, run_id: str) -> None:
+    """Leave a run's offloaded results with no matching row in the runs table."""
+    runs_table = db._get_table(table_type="runs")
+    with db.Session() as sess, sess.begin():
+        sess.execute(runs_table.delete().where(runs_table.c.run_id == run_id))
+
+
 # ------------------------------------------------------------------
 # Round trip and the substitution point
 # ------------------------------------------------------------------
@@ -426,6 +433,101 @@ def test_delete_sessions_for_another_user_leaves_payloads_intact(db):
     db.delete_sessions(session_ids=[session_id], user_id="bob")
     assert db.get_session(session_id=session_id, session_type=SessionType.AGENT) is None
     assert store.get_row(result_id) is None
+
+
+def test_delete_run_removes_index_rows_and_agno_fs_rows(db):
+    agent = Agent(model=ScriptedToolModel(), db=db, tools=[fetch_page], offload_tool_results=True)
+    session_id = _sid()
+    output = agent.run("go", session_id=session_id)
+    result_id = _tool_messages(output)[0].content.split('id="')[1].split('"')[0]
+    store = agent.result_store
+    row = store.get_row(result_id)
+    assert row is not None
+    assert store._fs_for_namespace(row["namespace"]).read(row["path"]) is not None
+
+    db.delete_run(run_id=output.run_id)
+    assert store.get_row(result_id) is None
+    assert store._fs_for_namespace(row["namespace"]).read(row["path"]) is None
+
+
+def test_delete_run_leaves_the_other_runs_in_the_session_alone(db):
+    agent = Agent(model=ScriptedToolModel(), db=db, tools=[fetch_page], offload_tool_results=True)
+    session_id = _sid()
+    first = agent.run("go", session_id=session_id)
+    agent.model = ScriptedToolModel()
+    second = agent.run("go", session_id=session_id)
+    store = agent.result_store
+    first_result_id = _tool_messages(first)[0].content.split('id="')[1].split('"')[0]
+    second_result_id = _tool_messages(second)[0].content.split('id="')[1].split('"')[0]
+    kept = store.get_row(second_result_id)
+
+    db.delete_run(run_id=first.run_id)
+    assert store.get_row(first_result_id) is None
+    assert store.get_row(second_result_id) is not None
+    assert store._fs_for_namespace(kept["namespace"]).read(kept["path"]) is not None
+
+
+def test_delete_runs_cascades_for_every_run(db):
+    agent = Agent(model=ScriptedToolModel(), db=db, tools=[fetch_page], offload_tool_results=True)
+    session_id = _sid()
+    result_ids = []
+    run_ids = []
+    for _ in range(2):
+        agent.model = ScriptedToolModel()
+        output = agent.run("go", session_id=session_id)
+        result_ids.append(_tool_messages(output)[0].content.split('id="')[1].split('"')[0])
+        run_ids.append(output.run_id)
+    store = agent.result_store
+
+    db.delete_runs(run_ids=run_ids)
+    assert all(store.get_row(result_id) is None for result_id in result_ids)
+
+
+def test_delete_run_that_matched_no_row_leaves_payloads_intact(db):
+    agent = Agent(model=ScriptedToolModel(), db=db, tools=[fetch_page], offload_tool_results=True)
+    output = agent.run("go", session_id=_sid())
+    result_id = _tool_messages(output)[0].content.split('id="')[1].split('"')[0]
+    store = agent.result_store
+    row = store.get_row(result_id)
+
+    # A run that owns payloads but has no row: mid-flight, before the run is
+    # persisted, or already deleted. delete_run reports False for it, and a
+    # cascade that ran anyway would destroy a live payload.
+    _drop_run_row(db, output.run_id)
+    assert db.delete_run(run_id=output.run_id) is False
+    assert store.get_row(result_id) is not None
+    assert store._fs_for_namespace(row["namespace"]).read(row["path"]) is not None
+
+
+def test_delete_runs_only_cascades_the_ids_it_deleted(db):
+    agent = Agent(model=ScriptedToolModel(), db=db, tools=[fetch_page], offload_tool_results=True)
+    session_id = _sid()
+    kept_run = agent.run("go", session_id=session_id)
+    agent.model = ScriptedToolModel()
+    deleted_run = agent.run("go", session_id=session_id)
+    store = agent.result_store
+    kept_result_id = _tool_messages(kept_run)[0].content.split('id="')[1].split('"')[0]
+    deleted_result_id = _tool_messages(deleted_run)[0].content.split('id="')[1].split('"')[0]
+
+    _drop_run_row(db, kept_run.run_id)
+    db.delete_runs(run_ids=[kept_run.run_id, deleted_run.run_id])
+    assert store.get_row(kept_result_id) is not None
+    assert store.get_row(deleted_result_id) is None
+
+
+async def test_an_async_db_cascades_payloads_on_run_delete(tmp_path):
+    from agno.db.sqlite import AsyncSqliteDb
+
+    path = str(tmp_path / "shared.db")
+    agent = Agent(model=ScriptedToolModel(), db=SqliteDb(db_file=path), tools=[fetch_page], offload_tool_results=True)
+    output = agent.run("go", session_id=_sid())
+    result_id = _tool_messages(output)[0].content.split('id="')[1].split('"')[0]
+    store = agent.result_store
+    row = store.get_row(result_id)
+
+    await AsyncSqliteDb(db_file=path).delete_run(run_id=output.run_id)
+    assert store.get_row(result_id) is None
+    assert store._fs_for_namespace(row["namespace"]).read(row["path"]) is None
 
 
 def test_the_index_table_is_created_with_the_rest_of_the_schema(db):
