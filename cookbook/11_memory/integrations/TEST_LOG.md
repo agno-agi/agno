@@ -7,3 +7,11 @@
 **Result:** Validation passed with zero violations. Runtime execution of individual cookbook scripts was not performed in this pass.
 
 ---
+
+### everos_integration.py
+
+**Status:** PASS (offline, 2026-09-22)
+
+**Description:** Ran `EVEROS_DEMO_MODE=offline .venvs/demo/bin/python cookbook/11_memory/integrations/everos_integration.py`. Both sync and async flows completed with the HTTP mock transport, exercising trajectory writes, flush, recall, and bounded retrieval tools. A real EverOS service was not used.
+
+---
