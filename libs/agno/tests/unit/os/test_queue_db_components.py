@@ -22,7 +22,7 @@ from agno.os import AgentOS
 from agno.os.job_queue import (
     QueueWorker,
     component_is_queueable,
-    ensure_duplicate_matches_component,
+    ensure_duplicate_matches_submission,
     get_active_queue_worker,
     queue_lifespan,
     queue_scope,
@@ -378,10 +378,11 @@ class TestTicketNamesAConcreteVersion:
             "component_id": "db-agent",
             "payload": {"scope": queue_scope(None, 1, pinned=1)},
         }
-        ensure_duplicate_matches_component(existing, "agent", "db-agent", version=1)
+        job = {"component_type": "agent", "component_id": "db-agent", "payload": {}}
+        ensure_duplicate_matches_submission(existing, job, version=1, session_id=None)
         with pytest.raises(HTTPException) as exc:
-            ensure_duplicate_matches_component(existing, "agent", "db-agent", version=2)
-        assert exc.value.status_code == 409
+            ensure_duplicate_matches_submission(existing, job, version=2, session_id=None)
+        assert exc.value.status_code == 422
 
     def test_unpinned_retry_after_a_publish_stays_idempotent(self, harness):
         headers = {"Idempotency-Key": "retry-1"}
@@ -398,7 +399,8 @@ class TestTicketNamesAConcreteVersion:
         # Tickets from a pre-scope producer carry no scope: they match an
         # unversioned replay and nothing else
         existing = {"component_type": "agent", "component_id": "a1", "payload": {"input": "hi"}}
-        ensure_duplicate_matches_component(existing, "agent", "a1", version=None)
+        job = {"component_type": "agent", "component_id": "a1", "payload": {"input": "hi"}}
+        ensure_duplicate_matches_submission(existing, job, version=None, session_id=None)
 
 
 class TestRegistryTicketsNeverFallBackToTheDb:
