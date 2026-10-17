@@ -161,8 +161,9 @@ class CsvTools(Toolkit):
             # -*- Format the SQL Query
             # Remove backticks
             formatted_sql = sql_query.replace("`", "")
-            # If there are multiple statements, only run the first one
-            formatted_sql = formatted_sql.split(";")[0]
+            # Parse statement boundaries without splitting quoted values or comments.
+            statements = con.extract_statements(formatted_sql)
+            formatted_sql = statements[0].query if statements else ""
             # -*- Run the SQL Query
             log_info(f"Running query: {formatted_sql}")
             query_result = con.sql(formatted_sql)
