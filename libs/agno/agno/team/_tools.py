@@ -546,6 +546,12 @@ def _get_history_for_member_agent(
     return []
 
 
+def _filter_team_history(team: "Team", team_history: Optional[str]) -> Optional[str]:
+    if team_history is not None and team.team_history_filter is not None:
+        return team.team_history_filter(team_history)
+    return team_history
+
+
 def _determine_team_member_interactions(
     team: "Team",
     team_run_context: Dict[str, Any],

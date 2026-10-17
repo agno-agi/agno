@@ -5,8 +5,19 @@ from agno.run.agent import RunInput, RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session.team import TeamSession
-from agno.team._tools import _get_history_for_member_agent
+from agno.team._tools import _filter_team_history, _get_history_for_member_agent
 from agno.team.team import Team
+
+
+def test_team_history_filter_redacts_or_removes_history():
+    team = Team(members=[])
+    team.team_history_filter = lambda history: history.replace("secret", "[redacted]")
+
+    assert _filter_team_history(team, "public secret") == "public [redacted]"
+
+    team.team_history_filter = lambda history: None
+    assert _filter_team_history(team, "secret") is None
+    assert _filter_team_history(team, None) is None
 
 
 def _make_member_run(agent_id: str, run_id: str) -> RunOutput:
