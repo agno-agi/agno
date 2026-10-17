@@ -357,3 +357,23 @@ Coordinator review follow-up: native transcript-mirror warnings and lost pre-che
 **Result:** `build_image.py` now ends with `Built agno-sandbox:review-fix (sha256:03733ba9...)` and the tag is in the image store, where the previous script exited 0 with no image. `runtime_resilience.py` passed all three sections on the overridden subnet. `test_runtime.py` passed 23 and skipped 5 with the override, matching the review's scratch-copy run, where the unmodified file failed every http and isolated case. AgentOS startup on the old table shape fails in the lifespan with `Sandbox table ai.<bindings> does not reference run table ai.<runs>; drop or rename that table, or pass PostgresDb(sandbox_table=...) to create a new one`; a submission on it returns 500 with the same message before any ticket exists, and a ticket enqueued past that check settles as `failed` within the 3 second lock grace instead of staying `running`. A submission with a `user_id` on a session created without one, and the two reverse cases, return 404 `Session not found` and leave no ticket and no container. `tests/unit/sandbox`: 378 passed. The full `tests/integration/sandbox` suite with the subnet override and every service variable set: 245 passed, 18 skipped (the hard-coded AsyncPostgresDb and transport skips) in 5m02s, no containers, volumes or tables left behind; the review's run of the unmodified branch had 1 failure and 13 errors, all the subnet cases.
 
 ---
+
+### sandbox_s3_checkpoints.py (2026-10-17)
+
+**Status:** PASS (claude-sonnet-4-6, `agno-sandbox:local`, moto server as the S3 endpoint on 127.0.0.1:9000)
+
+**Description:** A sandboxed Claude agent with `DockerSandbox(checkpoints=S3CheckpointStore("agno-checkpoints", prefix="sandbox/checkpoints"))`, boto3 pointed at the local server through `AWS_ENDPOINT_URL_S3`. Turn 1 writes and runs `hello.py`; the cookbook lists the bucket, removes the session's container by its `io.agno.sandbox.session` label to simulate losing the host, then runs turn 2 on the same session.
+
+**Result:** Turn 1 completed and its checkpoint appeared as one object under `sandbox/checkpoints/<sha256>.tar.gz` (75 KB). After the container was removed, turn 2 completed on a new container restored from that object, answered `hello.py`, and reported `metadata.sandbox.resumed = False`, the cold path. MinIO could not be pulled on this host (Docker Hub refused `minio/minio`, quay.io answered 401), so moto's server mode stood in as the S3-compatible endpoint; the store speaks plain S3 to either.
+
+---
+
+### S3CheckpointStore under the existing suites (2026-10-17)
+
+**Status:** PASS
+
+**Description:** `libs/agno/tests/unit/sandbox/test_s3_store.py` (moto in-process): contract round trip, a second store instance restoring what the first captured, no upload when the object exists, verify on a truncated object and on one overwritten without its digest, a forged digest caught when the bytes are read, missing-object errors through every sync and async access, delete idempotent, multipart upload with a crash after part 2 leaving no readable object and no lingering parts, the object limit applied before any upload, and constructor validation. Then the Docker transfer, coordinator and AgentOS integration suites with `AGNO_TEST_S3_BUCKET=agno-checkpoints AGNO_TEST_S3_ENDPOINT=http://127.0.0.1:9000` so every store in them is an `S3CheckpointStore`, including the warm-computer, replacement-computer and checkpoint-outage paths.
+
+**Result:** 9 unit tests passed. `test_transfer.py` 4 passed; `test_coordinator.py` 80 passed, 26 skipped (the AsyncPostgresDb and transport skips the log already records); `test_agentos.py` 24 passed after its checkpoint-outage test was changed to restore into `tmp_path` instead of the file store's root, the one place a suite had reached into the file store; that test still passes on the file store. The whole `tests/unit/sandbox` suite: 447 passed.
+
+---

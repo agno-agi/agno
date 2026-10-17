@@ -32,6 +32,14 @@ Every process sharing the host's bridge must use the same subnet; remove the bri
 
 `sandbox_claude_agentos.py` serves the same agent through AgentOS with a durable queue (Postgres and Redis). Every API request submits to the queue, a dropped connection does not cancel the turn, and a second request on the same session waits for the first. It names its checkpoint store explicitly: with a queue, any replica may run the next attempt, so the default host-local store is refused.
 
+## Checkpoints in S3
+
+```bash
+.venv/bin/python cookbook/frameworks/sandbox/docker/sandbox_s3_checkpoints.py
+```
+
+`S3CheckpointStore` (`agno.sandbox.s3`, needs `agno[s3]`) keeps checkpoints in an S3-compatible bucket instead of a directory, so replicas that share no filesystem can restore each other's sessions; the queue worker's refusal of the host-local default does not apply to it. Each checkpoint is one object under `<prefix>/<sha256>.tar.gz`, content-addressed like the file store, with its digest and size as object metadata. `put` hashes the archive first and uploads nothing when the object already exists; above `part_size` (default 64 MiB) it uploads in parts, and a crashed upload leaves nothing readable under the key. `verify` is a HEAD plus a size and digest-metadata check; `open_archive` downloads to a temporary file, checks the bytes against the reference, and removes the file when the caller is done. Configure `bucket`, `prefix` and `region`; credentials come from the standard AWS environment and the deployment's role; edit the bucket name at the top of the cookbook. An S3-compatible service such as MinIO works through the standard `AWS_ENDPOINT_URL_S3` variable or the store's `endpoint_url` argument. The integration suites run against this store when `AGNO_TEST_S3_BUCKET` is set (with `AGNO_TEST_S3_ENDPOINT` for a local server), and the unit tests use moto in-process.
+
 ## Attachments
 
 ```bash

@@ -16,7 +16,6 @@ from agno.db.postgres import PostgresDb
 from agno.job_queue.config import QueueConfig, RedisCoordination
 from agno.os import AgentOS
 from agno.sandbox import _harness
-from agno.sandbox.checkpoint import FileCheckpointStore
 from agno.sandbox.docker import DockerSandbox
 from agno.sandbox.fixture import FixtureAgent
 
@@ -30,7 +29,7 @@ pytestmark = [
 
 
 @pytest_asyncio.fixture
-async def service(tmp_path, request):
+async def service(tmp_path, request, checkpoint_store):
     import redis
     import redis.asyncio
 
@@ -62,7 +61,7 @@ async def service(tmp_path, request):
         memory_mb=512,
         workspace_mb=32,
         env={"AGNO_SANDBOX_TEST_RUNTIME": "1"},
-        checkpoints=FileCheckpointStore(tmp_path / "objects"),
+        checkpoints=checkpoint_store,
     )
     handles = []
     original = provider.acreate
@@ -189,7 +188,7 @@ async def test_queued_same_session_turns_do_not_spend_attempts_on_contention(ser
     assert len((await agent.aget_session("session")).runs) == 2
 
 
-async def test_checkpoint_outage_retries_finalization_only(service, monkeypatch):
+async def test_checkpoint_outage_retries_finalization_only(service, monkeypatch, tmp_path):
     client, agent, app, _ = service
     capture = _harness.coordinator(agent).transfer.acapture
     calls = []
@@ -213,7 +212,7 @@ async def test_checkpoint_outage_retries_finalization_only(service, monkeypatch)
     )
     from agno.sandbox.checkpoint import CheckpointRef
 
-    destination = _harness.coordinator(agent).transfer.store.root / "verify"
+    destination = tmp_path / "verify"
     await _harness.coordinator(agent).transfer.store.arestore(CheckpointRef(**row["record"]["checkpoint"]), destination)
     assert (destination / "workspace/fixture-effects.txt").read_text().splitlines() == [job["id"]]
 

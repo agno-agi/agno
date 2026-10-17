@@ -16,7 +16,7 @@ from agno.db.postgres import AsyncPostgresDb, PostgresDb
 from agno.run.agent import RunCompletedEvent, RunInput, RunOutput
 from agno.run.base import RunStatus
 from agno.sandbox import SandboxError
-from agno.sandbox.checkpoint import CheckpointRef, FileCheckpointStore
+from agno.sandbox.checkpoint import CheckpointRef
 from agno.sandbox.coordinator import SandboxCoordinator
 from agno.sandbox.docker import DockerCheckpointTransfer, DockerSandbox
 from agno.sandbox.postgres import SandboxSessionBusy
@@ -36,7 +36,7 @@ class Target:
 
 
 @pytest_asyncio.fixture(params=[PostgresDb, AsyncPostgresDb])
-async def system(request, tmp_path):
+async def system(request, tmp_path, checkpoint_store):
     suffix = uuid4().hex[:12]
     db = request.param(
         db_url=URL,
@@ -45,7 +45,7 @@ async def system(request, tmp_path):
         sandbox_table="co_bindings_" + suffix,
     )
     provider = DockerSandbox(IMAGE, namespace="coordinator-" + suffix, memory_mb=512, workspace_mb=32)
-    transfer = DockerCheckpointTransfer(provider, FileCheckpointStore(tmp_path / "objects"))
+    transfer = DockerCheckpointTransfer(provider, checkpoint_store)
     # Cold replacement every turn, which most of these tests rely on; warm reuse has its own tests.
     coordinator = SandboxCoordinator(db, provider, transfer, poll_wait=1, warm_computer_seconds=0)
     spec = Target("agent", "session", env={"AGNO_SANDBOX_TEST_RUNTIME": "1"})
