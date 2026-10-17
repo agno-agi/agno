@@ -21,8 +21,6 @@ db = PostgresDb(
     id="agentos-knowledge-postgres",
     db_url=getenv("DATABASE_URL", "postgresql+psycopg://ai:ai@localhost:5532/ai"),
 )
-
-
 filesystem_agent = Agent(
     id="filesystem-agent",
     name="File System Agent",
@@ -44,3 +42,4 @@ app = agent_os.get_app()
 
 if __name__ == "__main__":
     agent_os.serve(app="basic:app", reload=True)
+
