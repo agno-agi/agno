@@ -9,7 +9,9 @@ import json
 import pytest
 
 from agno.models.message import Message
-from agno.os.utils import get_run_input, stringify_input_content
+from agno.os.utils import get_run_input, get_session_name, stringify_input_content
+from agno.run.agent import RunInput
+from agno.run.team import TeamRunInput
 
 
 def test_stringify_string_input():
@@ -298,6 +300,28 @@ def test_get_run_input_with_basemodel_dict():
     parsed = json.loads(result)
     assert parsed["name"] == "Test User"
     assert parsed["age"] == 25
+
+
+# Tests for get_session_name
+
+
+def test_get_session_name_team_run_without_messages():
+    """A run that failed before its first checkpoint has input but no messages."""
+    session = {
+        "session_type": "team",
+        "runs": [{"run_id": "r1", "input": TeamRunInput(input_content="Why is it slow?").to_dict(), "messages": None}],
+    }
+
+    assert get_session_name(session) == "Why is it slow?"
+
+
+def test_get_session_name_agent_run_without_messages():
+    session = {
+        "session_type": "agent",
+        "runs": [{"run_id": "r1", "input": RunInput(input_content="Why is it slow?").to_dict()}],
+    }
+
+    assert get_session_name(session) == "Why is it slow?"
 
 
 if __name__ == "__main__":
