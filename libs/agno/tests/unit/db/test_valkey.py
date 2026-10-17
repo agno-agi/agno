@@ -543,3 +543,23 @@ class TestConstructorGuards:
         # The guard fires before any client creation, so no connection is attempted
         with pytest.raises(ValueError, match="password"):
             ValkeyDb(username="user")
+
+
+# -- Client attribution test --
+
+
+class TestClientInfoTag:
+    def test_glide_config_sets_client_info_tag(self, monkeypatch):
+        # The tag makes CLIENT SETINFO LIB-NAME report GlidePySync(agno) on the server
+        import agno.db.valkey.valkey as valkey_mod
+
+        config_cls = MagicMock(name="GlideClientConfiguration")
+        create = MagicMock(name="GlideClient.create")
+        monkeypatch.setattr(valkey_mod, "GlideClientConfiguration", config_cls)
+        monkeypatch.setattr(valkey_mod.GlideClient, "create", create)
+
+        ValkeyDb(host="localhost", port=6379)
+
+        config_cls.assert_called_once()
+        assert config_cls.call_args.kwargs["client_info_tag"] == "agno"
+        create.assert_called_once_with(config_cls.return_value)
