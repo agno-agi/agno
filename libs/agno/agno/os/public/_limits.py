@@ -129,15 +129,17 @@ class PublicLimiter:
                         {"key": key, "cost": cost, "minute_limit": minute_limit, "day_limit": day_limit},
                     ).first()
                     if row is None:
-                        reset = conn.execute(
-                            text("""SELECT CASE WHEN day=(now() AT TIME ZONE 'UTC')::date
+                        reset = int(
+                            conn.execute(
+                                text("""SELECT CASE WHEN day=(now() AT TIME ZONE 'UTC')::date
                             AND day_count+:cost>:day_limit THEN
                               ceil(extract(epoch FROM (date_trunc('day', now() AT TIME ZONE 'UTC')+interval '1 day'-(now() AT TIME ZONE 'UTC'))))
                             ELSE 60-mod(floor(extract(epoch FROM now()))::bigint,60) END
                             FROM public.agno_public_limits WHERE key=:key"""),
-                            {"key": key, "cost": cost, "day_limit": day_limit},
-                        ).scalar_one()
-                        raise _Denied(Admission(False, max(1, int(reset)), "rate_limited"))
+                                {"key": key, "cost": cost, "day_limit": day_limit},
+                            ).scalar_one()
+                        )
+                        raise _Denied(Admission(False, max(1, reset), "rate_limited"))
                     if subject == "global" and row[0] == cost:
                         self._cleanup(conn)
         except _Denied as exc:
