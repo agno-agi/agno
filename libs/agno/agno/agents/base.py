@@ -1,10 +1,11 @@
 import asyncio
 import json
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from copy import copy
 from dataclasses import dataclass, field
 from functools import partial
+from pathlib import Path
 from time import time
 from typing import (
     TYPE_CHECKING,
@@ -58,6 +59,7 @@ from agno.utils.string import parse_response_dict_str, parse_response_model_str
 
 if TYPE_CHECKING:
     from agno.sandbox import Sandbox
+    from agno.sandbox.checkpoint import CheckpointRef, CheckpointStore
     from agno.sandbox.repository import Repository
     from agno.tools.component import ComponentTool
 
@@ -1355,6 +1357,80 @@ class BaseExternalAgent:
             return None
         session = await self.aget_session(session_id, user_id)
         return self._find_run_in_session(session, run_id) if session else None
+
+    # ---------------------------------------------------------------------------
+    # Sandbox checkpoints
+    # ---------------------------------------------------------------------------
+
+    @property
+    def checkpoint_store(self) -> "CheckpointStore":
+        """The store this agent's sandbox turns checkpoint to.
+
+        The sandbox's ``checkpoints=`` store, else the host-local file default. The default
+        is refused while a durable queue worker is active, as the coordinator refuses it,
+        because another replica cannot read this host's disk.
+        """
+        return _sandbox_harness().store(self)
+
+    @asynccontextmanager
+    async def aopen_run_checkpoint(self, run_id: str) -> AsyncIterator[Path]:
+        """Open the checkpoint a completed sandbox run committed and yield its archive path.
+
+        The path holds the archive's stored bytes, verified by the store before it is yielded,
+        read-only, and is valid only inside the context. Extract them with
+        ``CheckpointArchive.arestore(path, destination)``, which documents the restored layout.
+        Refused when the run is unknown, belongs to another agent, is not COMPLETED or
+        committed no checkpoint.
+        """
+        store = self.checkpoint_store
+        reference = self._run_checkpoint_ref(run_id, await self._aread_run_row(run_id))
+        async with store.aopen_archive(reference) as archive:
+            yield archive
+
+    @contextmanager
+    def open_run_checkpoint(self, run_id: str) -> Iterator[Path]:
+        """Sync ``aopen_run_checkpoint``; an async database must use the async form, as with ``get_session``."""
+        store = self.checkpoint_store
+        reference = self._run_checkpoint_ref(run_id, self._read_run_row(run_id))
+        with store.open_archive(reference) as archive:
+            yield archive
+
+    def _read_run_row(self, run_id: str) -> Any:
+        if self.db is None:
+            raise ValueError(f"{type(self).__name__} has no database to read run {run_id} from")
+        if isinstance(self.db, AsyncBaseDb):
+            # An async engine's pooled connections belong to the loop that first used them, and a
+            # query on another loop fails inside get_run, which would then look like a missing run.
+            raise ValueError("Use aopen_run_checkpoint with an async database")
+        return self.db.get_run(run_id, deserialize=False)
+
+    async def _aread_run_row(self, run_id: str) -> Any:
+        if self.db is None:
+            raise ValueError(f"{type(self).__name__} has no database to read run {run_id} from")
+        if isinstance(self.db, BaseDb):
+            return self.db.get_run(run_id, deserialize=False)
+        return await self.db.get_run(run_id, deserialize=False)
+
+    def _run_checkpoint_ref(self, run_id: str, row: Any) -> "CheckpointRef":
+        """The checkpoint reference a completed run of this agent committed, from its stored row."""
+        from agno.sandbox.checkpoint import CheckpointRef
+
+        if not isinstance(row, dict):
+            raise ValueError(f"Run {run_id} does not exist")
+        if row.get("agent_id") != self.get_id():
+            raise ValueError(f"Run {run_id} belongs to another agent")
+        run_data = row.get("run_data") or {}
+        if isinstance(run_data, str):
+            run_data = json.loads(run_data)
+        status = str(row.get("status") or run_data.get("status") or "").upper()
+        if status != RunStatus.completed.value:
+            raise ValueError(
+                f"Run {run_id} is {status or 'unknown'}, not COMPLETED; only a completed turn commits a checkpoint"
+            )
+        checkpoint = ((run_data.get("metadata") or {}).get("sandbox") or {}).get("checkpoint")
+        if not isinstance(checkpoint, dict):
+            raise ValueError(f"Run {run_id} committed no sandbox checkpoint")
+        return CheckpointRef(**checkpoint)
 
     # ---------------------------------------------------------------------------
     # One turn per session

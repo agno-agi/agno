@@ -90,6 +90,7 @@ The store has no public API of its own, so these steps are walked against a real
 | `session_computer.py` | Several turns of one session: turn 2 resumes turn 1's computer from its pause, a later turn after the warm window runs on a fresh computer restored from the checkpoint; retrying a finished run returns its stored result |
 | `resume_after_disconnect.py` | The caller drops mid-turn, the turn keeps running in its container, and another coordinator reattaches to it |
 | `cancel_turn.py` | A cancelled turn publishes nothing; the next turn continues from the last completed one |
+| `open_checkpoint.py` | A completed run's checkpoint opened on the host through the agent (`checkpoint_store`, `open_run_checkpoint`) and restored to a directory; unknown, unfinished and other agents' runs are refused |
 | `warm_turns.py` | Four turns on Docker or AgentCore (`--provider agentcore`): which path each takes, what it costs, and the cold fallback after the warm window; counts create and restore on the provider rather than guessing from timing |
 
 ```python

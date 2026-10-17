@@ -24,6 +24,7 @@ from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
     from agno.agents.base import BaseExternalAgent
+    from agno.sandbox.checkpoint import CheckpointStore
     from agno.sandbox.coordinator import SandboxCoordinator
 
 # The runtime sets these inside the sandbox, so the service-side values are not sent.
@@ -125,6 +126,35 @@ def validate(agent: "BaseExternalAgent") -> None:
     submission(agent, "validate", {})
 
 
+def store(agent: "BaseExternalAgent") -> "CheckpointStore":
+    """The checkpoint store this agent's turns write to: the sandbox's own, else the file default.
+
+    A coordinator already built for this agent's sandbox and database owns the answer, so a
+    reader opens exactly the store its turns commit to.
+    """
+    sandbox = _sandbox(agent)
+    for db, existing in _coordinators.get(sandbox, []):
+        if db is agent.db:
+            return existing.transfer.store
+    if sandbox.checkpoints is not None:
+        return sandbox.checkpoints
+    from agno.os.job_queue import get_active_queue_worker
+    from agno.sandbox.checkpoint import FileCheckpointStore
+
+    if get_active_queue_worker() is not None:
+        # A durable queue hands retries to any replica, and a replica cannot restore from this
+        # host's disk; refusing here is cheaper than a recovery that fails later somewhere else.
+        raise ValueError(
+            f"Sandbox checkpoints default to {_DEFAULT_CHECKPOINTS}, which other queue replicas cannot "
+            "read and which does not survive losing this host; pass checkpoints= to the sandbox"
+        )
+    log_warning(
+        f"Sandbox checkpoints default to {_DEFAULT_CHECKPOINTS}; pass checkpoints= to the sandbox before "
+        "running more than one host"
+    )
+    return FileCheckpointStore(_DEFAULT_CHECKPOINTS)
+
+
 def coordinator(agent: "BaseExternalAgent") -> "SandboxCoordinator":
     """The coordinator for this agent's sandbox and database, built once per pair."""
     from agno.sandbox.coordinator import SandboxCoordinator
@@ -135,24 +165,7 @@ def coordinator(agent: "BaseExternalAgent") -> "SandboxCoordinator":
     for db, existing in built:
         if db is agent.db:
             return existing
-    store = sandbox.checkpoints
-    if store is None:
-        from agno.os.job_queue import get_active_queue_worker
-        from agno.sandbox.checkpoint import FileCheckpointStore
-
-        if get_active_queue_worker() is not None:
-            # A durable queue hands retries to any replica, and a replica cannot restore from this
-            # host's disk; refusing here is cheaper than a recovery that fails later somewhere else.
-            raise ValueError(
-                f"Sandbox checkpoints default to {_DEFAULT_CHECKPOINTS}, which other queue replicas cannot "
-                "read and which does not survive losing this host; pass checkpoints= to the sandbox"
-            )
-        log_warning(
-            f"Sandbox checkpoints default to {_DEFAULT_CHECKPOINTS}; pass checkpoints= to the sandbox before "
-            "running more than one host"
-        )
-        store = FileCheckpointStore(_DEFAULT_CHECKPOINTS)
-    result = SandboxCoordinator(agent.db, sandbox, sandbox.checkpoint_transfer(store))  # type: ignore[arg-type]
+    result = SandboxCoordinator(agent.db, sandbox, sandbox.checkpoint_transfer(store(agent)))  # type: ignore[arg-type]
     built.append((agent.db, result))
     return result
 

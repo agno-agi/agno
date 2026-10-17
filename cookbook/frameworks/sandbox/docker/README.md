@@ -141,6 +141,18 @@ sandbox.exec(new_handle, ["sh", "-c", "cd /workspace && python -m venv .venv && 
 
 Reinstalling needs network access or a local package source, since sandbox networking defaults to `none`. Exclusions are never inferred, so dependencies are not dropped silently.
 
+## Opening a run's checkpoint on the host
+
+```bash
+AGNO_SANDBOX_IMAGE=agno-sandbox:local .venv/bin/python cookbook/frameworks/sandbox/docker/open_checkpoint.py
+```
+
+Two fixture turns of one session through `FixtureAgent`, then each run's checkpoint opened on the host through the agent and restored to a directory. No model credentials are required.
+
+`agent.checkpoint_store` is the `CheckpointStore` the agent's turns write to: the sandbox's `checkpoints=` store, else the host-local default, which is refused while a durable queue worker is active, exactly as the coordinator refuses it. `agent.open_run_checkpoint(run_id)` and `aopen_run_checkpoint` read the committed reference from the run row, have the store verify the object, and yield the archive path for the duration of the context; `CheckpointArchive.restore(path, destination)` extracts it. As with `get_session`, the sync form takes a sync database and refuses an async one, whose pooled connections belong to the loop that first used them. The restored directory holds `workspace/`, the agent's working directory as the turn left it, with the pinned checkout under `workspace/repository` when the agent has `repository=` configured, and `native/`, the harness home, less the credential files excluded at capture. A run that is unknown, belongs to another agent, is not `COMPLETED` or committed no checkpoint is refused with a `ValueError`; an object that retention has removed raises `CheckpointObjectNotFound`.
+
+This is the extraction path for a host process that needs a turn's results after its computer is gone, such as turning an engineer's edits into a patch: open the run's checkpoint, restore it, and diff `workspace/` against the starting tree. The reference on the run row is the one the turn published atomically with its result, so the files always match the run.
+
 ## Native recovery: the sandbox never runs a turn on state it cannot verify
 
 ```bash

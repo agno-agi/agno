@@ -534,6 +534,13 @@ class CheckpointArchive:
     def restore(self, source: Path, destination: Path) -> Dict[str, Any]:
         """Restore into a new directory; failure never exposes a partial destination.
 
+        ``destination`` then holds the archive's two roots: ``workspace/``, the agent's
+        working directory as the turn left it, with the pinned checkout under
+        ``workspace/repository`` when the agent has a repository configured, and
+        ``native/``, the harness home with its conversation transcript and local history
+        database, less the credential files excluded at capture. The manifest is not
+        written out; its state is the return value.
+
         The parent directory is trusted coordinator-owned storage. It must not be
         writable by sandbox processes or concurrent callers targeting this path.
         """
@@ -665,7 +672,8 @@ class FileCheckpointStore:
     A service-host local disk does not cover host loss. Production callers must
     choose storage whose replication/durability matches their recovery promise.
     Objects are unreachable until a database transaction publishes their reference.
-    Deletion/retention is intentionally separate from compute destruction.
+    Deletion/retention is intentionally separate from compute destruction. Objects are
+    stored read-only, so a path leased by ``open_archive`` cannot alter them.
     """
 
     def __init__(self, root: Path, *, max_bytes: int = 1024 * 1024 * 1024) -> None:
@@ -691,6 +699,9 @@ class FileCheckpointStore:
                     output.write(chunk)
                 output.flush()
                 os.fsync(output.fileno())
+                # Every name for this object, including the ones open_archive leases out, shares
+                # its mode, so the bytes a reference describes cannot be edited through any of them.
+                os.fchmod(output.fileno(), 0o400)
             reference = CheckpointRef(digest.hexdigest(), size)
             target = self.root / reference.sha256
             try:

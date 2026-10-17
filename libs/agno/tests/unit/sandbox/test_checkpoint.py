@@ -266,6 +266,7 @@ def test_corrupt_or_missing_object_is_not_restored(tmp_path, roots):
     store = FileCheckpointStore(tmp_path / "objects")
     reference = store.put(capture(tmp_path, roots))
     path = store.root / reference.sha256
+    path.chmod(0o600)
     with path.open("r+b") as stream:
         stream.write(b"corrupt")
     with pytest.raises(SandboxError, match="checksum"):
@@ -289,6 +290,7 @@ def test_existing_corrupt_object_is_not_overwritten(tmp_path, roots):
     store = FileCheckpointStore(tmp_path / "objects")
     reference = store.put(source)
     path = store.root / reference.sha256
+    path.chmod(0o600)
     path.write_bytes(b"corrupt")
     with pytest.raises(SandboxError, match="size"):
         store.put(source)
@@ -1058,6 +1060,7 @@ def test_open_archive_yields_the_stored_bytes_and_keeps_the_object(tmp_path, roo
 def test_open_archive_refuses_an_object_that_does_not_match_its_reference(tmp_path, roots):
     store = FileCheckpointStore(tmp_path / "objects")
     reference = store.put(capture(tmp_path, roots))
+    (store.root / reference.sha256).chmod(0o600)
     (store.root / reference.sha256).write_bytes(b"corrupt")
     entered = False
     with pytest.raises(SandboxError, match="size"):
@@ -1352,6 +1355,7 @@ def test_corrupt_and_oversized_objects_keep_their_existing_errors(tmp_path, root
     original = path.read_bytes()
     damaged = bytearray(original)
     damaged[len(damaged) // 2] ^= 0xFF
+    path.chmod(0o600)
     path.write_bytes(bytes(damaged))
     with pytest.raises(SandboxError, match="checksum") as caught:
         store.verify(reference)
@@ -1514,6 +1518,8 @@ def replace_canonical(store, reference, content):
 
 
 def corrupt_in_place(path):
+    # Stored objects are read-only; corruption from outside the store lifts that first.
+    path.chmod(0o600)
     with path.open("r+b") as stream:
         first = stream.read(1)
         stream.seek(0)
