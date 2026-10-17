@@ -867,6 +867,14 @@ class Model(ABC):
                     if any(not req.is_resolved() for req in run_response.requirements):
                         break
 
+                # If every tool call in this batch was refused because the tool call
+                # limit was exhausted, no further tool work is possible: the budget is
+                # spent, so the next turn can only produce the same refusals. Break
+                # instead of looping. Ordinary tool failures are deliberately excluded
+                # here - the model should still see those and be able to recover.
+                if function_call_results and all(m.tool_call_limit_reached for m in function_call_results):
+                    break
+
                 # Continue loop to get next response
                 continue
 
@@ -1089,6 +1097,14 @@ class Model(ABC):
                 if run_response is not None and run_response.requirements:
                     if any(not req.is_resolved() for req in run_response.requirements):
                         break
+
+                # If every tool call in this batch was refused because the tool call
+                # limit was exhausted, no further tool work is possible: the budget is
+                # spent, so the next turn can only produce the same refusals. Break
+                # instead of looping. Ordinary tool failures are deliberately excluded
+                # here - the model should still see those and be able to recover.
+                if function_call_results and all(m.tool_call_limit_reached for m in function_call_results):
+                    break
 
                 # Continue loop to get next response
                 continue
@@ -1598,6 +1614,14 @@ class Model(ABC):
                     if any(not req.is_resolved() for req in run_response.requirements):
                         break
 
+                # If every tool call in this batch was refused because the tool call
+                # limit was exhausted, no further tool work is possible: the budget is
+                # spent, so the next turn can only produce the same refusals. Break
+                # instead of looping. Ordinary tool failures are deliberately excluded
+                # here - the model should still see those and be able to recover.
+                if function_call_results and all(m.tool_call_limit_reached for m in function_call_results):
+                    break
+
                 # Continue loop to get next response
                 continue
 
@@ -1878,6 +1902,14 @@ class Model(ABC):
                 if run_response is not None and run_response.requirements:
                     if any(not req.is_resolved() for req in run_response.requirements):
                         break
+
+                # If every tool call in this batch was refused because the tool call
+                # limit was exhausted, no further tool work is possible: the budget is
+                # spent, so the next turn can only produce the same refusals. Break
+                # instead of looping. Ordinary tool failures are deliberately excluded
+                # here - the model should still see those and be able to recover.
+                if function_call_results and all(m.tool_call_limit_reached for m in function_call_results):
+                    break
 
                 # Continue loop to get next response
                 continue
@@ -2227,6 +2259,7 @@ class Model(ABC):
             tool_name=function_call.function.name,
             tool_args=function_call.arguments,
             tool_call_error=True,
+            tool_call_limit_reached=True,
         )
 
     def run_function_call(
