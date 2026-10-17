@@ -1,5 +1,34 @@
 # Test Log
 
+### parlayapi.py
+
+**Status:** PASS (offline discovery and configuration)
+
+**Description:** Agno 3.0.9 connects over stdio to the published parlayapi-mcp
+0.3.7 package. The default discovers four read-only metadata tools without calling
+ParlayAPI or a model. Private discovery exposes seven allowlisted tools with a
+test-only key. Tests block TCP connections in the actual server subprocess and
+verify credential isolation, server-version pinning, excluded mutation tools,
+and agent configuration with model execution replaced by an inspection function.
+
+**Result:** Six focused tests pass on Python 3.12 with MCP 2.2.0 and FastMCP
+4.0.3. The default command and full repository `scripts/format.sh` and
+`scripts/validate.sh` pass. Validation used mypy 2.1.0 and required the repository's
+`types-regex` development dependency. Checks ran in a full verification worktree;
+formatting changed no contribution files and one unrelated existing test's layout.
+No live data request, model inference or unrelated runtime test suite was run.
+
+```bash
+python -m pytest -q --noconftest cookbook/91_tools/mcp/test_parlayapi.py
+python cookbook/91_tools/mcp/parlayapi.py
+ruff format --check cookbook/91_tools/mcp/parlayapi.py cookbook/91_tools/mcp/test_parlayapi.py
+ruff check cookbook/91_tools/mcp/parlayapi.py cookbook/91_tools/mcp/test_parlayapi.py
+bash scripts/format.sh
+bash scripts/validate.sh
+```
+
+---
+
 ### magic_hour.py
 
 **Status:** PASS
