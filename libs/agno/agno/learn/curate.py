@@ -28,7 +28,7 @@ from agno.utils.log import log_debug
 class Curator:
     """Memory maintenance. Keeps things tidy.
 
-    Currently supports user_profile store only.
+    Supports user_memory and user_profile stores.
     """
 
     machine: Any  # LearningMachine
@@ -38,26 +38,28 @@ class Curator:
         user_id: str,
         max_age_days: int = 0,
         max_count: int = 0,
+        store_key: str = "user_memory",
     ) -> int:
-        """Remove old memories from user profile.
+        """Remove old memories from the specified memory store.
 
         Args:
             user_id: User to prune memories for.
             max_age_days: Remove memories older than this (0 = disabled).
             max_count: Keep at most this many memories (0 = disabled).
+            store_key: Key of store to prune (default "user_memory").
 
         Returns:
             Number of memories removed.
         """
-        store = self.machine.stores.get("user_profile")
+        store = self.machine.stores.get(store_key)
         if not store:
             return 0
 
-        profile = store.get(user_id=user_id)
-        if not profile or not hasattr(profile, "memories"):
+        entity = store.get(user_id=user_id)
+        if not entity or not hasattr(entity, "memories"):
             return 0
 
-        memories = profile.memories
+        memories = entity.memories
         if not memories:
             return 0
 
@@ -75,35 +77,37 @@ class Curator:
         removed = original_count - len(memories)
 
         if removed > 0:
-            profile.memories = memories
-            store.save(user_id=user_id, profile=profile)
-            log_debug(f"Curator.prune: removed {removed} memories for user_id={user_id}")
+            entity.memories = memories
+            store.save(user_id, entity)
+            log_debug(f"Curator.prune: removed {removed} memories for user_id={user_id} in {store_key}")
 
         return removed
 
     def deduplicate(
         self,
         user_id: str,
+        store_key: str = "user_memory",
     ) -> int:
-        """Remove duplicate memories from user profile.
+        """Remove duplicate memories from the specified memory store.
 
         Uses exact and near-exact string matching.
 
         Args:
             user_id: User to deduplicate memories for.
+            store_key: Key of store to deduplicate (default "user_memory").
 
         Returns:
             Number of duplicate memories removed.
         """
-        store = self.machine.stores.get("user_profile")
+        store = self.machine.stores.get(store_key)
         if not store:
             return 0
 
-        profile = store.get(user_id=user_id)
-        if not profile or not hasattr(profile, "memories"):
+        entity = store.get(user_id=user_id)
+        if not entity or not hasattr(entity, "memories"):
             return 0
 
-        memories = profile.memories
+        memories = entity.memories
         if len(memories) < 2:
             return 0
 
@@ -112,9 +116,9 @@ class Curator:
         removed = original_count - len(unique_memories)
 
         if removed > 0:
-            profile.memories = unique_memories
-            store.save(user_id=user_id, profile=profile)
-            log_debug(f"Curator.deduplicate: removed {removed} duplicates for user_id={user_id}")
+            entity.memories = unique_memories
+            store.save(user_id, entity)
+            log_debug(f"Curator.deduplicate: removed {removed} duplicates for user_id={user_id} in {store_key}")
 
         return removed
 
@@ -122,21 +126,26 @@ class Curator:
     # Helpers
     # =========================================================================
 
+    def _get_field(self, m: Any, field_name: str, default: Any = None) -> Any:
+        if isinstance(m, dict):
+            return m.get(field_name, default)
+        return getattr(m, field_name, default)
+
     def _filter_by_age(
         self,
-        memories: List[dict],
+        memories: List[Any],
         cutoff: datetime,
-    ) -> List[dict]:
+    ) -> List[Any]:
         """Keep memories newer than cutoff."""
         result = []
         for m in memories:
-            created_at = m.get("created_at")
+            created_at = self._get_field(m, "created_at")
             if not created_at:
                 result.append(m)  # Keep if no timestamp
                 continue
 
             try:
-                created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                created = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
                 if created >= cutoff:
                     result.append(m)
             except (ValueError, TypeError):
@@ -146,28 +155,28 @@ class Curator:
 
     def _keep_newest(
         self,
-        memories: List[dict],
+        memories: List[Any],
         count: int,
-    ) -> List[dict]:
+    ) -> List[Any]:
         """Keep the N newest memories."""
         sorted_memories = sorted(
             memories,
-            key=lambda m: m.get("created_at", ""),
+            key=lambda m: str(self._get_field(m, "created_at", "") or ""),
             reverse=True,
         )
         return sorted_memories[:count]
 
     def _remove_duplicates(
         self,
-        memories: List[dict],
-    ) -> List[dict]:
+        memories: List[Any],
+    ) -> List[Any]:
         """Remove exact and near-exact duplicate memories."""
         seen = set()
         unique = []
 
         for m in memories:
-            content = m.get("content", "")
-            normalized = self._normalize(content)
+            content = self._get_field(m, "content", "") or ""
+            normalized = self._normalize(str(content))
 
             if normalized not in seen:
                 seen.add(normalized)
