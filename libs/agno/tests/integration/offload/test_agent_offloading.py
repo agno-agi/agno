@@ -865,6 +865,35 @@ def test_read_result_refuses_a_result_belonging_to_another_user(db):
     assert "different user" in reply
 
 
+def test_read_result_can_project_a_stored_json_pointer(db):
+    from agno.offload.tools import get_read_result_function
+    from agno.run import RunContext
+
+    agent = Agent(model=ScriptedToolModel(), db=db, tools=[fetch_page], offload_tool_results=True)
+    agent.initialize_agent()
+    session_id = _sid()
+    payload = json.dumps({"meta": {"total": 2}, "data": {"items": [{"id": 1}, {"id": 2}]}})
+    ref = agent.result_store.offload(
+        session_id=session_id,
+        run_id="json-run",
+        tool_call_id="json-call",
+        tool_name="fetch_json",
+        tool_args={},
+        output=payload,
+    )
+
+    read_tool = get_read_result_function(
+        agent,
+        run_context=RunContext(session_id=session_id, run_id="read-run"),
+    )
+    reply = read_tool.entrypoint(result_id=ref.result_id, json_pointer="/data/items/1")
+
+    assert 'JSON pointer "/data/items/1"' in reply
+    assert '"id": 2' in reply
+    assert "json_pointer" in read_tool.parameters["properties"]
+    assert "json_pointer" not in read_tool.parameters["required"]
+
+
 def test_the_read_back_tools_do_not_spend_the_tool_call_limit(db):
     agent = Agent(
         model=ScriptedToolModel(),

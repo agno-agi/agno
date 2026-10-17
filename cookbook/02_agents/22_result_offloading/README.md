@@ -19,6 +19,14 @@ Nothing is summarized away, there is no model call on the write path, and
 every read back is capped. Substitution happens before the tool message is
 built, so the persisted session row carries the envelope too.
 
+JSON results can be read selectively without loading the whole document into
+the model context. Pass an [RFC 6901 JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901)
+to `read_result`; `""` selects the root and `/data/items/0` selects the first
+item. The selected subtree is serialized and then goes through the same
+16,000-character / 400-line page limits. If the reply says that more follows,
+repeat the same `json_pointer` together with the returned line or character
+offset on the next call.
+
 Pass a `ResultStore` to change the defaults:
 
 ```python
@@ -58,7 +66,7 @@ Teams offload member answers the same way: see
 | Example | What it shows |
 |---|---|
 | [`01_offload_tool_results.py`](./01_offload_tool_results.py) | A tool returns 143KB; the transcript holds under 1KB and the model still answers correctly. |
-| [`02_result_store.py`](./02_result_store.py) | `ResultStore` used directly: offload, read a page, search, `live_ids()`, paging through a whole payload, cleanup. |
+| [`02_result_store.py`](./02_result_store.py) | `ResultStore` used directly: offload, read a page, JSON-pointer projection, search, `live_ids()`, paging through a whole payload, cleanup. |
 | [`03_where_results_live.py`](./03_where_results_live.py) | The three places a result lands: the envelope in the session row, the index row in `agno_tool_results`, the payload in AgentFS (`agno_fs`), counted with plain SQL. |
 | [`04_custom_store_settings.py`](./04_custom_store_settings.py) | Threshold, preview size and a one-hour lifetime through `ResultStore(...)`; the bound copy on `agent.result_store`; the expiry sweep. |
 | [`05_payloads_on_disk.py`](./05_payloads_on_disk.py) | `ResultStore(fs=...)` sends payloads to a local directory while the index stays on the db; the delete cascade removes the files. |
