@@ -1096,3 +1096,66 @@ async def test_media_download_success_no_skip_notice():
         message_text = agent_mock.arun.call_args[0][0]
         # No skip notice — clean caption only
         assert message_text == "Nice photo"
+
+
+# === Webhook Verification: constant-time token comparison ===
+
+
+def _as_bytes(value) -> bytes:
+    return value if isinstance(value, bytes) else str(value).encode("utf-8", "surrogateescape")
+
+
+def test_webhook_verification_compares_token_in_constant_time():
+    """The verify token must be checked with ``hmac.compare_digest``, not ``==``.
+
+    ``GET /webhook`` is unauthenticated (the WhatsApp interface is excluded from the
+    AgentOS auth layer) and ``hub.verify_token`` is a caller-controlled query param, so a
+    short-circuiting comparison leaks the configured token one byte at a time.
+    """
+    import hmac as hmac_module
+
+    agent_mock = _make_agent_mock()
+    real_compare_digest = hmac_module.compare_digest
+    compared: list = []
+
+    def _spy(a, b):
+        compared.append((_as_bytes(a), _as_bytes(b)))
+        return real_compare_digest(a, b)
+
+    with (
+        patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
+        patch.dict("os.environ", WHATSAPP_ENV),
+        patch("hmac.compare_digest", _spy),
+    ):
+        app = _build_app(agent_mock)
+        client = TestClient(app)
+
+        accepted = client.get(
+            "/webhook",
+            params={
+                "hub.mode": "subscribe",
+                "hub.verify_token": "test-verify-token",
+                "hub.challenge": "challenge_123",
+            },
+        )
+        rejected = client.get(
+            "/webhook",
+            params={
+                "hub.mode": "subscribe",
+                "hub.verify_token": "test-verify-tokeM",
+                "hub.challenge": "challenge_123",
+            },
+        )
+
+    # Behaviour is unchanged: the right token still verifies, a wrong one still 403s
+    assert accepted.status_code == 200
+    assert accepted.text == "challenge_123"
+    assert rejected.status_code == 403
+
+    expected = b"test-verify-token"
+    assert any(expected in pair for pair in compared), (
+        "the configured verify token never reached hmac.compare_digest — it is being compared in non-constant time"
+    )
+    assert any(b"test-verify-tokeM" in pair for pair in compared), (
+        "the rejected verify token never reached hmac.compare_digest"
+    )
