@@ -70,6 +70,7 @@ def filter_expr_to_sqlalchemy(
 
     Args:
         filter_dict: Serialized FilterExpr (from to_dict() or JSON body).
+            EQ and NEQ accept an explicit None value to compare with SQL NULL.
         table: SQLAlchemy Table object.
         allowed_columns: Set of allowed column names for validation.
             If provided, raises ValueError for unknown columns.
@@ -98,7 +99,7 @@ def filter_expr_to_sqlalchemy(
         key = filter_dict.get("key")
         value = filter_dict.get("value")
 
-        if key is None or value is None:
+        if key is None or "value" not in filter_dict or (value is None and op not in ("EQ", "NEQ")):
             raise ValueError(f"{op} filter requires 'key' and 'value' fields. Got: {filter_dict}")
 
         # Field validation
