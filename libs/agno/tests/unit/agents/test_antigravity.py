@@ -237,7 +237,7 @@ def test_extract_final_text_prefers_outputs_over_steps():
 
 def test_resolved_agent_uses_custom_agent_name_when_set():
     base = AntigravityAgent(name="T", api_key="dummy")
-    assert base._resolved_agent() == "antigravity-preview-05-2026"
+    assert base._resolved_agent() == "antigravity-preview-09-2026"
 
     custom = AntigravityAgent(name="T", api_key="dummy", custom_agent_name="my-bot")
     assert custom._resolved_agent() == "my-bot"
@@ -310,7 +310,7 @@ def test_ensure_custom_agent_posts_agent_definition():
     assert captured[0]["url"].endswith("/agents")
     posted = captured[0]["body"]
     assert posted["name"] == "my-bot"
-    assert posted["base_agent"] == "antigravity-preview-05-2026"
+    assert posted["base_agent"] == "antigravity-preview-09-2026"
     assert posted["instructions"] == "be terse"
     assert posted["description"] == "desc"
     assert posted["base_environment"] == {
