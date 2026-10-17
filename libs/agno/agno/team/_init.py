@@ -968,6 +968,8 @@ async def _disconnect_mcp_tools(team: "Team") -> None:
         except Exception as e:
             log_warning(f"Error disconnecting tool: {str(e)}")
     team._mcp_tools_initialized_on_run = []
+    if team.skills is not None:
+        await team.skills.aclose()
 
 
 def _connect_connectable_tools(team: "Team") -> None:
