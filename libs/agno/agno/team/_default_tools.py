@@ -68,6 +68,7 @@ from agno.run.team import (
     TeamRunOutputEvent,
 )
 from agno.session import TeamSession
+from agno.team._member_execution import run_member_sync, stream_member_sync
 from agno.tools.function import Function
 from agno.utils.knowledge import (
     get_agentic_or_user_search_filters,
@@ -721,7 +722,8 @@ def _get_delegate_task_function(
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     register_member_run(run_response.run_id, member_run_id)
-                member_agent_run_response_stream = member_agent.run(
+                member_agent_run_response_stream = stream_member_sync(
+                    member_agent,
                     input=member_agent_task if not history else history,
                     user_id=user_id,
                     # All members have the same session_id
@@ -735,6 +737,7 @@ def _get_delegate_task_function(
                     stream_events=stream_events or team.stream_member_events,
                     debug_mode=debug_mode,
                     dependencies=run_context.dependencies,
+                    run_context=run_context,
                     add_dependencies_to_context=add_dependencies_to_context,
                     metadata=run_context.metadata,
                     add_session_state_to_context=add_session_state_to_context,
@@ -782,7 +785,8 @@ def _get_delegate_task_function(
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     register_member_run(run_response.run_id, member_run_id)
-                member_agent_run_response = member_agent.run(  # type: ignore
+                member_agent_run_response = run_member_sync(
+                    member_agent,
                     input=member_agent_task if not history else history,  # type: ignore
                     user_id=user_id,
                     # All members have the same session_id
@@ -795,6 +799,7 @@ def _get_delegate_task_function(
                     stream=False,
                     debug_mode=debug_mode,
                     dependencies=run_context.dependencies,
+                    run_context=run_context,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                     metadata=run_context.metadata,
@@ -1077,7 +1082,8 @@ def _get_delegate_task_function(
                     member_run_id = str(uuid4())
                     if run_response.run_id is not None:
                         register_member_run(run_response.run_id, member_run_id)
-                    member_agent_run_response_stream = member_agent.run(
+                    member_agent_run_response_stream = stream_member_sync(
+                        member_agent,
                         input=member_agent_task if not history else history,
                         user_id=user_id,
                         # All members have the same session_id
@@ -1094,6 +1100,7 @@ def _get_delegate_task_function(
                         else None,
                         debug_mode=debug_mode,
                         dependencies=run_context.dependencies,
+                        run_context=run_context,
                         add_dependencies_to_context=add_dependencies_to_context,
                         add_session_state_to_context=add_session_state_to_context,
                         metadata=run_context.metadata,
@@ -1141,7 +1148,8 @@ def _get_delegate_task_function(
                     member_run_id = str(uuid4())
                     if run_response.run_id is not None:
                         register_member_run(run_response.run_id, member_run_id)
-                    member_agent_run_response = member_agent.run(  # type: ignore
+                    member_agent_run_response = run_member_sync(
+                        member_agent,
                         input=member_agent_task if not history else history,
                         user_id=user_id,
                         # All members have the same session_id
@@ -1157,6 +1165,7 @@ def _get_delegate_task_function(
                         else None,
                         debug_mode=debug_mode,
                         dependencies=run_context.dependencies,
+                        run_context=run_context,
                         add_dependencies_to_context=add_dependencies_to_context,
                         add_session_state_to_context=add_session_state_to_context,
                         metadata=run_context.metadata,
