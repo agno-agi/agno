@@ -10,6 +10,8 @@ answer -- so a red glyph is explainable without walking the result objects by ha
 
 from typing import Any, Dict, List, Optional, Sequence
 
+from agno.environments._engine import StopReason
+
 PASS_GLYPH = "█"  # full block
 FAIL_GLYPH = "░"  # light shade
 UNSCORED_GLYPH = "▲"  # triangle
@@ -33,7 +35,7 @@ def build_grid(
     stopped_early: Optional[str] = None,
 ) -> str:
     """The static grid. Each row: {id, glyphs, n_passed, n_scored, pass_rate,
-    learning_zone, n_unscored}."""
+    learning_zone, n_unscored, n_truncated}."""
     header = f"{env_name}                 k={k} · {n_attempts} attempts · {round(duration_seconds)}s"
     if total_cost is not None:
         # Only when a provider actually reported cost; no price table is bundled.
@@ -49,6 +51,10 @@ def build_grid(
             tags.append("learning zone")
         if row.get("n_unscored"):
             tags.append(f"{row['n_unscored']} unscored")
+        if row.get("n_truncated"):
+            # Which kind of unscored: a row of truncations means the output cap is too
+            # low, which reads nothing like an unreliable agent.
+            tags.append(f"{row['n_truncated']} truncated")
         if tags:
             line += "   " + "   ".join(tags)
         lines.append(line)
@@ -187,12 +193,15 @@ class LiveGrid:
             n_passed = 0
             n_scored = 0
             n_unscored = 0
+            n_truncated = 0
             for attempt_index in range(self._k):
                 attempt = self._slots[task_index][attempt_index]
                 if not self._filled[task_index][attempt_index] or attempt is None:
                     glyphs += " "
                     continue
                 glyphs += attempt_glyph(attempt.score)
+                if attempt.stop_reason == StopReason.truncated:
+                    n_truncated += 1
                 if attempt.score is None:
                     n_unscored += 1
                 else:
@@ -208,6 +217,7 @@ class LiveGrid:
                     "pass_rate": (n_passed / n_scored) if n_scored else None,
                     "learning_zone": False,  # settled after the run; too noisy mid-flight
                     "n_unscored": n_unscored,
+                    "n_truncated": n_truncated,
                 }
             )
         text = build_grid(
