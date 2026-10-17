@@ -1347,12 +1347,13 @@ class Gemini(Model):
                 for chunk in chunks:
                     if not chunk:
                         continue
-                    web = chunk.web
-                    if not web:
+                    source = chunk.web or chunk.retrieved_context
+                    if not source:
                         continue
-                    uri = web.uri
-                    title = web.title
-                    if uri:
+                    uri = source.uri
+                    title = source.title
+                    existing_urls = [citation.url for citation in citations_urls]
+                    if uri and uri not in existing_urls:
                         citations_urls.append(UrlCitation(url=uri, title=title))
 
             # Handle URLs from URL context tool
@@ -1500,12 +1501,13 @@ class Gemini(Model):
                 for chunk in chunks:
                     if not chunk:
                         continue
-                    web = chunk.web
-                    if not web:
+                    source = chunk.web or chunk.retrieved_context
+                    if not source:
                         continue
-                    uri = web.uri
-                    title = web.title
-                    if uri:
+                    uri = source.uri
+                    title = source.title
+                    existing_urls = [citation.url for citation in citations.urls]
+                    if uri and uri not in existing_urls:
                         citations.urls.append(UrlCitation(url=uri, title=title))
 
             # Handle URLs from URL context tool
