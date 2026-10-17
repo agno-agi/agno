@@ -11,6 +11,7 @@ import httpx
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
+from slack_sdk.errors import SlackApiError
 
 from agno.agent import RunEvent
 from agno.models.response import ToolExecution
@@ -197,6 +198,35 @@ def _routed_app(agent_mock: Any, **kwargs: Any) -> Iterator[FastAPI]:
         patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
     ):
         yield build_app(agent_mock, **kwargs)
+
+
+def _thread_reply_body(
+    event_type: str,
+    text: str,
+    thread_ts: str | None = "1708123456.000100",
+    ts: str = "1708123456.000200",
+    channel_type: str = "channel",
+) -> dict[str, Any]:
+    event: Dict[str, Any] = {"type": event_type, "text": text, "user": "U456", "channel": "C123", "ts": ts}
+    if thread_ts is not None:
+        event["thread_ts"] = thread_ts
+    # Slack sets channel_type on message events only; app_mention events never carry it
+    if event_type == "message":
+        event["channel_type"] = channel_type
+    return {"type": "event_callback", "authorizations": [{"user_id": "U_BOT"}], "event": event}
+
+
+def _client_with_thread_root(root_text: str) -> AsyncMock:
+    client = make_async_client_mock()
+    client.conversations_replies = AsyncMock(return_value={"ok": True, "messages": [{"text": root_text}]})
+    return client
+
+
+def _slack_mock_with_bot_identity() -> Mock:
+    # attach_routes learns its own bot identity from auth.test at mount time
+    mock_slack = make_slack_mock(token="xoxb-test")
+    mock_slack.client.auth_test = Mock(return_value={"ok": True, "bot_id": "B_BOT", "user_id": "U_BOT"})
+    return mock_slack
 
 
 class TestEventHandlerHelpers:
@@ -970,6 +1000,277 @@ class TestEventRetryDedupe:
         assert resp.status_code == 200
         await asyncio.sleep(0.1)
         agent_mock.arun.assert_not_called()
+
+
+class TestThreadRepliesAfterMention:
+    @pytest.mark.asyncio
+    async def test_plain_thread_reply_runs_when_root_mentioned_bot(self):
+        agent_mock = make_agent_mock()
+        mock_slack = _slack_mock_with_bot_identity()
+        mock_client = _client_with_thread_root("<@U_BOT> summarize this incident")
+
+        with (
+            patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
+            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client),
+        ):
+            app = build_app(agent_mock, reply_to_thread_after_mention=True)
+            from fastapi.testclient import TestClient
+
+            client = TestClient(app)
+            resp = make_signed_request(client, _thread_reply_body("message", "the outage started at 09:00"))
+
+        assert resp.status_code == 200
+        await wait_for_call(agent_mock.arun)
+        agent_mock.arun.assert_called_once()
+        assert agent_mock.arun.call_args.args[0] == "the outage started at 09:00"
+
+    @pytest.mark.asyncio
+    async def test_mention_reply_in_thread_runs_once(self):
+        # Slack delivers one @mention as both app_mention and message; only one may run
+        agent_mock = make_agent_mock()
+        mock_slack = _slack_mock_with_bot_identity()
+        mock_client = _client_with_thread_root("<@U_BOT> summarize this incident")
+
+        with (
+            patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
+            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client),
+        ):
+            app = build_app(agent_mock, reply_to_thread_after_mention=True)
+            from fastapi.testclient import TestClient
+
+            client = TestClient(app)
+            text = "<@U_BOT> also check the db logs"
+            statuses = [
+                make_signed_request(client, _thread_reply_body(event_type, text)).status_code
+                for event_type in ("app_mention", "message")
+            ]
+
+        assert statuses == [200, 200]
+        await wait_for_call(agent_mock.arun)
+        assert agent_mock.arun.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_flag_reaches_gate_through_slack_interface(self):
+        from agno.os.interfaces.slack.slack import Slack
+
+        agent_mock = make_agent_mock()
+        mock_slack = _slack_mock_with_bot_identity()
+        mock_client = _client_with_thread_root("<@U_BOT> summarize this incident")
+
+        with (
+            patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
+            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client),
+        ):
+            app = FastAPI()
+            app.include_router(
+                Slack(agent=agent_mock, prefix="", streaming=False, reply_to_thread_after_mention=True).get_router()
+            )
+            from fastapi.testclient import TestClient
+
+            client = TestClient(app)
+            resp = make_signed_request(client, _thread_reply_body("message", "the outage started at 09:00"))
+
+        assert resp.status_code == 200
+        await wait_for_call(agent_mock.arun)
+        agent_mock.arun.assert_called_once()
+
+    def test_missing_history_scope_answers_200_without_run(self):
+        agent_mock = make_agent_mock()
+        mock_slack = _slack_mock_with_bot_identity()
+        mock_client = make_async_client_mock()
+        mock_client.conversations_replies = AsyncMock(
+            side_effect=SlackApiError("missing_scope", Mock(data={"ok": False, "error": "missing_scope"}))
+        )
+
+        with (
+            patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
+            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client),
+        ):
+            app = build_app(agent_mock, reply_to_thread_after_mention=True)
+            from fastapi.testclient import TestClient
+
+            client = TestClient(app)
+            resp = make_signed_request(client, _thread_reply_body("message", "the outage started at 09:00"))
+
+        assert resp.status_code == 200
+        agent_mock.arun.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_app_mention_resolves_and_message_twin_does_not(self):
+        handler = _make_event_handler(
+            reply_to_mentions_only=True, reply_to_thread_after_mention=True, own_bot_user_id="U_BOT"
+        )
+        mock_client = _client_with_thread_root("<@U_BOT> summarize this incident")
+
+        with patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client):
+            mention = await handler.resolve_context(
+                _thread_reply_body("app_mention", "<@U_BOT> also check the db logs")
+            )
+            twin = await handler.resolve_context(_thread_reply_body("message", "<@U_BOT> also check the db logs"))
+
+        assert mention is not None
+        assert twin is None
+
+    @pytest.mark.asyncio
+    async def test_flag_off_keeps_thread_reply_blocked_without_lookup(self):
+        handler = _make_event_handler(
+            reply_to_mentions_only=True, reply_to_thread_after_mention=False, own_bot_user_id="U_BOT"
+        )
+        mock_client = _client_with_thread_root("<@U_BOT> summarize this incident")
+
+        with patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client):
+            ctx = await handler.resolve_context(_thread_reply_body("message", "the outage started at 09:00"))
+
+        assert ctx is None
+        mock_client.conversations_replies.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "reply_to_mentions_only, body, resolves",
+        [
+            pytest.param(
+                True, _thread_reply_body("app_mention", "<@U_BOT> also check the db logs"), True, id="app_mention"
+            ),
+            pytest.param(
+                False, _thread_reply_body("message", "the outage started at 09:00"), True, id="all_messages_mode"
+            ),
+            pytest.param(
+                True,
+                _thread_reply_body("message", "the outage started at 09:00", channel_type="im"),
+                True,
+                id="dm_thread_reply",
+            ),
+            pytest.param(
+                True,
+                _thread_reply_body("message", "<@U_BOT> also check the db logs"),
+                False,
+                id="already_mentions_bot",
+            ),
+            pytest.param(
+                True,
+                _thread_reply_body("message", "the outage started at 09:00", thread_ts=None),
+                False,
+                id="root_without_thread_ts",
+            ),
+            pytest.param(
+                True,
+                _thread_reply_body(
+                    "message", "the outage started at 09:00", thread_ts="1708123456.000300", ts="1708123456.000300"
+                ),
+                False,
+                id="root_with_thread_ts_equal_to_ts",
+            ),
+        ],
+    )
+    async def test_no_root_lookup_when_gate_does_not_apply(self, reply_to_mentions_only, body, resolves):
+        handler = _make_event_handler(
+            reply_to_mentions_only=reply_to_mentions_only, reply_to_thread_after_mention=True, own_bot_user_id="U_BOT"
+        )
+        mock_client = _client_with_thread_root("<@U_BOT> summarize this incident")
+
+        with patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client):
+            ctx = await handler.resolve_context(body)
+
+        assert (ctx is not None) is resolves
+        assert mock_client.conversations_replies.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_thread_reply_not_answered_when_root_mentions_someone_else(self):
+        handler = _make_event_handler(
+            reply_to_mentions_only=True, reply_to_thread_after_mention=True, own_bot_user_id="U_BOT"
+        )
+        mock_client = _client_with_thread_root("<@U_OTHER> summarize this incident")
+
+        with patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client):
+            ctx = await handler.resolve_context(_thread_reply_body("message", "the outage started at 09:00"))
+
+        assert ctx is None
+        mock_client.conversations_replies.assert_awaited_once()
+
+    def test_bot_authored_thread_reply_not_answered_without_lookup(self):
+        # Two bots opted into respond_to_other_apps in one mentioned thread must not answer each other forever
+        agent_mock = make_agent_mock()
+        mock_slack = _slack_mock_with_bot_identity()
+        mock_client = _client_with_thread_root("<@U_BOT> summarize this incident")
+        body = _thread_reply_body("message", "the outage started at 09:00")
+        body["event"]["bot_id"] = "B_PEER"
+
+        with (
+            patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
+            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client),
+        ):
+            app = build_app(agent_mock, reply_to_thread_after_mention=True, respond_to_other_apps=True)
+            from fastapi.testclient import TestClient
+
+            client = TestClient(app)
+            resp = make_signed_request(client, body)
+
+        assert resp.status_code == 200
+        agent_mock.arun.assert_not_called()
+        mock_client.conversations_replies.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_gate_uses_own_bot_user_id_not_authorizations(self):
+        # authorizations.user_id is the installation the event is visible through, not our identity
+        handler = _make_event_handler(
+            reply_to_mentions_only=True, reply_to_thread_after_mention=True, own_bot_user_id="U_BOT"
+        )
+        mock_client = _client_with_thread_root("<@U_BOT> summarize this incident")
+        body = _thread_reply_body("message", "the outage started at 09:00")
+        body["authorizations"] = [{"user_id": "U_INSTALL"}]
+
+        with patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client):
+            ctx = await handler.resolve_context(body)
+
+        assert ctx is not None
+        mock_client.conversations_replies.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_unrelated_authorizations_id_does_not_change_mention_matching(self):
+        handler = _make_event_handler(
+            reply_to_mentions_only=True, reply_to_thread_after_mention=True, own_bot_user_id="U_BOT"
+        )
+        mock_client = _client_with_thread_root("<@U_BOT> summarize this incident")
+        twin = _thread_reply_body("message", "<@U_BOT> also check the db logs")
+        twin["authorizations"] = [{"user_id": "U_INSTALL"}]
+
+        with patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client):
+            ctx = await handler.resolve_context(twin)
+
+        assert ctx is None
+        mock_client.conversations_replies.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_missing_authorizations_still_processed_with_own_bot_user_id(self):
+        handler = _make_event_handler(
+            reply_to_mentions_only=True, reply_to_thread_after_mention=True, own_bot_user_id="U_BOT"
+        )
+        mock_client = _client_with_thread_root("<@U_BOT> summarize this incident")
+        body = _thread_reply_body("message", "the outage started at 09:00")
+        del body["authorizations"]
+
+        with patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client):
+            ctx = await handler.resolve_context(body)
+
+        assert ctx is not None
+        mock_client.conversations_replies.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_gate_fails_closed_without_own_bot_user_id(self):
+        # auth.test failed at mount: the root check cannot be made, so nothing extra is answered
+        handler = _make_event_handler(reply_to_mentions_only=True, reply_to_thread_after_mention=True)
+        mock_client = _client_with_thread_root("<@U_BOT> summarize this incident")
+
+        with patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client):
+            ctx = await handler.resolve_context(_thread_reply_body("message", "the outage started at 09:00"))
+
+        assert ctx is None
+        mock_client.conversations_replies.assert_not_called()
 
 
 class TestStreamingRoutes:

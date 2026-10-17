@@ -22,6 +22,7 @@ from agno.os.interfaces.slack.helpers import (
     should_respond,
     slack_delivery_kwargs,
     strip_bot_mention,
+    thread_root_mentions_bot,
     upload_response_media_async,
 )
 from agno.os.interfaces.slack.pause import PAUSE_LABELS, finalize_pause, post_pause_card
@@ -90,6 +91,7 @@ class SlackEventHandler:
     unfurl_links: bool = True
     unfurl_media: bool = True
     markdown: bool = True
+    reply_to_thread_after_mention: bool = False
 
     def _client(self) -> AsyncWebClient:
         return AsyncWebClient(token=self.slack_tools.token, ssl=self.ssl)
@@ -117,8 +119,32 @@ class SlackEventHandler:
 
     async def resolve_context(self, data: dict) -> Optional[EventContext]:
         event = data["event"]
+
         if not should_respond(event, self.reply_to_mentions_only):
-            return None
+            # Plain human reply in a thread outside a DM: answer it when the thread root
+            # @mentioned the bot. A reply that @mentions the bot itself is left to the
+            # app_mention twin Slack delivers alongside, or it would run twice. Bot-authored
+            # replies stay excluded, or two bots in one thread would answer each other forever.
+            # The bot's identity is the auth.test result from mount time, not the envelope's
+            # authorizations entry (that is the installation the event is visible through);
+            # without a known identity the root check cannot be made, so nothing extra runs.
+            own_bot_user_id = self.own_bot_user_id
+            if not own_bot_user_id:
+                return None
+            thread_ts = event.get("thread_ts")
+            is_plain_thread_reply = (
+                self.reply_to_thread_after_mention
+                and event.get("type") == "message"
+                and event.get("channel_type") != "im"
+                and not event.get("bot_id")
+                and bool(thread_ts)
+                and thread_ts != event.get("ts")
+                and f"<@{own_bot_user_id}>" not in (event.get("text") or "")
+            )
+            if not is_plain_thread_reply:
+                return None
+            if not await thread_root_mentions_bot(self._client(), event.get("channel", ""), thread_ts, own_bot_user_id):
+                return None
 
         client = self._client()
         raw_ctx = extract_event_context(event)
