@@ -88,6 +88,7 @@ from agno.utils.response import (
 from agno.utils.team import (
     add_interaction_to_team_run_context,
     format_member_agent_task,
+    get_member_id,
 )
 from agno.utils.timer import Timer
 
@@ -1515,6 +1516,18 @@ def _get_delegate_task_function(
             delegate_function = delegate_task_to_member  # type: ignore
 
         delegate_func = Function.from_callable(delegate_function, name="delegate_task_to_member")
+
+        # Direct members only: an inner sub-team member is not a valid target for this leader,
+        # and the roster renders those without ids.
+        from agno.utils.callables import get_resolved_members
+
+        member_ids = [
+            member_id
+            for member in get_resolved_members(team, run_context) or []
+            if (member_id := get_member_id(member)) is not None
+        ]
+        if member_ids:
+            delegate_func.parameters["properties"]["member_id"]["enum"] = member_ids
 
     if team.respond_directly:
         delegate_func.stop_after_tool_call = True
