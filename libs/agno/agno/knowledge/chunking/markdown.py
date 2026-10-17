@@ -151,31 +151,34 @@ class MarkdownChunking(ChunkingStrategy):
             # split_on_headings is True: split on all headings (# to ######)
             heading_pattern = r"^#{1,6}\s+.+$"
 
-        # Split content while keeping the delimiter (heading)
-        # Use non-capturing group for the pattern to avoid extra capture groups
-        parts = re.split(f"({heading_pattern})", content, flags=re.MULTILINE)
+        # Headings inside fenced code are literal text, not section boundaries.
+        # A closing fence must use the same character and be at least as long as
+        # the opener; shorter or mismatched fences remain part of the code.
+        fence_pattern = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+        fence = ""
+        sections: List[str] = []
+        current_lines: List[str] = []
 
-        sections = []
-        current_section = ""
+        for line in content.splitlines(keepends=True):
+            fence_match = fence_pattern.match(line.rstrip("\r\n"))
+            if fence:
+                if fence_match:
+                    marker, rest = fence_match.groups()
+                    if marker[0] == fence[0] and len(marker) >= len(fence) and not rest.strip(" \t"):
+                        fence = ""
+            elif fence_match and (fence_match[1][0] == "~" or "`" not in fence_match[2]):
+                # Backticks are not allowed in a backtick fence's info string.
+                fence = fence_match[1]
+            elif re.match(heading_pattern, line):
+                section = "".join(current_lines).strip()
+                if section:
+                    sections.append(section)
+                current_lines = []
+            current_lines.append(line)
 
-        for part in parts:
-            if not part or not part.strip():
-                continue
-
-            # Check if this part is a heading
-            if re.match(heading_pattern, part.strip(), re.MULTILINE):
-                # Save previous section if exists
-                if current_section.strip():
-                    sections.append(current_section.strip())
-                # Start new section with this heading
-                current_section = part
-            else:
-                # Add content to current section
-                current_section += "\n\n" + part if current_section else part
-
-        # Don't forget the last section
-        if current_section.strip():
-            sections.append(current_section.strip())
+        section = "".join(current_lines).strip()
+        if section:
+            sections.append(section)
 
         return sections if sections else [content]
 
