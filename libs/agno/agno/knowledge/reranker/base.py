@@ -42,6 +42,19 @@ class Reranker(BaseModel):
         except (TypeError, ValueError):
             return False
 
+    def accepts_async_limit(self) -> bool:
+        """Whether this reranker's ``arerank`` takes the caller's kept count.
+
+        A subclass that overrides ``arerank`` replaces the one below, so the
+        ``accepts_limit`` check inside it never runs. A reranker written against the
+        older two-argument signature, including ones outside this repo, is still
+        awaited without the limit.
+        """
+        try:
+            return "limit" in signature(self.arerank).parameters
+        except (TypeError, ValueError):
+            return False
+
     async def arerank(self, query: str, documents: List[Document], limit: Optional[int] = None) -> List[Document]:
         """Async rerank. Runs the sync implementation off the event loop, since a
         reranker that calls a provider would otherwise block it."""
