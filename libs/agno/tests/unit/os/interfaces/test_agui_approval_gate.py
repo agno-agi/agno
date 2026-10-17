@@ -98,10 +98,12 @@ def harness(tmp_path):
         "parameters": {"type": "object", "properties": {"color": {"type": "string"}}},
     }
 
-    def post(run_id: str, messages: list, headers: dict):
+    def post(run_id: str, messages: list, headers: dict, forwarded: dict | None = None):
         body = {"threadId": "thread-gate", "runId": run_id, "state": {}, "messages": messages}
         return client.post(
-            "/agui", json={**body, "tools": [frontend_tool], "context": [], "forwardedProps": {}}, headers=headers
+            "/agui",
+            json={**body, "tools": [frontend_tool], "context": [], "forwardedProps": forwarded or {}},
+            headers=headers,
         )
 
     # Pause the run on the client tool, then build the resume payload.
@@ -131,6 +133,21 @@ def test_resume_is_refused_while_an_admin_approval_is_pending(harness):
     kwargs = db.get_approvals.await_args.kwargs
     assert kwargs["status"] == "pending" and kwargs["approval_type"] == "required"
     assert kwargs["run_id"]  # the paused run was resolved from the session before the gate decided
+
+
+def test_resume_is_refused_while_pending_even_when_background_is_requested(harness):
+    """Asking for a background run must not route a continuation around the gate.
+
+    A continuation always runs in the foreground, so the gate has to decide before
+    the background opt-in is read; otherwise the opt-in alone would skip it.
+    """
+    db, post, resume_messages = harness
+    db.get_approvals = AsyncMock(return_value=([{"id": "a1", "status": "pending"}], 1))
+
+    resp = post("run-2", resume_messages, _headers(["agents:run"]), forwarded={"agnoBackground": True})
+
+    assert resp.status_code == 403
+    assert "admin approval" in resp.json()["detail"]
 
 
 def test_approval_admin_may_still_resume(harness):
