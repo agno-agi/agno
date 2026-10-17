@@ -1,5 +1,35 @@
 # Test Log
 
+### upstash_box_tools.py
+
+**Status:** PASS
+
+**Description:** Coding agent with `UpstashBoxTools` writes and runs code in an
+Upstash Box. Ran the cookbook's agent live against the Box API with
+`openai/gpt-5.6-luna` through `OpenRouter` (same model as the cookbook) for
+both `print_response` and `arun`. Set `UPSTASH_BOX_API_KEY` and the
+credentials for the agent's model.
+
+**Result:** The sync run created a box, called `run_python_code`, and reported
+the real output (first 10 Fibonacci numbers, sum 88, average 8.8). The async
+run called `create_file`, `run_command`, and `list_files` on one box and
+reported mean 3.875 and median 3.5. Every tool, including pause/resume/snapshot,
+a public URL, separate boxes per session, recovery after the box is deleted
+outside the agent, and `command_timeout`, was also called directly against the
+API. `pytest libs/agno/tests/unit/tools/test_upstash_box.py` covers the toolkit
+with a mocked SDK (86 tests), including the box id being saved with the session
+through a real `Agent.run()` with `InMemoryDb` and reused by a new agent.
+`test_upstash_box_transport.py` runs the real SDK over HTTP against a local
+stand-in for the Box API, covering async calls across event loops.
+`libs/agno/tests/integration/tools/test_upstash_box.py` (18 tests, PASS, about
+8 minutes) runs against the real Box API with `upstash-box` 0.4.0: every tool
+sync and async, separate boxes per session, recovery after an external delete,
+event-loop changes, concurrent calls and shutdowns, plus end-to-end agno runs
+with a real model (sync, async, streaming, resuming a session from `SqliteDb`,
+separate sessions, and a Team member running code).
+
+---
+
 ### sixtydb_tools.py
 
 **Status:** PASS (local HTTP and cookbook checks); live agent run pending
