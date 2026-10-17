@@ -62,6 +62,16 @@ def _normalized_rank(rank: Any) -> Any:
     return rank / (rank + _RANK_NORMALIZATION_K)
 
 
+# Hybrid search scores only the union of the best vector and the best keyword candidates,
+# so both halves can be served by their indexes (HNSW/IVFFlat and GIN) instead of scoring
+# every row. Each half fetches max(limit * multiplier, minimum) candidates.
+_HYBRID_CANDIDATE_MULTIPLIER = 4
+_HYBRID_MIN_CANDIDATES = 20
+
+# content_language is interpolated into SQL as a regconfig literal, so it must be a plain name.
+_TS_CONFIG_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
 class PgVector(VectorDb):
     """
     PgVector class for managing vector operations with PostgreSQL and pgvector.
@@ -185,6 +195,10 @@ class PgVector(VectorDb):
         # Weight for the vector similarity score in hybrid search
         self.vector_score_weight: float = vector_score_weight
         # Content language for full-text search
+        if not _TS_CONFIG_RE.match(content_language):
+            raise ValueError(
+                f"Invalid content_language '{content_language}': expected a text search configuration name"
+            )
         self.content_language: str = content_language
 
         # Table schema version
@@ -1174,6 +1188,28 @@ class PgVector(VectorDb):
             log_error(f"Error during vector search: {str(e)}")
             return []
 
+    def _ts_config(self):
+        """The text search configuration as a ``regconfig`` literal.
+
+        A literal rather than a bind parameter, so ``to_tsvector`` in a query is the
+        same expression the GIN index was built on and the planner can use the index.
+        """
+        return literal_column(f"'{self.content_language}'::regconfig")
+
+    def _ts_vector(self):
+        return func.to_tsvector(self._ts_config(), self.table.c.content)
+
+    def _apply_filters(self, stmt, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]]):
+        """AND metadata filters (dict containment or FilterExpr DSL) into ``stmt``."""
+        if filters is None:
+            return stmt
+        if isinstance(filters, dict):
+            return stmt.where(self.table.c.meta_data.contains(filters))
+        sqlalchemy_conditions = [
+            self._dsl_to_sqlalchemy(f.to_dict() if hasattr(f, "to_dict") else f, self.table) for f in filters
+        ]
+        return stmt.where(and_(*sqlalchemy_conditions))
+
     def _build_ts_query(self, query: str):
         """
         Build the tsquery expression for keyword / hybrid search.
@@ -1190,7 +1226,7 @@ class PgVector(VectorDb):
         in prefix mode (caller should treat as "no FTS hit").
         """
         if not self.prefix_match:
-            return func.websearch_to_tsquery(self.content_language, bindparam("query", value=query))
+            return func.websearch_to_tsquery(self._ts_config(), bindparam("query", value=query))
 
         # to_tsquery is stricter than websearch_to_tsquery: it doesn't
         # tolerate punctuation or operators in the input. Tokenize on
@@ -1199,7 +1235,7 @@ class PgVector(VectorDb):
         if not tokens:
             return None
         prefix_query = " & ".join(f"{t}:*" for t in tokens)
-        return func.to_tsquery(self.content_language, bindparam("query", value=prefix_query))
+        return func.to_tsquery(self._ts_config(), bindparam("query", value=prefix_query))
 
     def keyword_search(
         self,
@@ -1238,14 +1274,16 @@ class PgVector(VectorDb):
             # Apply the user scope first so the planner narrows before the full-text scan
             stmt = self._apply_user_scope(stmt, user_id)
 
-            # Build the text search vector
-            ts_vector = func.to_tsvector(self.content_language, self.table.c.content)
+            # Build the text search vector (same expression as the GIN index)
+            ts_vector = self._ts_vector()
             # Build the ts_query — routes through to_tsquery with :* per token
             # when prefix_match is on, websearch_to_tsquery otherwise.
             ts_query = self._build_ts_query(query)
             if ts_query is None:
                 # Prefix mode with no usable tokens (e.g. empty query): nothing to match
                 return []
+            # Only matching rows: lets the planner use the GIN index instead of ranking every row
+            stmt = stmt.where(ts_vector.op("@@")(ts_query))
             # Compute the text rank
             text_rank = func.ts_rank_cd(ts_vector, ts_query)
 
@@ -1335,7 +1373,60 @@ class PgVector(VectorDb):
                 log_error(f"Error getting embedding for Query: {query}")
                 return []
 
-            # Define the columns to select
+            # === VECTOR COMPONENT ===
+            # vector_distance orders the vector candidates (the operator the vector index serves);
+            # vector_score maps it onto 0-1 for the hybrid score
+            if self.distance == Distance.l2:
+                vector_distance = self.table.c.embedding.l2_distance(query_embedding)
+                vector_score = 1 / (1 + vector_distance)
+            elif self.distance == Distance.cosine:
+                vector_distance = self.table.c.embedding.cosine_distance(query_embedding)
+                vector_score = func.greatest(0.0, 1 - vector_distance)
+            elif self.distance == Distance.max_inner_product:
+                # pgvector returns the negative inner product, so ascending order is best first
+                vector_distance = self.table.c.embedding.max_inner_product(query_embedding)
+                vector_score = func.greatest(0.0, func.least(1.0, (-vector_distance + 1) / 2))
+            else:
+                log_error(f"Unknown distance metric: {self.distance}")
+                return []
+
+            # === TEXT COMPONENT ===
+            # Same to_tsvector expression as the GIN index, so the @@ match can use it
+            ts_vector = self._ts_vector()
+            # Routes through to_tsquery with :* per token when prefix_match is on,
+            # websearch_to_tsquery otherwise
+            ts_query = self._build_ts_query(query)
+            if ts_query is None:
+                # No usable tokens (e.g. query was "!@#$" or empty): the text half matches nothing
+                ts_query = literal_column("''::tsquery")
+            # ts_rank_cd returns small values (0.0-0.1), normalize with x/(x+k) formula
+            text_rank = _normalized_rank(func.ts_rank_cd(ts_vector, ts_query))
+
+            if not 0 <= self.vector_score_weight <= 1:
+                raise ValueError("vector_score_weight must be between 0 and 1")
+            hybrid_score = (self.vector_score_weight * vector_score) + ((1 - self.vector_score_weight) * text_rank)
+
+            # === CANDIDATES ===
+            # Scoring every row means computing to_tsvector and the distance for the whole table,
+            # which no index can serve. The ranking splits in two instead:
+            # - a row with no keyword match has text_rank 0, so it ranks by vector distance alone,
+            #   which is what the vector index returns;
+            # - rows that do match are found through the GIN index and scored in full. Ordering them
+            #   by the hybrid score, not by text rank, keeps ties in text rank (common when many rows
+            #   share the query terms) from dropping the rows the vector half would have lifted.
+            candidate_limit = max(limit * _HYBRID_CANDIDATE_MULTIPLIER, _HYBRID_MIN_CANDIDATES)
+
+            vector_candidates = self._apply_filters(self._apply_user_scope(select(self.table.c.id), user_id), filters)
+            vector_candidates = vector_candidates.order_by(vector_distance).limit(candidate_limit)
+
+            text_candidates = select(self.table.c.id).where(ts_vector.op("@@")(ts_query))
+            text_candidates = self._apply_filters(self._apply_user_scope(text_candidates, user_id), filters)
+            text_candidates = text_candidates.order_by(hybrid_score.desc()).limit(candidate_limit)
+
+            vector_cte = vector_candidates.cte("vector_candidates")
+            text_cte = text_candidates.cte("text_candidates")
+            candidate_ids = select(vector_cte.c.id).union(select(text_cte.c.id)).subquery("candidate_ids")
+
             columns = [
                 self.table.c.id,
                 self.table.c.name,
@@ -1345,102 +1436,27 @@ class PgVector(VectorDb):
                 self.table.c.usage,
                 self._recency_column(),
             ]
-
-            # === TEXT SEARCH COMPONENT ===
-            # Hybrid search combines: (1) text/keyword matching + (2) vector similarity
-
-            # ts_vector: convert document content into searchable tokens
-            # Example: "The quick fox" -> 'fox':3 'quick':2 (stems words, removes stopwords)
-            ts_vector = func.to_tsvector(self.content_language, self.table.c.content)
-
-            # ts_query: convert user's search query into a search pattern
-            # Routes through to_tsquery with :* per token when prefix_match is on,
-            # websearch_to_tsquery otherwise
-            ts_query = self._build_ts_query(query)
-            if ts_query is None:
-                # No usable tokens (e.g. query was "!@#$" or empty)
-                # Fall back to empty tsquery so text_rank=0, letting vector search drive results
-                ts_query = literal_column("''::tsquery")
-
-            # text_rank: score how well document matches the query (0.0 to 1.0)
-            # ts_rank_cd returns small values (0.0-0.1), normalize with x/(x+k) formula
-            raw_text_rank = func.ts_rank_cd(ts_vector, ts_query)
-            text_rank = _normalized_rank(raw_text_rank)
-
-            # Compute the vector similarity score
-            if self.distance == Distance.l2:
-                # For L2 distance, smaller distances are better
-                vector_distance = self.table.c.embedding.l2_distance(query_embedding)
-                # Invert and normalize the distance to get a similarity score between 0 and 1
-                vector_score = 1 / (1 + vector_distance)
-            elif self.distance == Distance.cosine:
-                # For cosine distance, smaller distances are better
-                vector_distance = self.table.c.embedding.cosine_distance(query_embedding)
-                # Convert distance to similarity (cosine_distance = 1 - cosine_similarity)
-                vector_score = func.greatest(0.0, 1 - vector_distance)
-            elif self.distance == Distance.max_inner_product:
-                # For inner product, higher values are better
-                # pgvector returns negative inner product, so negate to get actual value
-                negative_ip = self.table.c.embedding.max_inner_product(query_embedding)
-                inner_product = -negative_ip
-                # Normalize to range [0, 1]
-                vector_score = func.greatest(0.0, func.least(1.0, (inner_product + 1) / 2))
-            else:
-                log_error(f"Unknown distance metric: {self.distance}")
-                return []
-
-            # Apply weights to control the influence of each score
-            # Validate the vector_weight parameter
-            if not 0 <= self.vector_score_weight <= 1:
-                raise ValueError("vector_score_weight must be between 0 and 1")
-            text_rank_weight = 1 - self.vector_score_weight  # weight for text rank
-
-            # Combine the scores into a hybrid score
-            hybrid_score = (self.vector_score_weight * vector_score) + (text_rank_weight * text_rank)
-
-            # Build the base statement, including the hybrid score
-            stmt = select(*columns, hybrid_score.label("hybrid_score"))
-
-            # Apply the user scope first so the planner narrows before scoring
-            stmt = self._apply_user_scope(stmt, user_id)
-
-            # Add the full-text search condition
-            # stmt = stmt.where(ts_vector.op("@@")(ts_query))
-
-            # Apply filters if provided
-            if filters is not None:
-                # Handle dict filters
-                if isinstance(filters, dict):
-                    stmt = stmt.where(self.table.c.meta_data.contains(filters))
-                # Handle FilterExpr DSL
-                else:
-                    # Convert each DSL expression to SQLAlchemy and AND them together
-                    sqlalchemy_conditions = [
-                        self._dsl_to_sqlalchemy(f.to_dict() if hasattr(f, "to_dict") else f, self.table)
-                        for f in filters
-                    ]
-                    stmt = stmt.where(and_(*sqlalchemy_conditions))
+            # Scope and filters were applied to both candidate sets
+            stmt = select(*columns, hybrid_score.label("hybrid_score")).where(
+                self.table.c.id.in_(select(candidate_ids.c.id))
+            )
 
             if self.similarity_threshold is not None:
                 stmt = stmt.where(hybrid_score >= self.similarity_threshold)
 
-            # Order the results by the hybrid score in descending order
-            stmt = stmt.order_by(desc("hybrid_score"))
+            stmt = stmt.order_by(desc("hybrid_score")).limit(limit)
 
-            # Limit the number of results
-            stmt = stmt.limit(limit)
-
-            # Log the query for debugging
             log_debug(f"Hybrid search query: {stmt}")
 
-            # Execute the query
             try:
                 with self.Session() as sess, sess.begin():
                     if self.vector_index is not None:
                         if isinstance(self.vector_index, Ivfflat):
                             sess.execute(text(f"SET LOCAL ivfflat.probes = {self.vector_index.probes}"))
                         elif isinstance(self.vector_index, HNSW):
-                            sess.execute(text(f"SET LOCAL hnsw.ef_search = {self.vector_index.ef_search}"))
+                            # An HNSW scan returns at most ef_search rows, so it must cover the candidates
+                            ef_search = max(self.vector_index.ef_search, candidate_limit)
+                            sess.execute(text(f"SET LOCAL hnsw.ef_search = {ef_search}"))
                     results = sess.execute(stmt).fetchall()
             except Exception as e:
                 log_error(f"Error performing hybrid search: {str(e)}")
@@ -1718,7 +1734,7 @@ class PgVector(VectorDb):
                 # Create index
                 create_gin_index_sql = text(
                     f'CREATE INDEX "{gin_index_name}" ON {self.table.fullname} '
-                    f"USING GIN (to_tsvector({self.content_language}, content));"
+                    f"USING GIN (to_tsvector('{self.content_language}'::regconfig, content));"
                 )
                 sess.execute(create_gin_index_sql)
         except Exception as e:
