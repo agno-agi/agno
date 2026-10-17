@@ -968,3 +968,127 @@ def test_a_factory_member_that_opted_out_keeps_its_history_whole(db):
     for run in member_runs:
         for message in run.messages or []:
             assert not str(message.content or "").startswith('<result id="res_')
+
+
+# ------------------------------------------------------------------
+# A member offloading on its own, inside a team that does not
+# ------------------------------------------------------------------
+
+
+class ToolCallingMemberModel(Model):
+    """Calls one tool, then answers. The tool result is what grows."""
+
+    def __init__(self, tool_name: str = "fetch_corpus"):
+        super().__init__(id="member", name="member", provider="test")
+        self.tool_name = tool_name
+        self.calls = 0
+
+    def _next(self) -> ModelResponse:
+        self.calls += 1
+        if self.calls == 1:
+            return ModelResponse(
+                role="assistant",
+                tool_calls=[
+                    {
+                        "id": "member-call-1",
+                        "type": "function",
+                        "function": {"name": self.tool_name, "arguments": "{}"},
+                    }
+                ],
+                response_usage=MessageMetrics(),
+            )
+        return ModelResponse(role="assistant", content="summarised", response_usage=MessageMetrics())
+
+    def invoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        return self._next()
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        return self._next()
+
+    def invoke_stream(self, *args: Any, **kwargs: Any) -> Iterator[ModelResponse]:
+        yield self._next()
+
+    async def ainvoke_stream(self, *args: Any, **kwargs: Any) -> AsyncIterator[ModelResponse]:
+        yield self._next()
+
+    def _parse_provider_response(self, response: Any, **kwargs: Any) -> ModelResponse:
+        return response
+
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        return response
+
+
+def _offloading_member_in_a_plain_team(db) -> Team:
+    """A member that offloads its own tool results, in a team that does not."""
+
+    def fetch_corpus() -> str:
+        return BIG
+
+    member = Agent(
+        name="researcher",
+        id="researcher",
+        model=ToolCallingMemberModel(),
+        db=db,
+        tools=[fetch_corpus],
+        offload_tool_results=ResultStore(threshold_chars=8000),
+    )
+    return Team(
+        name="platform",
+        id="platform",
+        members=[member],
+        model=LeaderModel(),
+        db=db,
+        # The team itself does not offload. That must not disable the member.
+        offload_tool_results=False,
+    )
+
+
+def _member_tool_messages(output) -> List[Any]:
+    member_run = output.member_responses[0]
+    return [m for m in (member_run.messages or []) if m.role == "tool"]
+
+
+def test_a_member_offloads_its_own_tool_results_in_a_team_that_does_not(db):
+    # The payoff, not the wiring: the member's own oversized tool result is a
+    # short envelope in its transcript even though the team stores nothing.
+    team = _offloading_member_in_a_plain_team(db)
+    output = team.run("go", session_id=_sid())
+
+    assert team._result_store is None
+    tool_message = _member_tool_messages(output)[0]
+    assert tool_message.tool_name == "fetch_corpus"
+    assert tool_message.content.startswith('<result id="res_')
+    assert BIG not in tool_message.content
+
+
+def test_that_member_can_read_its_payload_back(db):
+    team = _offloading_member_in_a_plain_team(db)
+    output = team.run("go", session_id=_sid())
+
+    member = team.members[0]
+    result_id = _result_id(_member_tool_messages(output)[0].content)
+    page = member._result_store.read(result_id, 1, 3000)
+    assert page.line_count == 3000
+    assert page.text.startswith("finding 1: ")
+
+
+def test_a_member_that_also_compresses_still_gets_its_store(db):
+    # The corner no test covered: compression on the member, its own store, and
+    # a team that offloads nothing. Guards against a symmetric raise growing
+    # back on this path by accident.
+    def fetch_corpus() -> str:
+        return BIG
+
+    member = Agent(
+        name="researcher",
+        id="researcher",
+        model=ToolCallingMemberModel(),
+        db=db,
+        tools=[fetch_corpus],
+        offload_tool_results=ResultStore(threshold_chars=8000),
+    )
+    team = Team(name="platform", id="platform", members=[member], model=LeaderModel(), db=db)
+    team.initialize_team()
+
+    assert member._result_store is not None
+    assert member._result_store.threshold_chars == 8000
