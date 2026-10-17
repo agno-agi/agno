@@ -24,7 +24,8 @@ class OpenRouter(OpenAILike):
         provider (str): The provider name. Defaults to "OpenRouter".
         api_key (Optional[str]): The API key.
         base_url (str): The base URL. Defaults to "https://openrouter.ai/api/v1".
-        max_tokens (int): The maximum number of tokens. Defaults to 1024.
+        max_tokens (Optional[int]): The maximum number of tokens. Defaults to None, so the
+            parameter is omitted and the routed model's own output limit applies.
         fallback_models (Optional[List[str]]): List of fallback model IDs to use if the primary model
             fails due to rate limits, timeouts, or unavailability. OpenRouter will automatically try
             these models in order. Example: ["anthropic/claude-sonnet-4", "deepseek/deepseek-r1"]
@@ -36,7 +37,7 @@ class OpenRouter(OpenAILike):
 
     api_key: Optional[str] = None
     base_url: str = "https://openrouter.ai/api/v1"
-    max_tokens: int = 1024
+    max_tokens: Optional[int] = None
     models: Optional[List[str]] = None  # Dynamic model routing https://openrouter.ai/docs/features/model-routing
 
     def _get_client_params(self) -> Dict[str, Any]:
