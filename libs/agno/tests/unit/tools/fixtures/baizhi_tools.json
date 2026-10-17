@@ -1,0 +1,142 @@
+{
+  "capturedAt": "2026-09-20T07:59:08.542655+00:00",
+  "endpoint": "https://agent-toolkit.app.baizhi.cloud/mcp",
+  "protocolVersion": "2025-11-25",
+  "note": "Only public tool metadata; authenticated discovery made no tools/call requests and this fixture contains no credential.",
+  "tools": [
+    {
+      "name": "websearch_search",
+      "description": "搜索公开网页并返回原始网页结果。适用于最新资讯、来源核验、官网或文档查询，以及多站点事实对比；不适用于本地代码分析、内部系统查询或纯推理任务。",
+      "inputSchema": {
+        "properties": {
+          "count": {
+            "default": 10,
+            "description": "请求的最大结果数。未传或小于等于 0 时默认取 10。",
+            "maximum": 50,
+            "type": "number"
+          },
+          "filter": {
+            "description": "可选来源过滤条件。用户要求限定官网、站点或出现 site:domain 语义时，必须在此处传递 domains；不要把 site:domain 拼接到 query。",
+            "properties": {
+              "domains": {
+                "description": "限定搜索结果来源站点。将用户指定的官网或 site:domain 约束转换为此数组；query 中只保留主题检索词。每一项都应是裸域名或 IP，不能包含 scheme、path、query 或 fragment；非 IP 域名必须包含点号。",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "exclude_domains": {
+                "description": "排除来自这些裸域名或 IP 的结果。将用户指定的排除站点约束转换为此数组，不要拼接到 query；每一项都不能包含 scheme、path、query 或 fragment；非 IP 域名必须包含点号。",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "need_summary": {
+            "default": false,
+            "description": "是否需要返回并记录每条网页结果摘要。默认关闭。",
+            "type": "boolean"
+          },
+          "query": {
+            "description": "搜索查询文本。去除首尾空白后不能为空。",
+            "type": "string"
+          },
+          "time_range": {
+            "default": "month",
+            "description": "搜索结果的新鲜度范围。未传时默认为 month。",
+            "enum": [
+              "day",
+              "week",
+              "month",
+              "year"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "web_scrape",
+      "description": "打开一个网页，返回整页正文。用户贴了链接并要看内容、总结、检查页面时用这个。一次只处理一个网址。默认返回 Markdown。",
+      "inputSchema": {
+        "properties": {
+          "accept_language": {
+            "description": "希望页面用哪种语言，例如 zh-CN。可不传。",
+            "type": "string"
+          },
+          "download": {
+            "default": false,
+            "description": "只要用户明确说要下载、导出、发给别人文件时才设为 true。此时会多返回一个 zip 下载链接（包内是 md 和 json）。自己读网页、给下一步用时不要传，默认 false。",
+            "type": "boolean"
+          },
+          "return_format": {
+            "default": "markdown",
+            "description": "正文格式。markdown=可读正文（默认）；json=JSON。一般不用改。",
+            "enum": [
+              "markdown",
+              "json"
+            ],
+            "type": "string"
+          },
+          "url": {
+            "description": "要打开的网页地址，必须是 http 或 https。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "web_extract",
+      "description": "从一个网页里抽出指定信息，例如标题、价格、题目。不要用它读整页正文（那是 web_scrape）。不知道字段名时先调 web_suggest_fields，或把用户原话放进 instruction。",
+      "inputSchema": {
+        "properties": {
+          "accept_language": {
+            "description": "希望页面用哪种语言，例如 zh-CN。可不传。",
+            "type": "string"
+          },
+          "download": {
+            "default": false,
+            "description": "只要用户明确说要下载、导出、发给别人文件时才设为 true。此时会多返回一个 zip 下载链接（包内是 md 和 json）。自己读网页、给下一步用时不要传，默认 false。",
+            "type": "boolean"
+          },
+          "fields": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "要抽出的字段。键是字段名，值是类型：string、number、boolean、array。可与 instruction 一起传；两者至少有一个。",
+            "type": "object"
+          },
+          "instruction": {
+            "description": "用一句话说要抽什么，例如「列出所有题目和选项」。fields 没有时必须传这个。",
+            "type": "string"
+          },
+          "url": {
+            "description": "要提取的网页地址，必须是 http 或 https。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      }
+    }
+  ]
+}
