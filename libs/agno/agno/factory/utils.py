@@ -73,6 +73,7 @@ class TrustedContext:
 
     claims: Mapping[str, Any] = field(default_factory=dict)
     scopes: frozenset[str] = field(default_factory=frozenset)
+    tenant_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -94,3 +95,8 @@ class RequestContext:
     request: Any = None  # fastapi.Request — typed as Any to avoid hard dependency at import time
     input: Optional[Union[BaseModel, Dict[str, Any]]] = None
     trusted: TrustedContext = field(default_factory=TrustedContext)
+
+    @property
+    def tenant_id(self) -> Optional[str]:
+        """Verified tenant identity; does not itself enforce resource isolation."""
+        return self.trusted.tenant_id

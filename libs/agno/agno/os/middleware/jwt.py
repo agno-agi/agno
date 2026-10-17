@@ -20,6 +20,7 @@ from agno.os.auth import (
     aprovision_user_with_default_role,
     build_insufficient_permissions_detail,
 )
+from agno.os.authz.identity import tenant_id_from_claims, validate_tenant_claim
 from agno.os.middleware.cors import OriginPolicy
 from agno.os.scopes import (
     AgentOSScope,
@@ -46,6 +47,9 @@ _AUTH_COMPLETE_ATTR = "_agno_auth_complete"
 # Set only after signature verification AND endpoint permission checks. Unlike the
 # completion marker, this is never set by unverified development mode or scheduler/PAT auth.
 _VERIFIED_API_JWT = object()
+
+# Identity-only marker: unlike public-route admission, this also covers verify-only apps.
+_VERIFIED_JWT_IDENTITY = object()
 
 
 # The built-in MCP OAuth server mints request identities as ``__oauth__:<client_id>``.
@@ -163,6 +167,7 @@ class JWTValidator:
         issuer: Optional[str] = None,
         issuer_claim: str = "iss",
         leeway: int = 10,
+        tenant_claim: Optional[str] = None,
     ):
         """
         Initialize the JWT validator.
@@ -182,8 +187,13 @@ class JWTValidator:
                     not match exactly is rejected. Pin this whenever more than one
                     IdP can mint tokens your keys verify.
             issuer_claim: JWT claim name for issuer (default: "iss").
+            tenant_claim: Verified JWT claim for tenant identity; requires validate=True.
             leeway: Seconds of leeway for clock skew tolerance (default: 10).
         """
+        validate_tenant_claim(tenant_claim)
+        if tenant_claim is not None and not validate:
+            raise ValueError("tenant_claim requires JWT signature validation")
+        self.tenant_claim = tenant_claim
         self.algorithm = algorithm
         self.validate = validate
         self.scopes_claim = scopes_claim
@@ -396,6 +406,10 @@ class JWTValidator:
             if token_issuer != self.issuer:
                 raise jwt.InvalidIssuerError(f"Invalid issuer. Expected: {self.issuer}, got: {token_issuer}")
 
+        try:
+            tenant_id_from_claims(payload, self.tenant_claim)
+        except ValueError as exc:
+            raise jwt.InvalidTokenError(str(exc)) from exc
         return payload
 
     def extract_claims(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -414,12 +428,15 @@ class JWTValidator:
         elif not isinstance(scopes, list):
             scopes = []
 
-        return {
+        claims = {
             "user_id": payload.get(self.user_id_claim),
             "session_id": payload.get(self.session_id_claim),
             "scopes": scopes,
             "audience": payload.get(self.audience_claim),
         }
+        if self.tenant_claim is not None:
+            claims["tenant_id"] = tenant_id_from_claims(payload, self.tenant_claim)
+        return claims
 
 
 def jwt_kwargs_have_key_source(kwargs: Dict[str, Any]) -> bool:
@@ -441,6 +458,7 @@ def build_jwt_middleware_kwargs(
     service_account_verifier: Optional[Any] = None,
     excluded_route_paths: Optional[List[str]] = None,
     issuer: Optional[str] = None,
+    tenant_claim: Optional[str] = None,
 ) -> Dict[str, Any]:
     """JWTMiddleware kwargs derived from an ``AuthorizationConfig``, in one place.
 
@@ -484,6 +502,8 @@ def build_jwt_middleware_kwargs(
         kwargs["audience"] = audience
     if issuer:
         kwargs["issuer"] = issuer
+    if tenant_claim is not None:
+        kwargs["tenant_claim"] = tenant_claim
     if admin_scope:
         kwargs["admin_scope"] = admin_scope
     if user_isolation:
@@ -605,6 +625,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         service_account_verifier: Optional["ServiceAccountVerifier"] = None,
         security_key: Optional[str] = None,
         cors_origin_policy: Optional[OriginPolicy] = None,
+        tenant_claim: Optional[str] = None,
     ):
         """
         Initialize the JWT middleware.
@@ -655,6 +676,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 even when authorization is disabled. Service account requests carry no
                 request.state.claims/token - factory trusted-claims consumers must
                 treat those as optional.
+            tenant_claim: Verified JWT claim for tenant identity. Requires validate=True;
+                missing claims produce None, and malformed values reject authentication.
+                Does not enable tenant resource isolation.
             user_isolation: Opt in to per-user data isolation (default False).
                 When True, route handlers wrap the DB in a per-request scoped
                 adapter and enforce session/run ownership on non-admin callers.
@@ -671,6 +695,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
               This allows error responses to include proper CORS headers.
         """
         super().__init__(app)
+        validate_tenant_claim(tenant_claim)
+        if tenant_claim is not None and not validate:
+            raise ValueError("tenant_claim requires JWT signature validation")
+        self.tenant_claim = tenant_claim
 
         all_verification_keys = list(verification_keys) if verification_keys else []
 
@@ -696,6 +724,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 session_id_claim=session_id_claim,
                 audience_claim=audience_claim,
                 issuer=issuer,
+                tenant_claim=tenant_claim,
             )
             if self._jwt_configured
             else None
@@ -1516,7 +1545,31 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # request.state.authenticated flag, which any other middleware could set -- so an
         # unrelated middleware cannot short-circuit our checks by flipping that flag.
         if getattr(request.state, _AUTH_COMPLETE_ATTR, False):
+            if self.tenant_claim is not None:
+                # A mounted app can select a different claim from the outer verified JWT.
+                # Never promote development-mode decoded claims into trusted identity.
+                claims = getattr(request.state, "claims", None) or {}
+                verified = getattr(request.state, "_agno_verified_jwt_identity", None) is _VERIFIED_JWT_IDENTITY
+                if claims and not verified:
+                    return self._create_error_response(
+                        401,
+                        "Tenant identity requires a verified JWT",
+                        request.headers.get("origin"),
+                        getattr(request.app.state, "cors_allowed_origins", None),
+                    )
+                try:
+                    request.state.tenant_id = tenant_id_from_claims(claims, self.tenant_claim) if verified else None
+                except ValueError:
+                    return self._create_error_response(
+                        401,
+                        "Invalid tenant claim",
+                        request.headers.get("origin"),
+                        getattr(request.app.state, "cors_allowed_origins", None),
+                    )
             return await call_next(request)
+
+        # Operator keys, PATs and scheduler credentials do not delegate a tenant.
+        request.state.tenant_id = None
 
         # Get origin and CORS allowed origins for error responses
         origin = request.headers.get("origin")
@@ -1655,6 +1708,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             request.state.user_id = user_id
             request.state.session_id = session_id
             request.state.scopes = scopes
+            request.state.tenant_id = tenant_id_from_claims(payload, self.tenant_claim)
             request.state.claims = payload  # Full decoded JWT for factory ctx.trusted.claims
             request.state.audience = audience
             request.state.authorization_enabled = self.authorization or False
@@ -1747,6 +1801,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             request.state.token = token
             request.state.authenticated = True
             setattr(request.state, _AUTH_COMPLETE_ATTR, True)
+
+            if self.validate:
+                request.state._agno_verified_jwt_identity = _VERIFIED_JWT_IDENTITY
 
             if mixed_public and self.authorization and self.validate:
                 request.state._agno_verified_api_jwt = _VERIFIED_API_JWT

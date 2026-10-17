@@ -344,3 +344,16 @@ run returned 200; demoting back to viewer also took effect. Users, Roles and
 Scope-catalog tabs rendered from the API; the Change-audit tab showed the live
 `user.assigned bob ["viewer"] -> ["runner"]` entry and the Decisions tab showed
 every allow/deny with its jti reference. No console errors.
+
+### 16_verified_tenant_identity.py
+
+**Status:** PASS
+
+**Description:** Ran the local TestClient demonstration on 2026-10-14 with no model calls or external
+services. Two verified JWTs for the same user carry different tenant claims. Both include administrator
+scope, while the request body, query and header all attempt to supply a different tenant.
+
+**Result:** The responses preserve `acme` and `globex` from the respective signed claims. This confirms
+identity propagation only; resource isolation and durable queue propagation are not demonstrated.
+
+---
