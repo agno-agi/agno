@@ -132,6 +132,10 @@ async def get_sessions_page(
         sort_by=sort_by,
         sort_order=sort_order,
         deserialize=False,
+        # List views render ``SessionSchema`` objects, which have no ``runs``
+        # field, so loading full run payloads would only burn memory and
+        # latency before being discarded at serialization time.
+        include_runs=False,
     )
     if isinstance(db, AsyncBaseDb):
         sessions, total_count = await db.get_sessions(**kwargs)
