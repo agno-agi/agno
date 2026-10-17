@@ -471,6 +471,39 @@ async def test_aretrieve(tmp_path):
     assert len(docs) == 1
 
 
+@pytest.mark.parametrize(
+    "base_dir,exclude_patterns",
+    [
+        ("example.github.io", None),
+        ("example.github.io/docs", None),
+        ("venv-guide", None),
+        ("archive/docs", ["archive"]),
+    ],
+)
+@pytest.mark.asyncio
+async def test_exclusion_ignores_base_path(tmp_path, base_dir, exclude_patterns):
+    """Exclusions apply inside the knowledge root, regardless of its location."""
+    base = tmp_path / base_dir
+    (base / "guides").mkdir(parents=True)
+    (base / "guides" / "content.md").write_text("retrievable content")
+    (base / "notes.txt").write_text("retrievable content")
+    fs_knowledge = FileSystemKnowledge(base_dir=str(base), include_patterns=["*.md"])
+    if exclude_patterns is not None:
+        fs_knowledge.exclude_patterns = exclude_patterns
+
+    excluded = fs_knowledge.exclude_patterns[0]
+    (base / excluded).mkdir()
+    (base / excluded / "hidden.md").write_text("retrievable content")
+    (base / f"{excluded}-hidden.md").write_text("retrievable content")
+
+    assert [doc.name for doc in fs_knowledge.retrieve("retrievable")] == ["guides/content.md"]
+    assert [doc.name for doc in await fs_knowledge.aretrieve("retrievable")] == ["guides/content.md"]
+
+    tools = {tool.name: tool for tool in fs_knowledge.get_tools()}
+    assert tools["list_files"].entrypoint("*") == "Found 1 files:\n- guides/content.md"
+    assert tools["grep_file"].entrypoint("retrievable") == "### guides/content.md\nretrievable content"
+
+
 # Tool execution tests
 
 
