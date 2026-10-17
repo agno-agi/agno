@@ -22,6 +22,7 @@ from typing import (
 if TYPE_CHECKING:
     from agno.run import RunContext
 
+from agno.utils.asyncio import run_blocking
 from agno.utils.log import log_debug, log_warning
 
 
@@ -122,9 +123,12 @@ async def ainvoke_callable_factory(
     if "session_state" in sig.parameters:
         kwargs["session_state"] = run_context.session_state if run_context.session_state is not None else {}
 
-    result = factory(**kwargs)
+    if asyncio.iscoroutinefunction(factory):
+        result = factory(**kwargs)
+    else:
+        result = await run_blocking(factory, **kwargs)
 
-    if asyncio.iscoroutine(result):
+    if asyncio.isfuture(result) or asyncio.iscoroutine(result):
         result = await result
 
     return result
@@ -193,8 +197,11 @@ async def _acompute_cache_key(
         if "team" in sig.parameters:
             kwargs["team"] = entity
 
-        result = custom_key_fn(**kwargs)
-        if asyncio.iscoroutine(result):
+        if asyncio.iscoroutinefunction(custom_key_fn):
+            result = custom_key_fn(**kwargs)
+        else:
+            result = await run_blocking(custom_key_fn, **kwargs)
+        if asyncio.isfuture(result) or asyncio.iscoroutine(result):
             result = await result
         return result
 
