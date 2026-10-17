@@ -442,11 +442,125 @@ def test_html_message_content(gmail_tools, mock_gmail_service):
     assert "HTML Email" in result
     assert "sender@test.com" in result
 
-    # Verify HTML content is included in the result
-    assert (
-        html_content in result
-        or base64.urlsafe_b64decode(mock_message_data["payload"]["body"]["data"]).decode() in result
+    assert json.loads(result)["emails"][0]["body"] == "HTML content"
+
+
+@pytest.mark.parametrize("method", ["get_latest_emails", "get_unread_emails", "search_emails"])
+@pytest.mark.parametrize("include_html", [False, True])
+def test_list_emails_reads_nested_html_body(gmail_tools, mock_gmail_service, method, include_html):
+    gmail_tools.include_html = include_html
+    message = create_mock_message("123", "Nested HTML", "sender@test.com", "2024-01-01", "")
+    message["payload"].update(
+        {
+            "mimeType": "multipart/mixed",
+            "parts": [
+                {
+                    "mimeType": "multipart/alternative",
+                    "parts": [
+                        {
+                            "mimeType": "text/html",
+                            "filename": "",
+                            "body": {"data": base64.urlsafe_b64encode(b"<p>Hello Agno</p>").decode()},
+                        }
+                    ],
+                },
+                {
+                    "mimeType": "application/pdf",
+                    "filename": "report.pdf",
+                    "body": {"attachmentId": "attachment-123", "size": 100},
+                },
+            ],
+        }
     )
+    mock_gmail_service.users().messages().list().execute.return_value = {"messages": [{"id": "123"}]}
+    mock_gmail_service.users().messages().get().execute.return_value = message
+
+    result = json.loads(getattr(gmail_tools, method)(count=1))
+
+    expected_body = "<p>Hello Agno</p>" if include_html else "Hello Agno"
+    assert result["emails"][0]["body"] == expected_body + "\n\nAttachments: report.pdf"
+    assert result["emails"][0]["subject"] == "Nested HTML"
+    assert result["count"] == 1
+
+
+def test_list_emails_prefers_nested_plain_text_and_limits_body(gmail_tools, mock_gmail_service):
+    gmail_tools.max_body_length = 6
+    message = create_mock_message("123", "Nested plain text", "sender@test.com", "2024-01-01", "")
+    message["payload"]["parts"] = [
+        {
+            "mimeType": "multipart/alternative",
+            "parts": [
+                {"mimeType": "text/html", "body": {"data": base64.urlsafe_b64encode(b"<p>HTML version</p>").decode()}},
+                {"mimeType": "text/plain", "body": {"data": base64.urlsafe_b64encode(b"Plain text version").decode()}},
+            ],
+        }
+    ]
+    mock_gmail_service.users().messages().list().execute.return_value = {"messages": [{"id": "123"}]}
+    mock_gmail_service.users().messages().get().execute.return_value = message
+
+    result = json.loads(gmail_tools.get_latest_emails(count=1))
+
+    assert result["emails"][0]["body"] == "Plain ... [truncated]"
+
+
+@pytest.mark.parametrize("plain_first", [False, True])
+@pytest.mark.parametrize("include_html", [False, True])
+def test_list_emails_prefers_plain_text_over_related_html(gmail_tools, mock_gmail_service, plain_first, include_html):
+    gmail_tools.include_html = include_html
+    message = create_mock_message("123", "Alternative bodies", "sender@test.com", "2024-01-01", "")
+    plain = {"mimeType": "text/plain", "body": {"data": base64.urlsafe_b64encode(b"Plain version").decode()}}
+    related = {
+        "mimeType": "multipart/related",
+        "parts": [
+            {"mimeType": "text/html", "body": {"data": base64.urlsafe_b64encode(b"<p>HTML version</p>").decode()}},
+            {"mimeType": "image/png", "filename": "logo.png", "body": {"attachmentId": "logo", "size": 10}},
+        ],
+    }
+    message["payload"].update(
+        {"mimeType": "multipart/alternative", "parts": [plain, related] if plain_first else [related, plain]}
+    )
+    mock_gmail_service.users().messages().list().execute.return_value = {"messages": [{"id": "123"}]}
+    mock_gmail_service.users().messages().get().execute.return_value = message
+
+    result = json.loads(gmail_tools.get_latest_emails(count=1))
+
+    assert result["emails"][0]["body"] == "Plain version\n\nAttachments: logo.png"
+
+
+@pytest.mark.parametrize("include_html", [False, True])
+@pytest.mark.parametrize("list_messages", [False, True], ids=["get-message", "list-messages"])
+def test_mixed_message_retains_html_body_and_plain_footer(gmail_tools, mock_gmail_service, include_html, list_messages):
+    gmail_tools.include_html = include_html
+    message = create_mock_message("123", "Mixed content", "sender@test.com", "2024-01-01", "")
+    message["payload"].update(
+        {
+            "mimeType": "multipart/mixed",
+            "parts": [
+                {
+                    "mimeType": "multipart/related",
+                    "parts": [
+                        {
+                            "mimeType": "text/html",
+                            "body": {"data": base64.urlsafe_b64encode(b"<p>Main content</p>").decode()},
+                        },
+                        {"mimeType": "image/png", "filename": "logo.png", "body": {"attachmentId": "logo", "size": 10}},
+                    ],
+                },
+                {"mimeType": "text/plain", "body": {"data": base64.urlsafe_b64encode(b"Mailing list footer").decode()}},
+            ],
+        }
+    )
+    mock_gmail_service.users().messages().list().execute.return_value = {"messages": [{"id": "123"}]}
+    mock_gmail_service.users().messages().get().execute.return_value = message
+
+    expected_body = "<p>Main content</p>\nMailing list footer" if include_html else "Main content\nMailing list footer"
+    if list_messages:
+        result = json.loads(gmail_tools.get_latest_emails(count=1))
+        assert result["emails"][0]["body"] == expected_body + "\n\nAttachments: logo.png"
+    else:
+        result = json.loads(gmail_tools.get_message(message_id="123"))
+        assert result["body"] == expected_body
+        assert result["attachments"][0]["filename"] == "logo.png"
 
 
 def test_multiple_recipients(gmail_tools, mock_gmail_service):

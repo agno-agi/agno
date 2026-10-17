@@ -1246,19 +1246,17 @@ class GmailTools(GoogleToolkit):
         return details
 
     def _get_message_body(self, msg_data: dict) -> str:
-        """Extract message body from message data"""
-        body = ""
-        attachments = []
+        """Extract MIME body text while retaining the list tools' attachment summary."""
         try:
-            if "parts" in msg_data["payload"]:
-                for part in msg_data["payload"]["parts"]:
-                    if part["mimeType"] == "text/plain":
-                        if "data" in part["body"]:
-                            body = base64.urlsafe_b64decode(part["body"]["data"]).decode()
-                    elif "filename" in part:
-                        attachments.append(part["filename"])
-            elif "body" in msg_data["payload"] and "data" in msg_data["payload"]["body"]:
-                body = base64.urlsafe_b64decode(msg_data["payload"]["body"]["data"]).decode()
+            payload = msg_data["payload"]
+            body, parsed_attachments = self._extract_body(payload)
+            attachments = [attachment["filename"] for attachment in parsed_attachments]
+            # List tools also report filenames when a payload has no downloadable attachment ID.
+            attachments.extend(
+                part["filename"]
+                for part in payload.get("parts", [])
+                if part.get("filename") and not part.get("body", {}).get("attachmentId")
+            )
         except Exception:
             return "Unable to decode message body"
 
@@ -1364,73 +1362,52 @@ class GmailTools(GoogleToolkit):
     def _extract_body(self, payload: Dict) -> Tuple[str, List[Dict]]:
         """Extract text body and attachment metadata from a Gmail message payload.
 
-        Handles multipart MIME, prefers text/plain over text/html, strips HTML tags
+        Handles multipart MIME, prefers text/plain for alternatives, strips HTML tags
         unless include_html is set, and truncates to max_body_length.
 
         Returns:
             Tuple of (body_text, list_of_attachment_dicts).
         """
-        mime_type = payload.get("mimeType", "")
-
-        if "parts" not in payload:
-            data = payload.get("body", {}).get("data")
-            if not data:
-                return "", []
-            text = self._decode_body_data(data)
-            if "html" in mime_type and not self.include_html:
-                text = re.sub(r"<[^>]+>", "", text)
-                text = "\n".join(s for s in (line.strip() for line in text.splitlines()) if s)
-            if self.max_body_length and len(text) > self.max_body_length:
-                text = text[: self.max_body_length] + "... [truncated]"
-            return text, []
-
-        plain_parts: List[str] = []
-        html_parts: List[str] = []
         attachments: List[Dict] = []
 
-        for part in payload["parts"]:
-            part_mime = part.get("mimeType", "")
+        def extract_part(part: Dict) -> Tuple[str, str]:
+            mime_type = part.get("mimeType", "text/plain")
+            if "parts" in part:
+                bodies = [extract_part(child) for child in part["parts"]]
+                bodies = [(text, mime) for text, mime in bodies if text]
+                if not bodies:
+                    return "", ""
 
-            if part_mime.startswith("multipart/"):
-                sub_body, sub_att = self._extract_body(part)
-                if sub_body:
-                    plain_parts.append(sub_body)
-                attachments.extend(sub_att)
-                continue
+                # Alternatives represent the same content; mixed parts are separate content.
+                if part.get("mimeType", "multipart/alternative") == "multipart/alternative":
+                    plain_bodies = [(text, mime) for text, mime in bodies if mime == "text/plain"]
+                    bodies = plain_bodies or bodies
+                body_mime = "text/plain" if all(mime == "text/plain" for _, mime in bodies) else "text/html"
+                return "\n".join(text for text, _ in bodies), body_mime
 
             part_body = part.get("body", {})
             if part_body.get("attachmentId"):
                 attachments.append(
                     {
                         "filename": part.get("filename", "unknown"),
-                        "mimeType": part_mime,
+                        "mimeType": part.get("mimeType", ""),
                         "size": part_body.get("size", 0),
                         "attachmentId": part_body["attachmentId"],
                     }
                 )
-                continue
+                return "", ""
 
             data = part_body.get("data")
-            if not data:
-                continue
+            if not data or mime_type not in ("text/plain", "text/html"):
+                return "", ""
 
-            if part_mime == "text/plain":
-                plain_parts.append(self._decode_body_data(data))
-            elif part_mime == "text/html":
-                html_parts.append(self._decode_body_data(data))
+            text = self._decode_body_data(data)
+            if mime_type == "text/html" and not self.include_html:
+                text = re.sub(r"<[^>]+>", "", text)
+                text = "\n".join(s for s in (line.strip() for line in text.splitlines()) if s)
+            return text, mime_type
 
-        if plain_parts:
-            body = "\n".join(plain_parts)
-        elif html_parts:
-            html = "\n".join(html_parts)
-            if self.include_html:
-                body = html
-            else:
-                body = re.sub(r"<[^>]+>", "", html)
-                body = "\n".join(s for s in (line.strip() for line in body.splitlines()) if s)
-        else:
-            body = ""
-
+        body, _ = extract_part(payload)
         if self.max_body_length and len(body) > self.max_body_length:
             body = body[: self.max_body_length] + "... [truncated]"
         return body, attachments
