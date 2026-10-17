@@ -156,12 +156,14 @@ class HttpxPageFetcher:
     """The fetcher that always works: httpx + BeautifulSoup, no key, no crawl delay.
 
     Fetching a list the caller already chose is not crawling, so there is no politeness sleep;
-    ``concurrency`` bounds how many requests are in flight at once instead.
+    ``concurrency`` must be positive and bounds how many requests are in flight at once instead.
     """
 
     extractor_id = "httpx"
 
     def __init__(self, *, concurrency: int = 8, timeout: int = 30, proxy: Optional[str] = None):
+        if concurrency <= 0:
+            raise ValueError("concurrency must be a positive integer")
         self.concurrency = concurrency
         self.timeout = timeout
         self.proxy = proxy
@@ -237,6 +239,8 @@ class ParallelPageFetcher:
         policy: Optional[RateLimitPolicy] = None,
         fallback: Optional[PageFetcher] = None,
     ):
+        if concurrency <= 0:
+            raise ValueError("concurrency must be a positive integer")
         self.concurrency = concurrency
         self.max_chars = max_chars
         self.policy = policy if policy is not None else RateLimitPolicy()
