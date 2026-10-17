@@ -38,6 +38,22 @@ def mock_executor():
     return executor
 
 
+@pytest.fixture
+def blocking_executor():
+    """An executor whose runs stay in flight until ``gate`` is set."""
+    executor = MagicMock()
+    gate = asyncio.Event()
+
+    async def _execute(*args, **kwargs):
+        await gate.wait()
+        return {"status": "success"}
+
+    executor.execute = AsyncMock(side_effect=_execute)
+    executor.close = AsyncMock()
+    executor.gate = gate
+    return executor
+
+
 class TestPollerInit:
     def test_defaults(self, mock_db, mock_executor):
         poller = SchedulePoller(db=mock_db, executor=mock_executor)
@@ -241,3 +257,86 @@ class TestPollerExecuteSafe:
         poller = SchedulePoller(db=mock_db, executor=executor)
         # Should not raise
         await poller._execute_safe({"id": "s1"})
+
+
+class TestPollerDoesNotReDispatchARunningSchedule:
+    """A claim lock goes stale after lock_grace_seconds (300 by default) while one execution
+    may legitimately run for Schedule.timeout_seconds (3600 by default), so a long execution
+    gets claimed again by the same poller. The reclaim must refresh the lock, not start a
+    second execution of the same schedule.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_stale_lock_reclaim_does_not_start_a_second_execution(self, mock_db, blocking_executor):
+        schedule = _make_schedule_dict()
+        # Tick 1 claims the schedule, tick 2 claims it again because its lock went stale
+        # while the first execution is still running.
+        mock_db.claim_due_schedule = MagicMock(side_effect=[schedule, None, schedule, None])
+
+        poller = SchedulePoller(db=mock_db, executor=blocking_executor)
+        poller._running = True
+        try:
+            await poller._poll_once()
+            await asyncio.sleep(0.05)
+            await poller._poll_once()
+            await asyncio.sleep(0.05)
+
+            assert blocking_executor.execute.call_count == 1
+        finally:
+            blocking_executor.gate.set()
+            await poller.stop()
+
+    @pytest.mark.asyncio
+    async def test_the_schedule_is_dispatched_again_once_the_first_execution_finishes(self, mock_db, mock_executor):
+        schedule = _make_schedule_dict()
+        mock_db.claim_due_schedule = MagicMock(side_effect=[schedule, None, schedule, None])
+
+        poller = SchedulePoller(db=mock_db, executor=mock_executor)
+        poller._running = True
+
+        await poller._poll_once()
+        await asyncio.sleep(0.05)  # the first execution completes here
+        await poller._poll_once()
+        await asyncio.sleep(0.05)
+
+        assert mock_executor.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_a_reclaim_does_not_block_other_due_schedules_in_the_same_tick(self, mock_db, blocking_executor):
+        first = _make_schedule_dict()
+        second = _make_schedule_dict(id="s2", name="second")
+        mock_db.claim_due_schedule = MagicMock(side_effect=[first, None, first, second, None])
+
+        poller = SchedulePoller(db=mock_db, executor=blocking_executor)
+        poller._running = True
+        try:
+            await poller._poll_once()
+            await asyncio.sleep(0.05)
+            await poller._poll_once()
+            await asyncio.sleep(0.05)
+
+            dispatched = [call.args[0].id for call in blocking_executor.execute.call_args_list]
+            assert dispatched == ["s1", "s2"]
+        finally:
+            blocking_executor.gate.set()
+            await poller.stop()
+
+    @pytest.mark.asyncio
+    async def test_a_tick_terminates_when_the_adapter_keeps_returning_the_running_schedule(
+        self, mock_db, blocking_executor
+    ):
+        """A DB adapter that does not refresh locked_at on reclaim must not spin the tick."""
+        schedule = _make_schedule_dict()
+        mock_db.claim_due_schedule = MagicMock(return_value=schedule)
+
+        poller = SchedulePoller(db=mock_db, executor=blocking_executor)
+        poller._running = True
+        try:
+            await asyncio.wait_for(poller._poll_once(), timeout=5)
+            await asyncio.sleep(0.05)
+
+            assert blocking_executor.execute.call_count == 1
+            assert mock_db.claim_due_schedule.call_count <= 3
+        finally:
+            blocking_executor.gate.set()
+            await poller.stop()
