@@ -298,17 +298,21 @@ class Gemini(Model):
         # User provides their own generation config
         if self.generation_config is not None:
             if isinstance(self.generation_config, GenerateContentConfig):
-                config = self.generation_config.model_dump()
+                config = self.generation_config.model_dump(exclude_none=True)
             else:
-                config = self.generation_config
+                # Copy so the caller's dict isn't modified by the updates below
+                config = dict(self.generation_config)
         else:
             config = {}
 
         if self.generative_model_kwargs:
             config.update(self.generative_model_kwargs)
 
-        config.update(
-            {
+        # Only fields that are set override the config: unset fields default to None
+        # and would otherwise erase values the user passed in generation_config.
+        model_config = {
+            k: v
+            for k, v in {
                 "safety_settings": self.safety_settings,
                 "temperature": self.temperature,
                 "top_p": self.top_p,
@@ -322,8 +326,10 @@ class Gemini(Model):
                 "response_modalities": self.response_modalities,
                 "speech_config": self.speech_config,
                 "cached_content": self.cached_content,
-            }
-        )
+            }.items()
+            if v is not None
+        }
+        config.update(model_config)
 
         if system_message is not None:
             config["system_instruction"] = system_message  # type: ignore
