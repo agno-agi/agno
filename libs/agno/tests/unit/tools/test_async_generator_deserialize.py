@@ -19,11 +19,12 @@ async generator function, and (b) argument coercion works end-to-end through
 """
 
 from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
-from typing import Literal
+from typing import Literal, Union
 
 import pytest
 from pydantic import BaseModel
 
+from agno.agent.agent import Agent
 from agno.tools.function import Function, FunctionCall
 
 
@@ -173,3 +174,28 @@ async def test_async_gen_validation_error_surfaces_on_iteration():
     with pytest.raises(ValidationError, match="time_range"):
         async for _ in result:
             pass
+
+
+@pytest.mark.asyncio
+async def test_async_gen_framework_union_keeps_argument_validation():
+    """Agent in one union must not disable coercion or async-generator dispatch."""
+
+    class Ticket(BaseModel):
+        title: str
+        priority: int
+
+    async def create_ticket(ticket: Union[Ticket, Agent], count: int):
+        yield type(ticket).__name__, type(count).__name__, ticket.priority
+
+    func = Function(name="create_ticket", entrypoint=create_ticket)
+    func.process_entrypoint()
+    call = FunctionCall(
+        function=func,
+        arguments={"ticket": {"title": "Login failed", "priority": "2"}, "count": "7"},
+    )
+
+    result = await call.aexecute()
+
+    assert result.status == "success"
+    assert isasyncgenfunction(func.entrypoint)
+    assert [item async for item in call.result] == [("Ticket", "int", 2)]
