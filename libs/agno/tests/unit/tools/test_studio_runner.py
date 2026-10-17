@@ -2906,9 +2906,8 @@ class TestDispatchCheckInvariants:
     def test_branch_pins_pair_each_occurrence_with_its_own_config(self, db, registry):
         """Two branches pin the same child id at different versions. The walk
         must pair each rebuilt branch object with the config version its own
-        branch-qualified link pinned: collapsed by id, the v1 branch (which
-        declares a parser model nothing reconstructs) was validated against
-        the v2 config and dispatched degraded."""
+        branch-qualified link pinned. The rich branch's parser model must
+        survive without being copied onto the plain branch."""
         from agno.agent import Agent
         from agno.workflow.condition import Condition
         from agno.workflow.step import Step
@@ -2931,9 +2930,11 @@ class TestDispatchCheckInvariants:
         ).save(db=db)
 
         runner = StudioRunnerTools(registry=registry, db=db)
-        error = _loads(runner.run_workflow("branch-workflow", "hi")).get("error", "")
-        assert "parser_model" in error
-        assert "shared-agent" in error
+        rebuilt = runner._workflow_for_run("branch-workflow")
+        assert rebuilt is not None
+        condition = rebuilt.steps[0]
+        assert condition.steps[0].agent.parser_model.id == "gpt-5.5"
+        assert condition.else_steps[0].agent.parser_model is None
 
     def test_branch_pins_catch_a_redirected_db_before_any_write(self, db, registry, tmp_path):
         """The isolated branch's agent declares tenant tables the registry's
@@ -2998,11 +2999,8 @@ class TestDispatchCheckInvariants:
         # report, and saying so beats an empty list.
         assert "error" in _loads(StudioRunnerTools(registry=Registry(name="R")).list_agents())
 
-    def test_an_edit_does_not_delete_what_the_rebuild_could_not_restore(self, db, registry):
-        """An edit works on a rebuilt component, so anything from_dict cannot
-        restore is already gone by the time the edit runs. Resaving would
-        delete a declaration the edit never mentioned -- and quietly lift the
-        refusal that declaration causes."""
+    def test_an_edit_preserves_the_auxiliary_model(self, db, registry):
+        """Editing an unrelated field keeps the saved parser model configured."""
         from agno.agent import Agent
 
         Agent(
@@ -3013,14 +3011,14 @@ class TestDispatchCheckInvariants:
         ).save(db=db)
 
         runner = StudioRunnerTools(registry=registry, db=db)
-        assert "parser_model" in _loads(runner.run_agent("rich", "hi"))["error"]
+        assert runner._agent_for_run("rich").parser_model.id == "o3-deep"
 
         studio = StudioTools(registry=registry, db=db)
         assert "error" not in _loads(studio.edit_agent("rich", description="an unrelated change"))
 
         stored = db.get_config(component_id="rich") or {}
         assert (stored.get("config") or {}).get("parser_model") is not None
-        assert "parser_model" in _loads(runner.run_agent("rich", "hi"))["error"]
+        assert runner._agent_for_run("rich").parser_model.id == "o3-deep"
 
     def test_an_edit_refuses_rather_than_guessing_when_it_cannot_read_the_original(self, db, registry):
         """A read that fails is not evidence there was nothing to carry. Taking
@@ -3159,9 +3157,8 @@ class TestDispatchCheckInvariants:
         # The code component is the one that runs, so it is the one listed.
         assert listing["agents"][0]["name"] == "dup-in-code"
 
-    def test_a_nested_members_lost_model_is_refused_where_it_happened(self, db, registry):
-        """A member declares its own models, so the loss belongs to the member
-        rather than only to the component the caller named."""
+    def test_a_nested_members_auxiliary_model_is_restored(self, db, registry):
+        """A saved team restores the parser model declared by its member."""
         model_config = {"name": "OpenAIResponses", "id": "gpt-5.4", "provider": "OpenAI"}
         for component_id, component_type, extra in (
             ("member", "agent", {"parser_model": {"id": "o3-deep", "provider": "OpenAI"}}),
@@ -3172,15 +3169,12 @@ class TestDispatchCheckInvariants:
             db.upsert_component(component_id=component_id, component_type=component_type, name=component_id)
             db.upsert_config(component_id=component_id, config=config, stage="published")
 
-        error = _loads(StudioRunnerTools(registry=registry, db=db).run_team("crew", "hi"))["error"]
-        assert "parser_model" in error and "member" in error
+        team = StudioRunnerTools(registry=registry, db=db)._team_for_run("crew")
+        assert team is not None
+        assert team.members[0].parser_model.id == "o3-deep"
 
-    def test_a_declared_model_that_cannot_be_rebuilt_is_refused(self, db, registry):
-        """A parser or output model is serialized and never read back, so a
-        component declaring one always answers through a different pipeline
-        than it was configured for; dispatch refuses instead of succeeding
-        some other way. reasoning_model reconstructs now and dispatches with
-        the pipeline it declared."""
+    def test_declared_auxiliary_models_are_dispatchable(self, db, registry):
+        """Saved components retain every configured model stage on dispatch."""
         from agno.agent import Agent
 
         Agent(
@@ -3191,10 +3185,7 @@ class TestDispatchCheckInvariants:
         ).save(db=db)
 
         runner = StudioRunnerTools(registry=registry, db=db)
-        assert "parser_model" in _loads(runner.run_agent("rich", "hi"))["error"]
-
-        # Reads and edits still load it, so the declaration stays repairable.
-        assert runner._find_agent("rich") is not None
+        assert runner._agent_for_run("rich").parser_model.id == "o3-deep"
 
         # A reasoning declaration rebuilds instead of refusing.
         Agent(
