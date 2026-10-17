@@ -524,6 +524,8 @@ def is_executor_pause(step_output: Any) -> bool:
     executor_type_value = getattr(executor_type, "value", executor_type)
     if executor_type_value in ("agent", "team"):
         return True
+    if getattr(step_output, "_executor_run_response", None) is not None:
+        return True
     # Check nested steps — composite steps (Condition/Loop/Router) propagate
     # is_paused but don't carry executor_type themselves.
     nested = getattr(step_output, "steps", None)
