@@ -18,10 +18,6 @@ def get_agentic_or_user_search_filters(
     """
     search_filters = None
 
-    # If agentic filters exist and manual filters (passed by user) do not, use agentic filters
-    if filters and not effective_filters:
-        search_filters = filters
-
     # If both agentic filters exist and manual filters (passed by user) exist, use manual filters (give priority to user and override)
     if filters and effective_filters:
         if isinstance(effective_filters, dict):
@@ -31,6 +27,16 @@ def get_agentic_or_user_search_filters(
             raise ValueError(
                 "Merging dict and list of filters is not supported; effective_filters should be a dict for search compatibility."
             )
+
+    # If only manual filters (passed by user) exist, use them. Every branch above
+    # is gated on the agent's filters, so without this one a user who passed
+    # filters gets them dropped and the search runs unscoped.
+    elif effective_filters and isinstance(effective_filters, dict):
+        search_filters = effective_filters
+
+    # If only agentic filters exist, use them
+    elif filters:
+        search_filters = filters
 
     log_info(f"Filters used by Agent: {search_filters}")
     return search_filters or {}
