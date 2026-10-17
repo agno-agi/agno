@@ -6277,7 +6277,15 @@ def _sync_run_response_with_model_response(
     intermediate snapshot.
     """
     if model_response.tool_executions is not None:
-        run_response.tools = list(model_response.tool_executions)
+        if run_response.tools is None:
+            run_response.tools = list(model_response.tool_executions)
+        else:
+            existing_by_id = {tool.tool_call_id: i for i, tool in enumerate(run_response.tools) if tool.tool_call_id}
+            for tool in model_response.tool_executions:
+                if tool.tool_call_id and tool.tool_call_id in existing_by_id:
+                    run_response.tools[existing_by_id[tool.tool_call_id]] = tool
+                else:
+                    run_response.tools.append(tool)
     run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
 
 
