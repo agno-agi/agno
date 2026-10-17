@@ -69,6 +69,7 @@ class Cloudflare(OpenAILike):
     max_tokens: Optional[int] = None
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         self.id = normalize_cloudflare_gateway_model_id(self.id)
 
     def _get_client_params(self) -> Dict[str, Any]:
