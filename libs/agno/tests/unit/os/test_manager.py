@@ -23,6 +23,7 @@ from agno.registry import Registry
 from agno.registry._reserved import BUILDER_ID, MANAGER_TEAM_ID, OPERATOR_ID, PRODUCT_MANAGER_ID
 from agno.run import RunContext
 from agno.tools.agentos import AgentOSTools
+from agno.tools.platform_context import PlatformContextTools
 from agno.tools.studio import StudioTools
 from agno.tools.studio_runner import StudioRunnerTools
 
@@ -361,6 +362,45 @@ def test_diagnostics_report_sync_async_and_required_env(db, monkeypatch):
         "scheduler",
         "mcp",
     }
+
+
+class CapturingModel(OfflineModel):
+    def __init__(self):
+        super().__init__()
+        self.system_messages = []
+
+    def invoke(self, *args, **kwargs):
+        messages = kwargs.get("messages") or []
+        self.system_messages.extend(m.content for m in messages if m.role == "system")
+        return super().invoke()
+
+    async def ainvoke(self, *args, **kwargs):
+        return self.invoke(*args, **kwargs)
+
+
+def test_manager_reads_page_context_from_run_dependencies(db):
+    model = CapturingModel()
+    os = AgentOS(db=db, manager=OSManager(model=model), telemetry=False)
+    client = TestClient(os.get_app())
+    assert any(isinstance(t, PlatformContextTools) for t in os.manager.tools)
+    assert any(isinstance(t, PlatformContextTools) for t in manager_member(os, OPERATOR_ID).tools)
+
+    dependencies = {
+        "page_context": {"page": "Traces", "path": "/traces"},
+        "context_refs": [{"kind": "trace", "id": "t1"}],
+    }
+    run = client.post(
+        f"/teams/{MANAGER_TEAM_ID}/runs",
+        data={"message": "why did this fail?", "stream": "false", "dependencies": json.dumps(dependencies)},
+    )
+    assert run.status_code == 200, run.text
+    system = model.system_messages[-1]
+    assert "'path': '/traces'" in system and "'id': 't1'" in system
+
+    # Without page context the placeholders fall back to the team defaults.
+    client.post(f"/teams/{MANAGER_TEAM_ID}/runs", data={"message": "hello", "stream": "false"})
+    assert "AgentOS UI: not provided" in model.system_messages[-1]
+    assert "{page_context}" not in model.system_messages[-1]
 
 
 def test_diagnostics_without_a_manager(tmp_path):

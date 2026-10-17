@@ -155,6 +155,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     """
     from agno.db.base import AsyncBaseDb, BaseDb
     from agno.tools.agentos import AgentOSTools
+    from agno.tools.platform_context import PlatformContextTools
     from agno.tools.studio import StudioTools
     from agno.tools.studio_runner import StudioRunnerTools
     from agno.utils.live_sequence import LiveSequence
@@ -209,7 +210,13 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         num_history_runs=5,
     )
 
-    operator_tools = [AgentOSTools(db=db), _diagnostics_tool(agent_os, config.required_env)]
+    # Resolves the items the UI references; the OS discovers its databases later.
+    manager_db: BaseDb = db
+
+    def platform_context() -> PlatformContextTools:
+        return PlatformContextTools(db=manager_db, get_dbs=lambda: dict(agent_os.dbs))
+
+    operator_tools = [AgentOSTools(db=db), platform_context(), _diagnostics_tool(agent_os, config.required_env)]
     operator_instructions = [OPERATOR_INSTRUCTIONS]
     if workspace is not None:
         operator_tools.extend(workspace.get_tools())
@@ -265,9 +272,13 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
                 include_all_components=True,
                 self_dispatch="once",
             ),
+            platform_context(),
         ],
         members=members,
         instructions=instructions,
+        # Fill the page context placeholders in MANAGER_INSTRUCTIONS when the UI
+        # sends none; its run dependencies override these.
+        dependencies={"page_context": "not provided", "context_refs": "none"},
         search_past_sessions=True,
         add_datetime_to_context=True,
         add_history_to_context=True,
