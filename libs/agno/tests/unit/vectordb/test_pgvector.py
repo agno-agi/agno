@@ -271,12 +271,16 @@ def test_upsert_builds_records_and_sets_conflict_on_id(mock_pgvector, mock_embed
 
     # Prepare session context manager mock
     sess = MagicMock()
+    sess.execute.return_value.fetchall.return_value = []
     cm = MagicMock()
     cm.__enter__.return_value = sess
     mock_pgvector.Session.return_value = cm
 
     # Build a chain of mocks: postgresql.insert(...).values(...).on_conflict_do_update(...)
-    with patch("agno.vectordb.pgvector.pgvector.postgresql.insert") as mock_insert:
+    with (
+        patch("agno.vectordb.pgvector.pgvector.select"),
+        patch("agno.vectordb.pgvector.pgvector.postgresql.insert") as mock_insert,
+    ):
         insert_stmt = MagicMock(name="insert_stmt")
         after_values = MagicMock(name="after_values")
         after_values.excluded = MagicMock(name="excluded")  # used in set_ mapping
@@ -439,7 +443,10 @@ async def test_async_upsert(mock_pgvector):
     docs = create_test_documents()
 
     # Mock the postgresql.insert to avoid SQLAlchemy errors with MagicMock table
-    with patch("agno.vectordb.pgvector.pgvector.postgresql.insert") as mock_insert:
+    with (
+        patch("agno.vectordb.pgvector.pgvector.select"),
+        patch("agno.vectordb.pgvector.pgvector.postgresql.insert") as mock_insert,
+    ):
         mock_stmt = MagicMock()
         mock_values_stmt = MagicMock()
         mock_stmt.values.return_value = mock_values_stmt
@@ -452,6 +459,7 @@ async def test_async_upsert(mock_pgvector):
                 # Mock the session to avoid actual database operations
                 with patch.object(mock_pgvector, "Session") as mock_session_class:
                     mock_session = MagicMock()
+                    mock_session.execute.return_value.fetchall.return_value = []
                     mock_session_class.return_value.__enter__.return_value = mock_session
 
                     await mock_pgvector.async_upsert(content_hash="test_hash", documents=docs)
@@ -1306,3 +1314,75 @@ def test_hybrid_search_falls_back_to_vector_on_no_usable_tokens(mock_engine):
         # Embedder was called — vector search still runs even with no text tokens
         local_embedder.get_embedding.assert_called_once_with("!@#$")
         assert results == []
+
+
+def test_upsert_embeds_and_writes_batch_by_batch(mock_pgvector, mock_embedder):
+    """Upsert embeds and writes one batch at a time and releases embeddings after each write."""
+    docs = create_test_documents(num_docs=3)
+    batches = []
+
+    def _fake_upsert(content_hash, documents, filters=None, batch_size=100, user_id=None):
+        batches.append([doc.id for doc in documents])
+        for doc in documents:
+            assert doc.embedding is not None
+
+    with patch.object(mock_pgvector, "_ids_by_content_hash", return_value=set()):
+        with patch.object(mock_pgvector, "_upsert", side_effect=_fake_upsert):
+            mock_pgvector.upsert("hash-1", docs, batch_size=2)
+
+    assert batches == [["doc_0", "doc_1"], ["doc_2"]]
+    assert all(doc.embedding is None for doc in docs)
+
+
+def test_upsert_failure_rolls_back_added_rows_and_keeps_existing(mock_pgvector, mock_embedder):
+    """A batch that fails mid-run rolls back only rows this run added; existing rows stay."""
+    docs = create_test_documents(num_docs=4)
+
+    def _fail_second_batch(content_hash, documents, filters=None, batch_size=100, user_id=None):
+        if [doc.id for doc in documents] == ["doc_2", "doc_3"]:
+            raise RuntimeError("write failed")
+
+    with patch.object(mock_pgvector, "_ids_by_content_hash", return_value={"existing-stale"}):
+        with patch.object(mock_pgvector, "_upsert", side_effect=_fail_second_batch):
+            with patch.object(mock_pgvector, "_delete_ids") as mock_delete_ids:
+                with pytest.raises(RuntimeError, match="write failed"):
+                    mock_pgvector.upsert("hash-1", docs, batch_size=2)
+
+    (deleted,), _ = mock_delete_ids.call_args
+    assert "existing-stale" not in deleted
+    assert len(deleted) == 2  # only the first batch's newly added rows
+
+
+def test_upsert_deletes_stale_ids_after_success(mock_pgvector, mock_embedder):
+    """Rows the new content no longer contains are deleted only after every batch landed."""
+    from hashlib import md5
+
+    docs = create_test_documents(num_docs=2)
+    kept_id = md5(f"{docs[0].id}_hash-1".encode()).hexdigest()
+
+    with patch.object(mock_pgvector, "_upsert"):
+        with patch.object(mock_pgvector, "_ids_by_content_hash", return_value={"stale-row", kept_id}):
+            with patch.object(mock_pgvector, "_delete_ids") as mock_delete_ids:
+                mock_pgvector.upsert("hash-1", docs, batch_size=1)
+
+    (deleted,), _ = mock_delete_ids.call_args
+    assert deleted == ["stale-row"]
+
+
+@pytest.mark.asyncio
+async def test_async_upsert_embeds_and_writes_batch_by_batch(mock_pgvector, mock_embedder):
+    """Async upsert embeds and writes one batch at a time and releases embeddings after each write."""
+    docs = create_test_documents(num_docs=3)
+    batches = []
+
+    async def _fake_async_upsert(content_hash, documents, filters=None, batch_size=100, user_id=None):
+        batches.append([doc.id for doc in documents])
+        for doc in documents:
+            assert doc.embedding is not None
+
+    with patch.object(mock_pgvector, "_ids_by_content_hash", return_value=set()):
+        with patch.object(mock_pgvector, "_async_upsert", side_effect=_fake_async_upsert):
+            await mock_pgvector.async_upsert("hash-1", docs, batch_size=2)
+
+    assert batches == [["doc_0", "doc_1"], ["doc_2"]]
+    assert all(doc.embedding is None for doc in docs)

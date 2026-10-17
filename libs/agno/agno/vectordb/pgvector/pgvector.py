@@ -2,7 +2,7 @@ import asyncio
 import re
 from hashlib import md5
 from math import sqrt
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Union, cast
 
 from agno.utils.string import generate_id
 
@@ -563,29 +563,49 @@ class PgVector(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """
-        Upsert documents by content hash.
-        First delete all documents with the same content hash.
-        Then upsert the new documents.
+        Upsert documents by content hash, embedding and writing one batch at a time.
+
+        Old rows stay retrievable until every batch has been embedded and written:
+        rows this run adds are rolled back when a later batch fails, and rows the
+        new content no longer contains are deleted only after all batches land.
+        Embeddings are held for one batch at a time instead of one per chunk, so
+        peak memory is bounded by ``batch_size`` rather than the chunk count.
 
         ``user_id`` is the owner of these chunks; ``None`` means shared. See ``insert``.
         """
-        # Embed before the delete below: clearing the old chunks first would destroy
-        # retrievable content if the embedder then fails.
-        for document in documents:
-            if not document.embedding:
-                document.embedding = None
-        embed_before_replace(documents, self.embedder)
-        # Empty results retain generic partial ingestion: write the usable chunks
-        # without asking the embedder again. Raised failures above still precede deletion.
-        documents = retrievable_documents(documents)
         self._require_owner_column(user_id)
+        existing_ids = self._ids_by_content_hash(content_hash, user_id=user_id)
+        written_ids: Set[str] = set()
         try:
-            if self.content_hash_exists(content_hash, user_id=user_id):
-                self._delete_by_content_hash(content_hash, user_id=user_id)
-            self._upsert(content_hash, documents, filters, batch_size, user_id=user_id)
+            for i in range(0, len(documents), batch_size):
+                batch_docs = documents[i : i + batch_size]
+                for document in batch_docs:
+                    if not document.embedding:
+                        document.embedding = None
+                # Embed before the batch can replace anything: a chunk that fails
+                # to embed must not take retrievable content down with it.
+                embed_before_replace(batch_docs, self.embedder)
+                batch_docs = retrievable_documents(batch_docs)
+                self._upsert(content_hash, batch_docs, filters, batch_size, user_id=user_id)
+                # Only count ids whose batch actually landed: a batch whose write
+                # raised never became retrievable content.
+                written_ids.update(self._document_record_id(doc, content_hash, user_id) for doc in batch_docs)
+                # The vectors live in the store now; the in-memory copies are the
+                # memory spike this method exists to bound.
+                for document in batch_docs:
+                    document.embedding = None
         except Exception as e:
-            log_error(f"Error upserting documents by content hash: {str(e)}")
+            log_error(f"Error upserting documents by content hash: {e}")
+            added_ids = [record_id for record_id in written_ids if record_id not in existing_ids]
+            if added_ids:
+                try:
+                    self._delete_ids(added_ids)
+                except Exception:
+                    log_error("Rollback of partially upserted rows failed; replacement rows may remain", exc_info=True)
             raise
+        stale_ids = [record_id for record_id in existing_ids if record_id not in written_ids]
+        if stale_ids:
+            self._delete_ids(stale_ids)
 
     def _upsert(
         self,
@@ -678,6 +698,42 @@ class PgVector(VectorDb):
             return record_id
         return md5(f"{record_id}_{user_id}".encode()).hexdigest()
 
+    def _document_record_id(self, doc: Document, content_hash: str, user_id: Optional[str]) -> str:
+        """The deterministic record id `_get_document_record` builds for ``doc``."""
+        base_id = doc.id or md5(self._clean_content(doc.content).encode()).hexdigest()
+        return self._scoped_record_id(base_id, content_hash, user_id)
+
+    def _ids_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> Set[str]:
+        """Ids currently stored for ``content_hash``, scoped like `_delete_by_content_hash`."""
+        scope_to_owner = self._require_owner_column(user_id)
+        try:
+            with self.Session() as sess:
+                stmt = select(self.table.c.id).where(self.table.c.content_hash == content_hash)
+                if scope_to_owner:
+                    if user_id is not None:
+                        stmt = stmt.where(self.table.c.user_id == user_id)
+                    else:
+                        stmt = stmt.where(self.table.c.user_id.is_(None))
+                return {row[0] for row in sess.execute(stmt).fetchall()}
+        except Exception as e:
+            log_error(f"Error reading ids for content hash '{content_hash}' from table '{self.table.fullname}': {e}")
+            raise
+
+    def _delete_ids(self, record_ids: List[str], chunk_size: int = 500) -> None:
+        """Delete rows by primary key in chunks; drops stale or rolled-back rows."""
+        for i in range(0, len(record_ids), chunk_size):
+            ids = record_ids[i : i + chunk_size]
+            sess = None
+            try:
+                with self.Session() as sess:
+                    sess.execute(self.table.delete().where(self.table.c.id.in_(ids)))
+                    sess.commit()
+            except Exception as e:
+                log_error(f"Error deleting rows from table '{self.table.fullname}': {e}")
+                if sess is not None:
+                    sess.rollback()
+                raise
+
     def _get_document_record(
         self,
         doc: Document,
@@ -692,8 +748,7 @@ class PgVector(VectorDb):
         cleaned_content = self._clean_content(doc.content)
         # Include content_hash in ID to ensure uniqueness across different content hashes
         # This allows the same URL/content to be inserted with different descriptions
-        base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
-        record_id = self._scoped_record_id(base_id, content_hash, user_id)
+        record_id = self._document_record_id(doc, content_hash, user_id)
 
         meta_data = doc.meta_data or {}
         if filters:
@@ -778,25 +833,44 @@ class PgVector(VectorDb):
     ) -> None:
         """Upsert documents asynchronously by running in a thread.
 
+        Embeds and writes one batch at a time so peak memory is bounded by
+        ``batch_size``; see ``upsert`` for the replacement semantics.
+
         ``user_id`` is the owner of these chunks; ``None`` means shared. See ``insert``.
         """
-        # Embed before the delete below: clearing the old chunks first would destroy
-        # retrievable content if the embedder then fails.
-        for document in documents:
-            if not document.embedding:
-                document.embedding = None
-        await aembed_before_replace(documents, self.embedder)
-        # Empty results retain generic partial ingestion: write the usable chunks
-        # without asking the embedder again. Raised failures above still precede deletion.
-        documents = retrievable_documents(documents)
         self._require_owner_column(user_id)
+        existing_ids = self._ids_by_content_hash(content_hash, user_id=user_id)
+        written_ids: Set[str] = set()
         try:
-            if self.content_hash_exists(content_hash, user_id=user_id):
-                self._delete_by_content_hash(content_hash, user_id=user_id)
-            await self._async_upsert(content_hash, documents, filters, batch_size, user_id=user_id)
+            for i in range(0, len(documents), batch_size):
+                batch_docs = documents[i : i + batch_size]
+                for document in batch_docs:
+                    if not document.embedding:
+                        document.embedding = None
+                # Embed before the batch can replace anything: a chunk that fails
+                # to embed must not take retrievable content down with it.
+                await aembed_before_replace(batch_docs, self.embedder)
+                batch_docs = retrievable_documents(batch_docs)
+                await self._async_upsert(content_hash, batch_docs, filters, batch_size, user_id=user_id)
+                # Only count ids whose batch actually landed: a batch whose write
+                # raised never became retrievable content.
+                written_ids.update(self._document_record_id(doc, content_hash, user_id) for doc in batch_docs)
+                # The vectors live in the store now; the in-memory copies are the
+                # memory spike this method exists to bound.
+                for document in batch_docs:
+                    document.embedding = None
         except Exception as e:
-            log_error(f"Error upserting documents by content hash: {str(e)}")
+            log_error(f"Error upserting documents by content hash: {e}")
+            added_ids = [record_id for record_id in written_ids if record_id not in existing_ids]
+            if added_ids:
+                try:
+                    self._delete_ids(added_ids)
+                except Exception:
+                    log_error("Rollback of partially upserted rows failed; replacement rows may remain", exc_info=True)
             raise
+        stale_ids = [record_id for record_id in existing_ids if record_id not in written_ids]
+        if stale_ids:
+            self._delete_ids(stale_ids)
 
     async def _async_upsert(
         self,
