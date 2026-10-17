@@ -2082,7 +2082,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 sessions = [dict(record._mapping) for record in records]
 
                 if runs_table is not None and sessions:
-                    session_ids = [s["session_id"] for s in sessions]
+                    session_ids = stmt.with_only_columns(table.c.session_id)
                     runs_stmt = select(
                         runs_table.c.session_id,
                         func.json_unquote(func.json_extract(runs_table.c.run_data, "$.model")).label("model"),

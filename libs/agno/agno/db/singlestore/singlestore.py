@@ -2081,7 +2081,7 @@ class SingleStoreDb(BaseDb):
                 sessions = [dict(record._mapping) for record in result]
 
                 if runs_table is not None and sessions:
-                    session_ids = [s["session_id"] for s in sessions]
+                    session_ids = stmt.with_only_columns(table.c.session_id)
                     runs_stmt = select(
                         runs_table.c.session_id,
                         func.JSON_EXTRACT_STRING(runs_table.c.run_data, "model").label("model"),
