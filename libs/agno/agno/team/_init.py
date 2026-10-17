@@ -403,6 +403,8 @@ def __init__(
     # Team session
     team._cached_session = None
     team._cached_session_db = None
+    # Parent session handed down during delegation (sub-teams only)
+    team._delegated_session = None
 
     team._tool_instructions = None
 
