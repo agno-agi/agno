@@ -4,7 +4,7 @@ import re
 from unittest.mock import MagicMock
 
 from agno.session import TeamSession
-from agno.team._messages import get_system_message
+from agno.team._messages import _get_dynamic_context_message, get_system_message
 from agno.team.team import Team
 
 # =============================================================================
@@ -63,7 +63,7 @@ def test_datetime_format_from_dict_missing():
 
 
 # =============================================================================
-# System message tests
+# Dynamic context message tests
 # =============================================================================
 
 
@@ -80,11 +80,12 @@ def _make_team_with_model(**kwargs) -> Team:
 def test_default_format_includes_full_datetime():
     """When no datetime_format is set, the full default datetime str is used."""
     team = _make_team_with_model(add_datetime_to_context=True)
-    session = TeamSession(session_id="test-session")
 
-    msg = get_system_message(team, session)
+    msg = _get_dynamic_context_message(team)
 
     assert msg is not None
+    assert msg.role == "user"
+    assert msg.add_to_agent_memory is False
     assert re.search(r"The current time is \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", msg.content)
 
 
@@ -94,9 +95,8 @@ def test_custom_date_only_format():
         add_datetime_to_context=True,
         datetime_format="%Y-%m-%d",
     )
-    session = TeamSession(session_id="test-session")
 
-    msg = get_system_message(team, session)
+    msg = _get_dynamic_context_message(team)
 
     assert msg is not None
     assert re.search(r"The current time is \d{4}-\d{2}-\d{2}\.", msg.content)
@@ -108,21 +108,30 @@ def test_custom_format_slash_style():
         add_datetime_to_context=True,
         datetime_format="%d/%m/%Y %H:%M",
     )
-    session = TeamSession(session_id="test-session")
 
-    msg = get_system_message(team, session)
+    msg = _get_dynamic_context_message(team)
 
     assert msg is not None
     assert re.search(r"The current time is \d{2}/\d{2}/\d{4} \d{2}:\d{2}\.", msg.content)
 
 
 def test_no_datetime_when_disabled():
-    """When add_datetime_to_context is False, no datetime info is added."""
+    """When add_datetime_to_context is False, no dynamic context message is generated."""
     team = _make_team_with_model(
         add_datetime_to_context=False,
         datetime_format="%Y-%m-%d",
     )
+
+    msg = _get_dynamic_context_message(team)
+
+    assert msg is None
+
+
+def test_datetime_not_in_system_message():
+    """Datetime context should NOT appear in the system message."""
+    team = _make_team_with_model(add_datetime_to_context=True)
     session = TeamSession(session_id="test-session")
+
     msg = get_system_message(team, session)
 
     if msg is not None:
