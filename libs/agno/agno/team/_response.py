@@ -1015,6 +1015,13 @@ def _handle_model_response_stream(
     from agno.team._run import build_team_after_tool_results_callback
 
     full_model_response = ModelResponse()
+    # Output accumulated before the current model request; restored if that request's stream is retried
+    before_request = (
+        full_model_response.content,
+        full_model_response.reasoning_content,
+        run_response.content,
+        run_response.reasoning_content,
+    )
     for model_response_event in call_model_stream_with_fallback(
         team.model,
         team.fallback_config,
@@ -1035,6 +1042,12 @@ def _handle_model_response_stream(
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
             if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                before_request = (
+                    full_model_response.content,
+                    full_model_response.reasoning_content,
+                    run_response.content,
+                    run_response.reasoning_content,
+                )
                 if stream_events:
                     yield handle_event(  # type: ignore
                         create_team_model_request_started_event(
@@ -1046,6 +1059,16 @@ def _handle_model_response_stream(
                         events_to_skip=team.events_to_skip,
                         store_events=team.store_events,
                     )
+                continue
+
+            # The stream failed partway and is retried from scratch: drop what it streamed so far
+            if model_response_event.event == ModelResponseEvent.model_request_retried.value:
+                (
+                    full_model_response.content,
+                    full_model_response.reasoning_content,
+                    run_response.content,
+                    run_response.reasoning_content,
+                ) = before_request
                 continue
 
             if model_response_event.event == ModelResponseEvent.model_request_completed.value:
@@ -1176,6 +1199,13 @@ async def _ahandle_model_response_stream(
     from agno.team._run import abuild_team_after_tool_results_callback
 
     full_model_response = ModelResponse()
+    # Output accumulated before the current model request; restored if that request's stream is retried
+    before_request = (
+        full_model_response.content,
+        full_model_response.reasoning_content,
+        run_response.content,
+        run_response.reasoning_content,
+    )
     model_stream = acall_model_stream_with_fallback(
         team.model,
         team.fallback_config,
@@ -1197,6 +1227,12 @@ async def _ahandle_model_response_stream(
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
             if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                before_request = (
+                    full_model_response.content,
+                    full_model_response.reasoning_content,
+                    run_response.content,
+                    run_response.reasoning_content,
+                )
                 if stream_events:
                     yield handle_event(  # type: ignore
                         create_team_model_request_started_event(
@@ -1208,6 +1244,16 @@ async def _ahandle_model_response_stream(
                         events_to_skip=team.events_to_skip,
                         store_events=team.store_events,
                     )
+                continue
+
+            # The stream failed partway and is retried from scratch: drop what it streamed so far
+            if model_response_event.event == ModelResponseEvent.model_request_retried.value:
+                (
+                    full_model_response.content,
+                    full_model_response.reasoning_content,
+                    run_response.content,
+                    run_response.reasoning_content,
+                ) = before_request
                 continue
 
             if model_response_event.event == ModelResponseEvent.model_request_completed.value:
