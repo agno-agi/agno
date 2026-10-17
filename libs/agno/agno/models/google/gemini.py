@@ -1604,12 +1604,38 @@ class Gemini(Model):
         metrics.output_tokens = response_usage.candidates_token_count or 0
         if response_usage.thoughts_token_count is not None:
             metrics.reasoning_tokens = response_usage.thoughts_token_count or 0
-        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+        metrics.total_tokens = (
+            response_usage.total_token_count
+            if response_usage.total_token_count is not None
+            else metrics.input_tokens + metrics.output_tokens
+        )
 
         metrics.cache_read_tokens = response_usage.cached_content_token_count or 0
 
+        provider_metrics: Dict[str, Any] = {}
         if response_usage.traffic_type is not None:
-            metrics.provider_metrics = {"traffic_type": response_usage.traffic_type}
+            provider_metrics["traffic_type"] = response_usage.traffic_type
+        if response_usage.tool_use_prompt_token_count is not None:
+            provider_metrics["tool_use_prompt_tokens"] = response_usage.tool_use_prompt_token_count
+
+        # Flat numeric counters remain additive when MessageMetrics are aggregated.
+        # These breakdowns are subsets of the provider totals, not extra tokens.
+        for prefix, details in (
+            ("prompt", response_usage.prompt_tokens_details),
+            ("candidates", response_usage.candidates_tokens_details),
+            ("cache", response_usage.cache_tokens_details),
+            ("tool_use_prompt", response_usage.tool_use_prompt_tokens_details),
+        ):
+            for detail in details or []:
+                if detail.modality is None or detail.token_count is None:
+                    continue
+                key = f"{prefix}_{detail.modality.value.lower()}_tokens"
+                provider_metrics[key] = provider_metrics.get(key, 0) + detail.token_count
+
+        metrics.audio_input_tokens = provider_metrics.get("prompt_audio_tokens", 0)
+        metrics.audio_output_tokens = provider_metrics.get("candidates_audio_tokens", 0)
+        metrics.audio_total_tokens = metrics.audio_input_tokens + metrics.audio_output_tokens
+        metrics.provider_metrics = provider_metrics or None
 
         return metrics
 
