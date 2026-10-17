@@ -30,6 +30,7 @@ assistant = Agent(
     name="AG-UI Assistant",
     model=OpenAIResponses(id="gpt-5.5"),
     db=db,
+    add_history_to_context=True,
     instructions="Answer clearly and concisely.",
 )
 
