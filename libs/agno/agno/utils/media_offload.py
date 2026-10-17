@@ -32,10 +32,6 @@ _EXPIRING_URL_PARAMS = frozenset(
     }
 )
 
-# How much of the caller-supplied session id a storage key carries, leaving room for the media
-# id, content hash and extension under the 255-byte filename cap.
-_MAX_SESSION_KEY_CHARS = 120
-
 
 def _is_expiring_url(url: Optional[str]) -> bool:
     """True if the URL carries a signature/expiry that goes stale (a presigned URL)."""
@@ -247,7 +243,10 @@ def _offload_single_media(
     content_hash = hashlib.sha256(content_bytes).hexdigest()
     # Scoped to the session and content-addressed, so a reused id never collides and deleting one
     # session's media never reaches another session that sent the same bytes.
-    storage_media_id = f"{session_id[:_MAX_SESSION_KEY_CHARS]}-{media_id}-{content_hash[:16]}"
+    # Hash the complete identity: truncation and storage-key sanitization can otherwise
+    # collapse distinct caller-supplied session IDs onto the same object.
+    session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+    storage_media_id = f"{session_hash}-{media_id}-{content_hash[:16]}"
 
     cache_key = _cache_key(media_type, mime_type, filename, storage_media_id)
     if cache is not None and cache_key in cache:
@@ -455,7 +454,10 @@ async def _aoffload_single_media(
     content_hash = hashlib.sha256(content_bytes).hexdigest()
     # Scoped to the session and content-addressed, so a reused id never collides and deleting one
     # session's media never reaches another session that sent the same bytes.
-    storage_media_id = f"{session_id[:_MAX_SESSION_KEY_CHARS]}-{media_id}-{content_hash[:16]}"
+    # Hash the complete identity: truncation and storage-key sanitization can otherwise
+    # collapse distinct caller-supplied session IDs onto the same object.
+    session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+    storage_media_id = f"{session_hash}-{media_id}-{content_hash[:16]}"
 
     cache_key = _cache_key(media_type, mime_type, filename, storage_media_id)
     if cache is not None and cache_key in cache:
