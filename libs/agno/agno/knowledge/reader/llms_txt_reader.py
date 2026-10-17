@@ -120,10 +120,7 @@ class LLMsTxtReader(Reader):
                 meta_data={"url": llms_txt_url, "type": "llms_txt_overview"},
                 content=overview,
             )
-            if self.chunk:
-                documents.extend(self.chunk_document(doc))
-            else:
-                documents.append(doc)
+            documents.append(doc)
 
         for entry in entries:
             content = fetched.get(entry.url)
@@ -141,10 +138,7 @@ class LLMsTxtReader(Reader):
                 },
                 content=content,
             )
-            if self.chunk:
-                documents.extend(self.chunk_document(doc))
-            else:
-                documents.append(doc)
+            documents.append(doc)
 
         return documents
 
@@ -259,7 +253,10 @@ class LLMsTxtReader(Reader):
                 fetched[entry.url] = content
 
         log_debug(f"Successfully fetched {len(fetched)}/{len(entries_to_fetch)} linked pages")
-        return self._build_documents(overview, entries_to_fetch, fetched, url, name)
+        documents = self._build_documents(overview, entries_to_fetch, fetched, url, name)
+        if self.chunk:
+            return [chunk for doc in documents for chunk in self.chunk_document(doc)]
+        return documents
 
     async def async_read(self, url: str, name: Optional[str] = None) -> List[Document]:
         log_debug(f"Reading llms.txt asynchronously: {url}")
@@ -285,4 +282,7 @@ class LLMsTxtReader(Reader):
             fetched: Dict[str, str] = {entry_url: content for entry_url, content in results if content}
 
             log_debug(f"Successfully fetched {len(fetched)}/{len(entries_to_fetch)} linked pages")
-            return self._build_documents(overview, entries_to_fetch, fetched, url, name)
+            documents = self._build_documents(overview, entries_to_fetch, fetched, url, name)
+            if self.chunk:
+                return await self.chunk_documents_async(documents)
+            return documents
