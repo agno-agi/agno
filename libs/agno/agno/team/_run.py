@@ -4862,7 +4862,7 @@ def _persist_team_run_in_session(
     import copy
 
     from agno.team._session import update_session_metrics
-    from agno.utils.agent import isolate_media_scrub_targets
+    from agno.utils.agent import isolate_media_scrub_targets, isolate_tool_scrub_targets
 
     # Mid-run checkpoint: offload its media like the terminal write, so the row carries references.
     storage_copy = build_offloaded_storage_copy(team, run_response, session.session_id) or copy.copy(run_response)
@@ -4870,6 +4870,8 @@ def _persist_team_run_in_session(
     # isolate what the scrubs touch.
     if not team.store_media:
         isolate_media_scrub_targets(storage_copy)
+    if not team.store_tool_messages:
+        isolate_tool_scrub_targets(storage_copy)
     if storage_copy.member_responses and team.store_member_responses:
         # save_session -> _scrub_member_responses scrubs each member in place;
         # deep-copy so it operates on the storage copy, not the live member runs.
@@ -4920,7 +4922,7 @@ async def _apersist_team_run_in_session(
     import copy
 
     from agno.team._session import update_session_metrics
-    from agno.utils.agent import isolate_media_scrub_targets
+    from agno.utils.agent import isolate_media_scrub_targets, isolate_tool_scrub_targets
 
     # Mid-run checkpoint: offload its media like the terminal write, so the row carries references.
     storage_copy = await abuild_offloaded_storage_copy(team, run_response, session.session_id) or copy.copy(
@@ -4930,6 +4932,8 @@ async def _apersist_team_run_in_session(
     # isolate what the scrubs touch.
     if not team.store_media:
         isolate_media_scrub_targets(storage_copy)
+    if not team.store_tool_messages:
+        isolate_tool_scrub_targets(storage_copy)
     if storage_copy.member_responses and team.store_member_responses:
         # save_session -> _scrub_member_responses scrubs each member in place;
         # deep-copy so it operates on the storage copy, not the live member runs.
