@@ -19,6 +19,15 @@ Nothing is summarized away, there is no model call on the write path, and
 every read back is capped. Substitution happens before the tool message is
 built, so the persisted session row carries the envelope too.
 
+Search returns at most 20 matching lines per call. When more matches follow,
+`search_result` names the `start_line` for the next call with the same pattern.
+`ResultStore.search()` and `asearch()` accept the same 1-indexed, inclusive
+argument: if `matches[-1].more` is true, continue from
+`matches[-1].line_number + 1`. Context lines can precede that point, but already
+returned matching lines are not returned again. A start beyond the last line
+returns no matches; values below 1 are rejected. Each page keeps the same
+character and match limits.
+
 Pass a `ResultStore` to change the defaults:
 
 ```python
