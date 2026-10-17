@@ -623,3 +623,116 @@ class TestSingletonIsolation:
         session = await aread_or_create_session(agent, session_id="fresh")
         assert session.metadata == {"env": "test"}
         assert session.metadata is not agent.metadata
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_arun_awaits_custom_session_reader(tmp_path, monkeypatch, stream):
+    """Preload must use the awaitable storage boundary for application-owned offload."""
+    import asyncio
+    import threading
+
+    from agno.db.sqlite import SqliteDb
+    from agno.run.agent import RunOutput
+
+    db = SqliteDb(db_file=str(tmp_path / "session.db"))
+    _seed_session(db, "s1", "agent-1", {"shared": "session", "session_only": "stored"})
+    original_read = db.get_session
+    started = threading.Event()
+    release = threading.Event()
+    blocked_loop = threading.Event()
+
+    def slow_read(*args, **kwargs):
+        started.set()
+        if not release.wait(2):
+            blocked_loop.set()
+        return original_read(*args, **kwargs)
+
+    from agno.agent import _storage
+    from agno.db.base import SessionType
+
+    async def custom_read(agent, session_id, session_type=SessionType.AGENT, user_id=None, runs_limit=None):
+        return await asyncio.to_thread(
+            slow_read, session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+        )
+
+    monkeypatch.setattr(_storage, "aread_session", custom_read)
+    agent = Agent(id="agent-1", model=MockModel(), db=db, metadata={"shared": "agent", "agent_only": "default"})
+
+    async def heartbeat():
+        assert await asyncio.to_thread(started.wait, 5)
+        release.set()
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+    try:
+        if stream:
+            outputs = [
+                chunk
+                async for chunk in agent.arun(
+                    "hi", session_id="s1", metadata={"shared": "call"}, stream=True, yield_run_output=True
+                )
+                if isinstance(chunk, RunOutput)
+            ]
+            out = outputs[-1]
+        else:
+            out = await agent.arun("hi", session_id="s1", metadata={"shared": "call"})
+        await heartbeat_task
+        assert not blocked_loop.is_set(), "Synchronous session preload blocked the event loop"
+        assert out.metadata == {"shared": "call", "agent_only": "default", "session_only": "stored"}
+    finally:
+        release.set()
+        await asyncio.gather(heartbeat_task, return_exceptions=True)
+        db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_arun_async_db_preserves_session_metadata_precedence(tmp_path, stream):
+    """Async storage must contribute the same metadata layer as sync storage."""
+    from agno.db.sqlite import AsyncSqliteDb
+    from agno.run.agent import RunOutput
+
+    db = AsyncSqliteDb(db_file=str(tmp_path / "session.db"))
+    await db.upsert_session(
+        AgentSession(session_id="s1", agent_id="agent-1", metadata={"shared": "session", "session_only": "stored"})
+    )
+    agent = Agent(id="agent-1", model=MockModel(), db=db, metadata={"shared": "agent", "agent_only": "default"})
+    try:
+        if stream:
+            outputs = [
+                chunk
+                async for chunk in agent.arun("hi", session_id="s1", stream=True, yield_run_output=True)
+                if isinstance(chunk, RunOutput)
+            ]
+            out = outputs[-1]
+        else:
+            out = await agent.arun("hi", session_id="s1")
+        assert out.metadata == {"shared": "session", "agent_only": "default", "session_only": "stored"}
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_arun_preserves_thread_bound_in_memory_sqlite_history(stream):
+    """Moving caller-owned SQLite reads to another thread must not erase history."""
+    from agno.db.sqlite import SqliteDb
+    from agno.run.agent import RunOutput
+
+    db = SqliteDb(db_url="sqlite:///:memory:")
+    _seed_session(db, "s1", "agent-1", {"shared": "session", "session_only": "stored"})
+    agent = Agent(id="agent-1", model=MockModel(), db=db, metadata={"shared": "agent"})
+    try:
+        if stream:
+            outputs = [
+                chunk
+                async for chunk in agent.arun("hi", session_id="s1", stream=True, yield_run_output=True)
+                if isinstance(chunk, RunOutput)
+            ]
+            out = outputs[-1]
+        else:
+            out = await agent.arun("hi", session_id="s1")
+        assert out.metadata == {"shared": "session", "session_only": "stored"}
+        assert db.get_session("s1").metadata == {"shared": "session", "session_only": "stored"}
+    finally:
+        db.close()
