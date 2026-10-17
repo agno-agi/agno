@@ -17,6 +17,14 @@ from agno.utils.media import get_image_type
 DEFAULT_IMAGE_WIDTH = 1024
 DEFAULT_IMAGE_HEIGHT = 1024
 
+# Number of leading bytes read from an image on disk when only its dimensions are needed.
+# PNG/GIF/WebP keep their dimensions within the first ~30 bytes, but JPEG stores them in a
+# SOF marker that sits after the APPn/JFIF segments — for a baseline RGB JPEG that is
+# offset 158, well past a 100-byte read. Reading too few bytes makes the JPEG scan run off
+# the end of the buffer, raise, and silently fall back to the defaults below, so the token
+# estimate for every colour JPEG read from disk was wrong.
+_IMAGE_HEADER_BYTES = 4096
+
 
 # Different models use different encodings
 @lru_cache(maxsize=16)
@@ -225,7 +233,12 @@ def _format_type(props: Dict[str, Any], indent: int) -> str:
 
 
 def _parse_image_dimensions_from_bytes(data: bytes, img_type: Optional[str] = None) -> Tuple[int, int]:
-    """Returns the image dimensions (width, height) from raw image bytes."""
+    """Returns the image dimensions (width, height) from raw image bytes.
+
+    Callers may hand over only a leading slice of the image, so every branch checks that
+    the bytes it needs are actually present and falls back to the defaults otherwise,
+    rather than raising on a short buffer.
+    """
     import io
     import struct
 
@@ -234,9 +247,13 @@ def _parse_image_dimensions_from_bytes(data: bytes, img_type: Optional[str] = No
 
     if img_type == "png":
         # PNG IHDR chunk: width at offset 16, height at offset 20 (big-endian)
+        if len(data) < 24:
+            return DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT
         return struct.unpack(">LL", data[16:24])
     elif img_type == "gif":
         # GIF logical screen descriptor: width/height at offset 6 (little-endian)
+        if len(data) < 10:
+            return DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT
         return struct.unpack("<HH", data[6:10])
     elif img_type == "jpeg":
         # JPEG requires scanning for SOF (Start of Frame) markers
@@ -248,28 +265,46 @@ def _parse_image_dimensions_from_bytes(data: bytes, img_type: Optional[str] = No
             while not 0xC0 <= ftype <= 0xCF or ftype in (0xC4, 0xC8, 0xCC):
                 f.seek(size, 1)
                 byte = f.read(1)
+                if not byte:
+                    # Ran out of data before finding an SOF marker — the buffer is a
+                    # truncated header, so the dimensions are unknown.
+                    return DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT
                 # Skip any padding 0xFF bytes
                 while ord(byte) == 0xFF:
                     byte = f.read(1)
+                    if not byte:
+                        return DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT
                 ftype = ord(byte)
-                size = struct.unpack(">H", f.read(2))[0] - 2
+                length = f.read(2)
+                if len(length) < 2:
+                    return DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT
+                size = struct.unpack(">H", length)[0] - 2
             f.seek(1, 1)  # Skip precision byte
-            h, w = struct.unpack(">HH", f.read(4))
+            dims = f.read(4)
+            if len(dims) < 4:
+                return DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT
+            h, w = struct.unpack(">HH", dims)
         return w, h
     elif img_type == "webp":
         # WebP has three encoding formats with different dimension locations
         if data[12:16] == b"VP8X":
             # Extended format: 24-bit dimensions stored in 3 bytes each
+            if len(data) < 30:
+                return DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT
             w = struct.unpack("<I", data[24:27] + b"\x00")[0] + 1
             h = struct.unpack("<I", data[27:30] + b"\x00")[0] + 1
             return w, h
         elif data[12:16] == b"VP8 ":
             # Lossy format: dimensions in first frame header, 14-bit masked
+            if len(data) < 30:
+                return DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT
             w = struct.unpack("<H", data[26:28])[0] & 0x3FFF
             h = struct.unpack("<H", data[28:30])[0] & 0x3FFF
             return w, h
         elif data[12:16] == b"VP8L":
             # Lossless format: dimensions bit-packed in 4 bytes
+            if len(data) < 25:
+                return DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT
             bits = struct.unpack("<I", data[21:25])[0]
             w = (bits & 0x3FFF) + 1
             h = ((bits >> 14) & 0x3FFF) + 1
@@ -291,7 +326,7 @@ def _get_image_dimensions(image: Image) -> Tuple[int, int]:
             data = image.content
         elif image.filepath:
             with open(image.filepath, "rb") as f:
-                data = f.read(100)  # Only need header bytes for dimension parsing
+                data = f.read(_IMAGE_HEADER_BYTES)
         elif image.url:
             import httpx
 
