@@ -6058,3 +6058,62 @@ def test_a_routing_failure_restores_the_callers_team_level_requirements(tmp_path
 
     names = [r.tool_execution.tool_name for r in (run1.requirements or [])]
     assert names.count("publish") == 1, f"the caller's run object carries: {names}"
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("store_member_responses", [False, True])
+def test_forked_member_pause_resumes_without_modifying_source(tmp_path, nested, store_member_responses):
+    """Resume from the database after forking and confirm that only the fork's member run executes."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "fork_pause.db")
+    db = SqliteDb(db_file=db_file)
+    builder = _build_nested_team if nested else _build_flat_team
+    source_team = builder(db, resuming=False)
+    source_team.store_member_responses = store_member_responses
+    paused = source_team.run("Email a@example.com", session_id="source")
+    assert paused.is_paused
+    before = db.get_runs(session_id="source", deserialize=False)
+
+    fork_id = source_team.fork_session(source_session_id="source")
+    forked = next(r for r in _reload_runs(db_file, fork_id) if getattr(r, "team_id", None) == source_team.id)
+    resumed_team = builder(SqliteDb(db_file=db_file), resuming=True)
+    resumed_team.store_member_responses = store_member_responses
+    completed = resumed_team.continue_run(
+        run_id=forked.run_id, session_id=fork_id, requirements=_wire_requirements(forked.requirements)
+    )
+
+    assert completed.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+    assert db.get_runs(session_id="source", deserialize=False) == before
+    assert all(r.session_id == fork_id for r in _reload_runs(db_file, fork_id))
+    assert all(r.status == RunStatus.completed for r in _reload_runs(db_file, fork_id))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("store_member_responses", [False, True])
+async def test_async_forked_member_pause_resumes_without_modifying_source(tmp_path, nested, store_member_responses):
+    """Verify the same session-isolation guarantees for async fork and resume."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "async_fork_pause.db")
+    db = SqliteDb(db_file=db_file)
+    builder = _build_nested_team if nested else _build_flat_team
+    source_team = builder(db, resuming=False)
+    source_team.store_member_responses = store_member_responses
+    paused = await source_team.arun("Email a@example.com", session_id="source")
+    assert paused.is_paused
+    before = db.get_runs(session_id="source", deserialize=False)
+
+    fork_id = await source_team.afork_session(source_session_id="source")
+    forked = next(r for r in _reload_runs(db_file, fork_id) if getattr(r, "team_id", None) == source_team.id)
+    resumed_team = builder(SqliteDb(db_file=db_file), resuming=True)
+    resumed_team.store_member_responses = store_member_responses
+    completed = await resumed_team.acontinue_run(
+        run_id=forked.run_id, session_id=fork_id, requirements=_wire_requirements(forked.requirements)
+    )
+
+    assert completed.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+    assert db.get_runs(session_id="source", deserialize=False) == before
+    assert all(r.session_id == fork_id for r in _reload_runs(db_file, fork_id))
+    assert all(r.status == RunStatus.completed for r in _reload_runs(db_file, fork_id))
