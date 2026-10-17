@@ -42,73 +42,79 @@ def _make_session_with_paused_run() -> AgentSession:
     return session
 
 
-class TestResumePausedRunErrorPaths:
+class TestNothingToResume:
+    """A trailing tool result no paused run is waiting on is not a resume.
+
+    Each case here says the same thing to the caller: this session holds no
+    paused run these results answer, so the router owes them a new turn rather
+    than a failed one. A client mints tool call ids the backend never emitted
+    (an interactive surface reports a click that way), so this is ordinary
+    traffic, not a broken resume.
+    """
+
+    async def _resume(self, entity, session_id: str):
+        return await resume_paused_run(
+            entity=entity,
+            session_id=session_id,
+            tool_messages=[FakeToolMessage("call_1", "result")],
+            run_context=RunContext(run_id="new-run", session_id=session_id),
+            run_kwargs={},
+        )
+
     @pytest.mark.asyncio
-    async def test_raises_when_no_db(self):
+    async def test_no_db_cannot_hold_a_paused_run(self):
         # spec=Agent needed for isinstance() check in resume_paused_run
         entity = MagicMock(spec=Agent)
         entity.db = None
 
-        with pytest.raises(ValueError, match="requires a database"):
-            await resume_paused_run(
-                entity=entity,
-                session_id="test-session",
-                tool_messages=[FakeToolMessage("call_1", "result")],
-                run_context=RunContext(run_id="new-run", session_id="test-session"),
-                run_kwargs={},
-            )
+        assert await self._resume(entity, "test-session") is None
 
     @pytest.mark.asyncio
-    async def test_raises_when_session_not_found(self):
+    async def test_a_session_that_is_gone_holds_no_paused_run(self):
         entity = MagicMock(spec=Agent)
         entity.db = MagicMock()
         entity.aget_session = AsyncMock(return_value=None)
 
-        with pytest.raises(ValueError, match="Session .* not found"):
-            await resume_paused_run(
-                entity=entity,
-                session_id="missing-session",
-                tool_messages=[FakeToolMessage("call_1", "result")],
-                run_context=RunContext(run_id="new-run", session_id="missing-session"),
-                run_kwargs={},
-            )
+        assert await self._resume(entity, "missing-session") is None
 
     @pytest.mark.asyncio
-    async def test_raises_when_no_paused_run(self):
+    async def test_a_session_of_completed_runs_holds_no_paused_run(self):
         entity = MagicMock(spec=Agent)
         entity.db = MagicMock()
         session = AgentSession(session_id="test-session")
         session.runs = [RunOutput(run_id="completed-run", status=RunStatus.completed)]
         entity.aget_session = AsyncMock(return_value=session)
 
-        with pytest.raises(ValueError, match="No paused run matching"):
-            await resume_paused_run(
-                entity=entity,
-                session_id="test-session",
-                tool_messages=[FakeToolMessage("call_1", "result")],
-                run_context=RunContext(run_id="new-run", session_id="test-session"),
-                run_kwargs={},
-            )
+        assert await self._resume(entity, "test-session") is None
 
     @pytest.mark.asyncio
-    async def test_raises_when_paused_run_has_no_requirements(self):
-        """Paused run with no requirements won't match any tool_call_ids."""
+    async def test_a_paused_run_with_no_requirements_waits_on_nothing(self):
         entity = MagicMock(spec=Agent)
         entity.db = MagicMock()
         session = AgentSession(session_id="test-session")
-        paused_run = RunOutput(run_id="paused-run", status=RunStatus.paused, requirements=None)
-        session.runs = [paused_run]
+        session.runs = [RunOutput(run_id="paused-run", status=RunStatus.paused, requirements=None)]
         entity.aget_session = AsyncMock(return_value=session)
 
-        # Run has no requirements, so no tool_call_ids to match
-        with pytest.raises(ValueError, match="No paused run matching"):
-            await resume_paused_run(
-                entity=entity,
-                session_id="test-session",
-                tool_messages=[FakeToolMessage("call_1", "result")],
-                run_context=RunContext(run_id="new-run", session_id="test-session"),
-                run_kwargs={},
-            )
+        assert await self._resume(entity, "test-session") is None
+
+    @pytest.mark.asyncio
+    async def test_an_unmatched_tool_call_id_leaves_a_paused_run_alone(self):
+        """The paused run waits on call_1; these results answer something else."""
+        entity = MagicMock(spec=Agent)
+        entity.db = MagicMock()
+        entity.aget_session = AsyncMock(return_value=_make_session_with_paused_run())
+        entity.acontinue_run = MagicMock(return_value=AsyncMock())
+
+        resumed = await resume_paused_run(
+            entity=entity,
+            session_id="test-session",
+            tool_messages=[FakeToolMessage("767065f4-7cc3-42d4", 'User performed action "bookHotel"')],
+            run_context=RunContext(run_id="new-run", session_id="test-session"),
+            run_kwargs={},
+        )
+
+        assert resumed is None
+        entity.acontinue_run.assert_not_called()
 
 
 class TestResumePausedRunHappyPath:

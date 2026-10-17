@@ -25,6 +25,7 @@ from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
 from agno.os.interfaces.agui import AGUI
+from agno.run.base import RunStatus
 
 JWT_SECRET = "agui-approval-gate-secret-32-bytes-long!"
 OS_ID = "agui-approval-os"
@@ -152,3 +153,25 @@ def test_resume_proceeds_when_nothing_is_pending(harness):
 
     assert resp.status_code == 200, resp.text
     assert [e["type"] for e in _sse_events(resp.text)][-1] == "RUN_FINISHED"
+
+
+def test_a_tool_result_matching_no_paused_run_is_not_gated_as_a_continue(harness):
+    """A surface click carries a client-minted tool call id, so it continues nothing.
+
+    The gate and the resume path read the same lookup, so a result that resolves to no
+    paused run is an ordinary turn on both: no 403, and the run that is actually paused
+    on the approval stays paused.
+    """
+    db, post, resume_messages = harness
+    db.get_approvals = AsyncMock(return_value=([{"id": "a1", "status": "pending"}], 1))
+    user, _assistant, _tool_message = resume_messages
+    click = {"id": "t-click", "role": "tool", "toolCallId": "client-minted-id", "content": "user clicked Book"}
+
+    resp = post("run-2", [user, click], _headers(["agents:run"]))
+
+    assert resp.status_code == 200, resp.text
+    assert [e["type"] for e in _sse_events(resp.text)][-1] == "RUN_FINISHED"
+    db.get_approvals.assert_not_awaited()
+    session = db.get_session(session_id="thread-gate", session_type="agent")
+    paused = [run for run in session.runs if run.status == RunStatus.paused]
+    assert [run.run_id for run in paused] == ["run-1"]
