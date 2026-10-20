@@ -44,6 +44,10 @@ from agno.sandbox.protocol import NATIVE_SESSION_KEYS
 from agno.sandbox.transfer import CheckpointTransfer
 from agno.utils.log import log_warning
 
+# Longer than a checkpoint capture keeps a computer paused: Docker pauses it for two copies of
+# at most 120 seconds each.
+_CAPTURE_PAUSE_GRACE = 300.0
+
 _CHECKPOINT_MISSING = (
     "This session's sandbox checkpoint is missing from checkpoint storage, so its workspace and conversation "
     "cannot be restored; start a new session, and check that every replica uses the same checkpoints= store"
@@ -872,6 +876,27 @@ class SandboxCoordinator:
             return False
         return True
 
+    async def _arunning(self, handle: SandboxHandle) -> Optional[SandboxHandle]:
+        """The finished turn's computer once it is running again; None when it is gone.
+
+        A capture pauses the computer while it copies files, so an owner that takes over during
+        another owner's capture finds it paused, not lost. Wait for that capture to release it,
+        and resume it when the pause outlives any capture, since its owner died holding it.
+        """
+        deadline = time.monotonic() + _CAPTURE_PAUSE_GRACE
+        while True:
+            current = await self.provider.aget(handle.provider_ref)
+            if current is None or current.state not in ("running", "paused"):
+                return None
+            if current.state == "running":
+                return current
+            if time.monotonic() >= deadline:
+                try:
+                    return await self.provider.aresume(current)
+                except (NotImplementedError, SandboxError):
+                    return None
+            await asyncio.sleep(1)
+
     async def _finalize(self, lease: SandboxLease) -> Dict[str, Any]:
         state = await self.store.aget(lease)
         record = state.record
@@ -879,8 +904,7 @@ class SandboxCoordinator:
             raise SandboxError("Only retained execution output can be finalized")
         if record.get("staged_checkpoint") is None:
             computer = SandboxHandle(**record["computer"])
-            current = await self.provider.aget(computer.provider_ref)
-            if current is None or current.state != "running":
+            if await self._arunning(computer) is None:
                 return await self._stop(
                     lease,
                     status="ERROR",
@@ -901,9 +925,7 @@ class SandboxCoordinator:
             ).hexdigest()
             # Outside the row locks: archiving and uploading a large workspace can take minutes.
             try:
-                reference = await self.transfer.acapture(
-                    computer, state={"binding": identity, "result_sha256": digest}
-                )
+                reference = await self.transfer.acapture(computer, state={"binding": identity, "result_sha256": digest})
             except CheckpointContentError as error:
                 # Capturing the same files again fails the same way; a retry would only keep the session busy.
                 return await self._stop(

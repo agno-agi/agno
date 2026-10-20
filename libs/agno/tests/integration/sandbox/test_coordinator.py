@@ -17,6 +17,7 @@ from agno.db.postgres import AsyncPostgresDb, PostgresDb
 from agno.run.agent import RunCompletedEvent, RunInput, RunOutput
 from agno.run.base import RunStatus
 from agno.sandbox import SandboxError
+from agno.sandbox import coordinator as sandbox_coordinator
 from agno.sandbox.checkpoint import CheckpointObjectNotFound, CheckpointRef
 from agno.sandbox.coordinator import SandboxCoordinator
 from agno.sandbox.docker import DockerCheckpointTransfer, DockerSandbox
@@ -579,6 +580,49 @@ async def test_a_newer_attempt_replaces_a_computer_whose_restore_is_unconfirmed(
     # The stalled attempt never executed: the turn ran once, on the replacement computer.
     assert await recovered_effects(coordinator, root) == ["first", "second"]
     assert await coordinator.provider.aget(handles_of(coordinator)[1].provider_ref) is None
+
+
+async def test_a_takeover_during_a_capture_waits_for_its_pause_instead_of_retiring_the_computer(system, monkeypatch):
+    coordinator, spec, root = system
+    copy = coordinator.transfer._copy
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def held(*args, **kwargs):
+        # The first capture stalls while it holds the computer paused.
+        if not entered.is_set():
+            entered.set()
+            await release.wait()
+        return await copy(*args, **kwargs)
+
+    monkeypatch.setattr(coordinator.transfer, "_copy", held)
+    stale = asyncio.create_task(run(coordinator, spec, queue_attempt=1))
+    await asyncio.wait_for(entered.wait(), 60)
+    await stamp_attempt(coordinator.store, "first", 2)
+    retried = asyncio.create_task(run(coordinator, spec, queue_attempt=2))
+    await asyncio.sleep(3)
+    assert not retried.done()
+    release.set()
+    assert (await asyncio.wait_for(retried, 120)).status == RunStatus.completed
+    with pytest.raises(SandboxError):
+        await stale
+    assert await recovered_effects(coordinator, root) == ["first"]
+
+
+async def test_a_computer_left_paused_by_a_failed_capture_is_resumed(system, monkeypatch):
+    coordinator, spec, root = system
+    monkeypatch.setattr(sandbox_coordinator, "_CAPTURE_PAUSE_GRACE", 0)
+    unpause = coordinator.transfer._unpause
+
+    async def died_holding_the_pause(handle):
+        raise OSError("worker died during capture")
+
+    monkeypatch.setattr(coordinator.transfer, "_unpause", died_holding_the_pause)
+    with pytest.raises(OSError, match="died"):
+        await run(coordinator, spec)
+    assert (await coordinator.provider.aget(handles_of(coordinator)[0].provider_ref)).state == "paused"
+    monkeypatch.setattr(coordinator.transfer, "_unpause", unpause)
+    assert (await run(coordinator, spec)).status == RunStatus.completed
+    assert await recovered_effects(coordinator, root) == ["first"]
 
 
 async def test_missing_checkpoint_object_ends_the_turn_without_a_retry(system):
