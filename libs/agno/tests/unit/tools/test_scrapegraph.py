@@ -194,6 +194,41 @@ def test_toolkit_level_headers_applied_to_every_call(mock_scrapegraph):
         assert scrape_kwargs["fetch_config"].headers == {"User-Agent": "custom-ua"}
 
 
+def test_sensitive_headers_are_not_forwarded(mock_scrapegraph):
+    """Constructor-level auth headers should not flow to arbitrary tool-call URLs."""
+    with patch.dict("os.environ", {"SGAI_API_KEY": TEST_API_KEY}):
+        tools = ScrapeGraphTools(headers={"Authorization": "Bearer secret", "Cookie": "sid=secret"})
+        tools.client = mock_scrapegraph
+
+        result = tools.smartscraper("https://evil.example/page", "extract")
+
+        assert result.startswith("Error")
+        assert "sensitive headers" in result
+        assert "ScrapeGraphTools" in result
+        mock_scrapegraph.extract.assert_not_called()
+
+
+def test_constructor_positional_crawl_settings_still_work():
+    """Existing positional arguments after headers keep their original meaning."""
+    with patch("agno.tools.scrapegraph.ScrapeGraphAI"):
+        tools = ScrapeGraphTools(
+            None,
+            True,
+            False,
+            False,
+            False,
+            False,
+            False,
+            {"User-Agent": "custom-ua"},
+            5,
+            600,
+        )
+
+    assert tools.headers == {"User-Agent": "custom-ua"}
+    assert tools.crawl_poll_interval == 5
+    assert tools.crawl_max_wait == 600
+
+
 def test_scrape_error(scrapegraph_tools, mock_scrapegraph):
     """Test scrape returns an error string when the API fails."""
     mock_scrapegraph.scrape.return_value = _api_result(data=None, status="error", error="bad url")
