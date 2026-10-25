@@ -610,7 +610,8 @@ class GoogleCalendarTools(GoogleToolkit):
                         is_available = False
                         break
 
-                if is_available and slot_end.hour <= working_hours_end:
+                working_day_end = current.replace(hour=working_hours_end, minute=0, second=0, microsecond=0)
+                if is_available and slot_end <= working_day_end:
                     available_slots.append({"start": current.isoformat(), "end": slot_end.isoformat()})
 
                 current += datetime.timedelta(minutes=30)

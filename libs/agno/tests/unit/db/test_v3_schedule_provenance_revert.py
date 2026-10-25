@@ -81,7 +81,7 @@ def test_sqlite_up_after_provenance_revert_restores_everything():
     asyncio.run(MigrationManager(db).down(target_version="2.5.6", table_type="schedules"))
     assert not _table_columns(db_file, SCHEDULES_TABLE) & set(SCHEDULE_PROVENANCE_COLUMNS)
 
-    asyncio.run(MigrationManager(db).up(table_type="schedules"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="schedules"))
 
     assert set(SCHEDULE_PROVENANCE_COLUMNS) <= _table_columns(db_file, SCHEDULES_TABLE)
     assert PROVENANCE_INDEXES <= _table_indexes(db_file, SCHEDULES_TABLE)
@@ -168,6 +168,6 @@ async def test_async_sqlite_revert_drops_provenance_columns_and_indexes():
     assert not _table_indexes(db_file, SCHEDULES_TABLE) & PROVENANCE_INDEXES
     assert "user_id" not in columns
 
-    await MigrationManager(db).up(table_type="schedules")
+    await MigrationManager(db).up(target_version="3.0.0", table_type="schedules")
     assert set(SCHEDULE_PROVENANCE_COLUMNS) <= _table_columns(db_file, SCHEDULES_TABLE)
     assert PROVENANCE_INDEXES <= _table_indexes(db_file, SCHEDULES_TABLE)
