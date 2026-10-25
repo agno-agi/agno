@@ -1,5 +1,6 @@
 """Unit tests for TeamSession."""
 
+from agno.agent import Agent
 from agno.models.message import Message
 from agno.run.agent import RunInput, RunOutput
 from agno.run.base import RunStatus
@@ -309,3 +310,52 @@ class TestGetTeamHistoryZeroCount:
     def test_get_team_history_positive_is_limited(self):
         """A positive num_runs returns that many recent runs."""
         assert len(_session_with_runs(3).get_team_history(num_runs=2)) == 2
+
+
+class TestMemberHistoryLimit:
+    """A member's own history setting decides how much history it gets."""
+
+    @staticmethod
+    def _session_with_member_runs(agent_id: str, count: int) -> TeamSession:
+        session = TeamSession(session_id="test-session")
+        session.runs = []
+        for i in range(count):
+            session.upsert_run(
+                RunOutput(
+                    run_id=f"run-{i}",
+                    agent_id=agent_id,
+                    status=RunStatus.completed,
+                    messages=[
+                        Message(role="user", content=f"task {i}"),
+                        Message(role="assistant", content=f"done {i}"),
+                    ],
+                )
+            )
+        return session
+
+    def test_num_history_messages_is_not_capped_by_team_num_history_runs(self):
+        session = self._session_with_member_runs("agent-001", count=5)
+        team = Team(id="team-001", members=[])  # defaults to num_history_runs=3
+        member = Agent(id="agent-001", add_history_to_context=True, num_history_messages=8)
+
+        history = _get_history_for_member_agent(team, session, member)
+
+        assert [m.content for m in history] == [
+            "task 1",
+            "done 1",
+            "task 2",
+            "done 2",
+            "task 3",
+            "done 3",
+            "task 4",
+            "done 4",
+        ]
+
+    def test_num_history_runs_still_applies(self):
+        session = self._session_with_member_runs("agent-001", count=5)
+        team = Team(id="team-001", members=[])
+        member = Agent(id="agent-001", add_history_to_context=True, num_history_runs=2)
+
+        history = _get_history_for_member_agent(team, session, member)
+
+        assert [m.content for m in history] == ["task 3", "done 3", "task 4", "done 4"]
