@@ -22,7 +22,9 @@ Agno is a self-improving platform for agents. Build agents. Run them as durable 
 
 ## Get started
 
-We recommend using our pre-built templates to bootstrap your agent platform. Give this prompt to your coding agent:
+We recommend using our pre-built templates to bootstrap your agent platform.
+
+Give this prompt to your coding agent:
 
 ```text
 Help me set up my agent platform.
@@ -30,7 +32,7 @@ Help me set up my agent platform.
 Clone https://github.com/agno-agi/agentos-railway into a folder called agent-platform, cd into it, and follow .agents/skills/setup-platform/SKILL.md.
 ```
 
-The setup skill helps you run the platform locally and build your first agent. You get:
+The setup skill runs your platform locally and helps you build your first agent. You get:
 
 - An API server and MCP server.
 - PostgreSQL storage for conversations, memory, and platform activity.
@@ -45,7 +47,7 @@ Connect your platform to [os.agno.com](https://os.agno.com) to start using it.
 
 Choose a template for your cloud: [Docker](https://github.com/agno-agi/agentos-docker) · [Railway](https://github.com/agno-agi/agentos-railway) · [AWS](https://github.com/agno-agi/agentos-aws) · [GCP](https://github.com/agno-agi/agentos-gcp) · [Azure](https://github.com/agno-agi/agentos-azure) · [Fly.io](https://github.com/agno-agi/agentos-fly) · [Render](https://github.com/agno-agi/agentos-render) · [Modal](https://github.com/agno-agi/agentos-modal) · [Helm](https://github.com/agno-agi/agentos-helm)
 
-## What's included
+### What's included
 
 | Capability | What you can do |
 |---|---|
