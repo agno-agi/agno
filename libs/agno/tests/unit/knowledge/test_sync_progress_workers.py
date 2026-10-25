@@ -1,0 +1,157 @@
+import asyncio
+from contextlib import closing
+from threading import Event
+
+import pytest
+
+from agno.knowledge.knowledge import Knowledge
+from agno.utils.bounded import BoundedWorkers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_slow_consumer_is_bounded_and_final_result_never_dropped(asynchronous):
+    workers = BoundedWorkers(1, "progress-test")
+    finished = Event()
+
+    def work(*, budget, on_progress):
+        for number in range(10000):
+            on_progress(number)
+        finished.set()
+        return {"done": True}
+
+    if asynchronous:
+        stream = workers.astream(work, seconds=5)
+        first = await stream.__anext__()
+        await asyncio.to_thread(finished.wait, 5)
+        rest = [event async for event in stream]
+    else:
+        stream = workers.stream(work, seconds=5)
+        first = next(stream)
+        assert finished.wait(5)
+        rest = list(stream)
+    assert first is not None and rest[-1] == {"done": True}
+    assert len(rest) <= 33
+    workers._executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_completed_worker_results_survive_a_consumer_pause_past_the_deadline(asynchronous):
+    workers = BoundedWorkers(1, "progress-late-consumer")
+
+    def work(*, budget, on_progress):
+        on_progress("first")
+        on_progress("second")
+        return {"done": True}
+
+    # The worker finishes well inside its 0.2 s budget; the consumer resumes only after the budget has passed.
+    if asynchronous:
+        stream = workers.astream(work, seconds=0.2)
+        first = await stream.__anext__()
+        await asyncio.sleep(0.35)
+        rest = [event async for event in stream]
+    else:
+        stream = workers.stream(work, seconds=0.2)
+        first = next(stream)
+        await asyncio.sleep(0.35)
+        rest = list(stream)
+    assert first == "first" and rest == ["second", {"done": True}]
+    workers._executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_unfinished_worker_still_hits_the_deadline(asynchronous):
+    workers = BoundedWorkers(1, "progress-deadline")
+    release, ended = Event(), Event()
+
+    def work(*, budget, on_progress):
+        try:
+            on_progress("started")
+            release.wait(5)
+        finally:
+            ended.set()
+
+    with pytest.raises(TimeoutError, match="operation_deadline"):
+        if asynchronous:
+            stream = workers.astream(work, seconds=0.2)
+            assert await stream.__anext__() == "started"
+            await asyncio.sleep(0.35)
+            await stream.__anext__()
+        else:
+            stream = workers.stream(work, seconds=0.2)
+            assert next(stream) == "started"
+            await asyncio.sleep(0.35)
+            next(stream)
+    release.set()
+    assert await asyncio.to_thread(ended.wait, 5)
+    workers._executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_early_close_requests_cancellation_and_retains_capacity_until_cleanup(asynchronous):
+    workers = BoundedWorkers(1, "progress-close")
+    cancelled, release, ended = Event(), Event(), Event()
+
+    def work(*, budget, on_progress):
+        try:
+            on_progress("started")
+            assert budget.cancelled.wait(5)
+            cancelled.set()
+            assert release.wait(5)
+        finally:
+            ended.set()
+
+    try:
+        if asynchronous:
+            # try/finally rather than contextlib.aclosing, which does not exist on Python 3.9.
+            stream = workers.astream(work, seconds=10)
+            try:
+                assert await stream.__anext__() == "started"
+            finally:
+                await stream.aclose()
+        else:
+            with closing(workers.stream(work, seconds=10)) as stream:
+                assert next(stream) == "started"
+        assert await asyncio.to_thread(cancelled.wait, 5)
+        with pytest.raises(TimeoutError, match="worker_capacity"):
+            workers.run_sync(lambda **kwargs: None, seconds=1)
+    finally:
+        release.set()
+        assert await asyncio.to_thread(ended.wait, 5)
+        workers._executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_worker_errors_propagate_without_terminal_success(asynchronous):
+    workers = BoundedWorkers(1, "progress-error")
+
+    def work(*, budget, on_progress):
+        on_progress("working")
+        raise ValueError("invalid source")
+
+    seen = []
+    with pytest.raises(ValueError, match="invalid source"):
+        if asynchronous:
+            async for event in workers.astream(work, seconds=5):
+                seen.append(event)
+        else:
+            seen.extend(workers.stream(work, seconds=5))
+    assert seen == ["working"]
+    workers._executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+async def test_async_sync_pages_forwards_the_progress_observer_to_the_worker(monkeypatch):
+    class Pages:
+        def sync(self, *, on_progress, budget, **kwargs):
+            on_progress("snapshot")
+            return "report"
+
+    monkeypatch.setattr(Knowledge, "_pages", lambda self: Pages())
+    seen = []
+    report = await Knowledge().async_sync_pages(url="https://docs.example.com/llms.txt", on_progress=seen.append)
+    assert report == "report" and seen == ["snapshot"]

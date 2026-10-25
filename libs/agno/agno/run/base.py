@@ -1,5 +1,5 @@
 from copy import copy
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -10,6 +10,7 @@ from agno.media import Audio, File, Image, Video
 from agno.metrics import RunMetrics
 from agno.models.message import Citations, Message, MessageReferences
 from agno.reasoning.step import ReasoningStep
+from agno.run.authorization import current_authorization
 from agno.utils.log import log_error
 
 
@@ -27,6 +28,9 @@ class RunContext:
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
+
+    # Runtime-only caller authority. Never reconstructed from persisted run metadata.
+    authorization: Any = field(default_factory=current_authorization, repr=False, compare=False)
 
     # Live reference to the current run's message list. Available in tool hooks
     # via run_context.messages. Hooks receive a shallow copy (via _safe_hook_call)

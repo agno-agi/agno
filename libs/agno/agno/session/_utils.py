@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional, Union
+from copy import copy
+from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
 
 if TYPE_CHECKING:
     from agno.run.agent import RunOutput
@@ -11,6 +12,8 @@ if TYPE_CHECKING:
     from agno.session.agent import AgentSession
     from agno.session.team import TeamSession
     from agno.session.workflow import WorkflowSession
+
+HistorySessionT = TypeVar("HistorySessionT", "AgentSession", "TeamSession")
 
 
 def resolve_run_index(
@@ -42,3 +45,19 @@ def resolve_run_index(
         if existing_id == target_id:
             return idx
     return None
+
+
+def continue_history_session(
+    session: HistorySessionT,
+    run: Optional[Union["RunOutput", "TeamRunOutput"]],
+) -> HistorySessionT:
+    """Return a copy of ``session`` without the continued run.
+
+    The continued run's messages are its input, so it must not also come back as history, whatever
+    its stored status. The original session and its runs are left untouched, including cached sessions.
+    """
+    if run is None:
+        return session
+    history_session = copy(session)
+    history_session.runs = [r for r in session.runs or [] if r.run_id != run.run_id]
+    return history_session

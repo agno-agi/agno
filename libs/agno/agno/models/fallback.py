@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable, Iterator, List, Optional, Union
+from inspect import isawaitable
+from typing import Any, AsyncIterator, Awaitable, Callable, Iterator, List, Optional, Union
 
 from agno.exceptions import ContextWindowExceededError, ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
@@ -71,6 +72,50 @@ class FallbackConfig:
 # ---------------------------------------------------------------------------
 # Fallback model selection
 # ---------------------------------------------------------------------------
+
+
+def _recovered_from_overflow(recover_from_overflow: Callable[[], bool]) -> bool:
+    """Run the overflow hook, reading any failure as "not recovered".
+
+    Recovery is an extra step in front of the normal handling, not a replacement for it. The hook
+    runs inside the handler for the provider's error, so an exception from it would surface in
+    place of that error and skip the fallback chain entirely.
+    """
+    try:
+        return bool(recover_from_overflow())
+    except Exception as e:  # noqa: BLE001 - recovery must never mask the provider's error
+        log_warning(f"Could not shrink the request after a context-window error: {e}")
+        return False
+
+
+async def _arecovered_from_overflow(recover_from_overflow: Callable[[], Union[bool, Awaitable[bool]]]) -> bool:
+    """Async variant of :func:`_recovered_from_overflow`.
+
+    Awaits a hook that returns an awaitable. Recovery calls the summarizer model, and run
+    synchronously on the async path that call would block the event loop - every other request
+    on the server waiting for it. A plain sync hook still works.
+    """
+    try:
+        result = recover_from_overflow()
+        if isawaitable(result):
+            result = await result
+        return bool(result)
+    except Exception as e:  # noqa: BLE001 - recovery must never mask the provider's error
+        log_warning(f"Could not shrink the request after a context-window error: {e}")
+        return False
+
+
+def _is_context_overflow(error: Exception) -> bool:
+    """Whether this error means the request was too long, after classification.
+
+    Providers report it inconsistently, so the already-classified type is checked first and a
+    generic ModelProviderError is classified as a fallback.
+    """
+    if isinstance(error, ContextWindowExceededError):
+        return True
+    if isinstance(error, ModelProviderError):
+        return isinstance(ModelProviderError.classify(error), ContextWindowExceededError)
+    return False
 
 
 def get_fallback_models(fallback_config: Optional[FallbackConfig], error: Exception) -> Optional[List[Model]]:
@@ -158,6 +203,7 @@ def _sync_appended_messages(
 def call_model_with_fallback(
     model: Model,
     fallback_config: Optional[FallbackConfig],
+    recover_from_overflow: Optional[Callable[[], bool]] = None,
     **kwargs: Any,
 ) -> ModelResponse:
     """Call the primary model, falling back on failure.
@@ -167,9 +213,23 @@ def call_model_with_fallback(
     try:
         return model.response(**kwargs)
     except ModelProviderError as primary_error:
+        # Shrinking the request and retrying the same model is cheaper than switching to a
+        # larger one, and is the only response that works when no larger model is configured.
+        # The fallback chain still runs if the retry fails, so the two compose.
+        if (
+            recover_from_overflow is not None
+            and _is_context_overflow(primary_error)
+            and _recovered_from_overflow(recover_from_overflow)
+        ):
+            try:
+                return model.response(**kwargs)
+            except ModelProviderError as retry_error:
+                primary_error = retry_error
         fallbacks = get_fallback_models(fallback_config, primary_error)
         if not fallbacks:
-            raise
+            # Not a bare raise: that re-raises the first error, and after a failed retry the
+            # caller should see the retry's, which describes the request as it was last sent.
+            raise primary_error
         log_warning(f"Primary model '{model.id}' failed. Trying fallback models...: {primary_error}")
         return _try_fallback_models(
             fallbacks,
@@ -185,15 +245,27 @@ def call_model_with_fallback(
 async def acall_model_with_fallback(
     model: Model,
     fallback_config: Optional[FallbackConfig],
+    recover_from_overflow: Optional[Callable[[], Union[bool, Awaitable[bool]]]] = None,
     **kwargs: Any,
 ) -> ModelResponse:
     """Async variant of call_model_with_fallback."""
     try:
         return await model.aresponse(**kwargs)
     except ModelProviderError as primary_error:
+        if (
+            recover_from_overflow is not None
+            and _is_context_overflow(primary_error)
+            and await _arecovered_from_overflow(recover_from_overflow)
+        ):
+            try:
+                return await model.aresponse(**kwargs)
+            except ModelProviderError as retry_error:
+                primary_error = retry_error
         fallbacks = get_fallback_models(fallback_config, primary_error)
         if not fallbacks:
-            raise
+            # Not a bare raise: that re-raises the first error, and after a failed retry the
+            # caller should see the retry's, which describes the request as it was last sent.
+            raise primary_error
         log_warning(f"Primary model '{model.id}' failed. Trying fallback models...: {primary_error}")
         return await _atry_fallback_models(
             fallbacks,
@@ -214,15 +286,33 @@ async def acall_model_with_fallback(
 def call_model_stream_with_fallback(
     model: Model,
     fallback_config: Optional[FallbackConfig],
+    recover_from_overflow: Optional[Callable[[], bool]] = None,
     **kwargs: Any,
 ) -> Iterator[StreamEvent]:
-    """Call the primary model stream, falling back on failure."""
+    """Call the primary model stream, falling back on failure.
+
+    ``recover_from_overflow`` shrinks the payload and retries the same model before any fallback,
+    exactly as the non-streaming path does. A rejection for length arrives before the first
+    chunk, so nothing has been yielded yet and the retry is safe to start from scratch.
+    """
     try:
         yield from model.response_stream(**kwargs)
     except ModelProviderError as primary_error:
+        if (
+            recover_from_overflow is not None
+            and _is_context_overflow(primary_error)
+            and _recovered_from_overflow(recover_from_overflow)
+        ):
+            try:
+                yield from model.response_stream(**kwargs)
+                return
+            except ModelProviderError as retry_error:
+                primary_error = retry_error
         fallbacks = get_fallback_models(fallback_config, primary_error)
         if not fallbacks:
-            raise
+            # Not a bare raise: that re-raises the first error, and after a failed retry the
+            # caller should see the retry's, which describes the request as it was last sent.
+            raise primary_error
         log_warning(f"Primary model '{model.id}' failed. Trying fallback models...: {primary_error}")
         yield ModelResponse(event=ModelResponseEvent.fallback_model_activated.value)
         yield from _try_fallback_models_stream(
@@ -238,6 +328,7 @@ def call_model_stream_with_fallback(
 async def acall_model_stream_with_fallback(
     model: Model,
     fallback_config: Optional[FallbackConfig],
+    recover_from_overflow: Optional[Callable[[], Union[bool, Awaitable[bool]]]] = None,
     **kwargs: Any,
 ) -> AsyncIterator[StreamEvent]:
     """Async variant of call_model_stream_with_fallback."""
@@ -245,9 +336,22 @@ async def acall_model_stream_with_fallback(
         async for event in model.aresponse_stream(**kwargs):
             yield event
     except ModelProviderError as primary_error:
+        if (
+            recover_from_overflow is not None
+            and _is_context_overflow(primary_error)
+            and await _arecovered_from_overflow(recover_from_overflow)
+        ):
+            try:
+                async for event in model.aresponse_stream(**kwargs):
+                    yield event
+                return
+            except ModelProviderError as retry_error:
+                primary_error = retry_error
         fallbacks = get_fallback_models(fallback_config, primary_error)
         if not fallbacks:
-            raise
+            # Not a bare raise: that re-raises the first error, and after a failed retry the
+            # caller should see the retry's, which describes the request as it was last sent.
+            raise primary_error
         log_warning(f"Primary model '{model.id}' failed. Trying fallback models...: {primary_error}")
         yield ModelResponse(event=ModelResponseEvent.fallback_model_activated.value)
         async for event in _atry_fallback_models_stream(

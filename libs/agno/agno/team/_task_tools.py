@@ -862,6 +862,7 @@ def _get_task_management_tools(
             str: Aggregated results from all task executions.
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
+        from contextvars import copy_context
 
         # Validate all tasks
         tasks_to_run = []
@@ -944,7 +945,7 @@ def _get_task_management_tools(
 
         with ThreadPoolExecutor(max_workers=len(tasks_to_run)) as executor:
             futures = {
-                executor.submit(_run_single_task, task_obj, member_agent): (task_obj, member_agent)
+                executor.submit(copy_context().run, _run_single_task, task_obj, member_agent): (task_obj, member_agent)
                 for task_obj, member_agent in tasks_to_run
             }
             for future in as_completed(futures):
