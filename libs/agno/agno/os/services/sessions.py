@@ -172,7 +172,9 @@ async def _get_session_dict(
     return session, session_type  # type: ignore[return-value]
 
 
-def classify_session_run(run: Dict[str, Any], session_type: SessionType) -> Optional[AnyRunSchema]:
+def classify_session_run(
+    run: Dict[str, Any], session_type: SessionType, *, session: Optional[Dict[str, Any]] = None
+) -> Optional[AnyRunSchema]:
     """Render one persisted run dict as the schema matching its actual shape.
 
     Team and workflow sessions can contain member/step runs of other kinds, so
@@ -181,7 +183,7 @@ def classify_session_run(run: Dict[str, Any], session_type: SessionType) -> Opti
     runs that carry neither an agent_id nor a team_id (returns None).
     """
     if session_type == SessionType.AGENT:
-        return RunSchema.from_dict(run)
+        return RunSchema.from_dict(run, session=session)
     if session_type == SessionType.TEAM:
         if run.get("agent_id") is not None:
             return RunSchema.from_dict(run)
@@ -224,5 +226,5 @@ async def get_session_runs(
             continue
         filtered.append(run)
 
-    classified = (classify_session_run(run, resolved_type) for run in filtered)
+    classified = (classify_session_run(run, resolved_type, session=session) for run in filtered)
     return [run_schema for run_schema in classified if run_schema is not None]

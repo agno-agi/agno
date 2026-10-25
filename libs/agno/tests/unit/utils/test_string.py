@@ -1,9 +1,12 @@
+import json
 from typing import List, Optional
 
+import pytest
 from pydantic import BaseModel
 
 from agno.utils.string import (
     _extract_json_objects,
+    _parse_individual_json,
     generate_id_from_name,
     parse_response_dict_str,
     parse_response_model_str,
@@ -384,6 +387,51 @@ def test_parse_json_with_python_code_in_value():
         == "def factorial(n):     # Calculate factorial of n     if n <= 1:         return 1     return n * factorial(n - 1)"
     )
     assert result.description == "A recursive factorial function with comments and multiplication"
+
+
+class ListFieldModel(BaseModel):
+    items: list[str]
+
+
+def test_parse_individual_json_merges_lists():
+    """Two list fragments for the same field are concatenated."""
+    result = _parse_individual_json('{"items": ["a"]}\n{"items": ["b"]}', ListFieldModel)
+    assert result is not None
+    assert result.items == ["a", "b"]
+
+
+@pytest.mark.parametrize("parse", [_parse_individual_json, parse_response_model_str])
+@pytest.mark.parametrize("scalar", ["draft", 42, None, True, {"nested": 1}])
+def test_scalar_before_list_across_parsers(parse, scalar):
+    """A scalar fragment before a list fragment must not crash the merge.
+
+    Regression test: the list branch only created its accumulator when the key
+    was absent, so a preceding scalar (an LLM commonly emits a draft value
+    first) was extended instead, raising
+    AttributeError: 'str' object has no attribute 'extend'.
+
+    Covers both the merge helper and the public parser, whose final fallback
+    is _parse_individual_json. json.dumps keeps every fragment a valid JSON
+    object; the extraction-count assertion pins that precondition so the test
+    cannot pass by silently dropping an invalid fragment.
+    """
+    content = json.dumps({"items": scalar}) + "\n" + json.dumps({"items": ["final"]})
+    assert len(_extract_json_objects(content)) == 2
+    result = parse(content, ListFieldModel)
+    assert result is not None, f"expected the later list to win for {scalar!r}"
+    assert result.items == ["final"]
+
+
+def test_parse_individual_json_list_before_scalar_still_fails_softly():
+    """A scalar after a list keeps the documented None-on-invalid behaviour."""
+    result = _parse_individual_json('{"items": ["a"]}\n{"items": "draft"}', ListFieldModel)
+    assert result is None
+
+
+def test_parse_individual_json_scalar_only_still_fails_softly():
+    """A lone scalar for a list field is still rejected by validation."""
+    result = _parse_individual_json('{"items": "draft"}', ListFieldModel)
+    assert result is None
 
 
 def test_generate_id_from_name_with_name():

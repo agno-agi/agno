@@ -90,14 +90,17 @@ class TestRequireApprovalResolved:
         assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_logs_warning_on_db_error(self):
+    async def test_refuses_and_logs_on_db_error(self):
+        """A db that supports approvals but cannot be read fails closed: letting the run
+        continue would let an outage resolve an admin-required approval."""
         db = MagicMock()
         db.get_approvals = MagicMock(side_effect=RuntimeError("connection lost"))
         dep = require_approval_resolved(db)
         request = _make_request(path_params={"run_id": "r1"})
         with patch("agno.utils.log.log_warning") as mock_log:
-            # Should not raise — gate is bypassed on error
-            assert await dep(request) is None
+            with pytest.raises(HTTPException) as exc_info:
+                await dep(request)
+            assert exc_info.value.status_code == 403
             mock_log.assert_called_once()
             assert "connection lost" in mock_log.call_args[0][0]
 
@@ -157,9 +160,16 @@ class TestRunContinuationBlockedReason:
         assert reason is None
 
     @pytest.mark.asyncio
-    async def test_fails_open_only_for_approval_feature_on_db_error(self):
+    async def test_fails_closed_when_the_approval_state_cannot_be_read(self):
         db = MagicMock()
         db.get_approvals = MagicMock(side_effect=RuntimeError("boom"))
+        reason = await run_continuation_blocked_reason(db, "r1", authorization_enabled=True, user_scopes=["agents:run"])
+        assert reason is not None and "could not be verified" in reason
+
+    @pytest.mark.asyncio
+    async def test_skips_a_db_without_approvals_support(self):
+        db = MagicMock()
+        db.get_approvals = MagicMock(side_effect=NotImplementedError)
         reason = await run_continuation_blocked_reason(db, "r1", authorization_enabled=True, user_scopes=["agents:run"])
         assert reason is None
 
@@ -207,3 +217,50 @@ class TestMcpContinueRunApprovalGate:
         db = MagicMock()
         await mcp_module._enforce_run_continuation_allowed(db, "run-1")  # no raise
         db.get_approvals.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_approval_admin_bypass_is_provider_aware():
+    """Issue-4 regression: run_continuation_blocked_reason's approvals:write admin bypass
+    must be provider-aware. Under a managed-roles plane a raw token scope must NOT grant
+    the bypass, and a genuine approver-role holder (whose token carries no scopes) must
+    NOT be blocked."""
+    import os
+    import tempfile
+    from types import SimpleNamespace
+
+    from agno.os.authz import Authorization
+
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    store = Authorization(db_url=f"sqlite:///{path}")
+    store.set_role_scopes("approver", ["approvals:write"])
+    store.set_role("val", "approver")
+    provider = store.provider
+
+    db = MagicMock()
+    db.get_approvals = AsyncMock(return_value=([{"id": "a1", "status": "pending"}], 1))
+
+    def _req(user_id, scopes):
+        return SimpleNamespace(
+            state=SimpleNamespace(
+                user_id=user_id, scopes=scopes, claims={}, admin_scope=None, authorization_enabled=True
+            ),
+            app=SimpleNamespace(state=SimpleNamespace(authorization_provider=provider)),
+        )
+
+    # a token merely CARRYING approvals:write, but no approver role -> bypass refused
+    blocked = await run_continuation_blocked_reason(
+        db,
+        "r1",
+        authorization_enabled=True,
+        user_scopes=["approvals:write"],
+        request=_req("mallory", ["approvals:write"]),
+    )
+    assert blocked is not None, "raw token scope must not grant the approval-admin bypass off-plane"
+
+    # the genuine approver role, empty token scopes -> bypass via provider -> not blocked
+    allowed = await run_continuation_blocked_reason(
+        db, "r1", authorization_enabled=True, user_scopes=[], request=_req("val", [])
+    )
+    assert allowed is None, "an approver-role holder must be able to resolve approvals"
