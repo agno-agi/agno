@@ -1,3 +1,4 @@
+import re
 import time
 from datetime import date, datetime, timedelta, timezone
 from importlib import metadata
@@ -846,7 +847,7 @@ class MongoDb(BaseDb):
                 else:
                     query["created_at"] = {"$lte": end_timestamp}
             if session_name is not None:
-                query["session_data.session_name"] = {"$regex": session_name, "$options": "i"}
+                query["session_data.session_name"] = {"$regex": re.escape(session_name), "$options": "i"}
 
             # Get total count
             total_count = collection.count_documents(query)
@@ -1404,7 +1405,7 @@ class MongoDb(BaseDb):
             if topics is not None:
                 query["topics"] = {"$in": topics}
             if search_content is not None:
-                query["memory"] = {"$regex": search_content, "$options": "i"}
+                query["memory"] = {"$regex": re.escape(search_content), "$options": "i"}
 
             # Get total count
             total_count = collection.count_documents(query)
@@ -3197,21 +3198,46 @@ class MongoDb(BaseDb):
             log_debug(f"Error claiming schedule: {e}")
             return None
 
-    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+    def release_schedule(
+        self,
+        schedule_id: str,
+        next_run_at: Optional[int] = None,
+        *,
+        worker_id: Optional[str] = None,
+        locked_at: Optional[int] = None,
+    ) -> bool:
         try:
             collection = self._get_collection(table_type="schedules")
             if collection is None:
                 return False
 
             updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
-            if next_run_at is not None:
-                updates["next_run_at"] = next_run_at
+            updates["next_run_at"] = {
+                "$cond": [
+                    {"$eq": ["$cron_expr", ""]},
+                    None,
+                    next_run_at if next_run_at is not None else "$next_run_at",
+                ]
+            }
 
-            result = collection.update_one({"id": schedule_id}, {"$set": updates})
+            query: Dict[str, Any] = {"id": schedule_id}
+            if worker_id is not None:
+                query["locked_by"] = worker_id
+            if locked_at is not None:
+                query["locked_at"] = locked_at
+            result = collection.update_one(query, [{"$set": updates}])
             return result.matched_count > 0
         except Exception as e:
             log_debug(f"Error releasing schedule: {e}")
             return False
+
+    def delete_schedule_runs(self, schedule_id: str, *, before: int) -> int:
+        """Expire only completed history for the selected schedule."""
+        collection = self._get_collection(table_type="schedule_runs")
+        if collection is None:
+            return 0
+        result = collection.delete_many({"schedule_id": schedule_id, "completed_at": {"$lt": before, "$ne": None}})
+        return result.deleted_count
 
     def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -3257,6 +3283,25 @@ class MongoDb(BaseDb):
         except Exception as e:
             log_debug(f"Error getting schedule run: {e}")
             return None
+
+    def get_latest_schedule_runs(self, schedule_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Fetch the latest run for every requested schedule in one aggregation."""
+        if not schedule_ids:
+            return {}
+        collection = self._get_collection(table_type="schedule_runs")
+        if collection is None:
+            return {}
+        pipeline: List[Dict[str, Any]] = [
+            {"$match": {"schedule_id": {"$in": schedule_ids}}},
+            {"$sort": {"schedule_id": 1, "triggered_at": -1, "created_at": -1, "id": -1}},
+            {"$group": {"_id": "$schedule_id", "run": {"$first": "$$ROOT"}}},
+        ]
+        latest = {}
+        for group in collection.aggregate(pipeline):
+            run = group["run"]
+            run.pop("_id", None)
+            latest[group["_id"]] = run
+        return latest
 
     def get_schedule_runs(
         self,
