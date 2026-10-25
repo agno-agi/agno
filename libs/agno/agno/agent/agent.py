@@ -161,6 +161,10 @@ class Agent:
     # --- Agent History ---
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
     add_history_to_context: bool = False
+    # shared_session=true marks the session as shared with other agents: their replies replay as
+    # user-role messages labelled with their name, their tool traffic is left out, and a user
+    # message sent to several agents (the same Message run through each) replays once.
+    shared_session: bool = False
     # Number of historical runs to include in the messages
     num_history_runs: Optional[int] = None
     # Number of historical messages to include in the messages list sent to the Model.
@@ -444,6 +448,7 @@ class Agent:
         compression_manager: Optional[CompressionManager] = None,
         offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
         add_history_to_context: bool = False,
+        shared_session: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
         max_tool_calls_from_history: Optional[int] = None,
@@ -591,6 +596,7 @@ class Agent:
         self._result_store_setting: Union[bool, "ResultStore", None] = None
 
         self.add_history_to_context = add_history_to_context
+        self.shared_session = shared_session
         self.num_history_runs = num_history_runs
         self.num_history_messages = num_history_messages
         if self.num_history_messages is not None and self.num_history_runs is not None:
