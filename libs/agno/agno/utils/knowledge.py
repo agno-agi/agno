@@ -135,3 +135,33 @@ def strict_user_id_kwarg(fn: Any, user_id: Optional[str]) -> Dict[str, Any]:
         "user_id parameter. This vector db predates per-user isolation — add user_id parameters to "
         "its methods (see agno.vectordb.base.VectorDb) before running user-scoped operations."
     )
+
+
+def get_run_response_kwarg(fn: Any, run_response: Optional[Any]) -> Dict[str, Any]:
+    """``{"run_response": ...}`` only when the callee accepts it.
+
+    A query transformer that calls an LLM should bill those tokens to the run that
+    triggered the search, so the agent offers its run on retrieval. Only a callee that
+    names ``run_response`` is offered one: unlike :func:`get_user_id_kwarg`, where a
+    dropped owner leaks data across users, this is an enhancement. A legacy
+    ``retrieve(query, **kwargs)`` that forwards to a narrower search would raise on an
+    argument it never asked for, and losing metrics attribution is the lesser cost.
+
+    Args:
+        fn: The callable the kwarg will be passed to.
+        run_response: The run to attribute the transformer's model call to.
+
+    Returns:
+        Dict[str, Any]: {"run_response": run_response} when accepted, empty otherwise.
+    """
+    import inspect
+
+    if run_response is None:
+        return {}
+    try:
+        parameters = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return {}
+    if "run_response" in parameters:
+        return {"run_response": run_response}
+    return {}

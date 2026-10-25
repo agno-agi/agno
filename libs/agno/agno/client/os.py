@@ -58,6 +58,7 @@ from agno.os.schema import (
     PaginatedResponse,
     PaginationInfo,
     RunSchema,
+    SessionRunPreviewSchema,
     SessionSchema,
     TeamRunSchema,
     TeamSessionDetailSchema,
@@ -1824,6 +1825,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        status: Optional[List[str]] = None,
     ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
         """Get all runs for a specific session.
 
@@ -1836,6 +1838,7 @@ class AgentOSClient:
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
+            status: Optional run status filter, matching any of the given statuses (case-insensitive)
 
         Returns:
             List of runs (RunSchema, TeamRunSchema, or WorkflowRunSchema)
@@ -1848,6 +1851,7 @@ class AgentOSClient:
             "user_id": user_id,
             "created_after": created_after,
             "created_before": created_before,
+            "status": status,
             "db_id": db_id,
             "table": table,
         }
@@ -1865,6 +1869,84 @@ class AgentOSClient:
             else:
                 runs.append(RunSchema.model_validate(run))
         return runs
+
+    @staticmethod
+    def _session_run_preview_params(
+        session_type: Optional[SessionType],
+        user_id: Optional[str],
+        created_after: Optional[int],
+        created_before: Optional[int],
+        status: Optional[List[str]],
+        db_id: Optional[str],
+        table: Optional[str],
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {
+            "type": session_type.value if session_type else None,
+            "user_id": user_id,
+            "created_after": created_after,
+            "created_before": created_before,
+            "status": status,
+            "db_id": db_id,
+            "table": table,
+        }
+        return {k: v for k, v in params.items() if v is not None}
+
+    def get_session_run_previews(
+        self,
+        session_id: str,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        status: Optional[List[str]] = None,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> List[SessionRunPreviewSchema]:
+        """Get lightweight previews of a session's runs: ids, status, timestamps and
+        truncated input/output, without messages, events, media or metrics.
+
+        Args:
+            session_id: ID of the session
+            session_type: Type of session (agent, team, or workflow). If None, auto-detected by the server.
+            user_id: Optional user ID filter
+            created_after: Filter runs created after this Unix timestamp
+            created_before: Filter runs created before this Unix timestamp
+            status: Optional run status filter, matching any of the given statuses (case-insensitive)
+            db_id: Optional database ID to use
+            table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            List of SessionRunPreviewSchema
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params = self._session_run_preview_params(
+            session_type, user_id, created_after, created_before, status, db_id, table
+        )
+        data = self._get(f"/sessions/{session_id}/run-previews", params=params, headers=headers)
+        return [SessionRunPreviewSchema.model_validate(run) for run in data]
+
+    async def aget_session_run_previews(
+        self,
+        session_id: str,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        status: Optional[List[str]] = None,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> List[SessionRunPreviewSchema]:
+        """Async variant of get_session_run_previews."""
+        params = self._session_run_preview_params(
+            session_type, user_id, created_after, created_before, status, db_id, table
+        )
+        data = await self._aget(f"/sessions/{session_id}/run-previews", params=params, headers=headers)
+        return [SessionRunPreviewSchema.model_validate(run) for run in data]
 
     async def get_session_run(
         self,
@@ -2380,7 +2462,7 @@ class AgentOSClient:
         Args:
             name: Content name (auto-generated from file/URL if not provided)
             description: Content description
-            url: URL to fetch content from (can be a single URL string or a JSON-encoded array of URLs)
+            url: A single URL to fetch content from. Upload each URL in a separate call.
             metadata: Metadata dictionary for the content
             file: File object containing content (bytes or file-like object), filename, and mime_type. Can also be a FastAPI UploadFile.
             text_content: Raw text content to process

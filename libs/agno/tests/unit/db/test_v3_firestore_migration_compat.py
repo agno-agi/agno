@@ -153,6 +153,8 @@ def test_fresh_schema_round_trip():
     session.upsert_run(_make_run("r1", "s1", "one"))
     session.upsert_run(_make_run("r2", "s1", "two"))
     db.upsert_session(session)
+    for index, run in enumerate(session.runs):
+        db.upsert_run(run=run, session_id=session.session_id, user_id=session.user_id, run_index=index)
 
     raw_docs = list(db.db_client.collection("agno_sessions").stream())
     assert len(raw_docs) == 1
@@ -222,6 +224,8 @@ def test_get_run_get_runs_apis():
     for i in range(3):
         session.upsert_run(_make_run(f"r{i}", "sx", f"c{i}"))
     db.upsert_session(session)
+    for index, run in enumerate(session.runs):
+        db.upsert_run(run=run, session_id=session.session_id, user_id=session.user_id, run_index=index)
 
     run = db.get_run("r1")
     assert run is not None and run.content == "c1"

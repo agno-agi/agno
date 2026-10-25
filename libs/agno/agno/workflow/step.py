@@ -405,7 +405,9 @@ class Step:
             # Without a pin, code-defined registry agents win as before.
             if pinned is None and registry and agent_id:
                 registry_agent = registry.get_agent(agent_id)
-                if registry_agent is not None:
+                from agno.agents.base import BaseExternalAgent
+
+                if registry_agent is not None and not isinstance(registry_agent, BaseExternalAgent):
                     try:
                         # Deep copy to isolate mutable state between concurrent requests
                         agent = registry_agent.deep_copy()
@@ -482,7 +484,9 @@ class Step:
             # A pinned lenient load may still fall back to a code-defined agent.
             if agent is None and pinned is not None and registry and agent_id:
                 registry_agent = registry.get_agent(agent_id)
-                if registry_agent is not None:
+                from agno.agents.base import BaseExternalAgent
+
+                if registry_agent is not None and not isinstance(registry_agent, BaseExternalAgent):
                     try:
                         agent = registry_agent.deep_copy()
                     except Exception as e:
