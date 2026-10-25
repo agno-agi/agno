@@ -1,10 +1,14 @@
+import json
 from typing import List, Optional
 
+import pytest
 from pydantic import BaseModel
 
 from agno.utils.string import (
     _extract_json_objects,
+    _parse_individual_json,
     generate_id_from_name,
+    parse_response_dict_str,
     parse_response_model_str,
     sanitize_postgres_string,
     url_safe_string,
@@ -385,6 +389,51 @@ def test_parse_json_with_python_code_in_value():
     assert result.description == "A recursive factorial function with comments and multiplication"
 
 
+class ListFieldModel(BaseModel):
+    items: list[str]
+
+
+def test_parse_individual_json_merges_lists():
+    """Two list fragments for the same field are concatenated."""
+    result = _parse_individual_json('{"items": ["a"]}\n{"items": ["b"]}', ListFieldModel)
+    assert result is not None
+    assert result.items == ["a", "b"]
+
+
+@pytest.mark.parametrize("parse", [_parse_individual_json, parse_response_model_str])
+@pytest.mark.parametrize("scalar", ["draft", 42, None, True, {"nested": 1}])
+def test_scalar_before_list_across_parsers(parse, scalar):
+    """A scalar fragment before a list fragment must not crash the merge.
+
+    Regression test: the list branch only created its accumulator when the key
+    was absent, so a preceding scalar (an LLM commonly emits a draft value
+    first) was extended instead, raising
+    AttributeError: 'str' object has no attribute 'extend'.
+
+    Covers both the merge helper and the public parser, whose final fallback
+    is _parse_individual_json. json.dumps keeps every fragment a valid JSON
+    object; the extraction-count assertion pins that precondition so the test
+    cannot pass by silently dropping an invalid fragment.
+    """
+    content = json.dumps({"items": scalar}) + "\n" + json.dumps({"items": ["final"]})
+    assert len(_extract_json_objects(content)) == 2
+    result = parse(content, ListFieldModel)
+    assert result is not None, f"expected the later list to win for {scalar!r}"
+    assert result.items == ["final"]
+
+
+def test_parse_individual_json_list_before_scalar_still_fails_softly():
+    """A scalar after a list keeps the documented None-on-invalid behaviour."""
+    result = _parse_individual_json('{"items": ["a"]}\n{"items": "draft"}', ListFieldModel)
+    assert result is None
+
+
+def test_parse_individual_json_scalar_only_still_fails_softly():
+    """A lone scalar for a list field is still rejected by validation."""
+    result = _parse_individual_json('{"items": "draft"}', ListFieldModel)
+    assert result is None
+
+
 def test_generate_id_from_name_with_name():
     """Test that named IDs are deterministic kebab-case"""
     assert generate_id_from_name("My Agent") == "my-agent"
@@ -439,3 +488,57 @@ def test_sanitize_postgres_string_other_illegal_chars():
     assert sanitize_postgres_string("hello\x0e\x1fworld") == "helloworld"
     # Unicode replacement characters
     assert sanitize_postgres_string("hello\ufffe\uffffworld") == "helloworld"
+
+
+def test_extract_json_objects_ignores_unmatched_closing_brace():
+    """A stray closing brace in prose must not hide the objects that follow.
+
+    Regression test: the depth counter went negative on an unmatched '}', so
+    every later '{' failed the start-of-object check and extraction returned
+    nothing.
+    """
+    assert _extract_json_objects('Some prose } then {"a": 1}') == ['{"a": 1}']
+    assert _extract_json_objects('{"a": 1}} {"b": 2}') == ['{"a": 1}', '{"b": 2}']
+    assert _extract_json_objects("}") == []
+
+
+def test_parse_response_dict_str_ignores_unmatched_closing_brace():
+    content = 'Here is the payload } {"name": "agno", "value": "1"}'
+    result = parse_response_dict_str(content)
+    assert result == {"name": "agno", "value": "1"}
+
+
+def test_extract_json_objects_ignores_unmatched_quote_in_prose():
+    """A stray quote in prose must not swallow the object that follows.
+
+    Regression test: the scanner entered a string literal on any '"', including one
+    in the surrounding text, and then treated the object and its closing brace as
+    string content.
+    """
+    text = 'The user asked "what is the config: {"theme": "dark"}'
+    assert _extract_json_objects(text) == ['{"theme": "dark"}']
+    assert parse_response_dict_str(text) == {"theme": "dark"}
+
+
+def test_extract_json_objects_ignores_quoted_open_brace_in_prose():
+    """A quoted '{' in prose must not swallow the object that follows."""
+    for text in ['He said "use {" then {"a": 1}', 'The "{" character opens objects: {"a": 1}']:
+        assert _extract_json_objects(text) == ['{"a": 1}']
+        assert parse_response_dict_str(text) == {"a": 1}
+
+
+def test_extract_json_objects_skips_non_json_brace_spans():
+    assert _extract_json_objects('Use "{name}" placeholders: {"a": 1}') == ['{"a": 1}']
+    assert _extract_json_objects('{"a": 1}{"b": 2}') == ['{"a": 1}', '{"b": 2}']
+
+
+def test_extract_json_objects_handles_malformed_deep_nesting():
+    assert _extract_json_objects('{"x": ' * 40000) == []
+    assert _extract_json_objects("{ a " * 60000) == []
+
+
+def test_extract_json_objects_ignores_unmatched_opening_brace():
+    text = 'Use { as a marker, then {"a": 1}'
+    assert _extract_json_objects(text) == ['{"a": 1}']
+    assert parse_response_dict_str(text) == {"a": 1}
+    assert _extract_json_objects('Open { here and { there, then {"a": 1} and {"b": 2}') == ['{"a": 1}', '{"b": 2}']

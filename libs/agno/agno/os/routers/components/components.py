@@ -41,7 +41,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import AgnoHTTPException, draft_preview_identity, may_read_draft_configs
+from agno.os.utils import AgnoHTTPException, adraft_preview_identity, draft_preview_identity, may_read_draft_configs
 from agno.registry import Registry
 from agno.utils.log import log_error, log_warning
 from agno.utils.string import generate_component_id_from_name, hash_string_sha256, validate_component_id
@@ -512,7 +512,10 @@ def _resolve_member_links(
         member_type = member.get("type")
         if member_type == "agent":
             child_id = member.get("agent_id")
-            in_registry = bool(registry and child_id and registry.get_agent(child_id) is not None)
+            from agno.agents.base import BaseExternalAgent
+
+            registered = registry.get_agent(child_id) if registry and isinstance(child_id, str) else None
+            in_registry = registered is not None
         elif member_type == "team":
             child_id = member.get("team_id")
             in_registry = bool(registry and child_id and registry.get_team(child_id) is not None)
@@ -542,6 +545,9 @@ def _resolve_member_links(
             # A draft-only component (no current_version) still exists; leave it
             # to be resolved at load time rather than flagging it as unresolved.
             continue
+
+        if member_type == "agent" and isinstance(registered, BaseExternalAgent):
+            raise ValueError("External agents cannot be team members: " + child_id)
 
         # Not a DB component. If it is a code-defined component it will be
         # resolved from the registry at load time; otherwise it is unresolved.
@@ -808,6 +814,9 @@ def attach_routes(
                 if problem is not None:
                     raise HTTPException(status_code=400, detail=problem)
 
+            if registry is not None and component_id in registry.excluded_component_ids:
+                raise HTTPException(status_code=409, detail="This component is excluded from the registry")
+
             # Prepare config - ensure it's a dict and resolve db reference
             config = body.config or {}
             config = _resolve_db_in_config(config, db, registry)
@@ -842,6 +851,13 @@ def attach_routes(
                 # way unresolved members are: a step may name a code-defined
                 # executor this process cannot see.
                 links = _resolve_step_links(config, db, registry) or None
+
+            # Falls back to the unscoped JWT sub so admin-created components still carry an owner.
+            creator_user_id = scoped_user_id or getattr(request.state, "user_id", None)
+
+            _validate_referenced_component_ownership(
+                db, config, links=links, scoped_user_id=scoped_user_id, own_component_id=component_id
+            )
 
             # Falls back to the unscoped JWT sub so admin-created components still carry an owner.
             creator_user_id = scoped_user_id or getattr(request.state, "user_id", None)
@@ -1152,7 +1168,7 @@ def attach_routes(
             if component_row is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             configs = db.list_configs(component_id, include_config=include_config)
-            actor, privileged = draft_preview_identity(request)
+            actor, privileged = await adraft_preview_identity(request)
             if not may_read_draft_configs(component_row, actor, privileged):
                 configs = [c for c in configs if c.get("stage") == "published"]
             return [_config_response(c, component_row, scoped_user_id) for c in configs]
@@ -1348,7 +1364,7 @@ def attach_routes(
             if component_row is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             config = db.get_config(component_id, version=version)
-            actor, privileged = draft_preview_identity(request)
+            actor, privileged = await adraft_preview_identity(request)
             if (
                 config is not None
                 and config.get("stage") != "published"

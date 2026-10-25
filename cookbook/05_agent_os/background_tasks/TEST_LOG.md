@@ -102,3 +102,13 @@ ticket. Captured concise startup logs and clean worker shutdown.
 scenario, or live streaming exercise was performed in this smoke check.
 
 ---
+
+### queue_per_session.py
+
+**Status:** PASS (2026-10-13, cookbook run as written with gpt-5.6-luna against local Postgres on localhost:5532; an earlier 2026-10-12 pass used a 2-second offline fake model in a scratch harness)
+
+**Description:** Started the cookbook app and submitted its two documented messages to one session back to back, plus one run to another session, then polled all three every 300 ms. Also exercised, through a scratch harness with the same QueueConfig on both the Postgres and the Redis queue store: a run paused for tool confirmation holding its session (the next run polled PENDING with waiting_on naming the paused run while another session completed), continue releasing it in order, cancel of a paused head releasing the next run, and queue_per_session=False restoring concurrent same-session execution with no waiting_on. /config reported queue {durable: true, queue_per_session: true}. The second same-session run stayed PENDING with waiting_on naming the first run while the first was RUNNING; the other session's run went RUNNING alongside the first; the second run went RUNNING only after the first COMPLETED, and all three completed.
+
+**Result:** PASS. One run per session in acceptance order (the second answer named the city the first run chose), concurrency across sessions, waiting_on on the poll, paused-head hold with continue and cancel, and /config discovery behave as the docstring describes on both stores.
+
+---

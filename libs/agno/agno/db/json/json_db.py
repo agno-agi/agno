@@ -1,5 +1,7 @@
+import errno
 import json
 import os
+import stat
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -36,6 +38,9 @@ from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
+
+# Errors where an existing table can't be replaced atomically, so it is written in place instead
+_IN_PLACE_WRITE_ERRNOS = frozenset({errno.EACCES, errno.EPERM, errno.EBUSY, errno.EXDEV})
 
 
 class JsonDb(BaseDb):
@@ -113,8 +118,12 @@ class JsonDb(BaseDb):
 
         except FileNotFoundError:
             if create_table_if_not_found:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    json.dump([], f)
+                # Exclusive create so a table published by a concurrent writer is never truncated
+                try:
+                    with open(file_path, "x", encoding="utf-8") as f:
+                        json.dump([], f)
+                except FileExistsError:
+                    pass
             return []
 
         except json.JSONDecodeError as e:
@@ -122,7 +131,7 @@ class JsonDb(BaseDb):
             raise e
 
     def _write_json_file(self, filename: str, data: List[Dict[str, Any]]) -> None:
-        """Write data to a JSON file.
+        """Write data to a JSON file, publishing regular tables after serialization succeeds.
 
         Args:
             filename (str): The name of the JSON file to write.
@@ -131,18 +140,60 @@ class JsonDb(BaseDb):
         Raises:
             Exception: If an error occurs while writing to the JSON file.
         """
-        file_path = self.db_path / f"{filename}.json"
+        file_path = (self.db_path / f"{filename}.json").resolve()
 
         # Create directory if it doesn't exist
         self.db_path.mkdir(parents=True, exist_ok=True)
 
+        temporary_path: Optional[Path] = None
         try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, default=str)
+            existing = file_path.stat() if file_path.exists() else None
+            if existing is not None and not stat.S_ISREG(existing.st_mode):
+                self._write_json_in_place(file_path, data)
+                return
+            if existing is not None:
+                descriptor = os.open(file_path, os.O_WRONLY)
+                os.close(descriptor)
+
+            serializing = False
+            try:
+                staging_path = file_path.with_name(f".agno-json-{uuid4().hex}.tmp")
+                with open(staging_path, "x", encoding="utf-8") as f:
+                    temporary_path = staging_path
+                    if existing is not None:
+                        self._copy_table_metadata(staging_path, existing)
+                    serializing = True
+                    json.dump(data, f, indent=2, default=str)
+                serializing = False
+                os.replace(staging_path, file_path)
+            except OSError as e:
+                # Bind-mounted tables, read-only directories and foreign-owned tables can't be replaced.
+                # Serialization errors always propagate so the existing table is never truncated.
+                if serializing or existing is None or e.errno not in _IN_PLACE_WRITE_ERRNOS:
+                    raise
+                log_debug(f"Writing {file_path} in place: {e}")
+                self._write_json_in_place(file_path, data)
 
         except Exception as e:
             log_error(f"Error writing to the {file_path} JSON file: {str(e)}")
             raise e
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _copy_table_metadata(staging_path: Path, existing: os.stat_result) -> None:
+        """Give the staging file the existing table's owner and mode bits."""
+        staged = staging_path.stat()
+        if hasattr(os, "chown") and (staged.st_uid, staged.st_gid) != (existing.st_uid, existing.st_gid):
+            os.chown(staging_path, existing.st_uid, existing.st_gid)
+        os.chmod(staging_path, stat.S_IMODE(existing.st_mode))
+
+    @staticmethod
+    def _write_json_in_place(file_path: Path, data: List[Dict[str, Any]]) -> None:
+        """Overwrite the table directly, for paths that can't be replaced atomically."""
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, default=str)
 
     def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
         """Get the schema version stamped for the given table.

@@ -7,9 +7,9 @@ import math
 from collections import OrderedDict
 from collections.abc import Iterator, Mapping
 from threading import Lock
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
-from agno.knowledge.page.types import GrepResult, Page, PageError, PageNotFound
+from agno.knowledge.page.types import GrepResult, Page, PageCommandResult, PageError, PageNotFound
 from agno.utils.bounded import BoundedWorkers, WorkBudget
 
 if TYPE_CHECKING:
@@ -96,12 +96,46 @@ class PageFileSystem:
         except TimeoutError as exc:
             raise PageError() from exc
 
-    def tools(self, *, tool_name: str = "query_pages", description: Optional[str] = None) -> Toolkit:
+    def _run_result(self, command: str, *, budget: WorkBudget) -> PageCommandResult:
+        from agno.knowledge.page._commands import run_command_result
+
+        return run_command_result(command, PageCorpus(self, budget=budget))
+
+    def run_command_result(self, command: str, *, max_output_bytes: int = 32000) -> PageCommandResult:
+        """Run a command with typed errors/completeness and a final UTF-8 JSON bound."""
+        PageCommandResult(text="").bounded(max_output_bytes)
+        try:
+            result = _COMMAND_WORKERS.run_sync(self._run_result, command, seconds=self.command_seconds)
+        except (PageError, TimeoutError) as exc:
+            code = exc.code if isinstance(exc, PageError) else "page_unavailable"
+            result = PageCommandResult(text=code, is_error=True, errors=(code,))
+        return result.bounded(max_output_bytes)
+
+    async def arun_command_result(self, command: str, *, max_output_bytes: int = 32000) -> PageCommandResult:
+        """Async run_command_result; cancellation retains worker ownership."""
+        PageCommandResult(text="").bounded(max_output_bytes)
+        try:
+            result = await _COMMAND_WORKERS.run(self._run_result, command, seconds=self.command_seconds)
+        except (PageError, TimeoutError) as exc:
+            code = exc.code if isinstance(exc, PageError) else "page_unavailable"
+            result = PageCommandResult(text=code, is_error=True, errors=(code,))
+        return result.bounded(max_output_bytes)
+
+    def tools(
+        self,
+        *,
+        tool_name: str = "query_pages",
+        description: Optional[str] = None,
+        transport: Literal["chat", "mcp"] = "chat",
+        max_output_bytes: int = 32000,
+    ) -> Toolkit:
         """Build one read-only command tool for ``Agent(tools=[files.tools()])``.
 
         Sync and async runs select their corresponding command implementation.
         The tool returns readable page errors; direct command methods still raise
         PageError. Applications retain setup, retrieval timing and instructions.
+        transport="mcp" exposes typed command metadata/schema and explicit MCP
+        execution errors, bounded by max_output_bytes including the result JSON.
         """
         from agno.knowledge.page._commands import USAGE
         from agno.knowledge.page.types import tool_error
@@ -121,6 +155,15 @@ class PageFileSystem:
                 return await self.arun_command(command)
             except PageError as exc:
                 return tool_error(exc)
+
+        if transport not in ("chat", "mcp"):
+            raise ValueError("transport must be chat or mcp")
+        if transport == "mcp":
+            from agno.knowledge.page.tools import command_mcp_tools
+
+            return command_mcp_tools(
+                self, tool_name=tool_name, description=description or USAGE, max_output_bytes=max_output_bytes
+            )
 
         query_pages.__name__ = tool_name
         toolkit = Toolkit(name="page_filesystem", tools=[query_pages], async_tools=[(aquery_pages, tool_name)])

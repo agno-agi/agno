@@ -20,15 +20,44 @@ Example:
 
 import asyncio
 import json
+import posixpath
 import time
 from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from urllib.parse import unquote, urlsplit
 
-from agno.db.schemas.scheduler import RUN_ENDPOINT_RE, Schedule, match_run_endpoint
+from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID, RUN_ENDPOINT_RE, Schedule, match_run_endpoint
+from agno.registry._reserved import RESERVED_MEMBER_IDS
 from agno.run import RunContext
+from agno.run.authorization import public_payload, requires_permission
 from agno.scheduler.manager import ScheduleManager
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, logger
+
+
+def _manager_member_refusal(endpoint: str) -> Optional[str]:
+    """Validate the path the HTTP server will resolve, including encoded IDs and queries."""
+    path = posixpath.normpath(unquote(urlsplit(endpoint).path))
+    parts = path.strip("/").split("/")
+    if len(parts) >= 2 and parts[0] in ("agents", "teams", "workflows") and parts[1] in RESERVED_MEMBER_IDS:
+        return "Manager specialists are internal. Schedule OS Manager instead."
+    return None
+
+
+def _company_routine_refusal(schedule: Any) -> Optional[str]:
+    """Company Routines stay linked to their Product, so only Company may change them."""
+    if (
+        schedule is None
+        or getattr(schedule, "managed_by", None) != "company"
+        or schedule.id == COMPANY_AUTOMATION_SCHEDULE_ID
+    ):
+        return None
+    return json.dumps(
+        {
+            "error": f"Schedule {schedule.id} is a Company Routine. Change it through Company Routines.",
+            "error_type": "company_routine",
+        }
+    )
 
 
 def _parse_target_archived_reason(disabled_reason: Optional[str]) -> Optional[Tuple[str, str]]:
@@ -128,7 +157,11 @@ def _archived_component_refusal(
     different answer for another owner's archived component than for an id that
     does not exist, which discloses that the component exists.
     """
-    if db is None:
+    from agno.registry._reserved import RESERVED_MANAGER_IDS
+
+    # Reserved managers resolve only from AgentOS, never from archived catalog
+    # rows left by an older deployment. Their availability is checked by the owner.
+    if db is None or target_id in RESERVED_MANAGER_IDS:
         return None
     get_component = getattr(db, "get_component", None)
     if get_component is None:
@@ -155,7 +188,11 @@ async def _aarchived_component_refusal(
     db: Any, target_type: str, target_id: str, user_id: Optional[str] = None
 ) -> Optional[Tuple[str, str]]:
     """Async variant of ``_archived_component_refusal``; same predicate."""
-    if db is None:
+    from agno.registry._reserved import RESERVED_MANAGER_IDS
+
+    # Reserved managers resolve only from AgentOS, never from archived catalog
+    # rows left by an older deployment. Their availability is checked by the owner.
+    if db is None or target_id in RESERVED_MANAGER_IDS:
         return None
     get_component = getattr(db, "get_component", None)
     if get_component is None:
@@ -563,6 +600,7 @@ class SchedulerTools(Toolkit):
         self._manager = value
         self._manager_pinned = True
 
+    @requires_permission("schedules", "write")
     def create_schedule(
         self,
         name: str,
@@ -591,6 +629,9 @@ class SchedulerTools(Toolkit):
         resolved_endpoint = endpoint or self.default_endpoint
         if not resolved_endpoint:
             return json.dumps({"error": "No endpoint provided and no default_endpoint configured"})
+        private_target = _manager_member_refusal(resolved_endpoint)
+        if private_target:
+            return json.dumps({"error": private_target, "error_type": "target_internal"})
 
         resolved_payload = self.default_payload
         if payload is not None:
@@ -680,6 +721,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to create schedule")
             return json.dumps({"error": str(e)})
 
+    @requires_permission("schedules", "read")
     def list_schedules(self, enabled_only: bool = False, run_context: Optional[RunContext] = None) -> str:
         """List all existing schedules.
 
@@ -709,6 +751,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to list schedules")
             return json.dumps({"error": str(e)})
 
+    @requires_permission("schedules", "read")
     def get_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Get details of a specific schedule by its ID.
 
@@ -732,13 +775,14 @@ class SchedulerTools(Toolkit):
                     "timezone": schedule.timezone,
                     "enabled": schedule.enabled,
                     "description": schedule.description,
-                    "payload": schedule.payload,
+                    "payload": public_payload(schedule.payload),
                 }
             )
         except Exception as e:
             logger.exception("Failed to get schedule")
             return json.dumps({"error": str(e)})
 
+    @requires_permission("schedules", "delete")
     def delete_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Delete a schedule by its ID. This permanently removes the schedule.
 
@@ -749,6 +793,9 @@ class SchedulerTools(Toolkit):
             str: JSON string confirming deletion.
         """
         try:
+            routine_refusal = _company_routine_refusal(self.manager.get(schedule_id, user_id=self._owner(run_context)))
+            if routine_refusal:
+                return routine_refusal
             deleted = self.manager.delete(schedule_id, user_id=self._owner(run_context))
             if deleted:
                 return json.dumps({"status": "deleted", "id": schedule_id})
@@ -757,6 +804,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to delete schedule")
             return json.dumps({"error": str(e)})
 
+    @requires_permission("schedules", "write")
     def enable_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Enable a disabled schedule so it starts running again.
 
@@ -770,6 +818,12 @@ class SchedulerTools(Toolkit):
             existing = self.manager.get(schedule_id, user_id=self._owner(run_context))
             if existing is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+            routine_refusal = _company_routine_refusal(existing)
+            if routine_refusal:
+                return routine_refusal
+            private_target = _manager_member_refusal(existing.endpoint)
+            if private_target:
+                return json.dumps({"error": private_target, "error_type": "target_internal"})
             # A schedule aimed at an archived component can only 404 at fire
             # time; restoring the component is the way to turn it back on. A
             # target without a catalog row is a live code-defined component.
@@ -836,6 +890,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to enable schedule")
             return json.dumps({"error": str(e)})
 
+    @requires_permission("schedules", "write")
     def disable_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Disable a schedule so it stops running. Can be re-enabled later.
 
@@ -846,6 +901,9 @@ class SchedulerTools(Toolkit):
             str: JSON string with the updated schedule details.
         """
         try:
+            routine_refusal = _company_routine_refusal(self.manager.get(schedule_id, user_id=self._owner(run_context)))
+            if routine_refusal:
+                return routine_refusal
             schedule = self.manager.disable(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
@@ -861,6 +919,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to disable schedule")
             return json.dumps({"error": str(e)})
 
+    @requires_permission("schedules", "write")
     def trigger_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Queue an enabled schedule to run now.
 
@@ -879,6 +938,9 @@ class SchedulerTools(Toolkit):
             schedule = self.manager.get(schedule_id, user_id=owner)
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+            private_target = _manager_member_refusal(schedule.endpoint)
+            if private_target:
+                return json.dumps({"error": private_target, "error_type": "target_internal"})
             if not schedule.enabled:
                 return json.dumps(
                     {"error": f"Schedule is disabled: {schedule_id}. Call enable_schedule first, then trigger it."}
@@ -895,6 +957,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to trigger schedule")
             return json.dumps({"error": str(e)})
 
+    @requires_permission("schedules", "read")
     def get_schedule_runs(self, schedule_id: str, limit: int = 10, run_context: Optional[RunContext] = None) -> str:
         """Get the run history for a schedule.
 
@@ -926,6 +989,7 @@ class SchedulerTools(Toolkit):
     # Async tools
     # ------------------------------------------------------------------
 
+    @requires_permission("schedules", "write")
     async def acreate_schedule(
         self,
         name: str,
@@ -954,6 +1018,9 @@ class SchedulerTools(Toolkit):
         resolved_endpoint = endpoint or self.default_endpoint
         if not resolved_endpoint:
             return json.dumps({"error": "No endpoint provided and no default_endpoint configured"})
+        private_target = _manager_member_refusal(resolved_endpoint)
+        if private_target:
+            return json.dumps({"error": private_target, "error_type": "target_internal"})
 
         resolved_payload = self.default_payload
         if payload is not None:
@@ -1043,6 +1110,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to create schedule")
             return json.dumps({"error": str(e)})
 
+    @requires_permission("schedules", "read")
     async def alist_schedules(self, enabled_only: bool = False, run_context: Optional[RunContext] = None) -> str:
         """List all existing schedules.
 
@@ -1072,6 +1140,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to list schedules")
             return json.dumps({"error": str(e)})
 
+    @requires_permission("schedules", "read")
     async def aget_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Get details of a specific schedule by its ID.
 
@@ -1095,13 +1164,14 @@ class SchedulerTools(Toolkit):
                     "timezone": schedule.timezone,
                     "enabled": schedule.enabled,
                     "description": schedule.description,
-                    "payload": schedule.payload,
+                    "payload": public_payload(schedule.payload),
                 }
             )
         except Exception as e:
             logger.exception("Failed to get schedule")
             return json.dumps({"error": str(e)})
 
+    @requires_permission("schedules", "delete")
     async def adelete_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Delete a schedule by its ID. This permanently removes the schedule.
 
@@ -1112,6 +1182,11 @@ class SchedulerTools(Toolkit):
             str: JSON string confirming deletion.
         """
         try:
+            routine_refusal = _company_routine_refusal(
+                await self.manager.aget(schedule_id, user_id=self._owner(run_context))
+            )
+            if routine_refusal:
+                return routine_refusal
             deleted = await self.manager.adelete(schedule_id, user_id=self._owner(run_context))
             if deleted:
                 return json.dumps({"status": "deleted", "id": schedule_id})
@@ -1120,6 +1195,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to delete schedule")
             return json.dumps({"error": str(e)})
 
+    @requires_permission("schedules", "write")
     async def aenable_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Enable a disabled schedule so it starts running again.
 
@@ -1133,6 +1209,12 @@ class SchedulerTools(Toolkit):
             existing = await self.manager.aget(schedule_id, user_id=self._owner(run_context))
             if existing is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+            routine_refusal = _company_routine_refusal(existing)
+            if routine_refusal:
+                return routine_refusal
+            private_target = _manager_member_refusal(existing.endpoint)
+            if private_target:
+                return json.dumps({"error": private_target, "error_type": "target_internal"})
             # A schedule aimed at an archived component can only 404 at fire
             # time; restoring the component is the way to turn it back on. A
             # target without a catalog row is a live code-defined component.
@@ -1199,6 +1281,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to enable schedule")
             return json.dumps({"error": str(e)})
 
+    @requires_permission("schedules", "write")
     async def adisable_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Disable a schedule so it stops running. Can be re-enabled later.
 
@@ -1209,6 +1292,11 @@ class SchedulerTools(Toolkit):
             str: JSON string with the updated schedule details.
         """
         try:
+            routine_refusal = _company_routine_refusal(
+                await self.manager.aget(schedule_id, user_id=self._owner(run_context))
+            )
+            if routine_refusal:
+                return routine_refusal
             schedule = await self.manager.adisable(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
@@ -1224,6 +1312,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to disable schedule")
             return json.dumps({"error": str(e)})
 
+    @requires_permission("schedules", "write")
     async def atrigger_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
         """Queue an enabled schedule to run now.
 
@@ -1242,6 +1331,9 @@ class SchedulerTools(Toolkit):
             schedule = await self.manager.aget(schedule_id, user_id=owner)
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+            private_target = _manager_member_refusal(schedule.endpoint)
+            if private_target:
+                return json.dumps({"error": private_target, "error_type": "target_internal"})
             if not schedule.enabled:
                 return json.dumps(
                     {"error": f"Schedule is disabled: {schedule_id}. Call enable_schedule first, then trigger it."}
@@ -1258,6 +1350,7 @@ class SchedulerTools(Toolkit):
             logger.exception("Failed to trigger schedule")
             return json.dumps({"error": str(e)})
 
+    @requires_permission("schedules", "read")
     async def aget_schedule_runs(
         self, schedule_id: str, limit: int = 10, run_context: Optional[RunContext] = None
     ) -> str:

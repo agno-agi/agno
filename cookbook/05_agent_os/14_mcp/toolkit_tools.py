@@ -77,7 +77,6 @@ agent_os = AgentOS(
     agents=[memory_agent],
     mcp=MCPConfig(
         tools=[memory_tools],
-        default_tools=False,
     ),
 )
 app = agent_os.get_app()

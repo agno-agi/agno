@@ -424,3 +424,16 @@ def test_full_text_search_uses_schema_for_qualified_table(duckdb_tools_instance,
     call_args = mock_duckdb_connection.sql.call_args[0][0]
     assert "\"fts_myschema_docs\".match_bm25(id, 'butter')" in call_args
     assert "fts_main_docs" not in call_args
+
+
+@pytest.mark.parametrize("loader", ["load_local_csv_to_table", "load_s3_csv_to_table"])
+def test_csv_loader_accepts_quote_delimiter(tmp_path, loader):
+    """Both SQL builders must quote a delimiter just as they quote the path."""
+    import duckdb
+
+    csv_path = tmp_path / "records.csv"
+    csv_path.write_text("name'age\nAlice'30\n", encoding="utf-8")
+    with duckdb.connect() as connection:
+        tools = DuckDbTools(connection=connection)
+        getattr(tools, loader)(str(csv_path), table="records", delimiter="'")
+        assert connection.sql("SELECT name, age FROM records").fetchall() == [("Alice", 30)]
