@@ -1,5 +1,7 @@
 """Table schemas and related utils used by the PostgresDb class"""
 
+import hashlib
+from functools import partial
 from typing import Any
 
 from agno.db.schemas.authz import AUTHZ_TABLE_SCHEMAS
@@ -7,7 +9,7 @@ from agno.db.schemas.mcp_oauth import MCP_OAUTH_TABLE_SCHEMAS
 
 try:
     from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import BigInteger, Boolean, Date, Integer, String, Text
+    from sqlalchemy.types import BigInteger, Boolean, Date, DateTime, Integer, String, Text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -264,6 +266,74 @@ LEARNINGS_TABLE_SCHEMA = {
 }
 
 
+SOURCES_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True},
+    "product_id": {"type": String, "nullable": False, "index": True},
+    "reference": {"type": Text, "nullable": False},
+    "type": {"type": String, "nullable": False},
+    "credential_ref": {"type": String, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "config": {"type": JSONB, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+}
+
+PRODUCTS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True},
+    "name": {"type": String, "nullable": True, "index": True},
+    "purpose": {"type": Text, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "metadata": {"type": JSONB, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+}
+
+TASKS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True},
+    "product_id": {"type": String, "nullable": False, "index": True},
+    "project_id": {"type": String, "nullable": True, "index": True},
+    "title": {"type": String, "nullable": True, "index": True},
+    "brief": {"type": Text, "nullable": True},
+    "status": {"type": String, "nullable": False, "index": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "executor_type": {"type": String, "nullable": True},
+    "executor_id": {"type": String, "nullable": True},
+    "accepted_by": {"type": String, "nullable": True},
+    "accepted_at": {"type": BigInteger, "nullable": True},
+    "session_id": {"type": String, "nullable": True, "index": True},
+    "job_id": {"type": String, "nullable": True, "index": True},
+    "evidence": {"type": JSONB, "nullable": True},
+    "result": {"type": JSONB, "nullable": True},
+    "origin": {"type": String, "nullable": True},
+    "routine_id": {"type": String, "nullable": True},
+    "dedupe_key": {"type": String, "nullable": True},
+    "transitions": {"type": JSONB, "nullable": True},
+    "metadata": {"type": JSONB, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+    "_unique_constraints": [
+        {"name": "uq_company_task_evidence", "columns": ["product_id", "dedupe_key"]},
+    ],
+}
+
+PROJECTS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True},
+    "name": {"type": String, "nullable": True, "index": True},
+    "outcome": {"type": Text, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "transitions": {"type": JSONB, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+    "product_id": {"type": String, "nullable": False, "index": True},
+    "status": {"type": String, "nullable": False, "index": True},
+    "target_date": {"type": BigInteger, "nullable": True},
+}
+
+
 SCHEDULE_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "name": {"type": String, "nullable": False, "index": True},
@@ -363,6 +433,46 @@ TOOL_RESULTS_TABLE_SCHEMA = {
         {"name": "session_created_at", "columns": ["session_id", "created_at"]},
     ],
 }
+
+
+def default_sandbox_table_name(session_table_name: str) -> str:
+    """One bindings table per session table, within PostgreSQL's 63-byte identifier limit."""
+    suffix = "_sandbox_bindings"
+    name = session_table_name + suffix
+    if len(name.encode()) <= 63:
+        return name
+    # A digest keeps long names that share a prefix apart.
+    digest = "_" + hashlib.sha256(session_table_name.encode()).hexdigest()[:8]
+    prefix = session_table_name.encode()[: 63 - len(suffix) - len(digest)].decode(errors="ignore")
+    return prefix + digest + suffix
+
+
+def _get_sandbox_bindings_table_schema(
+    session_table_name: str = "agno_sessions", runs_table_name: str = "agno_runs"
+) -> dict[str, Any]:
+    """Sandbox lease table; deleting a session deletes its binding, so a recreated session starts fresh."""
+    return {
+        # namespace = "<schema>.<session table>"; the foreign key below ties the table to that one session table
+        "namespace": {"type": String, "primary_key": True, "nullable": False},
+        "session_id": {
+            "type": String,
+            "primary_key": True,
+            "nullable": False,
+            "foreign_key": f"{session_table_name}.session_id",
+            "ondelete": "CASCADE",
+        },
+        "agent_id": {"type": String, "nullable": False},
+        "user_id": {"type": String, "nullable": True},
+        "epoch": {"type": BigInteger, "nullable": False},
+        "owner": {"type": String, "nullable": True},
+        # Set only while a turn holds the session. No cascade: deleting that run alone is refused,
+        # while deleting the session removes both rows in one statement.
+        "run_id": {"type": String, "nullable": True, "foreign_key": f"{runs_table_name}.run_id"},
+        "queue_attempt": {"type": BigInteger, "nullable": True},
+        # Compared against the database clock, so it needs a timezone-aware type
+        "expires_at": {"type": partial(DateTime, timezone=True), "nullable": True},
+        "record": {"type": JSONB, "nullable": False},
+    }
 
 
 JOBS_TABLE_SCHEMA = {
@@ -482,12 +592,55 @@ SERVICE_ACCOUNT_TABLE_SCHEMA = {
 }
 
 
+TRANSCRIPTS_TABLE_SCHEMA = {
+    "framework": {"type": String, "primary_key": True, "nullable": False},
+    "project_key": {"type": String, "primary_key": True, "nullable": False},
+    "session_id": {"type": String, "primary_key": True, "nullable": False},
+    # Empty for the main transcript, so the unique constraint below also covers it.
+    "subpath": {"type": String, "primary_key": True, "nullable": False},
+    "position": {"type": BigInteger, "primary_key": True, "nullable": False},
+    "entry_uuid": {"type": String, "nullable": True},
+    "entry": {"type": String, "nullable": False},
+    "agno_session_id": {"type": String, "nullable": False, "index": True},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "_unique_constraints": [
+        {"name": "uq_entry_uuid", "columns": ["framework", "project_key", "session_id", "subpath", "entry_uuid"]},
+    ],
+}
+
+
+COMPACTIONS_TABLE_SCHEMA = {
+    "compaction_id": {"type": String, "primary_key": True, "nullable": False},
+    "session_id": {"type": String, "nullable": False},
+    # The run that produced this fold. A record is an immutable fact about one
+    # run, so resuming that run resolves the fold it actually saw.
+    "run_id": {"type": String, "nullable": True},
+    "user_id": {"type": String, "nullable": True},
+    # Anchors are message ids, never indexes: history is rebuilt from stored runs
+    # each run, so a position means something different every time.
+    "first_kept_message_id": {"type": String, "nullable": True},
+    "summary": {"type": String, "nullable": True},
+    # The folded transcript, verbatim. Null when the backend or the caller opted
+    # out: the summary still stands, only recoverability is lost.
+    "archived_messages": {"type": String, "nullable": True},
+    "messages_compacted": {"type": BigInteger, "nullable": True},
+    "tokens_before": {"type": BigInteger, "nullable": True},
+    "tokens_after": {"type": BigInteger, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "__composite_indexes__": [
+        # Resolving the fold in force, and session cleanup.
+        {"name": "compactions_session_created_at", "columns": ["session_id", "created_at"]},
+    ],
+}
+
+
 def get_table_schema_definition(
     table_type: str,
     traces_table_name: str = "agno_traces",
     db_schema: str = "agno",
     schedules_table_name: str = "agno_schedules",
     session_table_name: str = "agno_sessions",
+    runs_table_name: str = "agno_runs",
 ) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
@@ -509,6 +662,8 @@ def get_table_schema_definition(
         return _get_schedule_runs_table_schema(schedules_table_name, db_schema)
     if table_type == "runs":
         return _get_run_table_schema(session_table_name)
+    if table_type == "sandbox_bindings":
+        return _get_sandbox_bindings_table_schema(session_table_name, runs_table_name)
 
     schemas = {
         "sessions": SESSION_TABLE_SCHEMA,
@@ -524,8 +679,14 @@ def get_table_schema_definition(
         "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
+        "products": PRODUCTS_TABLE_SCHEMA,
+        "sources": SOURCES_TABLE_SCHEMA,
+        "projects": PROJECTS_TABLE_SCHEMA,
+        "tasks": TASKS_TABLE_SCHEMA,
         "jobs": JOBS_TABLE_SCHEMA,
         "tool_results": TOOL_RESULTS_TABLE_SCHEMA,
+        "compactions": COMPACTIONS_TABLE_SCHEMA,
+        "transcripts": TRANSCRIPTS_TABLE_SCHEMA,
         "approvals": APPROVAL_TABLE_SCHEMA,
         "auth_tokens": AUTH_TOKEN_TABLE_SCHEMA,
         "service_accounts": SERVICE_ACCOUNT_TABLE_SCHEMA,

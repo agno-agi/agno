@@ -46,6 +46,7 @@ from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.message import Message
 from agno.registry import Registry
+from agno.registry._reserved import RESERVED_MANAGER_IDS, _reserved_manager_id_message
 from agno.run import CancellationStage, RunContext, RunStatus
 from agno.run.agent import (
     RunCancelledEvent as AgentRunCancelledEvent,
@@ -1514,6 +1515,11 @@ class Workflow:
         Returns:
             The workflow loaded from the database or None if not found.
         """
+        from agno.exceptions import ComponentRehydrationError
+
+        if id in RESERVED_MANAGER_IDS:
+            raise ComponentRehydrationError(_reserved_manager_id_message(id))
+
         if published_only and version is None and label is None:
             # Dispatch semantics on demand: resolve strictly through the live
             # pointer instead of the current-or-latest-draft read fallback.
@@ -2907,12 +2913,7 @@ class Workflow:
                 call_kwargs.update(kwargs)
                 break
 
-        try:
-            return func(**call_kwargs)
-        except TypeError:
-            # If signature inspection fails, fall back to original method
-            logger.exception("Function signature inspection failed. Falling back to original calling convention.")
-            return func(**kwargs)
+        return func(**call_kwargs)
 
     def _accumulate_partial_step_data(
         self, event: Union[RunContentEvent, TeamRunContentEvent], partial_step_content: str
@@ -2945,7 +2946,7 @@ class Workflow:
                     raise ValueError("Cannot use async function with synchronous execution")
                 elif isgeneratorfunction(self.steps):
                     content = ""
-                    for chunk in self.steps(self, execution_input, **kwargs):
+                    for chunk in self._call_custom_function(self.steps, execution_input, **kwargs):
                         # Check for cancellation while consuming generator
                         raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                         if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
@@ -3878,26 +3879,11 @@ class Workflow:
                 call_kwargs.update(kwargs)
                 break
 
-        try:
-            # Check if it's an async generator function
-            if isasyncgenfunction(func):
-                # For async generators, call the function and return the async generator directly
-                return func(**call_kwargs)  # type: ignore
-            else:
-                # For regular async functions, await the result
-                return await func(**call_kwargs)  # type: ignore
-        except TypeError as e:
-            # If signature inspection fails, fall back to original method
-            log_warning(
-                f"Async function signature inspection failed. Falling back to original calling convention.: {str(e)}"
-            )
-
-            if isasyncgenfunction(func):
-                # For async generators, use the same signature inspection logic in fallback
-                return func(**call_kwargs)  # type: ignore
-            else:
-                # For regular async functions, use the same signature inspection logic in fallback
-                return await func(**call_kwargs)  # type: ignore
+        if isasyncgenfunction(func):
+            # For async generators, call the function and return the async generator directly
+            return func(**call_kwargs)  # type: ignore
+        # For regular async functions, await the result
+        return await func(**call_kwargs)  # type: ignore
 
     async def _aload_or_create_session(
         self, session_id: str, user_id: Optional[str], session_state: Optional[Dict[str, Any]]
@@ -3964,7 +3950,7 @@ class Workflow:
                     )
                 elif isgeneratorfunction(self.steps):
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                    for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]
+                    for chunk in self._call_custom_function(self.steps, execution_input, **kwargs):  # type: ignore[arg-type]
                         if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                             content += chunk.content
                         else:
@@ -4334,7 +4320,7 @@ class Workflow:
                     )
                 elif isgeneratorfunction(self.steps):
                     content = ""
-                    for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]
+                    for chunk in self._call_custom_function(self.steps, execution_input, **kwargs):  # type: ignore[arg-type]
                         await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                         if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                             content += chunk.content
@@ -4355,7 +4341,7 @@ class Workflow:
                     workflow_run_response.content = content
                 else:
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                    workflow_run_response.content = self.steps(self, execution_input, **kwargs)
+                    workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
                 workflow_run_response.status = RunStatus.completed
             except RunCancelledException as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
@@ -11960,9 +11946,13 @@ def get_workflow_by_id(
         Workflow instance or None.
 
     Raises:
-        ComponentRehydrationError: If strict and a registry reference cannot be resolved.
+        ComponentRehydrationError: If the ID is reserved for OS Manager, or if strict
+            and a registry reference cannot be resolved.
     """
     from agno.exceptions import ComponentRehydrationError
+
+    if id in RESERVED_MANAGER_IDS:
+        raise ComponentRehydrationError(_reserved_manager_id_message(id))
 
     try:
         from agno.utils.component_scope import component_owner_scope
@@ -12050,6 +12040,7 @@ def get_workflows(
         exclude_component_ids: Component IDs to exclude from results.
         user_id: If set, only load workflows owned by this user, unowned (shared), or published.
     """
+    exclude_component_ids = set(exclude_component_ids or ()) | RESERVED_MANAGER_IDS
     workflows: List[Workflow] = []
     try:
         from agno.utils.component_scope import component_owner_scope

@@ -535,6 +535,10 @@ class LiteLLM(Model):
             metrics.output_tokens = response_usage.get("completion_tokens") or 0
             if (prompt_details := response_usage.get("prompt_tokens_details")) and isinstance(prompt_details, dict):
                 metrics.cache_read_tokens = prompt_details.get("cached_tokens", 0) or 0
+                # LiteLLM names the cache write `cache_write_tokens` and mirrors it to `cache_creation_tokens`
+                metrics.cache_write_tokens = (
+                    prompt_details.get("cache_write_tokens") or prompt_details.get("cache_creation_tokens") or 0
+                )
                 metrics.audio_input_tokens = prompt_details.get("audio_tokens", 0) or 0
             if (completion_details := response_usage.get("completion_tokens_details")) and isinstance(
                 completion_details, dict
@@ -546,6 +550,11 @@ class LiteLLM(Model):
             metrics.output_tokens = response_usage.completion_tokens or 0
             if prompt_details := getattr(response_usage, "prompt_tokens_details", None):
                 metrics.cache_read_tokens = getattr(prompt_details, "cached_tokens", 0) or 0
+                metrics.cache_write_tokens = (
+                    getattr(prompt_details, "cache_write_tokens", None)
+                    or getattr(prompt_details, "cache_creation_tokens", None)
+                    or 0
+                )
                 metrics.audio_input_tokens = getattr(prompt_details, "audio_tokens", 0) or 0
             if completion_details := getattr(response_usage, "completion_tokens_details", None):
                 metrics.reasoning_tokens = getattr(completion_details, "reasoning_tokens", 0) or 0

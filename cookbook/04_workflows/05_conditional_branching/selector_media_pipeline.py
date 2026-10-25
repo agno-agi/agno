@@ -38,7 +38,7 @@ class MediaRequest(BaseModel):
 image_generator = Agent(
     name="Image Generator",
     model=OpenAIChat(id="gpt-5.6-luna"),
-    tools=[OpenAITools(image_model="gpt-image-1")],
+    tools=[OpenAITools(image_model="gpt-image-2")],
     instructions="""You are an expert image generation specialist.
     When users request image creation, you should ACTUALLY GENERATE the image using your available image generation tools.
 

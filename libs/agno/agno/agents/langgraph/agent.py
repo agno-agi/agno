@@ -1,7 +1,7 @@
-from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, ClassVar, Dict, List, Optional
 from uuid import uuid4
 
+from agno.agents._config import agent_dataclass
 from agno.agents.base import BaseExternalAgent
 from agno.agents.langgraph.utils import build_messages_with_history
 from agno.models.response import ToolExecution
@@ -13,7 +13,7 @@ from agno.run.agent import (
 )
 
 
-@dataclass
+@agent_dataclass
 class LangGraphAgent(BaseExternalAgent):
     """Adapter for LangGraph compiled graphs.
 
@@ -57,8 +57,9 @@ class LangGraphAgent(BaseExternalAgent):
     graph: Any = None
     input_key: str = "messages"
     output_key: str = "messages"
-    config: Optional[Dict[str, Any]] = field(default=None)
-    framework: str = "langgraph"
+    config: Optional[Dict[str, Any]] = None
+
+    _sdk_name: ClassVar[str] = "langgraph"
 
     async def _arun_adapter(
         self,
