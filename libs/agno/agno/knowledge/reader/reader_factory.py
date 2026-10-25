@@ -398,18 +398,21 @@ class ReaderFactory:
 
     @classmethod
     def create_reader(cls, reader_key: str, **kwargs) -> Reader:
-        """Create a reader instance with the given key and optional overrides."""
-        if reader_key in cls._reader_cache:
-            return cls._reader_cache[reader_key]
+        """Create a reader instance with the given key and optional overrides.
 
-        # Get the reader method and create the instance
+        When kwargs are provided, constructs and returns a new reader instance
+        configured with those overrides. When no kwargs are provided, returns a
+        newly constructed default instance to avoid sharing mutable state across callers.
+
+        Args:
+            reader_key: The identifier for the reader type (e.g., 'text', 'pdf', 'csv').
+            **kwargs: Optional configuration overrides passed to the reader constructor.
+
+        Returns:
+            Reader: A configured reader instance.
+        """
         reader_method = cls._get_reader_method(reader_key)
-        reader = reader_method(**kwargs)
-
-        # Cache the reader
-        cls._reader_cache[reader_key] = reader
-
-        return reader
+        return reader_method(**kwargs)
 
     @classmethod
     def get_reader_for_extension(cls, extension: str) -> Reader:
