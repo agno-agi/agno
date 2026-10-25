@@ -1,62 +1,58 @@
 """
-Claude Agent SDK on AgentOS
-===========================
-Serve a Claude Agent SDK agent through AgentOS -- the same runtime
-used for native Agno agents.
+ClaudeAgent: Serve the Shipping Reviewer
+==========================================
+Expose the file-reading agent through AgentOS with local SQLite run storage.
 
-The agent is available at the standard /agents/{agent_id}/runs endpoint,
-supports streaming (SSE) and non-streaming responses, and appears in
-the AgentOS UI alongside any native agents.
+Start the server:
+    python cookbook/frameworks/claude-agent-sdk/claude_agentos.py
 
-Requirements:
-    pip install claude-agent-sdk
+Stream a run from your own client:
+    curl -N http://127.0.0.1:7777/agents/claude-reviewer/runs \
+      -F 'message=Read shipping.py and explain the shipping fee rules.' \
+      -F 'session_id=shipping-review' \
+      -F 'stream=true'
 
-Usage:
-    .venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/claude_agentos.py
-
-Then call the API:
-    # List agents
-    curl http://localhost:7777/agents
-
-    # Streaming
-    curl -X POST http://localhost:7777/agents/claude-assistant/runs \
-        -F "message=What is quantum computing?" \
-        -F "stream=true" \
-        --no-buffer
-
-    # Non-streaming
-    curl -X POST http://localhost:7777/agents/claude-assistant/runs \
-        -F "message=What is quantum computing?" \
-        -F "stream=false"
+Use stream=false for a JSON response. See README.md for more HTTP examples.
+Inspect run IDs, streamed tool events and stored results. This local server has
+no authentication; keep it bound to loopback. SQLite is for this local exercise only.
+This does not establish durable queueing or multi-replica recovery.
 """
 
+import os
+from pathlib import Path
+
 from agno.agents.claude import ClaudeAgent
+from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 
 # ---------------------------------------------------------------------------
-# Create the Claude Agent SDK agent
+# Configure Workspace and Storage
 # ---------------------------------------------------------------------------
-claude_agent = ClaudeAgent(
-    name="Claude Assistant",
-    description="A Claude-powered assistant served through AgentOS",
-    model="claude-sonnet-4-6",
-    allowed_tools=["Read", "Bash"],
-    permission_mode="acceptEdits",
-    max_turns=10,
-)
+workspace = Path(__file__).resolve().parents[1] / "sample_project"
+state_dir = Path(os.getenv("HARNESS_STATE_DIR", "tmp/harnesses/claude"))
 
 # ---------------------------------------------------------------------------
-# Setup AgentOS
+# Create the Agent
 # ---------------------------------------------------------------------------
-agent_os = AgentOS(
-    name="Claude Agent SDK Example",
-    description="AgentOS serving a Claude Agent SDK agent",
-    agents=[claude_agent],
+agent = ClaudeAgent(
+    id="claude-reviewer",
+    name="Claude Shipping Reviewer",
+    db=SqliteDb(db_file=str(state_dir / "runs.db")),
+    model="claude-sonnet-5-5",
+    cwd=str(workspace),
+    allowed_tools=["Read"],
+    permission_mode="dontAsk",
+    tools=["Read"],
+    setting_sources=[],
+    strict_mcp_config=True,
 )
+agent_os = AgentOS(agents=[agent])
 app = agent_os.get_app()
 
 # ---------------------------------------------------------------------------
-# Run
+# Run AgentOS
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    agent_os.serve(app="claude_agentos:app", reload=True)
+    agent_os.serve(
+        app=app, host="127.0.0.1", port=int(os.getenv("PORT", "7777")), reload=False
+    )

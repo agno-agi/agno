@@ -127,7 +127,7 @@ async def test_async_postgres_schedules_migration_adds_provenance_columns(schema
         assert "user_id" not in cols
         assert not cols & set(SCHEDULE_PROVENANCE_COLUMNS)
 
-        await MigrationManager(db).up(table_type="schedules")
+        await MigrationManager(db).up(target_version="3.0.0", table_type="schedules")
 
         cols = _table_columns(schema)
         assert "user_id" in cols

@@ -47,6 +47,7 @@ class AgentResponse(BaseModel):
     is_component: bool = False
     current_version: Optional[int] = None
     stage: Optional[str] = None
+    sandboxed: bool = False
 
     @classmethod
     def from_factory(cls, factory: AgentFactory) -> AgentResponse:
