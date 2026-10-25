@@ -53,6 +53,11 @@ from agno.run.agent import (
     RunOutput,
     RunOutputEvent,
 )
+
+# Strong references to background tasks so they aren't garbage-collected mid-execution.
+# See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+# One registry for every detached run, shared with agents, so AgentOS shutdown drains one set.
+from agno.run.background import _background_tasks  # noqa: E402
 from agno.run.cancel import (
     acancel_run as acancel_run_global,
 )
@@ -90,7 +95,7 @@ from agno.run.team import (
     TeamRunOutputEvent,
 )
 from agno.session import TeamSession
-from agno.session._utils import resolve_run_index
+from agno.session._utils import continue_history_session, resolve_run_index
 from agno.tools.function import Function
 from agno.utils.agent import (
     abuild_full_run_storage_copy,
@@ -127,10 +132,6 @@ from agno.utils.log import (
     log_info,
     log_warning,
 )
-
-# Strong references to background tasks so they aren't garbage-collected mid-execution.
-# See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
-_background_tasks: set[asyncio.Task[None]] = set()
 
 # Cancel raises immediately on every event. Only terminal events bypass so the
 # member's own cancel handler can yield them to the stream. RunError is excluded —
@@ -3490,81 +3491,29 @@ async def _arun_background(
 
     log_info(f"Background run {run_response.run_id} created with PENDING status")
 
-    # 4. Spawn the background task. Execution waits for a concurrency slot
-    # (background_run_slot); the run stays PENDING while waiting in line and
-    # can be cancelled without consuming a slot.
-    async def _background_task() -> None:
-        try:
-            async with background_run_slot(run_id=run_response.run_id):
-                # Transition to RUNNING via the atomic helper (row-locked
-                # patch when the DB supports it, fresh-read + save otherwise).
-                run_response.status = RunStatus.running
-                await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
+    from agno.run.background import _execute_background, _spawn_background
 
-                # Execute the actual run — _arun handles everything including
-                # session persistence and cleanup
-                await _arun(
-                    team,
-                    run_response=run_response,
-                    run_context=run_context,
-                    session_id=session_id,
-                    user_id=user_id,
-                    add_history_to_context=add_history_to_context,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    response_format=response_format,
-                    debug_mode=debug_mode,
-                    background_tasks=background_tasks,
-                    **kwargs,
-                )
-        except RunCancelledException:
-            # Cancelled while waiting for a slot — _arun never started, so
-            # persist CANCELLED and deregister the run here.
-            log_info(f"Background run {run_response.run_id} cancelled while waiting for a slot")
-            try:
-                run_response.status = RunStatus.cancelled
-                run_response.cancellation_stage = CancellationStage.pending
-                await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
-            except Exception as e:
-                log_error(f"Failed to persist cancelled state for background run {run_response.run_id}: {str(e)}")
-            await acleanup_run(run_context.run_id)
-        except asyncio.CancelledError:
-            # Task-level shutdown (event loop stopping), not run-cancellation:
-            # best-effort persist so pollers are not left with a run stuck at
-            # PENDING/RUNNING forever. The durable queue's drain handles this
-            # properly; this is the non-durable path's honest fallback.
-            from agno.run.concurrency import is_worker_managed
+    async def execute() -> None:
+        await _arun(
+            team,
+            run_response=run_response,
+            run_context=run_context,
+            session_id=session_id,
+            user_id=user_id,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            response_format=response_format,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
 
-            if is_worker_managed(getattr(run_response, "run_id", None) or ""):
-                raise  # worker-claimed: the QueueWorker owns this terminal
-            if run_response.status == RunStatus.paused:
-                # The leg already PAUSED and parked valid, continuable HITL
-                # state (persisted by the leg itself) - a routine deploy's
-                # shutdown must not stamp CANCELLED over it. This in-memory
-                # check is the ONLY protection off-Postgres: adapters without
-                # the atomic primitive reach the whole-session fallback, which
-                # no DB-side guard covers.
-                raise
-            with contextlib.suppress(Exception):
-                run_response.status = RunStatus.cancelled
-                await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
-            raise
-        except Exception as e:
-            log_error(f"Background run {run_response.run_id} failed: {str(e)}")
-            # Persist ERROR status — only the changed run (O(1))
-            try:
-                run_response.status = RunStatus.error
-                error_run = await abuild_full_run_storage_copy(team, run_response, session_id)
-                await apersist_run_transition(team, "team", session_id, error_run, user_id=user_id, full_run=True)
-            except Exception as e:
-                log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
-            # Note: acleanup_run is already called by _arun's finally block
+    async def transition(full_run: bool) -> None:
+        storage_run = await abuild_full_run_storage_copy(team, run_response, session_id) if full_run else run_response
+        await apersist_run_transition(team, "team", session_id, storage_run, user_id=user_id, full_run=full_run)
 
-    task = asyncio.create_task(_background_task())
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
-
-    # 5. Return immediately with the PENDING response
+    _spawn_background(_execute_background(run_response, execute, transition, slot_factory=background_run_slot))
     return run_response
 
 
@@ -3594,7 +3543,6 @@ async def _arun_background_stream(
     The detached task keeps running even if the client disconnects.
     The caller (router) just yields the SSE strings to the client.
     """
-    from agno.os.event_streams import get_event_stream
     from agno.team._session import asave_run, asave_session
     from agno.team._storage import _aread_or_create_session, _update_metadata
 
@@ -3615,144 +3563,54 @@ async def _arun_background_stream(
     await asave_session(team, session=team_session)
     await asave_run(team, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
 
-    # Pre-register with the event buffer so reconnecting clients can attach and
-    # wait while the run is still queued (no events buffered yet).
-    with contextlib.suppress(Exception):
-        # Fail-open: a Redis blip must not strand an accepted run
-        await get_event_stream().register_run(run_id, RunStatus.pending)
-
     log_info(f"Background stream run {run_id} persisted with PENDING status")
 
-    # 2. Create queue for forwarding SSE strings to the caller
-    sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+    from agno.run.background import _BackgroundStream, _execute_background, _spawn_background
 
-    # 3. Spawn detached background task. Execution waits for a concurrency slot
-    # (background_run_slot); the run stays PENDING while waiting in line and
-    # can be cancelled without consuming a slot.
-    async def _background_producer() -> None:
-        event_stream = get_event_stream()
-        from agno.os.utils import format_sse_event_with_index
+    await aregister_run(run_id)
+    transport = _BackgroundStream(run_response)
+    await transport.register()
 
-        slot_cm = background_run_slot(run_id=run_id)
-        slot_held = False
-        try:
-            await slot_cm.__aenter__()
-            slot_held = True
+    async def execute() -> None:
+        async for event in _arun_stream(
+            team,
+            run_response=run_response,
+            run_context=run_context,
+            user_id=user_id,
+            response_format=response_format,
+            stream_events=stream_events,
+            yield_run_output=yield_run_output or False,
+            session_id=session_id,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        ):
+            if not isinstance(event, TeamRunOutput):
+                await transport.publish(event)
 
-            # Transition to RUNNING now that a slot is held (atomic helper)
-            run_response.status = RunStatus.running
-            await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
-            with contextlib.suppress(Exception):
-                # Fail-open: coordination writes must not kill the run
-                await event_stream.set_run_status(run_id, RunStatus.running)
+    async def transition(full_run: bool) -> None:
+        storage_run = await abuild_full_run_storage_copy(team, run_response, session_id) if full_run else run_response
+        await apersist_run_transition(team, "team", session_id, storage_run, user_id=user_id, full_run=full_run)
 
-            async for event in _arun_stream(
-                team,
-                run_response=run_response,
-                run_context=run_context,
-                user_id=user_id,
-                response_format=response_format,
-                stream_events=stream_events,
-                yield_run_output=yield_run_output or False,
-                session_id=session_id,
-                add_history_to_context=add_history_to_context,
-                add_dependencies_to_context=add_dependencies_to_context,
-                add_session_state_to_context=add_session_state_to_context,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                **kwargs,
-            ):
-                if isinstance(event, TeamRunOutput):
-                    continue
-
-                # Buffer + publish to live tails (the event stream owns the index)
-                event_index: Optional[int] = None
-                try:
-                    event_index = await event_stream.add_event(run_id, event)
-                except Exception:
-                    log_warning(f"Failed to buffer event for run {run_id}")
-
-                # Format as SSE for the primary queue (original client)
-                sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
-                try:
-                    await sse_queue.put(sse_data)
-                except Exception:
-                    log_warning(f"Failed to push SSE data to queue for run {run_id}")
-
-        except asyncio.CancelledError:
-            # Task-level shutdown (event loop stopping), not run-cancellation:
-            # best-effort persist so pollers are not left with a run stuck at
-            # PENDING/RUNNING forever (parity with the non-stream producer)
-            from agno.run.concurrency import is_worker_managed
-
-            if is_worker_managed(getattr(run_response, "run_id", None) or ""):
-                raise  # worker-claimed: the QueueWorker owns this terminal
-            if run_response.status == RunStatus.paused:
-                # The leg already PAUSED and parked valid, continuable HITL
-                # state (persisted by the leg itself) - a routine deploy's
-                # shutdown must not stamp CANCELLED over it. This in-memory
-                # check is the ONLY protection off-Postgres: adapters without
-                # the atomic primitive reach the whole-session fallback, which
-                # no DB-side guard covers.
-                raise
-            with contextlib.suppress(Exception):
-                run_response.status = RunStatus.cancelled
-                await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
-            raise
-        except RunCancelledException:
-            # Cancelled while waiting for a slot — execution never started, so
-            # persist CANCELLED and deregister the run here.
-            log_info(f"Background stream run {run_id} cancelled while waiting for a slot")
-            try:
-                run_response.status = RunStatus.cancelled
-                run_response.cancellation_stage = CancellationStage.pending
-                await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
-            except Exception:
-                log_error(f"Failed to persist cancelled state for background stream run {run_id}", exc_info=True)
-            await acleanup_run(run_id)
-        except Exception:
-            log_error(f"Background stream run {run_id} failed", exc_info=True)
-            # Persist ERROR status — only the changed run (O(1))
-            try:
-                run_response.status = RunStatus.error
-                error_run = await abuild_full_run_storage_copy(team, run_response, session_id)
-                await apersist_run_transition(team, "team", session_id, error_run, user_id=user_id, full_run=True)
-            except Exception:
-                log_error(f"Failed to persist error state for background stream run {run_id}", exc_info=True)
-
-        finally:
-            if slot_held:
-                await slot_cm.__aexit__(None, None, None)
-
-            # Signal primary queue FIRST — unblocks the original client
-            try:
-                await sse_queue.put(None)
-            except Exception:
-                log_warning(f"Failed to signal primary queue for run {run_id} completion")
-
-            # Mark run terminal in the event stream and wake all tails
-            # (shielded to survive task cancellation)
-            try:
-                await asyncio.shield(event_stream.complete_run(run_id, run_response.status or RunStatus.completed))
-            except (Exception, asyncio.CancelledError):
-                log_warning(f"Failed to mark run {run_id} as completed in event stream")
-
-    task = asyncio.create_task(_background_producer())
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
-
-    # 4. Yield SSE strings from the queue. Emit SSE keepalive comments on idle
-    # so proxies do not kill the connection while the run waits for a slot (or
-    # during long silent stretches of execution).
-    while True:
-        try:
-            sse_data = await asyncio.wait_for(sse_queue.get(), timeout=SSE_KEEPALIVE_INTERVAL_SECONDS)
-        except asyncio.TimeoutError:
-            yield ": keepalive\n\n"
-            continue
-        if sse_data is None:
-            break
-        yield sse_data
+    _spawn_background(
+        _execute_background(
+            run_response,
+            execute,
+            transition,
+            on_running=transport.running,
+            on_terminal=transport.complete,
+            slot_factory=background_run_slot,
+        )
+    )
+    pump = transport.pump(SSE_KEEPALIVE_INTERVAL_SECONDS)
+    try:
+        async for item in pump:
+            yield item
+    finally:
+        await pump.aclose()
 
 
 async def _arun_stream(
@@ -5417,6 +5275,7 @@ def _build_continue_run_messages(
     session: Optional[TeamSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
+    run_response: Optional[TeamRunOutput] = None,
 ) -> RunMessages:
     """Build a RunMessages object from the existing conversation messages.
 
@@ -5458,7 +5317,7 @@ def _build_continue_run_messages(
 
         skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
 
-        history: List[Message] = session.get_messages(
+        history: List[Message] = continue_history_session(session, run_response).get_messages(
             last_n_runs=team.num_history_runs,
             limit=team.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
@@ -5490,12 +5349,13 @@ def _get_continue_run_messages(
     session: Optional[TeamSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
+    run_response: Optional[TeamRunOutput] = None,
 ) -> RunMessages:
     """Build the messages that resume a paused run, reading offloaded media back first.
 
     The paused run's own messages come off the database carrying a reference and no bytes.
     """
-    run_messages = _build_continue_run_messages(team, input, session, add_history_to_context, run_context)
+    run_messages = _build_continue_run_messages(team, input, session, add_history_to_context, run_context, run_response)
     if team.media_storage is not None:
         from agno.utils.media_offload import refresh_messages_media
 
@@ -5509,9 +5369,10 @@ async def _aget_continue_run_messages(
     session: Optional[TeamSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
+    run_response: Optional[TeamRunOutput] = None,
 ) -> RunMessages:
     """Async variant of :func:`_get_continue_run_messages`."""
-    run_messages = _build_continue_run_messages(team, input, session, add_history_to_context, run_context)
+    run_messages = _build_continue_run_messages(team, input, session, add_history_to_context, run_context, run_response)
     if team.media_storage is not None:
         from agno.utils.media_offload import arefresh_messages_media
 
@@ -5862,11 +5723,18 @@ def _merge_tools_preserving_approval(
 
     This function preserves approval_type and approval_id from the session originals
     whenever the incoming tool does not carry them.
+
+    A call that already ran keeps the session original. The payload can carry an
+    out-of-date copy of that call (confirmed, no result), for example after an
+    earlier pause was resolved from the approvals table; swapping it in would
+    execute the call a second time.
     """
     merged: List[Any] = []
     for orig in original_tools:
         updated = updated_tools_map.get(orig.tool_call_id)
-        if updated is not None:
+        if updated is not None and getattr(orig, "result", None) is not None:
+            merged.append(orig)
+        elif updated is not None:
             for attr in ("approval_type", "approval_id"):
                 if getattr(updated, attr, None) is None and getattr(orig, attr, None) is not None:
                     setattr(updated, attr, getattr(orig, attr))
@@ -7733,6 +7601,7 @@ def continue_run_dispatch(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            run_response=run_response,
         )
 
         log_debug(f"Team Continue Run (forked): {run_response.run_id}", center=True)
@@ -7977,6 +7846,7 @@ def continue_run_dispatch(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            run_response=run_response,
         )
 
         # Handle tool call updates (execute confirmed tools, etc.)
@@ -8049,6 +7919,7 @@ def continue_run_dispatch(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            run_response=run_response,
         )
 
         # Prepare for member HITL continuation
@@ -8211,6 +8082,7 @@ def _continue_run_dispatch_stream_with_member_events(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            run_response=run_response,
         )
 
         _handle_team_tool_call_updates(team, run_response=run_response, run_messages=run_messages, tools=_tools)
@@ -8262,6 +8134,7 @@ def _continue_run_dispatch_stream_with_member_events(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            run_response=run_response,
         )
 
         _prepare_member_hitl_continuation(run_response, run_messages, member_results)
@@ -9745,6 +9618,7 @@ async def _acontinue_run(
                         session=team_session,
                         add_history_to_context=team.add_history_to_context,
                         run_context=run_context,
+                        run_response=run_response,
                     )
 
                     await _ahandle_team_tool_call_updates(
@@ -9793,6 +9667,7 @@ async def _acontinue_run(
                         session=team_session,
                         add_history_to_context=team.add_history_to_context,
                         run_context=run_context,
+                        run_response=run_response,
                     )
 
                     # Prepare for member HITL continuation
@@ -10231,6 +10106,7 @@ async def _acontinue_run_stream(
                         session=team_session,
                         add_history_to_context=team.add_history_to_context,
                         run_context=run_context,
+                        run_response=run_response,
                     )
 
                     run_response.status = RunStatus.running
@@ -10359,6 +10235,7 @@ async def _acontinue_run_stream(
                         session=team_session,
                         add_history_to_context=team.add_history_to_context,
                         run_context=run_context,
+                        run_response=run_response,
                     )
 
                     # Prepare for member HITL continuation

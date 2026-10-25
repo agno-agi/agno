@@ -63,6 +63,7 @@ class AgentOSScope(str, Enum):
     - knowledge:read - View and search knowledge
     - knowledge:write - Add and update knowledge
     - knowledge:delete - Delete knowledge
+    - filesystem:read - Browse, read and search agent filesystems
     - metrics:read - View metrics
     - metrics:write - Refresh metrics
     - evals:read - View evaluation runs
@@ -317,8 +318,12 @@ def has_required_scopes(
         parts = required_scope_str.split(":")
         if len(parts) == 2:
             resource, action = parts
-            # Build the required scope based on context
-            if resource_id and resource_type:
+            # Build the required scope based on context. The per-resource rewrite applies only
+            # when the required scope is about the path's own family: a route under
+            # /agents/{id} that requires a scope from another family (say ``sessions:read``)
+            # must be checked as written, or a caller holding ``agents:<id>:read`` would
+            # satisfy a ``sessions:read`` requirement they never held.
+            if resource_id and resource_type and LEGACY_RESOURCE_ALIASES.get(resource, resource) == resource_type:
                 # Per-resource scope required
                 full_required_scope = f"{resource_type}:<resource-id>:{action}"
             else:
@@ -414,7 +419,7 @@ def get_accessible_resource_ids(
     return accessible_ids
 
 
-def get_default_scope_mappings() -> Dict[str, List[str]]:
+def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]:
     """
     Get default scope mappings for AgentOS endpoints.
 
@@ -481,6 +486,7 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "GET /knowledge/content/*": ["knowledge:read"],
         "GET /knowledge/config": ["knowledge:read"],
         "POST /knowledge/content": ["knowledge:write"],
+        "POST /knowledge/content/*/refresh": ["knowledge:write"],
         "PATCH /knowledge/content/*": ["knowledge:write"],
         "POST /knowledge/search": ["knowledge:read"],
         "DELETE /knowledge/content": ["knowledge:delete"],
@@ -530,6 +536,9 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "POST /knowledge/remote-content": ["knowledge:write"],
         "GET /knowledge/*/sources": ["knowledge:read"],
         "GET /knowledge/*/sources/*/files": ["knowledge:read"],
+        # Filesystem browser (read-only). The router further limits results to the
+        # agents the caller may read.
+        "GET /filesystem/*": ["filesystem:read"],
         # Registry (read-only)
         "GET /registry": ["registry:read"],
         # Component endpoints (Studio)
@@ -547,6 +556,64 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "DELETE /components/*/configs/*": ["components:delete"],
         "POST /components/*/configs/*/set-current": ["components:write"],
     }
+    if company:
+        mappings.update(
+            {
+                # Company playbook and learning-decision endpoints. Keep nested
+                # wiki routes before products/*: matching is first-match and *
+                # spans slashes, so the generic Product pattern also matches wiki.
+                "GET /company/products/*/wiki": ["wiki:read"],
+                "GET /company/products/*/wiki/*": ["wiki:read"],
+                "PUT /company/products/*/wiki/*": ["wiki:write"],
+                "GET /company/wiki": ["wiki:read"],
+                "GET /company/wiki/*": ["wiki:read"],
+                "PUT /company/wiki/*": ["wiki:write"],
+                "GET /company/decisions": ["decisions:read"],
+                "POST /company/decisions": ["decisions:write"],
+                # Company Product endpoints
+                # Company Sources, scheduler-backed Routines and first-Product setup.
+                "GET /company/sources": ["sources:read"],
+                "POST /company/sources": ["sources:write"],
+                "DELETE /company/sources/*": ["sources:delete"],
+                "POST /company/sources/*/restore": ["sources:delete"],
+                "GET /company/routines": ["routines:read"],
+                "GET /company/routines/*/runs": ["routines:read", "schedules:read"],
+                "GET /company/routines/*": ["routines:read"],
+                "POST /company/routines/*/trigger": ["routines:write", "schedules:write"],
+                "POST /company/routines": ["routines:write", "schedules:write"],
+                "PATCH /company/routines/*": ["routines:write", "schedules:write"],
+                "POST /company/routines/*/pause": ["routines:write", "schedules:write"],
+                "POST /company/routines/*/resume": ["routines:write", "schedules:write"],
+                "POST /company/setup": ["products:write"],
+                "GET /company/products": ["products:read"],
+                "GET /company/products/*": ["products:read"],
+                "POST /company/products": ["products:write"],
+                "PATCH /company/products/*": ["products:write"],
+                "DELETE /company/products/*": ["products:delete"],
+                "POST /company/products/*/restore": ["products:delete"],
+                # Company Project endpoints
+                "GET /company/projects": ["projects:read"],
+                "GET /company/projects/*": ["projects:read"],
+                "POST /company/projects": ["projects:write"],
+                "PATCH /company/projects/*": ["projects:write"],
+                "DELETE /company/projects/*": ["projects:delete"],
+                "POST /company/projects/*/restore": ["projects:delete"],
+                "POST /company/projects/*/transitions": ["projects:write"],
+                # Company Task endpoints
+                "GET /company/tasks": ["tasks:read"],
+                "GET /company/tasks/*": ["tasks:read"],
+                "POST /company/tasks": ["tasks:write"],
+                "PATCH /company/tasks/*": ["tasks:write"],
+                "DELETE /company/tasks/*": ["tasks:delete"],
+                "POST /company/tasks/*/restore": ["tasks:delete"],
+                "POST /company/tasks/*/transitions": ["tasks:write"],
+                # Company execution and attention reuse Task access; executor routes check run permission too.
+                "POST /company/tasks/*/runs": ["tasks:write", "wiki:read"],
+                "GET /company/runs/*": ["tasks:read"],
+                "POST /company/runs/*/cancel": ["tasks:write"],
+                "GET /company/attention": ["tasks:read"],
+            }
+        )
     return mappings
 
 
@@ -616,6 +683,10 @@ class RouteScopeCheck:
     # hold per-resource scopes: the endpoint should filter results to these IDs
     # (possibly an empty set) instead of rejecting with 403.
     accessible_resource_ids: Optional[Set[str]] = None
+    # Why a denial happened when it was not a plain scope mismatch, recorded on the decision
+    # trail: ``provider_error`` when the enforcing provider raised (an FGA outage, an unreachable
+    # role database) and the gate failed closed.
+    reason: Optional[str] = None
 
 
 def check_route_scopes(

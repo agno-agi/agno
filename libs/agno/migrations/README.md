@@ -17,6 +17,38 @@ Notice:
 - The script is idempotent. If something goes wrong or if you stop it mid-run, you can run it again.
 - Metrics are automatically converted from v1 to v2 format.
 
+## Filesystem table (`agno_fs`) in v3.1
+
+v3.1 keys the filesystem table by `(namespace, user_id, path)`. `user_id` is the user
+partition: `""` for the shared partition (runs with no user), a user's id for their own.
+
+The table is not part of the migration manager, because it belongs to `DbFileSystem`
+(its own schema, and it can be built from a bare `db_url`). A table created by an
+earlier release is refused with `SchemaOutdatedError` until it is upgraded, so the
+key change is a deliberate step and never runs on its own. Upgrade it once, with the
+application stopped, using the script for your database:
+
+```bash
+# PostgreSQL
+python libs/agno/migrations/migrate_filesystem_postgres.py
+
+# SQLite
+python libs/agno/migrations/migrate_filesystem_sqlite.py
+```
+
+Edit the connection in the script to match the application's, or call it from code:
+
+```python
+from agno.fs.db import DbFileSystem
+
+DbFileSystem(db=my_postgres_db).upgrade_schema()
+```
+
+On PostgreSQL the upgrade is an `ALTER TABLE` (column plus key). SQLite cannot change
+a key in place, so the table is rebuilt and swapped in one transaction. Existing rows
+keep their namespace and land in the shared partition, so a custom
+`users/{user_id}/...` template still finds its files. The upgrade is idempotent.
+
 ## How to use the migration manager
 
 The migration manager is a class that can be used to manage the migrations for the Agno database.

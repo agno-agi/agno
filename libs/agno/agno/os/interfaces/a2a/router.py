@@ -24,6 +24,7 @@ except ImportError as e:
 
 from agno.agent import Agent, RemoteAgent
 from agno.agent.protocol import AgentProtocol
+from agno.agents.base import BaseExternalAgent
 from agno.os.interfaces.a2a.utils import (
     map_a2a_request_to_run_input,
     map_run_output_to_a2a_task,
@@ -237,7 +238,7 @@ def attach_routes(
             raise HTTPException(status_code=404, detail="Agent not found")
         if isinstance(agent, RemoteAgent):
             raise HTTPException(status_code=400, detail="Task polling is not supported for remote agents")
-        if not isinstance(agent, Agent):
+        if not isinstance(agent, (Agent, BaseExternalAgent)):
             raise HTTPException(status_code=501, detail="Task polling is not supported for this agent type")
 
         # Scope the run lookup to the caller for non-admins (aget_run_output filters the
@@ -287,7 +288,7 @@ def attach_routes(
             raise HTTPException(status_code=404, detail="Agent not found")
         if isinstance(agent, RemoteAgent):
             raise HTTPException(status_code=400, detail="Task cancellation is not supported for remote agents")
-        if not isinstance(agent, Agent):
+        if not isinstance(agent, (Agent, BaseExternalAgent)):
             raise HTTPException(status_code=501, detail="Task cancellation is not supported for this agent type")
 
         # Verify ownership before applying a global cancellation intent: a scoped principal

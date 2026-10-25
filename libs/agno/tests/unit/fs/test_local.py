@@ -88,10 +88,6 @@ class TestLocalWrite:
         assert excinfo.value.operation == "write"
         assert excinfo.value.backend == "LocalFileSystem"
 
-    def test_version_is_none(self, local_fs):
-        meta = local_fs.write(NS, "a.md", "x")
-        assert meta.version is None
-
 
 class TestLocalFileMode:
     """A file's permissions must not depend on which operation created it."""
@@ -244,3 +240,16 @@ class TestSelfMoveParity:
         meta = local_fs.move(NS, "notes/a.md", "notes/a.md")
         assert meta.path == "notes/a.md"
         assert local_fs.read(NS, "notes/a.md") == "x"
+
+
+def test_user_folders_do_not_depend_on_case(tmp_path):
+    # macOS and Windows disks are case-insensitive: "Alice" and "alice" must still
+    # land in different folders, and the folder names must decode back exactly.
+    local_fs = LocalFileSystem(root=tmp_path)
+    local_fs.write(NS, "a.md", "upper", user_id="Alice")
+    local_fs.write(NS, "a.md", "lower", user_id="alice")
+
+    assert local_fs.read(NS, "a.md", user_id="Alice") == "upper"
+    assert local_fs.read(NS, "a.md", user_id="alice") == "lower"
+    assert sorted(local_fs.partitions(NS)) == ["Alice", "alice"]
+    assert all(name == name.lower() for name in (entry.name for entry in tmp_path.iterdir()))
