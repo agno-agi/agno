@@ -144,7 +144,7 @@ class Searxng(Toolkit):
             response = httpx.get(url, timeout=self.timeout)
             response.raise_for_status()
             resp = response.json()
-            results = self.fixed_max_results or max_results
+            results = max_results if self.fixed_max_results is None else self.fixed_max_results
             resp["results"] = resp["results"][:results]
             return json.dumps(resp)
         except Exception as e:

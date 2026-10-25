@@ -1,0 +1,239 @@
+# Codex: SDK to AgentOS
+
+Start with the [shared setup](../README.md#start-here), then install the tested
+SDK version in that environment:
+
+```bash
+uv pip install 'openai-codex==0.162.1'
+```
+
+Export `OPENAI_API_KEY` to authenticate `CodexAgent` automatically. Agno uses
+the key from the Codex process environment, including overrides in `env` or
+`client_options.env`, before starting or resuming a thread or compacting it.
+An existing ChatGPT or other non-API-key login is preserved. Without a key,
+Codex uses its existing authentication (`codex login`).
+
+The native SDK example requires an existing login. To authenticate it directly
+with an API key, run:
+
+```bash
+python - <<'PY'
+import os
+from openai_codex import Codex
+
+with Codex() as codex:
+    codex.login_api_key(os.environ["OPENAI_API_KEY"])
+PY
+```
+
+This stores authentication using the SDK's login mechanism. Do not put
+credentials in the example files. The examples default to `gpt-5.6-luna`;
+`CODEX_MODEL` overrides it.
+The Python SDK supplies a pinned Codex app-server runtime.
+
+## 1. Run the smallest example
+
+```bash
+python cookbook/frameworks/codex/codex_basic.py
+```
+
+Inspect the answer and Agno run ID. An order of exactly 100 dollars qualifies
+for free shipping. This prompt contains the policy, so no file read is needed.
+The script uses `print_response(..., stream=True)`, which displays the terminal status and raises
+on failed or cancelled runs, so errors exit nonzero. The method returns the final
+`RunOutput`; its async equivalent is `aprint_response()`. See the shared
+[3.2 migration notes](../README.md#adapter-api-changes-for-32).
+
+## 2. Compare with the native SDK
+
+```bash
+python cookbook/frameworks/codex/codex_native_sdk.py
+```
+
+The prompt, model and corresponding execution settings match `codex_basic.py`.
+The native example creates an `AsyncCodex` client, a thread and a turn, then
+prints text deltas from `turn.stream()`.
+Agno manages those calls and returns a `RunOutput`. Codex still executes the
+agent loop; its native thread ID is distinct from an Agno run/session ID.
+
+The comparison is about API shape, not identical prose or latency. These
+one-shot scripts do not configure an Agno database or establish durable resume.
+
+Official reference: [Codex Python SDK](https://learn.chatgpt.com/docs/codex-sdk#python-library).
+
+## Configure the adapter and native SDK
+
+Use named settings for common configuration, including `mcp_servers`,
+`model_provider` and `service_tier`. Advanced settings have three distinct scopes:
+
+```python
+from openai_codex import CodexConfig
+from agno.agents.codex import CodexAgent, ThreadOptions, TurnOptions
+
+thread_options: ThreadOptions = {"ephemeral": True}
+turn_options: TurnOptions = {"effort": "low"}
+
+agent = CodexAgent(
+    model="gpt-5.6-luna",
+    sandbox_mode="read-only",
+    approval_mode="deny_all",
+    client_options=CodexConfig(client_name="shipping_review"),
+    thread_options=thread_options,
+    turn_options=turn_options,
+)
+agent.print_response("Explain when a shipping fee should be waived.", stream=True)
+```
+
+- `client_options` accepts the native `CodexConfig`: executable, process environment,
+  launch arguments and client identity. Named `codex_bin` and `env` override it.
+- `thread_options` configures thread creation/resume. Agno filters start-only and
+  resume-only keys for the relevant operation. Ephemeral threads are never saved
+  as resumable, including when configured through this dictionary.
+- `turn_options` configures each turn. Both option dictionaries expose typed keys
+  for editor completion; they use native SDK parameter names.
+- `config` remains the native **thread** configuration dictionary. `mcp_servers`
+  replaces its `mcp_servers` entry; use `mcp_servers={}` to clear that entry.
+
+Explicit non-`None` named settings win over matching thread and turn options,
+including empty strings, empty dictionaries and `False`. `None` inherits the
+option/SDK default. Options are copied before use; the adapter does not mutate
+caller-owned dictionaries or `CodexConfig`.
+
+Commands that exit non-zero, declined commands, and failed MCP tools are stored
+with `tool_call_error=True` and their output or error message as the result.
+
+`thread_kwargs` and `turn_kwargs` are deprecated aliases. Rename them to
+`thread_options` and `turn_options`; do not pass both forms. Named settings now
+win over aliases too, which changes calls that previously supplied conflicting
+values. Unknown option keys fail clearly.
+
+Agno currently accepts **string prompts** for Codex. Native `TextInput`, image,
+skill, mention and external-message objects are rejected instead of being silently
+stringified. Use the native SDK for those input types. This restriction applies
+to both streaming and non-streaming, sync and async runs.
+
+## 3. Watch actual tools
+
+```bash
+python cookbook/frameworks/codex/codex_tools.py
+```
+
+This time the policy is not supplied in the prompt: the harness must read
+`shipping.py` and `orders.json`. The script uses `print_response(..., stream=True)` to render the answer and
+Tool Calls panel, and returns the final `RunOutput` with tool results. Expect fees of 8, 0 and 0 dollars.
+The script checks that at least one tool succeeded; the live test also checks
+fixture contents in the returned tool results. Inspect the final explanation yourself.
+
+The thread uses `sandbox_mode="read-only"` and `approval_mode="deny_all"`.
+Shell reads are translated into Agno tool events. Codex can inherit other local
+configuration; this is a local integration exercise, not a tenant-isolation
+demonstration. We do not use full-access mode or auto-approve escalation.
+
+## 4. Serve the same review through AgentOS
+
+```bash
+python cookbook/frameworks/codex/codex_agentos.py
+```
+
+In another terminal:
+
+```bash
+curl -fsS http://127.0.0.1:7777/health
+curl -fsS http://127.0.0.1:7777/agents
+curl --no-buffer -fsS http://127.0.0.1:7777/agents/codex-reviewer/runs \
+  -F 'message=Read shipping.py and orders.json. Explain the fee for each order. Do not modify files.' \
+  -F 'session_id=codex-shipping-review' -F 'stream=true'
+```
+
+This streams SSE. Use `stream=false` for a single JSON response. Run one provider
+server at a time, or set `PORT=7778` for the second server.
+
+Copy the returned `run_id` and read the stored result:
+
+```bash
+curl -fsS 'http://127.0.0.1:7777/agents/codex-reviewer/runs/RUN_ID?session_id=codex-shipping-review'
+```
+
+Agno stores product-facing run/tool data in `tmp/harnesses/codex/runs.db`.
+The Agno session stores `codex_thread_id`; Codex's authoritative rollout
+files remain in its local Codex home, not this SQLite database. A stored thread
+ID alone is insufficient on a different machine. See the
+[existing session examples](#how-sessions-work).
+
+The local server has no authentication. Use PostgreSQL and explicit
+authorization for production. Background jobs, disconnects and recovery are
+follow-up exercises, not guarantees demonstrated here.
+
+## Validate and continue
+
+Use [TEST_PROMPT.md](../TEST_PROMPT.md) for reproducible live tests and
+[TEST_LOG.md](TEST_LOG.md) for observations. Continue with the session, MCP and background examples below.
+
+
+## More Codex examples
+
+- [codex_session.py](codex_session.py): multi-turn conversations.
+- [codex_session_agentos.py](codex_session_agentos.py): sessions through AgentOS.
+- [codex_mcp_tools.py](codex_mcp_tools.py): connect native MCP tools.
+- [codex_structured_output.py](codex_structured_output.py): parsed Pydantic models or JSON Schema objects, configured on the agent or per run. Schemas require an object root. Streaming text may include commentary; the completed run carries the parsed answer.
+- [codex_metrics.py](codex_metrics.py): per-run token usage and session totals.
+- [codex_metrics_agentos.py](codex_metrics_agentos.py): metrics through the AgentOS API.
+- [codex_retries.py](codex_retries.py): transient failures, retry limits and permanent errors.
+- [codex_compaction.py](codex_compaction.py): compact and resume a stored thread.
+- [background_cancel.py](background_cancel.py): background execution and cancellation.
+
+Each exercise has its own setup and validation history in [TEST_LOG.md](TEST_LOG.md).
+
+## How sessions work
+
+Each Agno `session_id` maps to one Codex thread. The thread id is stored on the
+Agno session (`session_data["codex_thread_id"]`) when a `db` is configured, so
+the mapping survives restarts. Without a `db` the mapping is kept in memory for
+the lifetime of the agent object.
+
+If a thread cannot be resumed (for example `ephemeral=True`, or the Codex
+session files were removed), the adapter starts a fresh thread and prepends the
+persisted chat history to the prompt so context is not lost.
+
+## Retries
+
+`CodexAgent` takes `retries`, `delay_between_retries` and `exponential_backoff`, the same settings an Agno `Agent` takes. A failed attempt is retried with the same run id and resumes the Codex thread the failed attempt started. Errors that would fail again are not retried: session budget and usage limits, context window overflows, authentication, bad requests and policy blocks. Cancelled runs are not retried.
+
+- **Combined budget with the job queue.** The durable queue retries a job up to its `max_attempts`, and this setting retries attempts inside each job, so Codex can be invoked up to `max_attempts × (retries + 1)` times for one run. Set one of the two unless you want that product. On top of both, the Codex CLI retries transient API errors on its own before reporting a failure, so one Agno attempt can already be several model requests. An error the agent classifies as permanent is marked on the run, and the queue fails the job at once instead of re-driving it.
+- **Streaming clients see the failed attempt's output first.** The stream emits a warning event with `type: "retry"` between the failed attempt's events and the new attempt's. Treat everything before that event as superseded: reset the text you have buffered for the run and start again from the event; keep the tool events, since those tools ran. The event carries `attempt` (the attempt that failed, counting from 1), `attempts` (the total allowed) and `delay`, and a run that was retried stores `metadata["attempts"]`. Everything before that event is superseded. The final `RunCompleted` content and the stored run hold only the last attempt's answer; tool calls from every attempt are kept because they ran.
+- **Tools are not exactly-once.** The retry resumes the same thread and re-sends the prompt, so Codex sees what the failed attempt did but may run a command again. A command that completed before the failure is not undone. The same holds when the durable queue re-drives a job after a worker crash: the job restarts from the beginning and tools that already ran run again. Anything a tool changes outside the workspace (an API call, a message, a payment) must be idempotent, or keyed so a repeat is a no-op, before enabling agent retries or queue `max_attempts` above 1.
+
+## Metrics
+
+Every run reports the token usage for the whole turn on `RunOutput.metrics` (input, cached input, output, reasoning and total), plus wall-clock `duration` measured by Agno and `time_to_first_token` when streaming. A turn with tool calls makes several model requests; Codex reports usage after each one, and the adapter sums them by taking the growth of the thread total over the turn, so a two-tool turn reports all three requests rather than only the last. Like the OpenAI API, `input_tokens` includes the cached prefix. Codex reports no cost. Completed runs are added to `session_data["session_metrics"]`, which AgentOS reads for the sessions list, the session view and the metrics page.
+
+## Images and files
+
+Attachments use the effective SDK workspace: named `cwd` wins, then `turn_options["cwd"]`, then the thread workspace. Relative workspaces produce absolute attachment paths so Codex can open them after changing directories.
+
+Images passed to `run` / `arun`, or uploaded through the AgentOS API and UI, go to Codex as native image inputs on the turn, so the model sees them directly. Files are written under `cwd/.agno/uploads/<run_id>/` and named in the prompt; Codex reads them with its shell, so text formats work everywhere and PDFs need a reader such as `pdftotext` on the machine. The folder is removed when the run ends unless `keep_uploads=True`. Before any later turn of the session, the attachments of earlier runs are written back to the uploads folder the session recorded when they were first staged, so the paths Codex already knows resolve again on whichever replica runs that turn (replicas normally share the same layout). If that folder cannot be written there, the files go under the replica's own working directory and the prompt names the new location. A continued or forked run gets the same treatment. The run's `input` records what was attached. Audio and video are rejected before the run starts.
+
+## Sandbox and approvals
+
+| Setting | Values | Notes |
+|---|---|---|
+| `sandbox` | `read-only`, `workspace-write`, `full-access` | Filesystem access for commands and edits |
+| `approval_mode` | `auto_review`, `deny_all` | How escalated permission requests are handled. There is no interactive prompt, so `deny_all` is the safe choice for unattended servers |
+
+Test results are tracked in `TEST_LOG.md`.
+
+## One turn per session
+
+Codex keeps one conversation per Agno session (the thread); overlapping turns can corrupt it. Reuse one agent instance and serialize turns for each session. When the adapter detects an in-flight turn on that instance, or a pending/running run in the stored session, it raises `SessionBusyError` before execution (HTTP 409 from AgentOS, or a `RunError` event with `error_type: session_busy` on a stream). The error names the blocking run.
+
+This check is not an atomic claim across agent instances or replicas. Simultaneous requests can race, and a direct foreground run has no in-flight database row before execution. Applications must serialize same-session submissions across replicas; the check alone does not provide distributed mutual exclusion. If the Codex app-server reports "already has an active writer", the adapter maps it to `SessionBusyError`; configured agent retries can retry after backoff. This backstop does not replace application-side serialization.
+
+A run row left pending or running by a crash keeps its session busy until that run is cancelled. The durable queue sweeps crashed queued runs on its own; cancel an orphaned background run through the run cancellation endpoint. With the built-in Postgres, Redis or in-memory queue store, durably queued turns on one session are admitted one at a time in the order the store accepted them: a waiting turn stays queued and spends no attempt or worker slot until the active turn finishes (see `cookbook/05_agent_os/background_tasks/queue_per_session.py`). A third-party queue store that does not advertise `serializes_sessions = True` falls back to re-driving a busy turn after the retry delay, where attempts can run out before the active turn finishes. Direct, non-queued calls on the same session are not admitted this way; serialize those in the application.
+
+## Background runs and cancellation
+
+`background_cancel.py` serves the agent through AgentOS. Submit runs with `background=true`, poll the run endpoint, or use `stream=true` for indexed SSE. Runs continue after disconnects; the resume endpoint reads the configured event stream. Cancel through the run cancellation endpoint. A run submitted with `stream=false` has no event stream to attach to later: nothing is published while it runs and no events are stored with it, so the resume endpoint answers with its status and zero events. Choose `stream=true` at submission when live or replayed events are needed, and poll the run endpoint otherwise.
+
+Run `background_cancel.py --verify` to start a real streamed turn, cancel after its first content event, and verify CANCELLED in the database. Multi-replica resume and cancellation require shared event-stream and cancellation-manager backends. Stored-event replay after the event-stream TTL is a follow-up.
+
+The Codex example uses `approval_mode="deny_all"`. The SDK default accepts escalation requests, which is unsuitable for unattended servers.

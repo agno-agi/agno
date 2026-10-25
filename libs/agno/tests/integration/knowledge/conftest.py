@@ -11,6 +11,10 @@ def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
     if report.when == "call" and report.failed:
+        # The page storage suite talks only to local PostgreSQL and its errors mention
+        # quota; a genuine failure there must never be reported as a provider rate limit.
+        if "test_page_storage" in item.nodeid:
+            return
         if call.excinfo is not None:
             error_msg = str(call.excinfo.value)
             full_repr = str(report.longrepr) if report.longrepr else ""
