@@ -6,6 +6,7 @@ PostgreSQL is supported for production, with the same sync and async methods.
 | File | What it teaches |
 | --- | --- |
 | `01_manage_products.py` | Create two owners' Products, list unscoped or by owner, soft-delete, inspect and restore. |
+| [`10_customer_feedback/`](10_customer_feedback/README.md) | Live GPT-6.1 Sol feedback review, human acceptance, and a saved product brief through the AgentOS UI. |
 
 Run with the development environment:
 
