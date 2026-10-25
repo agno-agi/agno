@@ -110,7 +110,7 @@ class FieldLabeledCSVReader(Reader):
                 content = file.read()
                 if isinstance(content, bytes):
                     content = content.decode(self.encoding or "utf-8")
-                file_content = io.StringIO(content)
+                file_content = io.StringIO(content, newline="")
 
             documents = []
 
@@ -191,7 +191,7 @@ class FieldLabeledCSVReader(Reader):
                 log_debug(f"Reading async: {file}")
                 async with aiofiles.open(file, mode="r", encoding=self.encoding or "utf-8", newline="") as file_content:
                     content = await file_content.read()
-                    file_content_io = io.StringIO(content)
+                    file_content_io = io.StringIO(content, newline="")
                 csv_name = name or file.stem
             else:
                 log_debug(f"Reading retrieved file async: {getattr(file, 'name', 'BytesIO')}")
@@ -200,7 +200,7 @@ class FieldLabeledCSVReader(Reader):
                 content = file.read()
                 if isinstance(content, bytes):
                     content = content.decode(self.encoding or "utf-8")
-                file_content_io = io.StringIO(content)
+                file_content_io = io.StringIO(content, newline="")
 
             file_content_io.seek(0)
             csv_reader = csv.reader(file_content_io, delimiter=delimiter, quotechar=quotechar)
