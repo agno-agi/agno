@@ -12,6 +12,8 @@
   A self-improving platform for agents<br/>
 </p>
 
+## Introduction
+
 Agno is a self-improving platform for agents. Build agents. Run them as durable services. Improve them with use.
 
 ### Build agents
