@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class QueueJobSchema(BaseModel):
@@ -26,3 +26,12 @@ class QueueJobSchema(BaseModel):
     created_at: Optional[int] = Field(None, description="Epoch seconds the job was accepted")
     updated_at: Optional[int] = Field(None, description="Epoch seconds of the last state change")
     completed_at: Optional[int] = Field(None, description="Epoch seconds the job reached a terminal state")
+
+    @field_validator("payload")
+    @classmethod
+    def _redact_factory_claims(cls, payload: Dict[str, Any]) -> Dict[str, Any]:
+        # Factory tickets carry the submitter's verified claims for the worker; the ops surface never shows them
+        context = (payload.get("scope") or {}).get("context")
+        if not isinstance(context, dict) or "claims" not in context:
+            return payload
+        return {**payload, "scope": {**payload["scope"], "context": {**context, "claims": "[redacted]"}}}
