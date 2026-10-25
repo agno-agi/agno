@@ -18,7 +18,7 @@ Agno is a self-improving platform for agents. Build agents. Run them as durable 
 
 - **Build** agents with the Agno, Claude Code, or Codex SDKs. Use any model, connect them to your tools and build agents for your product, your team, or your customers. Build agents using code, a no-code UI or by chatting with the OS Manager in your platform. Organize agents into teams or multi-step workflows.
 - **Run** your agents as durable services. Get an API and MCP server out of the box. Build products on top of the API or connect your agents to AI applications using MCP. Run your platform in your own cloud, keep all your data in your own database, and manage everything using the [AgentOS UI](https://os.agno.com). Review conversations, inspect traces, manage knowledge, and track your agent activity in one place.
-- **Improve** your agents with use. Give coding agents access to conversations, traces, and evaluations so they can investigate failures, simulate scenarios, and test improvements. Start by running the `/eval-and-improve` skill in Claude Code or Codex. When you're ready, schedule the improvement as a daily workflow, run it in a sandbox, and have it produce PRs automatically.
+- **Improve** your agents and the platform they run on. Give coding agents access to source code, conversations, traces, and evaluations so they can investigate failures, simulate user scenarios, and test changes to instructions, tools, knowledge, and code. Start by running the `/eval-and-improve` skill in Claude Code or Codex. Retain useful changes and regression tests, and choose which changes to adopt. When you're ready, configure scheduled improvement runs in a sandbox that return pull requests for review.
 
 ## Get started
 
@@ -39,7 +39,7 @@ The setup skill runs your platform locally and helps you build your first agent.
 - OS Manager to help build and manage your platform.
 - Claude and Codex engineers to work on your code.
 - Skills for building, evaluating, and improving agents.
-- A Company workspace for organizing ongoing work.
+- A Company workspace for organizing ongoing work, with a daily maintenance routine that reviews your codebase and Agno releases and proposes platform improvements.
 
 Connect your platform to [os.agno.com](https://os.agno.com) to start using it.
 
