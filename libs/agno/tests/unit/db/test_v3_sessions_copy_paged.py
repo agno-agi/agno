@@ -1,5 +1,4 @@
 import json
-import logging
 import os
 import tempfile
 import time
@@ -12,26 +11,18 @@ from agno.db.migrations.versions import v3_0_0
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 
 
-class _Collect(logging.Handler):
-    def __init__(self) -> None:
-        super().__init__(level=logging.DEBUG)
-        self.records: List[logging.LogRecord] = []
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self.records.append(record)
+@pytest.fixture
+def infos(monkeypatch) -> List[str]:
+    messages: List[str] = []
+    monkeypatch.setattr(v3_0_0, "log_info", messages.append)
+    return messages
 
 
 @pytest.fixture
-def logged():
-    """Agno's logger sets propagate=False, so caplog never sees these; attach a handler directly."""
-    logger = logging.getLogger("agno")
-    handler = _Collect()
-    old_level = logger.level
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
-    yield handler.records
-    logger.removeHandler(handler)
-    logger.setLevel(old_level)
+def warnings(monkeypatch) -> List[str]:
+    messages: List[str] = []
+    monkeypatch.setattr(v3_0_0, "log_warning", messages.append)
+    return messages
 
 
 def _run(run_id: str) -> Dict[str, object]:
@@ -62,53 +53,49 @@ def _stored(db: SqliteDb) -> Dict[str, str]:
         return dict(sess.execute(text("SELECT run_id, session_id FROM agno_runs")).tuples().all())
 
 
-def _messages(records: List[logging.LogRecord], level: int) -> List[str]:
-    return [r.getMessage() for r in records if r.levelno == level]
-
-
-def test_every_run_is_copied_across_pages(logged, monkeypatch):
+def test_every_run_is_copied_across_pages(infos, warnings, monkeypatch):
     monkeypatch.setattr(v3_0_0, "BATCH_SIZE", 2)
     db = _legacy_db({f"s{i}": [f"s{i}-r0", f"s{i}-r1"] for i in range(5)})
 
     assert v3_0_0._migrate_sqlite_sessions(db, "agno_sessions") is True
 
     assert len(_stored(db)) == 10
-    assert "-- Copied 10 runs from agno_sessions into the runs table" in _messages(logged, logging.INFO)
-    assert _messages(logged, logging.WARNING) == []
+    assert "-- Copied 10 runs from agno_sessions into the runs table" in infos
+    assert warnings == []
 
 
-def test_a_run_id_held_by_two_sessions_is_named_in_a_warning(logged):
+def test_a_run_id_held_by_two_sessions_is_named_in_a_warning(infos, warnings):
     db = _legacy_db({"sess-a": ["shared", "a1"], "sess-b": ["shared", "b1"]})
 
     v3_0_0._migrate_sqlite_sessions(db, "agno_sessions")
 
     assert _stored(db) == {"shared": "sess-a", "a1": "sess-a", "b1": "sess-b"}
-    assert "-- Copied 3 runs from agno_sessions into the runs table" in _messages(logged, logging.INFO)
-    [warning] = _messages(logged, logging.WARNING)
+    assert "-- Copied 3 runs from agno_sessions into the runs table" in infos
+    [warning] = warnings
     assert "1 run(s) were not copied" in warning
     assert "shared (kept for sess-a, not for sess-b)" in warning
 
 
-def test_a_run_id_shared_across_pages_is_also_caught(logged, monkeypatch):
+def test_a_run_id_shared_across_pages_is_also_caught(infos, warnings, monkeypatch):
     monkeypatch.setattr(v3_0_0, "BATCH_SIZE", 1)
     db = _legacy_db({"sess-a": ["shared"], "sess-b": ["shared"]})
 
     v3_0_0._migrate_sqlite_sessions(db, "agno_sessions")
 
     assert _stored(db) == {"shared": "sess-a"}
-    assert "shared (kept for sess-a, not for sess-b)" in _messages(logged, logging.WARNING)[0]
+    assert "shared (kept for sess-a, not for sess-b)" in warnings[0]
 
 
-def test_a_rerun_copies_nothing_twice_and_warns_about_nothing(logged):
+def test_a_rerun_copies_nothing_twice_and_warns_about_nothing(infos, warnings):
     db = _legacy_db({"sess-a": ["a0", "a1"], "sess-b": ["b0"]})
     v3_0_0._migrate_sqlite_sessions(db, "agno_sessions")
-    logged.clear()
+    infos.clear()
 
     v3_0_0._migrate_sqlite_sessions(db, "agno_sessions")
 
     assert len(_stored(db)) == 3
-    assert "-- Copied 0 runs from agno_sessions into the runs table" in _messages(logged, logging.INFO)
-    assert _messages(logged, logging.WARNING) == []
+    assert "-- Copied 0 runs from agno_sessions into the runs table" in infos
+    assert warnings == []
 
 
 def test_a_failure_keeps_the_pages_already_committed(monkeypatch):
@@ -133,19 +120,19 @@ async def _async_legacy_db(sessions: Dict[str, List[str]]) -> AsyncSqliteDb:
     return AsyncSqliteDb(db_file=sync_db.db_file)
 
 
-async def test_async_copies_across_pages(logged, monkeypatch):
+async def test_async_copies_across_pages(infos, monkeypatch):
     monkeypatch.setattr(v3_0_0, "BATCH_SIZE", 2)
     db = await _async_legacy_db({f"s{i}": [f"s{i}-r0", f"s{i}-r1"] for i in range(3)})
 
     assert await v3_0_0._migrate_async_sqlite_sessions(db, "agno_sessions") is True
 
-    assert "-- Copied 6 runs from agno_sessions into the runs table" in _messages(logged, logging.INFO)
+    assert "-- Copied 6 runs from agno_sessions into the runs table" in infos
 
 
-async def test_async_names_a_shared_run_id_in_a_warning(logged):
+async def test_async_names_a_shared_run_id_in_a_warning(infos, warnings):
     db = await _async_legacy_db({"sess-a": ["shared", "a1"], "sess-b": ["shared", "b1"]})
 
     await v3_0_0._migrate_async_sqlite_sessions(db, "agno_sessions")
 
-    assert "-- Copied 3 runs from agno_sessions into the runs table" in _messages(logged, logging.INFO)
-    assert "shared (kept for sess-a, not for sess-b)" in _messages(logged, logging.WARNING)[0]
+    assert "-- Copied 3 runs from agno_sessions into the runs table" in infos
+    assert "shared (kept for sess-a, not for sess-b)" in warnings[0]

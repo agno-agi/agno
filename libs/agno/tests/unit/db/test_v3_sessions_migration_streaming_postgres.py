@@ -9,7 +9,6 @@ Runs against the live pgvector container (localhost:5532) with a unique schema p
 test; skips cleanly when psycopg or the server is absent.
 """
 
-import logging
 import subprocess
 import sys
 import uuid
@@ -18,6 +17,7 @@ import pytest
 from sqlalchemy import create_engine, event, text
 
 from agno.db.migrations.manager import MigrationManager
+from agno.db.migrations.versions import v3_0_0
 
 pytest.importorskip("psycopg")
 
@@ -173,7 +173,7 @@ async def test_async_postgres_migration_copies_every_run_and_keeps_the_legacy_co
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["sync", "async"])
-async def test_postgres_migration_names_a_run_id_two_sessions_share(schema, mode):
+async def test_postgres_migration_names_a_run_id_two_sessions_share(schema, mode, monkeypatch):
     """The runs table has one row per run_id, so the second session's copy is left out, counted out and named."""
     _seed_legacy_sessions(schema, SMALL_SESSIONS)
     engine = create_engine(DB_URL)
@@ -190,21 +190,19 @@ async def test_postgres_migration_names_a_run_id_two_sessions_share(schema, mode
     db = (AsyncPostgresDb if mode == "async" else PostgresDb)(
         db_url=DB_URL, db_schema=schema, session_table=SESSIONS_TABLE
     )
-    # Agno's logger does not propagate, so caplog never sees these records.
-    records: list = []
-    handler = logging.Handler()
-    handler.emit = records.append  # type: ignore[method-assign]
-    logging.getLogger("agno").addHandler(handler)
-    try:
-        await MigrationManager(db).up(table_type="sessions")
-    finally:
-        logging.getLogger("agno").removeHandler(handler)
+    infos: list = []
+    warnings: list = []
+    monkeypatch.setattr(v3_0_0, "log_info", infos.append)
+    monkeypatch.setattr(v3_0_0, "log_warning", warnings.append)
+
+    await MigrationManager(db).up(table_type="sessions")
 
     copied = SMALL_SESSIONS * RUNS_PER_SESSION - 1
-    messages = [record.getMessage() for record in records]
     assert _runs_copied(schema) == copied
-    assert f"-- Copied {copied} runs from {SESSIONS_TABLE} into the runs table" in messages
-    assert any("1 run(s) were not copied" in message and "r1_1" in message for message in messages)
+    assert f"-- Copied {copied} runs from {SESSIONS_TABLE} into the runs table" in infos
+    [warning] = warnings
+    assert "1 run(s) were not copied" in warning
+    assert "r1_1 (kept for s1, not for s2)" in warning
 
 
 # ---------------------------------------------------------------------------

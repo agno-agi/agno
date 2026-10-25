@@ -828,6 +828,7 @@ def _migrate_postgres_sessions(db: BaseDb, table_name: str) -> bool:
             log_info(f"Table {table_name} has no runs column, skipping migration")
             return False
 
+        # Move all runs into the runs table
         # Server-side cursor: without it the driver buffers every session's runs before the
         # first fetchmany, and BATCH_SIZE would bound nothing.
         result = sess.execute(
@@ -892,6 +893,7 @@ async def _migrate_async_postgres_sessions(db: AsyncBaseDb, table_name: str) -> 
             log_info(f"Table {table_name} has no runs column, skipping migration")
             return False
 
+        # Move all runs into the runs table
         # stream() uses a server-side cursor; execute() would buffer every session's runs
         # before the first fetchmany, and BATCH_SIZE would bound nothing.
         result = await sess.stream(text(f"SELECT session_id, user_id, runs FROM {full_table} WHERE runs IS NOT NULL"))
@@ -946,7 +948,7 @@ def _migrate_sqlite_sessions(db: BaseDb, table_name: str) -> bool:
             log_info(f"Table {table_name} has no runs column, skipping migration")
             return False
 
-    # See _migrate_postgres_sessions: one page of sessions per transaction.
+    # One page of sessions per transaction, so a crash keeps the pages already copied.
     first_page = text(
         f"SELECT session_id, user_id, runs FROM {table_name} WHERE runs IS NOT NULL ORDER BY session_id LIMIT :limit"
     )
@@ -1006,7 +1008,7 @@ async def _migrate_async_sqlite_sessions(db: AsyncBaseDb, table_name: str) -> bo
             log_info(f"Table {table_name} has no runs column, skipping migration")
             return False
 
-    # See _migrate_postgres_sessions: one page of sessions per transaction.
+    # One page of sessions per transaction, so a crash keeps the pages already copied.
     first_page = text(
         f"SELECT session_id, user_id, runs FROM {table_name} WHERE runs IS NOT NULL ORDER BY session_id LIMIT :limit"
     )
