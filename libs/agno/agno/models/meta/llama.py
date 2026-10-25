@@ -440,7 +440,7 @@ class Llama(Model):
         Parse the Llama streaming response into a ModelResponse.
 
         Args:
-            response_delta: Raw response chunk from the Llama API
+            response: Raw response chunk from the Llama API
 
         Returns:
             ModelResponse: Parsed response data

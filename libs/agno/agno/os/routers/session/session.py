@@ -26,6 +26,7 @@ from agno.os.schema import (
     PaginatedResponse,
     PaginationInfo,
     RunSchema,
+    SessionRunPreviewSchema,
     SessionSchema,
     SortOrder,
     TeamRunSchema,
@@ -561,6 +562,67 @@ def attach_routes(
         else:
             return WorkflowSessionDetailSchema.from_session(session)  # type: ignore
 
+    async def _fetch_session_runs(
+        request: Request,
+        session_id: str,
+        session_type: Optional[SessionType],
+        user_id: Optional[str],
+        created_after: Optional[int],
+        created_before: Optional[int],
+        status: Optional[List[str]],
+        db_id: Optional[str],
+        table: Optional[str],
+    ) -> List[Any]:
+        from agno.run.base import RunStatus
+
+        wanted_statuses = None
+        if status:
+            valid = {member.value for member in RunStatus}
+            wanted_statuses = {value.upper() for value in status}
+            unknown = sorted(wanted_statuses - valid)
+            if unknown:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid status value(s) {unknown}; expected one of {sorted(valid)}",
+                )
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            runs = await db.get_session_runs(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=effective_user_id,
+                created_after=created_after,
+                created_before=created_before,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
+        else:
+            # Shared with the MCP get_session_runs tool: auto-detection, timestamp
+            # filtering, per-run classification, and sync-db threadpool offload all
+            # live in the service so the two surfaces cannot drift.
+            try:
+                runs = await get_session_runs_from_service(
+                    db,
+                    session_id=session_id,
+                    session_type=session_type,
+                    user_id=effective_user_id,
+                    created_after=created_after,
+                    created_before=created_before,
+                )
+            except SessionNotFoundError:
+                raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+
+        # Status filter runs AFTER the fetch, identically for both sources: a
+        # RemoteDb cannot be assumed to understand the new param, and a session's
+        # run list is bounded.
+        if wanted_statuses is not None:
+            runs = [r for r in runs if (getattr(r, "status", None) or "").upper() in wanted_statuses]
+        return runs
+
     @router.get(
         "/sessions/{session_id}/runs",
         response_model=List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
@@ -568,9 +630,11 @@ def attach_routes(
         operation_id="get_session_runs",
         summary="Get Session Runs",
         description=(
-            "Retrieve all runs (executions) for a specific session with optional timestamp filtering. "
-            "Runs represent individual interactions or executions within a session. "
-            "Response schema varies based on session type."
+            "Retrieve all runs (executions) for a specific session with optional timestamp and "
+            "status filtering. Repeat the status param to match any of several (case-insensitive; "
+            "e.g. status=PENDING&status=RUNNING&status=PAUSED is the live set a queue tray shows). "
+            "Response schema varies based on session type. For lightweight entries, use "
+            "GET /sessions/{session_id}/run-previews."
         ),
         response_model_exclude_none=True,
         responses={
@@ -695,39 +759,65 @@ def attach_routes(
             default=None,
             description="Filter runs created before this Unix timestamp (epoch time in seconds)",
         ),
+        status: Optional[List[str]] = Query(
+            default=None,
+            description="Status filter; repeatable to match any of several, case-insensitive "
+            "(PENDING, RUNNING, PAUSED, COMPLETED, CANCELLED, ERROR, REGENERATED)",
+        ),
         db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),
         table: Optional[str] = Query(default=None, description="Table to query runs from"),
     ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
-        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+        runs = await _fetch_session_runs(
+            request, session_id, session_type, user_id, created_after, created_before, status, db_id, table
+        )
+        return cast(List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]], runs)
 
-        if isinstance(db, RemoteDb):
-            auth_token = get_auth_token_from_request(request)
-            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
-            return await db.get_session_runs(
-                session_id=session_id,
-                session_type=session_type,
-                user_id=effective_user_id,
-                created_after=created_after,
-                created_before=created_before,
-                db_id=db_id,
-                table=table,
-                headers=headers,
-            )
-
-        # Shared with the MCP get_session_runs tool: auto-detection, timestamp
-        # filtering, per-run classification, and sync-db threadpool offload all
-        # live in the service so the two surfaces cannot drift.
-        try:
-            return await get_session_runs_from_service(
-                db,
-                session_id=session_id,
-                session_type=session_type,
-                user_id=effective_user_id,
-                created_after=created_after,
-                created_before=created_before,
-            )
-        except SessionNotFoundError:
-            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+    @router.get(
+        "/sessions/{session_id}/run-previews",
+        response_model=List[SessionRunPreviewSchema],
+        status_code=200,
+        operation_id="get_session_run_previews",
+        summary="Get Session Run Previews",
+        description=(
+            "Lightweight listing of a session's runs for polling clients such as a queue tray: ids, "
+            "status, timestamps and truncated input/output previews, without messages, events, media "
+            "or metrics. Accepts the same filters as GET /sessions/{session_id}/runs."
+        ),
+        response_model_exclude_none=True,
+        responses={
+            404: {"description": "Session not found", "model": NotFoundResponse},
+            422: {"description": "Invalid session type", "model": ValidationErrorResponse},
+        },
+    )
+    async def get_session_run_previews(
+        request: Request,
+        session_id: str = Path(description="Session ID to get runs from"),
+        session_type: Optional[SessionType] = Query(
+            default=None,
+            description="Session type (agent, team, or workflow). If not provided, auto-detected from session data.",
+            alias="type",
+        ),
+        user_id: Optional[str] = Query(default=None, description="User ID to query runs from"),
+        created_after: Optional[int] = Query(
+            default=None,
+            description="Filter runs created after this Unix timestamp (epoch time in seconds)",
+        ),
+        created_before: Optional[int] = Query(
+            default=None,
+            description="Filter runs created before this Unix timestamp (epoch time in seconds)",
+        ),
+        status: Optional[List[str]] = Query(
+            default=None,
+            description="Status filter; repeatable to match any of several, case-insensitive "
+            "(PENDING, RUNNING, PAUSED, COMPLETED, CANCELLED, ERROR, REGENERATED)",
+        ),
+        db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),
+        table: Optional[str] = Query(default=None, description="Table to query runs from"),
+    ) -> List[SessionRunPreviewSchema]:
+        runs = await _fetch_session_runs(
+            request, session_id, session_type, user_id, created_after, created_before, status, db_id, table
+        )
+        return [SessionRunPreviewSchema.from_run(r) for r in runs]
 
     @router.get(
         "/sessions/{session_id}/runs/{run_id}",
@@ -833,7 +923,7 @@ def attach_routes(
         elif target_run.get("team_id") is not None:
             return TeamRunSchema.from_dict(target_run)
         else:
-            return RunSchema.from_dict(target_run)
+            return RunSchema.from_dict(target_run, session=cast(Dict[str, Any], session))
 
     @router.delete(
         "/sessions/{session_id}",

@@ -3,8 +3,8 @@ Pipedream Google Calendar MCP
 
 This example shows how to use Pipedream MCP servers (in this case the Google Calendar one) with Agno Agents.
 
-1. Connect your Pipedream and Google Calendar accounts: https://mcp.pipedream.com/app/google_calendar
-2. Get your Pipedream MCP server url: https://mcp.pipedream.com/app/google_calendar
+1. Connect your Pipedream and Google Calendar accounts: https://pipedream.com/apps/google_calendar
+2. Get your Pipedream MCP server url: https://pipedream.com/apps/google_calendar
 3. Set the MCP_SERVER_URL environment variable to the MCP server url you got above
 4. Install dependencies: uv pip install agno mcp
 """

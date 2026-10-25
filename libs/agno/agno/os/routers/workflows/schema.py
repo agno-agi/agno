@@ -94,6 +94,7 @@ class WorkflowResponse(BaseModel):
     is_component: bool = Field(False, description="Whether this workflow was created via Builder")
     current_version: Optional[int] = Field(None, description="Current published version number")
     stage: Optional[str] = Field(None, description="Stage of the loaded config (draft/published)")
+    sandboxed: bool = False
 
     @classmethod
     def from_factory(cls, factory: WorkflowFactory) -> WorkflowResponse:

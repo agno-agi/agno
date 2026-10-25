@@ -158,15 +158,24 @@ class TestDurabilityBypassIsLoud:
         client = TestClient(app, raise_server_exceptions=False)
         return SimpleNamespace(app=app, store=store, client=client)
 
-    def test_factory_backed_submission_warns(self, factory_harness, caplog):
+    def test_factory_backed_submission_rides_the_queue(self, factory_harness, caplog, monkeypatch):
+        """Factories used to drop to the non-durable path; now the ticket
+        carries the request context and the worker invokes the factory again,
+        so there is nothing to warn about."""
+
+        async def ok_prepare(component, component_type, run_id, session_id, user_id, input):
+            return None
+
+        monkeypatch.setattr("agno.os.job_queue.aprepare_queued_run", ok_prepare)
         with caplog.at_level("WARNING"):
-            factory_harness.client.post(
+            resp = factory_harness.client.post(
                 "/agents/fx-agent/runs", data={"message": "hi", "stream": "false", "background": "true"}
             )
-        assert any("bypasses the durable queue" in r.message for r in caplog.records), (
-            "a factory-backed background submission silently lost durability - it must warn"
-        )
-        assert len(factory_harness.store._jobs) == 0, "the bypass must not have enqueued anything"
+        assert resp.status_code == 202, resp.text
+        assert not any("bypasses the durable queue" in r.message for r in caplog.records)
+        assert len(factory_harness.store._jobs) == 1, "a factory-backed submission must ride the durable queue"
+        job = next(iter(factory_harness.store._jobs.values()))
+        assert job["payload"]["scope"]["source"] == "factory"
 
     def test_durable_path_does_not_warn(self, harness, monkeypatch):
         """No false alarms: a queueable registry submission rides the queue
@@ -465,3 +474,38 @@ class TestServerErrorsDoNotEchoInternals:
         assert resp.status_code == 500
         assert self.SECRET not in resp.text, "the app-level handler must not echo str(exc) on 5xx"
         assert "RuntimeError" in resp.json()["detail"]
+
+
+class TestTicketPollCancellationStage:
+    """A cancelled ticket that no worker ever claimed has no run row to say
+    so; the ticket-only poll view carries the stage itself."""
+
+    @pytest.mark.asyncio
+    async def test_unclaimed_cancelled_ticket_reports_pending(self):
+        from agno.os.job_queue import aticket_poll_fallback
+
+        store = InMemoryQueueStore()
+        store._jobs["r1"] = QueuedJob(
+            id="r1", component_type="agent", component_id="a1", session_id="s1", payload={}, status="cancelled"
+        ).to_dict()
+        worker = SimpleNamespace(store=store)
+        view = await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", None, user_scoped=False)
+        assert view is not None and view["status"] == "CANCELLED"
+        assert view["cancellation_stage"] == "PENDING"
+
+    @pytest.mark.asyncio
+    async def test_claimed_cancelled_ticket_reports_no_stage(self):
+        """Once claimed the run row is authoritative; the ticket view does not
+        guess a stage it cannot know."""
+        from agno.os.job_queue import aticket_poll_fallback
+
+        store = InMemoryQueueStore()
+        job = QueuedJob(
+            id="r1", component_type="agent", component_id="a1", session_id="s1", payload={}, status="cancelled"
+        ).to_dict()
+        job["attempt"] = 1
+        store._jobs["r1"] = job
+        worker = SimpleNamespace(store=store)
+        view = await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", None, user_scoped=False)
+        assert view is not None and view["status"] == "CANCELLED"
+        assert "cancellation_stage" not in view

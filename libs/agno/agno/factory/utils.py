@@ -39,6 +39,30 @@ class FactoryContextRequired(FactoryError):
 # ---------------------------------------------------------------------------
 
 
+class QueuedRequest:
+    """``ctx.request`` when a factory runs on the durable queue worker.
+
+    The HTTP request is gone by the time the worker builds the component, so
+    any attribute access raises FactoryContextRequired naming the fix. Falsy,
+    so ``if ctx.request:`` guards keep working.
+    """
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("__"):
+            # copy/pickle probe dunders and expect AttributeError
+            raise AttributeError(name)
+        raise FactoryContextRequired(
+            f"Factory read ctx.request.{name}, but queued runs have no HTTP request. "
+            "Pass what the factory needs through factory_input or the trusted claims."
+        )
+
+    def __bool__(self) -> bool:
+        return False
+
+    def __repr__(self) -> str:
+        return "QueuedRequest()"
+
+
 @dataclass(frozen=True)
 class TrustedContext:
     """Context populated by verified middleware only (e.g. JWT claims).
@@ -59,6 +83,8 @@ class RequestContext:
         user_id: From form field or request.state (same precedence as today).
         session_id: From form field or request.state.
         request: Raw FastAPI Request — escape hatch for anything not plumbed through.
+            A QueuedRequest (falsy, raises on attribute reads) when the factory
+            runs on the durable queue worker, where no HTTP request exists.
         input: Validated factory_input (pydantic model if input_schema was set, else dict).
         trusted: Populated by verified middleware only (request.state.*).
     """

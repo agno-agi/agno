@@ -70,3 +70,33 @@ async def test_remote_team_a2a_forwards_metadata() -> None:
         "company_id": "C-1",
         "investor_company_id": "IC-1",
     }
+
+
+def test_remote_agent_role_is_a_property() -> None:
+    """RemoteAgent.role must resolve to the configured role string, not a bound method.
+
+    Regression test: the missing @property meant a Team leader's system prompt
+    interpolated the bound-method repr for every remote member.
+    """
+    from agno.os.routers.agents.schema import AgentResponse
+
+    remote_agent = RemoteAgent(base_url="http://fake-host", agent_id="greeter")
+    remote_agent._cached_agent_config = (
+        AgentResponse(id="greeter", name="Greeter", role="Greets users warmly"),
+        float("inf"),
+    )
+    assert remote_agent.role == "Greets users warmly"
+    assert isinstance(remote_agent.role, str)
+
+
+def test_remote_team_role_is_a_property() -> None:
+    """RemoteTeam.role must resolve to the configured role string, not a bound method."""
+    from agno.os.routers.teams.schema import TeamResponse
+
+    remote_team = RemoteTeam(base_url="http://fake-host", team_id="research")
+    remote_team._cached_team_config = (
+        TeamResponse(id="research", name="Research", role="Coordinates research tasks"),
+        float("inf"),
+    )
+    assert remote_team.role == "Coordinates research tasks"
+    assert isinstance(remote_team.role, str)

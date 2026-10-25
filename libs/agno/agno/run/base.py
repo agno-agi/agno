@@ -1,5 +1,5 @@
 from copy import copy
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -10,6 +10,7 @@ from agno.media import Audio, File, Image, Video
 from agno.metrics import RunMetrics
 from agno.models.message import Citations, Message, MessageReferences
 from agno.reasoning.step import ReasoningStep
+from agno.run.authorization import current_authorization
 from agno.utils.log import log_error
 
 
@@ -27,6 +28,9 @@ class RunContext:
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
+
+    # Runtime-only caller authority. Never reconstructed from persisted run metadata.
+    authorization: Any = field(default_factory=current_authorization, repr=False, compare=False)
 
     # Live reference to the current run's message list. Available in tool hooks
     # via run_context.messages. Hooks receive a shallow copy (via _safe_hook_call)
@@ -386,6 +390,51 @@ class RunStatus(str, Enum):
     # history-builders can skip it when rebuilding context. Pass replace_original=false
     # to keep the original COMPLETED and visible instead.
     regenerated = "REGENERATED"
+
+
+class CancellationStage(str, Enum):
+    """Where a CANCELLED run was when it was cancelled.
+
+    A machine-readable companion to the CANCELLED status: the same status
+    covers a run that never started, a run stopped mid-execution with partial
+    output, and a run stopped while parked for a human-in-the-loop
+    continuation, and a UI treats those differently. The human-readable
+    reason stays on ``content``.
+
+    The stage is the status the run held when CANCELLED was written:
+    ``pending`` for a run that never started (a queued ticket, or a fresh
+    background run still waiting for a concurrency slot), ``executing`` for
+    a run stopped mid-execution (including a retry waiting out its backoff,
+    since an attempt already ran), ``paused`` for a run parked for a
+    human-in-the-loop continuation (including a continuation cancelled while
+    waiting for a slot, and a rejected confirmation that ends the run).
+
+    Absent (``None``) means unknown. Deliberately unstamped: runs written
+    before the field existed, and task-level interrupts (an event-loop
+    shutdown, a disconnected streaming task, a KeyboardInterrupt), which are
+    neither a user cancel nor a never-started run. Consumers must therefore
+    hide only on ``pending`` and never "show only on ``executing``".
+    Values are a wire contract: extend, never rename.
+    """
+
+    pending = "PENDING"
+    executing = "EXECUTING"
+    paused = "PAUSED"
+
+    @classmethod
+    def coerce(cls, value: Any) -> Any:
+        """A stored value as the enum when it is a known member, else as is.
+
+        Loading is tolerant by design: a newer server may have written a
+        stage this version does not know, and it must survive a round trip
+        unchanged rather than raise or be dropped.
+        """
+        if isinstance(value, str) and not isinstance(value, cls):
+            try:
+                return cls(value)
+            except ValueError:
+                return value
+        return value
 
 
 # Canonical set of run statuses excluded when rebuilding message history/context.
