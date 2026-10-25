@@ -15,6 +15,7 @@ from agno.models.groq import Groq
 from agno.models.minimax import MiniMax
 from agno.models.n1n import N1N
 from agno.models.openai import OpenAIChat, OpenAIResponses
+from agno.models.runcrate import Runcrate
 from agno.models.tokenlab import TokenLab
 from agno.models.utils import get_model
 from agno.team import Team
@@ -80,6 +81,13 @@ def test_get_model_parses_n1n_string():
     model = get_model("n1n:gpt-4o")
     assert isinstance(model, N1N)
     assert model.id == "gpt-4o"
+
+
+def test_get_model_parses_runcrate_string():
+    """Test get_model() parses Runcrate model string."""
+    model = get_model("runcrate:deepseek-ai/DeepSeek-V4.1-Flash")
+    assert isinstance(model, Runcrate)
+    assert model.id == "deepseek-ai/DeepSeek-V4.1-Flash"
 
 
 def test_get_model_parses_tokenlab_string():
