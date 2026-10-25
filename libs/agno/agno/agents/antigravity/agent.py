@@ -1,9 +1,9 @@
 import json
-from dataclasses import dataclass
 from os import getenv
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, ClassVar, Dict, List, Optional
 from uuid import uuid4
 
+from agno.agents._config import agent_dataclass
 from agno.agents.base import BaseExternalAgent
 from agno.exceptions import PathSecurityError
 from agno.models.response import ToolExecution
@@ -20,7 +20,7 @@ DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 INLINE_SOURCE_MAX_BYTES = 75 * 1024  # API limit for inline source content per file
 
 
-@dataclass
+@agent_dataclass
 class AntigravityAgent(BaseExternalAgent):
     """Adapter for Google's Gemini Agents API (Antigravity).
 
@@ -58,7 +58,6 @@ class AntigravityAgent(BaseExternalAgent):
     agent: str = "antigravity-preview-05-2026"
     sources: Optional[List[Dict[str, Any]]] = None
     timeout: int = 600
-    framework: str = "antigravity"
 
     # Custom-agent definition (Agents API). When `custom_agent_name` is set, the
     # adapter sends `agent: <name>` on /interactions. Call `ensure_custom_agent()`
@@ -67,6 +66,7 @@ class AntigravityAgent(BaseExternalAgent):
     custom_agent_instructions: Optional[str] = None
     custom_agent_description: Optional[str] = None
 
+    _sdk_name: ClassVar[str] = "antigravity"
     # Per-session env/interaction state lives in the persisted session's
     # session_data, not on this instance (thread-safe, survives restarts).
     _ENV_KEY = "antigravity_env_id"

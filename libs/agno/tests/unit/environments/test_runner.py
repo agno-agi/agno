@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from agno.agent import Agent
+from agno.agent import Agent, FollowupConfig
 from agno.agent._utils import SHARED_BY_REFERENCE_FIELDS
 from agno.db.in_memory import InMemoryDb
 from agno.environments import (
@@ -1505,6 +1505,49 @@ def test_every_shared_field_has_a_hermetic_action():
     # without a mapped hermetic action fails here before it ships.
     missing = set(SHARED_BY_REFERENCE_FIELDS) - set(_ISOLATE_FIELD_ACTIONS)
     assert not missing, f"unmapped shared-by-reference fields: {sorted(missing)}"
+
+
+@pytest.mark.parametrize("slot", ["followups", "followup_model"])
+async def test_followup_model_gets_fresh_provider_calls_per_attempt(tmp_path, slot):
+    # Two sequential attempts must each hit the provider on a cache-off copy: with the
+    # caller's cache-on instance shared, the second attempt would replay the first.
+    # The model on a FollowupConfig and the legacy followup_model slot get the same treatment.
+    calls = []
+    followup_model = RecordingFakeModel("followup", calls=calls)
+    followup_model.cache_response = True
+    followup_model.cache_dir = str(tmp_path / "followup-cache")
+    if slot == "followups":
+        kwargs = {"followups": FollowupConfig(model=followup_model)}
+    else:
+        kwargs = {"followups": True, "followup_model": followup_model}
+    caller = Agent(model=RecordingFakeModel("main"), db=InMemoryDb(), telemetry=False, **kwargs)
+
+    result = await arun_rollouts(_real_env(caller), k=2, concurrency=1)
+
+    assert result.pass_rate == 1.0
+    assert len(calls) == 2
+    assert all(cache_response is False for _, _, _, cache_response in calls)
+    assert all(instance_id != id(followup_model) for _, _, instance_id, _ in calls)
+    assert followup_model.cache_response is True
+
+
+def test_string_followup_config_model_is_resolved_before_isolation(tmp_path):
+    # A "provider:model_id" string resolves at construction, so deep_copy hands the
+    # attempt a Model instance and the isolation pass can give it a cache-off copy.
+    config = FollowupConfig(model="openai:gpt-5.5")
+    caller = Agent(model=RecordingFakeModel("main"), db=InMemoryDb(), followups=config, telemetry=False)
+    assert config.model == "openai:gpt-5.5"  # the caller's object is left unresolved
+    assert isinstance(caller.followups.model, Model)
+    caller.followups.model.cache_response = True
+    caller.followups.model.cache_dir = str(tmp_path / "cache")
+
+    attempt = caller.deep_copy()
+    _isolate_attempt(attempt)
+
+    assert isinstance(attempt.followups.model, Model)
+    assert attempt.followups.model is not caller.followups.model
+    assert attempt.followups.model.cache_response is False
+    assert caller.followups.model.cache_response is True
 
 
 # ---------------------------------------------------------------------------

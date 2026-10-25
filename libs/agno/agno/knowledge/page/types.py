@@ -51,6 +51,22 @@ class SyncFailed(PageError):
     code = "sync_failed"
 
 
+class PageMoved(PageError):
+    """A listed page redirects to a different page or another host: an alias, not a page of this source."""
+
+    code = "page_moved"
+
+    def __init__(self, target: str):
+        super().__init__()
+        self.target = target
+
+
+class PageNotMarkdown(PageError):
+    """A listed Markdown page answered with HTML; it is never stored as page text."""
+
+    code = "page_not_markdown"
+
+
 class PageResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     schema_version: Literal[1] = 1
@@ -171,6 +187,19 @@ class GrepResult(PageResult):
     stop_reason: Optional[Literal["limit", "output_limit", "deadline"]] = None
 
 
+class PageSyncProgress(PageResult):
+    """Observer snapshot; terminal success/partial status is carried by SyncReport."""
+
+    stage: Literal["waiting", "discovered", "publishing", "pruning"]
+    discovered: int = 0
+    processed: int = 0
+    updated: int = 0
+    deleted: int = 0
+    failed: int = 0
+    unknown: int = 0
+    path: Optional[str] = None
+
+
 class SyncReport(PageResult):
     status: Literal["unchanged", "completed", "partial"]
     discovered: int = 0
@@ -179,6 +208,13 @@ class SyncReport(PageResult):
     failed: int = 0
     unknown: int = 0
     errors: Tuple[str, ...] = ()
+    # Site paths (e.g. "/guides/setup.md") of pages that failed to publish or delete
+    # in this run, first 20, so callers can name them; `failed` stays the full count.
+    failed_paths: Tuple[str, ...] = ()
+    # Listed pages that redirect to another page or host (aliases, not pages of this source).
+    # They are not failures and do not block pruning; `skipped_paths` names the first 20.
+    skipped: int = 0
+    skipped_paths: Tuple[str, ...] = ()
 
 
 def encoded_size(value: BaseModel) -> int:
