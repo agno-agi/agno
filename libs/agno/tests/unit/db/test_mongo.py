@@ -107,3 +107,15 @@ class TestSyncMongoLearnings:
                     raise AssertionError("expected RuntimeError")
                 except RuntimeError:
                     pass
+
+
+def test_text_filters_match_literal_text():
+    """session_name and search_content are user text, not regex patterns."""
+    db = _db()
+    coll = MagicMock()
+    with patch.object(db, "_get_collection", return_value=coll):
+        db.get_sessions(session_name="v1.2(draft", deserialize=False)
+        db.get_user_memories(search_content="v1.2(draft", deserialize=False)
+    sessions_query, memories_query = [c.args[0] for c in coll.count_documents.call_args_list]
+    assert sessions_query["session_data.session_name"] == {"$regex": r"v1\.2\(draft", "$options": "i"}
+    assert memories_query["memory"] == {"$regex": r"v1\.2\(draft", "$options": "i"}
