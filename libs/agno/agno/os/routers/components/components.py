@@ -512,7 +512,10 @@ def _resolve_member_links(
         member_type = member.get("type")
         if member_type == "agent":
             child_id = member.get("agent_id")
-            in_registry = bool(registry and child_id and registry.get_agent(child_id) is not None)
+            from agno.agents.base import BaseExternalAgent
+
+            registered = registry.get_agent(child_id) if registry and isinstance(child_id, str) else None
+            in_registry = registered is not None
         elif member_type == "team":
             child_id = member.get("team_id")
             in_registry = bool(registry and child_id and registry.get_team(child_id) is not None)
@@ -542,6 +545,9 @@ def _resolve_member_links(
             # A draft-only component (no current_version) still exists; leave it
             # to be resolved at load time rather than flagging it as unresolved.
             continue
+
+        if member_type == "agent" and isinstance(registered, BaseExternalAgent):
+            raise ValueError("External agents cannot be team members: " + child_id)
 
         # Not a DB component. If it is a code-defined component it will be
         # resolved from the registry at load time; otherwise it is unresolved.
@@ -807,6 +813,9 @@ def attach_routes(
                 problem = validate_component_id(component_id)
                 if problem is not None:
                     raise HTTPException(status_code=400, detail=problem)
+
+            if registry is not None and component_id in registry.excluded_component_ids:
+                raise HTTPException(status_code=409, detail="This component is excluded from the registry")
 
             # Prepare config - ensure it's a dict and resolve db reference
             config = body.config or {}

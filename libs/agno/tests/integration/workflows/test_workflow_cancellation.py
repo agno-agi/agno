@@ -7,10 +7,10 @@ import pytest
 
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run import RunContext
 from agno.run.agent import RunContentEvent
 from agno.run.base import RunStatus
 from agno.run.cancel import cancel_run
-from agno.run import RunContext
 from agno.run.workflow import StepProgressEvent, WorkflowCancelledEvent
 from agno.workflow import HumanReview, Step, Workflow
 from agno.workflow.condition import Condition

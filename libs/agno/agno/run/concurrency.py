@@ -169,19 +169,22 @@ class WorkerOwnership:
     worker_id: str
     attempt: int
     cancellation_cause: Optional[str] = None
+    session_serialized: bool = False
 
 
 _worker_managed_runs: Dict[str, WorkerOwnership] = {}
 
 
 @contextmanager
-def worker_managed_execution(run_id: str, worker_id: str, attempt: int) -> Iterator[WorkerOwnership]:
+def worker_managed_execution(
+    run_id: str, worker_id: str, attempt: int, *, session_serialized: bool = False
+) -> Iterator[WorkerOwnership]:
     """Register worker ownership for exactly the span of the with-block.
 
     Exception-safe by construction: early returns and pre-slot exceptions
     unwind through the finally, so a marker can never outlive the execution
     it described (the bare mark/unmark pair leaked on both)."""
-    ownership = WorkerOwnership(worker_id=worker_id, attempt=attempt)
+    ownership = WorkerOwnership(worker_id=worker_id, attempt=attempt, session_serialized=session_serialized)
     _worker_managed_runs[run_id] = ownership
     try:
         yield ownership
