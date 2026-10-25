@@ -17,6 +17,7 @@ from agno.models.google import Gemini
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat, OpenAIResponses
 from agno.run.base import RunStatus
+from agno.utils import log as agno_log
 
 
 class _Collect(logging.Handler):
@@ -29,8 +30,10 @@ class _Collect(logging.Handler):
 
 
 @pytest.fixture
-def logged():
+def logged(monkeypatch):
     """Agno's logger sets propagate=False, so caplog never sees these; attach a handler directly."""
+    # A Team test earlier in the worker can leave the active logger on agno-team.
+    monkeypatch.setattr(agno_log, "logger", agno_log.agent_logger)
     logger = logging.getLogger("agno")
     handler = _Collect()
     old_level = logger.level
