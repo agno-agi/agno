@@ -22,9 +22,7 @@ Agno is a self-improving platform for agents. Build agents. Run them as durable 
 
 ## Get started
 
-We recommend using our pre-built templates to bootstrap your agent platform and using coding agents to handle the setup and deployment.
-
-Give this prompt to your coding agent:
+We recommend using our pre-built templates to bootstrap your agent platform. Give this prompt to your coding agent:
 
 ```text
 Help me set up my agent platform.
@@ -45,9 +43,7 @@ Connect your platform to [os.agno.com](https://os.agno.com) to start using it.
 
 ## Deploy to your cloud
 
-Choose a template for your deployment:
-
-[Docker](https://github.com/agno-agi/agentos-docker) · [Railway](https://github.com/agno-agi/agentos-railway) · [AWS](https://github.com/agno-agi/agentos-aws) · [GCP](https://github.com/agno-agi/agentos-gcp) · [Azure](https://github.com/agno-agi/agentos-azure) · [Fly.io](https://github.com/agno-agi/agentos-fly) · [Render](https://github.com/agno-agi/agentos-render) · [Modal](https://github.com/agno-agi/agentos-modal) · [Helm](https://github.com/agno-agi/agentos-helm)
+Choose a template for your cloud: [Docker](https://github.com/agno-agi/agentos-docker) · [Railway](https://github.com/agno-agi/agentos-railway) · [AWS](https://github.com/agno-agi/agentos-aws) · [GCP](https://github.com/agno-agi/agentos-gcp) · [Azure](https://github.com/agno-agi/agentos-azure) · [Fly.io](https://github.com/agno-agi/agentos-fly) · [Render](https://github.com/agno-agi/agentos-render) · [Modal](https://github.com/agno-agi/agentos-modal) · [Helm](https://github.com/agno-agi/agentos-helm)
 
 ## What's included
 
