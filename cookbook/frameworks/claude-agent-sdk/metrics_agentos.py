@@ -35,12 +35,10 @@ db = SqliteDb(db_file="tmp/claude-agent-sdk-metrics.db")
 agent = ClaudeAgent(
     id=AGENT_ID,
     name="Claude Metrics",
-    model="claude-sonnet-4-6",
+    model="claude-sonnet-5-5",
     db=db,
     allowed_tools=["Bash"],
     permission_mode="bypassPermissions",
-    max_turns=4,
-    max_budget_usd=0.5,
 )
 agent_os = AgentOS(agents=[agent], db=db)
 app = agent_os.get_app()

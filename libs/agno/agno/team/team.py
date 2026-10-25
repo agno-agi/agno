@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -30,6 +30,7 @@ from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
+from agno.registry._reserved import RESERVED_MANAGER_IDS, _reserved_manager_id_message
 
 if TYPE_CHECKING:
     from agno.learn.machine import LearningMachine
@@ -460,6 +461,9 @@ class Team:
     _callable_tools_cache: Dict[str, List[Any]] = None  # type: ignore[assignment]
     _callable_knowledge_cache: Dict[str, Any] = None  # type: ignore[assignment]
     _callable_members_cache: Dict[str, List[Any]] = None  # type: ignore[assignment]
+
+    # Keep this team out of the registry while allowing it to run.
+    _registry_excluded: bool = field(default=False, init=False, repr=False, compare=False)
 
     def __init__(
         self,
@@ -1911,9 +1915,13 @@ def get_team_by_id(
         Team instance or None.
 
     Raises:
-        ComponentRehydrationError: If strict and a member or registry reference cannot be resolved.
+        ComponentRehydrationError: If the ID is reserved for OS Manager, or if strict
+            and a member or registry reference cannot be resolved.
     """
     from agno.exceptions import ComponentRehydrationError
+
+    if id in RESERVED_MANAGER_IDS:
+        raise ComponentRehydrationError(_reserved_manager_id_message(id))
 
     try:
         from agno.utils.component_scope import component_owner_scope
@@ -2002,6 +2010,7 @@ def get_teams(
     Returns:
         List of Team instances loaded from the database
     """
+    exclude_component_ids = set(exclude_component_ids or ()) | RESERVED_MANAGER_IDS
     teams: List[Team] = []
     try:
         from agno.utils.component_scope import component_owner_scope

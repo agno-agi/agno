@@ -42,12 +42,12 @@ async def main(stream: bool = False):
         )
         agent = ClaudeAgent(
             id="failed-run-demo",
-            model="claude-sonnet-4-6",
+            model="claude-sonnet-5-5",
             db=SqliteDb(db_file=str(workspace / "runs.db")),
             cwd=workdir,
             system_prompt=f"Your working directory is {workdir}. Follow the requested command exactly.",
             allowed_tools=["Bash"],
-            options_kwargs={"tools": ["Bash"]},
+            tools=["Bash"],
             permission_mode="bypassPermissions",
             max_turns=1,
             max_budget_usd=0.5,

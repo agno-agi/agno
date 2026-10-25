@@ -213,8 +213,7 @@ class Model(ABC):
         if isinstance(error, ContextWindowExceededError):
             return False
 
-        non_retryable_codes = {400, 401, 403, 404, 413, 422}
-        if error.status_code in non_retryable_codes:
+        if error.status_code in ModelProviderError.NON_RETRYABLE_STATUS_CODES:
             return False
 
         # Defense-in-depth: catch context window errors even if not pre-classified

@@ -1,11 +1,35 @@
+import asyncio
 import json
-from dataclasses import dataclass, field
+import os
+import warnings
+from contextlib import asynccontextmanager
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from importlib import import_module
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Set, Tuple
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, AsyncIterator, ClassVar, Dict, Iterator, List, Optional, Set, Tuple
 from uuid import uuid4
 
-from agno.agents.base import BaseExternalAgent, ExternalRunMetricsEvent, ExternalRunResult
-from agno.exceptions import RunCancelledException
+from agno.agents._config import agent_dataclass
+from agno.agents._media import (
+    accept_media,
+    cleanup_run_media,
+    media_prompt_block,
+    remember_uploads_root,
+    remove_upload_folder,
+    stage_media,
+    stage_prior_media,
+    uploads_root,
+)
+from agno.agents.base import (
+    BaseExternalAgent,
+    ExternalRunMetricsEvent,
+    ExternalRunResult,
+    ExternalRunStructuredOutputEvent,
+    run_coroutine_sync,
+)
+from agno.agents.codex.options import ThreadOptions, TurnOptions
+from agno.exceptions import RunCancelledException, SessionBusyError
 from agno.metrics import ModelMetrics, RunMetrics
 from agno.models.response import ToolExecution
 from agno.run.agent import (
@@ -15,6 +39,9 @@ from agno.run.agent import (
     ToolCallStartedEvent,
 )
 from agno.utils.log import log_debug, log_warning
+
+if TYPE_CHECKING:
+    from openai_codex import CodexConfig
 
 
 def _sdk() -> Any:
@@ -37,13 +64,43 @@ _SANDBOX_ALIASES: Dict[str, str] = {
     "danger_full_access": "full-access",
 }
 
+
 # thread_start-only options that thread_resume does not accept.
 _START_ONLY_KEYS = {"ephemeral", "service_name", "session_start_source", "thread_source"}
+
+# codexErrorInfo values that fail the same way on every attempt, or are limits a retry would bypass.
+_PERMANENT_TURN_ERRORS = {
+    "contextWindowExceeded",
+    "sessionBudgetExceeded",
+    "usageLimitExceeded",
+    "unauthorized",
+    "badRequest",
+    "cyberPolicy",
+    "misalignmentPolicyViolation",
+    "tooManyDenials",
+}
+# JSON-RPC codes for requests the app-server rejects as malformed.
+_PERMANENT_RPC_CODES = {-32700, -32600, -32601, -32602}
+
+
+class CodexTurnError(RuntimeError):
+    """A failed Codex turn, with the app-server's codexErrorInfo value when it sent a plain one."""
+
+    def __init__(self, message: str, codex_error_info: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.codex_error_info = codex_error_info
 
 
 def _item_root(item: Any) -> Any:
     """Unwrap a pydantic RootModel (ThreadItem) to the concrete item."""
     return getattr(item, "root", item)
+
+
+def _error_info(error: Any) -> Optional[str]:
+    """The plain codexErrorInfo value of a TurnError. Structured variants (connection failures) give None."""
+    info = _item_root(getattr(error, "codex_error_info", None))
+    value = getattr(info, "value", info)
+    return value if isinstance(value, str) else None
 
 
 def _coerce_args(raw: Any) -> Optional[Dict[str, Any]]:
@@ -81,8 +138,12 @@ class _StreamState:
     emitted_text: bool = False
     tool_info: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     error: Optional[str] = None
+    error_info: Optional[str] = None
     usage_first: Any = None
     usage_last: Any = None
+    # The turn's answer by the SDK's final_response rule, for output_schema parsing.
+    final_answer: Optional[str] = None
+    final_answer_phased: bool = False
 
 
 @dataclass
@@ -90,14 +151,14 @@ class _TurnOutcome:
     """What a non-streaming turn produced, collected from the app-server notifications."""
 
     status: Optional[str] = None
-    error: Optional[str] = None
+    error: Any = None
     items: List[Any] = field(default_factory=list)
     final_response: Optional[str] = None
     usage_first: Any = None
     usage_last: Any = None
 
 
-@dataclass
+@agent_dataclass
 class CodexAgent(BaseExternalAgent):
     """Adapter for OpenAI Codex via the official Codex Python SDK (openai-codex).
 
@@ -112,27 +173,48 @@ class CodexAgent(BaseExternalAgent):
     Args:
         name: Display name for this agent.
         id: Unique identifier (auto-generated from name if not set).
-        model: Codex model id (e.g. "gpt-5.6-luna"). Defaults to the Codex default.
+        model: Codex model id. Defaults to gpt-5.6-luna unless set in thread_options or turn_options.
         instructions: Developer instructions appended to the Codex system prompt.
         base_instructions: Replaces the Codex built-in system prompt entirely.
-        sandbox: "read-only", "workspace-write" or "full-access". Defaults to the Codex default.
+        sandbox_mode: "read-only", "workspace-write" or "full-access". Defaults to the Codex default.
         approval_mode: "auto_review" or "deny_all" for escalated permission requests.
         reasoning_effort: "minimal", "low", "medium", "high" or "xhigh".
         cwd: Working directory for the agent.
+        keep_uploads: Keep files attached to a run under cwd/.agno/uploads/<run_id>/ after the run.
         ephemeral: Do not persist Codex thread files. Ephemeral threads cannot be resumed.
-        output_schema: JSON Schema constraining the final answer. Content is the JSON string.
-        config: Codex config overrides applied to every thread (e.g. {"mcp_servers": {...}}).
+        output_schema: Pydantic model or JSON Schema for the final answer. The run content is the parsed
+            model (a dict for a JSON Schema). A model is made strict (no extra keys, every field required).
+        model_provider: Native Codex model provider name.
+        service_tier: Service tier used for threads and turns.
+        mcp_servers: Native MCP server configuration, replacing config["mcp_servers"].
+        config: Native thread config overrides; unrelated to client process configuration.
+        client_options: Native CodexConfig for the app-server process.
+        thread_options: Typed native thread settings. Named non-None settings take precedence.
+        turn_options: Typed native turn settings. Named non-None settings take precedence.
         codex_bin: Path to a specific Codex executable. Defaults to the bundled one.
-        env: Environment variables for the Codex process.
-        thread_kwargs: Extra kwargs forwarded to thread_start / thread_resume.
-        turn_kwargs: Extra kwargs forwarded to each turn.
+        env: Environment variables for the Codex process. OPENAI_API_KEY automatically
+            authenticates API-key sessions; existing non-API-key logins are preserved.
+        thread_kwargs: Deprecated alias for thread_options.
+        turn_kwargs: Deprecated alias for turn_options.
+        retries: Number of times to retry a failed run. Cancelled runs, budget and usage limits and errors
+            that would fail again (context window, authentication, bad requests, policy) are not retried.
+        delay_between_retries: Seconds to wait before each retry.
+        exponential_backoff: Double the delay after each failed attempt.
+        require_native_resume: Fail the run when the recorded native conversation cannot be resumed,
+            instead of starting a new one with the history pasted into the prompt.
+        strict_persistence: Fail the run when its row cannot be written, instead of logging the failure.
+        sandbox: Run the whole Codex process in a computer from this sandbox each turn,
+            such as DockerSandbox(image). Requires a PostgresDb on the agent or its AgentOS.
+
+    Input must be a string. Native SDK input objects (including images, skills and
+    external tool messages) are not supported by Agno's text history adapter.
 
     Example:
         from agno.agents.codex import CodexAgent
 
         agent = CodexAgent(
             name="Codex Coder",
-            sandbox="workspace-write",
+            sandbox_mode="workspace-write",
             cwd=".",
         )
 
@@ -144,61 +226,251 @@ class CodexAgent(BaseExternalAgent):
         AgentOS(agents=[agent])
     """
 
+    # Model and instructions
     model: Optional[str] = None
     instructions: Optional[str] = None
     base_instructions: Optional[str] = None
-    sandbox: Optional[str] = None
-    approval_mode: Optional[str] = None
+    model_provider: Optional[str] = None
     reasoning_effort: Optional[str] = None
+    service_tier: Optional[str] = None
+    # Native tools
+    mcp_servers: Optional[Dict[str, Any]] = None
+    # Workspace and settings
     cwd: Optional[str] = None
+    # Keep attachments staged under cwd/.agno/uploads/<run_id>/ after the run instead of deleting them.
+    keep_uploads: bool = False
+    sandbox_mode: Optional[str] = None
+    approval_mode: Optional[str] = None
     ephemeral: Optional[bool] = None
-    output_schema: Optional[Dict[str, Any]] = None
+    # Native runtime configuration
+    client_options: Optional["CodexConfig"] = None
+    thread_options: Optional[ThreadOptions] = None
+    turn_options: Optional[TurnOptions] = None
     config: Optional[Dict[str, Any]] = None
     codex_bin: Optional[str] = None
     env: Optional[Dict[str, str]] = None
     thread_kwargs: Dict[str, Any] = field(default_factory=dict)
     turn_kwargs: Dict[str, Any] = field(default_factory=dict)
-    framework: str = "codex"
 
-    # Key under which the Codex thread id is stored in the Agno session's session_data.
+    _supports_output_schema: ClassVar[bool] = True
+    _sdk_name: ClassVar[str] = "codex"
+    _sandbox_runtime: ClassVar[Optional[str]] = "codex"
+    # Key under which the Codex thread id is stored in the Agno session.
     _THREAD_KEY = "codex_thread_id"
 
     # Fallback Agno session_id -> Codex thread id map, used when no db is configured.
     _thread_ids: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
-    # ---------------------------------------------------------------------------
-    # Authentication helpers
-    # ---------------------------------------------------------------------------
+    def __post_init__(self) -> None:
+        legacy_mode: Any = self.sandbox
+        if isinstance(legacy_mode, str):
+            if self.sandbox_mode is not None:
+                raise ValueError("Use sandbox_mode, not both sandbox and sandbox_mode")
+            warnings.warn(
+                "CodexAgent(sandbox=<str>) is deprecated; use sandbox_mode. sandbox= now takes a Sandbox.",
+                DeprecationWarning,
+                stacklevel=4,
+            )
+            self.sandbox_mode, self.sandbox = legacy_mode, None
+        super().__post_init__()
+        self._validate_options()
+        if self._effective_model()[0] is None:
+            # Like a native model's default id: the default is what the thread runs and the run records.
+            self.model = "gpt-5.6-luna"
+        if self.require_native_resume and self._resolved_thread_options().get("ephemeral"):
+            raise ValueError("Native resume requires persistent Codex threads; ephemeral mode is incompatible")
+        for name in ("thread", "turn"):
+            if getattr(self, f"{name}_kwargs"):
+                warnings.warn(
+                    f"{name}_kwargs is deprecated; use {name}_options. Named settings take precedence.",
+                    DeprecationWarning,
+                    stacklevel=3,
+                )
+
+    def _validate_options(self) -> None:
+        for name, schema in (("thread", ThreadOptions), ("turn", TurnOptions)):
+            options = getattr(self, f"{name}_options")
+            legacy = getattr(self, f"{name}_kwargs")
+            if options is not None and legacy:
+                raise ValueError(f"Use {name}_options or {name}_kwargs, not both")
+            values = options if options is not None else legacy
+            unknown = set(values) - set(schema.__annotations__)
+            if unknown:
+                raise ValueError(f"Unknown {name} options: {', '.join(sorted(unknown))}")
+
+    @staticmethod
+    def _validate_input(input: Any) -> None:
+        if not isinstance(input, str):
+            raise TypeError(
+                "CodexAgent input must be a string. Native Codex input objects are not supported; "
+                "use the native SDK for images, skills or external tool messages."
+            )
+
+    def _refuse_host_operation(self, operation: str) -> None:
+        if self.sandbox is not None:
+            raise ValueError(
+                f"{operation} acts on this host, not the sandbox where Codex runs; "
+                "pass OPENAI_API_KEY in the sandbox's env instead"
+                if operation == "login_api_key"
+                else f"{operation} acts on this host, not the sandbox where the Codex thread lives"
+            )
 
     def login_api_key(self, api_key: str) -> None:
         """Store an API key in the Codex CLI auth so future runs are authenticated."""
+        self._refuse_host_operation("login_api_key")
         sdk = _sdk()
         with sdk.Codex(self._codex_config(sdk)) as codex:
             codex.login_api_key(api_key)
 
     async def alogin_api_key(self, api_key: str) -> None:
         """Async version of login_api_key."""
+        self._refuse_host_operation("login_api_key")
         sdk = _sdk()
         async with sdk.AsyncCodex(self._codex_config(sdk)) as codex:
             await codex.login_api_key(api_key)
+
+    # ---------------------------------------------------------------------------
+    # Context compaction
+    # ---------------------------------------------------------------------------
+
+    def compact(self, session_id: str, user_id: Optional[str] = None, timeout: float = 120.0) -> bool:
+        """Sync version of acompact."""
+        self._refuse_host_operation("compact")
+        return run_coroutine_sync(self.acompact(session_id, user_id=user_id, timeout=timeout))
+
+    async def acompact(self, session_id: str, user_id: Optional[str] = None, timeout: float = 120.0) -> bool:
+        """Compact the Codex thread behind an Agno session.
+
+        Codex keeps the conversation in its own thread. Compaction asks the app-server to
+        replace the older turns with a summary so later turns fit the context window; the
+        next run on the session continues from that summary. The thread, its rollout and the
+        summary stay on the machine running Codex.
+
+        Returns False when the session has no Codex thread, or its thread can no longer be
+        resumed (the stored id is then forgotten, as a run would). Waits until the thread is
+        idle again and raises TimeoutError if that takes longer than timeout seconds.
+
+        Compaction opens its own app-server on the thread, so it must not overlap a run on the
+        same session: two processes would append to one rollout. A run recorded as pending or
+        running for the session raises RuntimeError.
+        """
+        self._refuse_host_operation("acompact")
+        sdk = _sdk()
+        session = await self.aget_session(session_id, user_id)
+        thread_id = self._get_thread_id(session, session_id)
+        if not thread_id:
+            return False
+        self._check_no_run_in_flight(session, session_id)
+        async with self._new_client() as codex:
+            # Resume through the high-level client: it translates the adapter's options
+            # (sandbox names, approval mode, instructions) into the wire parameters that the
+            # low-level thread_resume would otherwise send verbatim.
+            try:
+                thread = await codex.thread_resume(thread_id, **self._thread_kwargs(sdk, resume=True))
+            except Exception as e:
+                if self.require_native_resume or not self._is_missing_thread(e):
+                    raise
+                log_warning(f"Codex: cannot compact thread {thread_id} for session {session_id}: {e}. Forgetting it.")
+                self._forget_thread(session, session_id)
+                if session is not None and self.db is not None:
+                    await self.aupsert_session(session)
+                return False
+            await thread.compact()
+            await self._await_thread_idle(self._app_server_client(codex), thread_id, timeout)
+        log_debug(f"Codex: compacted thread {thread_id} for session {session_id}")
+        return True
+
+    @classmethod
+    def _check_no_run_in_flight(cls, session: Any, session_id: str) -> None:
+        run = cls._run_in_flight(session)
+        if run is not None:
+            status = getattr(run.status, "value", run.status)
+            raise RuntimeError(
+                f"Cannot compact session {session_id}: run {run.run_id} is {status}. Wait for it to finish."
+            )
+
+    @staticmethod
+    def _app_server_client(codex: Any) -> Any:
+        """The low-level client behind an AsyncCodex, the only way to read the global
+        notification queue: the SDK has no public signal for when compaction finishes."""
+        client = getattr(codex, "_client", None)
+        if client is None or not hasattr(client, "next_notification"):
+            raise RuntimeError("This openai-codex version does not expose app-server notifications; cannot compact")
+        return client
+
+    @staticmethod
+    async def _await_thread_idle(client: Any, thread_id: str, timeout: float) -> None:
+        """Wait for the compaction to finish: the thread goes active, then idle again.
+
+        The app-server reports thread/compacted on a per-turn queue the caller never
+        registered, so the thread status notifications on the global queue are used instead.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        active = False
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError(f"Codex thread {thread_id} did not finish compacting within {timeout}s")
+            try:
+                notification = await asyncio.wait_for(client.next_notification(), timeout=remaining)
+            except asyncio.TimeoutError as e:
+                # asyncio.TimeoutError is only an alias of the builtin from Python 3.11.
+                raise TimeoutError(f"Codex thread {thread_id} did not finish compacting within {timeout}s") from e
+            method = getattr(notification, "method", "")
+            payload = getattr(notification, "payload", None)
+            if getattr(payload, "thread_id", thread_id) != thread_id:
+                continue
+            if method == "thread/compacted":
+                # Today the app-server routes this to a per-turn queue the caller never
+                # registered, so it is never seen here; kept in case that routing changes.
+                return
+            if method != "thread/status/changed":
+                continue
+            status = getattr(payload, "status", None)
+            kind = getattr(getattr(status, "root", status), "type", None)
+            if kind == "active":
+                active = True
+            elif kind == "idle" and active:
+                return
 
     # ---------------------------------------------------------------------------
     # SDK option builders
     # ---------------------------------------------------------------------------
 
     def _codex_config(self, sdk: Any) -> Any:
-        kwargs: Dict[str, Any] = {}
-        if self.codex_bin:
-            kwargs["codex_bin"] = self.codex_bin
-        if self.env:
-            kwargs["env"] = dict(self.env)
-        return sdk.CodexConfig(**kwargs)
+        if self.client_options is not None and not isinstance(self.client_options, sdk.CodexConfig):
+            raise TypeError("client_options must be an openai_codex.CodexConfig")
+        config = replace(self.client_options) if self.client_options is not None else sdk.CodexConfig()
+        if self.codex_bin is not None:
+            config.codex_bin = self.codex_bin
+        if self.env is not None:
+            config.env = dict(self.env)
+        elif config.env is not None:
+            config.env = dict(config.env)
+        return config
 
-    def _new_client(self) -> Any:
+    @asynccontextmanager
+    async def _new_client(self) -> AsyncIterator[Any]:
         """Create an AsyncCodex client. One app-server process per run keeps the
         client bound to the current event loop."""
         sdk = _sdk()
-        return sdk.AsyncCodex(self._codex_config(sdk))
+        config = self._codex_config(sdk)
+        api_key = (config.env or {}).get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
+        async with sdk.AsyncCodex(config) as codex:
+            if api_key:
+                # The app-server inherits the environment but requires an explicit login.
+                # Keep a user's ChatGPT or other non-API-key account, as sandbox runs do.
+                try:
+                    account = _item_root((await codex.account()).account)
+                    if account is None or account.type == "apiKey":
+                        await codex.login_api_key(api_key)
+                except Exception as error:
+                    message = str(error).replace(api_key, "[redacted]")[:500]
+                    # To preserve the original exception's traceback, build a new one from it.
+                    cause = RuntimeError(f"{type(error).__name__}: {message}").with_traceback(error.__traceback__)
+                    raise RuntimeError("Codex API-key authentication failed: " + message) from cause
+            yield codex
 
     @staticmethod
     def _to_sandbox(sdk: Any, value: str) -> Any:
@@ -225,39 +497,81 @@ class CodexAgent(BaseExternalAgent):
             types_module = import_module(f"{sdk.__name__}.types")
         return types_module.ReasoningEffort(value.lower())
 
-    def _thread_kwargs(self, sdk: Any, *, resume: bool) -> Dict[str, Any]:
-        """Build kwargs for thread_start (resume=False) or thread_resume (resume=True)."""
-        kwargs: Dict[str, Any] = {}
-        if self.model:
-            kwargs["model"] = self.model
-        if self.instructions:
-            kwargs["developer_instructions"] = self.instructions
-        if self.base_instructions:
-            kwargs["base_instructions"] = self.base_instructions
-        if self.sandbox:
-            kwargs["sandbox"] = self._to_sandbox(sdk, self.sandbox)
-        if self.approval_mode:
-            kwargs["approval_mode"] = self._to_approval_mode(sdk, self.approval_mode)
-        if self.cwd:
-            kwargs["cwd"] = self.cwd
-        if self.config:
-            kwargs["config"] = self.config
-        if self.ephemeral is not None and not resume:
-            kwargs["ephemeral"] = self.ephemeral
-        for key, value in self.thread_kwargs.items():
-            if resume and key in _START_ONLY_KEYS:
-                continue
-            kwargs[key] = value
-        return kwargs
+    def _resolved_thread_options(self) -> Dict[str, Any]:
+        self._validate_options()
+        options = dict(self.thread_options if self.thread_options is not None else self.thread_kwargs)
+        for key, value in {
+            "model": self.model,
+            "model_provider": self.model_provider,
+            "developer_instructions": self.instructions,
+            "base_instructions": self.base_instructions,
+            "sandbox": self.sandbox_mode,
+            "approval_mode": self.approval_mode,
+            "cwd": self.cwd,
+            "config": self.config,
+            "ephemeral": self.ephemeral,
+            "service_tier": self.service_tier,
+        }.items():
+            if value is not None:
+                options[key] = value
+        if options.get("config") is not None:
+            options["config"] = deepcopy(options["config"])
+        if self.mcp_servers is not None:
+            config = options.setdefault("config", {})
+            if config is None:
+                config = options["config"] = {}
+            config["mcp_servers"] = deepcopy(self.mcp_servers)
+        return options
 
-    def _turn_kwargs(self, sdk: Any) -> Dict[str, Any]:
-        kwargs: Dict[str, Any] = {}
-        if self.reasoning_effort:
-            kwargs["effort"] = self._to_reasoning_effort(sdk, self.reasoning_effort)
-        if self.output_schema:
-            kwargs["output_schema"] = self.output_schema
-        kwargs.update(self.turn_kwargs)
-        return kwargs
+    def _run_model(self) -> Tuple[Optional[str], Optional[str]]:
+        model, provider = self._effective_model()
+        # Codex's own provider ids, spelled as Agno names the same providers.
+        return model, {"openai": "OpenAI"}.get(provider.lower(), provider)
+
+    def _effective_model(self) -> Tuple[Optional[str], str]:
+        """The model and provider a turn runs on: the named setting, else the turn option,
+        else the thread option, as a turn's model overrides the thread's for that turn. Reads
+        the raw settings so a run that failed on invalid options can still be recorded."""
+        thread = self.thread_options if self.thread_options is not None else self.thread_kwargs
+        turn = self.turn_options if self.turn_options is not None else self.turn_kwargs
+        model = self.model or turn.get("model") or thread.get("model")
+        provider = self.model_provider or thread.get("model_provider") or "openai"
+        return (str(model) if model else None), str(provider)
+
+    def _thread_kwargs(self, sdk: Any, *, resume: bool) -> Dict[str, Any]:
+        """Build native options from the settings used for Agno session bookkeeping."""
+        excluded = _START_ONLY_KEYS if resume else {"include_turns"}
+        options = {k: v for k, v in self._resolved_thread_options().items() if v is not None and k not in excluded}
+        self._normalize_permissions(sdk, options)
+        return options
+
+    def _normalize_permissions(self, sdk: Any, options: Dict[str, Any]) -> None:
+        if "sandbox" in options:
+            options["sandbox"] = self._to_sandbox(sdk, options["sandbox"])
+        if "approval_mode" in options:
+            options["approval_mode"] = self._to_approval_mode(sdk, options["approval_mode"])
+
+    def _turn_kwargs(self, sdk: Any, output_schema: Optional[Any] = None) -> Dict[str, Any]:
+        self._validate_options()
+        options = dict(self.turn_options if self.turn_options is not None else self.turn_kwargs)
+        for key, value in {
+            "model": self.model,
+            "cwd": self.cwd,
+            "sandbox": self.sandbox_mode,
+            "approval_mode": self.approval_mode,
+            "service_tier": self.service_tier,
+            "effort": self.reasoning_effort,
+            "output_schema": output_schema if output_schema is not None else self.output_schema,
+        }.items():
+            if value is not None:
+                options[key] = value
+        options = {k: v for k, v in options.items() if v is not None}
+        self._normalize_permissions(sdk, options)
+        if "effort" in options:
+            options["effort"] = self._to_reasoning_effort(sdk, options["effort"])
+        if "output_schema" in options:
+            options["output_schema"] = deepcopy(self._output_json_schema(options["output_schema"], "openai"))
+        return options
 
     # ---------------------------------------------------------------------------
     # Session <-> Codex thread mapping
@@ -275,7 +589,7 @@ class CodexAgent(BaseExternalAgent):
     def _remember_thread(self, session: Any, session_id: Optional[str], thread_id: Optional[str]) -> None:
         """Stash the Codex thread id on the session (persisted by the base class)
         and in memory. Ephemeral threads are never resumable, so skip them."""
-        if not thread_id or self.ephemeral:
+        if not thread_id or self._resolved_thread_options().get("ephemeral"):
             return
         if session is not None:
             if session.session_data is None:
@@ -289,6 +603,11 @@ class CodexAgent(BaseExternalAgent):
             session.session_data.pop(self._THREAD_KEY, None)
         if session_id:
             self._thread_ids.pop(session_id, None)
+
+    @staticmethod
+    def _is_active_writer(error: Exception) -> bool:
+        """True when the app-server refuses a resume because a turn is running on the thread."""
+        return "already has an active writer" in str(getattr(error, "message", None) or error)
 
     @staticmethod
     def _is_missing_thread(error: Exception) -> bool:
@@ -310,14 +629,24 @@ class CodexAgent(BaseExternalAgent):
         transport, bad cwd) is raised as-is and keeps the stored thread id, so a
         transient problem cannot unlink the session from its conversation.
         """
+        if self._resolved_thread_options().get("ephemeral"):
+            self._forget_thread(session, session_id)
         thread_id = self._get_thread_id(session, session_id)
+        self._check_native_resume(thread_id, session)
         if thread_id:
             try:
                 thread = await codex.thread_resume(thread_id, **self._thread_kwargs(sdk, resume=True))
                 log_debug(f"Codex: resumed thread {thread_id} for session {session_id}")
                 return thread, True
             except Exception as e:
-                if not self._is_missing_thread(e):
+                if self._is_active_writer(e):
+                    # The app-server's own guard: another turn holds the thread. Same contract
+                    # as the base class's check, for a turn that slipped past it on another replica.
+                    raise SessionBusyError(
+                        f"Session {session_id} already has a turn in flight on Codex thread {thread_id}: {e}",
+                        session_id=session_id,
+                    ) from e
+                if self.require_native_resume or not self._is_missing_thread(e):
                     raise
                 log_warning(
                     f"Codex: could not resume thread {thread_id} for session {session_id}: {e}. Starting a new one."
@@ -333,11 +662,96 @@ class CodexAgent(BaseExternalAgent):
     # Adapter hooks
     # ---------------------------------------------------------------------------
 
+    def _media_workspace(self) -> Optional[str]:
+        """A named cwd wins; otherwise a turn cwd overrides the thread workspace."""
+        if self.cwd is not None:
+            return self.cwd
+        turn = self.turn_options if self.turn_options is not None else self.turn_kwargs
+        if turn.get("cwd") is not None:
+            return turn["cwd"]
+        return self._resolved_thread_options().get("cwd")
+
+    def _media_kwargs(self, **media: Any) -> Dict[str, Any]:
+        """Images go to Codex as native local-image inputs; files are written under
+        cwd/.agno/uploads/<run_id>/ and named in the prompt. Audio and video are rejected."""
+        return accept_media(media)
+
+    def _turn_input(self, sdk: Any, prompt: str, staged: Any, moved_note: str = "") -> Any:
+        """The turn input: plain text, or text plus native image items when media was attached."""
+        if not staged:
+            return f"{prompt}{moved_note}"
+        files = [item for item in staged if item.kind == "file"]
+        text = f"{prompt}{media_prompt_block(files)}{moved_note}" if files or moved_note else prompt
+        items: List[Any] = [sdk.TextInput(text=text)]
+        for item in staged:
+            if item.kind == "image" and item.path:
+                items.append(sdk.LocalImageInput(path=item.path))
+            elif item.kind == "image" and item.url:
+                items.append(sdk.ImageInput(url=item.url))
+        return items
+
     async def _arun_adapter(
         self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
     ) -> ExternalRunResult:
+        """Stage attachments for the run, execute, then remove them unless keep_uploads is set."""
+        workspace = self._media_workspace()
+        media = kwargs.pop("media", None)
+        run_id = kwargs.get("run_id") or str(uuid4())
+        kwargs["run_id"] = run_id
+        kwargs["staged_media"] = []
+        restaged: List[Path] = []
+        prepared = False
+        created_root = False
+        try:
+            if media:
+                created_root = not uploads_root(workspace, run_id).exists()
+                kwargs["staged_media"] = stage_media(workspace, run_id, media)
+            if kwargs["staged_media"]:
+                remember_uploads_root(kwargs.get("session"), workspace)
+            restaged, kwargs["moved_note"] = stage_prior_media(workspace, kwargs.get("session"), exclude_run_id=run_id)
+            prepared = True
+            return await self._arun_adapter_sdk(input, history=history, **kwargs)
+        finally:
+            if not self.keep_uploads or not prepared:
+                cleanup_run_media(workspace, run_id, kwargs["staged_media"], created_root)
+                for folder in restaged:
+                    remove_upload_folder(folder)
+
+    async def _arun_adapter_stream(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> AsyncIterator[RunOutputEvent]:
+        workspace = self._media_workspace()
+        media = kwargs.pop("media", None)
+        run_id = kwargs.get("run_id") or str(uuid4())
+        kwargs["run_id"] = run_id
+        kwargs["staged_media"] = []
+        restaged: List[Path] = []
+        prepared = False
+        created_root = False
+        try:
+            if media:
+                created_root = not uploads_root(workspace, run_id).exists()
+                kwargs["staged_media"] = stage_media(workspace, run_id, media)
+            if kwargs["staged_media"]:
+                remember_uploads_root(kwargs.get("session"), workspace)
+            restaged, kwargs["moved_note"] = stage_prior_media(workspace, kwargs.get("session"), exclude_run_id=run_id)
+            prepared = True
+            async for event in self._arun_adapter_stream_sdk(input, history=history, **kwargs):
+                yield event
+        finally:
+            if not self.keep_uploads or not prepared:
+                cleanup_run_media(workspace, run_id, kwargs["staged_media"], created_root)
+                for folder in restaged:
+                    remove_upload_folder(folder)
+
+    async def _arun_adapter_sdk(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> ExternalRunResult:
         """Non-streaming: run one turn and return the final answer."""
+        self._validate_input(input)
         sdk = _sdk()
+        self._thread_kwargs(sdk, resume=False)
+        turn_options = self._turn_kwargs(sdk, kwargs.get("output_schema"))
         session = kwargs.get("session")
         session_id = kwargs.get("session_id")
 
@@ -345,37 +759,37 @@ class CodexAgent(BaseExternalAgent):
             thread, resumed = await self._open_thread(codex, sdk, session, session_id)
             prompt = self._build_prompt(input, history, resumed)
             run_id = kwargs.get("run_id") or str(uuid4())
-            handle = await thread.turn(prompt, **self._turn_kwargs(sdk))
+            handle = await thread.turn(
+                self._turn_input(sdk, prompt, kwargs.get("staged_media"), kwargs.get("moved_note", "")), **turn_options
+            )
             self._set_run_handle(run_id, handle)
             try:
-                result = await self._acollect_turn(handle)
+                result = await self._acollect_turn(handle, kwargs.get("run_state"))
             finally:
                 self._clear_run_handle(run_id)
             if result.status == "interrupted":
                 raise RunCancelledException(run_id)
             if result.status == "failed":
-                raise RuntimeError(f"Codex turn failed: {result.error}")
+                # The tools that completed are already in run_state for the base class to keep.
+                raise CodexTurnError(
+                    f"Codex turn failed: {getattr(result.error, 'message', None) or result.error}",
+                    _error_info(result.error),
+                )
 
-        tools = []
-        for item in result.items:
-            item = _item_root(item)
-            tool = self._tool_from_item(item)
-            if tool is not None:
-                tool.result = self._tool_result_from_item(item)
-                tools.append(tool)
         return ExternalRunResult(
             self._final_text(result),
-            tools or None,
+            self._tools_from_items(result.items) or None,
             metrics=self._metrics_from_usage(result.usage_first, result.usage_last),
         )
 
-    @staticmethod
-    async def _acollect_turn(handle: Any) -> _TurnOutcome:
-        """Consume a turn's notification stream the way the SDK's run() does, keeping every
-        token usage update rather than only the last one.
+    async def _acollect_turn(self, handle: Any, run_state: Optional[Dict[str, Any]] = None) -> _TurnOutcome:
+        """Consume a turn's notification stream the way the SDK's run() does.
 
-        A turn with tool calls makes several model requests and the app-server reports usage
-        after each, so the first and last reports are both needed to size the whole turn.
+        Unlike run(), which returns items only once the turn ends, this records each tool call
+        in run_state["tools"] as it completes, so a transport error later in the turn still
+        leaves the work that was done for the base class to keep. It also keeps the first and
+        last token usage report: a turn with tool calls makes several model requests and the
+        app-server reports usage after each, so both are needed to size the whole turn.
         """
         outcome = _TurnOutcome()
         async for notification in handle.stream():
@@ -391,14 +805,19 @@ class CodexAgent(BaseExternalAgent):
                     outcome.usage_last = usage
             elif method == "item/completed":
                 item = getattr(payload, "item", None)
-                if item is not None:
-                    outcome.items.append(item)
+                if item is None:
+                    continue
+                outcome.items.append(item)
+                if run_state is not None:
+                    tool = self._tool_from_item(_item_root(item))
+                    if tool is not None:
+                        self._finish_tool(tool, _item_root(item))
+                        run_state.setdefault("tools", {})[tool.tool_call_id or str(uuid4())] = tool
             elif method == "turn/completed":
                 turn = getattr(payload, "turn", None)
                 status = getattr(turn, "status", None)
                 outcome.status = getattr(status, "value", status)
-                error = getattr(turn, "error", None)
-                outcome.error = getattr(error, "message", None) or (str(error) if error else None)
+                outcome.error = getattr(turn, "error", None)
                 break
         # The SDK's final_response rule: the final-answer phase message, else the last message
         # without a phase.
@@ -418,6 +837,23 @@ class CodexAgent(BaseExternalAgent):
             outcome.final_response = unphased
         return outcome
 
+    def _tools_from_items(self, items: List[Any]) -> List[ToolExecution]:
+        tools = []
+        for item in items:
+            item = _item_root(item)
+            tool = self._tool_from_item(item)
+            if tool is not None:
+                self._finish_tool(tool, item)
+                tools.append(tool)
+        return tools
+
+    @classmethod
+    def _finish_tool(cls, tool: ToolExecution, item: Any) -> ToolExecution:
+        """Fill in a completed item's result and failure flag on its ToolExecution."""
+        tool.result = cls._tool_result_from_item(item)
+        tool.tool_call_error = cls._tool_error_from_item(item)
+        return tool
+
     @staticmethod
     def _final_text(result: Any) -> str:
         final_response = getattr(result, "final_response", None)
@@ -430,7 +866,7 @@ class CodexAgent(BaseExternalAgent):
                 parts.append(str(root.text))
         return "\n\n".join(parts)
 
-    async def _arun_adapter_stream(
+    async def _arun_adapter_stream_sdk(
         self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
     ) -> AsyncIterator[RunOutputEvent]:
         """Streaming: translate Codex app-server notifications into Agno events.
@@ -440,7 +876,10 @@ class CodexAgent(BaseExternalAgent):
         item/started and item/completed notifications. turn/completed closes
         the stream and carries the failure status, if any.
         """
+        self._validate_input(input)
         sdk = _sdk()
+        self._thread_kwargs(sdk, resume=False)
+        turn_options = self._turn_kwargs(sdk, kwargs.get("output_schema"))
         run_id = kwargs.get("run_id", str(uuid4()))
         session = kwargs.get("session")
         session_id = kwargs.get("session_id")
@@ -449,7 +888,9 @@ class CodexAgent(BaseExternalAgent):
         async with self._new_client() as codex:
             thread, resumed = await self._open_thread(codex, sdk, session, session_id)
             prompt = self._build_prompt(input, history, resumed)
-            handle = await thread.turn(prompt, **self._turn_kwargs(sdk))
+            handle = await thread.turn(
+                self._turn_input(sdk, prompt, kwargs.get("staged_media"), kwargs.get("moved_note", "")), **turn_options
+            )
             self._set_run_handle(run_id, handle)
             try:
                 async for notification in handle.stream():
@@ -459,10 +900,15 @@ class CodexAgent(BaseExternalAgent):
                 self._clear_run_handle(run_id)
 
         if state.error:
-            raise RuntimeError(f"Codex turn failed: {state.error}")
+            raise CodexTurnError(f"Codex turn failed: {state.error}", state.error_info)
         metrics = self._metrics_from_usage(state.usage_first, state.usage_last)
         if metrics is not None:
             yield ExternalRunMetricsEvent(run_id=run_id, agent_id=self.get_id(), metrics=metrics)
+        if kwargs.get("output_schema") is not None and state.final_answer is not None:
+            # The streamed text joins commentary and the final answer; only the answer is the JSON.
+            yield ExternalRunStructuredOutputEvent(
+                run_id=run_id, agent_id=self.get_id(), structured_output=state.final_answer
+            )
 
     # Codex usage field -> Agno metrics field
     _USAGE_FIELDS = (
@@ -493,7 +939,8 @@ class CodexAgent(BaseExternalAgent):
         for codex_field, agno_field in self._USAGE_FIELDS:
             before_turn = int(getattr(first_total, codex_field, 0) or 0) - int(getattr(first_last, codex_field, 0) or 0)
             counts[agno_field] = max(0, int(getattr(final_total, codex_field, 0) or 0) - before_turn)
-        model = ModelMetrics(id=self.model or "codex", provider="openai", **counts)
+        model_id, provider = self._effective_model()
+        model = ModelMetrics(id=model_id or "", provider=provider, **counts)
         return self._build_metrics(model, [model])
 
     # ---------------------------------------------------------------------------
@@ -502,6 +949,18 @@ class CodexAgent(BaseExternalAgent):
 
     async def _ainterrupt_run(self, handle: Any) -> None:
         await handle.interrupt()
+
+    def _is_retryable_error(self, error: Exception) -> bool:
+        if not super()._is_retryable_error(error):
+            return False
+        if getattr(error, "codex_error_info", None) in _PERMANENT_TURN_ERRORS:
+            return False
+        rpc_error = getattr(_sdk(), "JsonRpcError", None)
+        return not (
+            rpc_error is not None
+            and isinstance(error, rpc_error)
+            and getattr(error, "code", None) in _PERMANENT_RPC_CODES
+        )
 
     def _content_event(self, run_id: str, content: str, reasoning: Optional[str] = None) -> RunContentEvent:
         return RunContentEvent(
@@ -561,6 +1020,12 @@ class CodexAgent(BaseExternalAgent):
             if getattr(item, "type", None) == "agentMessage":
                 item_id = getattr(item, "id", "") or ""
                 text = getattr(item, "text", "") or ""
+                phase = getattr(item, "phase", None)
+                phase = getattr(phase, "value", phase)
+                if phase == "final_answer":
+                    state.final_answer, state.final_answer_phased = text, True
+                elif phase is None and not state.final_answer_phased:
+                    state.final_answer = text
                 # Only emit the full text when no deltas were streamed for this item
                 if text and item_id not in state.text_item_ids:
                     if state.emitted_text:
@@ -583,7 +1048,7 @@ class CodexAgent(BaseExternalAgent):
                         tool_call_id=tool.tool_call_id, tool_name=tool.tool_name, tool_args=tool.tool_args
                     ),
                 )
-            tool.result = self._tool_result_from_item(item)
+            self._finish_tool(tool, item)
             yield ToolCallCompletedEvent(run_id=run_id, agent_id=self.get_id(), agent_name=self.name or "", tool=tool)
 
         elif method == "turn/completed":
@@ -593,6 +1058,7 @@ class CodexAgent(BaseExternalAgent):
             if status_value == "failed":
                 error = getattr(turn, "error", None)
                 state.error = getattr(error, "message", None) or "turn failed"
+                state.error_info = _error_info(error) or state.error_info
             elif status_value == "interrupted":
                 raise RunCancelledException(run_id)
 
@@ -603,6 +1069,7 @@ class CodexAgent(BaseExternalAgent):
                 log_debug(f"Codex: transient error, retrying: {message}")
             else:
                 state.error = message
+                state.error_info = _error_info(error) or state.error_info
 
     @staticmethod
     def _tool_from_item(item: Any) -> Optional[ToolExecution]:
@@ -649,6 +1116,24 @@ class CodexAgent(BaseExternalAgent):
             )
 
         return None
+
+    @staticmethod
+    def _tool_error_from_item(item: Any) -> bool:
+        """Whether a completed Codex item is a failed tool call.
+
+        Codex marks failure on the item's status (failed, declined) for every item kind. A
+        command that exited non-zero and an MCP call whose server reported an error are
+        failures too; an MCP server that returns its error as a text result (isError on the
+        MCP side) still arrives with status failed and error unset.
+        """
+        status = getattr(item, "status", None)
+        if getattr(status, "value", status) in ("failed", "declined"):
+            return True
+        if getattr(item, "type", None) == "commandExecution":
+            return getattr(item, "exit_code", None) not in (None, 0)
+        if getattr(item, "type", None) in ("mcpToolCall", "dynamicToolCall"):
+            return getattr(item, "error", None) is not None
+        return False
 
     @staticmethod
     def _tool_result_from_item(item: Any) -> str:

@@ -36,13 +36,11 @@ def main():
     with tempfile.TemporaryDirectory(prefix="agno-metrics-") as workdir:
         agent = ClaudeAgent(
             id="metrics-demo",
-            model="claude-sonnet-4-6",
+            model="claude-sonnet-5-5",
             db=SqliteDb(db_file=str(Path(workdir) / "runs.db")),
             cwd=workdir,
             allowed_tools=["Bash"],
             permission_mode="bypassPermissions",
-            max_turns=4,
-            max_budget_usd=0.5,
         )
 
         # 1. A plain turn.

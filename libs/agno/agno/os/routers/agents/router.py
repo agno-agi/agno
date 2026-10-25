@@ -42,15 +42,21 @@ from agno.os.auth import (
 from agno.os.checkpoints import build_run_checkpoint_snapshot, list_run_checkpoints
 from agno.os.event_streams import get_event_stream
 from agno.os.job_queue import (
+    _new_queued_run_id,
+    aattach_waiting_on,
     acontinue_via_queue,
+    aenqueue_ticket,
     aprepare_accepted_or_abort,
     araise_if_ticket_owns_continue,
     aticket_poll_fallback,
+    component_is_queueable,
     ensure_duplicate_matches_component,
     normalize_idempotency_key,
     payload_is_queueable,
+    resolve_queue_scope,
     ticket_status_to_api,
     validate_seam_input,
+    wake_queue_worker,
 )
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
@@ -67,6 +73,7 @@ from agno.os.middleware.user_scope import (
 )
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.schema import (
+    AgentSummaryResponse,
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
@@ -80,10 +87,12 @@ from agno.os.utils import (
     allow_draft_preview,
     amark_continue_stream_running,
     classify_upload_file,
+    factory_row_handle,
     find_factory_by_id,
     format_sse_event,
     get_agent_by_id,
     get_request_kwargs,
+    is_form_field_omitted,
     parse_files_metadata,
     process_audio,
     process_document,
@@ -152,11 +161,16 @@ async def agent_response_streamer(
         async for run_response_chunk in run_response:  # type: ignore[union-attr]
             yield format_sse_event(run_response_chunk)  # type: ignore
     except (InputCheckError, OutputCheckError) as e:
+        # Carry the run identity so clients can attach the error to the message they sent.
         error_response = RunErrorEvent(
             content=str(e),
             error_type=e.type,
             error_id=e.error_id,
             additional_data=e.additional_data,
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
         )
         yield format_sse_event(error_response)
     except asyncio.CancelledError:
@@ -167,6 +181,12 @@ async def agent_response_streamer(
         traceback.print_exc(limit=3)
         error_response = RunErrorEvent(
             content=str(e),
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
+            error_type=getattr(e, "type", None),
+            error_id=getattr(e, "error_id", None),
         )
         yield format_sse_event(error_response)
 
@@ -237,11 +257,16 @@ async def agent_resumable_response_streamer(
                     )
                 yield format_sse_event(sse_data)
     except (InputCheckError, OutputCheckError) as e:
+        # Carry the run identity so clients can attach the error to the message they sent.
         error_response = RunErrorEvent(
             content=str(e),
             error_type=e.type,
             error_id=e.error_id,
             additional_data=e.additional_data,
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
         )
         yield format_sse_event(error_response)
     except asyncio.CancelledError:
@@ -252,6 +277,12 @@ async def agent_resumable_response_streamer(
         traceback.print_exc(limit=3)
         error_response = RunErrorEvent(
             content=str(e),
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
+            error_type=getattr(e, "type", None),
+            error_id=getattr(e, "error_id", None),
         )
         yield format_sse_event(error_response)
 
@@ -348,11 +379,16 @@ async def agent_continue_response_streamer(
                     final_status=RunStatus.cancelled if _cancelled else None,
                 )
     except (InputCheckError, OutputCheckError) as e:
+        # Carry the run identity so clients can attach the error to the message they sent.
         error_response = RunErrorEvent(
             content=str(e),
             error_type=e.type,
             error_id=e.error_id,
             additional_data=e.additional_data,
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
         )
         yield format_sse_event(error_response)
 
@@ -426,11 +462,16 @@ async def agent_resumable_continue_response_streamer(
         ):
             yield sse_data
     except (InputCheckError, OutputCheckError) as e:
+        # Carry the run identity so clients can attach the error to the message they sent.
         error_response = RunErrorEvent(
             content=str(e),
             error_type=e.type,
             error_id=e.error_id,
             additional_data=e.additional_data,
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
         )
         yield format_sse_event(error_response)
     except asyncio.CancelledError:
@@ -441,6 +482,12 @@ async def agent_resumable_continue_response_streamer(
         traceback.print_exc(limit=3)
         error_response = RunErrorEvent(
             content=str(e),
+            run_id=kwargs.get("run_id"),
+            session_id=session_id,
+            agent_id=getattr(agent, "id", None) or "",
+            agent_name=getattr(agent, "name", None) or "",
+            error_type=getattr(e, "type", None),
+            error_id=getattr(e, "error_id", None),
         )
         yield format_sse_event(error_response)
 
@@ -486,16 +533,9 @@ async def _resume_stream_generator(
                     yield frame
                 return
             elif run_output:
-                meta = {
-                    "event": "replay",
-                    "run_id": run_id,
-                    "status": run_output.status.value
-                    if hasattr(run_output.status, "value")
-                    else (run_output.status or "unknown"),
-                    "total_events": 0,
-                    "message": "Run completed but no events stored.",
-                }
-                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
+                from agno.os.utils import no_stored_events_replay_meta
+
+                yield f"event: replay\ndata: {json.dumps(no_stored_events_replay_meta(run_output, run_id))}\n\n"
                 return
 
         # Run not found anywhere
@@ -689,6 +729,8 @@ def get_agent_router(
         ),
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
+        if await is_form_field_omitted(request, "stream"):
+            stream = True
 
         files_metadata_list = parse_files_metadata(files_metadata)
 
@@ -831,6 +873,27 @@ def get_agent_router(
         # Extract auth token for remote agents
         auth_token = get_auth_token_from_request(request)
 
+        from agno.agents.base import BaseExternalAgent
+
+        if isinstance(agent, BaseExternalAgent) and agent.sandbox is not None:
+            from agno.os.routers.agents.sandbox import sandbox_run_response
+
+            return await sandbox_run_response(
+                agent,
+                getattr(request.app.state, "queue_worker", None),
+                request,
+                input=message,
+                session_id=session_id,
+                user_id=user_id,
+                kwargs=kwargs,
+                stream=stream,
+                background=background,
+                version=version,
+                images=base64_images,
+                files=input_files,
+                unsupported_media=bool(base64_audios or base64_videos),
+            )
+
         # Background execution
         if background:
             if isinstance(agent, RemoteAgent):
@@ -857,12 +920,8 @@ def get_agent_router(
                     queue_worker is not None
                     and getattr(agent, "db", None) is not None
                     and payload_is_queueable(queued_stream_payload)
-                    and version is None
                     and not (base64_images or base64_audios or base64_videos or input_files)
-                    and any(
-                        getattr(candidate, "id", None) == agent_id and not isinstance(candidate, AgentFactory)
-                        for candidate in (os.agents or [])
-                    )
+                    and component_is_queueable(agent, agent_id, os.agents, os.db)
                 )
                 if stream_queueable:
                     # 202/stream-accept must honor input_schema like the inline path (400)
@@ -871,8 +930,19 @@ def get_agent_router(
                     from agno.os.event_streams import get_event_stream as _ges
                     from agno.run.base import RunStatus as _RS
 
-                    queued_run_id = str(uuid4())
+                    queued_run_id = _new_queued_run_id()
                     queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
+                    queued_stream_payload["scope"] = resolve_queue_scope(
+                        agent_id,
+                        os.agents,
+                        os.db,
+                        scoped_user_id,
+                        version,
+                        state=request.state,
+                        context_user_id=user_id,
+                        session_id=queued_session_id,
+                        factory_input=factory_input,
+                    )
                     job = QueuedJob(
                         id=queued_run_id,
                         component_type="agent",
@@ -884,9 +954,7 @@ def get_agent_router(
                         deployment_id=queue_worker.config.deployment_id,
                         idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
                     ).to_dict()
-                    enqueue_result = await queue_worker.store.enqueue_job(
-                        job, max_depth=queue_worker.config.max_queue_depth
-                    )
+                    enqueue_result = await aenqueue_ticket(queue_worker, job, agent)
                     if enqueue_result["reason"] == "queue_full":
                         raise HTTPException(status_code=429, detail="Job queue is full")
                     if enqueue_result["reason"] == "duplicate":
@@ -896,7 +964,7 @@ def get_agent_router(
                                 status_code=409,
                                 detail="Idempotency-Key was already used but the original run could not be retrieved",
                             )
-                        ensure_duplicate_matches_component(existing, "agent", job["component_id"])
+                        ensure_duplicate_matches_component(existing, "agent", job["component_id"], version=version)
                         if not (existing.get("payload") or {}).get("stream"):
                             # The key was used by a NON-stream submission: its
                             # run never registers in the event stream, so a
@@ -933,11 +1001,12 @@ def get_agent_router(
                     await aprepare_accepted_or_abort(
                         queue_worker, agent, "agent", queued_run_id, queued_session_id, user_id, message
                     )
+                    wake_queue_worker(queue_worker)
                     return StreamingResponse(queued_run_tail_streamer(queued_run_id), media_type="text/event-stream")
                 if queue_worker is not None:
                     log_warning(
                         "Streaming background run bypasses the durable queue (remote/factory/"
-                        "version-pinned/media submissions are not queueable): bounded and "
+                        "media submissions are not queueable): bounded and "
                         "observable, but NOT durable."
                     )
                 # background=True, stream=True: resumable SSE streaming
@@ -967,19 +1036,15 @@ def get_agent_router(
             # replica's worker claims the job executes it, surviving crashes
             # and deploys. Client contract identical: 202 + poll.
             queue_worker = getattr(request.app.state, "queue_worker", None)
-            # Queueable only if the agent is a plain registry instance: the
-            # worker resolves from the registry, so factory-backed or
-            # off-registry (db-resolved / version-pinned) components would be
-            # accepted here and then fail or run differently in the worker.
-            agent_is_queueable = any(
-                getattr(candidate, "id", None) == agent_id and not isinstance(candidate, AgentFactory)
-                for candidate in (os.agents or [])
-            )
+            # Queueable when the worker can re-resolve the agent at claim
+            # time: a plain registry instance, or a db-backed (components API
+            # / version-pinned) agent replayed from the scope on the ticket.
+            # Factory-backed agents need request context and never queue.
+            agent_is_queueable = component_is_queueable(agent, agent_id, os.agents, os.db)
             queued_payload = {"input": message, "kwargs": kwargs}
             if (
                 queue_worker is not None
                 and agent_is_queueable
-                and version is None  # version-pinned resolution differs from the worker's registry instance
                 and payload_is_queueable(queued_payload)
                 # Media cannot ride the queue payload yet: fall back to the
                 # bounded in-process path (parity with the stream seam) rather
@@ -988,8 +1053,19 @@ def get_agent_router(
             ):
                 # 202 must honor input_schema exactly like the inline path (400)
                 validate_seam_input(agent, message)
-                queued_run_id = str(uuid4())
+                queued_run_id = _new_queued_run_id()
                 queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
+                queued_payload["scope"] = resolve_queue_scope(
+                    agent_id,
+                    os.agents,
+                    os.db,
+                    scoped_user_id,
+                    version,
+                    state=request.state,
+                    context_user_id=user_id,
+                    session_id=queued_session_id,
+                    factory_input=factory_input,
+                )
                 job = QueuedJob(
                     id=queued_run_id,
                     component_type="agent",
@@ -1005,14 +1081,12 @@ def get_agent_router(
                 # Enqueue FIRST: the committed queue row is the acceptance.
                 # Rejected or duplicate submissions must leave no phantom
                 # PENDING run behind in the session.
-                enqueue_result = await queue_worker.store.enqueue_job(
-                    job, max_depth=queue_worker.config.max_queue_depth
-                )
+                enqueue_result = await aenqueue_ticket(queue_worker, job, agent)
                 if enqueue_result["reason"] == "queue_full":
                     raise HTTPException(status_code=429, detail="Job queue is full")
                 if enqueue_result["reason"] == "duplicate" and enqueue_result["job"] is not None:
                     existing = enqueue_result["job"]
-                    ensure_duplicate_matches_component(existing, "agent", job["component_id"])
+                    ensure_duplicate_matches_component(existing, "agent", job["component_id"], version=version)
                     return JSONResponse(
                         status_code=202,
                         content={
@@ -1037,6 +1111,7 @@ def get_agent_router(
                 await aprepare_accepted_or_abort(
                     queue_worker, agent, "agent", queued_run_id, queued_session_id, user_id, message
                 )
+                wake_queue_worker(queue_worker)
                 return JSONResponse(
                     status_code=202,
                     content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
@@ -1057,15 +1132,14 @@ def get_agent_router(
                         "Executing on the accepting replica instead - bounded and observable, but NOT durable."
                     )
                 else:
-                    # Off-registry, factory-backed, or version-pinned: the
-                    # worker resolves from the registry, so these cannot ride
-                    # the queue - previously this dropped to the non-durable
-                    # path with no log line at all.
+                    # Remote or factory-backed: the worker cannot re-resolve
+                    # these at claim time (no request context), so they
+                    # cannot ride the queue - previously this dropped to the
+                    # non-durable path with no log line at all.
                     log_warning(
-                        "Background run bypasses the durable queue: the agent is not a plain "
-                        "registry instance (remote, factory-backed, db-resolved, or version-pinned "
-                        "resolution differs from the worker's registry instance). Executing on the "
-                        "accepting replica instead - bounded and observable, but NOT durable."
+                        "Background run bypasses the durable queue: the agent cannot be re-resolved "
+                        "by the queue worker (remote or factory-backed agents need request context). "
+                        "Executing on the accepting replica instead - bounded and observable, but NOT durable."
                     )
 
             # Same input-error contract as the inline path: schema violations
@@ -1382,6 +1456,10 @@ def get_agent_router(
         ),
     ):
         kwargs = await get_request_kwargs(request, continue_agent_run)
+        if await is_form_field_omitted(request, "stream"):
+            stream = True
+        if await is_form_field_omitted(request, "replace_original"):
+            replace_original = None
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -1560,10 +1638,7 @@ def get_agent_router(
                 "continue_from": continue_from_value,
                 "kwargs": kwargs,
             }
-            agent_is_queueable = any(
-                getattr(candidate, "id", None) == agent_id and not isinstance(candidate, AgentFactory)
-                for candidate in (os.agents or [])
-            )
+            agent_is_queueable = component_is_queueable(agent, agent_id, os.agents, os.db)
             if (
                 queue_worker is not None
                 and not isinstance(agent, RemoteAgent)
@@ -2034,7 +2109,8 @@ def get_agent_router(
                             description=getattr(agent, "description", None),
                             db_id=agent_db.id if agent_db else None,
                             sessions=sessions,
-                            metadata={"framework": getattr(agent, "framework", "external")},
+                            metadata=AgentSummaryResponse.from_agent(agent).metadata or {"sdk": "external"},
+                            sandboxed=AgentSummaryResponse.from_agent(agent).sandboxed,
                         )
                     )
 
@@ -2137,7 +2213,8 @@ def get_agent_router(
                 id=agent.id,
                 name=agent.name,
                 description=getattr(agent, "description", None),
-                metadata={"framework": getattr(agent, "framework", "external")},
+                metadata=AgentSummaryResponse.from_agent(agent).metadata or {"sdk": "external"},
+                sandboxed=AgentSummaryResponse.from_agent(agent).sandboxed,
             )
 
     @router.get(
@@ -2164,13 +2241,7 @@ def get_agent_router(
         # Factory agents: resolve to get a real agent for session lookup
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
-            agent = await resolve_agent(  # type: ignore[assignment]
-                agent_id,
-                os.agents,
-                factory.db,
-                session_id=session_id,
-                published_only=False,
-            )
+            agent = factory_row_handle(factory)  # type: ignore[assignment]
         else:
             try:
                 agent = get_agent_by_id(
@@ -2242,7 +2313,7 @@ def get_agent_router(
         if not run_matches_component(run_output, "agents", agent_id):
             raise HTTPException(status_code=404, detail="Run not found")
 
-        return run_output.to_dict()
+        return await aattach_waiting_on(getattr(request.app.state, "queue_worker", None), run_id, run_output.to_dict())
 
     @router.get(
         "/agents/{agent_id}/runs/{run_id}/checkpoints",
@@ -2268,13 +2339,7 @@ def get_agent_router(
     ):
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
-            agent = await resolve_agent(  # type: ignore[assignment]
-                agent_id,
-                os.agents,
-                factory.db,
-                session_id=session_id,
-                published_only=False,
-            )
+            agent = factory_row_handle(factory)  # type: ignore[assignment]
         else:
             try:
                 agent = get_agent_by_id(
@@ -2339,13 +2404,7 @@ def get_agent_router(
     ):
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
-            agent = await resolve_agent(  # type: ignore[assignment]
-                agent_id,
-                os.agents,
-                factory.db,
-                session_id=session_id,
-                published_only=False,
-            )
+            agent = factory_row_handle(factory)  # type: ignore[assignment]
         else:
             try:
                 agent = get_agent_by_id(
@@ -2397,6 +2456,10 @@ def get_agent_router(
             "1. **Run still active**: Sends catch-up events + continues live streaming\n"
             "2. **Run completed (in buffer)**: Replays missed buffered events\n"
             "3. **Run completed (in database)**: Replays events from database\n\n"
+            "A run submitted with `stream=false`, inline or with `background=true`, has no event stream: "
+            "nothing is published while it runs and no events are stored with it. For such a run this "
+            "endpoint sends one `replay` frame with `total_events: 0` and its current status; poll the "
+            "run endpoint for the result instead.\n\n"
             "**Client usage:**\n"
             "Track `event_index` from each SSE event. On reconnection, pass the last "
             "received `event_index` as `last_event_index`."
@@ -2528,13 +2591,7 @@ def get_agent_router(
         # Factory agents: resolve to get a real agent for session lookup
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
-            agent = await resolve_agent(  # type: ignore[assignment]
-                agent_id,
-                os.agents,
-                factory.db,
-                session_id=session_id,
-                published_only=False,
-            )
+            agent = factory_row_handle(factory)  # type: ignore[assignment]
         else:
             try:
                 agent = get_agent_by_id(

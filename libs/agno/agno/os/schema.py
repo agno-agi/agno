@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar, Union
@@ -12,6 +13,7 @@ from agno.db.base import SessionType
 from agno.db.utils import detect_session_type
 from agno.os.config import (
     ChatConfig,
+    CompanySectionConfig,
     EvalsConfig,
     KnowledgeConfig,
     LearningConfig,
@@ -256,6 +258,15 @@ def _extract_filesystem(filesystem: Any, agent: Any, user_id: Optional[str] = No
     )
 
 
+def _builtin_component_metadata(component: Any) -> Optional[Dict[str, Any]]:
+    """Expose framework identity without publishing arbitrary metadata in summaries."""
+    from agno.registry._reserved import is_framework_owned
+
+    if is_framework_owned(component):
+        return {"_agno": {"internal": True, "id": component.id}}
+    return None
+
+
 class AgentSummaryResponse(BaseModel):
     id: Optional[str] = Field(None, description="Unique identifier for the agent")
     name: Optional[str] = Field(None, description="Name of the agent")
@@ -263,12 +274,19 @@ class AgentSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
     model: Optional[Model] = Field(None, description="Model used by the agent")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    sandboxed: bool = False
 
     @classmethod
     def from_agent(cls, agent: Union[Agent, AgentProtocol, RemoteAgent, AgentFactory]) -> "AgentSummaryResponse":
+        from agno.agents.base import BaseExternalAgent
+
         agent_db = getattr(agent, "db", None)
-        framework = getattr(agent, "framework", None)
-        metadata = {"framework": framework} if framework else None
+        # Built-in adapters expose sdk. The framework fallback is only for third-party adapters that
+        # satisfy AgentProtocol structurally and predate the rename; drop it with the framework alias.
+        sdk = getattr(agent, "sdk", None) or getattr(agent, "framework", None)
+        metadata = _builtin_component_metadata(agent)
+        if sdk:
+            metadata = {**(metadata or {}), "sdk": sdk}
         if isinstance(agent, AgentFactory):
             return cls(
                 id=agent.id,
@@ -284,6 +302,7 @@ class AgentSummaryResponse(BaseModel):
             db_id=agent_db.id if agent_db else None,
             model=_extract_model(agent),
             metadata=metadata,
+            sandboxed=isinstance(agent, BaseExternalAgent) and agent.sandbox is not None,
         )
 
 
@@ -294,6 +313,9 @@ class TeamSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
     mode: Optional[str] = Field(None, description="Team execution mode (coordinate, route, broadcast, tasks)")
     model: Optional[Model] = Field(None, description="Model used by the team leader")
+
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Framework component metadata")
+    sandboxed: bool = False
 
     @classmethod
     def from_team(cls, team: Union[Team, RemoteTeam, TeamFactory]) -> "TeamSummaryResponse":
@@ -314,6 +336,7 @@ class TeamSummaryResponse(BaseModel):
             db_id=db_id,
             mode=mode,
             model=_extract_model(team),
+            metadata=_builtin_component_metadata(team),
         )
 
 
@@ -327,6 +350,7 @@ class WorkflowSummaryResponse(BaseModel):
     is_component: bool = Field(False, description="Whether this workflow was created via Builder")
     current_version: Optional[int] = Field(None, description="Current published version number")
     stage: Optional[str] = Field(None, description="Stage of the loaded config (draft/published)")
+    sandboxed: bool = False
 
     @classmethod
     def from_workflow(
@@ -378,6 +402,15 @@ class McpInfo(BaseModel):
     oauth: Optional[McpOAuthInfo] = Field(
         None, description="OAuth discovery details when the MCP endpoint is OAuth-protected, null otherwise"
     )
+    tool_run_endpoint: bool = Field(
+        False,
+        description=(
+            "Whether this deployment serves the plain-HTTP tool runner at "
+            "`{path}/server/tools/{tool_name}/run`. False both when the MCP server is off and "
+            "when it is on with `MCPConfig(tool_run_endpoint=False)`, so a client can tell upfront "
+            "whether running a tool is possible instead of discovering it on the call."
+        ),
+    )
 
 
 class InfoResponse(BaseModel):
@@ -410,6 +443,36 @@ class InfoResponse(BaseModel):
     )
 
 
+class QueueCapabilities(BaseModel):
+    """Deployment-level background-run capabilities: what a client may rely on
+    when deciding whether to render queue-aware UI (e.g. a chat tray).
+
+    Reported as EFFECTIVE behavior, not raw settings: queue_per_session is
+    true only when a durable queue actually enforces the per-session gate -
+    a queue_per_session flag without durable=True, or with a custom store
+    that does not serialize sessions, gates nothing and is reported false. Readable by any authenticated caller (deployment
+    capability, not operator data - the admin-scoped /queue surface stays
+    the only view of actual jobs).
+
+    Both fields describe submissions the durable queue can carry. A
+    background submission the queue cannot carry (media uploads, payloads
+    plain JSON cannot store, factory-backed or off-registry components)
+    executes in-process on the accepting replica, outside the gate and
+    without durability, and the server logs each such bypass; the client
+    still receives 202 PENDING. A caller that sends those knows it is
+    sending them; the capability does not change per submission."""
+
+    durable: bool = Field(
+        ...,
+        description="Accepted background runs survive crashes and deploys (ticketed queue with a worker)",
+    )
+    queue_per_session: bool = Field(
+        ...,
+        description="Same-session background submissions execute at most one at a time, FIFO by submission; "
+        "false when no durable queue enforces the gate",
+    )
+
+
 class ConfigResponse(BaseModel):
     """Response schema for the general config endpoint"""
 
@@ -432,15 +495,26 @@ class ConfigResponse(BaseModel):
     metrics: Optional[MetricsConfig] = Field(None, description="Metrics configuration")
     memory: Optional[MemoryConfig] = Field(None, description="Memory configuration")
     learning: Optional[LearningConfig] = Field(None, description="Learning configuration")
+    company: Optional[CompanySectionConfig] = Field(None, description="Company configuration")
     filesystem: Optional[FileSystemConfig] = Field(None, description="Filesystem configuration")
     knowledge: Optional[KnowledgeConfig] = Field(None, description="Knowledge configuration")
     evals: Optional[EvalsConfig] = Field(None, description="Evaluations configuration")
     traces: Optional[TracesConfig] = Field(None, description="Traces configuration")
+    # Optional for CLIENT compatibility (the SDK parses this same schema, and
+    # older servers omit the field); the server always populates it.
+    queue: Optional[QueueCapabilities] = Field(None, description="Background-run queue capabilities")
 
     agents: List[AgentSummaryResponse] = Field(..., description="List of registered agents")
     teams: List[TeamSummaryResponse] = Field(..., description="List of registered teams")
     workflows: List[WorkflowSummaryResponse] = Field(..., description="List of registered workflows")
     interfaces: List[InterfaceResponse] = Field(..., description="List of available interfaces")
+
+    @model_serializer(mode="wrap")
+    def _serialize_config(self, handler: SerializerFunctionWrapHandler) -> Dict[str, Any]:
+        data = handler(self)
+        # Clients use an explicit null to hide Company when it is not configured.
+        data.setdefault("company", None)
+        return data
 
 
 class ModelResponse(BaseModel):
@@ -453,6 +527,17 @@ class WorkflowRunRequest(BaseModel):
     input: Dict[str, Any] = Field(..., description="Input parameters for the workflow run")
     user_id: Optional[str] = Field(None, description="User identifier for the workflow run")
     session_id: Optional[str] = Field(None, description="Session identifier for context persistence")
+
+
+def _agent_metadata(
+    metadata: Optional[Dict[str, Any]], agent_data: Optional[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    """Expose the persisted adapter identity without changing stored user metadata.
+    A malformed agent_data (not a mapping) means no label rather than a failed read."""
+    sdk = (agent_data.get("sdk") or agent_data.get("framework")) if isinstance(agent_data, dict) else None
+    if isinstance(sdk, str) and sdk:
+        return {**(metadata or {}), "sdk": sdk}
+    return dict(metadata) if metadata is not None else None
 
 
 class SessionSchema(BaseModel):
@@ -508,7 +593,9 @@ class SessionSchema(BaseModel):
             session_summary=summary,
             metrics=metrics,
             total_tokens=total_tokens,
-            metadata=session.get("metadata"),
+            metadata=_agent_metadata(session.get("metadata"), session.get("agent_data"))
+            if session_type_str == SessionType.AGENT.value
+            else session.get("metadata"),
         )
 
 
@@ -575,7 +662,7 @@ class AgentSessionDetailSchema(BaseModel):
             if session.session_data
             else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,  # type: ignore
-            metadata=session.metadata,
+            metadata=_agent_metadata(session.metadata, session.agent_data),
             chat_history=[message.to_dict() for message in session.get_chat_history()],
             created_at=to_utc_datetime(created_at),
             updated_at=to_utc_datetime(updated_at),
@@ -680,6 +767,7 @@ class RunSchema(BaseModel):
     reasoning_content: Optional[str] = Field(None, description="Reasoning content if reasoning was enabled")
     reasoning_steps: Optional[List[dict]] = Field(None, description="List of reasoning steps")
     metrics: Optional[dict] = Field(None, description="Performance and usage metrics")
+    metadata: Optional[dict] = Field(None, description="Run metadata, including sdk for external agent sessions")
     messages: Optional[List[dict]] = Field(None, description="Message history for the run")
     tools: Optional[List[dict]] = Field(None, description="Tools used in the run")
     events: Optional[List[dict]] = Field(None, description="Events generated during the run")
@@ -717,9 +805,17 @@ class RunSchema(BaseModel):
     )
 
     @classmethod
-    def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
+    def from_dict(cls, run_dict: Dict[str, Any], *, session: Optional[Dict[str, Any]] = None) -> "RunSchema":
         run_input = get_run_input(run_dict)
         run_response_format = "text" if run_dict.get("content_type", "str") == "str" else "json"
+        agent_data = None
+        # Member/step runs must not inherit another agent's session identity.
+        if (
+            session is not None
+            and detect_session_type(session) == SessionType.AGENT.value
+            and run_dict.get("agent_id") in (None, session.get("agent_id"))
+        ):
+            agent_data = session.get("agent_data")
 
         return cls(
             run_id=run_dict.get("run_id", ""),
@@ -734,6 +830,7 @@ class RunSchema(BaseModel):
             reasoning_content=run_dict.get("reasoning_content", ""),
             reasoning_steps=run_dict.get("reasoning_steps", []),
             metrics=run_dict.get("metrics", {}),
+            metadata=_agent_metadata(run_dict.get("metadata"), agent_data),
             messages=[message for message in run_dict.get("messages", [])] if run_dict.get("messages") else None,
             tools=[tool for tool in run_dict.get("tools", [])] if run_dict.get("tools") else None,
             events=[event for event in run_dict["events"]] if run_dict.get("events") else None,
@@ -757,10 +854,57 @@ class RunSchema(BaseModel):
         )
 
 
+_RUN_PREVIEW_CHARS = 280
+
+
+class SessionRunPreviewSchema(BaseModel):
+    """Lightweight session-run listing entry: the shape a queue tray or
+    session sidebar polls for. Deliberately excludes messages, events, media,
+    metrics and step results - the full shapes stay on the default listing
+    and the single-run endpoint. Previews are truncated to 280 characters."""
+
+    run_id: str = Field(..., description="Unique identifier for the run")
+    parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
+    agent_id: Optional[str] = Field(None, description="Agent ID, when this is an agent run")
+    team_id: Optional[str] = Field(None, description="Team ID, when this is a team run")
+    workflow_id: Optional[str] = Field(None, description="Workflow ID, when this is a workflow run")
+    user_id: Optional[str] = Field(None, description="User ID associated with the run")
+    status: Optional[str] = Field(
+        None, description="Run status (PENDING, RUNNING, PAUSED, COMPLETED, CANCELLED, ERROR, REGENERATED)"
+    )
+    run_input: Optional[str] = Field(None, description="Input preview, truncated")
+    content_preview: Optional[str] = Field(None, description="Output content preview, truncated")
+    created_at: Optional[datetime] = Field(None, description="Run creation timestamp")
+
+    @classmethod
+    def _preview(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        # Structured output (output_schema) previews as JSON, matching the full listing's content.
+        text = value if isinstance(value, str) else json.dumps(value, default=str)
+        return text[:_RUN_PREVIEW_CHARS]
+
+    @classmethod
+    def from_run(cls, run: Any) -> "SessionRunPreviewSchema":
+        return cls(
+            run_id=run.run_id,
+            parent_run_id=getattr(run, "parent_run_id", None),
+            agent_id=getattr(run, "agent_id", None),
+            team_id=getattr(run, "team_id", None),
+            workflow_id=getattr(run, "workflow_id", None),
+            user_id=getattr(run, "user_id", None),
+            status=getattr(run, "status", None),
+            run_input=cls._preview(getattr(run, "run_input", None)),
+            content_preview=cls._preview(getattr(run, "content", None)),
+            created_at=getattr(run, "created_at", None),
+        )
+
+
 class TeamRunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the team run")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     team_id: Optional[str] = Field(None, description="Team ID that executed this run")
+    user_id: Optional[str] = Field(None, description="User ID associated with the run")
     status: Optional[str] = Field(None, description="Run status (PENDING, RUNNING, COMPLETED, ERROR, etc.)")
     cancellation_stage: Optional[str] = Field(None, description=CANCELLATION_STAGE_DESCRIPTION)
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the team run")
@@ -813,6 +957,7 @@ class TeamRunSchema(BaseModel):
             run_id=run_dict.get("run_id", ""),
             parent_run_id=run_dict.get("parent_run_id", ""),
             team_id=run_dict.get("team_id", ""),
+            user_id=run_dict.get("user_id"),
             status=run_dict.get("status"),
             cancellation_stage=run_dict.get("cancellation_stage"),
             run_input=run_input,
@@ -1200,3 +1345,4 @@ class RegistryContentResponse(BaseModel):
     id: Optional[str] = None
     description: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    sandboxed: bool = False

@@ -17,9 +17,31 @@ SCHEDULE_OWNER_HEADER: str = "X-Schedule-Owner"
 # (see ``is_reserved_principal``) and it may not own a schedule.
 INTERNAL_SCHEDULER_USER_ID: str = "__scheduler__"
 
+# Reserved runtime schedule: public management must not stop Company pickup.
+COMPANY_AUTOMATION_SCHEDULE_ID = "agno-company-automation"
+
+
+def _require_mutable_schedule(schedule_id: str) -> None:
+    if schedule_id == COMPANY_AUTOMATION_SCHEDULE_ID:
+        raise ValueError("Company automation is a runtime-managed schedule and cannot be modified")
+
+
 # Matches a run endpoint and captures resource type + ID. ``\Z`` rather than ``$`` so a trailing
 # newline can't slip past the run-endpoint check.
 RUN_ENDPOINT_RE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs/?\Z")
+
+
+def _schedule_endpoint_targets(managed_by: Optional[str], endpoint: str) -> Dict[str, Optional[str]]:
+    """Derive editable targets while preserving control-plane target ownership."""
+    target = RUN_ENDPOINT_RE.fullmatch(endpoint)
+    if target is None and managed_by == "company":
+        raise ValueError("Routine executor must be a run endpoint")
+    if managed_by not in (None, "company"):
+        return {}
+    return {
+        "target_type": target.group(1).rstrip("s") if target else None,
+        "target_id": target.group(2) if target else None,
+    }
 
 
 def build_run_endpoint(target_type: str, target_id: str) -> str:
@@ -132,7 +154,15 @@ SCHEDULE_MUTABLE_COLUMNS = frozenset(
 
 def validate_schedule_update(kwargs: dict) -> None:
     """Refuse update_schedule writes outside the mutable column set."""
-    rejected = sorted(set(kwargs) - SCHEDULE_MUTABLE_COLUMNS)
+    allowed = set(SCHEDULE_MUTABLE_COLUMNS)
+    # Target columns may accompany an endpoint edit only when they exactly match
+    # that endpoint. Standalone provenance writes still use the dedicated API.
+    if "endpoint" in kwargs:
+        target = RUN_ENDPOINT_RE.fullmatch(kwargs["endpoint"])
+        expected = (target.group(1).rstrip("s"), target.group(2)) if target else (None, None)
+        if {"target_type", "target_id"} <= kwargs.keys() and (kwargs["target_type"], kwargs["target_id"]) == expected:
+            allowed.update({"target_type", "target_id"})
+    rejected = sorted(set(kwargs) - allowed)
     if rejected:
         raise ValueError(
             f"update_schedule cannot modify {rejected}: only {sorted(SCHEDULE_MUTABLE_COLUMNS)} are mutable; "

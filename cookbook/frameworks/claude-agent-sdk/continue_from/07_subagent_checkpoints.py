@@ -22,7 +22,7 @@ from agno.db.sqlite import SqliteDb
 from agno.os.checkpoints import list_run_checkpoints
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
-from claude_agent_sdk import AgentDefinition
+from claude_agent_sdk import AgentDefinition, ClaudeAgentOptions
 
 SESSION_ID = "subagent-checkpoints"
 
@@ -35,17 +35,15 @@ async def main():
         )
         agent = ClaudeAgent(
             id="subagent-checkpoint-demo",
-            model="claude-sonnet-4-6",
+            model="claude-sonnet-5-5",
             db=SqliteDb(db_file=str(workspace / "runs.db")),
             cwd=workdir,
             system_prompt=f"Your working directory is {workdir}. Delegate CSV analysis to sales-analyst.",
             allowed_tools=["Agent", "Bash"],
             permission_mode="bypassPermissions",
-            max_turns=6,
-            max_budget_usd=1,
-            options_kwargs={
-                "tools": ["Agent", "Bash"],
-                "agents": {
+            tools=["Agent", "Bash"],
+            options=ClaudeAgentOptions(
+                agents={
                     "sales-analyst": AgentDefinition(
                         description="Computes sales totals from CSV files.",
                         prompt=f"Your working directory is {workdir}. Use Bash to read sales.csv "
@@ -54,7 +52,7 @@ async def main():
                         model="sonnet",
                     )
                 },
-            },
+            ),
         )
         run = None
         async for event in agent.arun(

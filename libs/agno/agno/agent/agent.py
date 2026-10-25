@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -41,6 +41,7 @@ from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
+from agno.registry._reserved import RESERVED_MANAGER_IDS, _reserved_manager_id_message
 
 if TYPE_CHECKING:
     from agno.compaction.types import CompactionResult
@@ -58,6 +59,7 @@ from agno.models.message import Message
 
 if TYPE_CHECKING:
     from agno.offload.store import ResultStore
+    from agno.sandbox import Sandbox
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
@@ -404,6 +406,9 @@ class Agent:
     # Custom cache key function for knowledge callable factory
     callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None
 
+    # Keep this agent out of the registry while allowing it to run.
+    _registry_excluded: bool = field(default=False, init=False, repr=False, compare=False)
+
     def __init__(
         self,
         *,
@@ -516,7 +521,13 @@ class Agent:
         cache_callables: bool = True,
         callable_tools_cache_key: Optional[Callable[..., Optional[str]]] = None,
         callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None,
+        sandbox: Optional["Sandbox"] = None,
     ):
+        if sandbox is not None:
+            raise NotImplementedError(
+                "Agent(sandbox=...) is not supported yet. Use ClaudeAgent(sandbox=...) or "
+                "CodexAgent(sandbox=...) to run a coding harness inside a sandbox."
+            )
         self.model = model  # type: ignore[assignment]
         if fallback_config is not None:
             if fallback_models:
@@ -1875,10 +1886,14 @@ def get_agent_by_id(
         Agent instance or None.
 
     Raises:
-        ComponentRehydrationError: If strict and a registry reference cannot be resolved.
+        ComponentRehydrationError: If the ID is reserved for OS Manager, or if strict
+            and a registry reference cannot be resolved.
     """
     from agno.exceptions import ComponentRehydrationError
     from agno.utils.log import log_error
+
+    if id in RESERVED_MANAGER_IDS:
+        raise ComponentRehydrationError(_reserved_manager_id_message(id))
 
     try:
         # Only resolve the agent if owned by this user, unowned (shared), or published.
@@ -1954,6 +1969,7 @@ def get_agents(
     """
     from agno.utils.log import log_error
 
+    exclude_component_ids = set(exclude_component_ids or ()) | RESERVED_MANAGER_IDS
     agents: List[Agent] = []
     try:
         # The DB default page is one small page and the catalog can exceed it

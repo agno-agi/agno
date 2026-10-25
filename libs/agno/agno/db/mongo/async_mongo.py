@@ -3324,21 +3324,48 @@ class AsyncMongoDb(AsyncBaseDb):
             log_debug(f"Error claiming schedule: {e}")
             return None
 
-    async def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+    async def release_schedule(
+        self,
+        schedule_id: str,
+        next_run_at: Optional[int] = None,
+        *,
+        worker_id: Optional[str] = None,
+        locked_at: Optional[int] = None,
+    ) -> bool:
         try:
             collection = await self._get_collection(table_type="schedules")
             if collection is None:
                 return False
 
             updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
-            if next_run_at is not None:
-                updates["next_run_at"] = next_run_at
+            updates["next_run_at"] = {
+                "$cond": [
+                    {"$eq": ["$cron_expr", ""]},
+                    None,
+                    next_run_at if next_run_at is not None else "$next_run_at",
+                ]
+            }
 
-            result = await collection.update_one({"id": schedule_id}, {"$set": updates})
+            query: Dict[str, Any] = {"id": schedule_id}
+            if worker_id is not None:
+                query["locked_by"] = worker_id
+            if locked_at is not None:
+                query["locked_at"] = locked_at
+            result = await collection.update_one(query, [{"$set": updates}])
             return result.matched_count > 0
         except Exception as e:
             log_debug(f"Error releasing schedule: {e}")
             return False
+
+    async def delete_schedule_runs(self, schedule_id: str, *, before: int) -> int:
+        """Expire only completed history for the selected schedule."""
+        collection = await self._get_collection(table_type="schedule_runs")
+        if collection is None:
+            return 0
+        result = await collection.delete_many(
+            {"schedule_id": schedule_id, "completed_at": {"$lt": before, "$ne": None}}
+        )
+        return result.deleted_count
 
     async def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -3385,6 +3412,25 @@ class AsyncMongoDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error getting schedule run: {e}")
             return None
+
+    async def get_latest_schedule_runs(self, schedule_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Fetch the latest run for every requested schedule in one aggregation."""
+        if not schedule_ids:
+            return {}
+        collection = await self._get_collection(table_type="schedule_runs")
+        if collection is None:
+            return {}
+        pipeline: List[Dict[str, Any]] = [
+            {"$match": {"schedule_id": {"$in": schedule_ids}}},
+            {"$sort": {"schedule_id": 1, "triggered_at": -1, "created_at": -1, "id": -1}},
+            {"$group": {"_id": "$schedule_id", "run": {"$first": "$$ROOT"}}},
+        ]
+        latest = {}
+        for group in await self._aggregate_to_list(collection, pipeline):
+            run = group["run"]
+            run.pop("_id", None)
+            latest[group["_id"]] = run
+        return latest
 
     async def get_schedule_runs(
         self,

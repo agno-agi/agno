@@ -1,6 +1,43 @@
-# Test log
+# Claude cookbook test log
+
+All examples now live in this directory. Earlier entries retain the paths and
+filenames used at the time of each run. See the final section for validation
+of the consolidated paths.
+
+## Earlier framework examples
+
 
 ## 2026-10-10
+
+### structured_output_tools.py (2026-10-11)
+
+**Status:** PASS (claude-sonnet-4-6)
+
+**Description:** `output_schema=DiskUsage` with a Bash call (`du -sh .`), non-streamed and streamed, then a `RootModel[List[str]]` schema.
+
+**Result:** Both runs returned a `DiskUsage` with `content_type` DiskUsage. `run.tools` held only `Bash`, the stored history held only the `du` result, and the streamed tool events were `['Bash']`: the `StructuredOutput` delivery call is not recorded. The list-rooted schema was refused with `ValueError` before the run.
+
+---
+
+### structured_output.py (review follow-ups, 2026-10-11)
+
+**Status:** PASS (claude-sonnet-4-6)
+
+**Description:** Review of the output_schema change. Live: a model schema with a Bash call, non-streamed and streamed; a stored run read back; a `RootModel[List[str]]` and an array JSON Schema; AgentOS `output_schema` form field non-streamed, streamed, with `use_json_schema`, the run view, and a background run; then the cookbook rerun after the fixes.
+
+**Result:** Found and fixed: (1) Claude Code's `StructuredOutput` delivery call was recorded as a tool call (`run.tools` held Bash plus StructuredOutput with the acknowledgement as its result, the stream emitted a `ToolCallStarted` for it, and the stored history carried `tool result: Structured output provided successfully`); it is now dropped on both paths and the object still comes from the result message. (2) An array-rooted schema made the whole run fail with the API's `400 tools.N.custom.input_schema.type: Input should be 'object'`; it is now refused with `ValueError` before the run on both harnesses. AgentOS: `content_type` DynamicModel with the parsed dict on every path, `dict` with `use_json_schema`. Cookbook reran unchanged after the fixes.
+
+---
+
+### structured_output.py
+
+**Status:** PASS
+
+**Description:** `output_schema=ProjectSummary` (nested Pydantic list) with Read and Glob tools: a non-streaming run, a streaming run, then a per-run JSON Schema dict overriding the agent's model.
+
+**Result:** Non-streaming content was a `ProjectSummary` with three files, `content_type` "ProjectSummary". The streaming `RunCompleted` event carried a `ProjectSummary`. The per-run schema returned `{'python_files': 13}` with `content_type` "dict" (13 is correct). Also checked through AgentOS: `POST /agents/claude/runs` with an `output_schema` form field returned `content_type` "Capital" and `{'city': 'Paris'}`.
+
+---
 
 ### metrics_agentos.py --verify
 
@@ -23,6 +60,26 @@
 ---
 
 ## 2026-10-09
+
+### compaction.py (transcript read API)
+
+**Status:** PASS
+
+**Description:** Reran after replacing the cookbook's raw SQL on `agno_transcripts` with `db.get_transcript_entries(framework, project_key, session_id)`, keyed by the Claude session id stored on the Agno session.
+
+**Result:** 29 rows before `/compact`, 39 after; the `compact_boundary` and summary entries were found at positions 33 and 34; replica B recalled the fact.
+
+---
+
+### compaction.py
+
+**Status:** PASS
+
+**Description:** Seeds a fact, adds three turns including a 1200-line filler document, sends `/compact` as the run input with a `PreCompact` hook registered through `options_kwargs`, prints the transcript rows the compaction produced, then resumes the session from a second agent instance with a different working directory.
+
+**Result:** 35 transcript rows before, 45 after. The hook fired with trigger `manual`. Rows 39 and 40 were the `compact_boundary` system entry and the `isCompactSummary` user entry. Replica B resumed from the database alone and answered `tangerine-walrus-88` from the summary. A conversation of one turn returns "Not enough messages to compact", which is why the cookbook adds turns first.
+
+---
 
 ### continue_from.py (finished runs always fork)
 
@@ -131,7 +188,6 @@
 
 ---
 
-
 ### Transcript mirror failure regression (2026-10-08)
 
 **Status:** PASS
@@ -167,6 +223,306 @@ checks; the earlier live provider cancellation runs were not repeated.
 
 **Result:** Process A replied `OK`; process B, with its Agno run deleted, replied `cobalt orchard 742`. The PostgreSQL contract test (PostgresDb and AsyncPostgresDb) passed against PostgreSQL 14.
 
+
+## Refreshed starting examples
+
+
+Latest configuration/API validation is recorded at the end; the original run below used the earlier model.
+
+**Date:** 2026-10-09 (Europe/London)
+
+**Source:** main `ff9b86d5be5245bd349e55c459bce45ba3d3cc21` plus this PR's cookbook/test changes, run from an isolated worktree before commit. The imported Agno path was the worktree's `libs/agno/agno/__init__.py`, not a released wheel or the user's checkout.
+
+**Environment:** Python 3.12.8; editable Agno 3.1.2; SQLAlchemy 2.0.52; pytest 9.1.1. Fresh worktree development venv. Existing local CLI authentication; no credential values read or printed.
+
+**Harness:** claude-agent-sdk 0.2.165; Claude Code 2.1.294; model claude-sonnet-4-6.
+
+**Command:** `AGNO_TEST_CLAUDE_SDK=1 AGNO_TEST_CODEX_SDK=1 .venv/bin/python -m pytest libs/agno/tests/integration/agents/test_harness_cookbooks.py -q -o addopts=''`. Both providers together: 8 passed in 70.07 seconds; none skipped; no retries.
+
+### basic.py
+
+**Status:** PASS
+
+**Description:** Real one-shot Agno wrapper run with the inclusive shipping-threshold prompt.
+
+**Result:** Returned zero-dollar shipping and a COMPLETED RunOutput. A separate run with an invalid model exited 1 at the terminal-status assertion. A provider failure cannot silently pass this example.
+
+---
+
+### native_sdk.py
+
+**Status:** PASS
+
+**Description:** Same prompt/model using the native SDK directly.
+
+**Result:** Returned zero-dollar shipping, a native Claude session ID and successful terminal status. This is a one-shot API comparison, not a timing benchmark or native-resume test.
+
+---
+
+### tools.py
+
+**Status:** PASS
+
+**Description:** Real streamed review of shipping.py and orders.json through the Agno wrapper.
+
+**Result:** Text deltas and tool start/end events appeared; returned tool data contained the fixture's subtotal and boundary values. The answer correctly explained fees 8, 0, 0. The final RunOutput completed with successful tool data. Fixture file hashes stayed unchanged.
+
+---
+
+### agent_os.py
+
+**Status:** PASS
+
+**Description:** Started this exact server script on a loopback port with a temporary SQLite directory. Exercised health, agent discovery, one non-streaming tool run and one SSE tool run in independent sessions. Retrieved both runs through GET /agents/{id}/runs/{run_id}?session_id=... .
+
+**Result:** Both runs were COMPLETED and retained two Read results each. The SSE response contained 146 events in this run, including RunStarted, RunContent, ToolCallStarted, ToolCallCompleted and RunCompleted. IDs were consistent; no RunError/RunCancelled appeared. Both answers correctly explained the boundary. Fixture hashes were unchanged. Event counts vary and are not acceptance thresholds.
+
+---
+
+## Limits
+
+**Clean-install follow-up:** This provider's four cases also passed in the
+minimal README environment: agno[os,sqlite], the pinned SDKs, pytest and
+pytest-asyncio, with SQLAlchemy 2.1.4. Both providers together: 8 passed in
+74.15 seconds. The first collection attempt exposed a missing pytest-asyncio
+setup instruction; it was corrected before rerunning. See the root test log.
+
+No browser disconnect, server restart, native transcript recovery, production authorization, queue retry, compaction, approval, subagent or sandbox-replacement claim is made by these tests. API access was real loopback HTTP, not an in-process ASGI mock. The SQLite result checks are separate from native conversation durability. Older tests in cookbook/frameworks retain their historical scope.
+
+
+## Claude configuration update — 2026-10-09
+
+**Source:** `codex/harness-cookbooks` in `/Users/ab/code/agno`, based on
+`d36a67ebe4` plus the configuration changes in this PR. Main's merged setup
+changes (#10920) are included. This follow-up ran in the user's normal checkout.
+
+### Native model identifier
+
+**Status:** FAIL
+
+**Description:** First attempted the requested `sonnet-5-5` literal using the
+native SDK example, before testing the wrapper.
+
+**Result:** The SDK returned `unrecognized_model` and exited 1. No automatic
+retry was performed. The user supplied the full ID `claude-sonnet-5-5`; all four
+examples now use that literal without a model environment override.
+
+---
+
+### Full-ID standalone and AgentOS acceptance
+
+**Status:** PASS
+
+**Description:** With `claude-sonnet-5-5`, ran the native/basic/tools scripts and
+real AgentOS HTTP/SSE/persisted-result checks. Added a fifth Claude test that
+reuses the native example's `ClaudeAgentOptions` directly in `ClaudeAgent`.
+
+**Result:** The initial four Claude cases passed in 28.25s in `.venv`.
+The expanded combined Claude/Codex suite passed all nine cases in 70.28s in
+`.venvs/claude-dx-validation`, with no skips or retries. Claude HTTP results
+contained two Read results each and correct fees of 8, 0, 0. Fixture hashes
+were unchanged. After giving the new native-options test an explicit async
+120-second timeout, that final test passed again in 2.88s. The input options
+object retained its original resume, streaming and tool configuration.
+
+**Environment:** Python 3.12.8; editable Agno 3.1.2 from this checkout;
+claude-agent-sdk 0.2.165; bundled Claude Code 2.1.294. Clean validation used
+SQLAlchemy 2.0.52, pytest 9.1.1 and pytest-asyncio 1.4.0. Existing local CLI
+credentials were used; no credential values were logged.
+
+---
+
+### Configuration and session regressions
+
+**Status:** PASS
+
+**Description:** Tested typed options, named overrides including empty/false
+values, independent configuration containers, callback/service identity,
+legacy deprecation and precedence, conflicting session/stream settings,
+transcript-store injection, checkpoint exclusions and SDK-optional imports.
+Exercised typed options through sync and async runs, streaming and non-streaming,
+including a second run that resumes the native session.
+
+**Result:** 192 external-agent unit tests passed. The final focused Claude
+configuration/session suite passed all 45 cases. Native skills/plugins option
+forwarding is covered by configuration tests; real skill/plugin execution was
+not tested. The earlier durability and deployment limits still apply.
+
+
+## Shared adapter API update — 2026-10-09
+
+### basic.py, native_sdk.py, tools.py and agent_os.py
+
+**Status:** PASS
+
+**Description:** Reran the combined opt-in live suite after switching basic.py
+to the shared failure-aware printer and making adapter constructors keyword-only.
+
+**Result:** All nine Claude/Codex cases passed in 61.99s, including the four
+Claude script/HTTP cases. The full run also checks native Claude options.
+Model and SDK versions are unchanged from the preceding entry. Runs used the
+normal checkout at `924d4ceb90` plus the API update. Fixture integrity and stored
+tool output checks passed. Full evidence and limits are in the
+[root test log](../TEST_LOG.md#shared-adapter-dx-for-32--2026-10-09).
+
+The shared regression suite passed 265 cases, including both sync/async printers
+for success, error and cancellation, keyword-only signatures, unsupported media
+rejection, SDK metadata compatibility and public typing.
+
+
+### Live failed-run printing
+
+**Status:** PASS
+
+**Description:** Loaded each basic example without its main block, changed the
+model only in memory to `invalid-harness-cookbook-model`, and invoked the printer.
+
+**Result:** Both native providers rejected the request. Each wrapper displayed
+`Run failed` and `Status: ERROR`, raised `AgentRunException`, and exited 1.
+No example source or model default was changed, and neither check was retried.
+
+
+### Example configuration cleanup — 2026-10-09
+
+**Status:** PASS
+
+**Description:** Removed explicit turn and dollar limits from all four Claude
+examples and corrected the root README's description. Ran the four-example
+pattern check, compileall and whitespace checks.
+
+**Result:** Static checks pass. No live model calls were rerun for this
+configuration-only cleanup; previous live results describe the earlier limits.
+
+
+## Claude live acceptance without explicit limits — 2026-10-09
+
+### native_sdk.py, basic.py, tools.py, agent_os.py and typed options
+
+**Status:** PASS
+
+**Description:** Ran the five Claude acceptance cases on clean source
+`78f321ba9ddd3d7c32221ced4c8d9df0c61dff96` from `/Users/ab/code/agno`, after
+removing explicit turn and dollar limits. Command:
+
+```bash
+AGNO_TEST_CLAUDE_SDK=1 .venvs/claude-dx-validation/bin/python -m pytest \
+  libs/agno/tests/integration/agents/test_harness_cookbooks.py -k claude -q
+```
+
+**Result:** 5 passed, 4 Codex cases deselected, in 29.47s. No skips or automatic
+retries. This made six successful model calls: three standalone examples, two
+AgentOS HTTP runs (non-streaming and SSE), and native-options reuse. Native and
+wrapped basic answers correctly gave zero shipping at the threshold. The tools
+script and both HTTP outputs correctly gave fees 8, 0, 0; each HTTP run stored
+two Read results and COMPLETED status with no metadata warnings. Fixture hashes
+were unchanged. The input native options retained their original configuration.
+
+**Environment:** Python 3.12.8; editable Agno 3.1.2 imported from this checkout;
+Claude SDK 0.2.165 / CLI 2.1.294; literal model `claude-sonnet-5-5`; SQLAlchemy
+2.0.52; pytest 9.1.1 and pytest-asyncio 1.4.0. Existing local CLI authentication
+was used without reading or logging credentials. Output, HTTP events and stored
+results are retained locally under `.context/claude-live-no-limits/`.
+
+### Live failure behavior
+
+**Status:** PASS
+
+**Description:** Loaded the current basic example, set an invalid model only
+in memory and invoked its printer. No source defaults were changed.
+
+**Result:** Claude rejected the model; the wrapper displayed `Run failed` and
+`Status: ERROR`, raised `AgentRunException` and exited 1. No retry was performed.
+
+These results verify the current Claude cookbook flows. They do not establish
+live history/resume, compaction, disconnect survival, durable retries,
+multi-replica recovery, skill/plugin execution or sandbox isolation.
+
+
+### Claude streamed tools through print_response — 2026-10-09
+
+**Status:** PASS
+
+**Description:** Simplified `claude/tools.py` to
+`result = agent.print_response(prompt, stream=True)`. The live test executes
+its actual main block, checks the Tool Calls panel, and reads the returned
+RunOutput to verify successful tool results contain both fixture files.
+
+**Result:** 1 passed, 8 deselected in 6.71s, without retries, using
+`AGNO_TEST_CLAUDE_SDK=1` and `-k 'claude and tools'`. Claude returned COMPLETED,
+two successful Read results and correct shipping fees. Fixture hashes remained
+unchanged. Tested `e1d1f5a48c` plus this update in the normal checkout, with the
+same SDK/model environment as the preceding live acceptance run. Required
+format/validation scripts and the provider pattern check passed. Raw evidence
+is retained under `.context/claude-tools-printer/`.
+
+
+## Consolidated paths — 2026-10-09
+
+### claude_basic.py, claude_native_sdk.py, claude_tools.py and claude_agentos.py
+
+**Status:** PASS
+
+**Description:** Ran the actual examples from this directory, alongside the
+existing advanced examples, through the updated live acceptance suite.
+
+**Result:** All nine combined Claude/Codex cases passed in 60.23s with no skips
+or retries. Correct shipping answers, actual tool data, HTTP/SSE, saved results
+and fixture integrity checks passed. Native Claude options reuse also passed.
+Source was `1d91efd765` plus the path consolidation in the normal checkout;
+SDK/model versions are unchanged from the preceding runs. See the
+[root log](../TEST_LOG.md#consolidated-framework-paths--2026-10-09) for complete
+evidence and limits. This does not rerun this directory's advanced examples.
+
+
+## Streaming examples — 2026-10-09
+
+**Status:** PASS
+
+**Description:** claude_basic.py and claude_native_sdk.py stream their text. transcript_store.py uses streaming printers for both turns, the requested claude-sonnet-5-5 model, and no explicit turn/budget limits.
+
+**Result:** All ten live acceptance cases pass in 60.88s. Additional live structured-output and transcript runs pass. Full format/validation, compile, whitespace and starting-example pattern checks pass. See the [shared test log](../TEST_LOG.md#streaming-examples--2026-10-09) for commands, versions, evidence and the corrected transcript test-wrapper failure.
+
+
+---
+
+### claude_retries.py (review follow-up)
+
+**Status:** PASS
+
+**Description:** Reran after two base-class changes from the review: a streamed retry now emits a `retry` warning event between the failed attempt's output and the new attempt (also stored in the run's warnings), and a non-streamed retry keeps the tool calls of failed attempts, which the adapters leave in `run_state["tools"]`. Live check with an injected failure after a Bash call.
+
+**Result:** Non-streamed: two attempts, same SDK session, stored run has both Bash calls (before the change it had one, while the streamed run had two). Streamed: unchanged, both calls kept. The four cookbook cases pass as before.
+
+---
+
+### claude_retries.py (demonstration rewrite)
+
+**Status:** PASS
+
+**Description:** The cookbook now injects the failure itself: the first attempt is cut off with a simulated transient error at the SDK result message, after the session started. Runs four cases with `retries=2`, `delay_between_retries=1`, `exponential_backoff=True`: one failure then success, more failures than retries, `max_turns=1` with retries left, and the default `retries=0`.
+
+**Result:** Case 1: two attempts, the retry resumed the same SDK session id and answered. Case 2: three attempts with 1s then 2s backoff, run ended in ERROR with the last error. Case 3: one attempt, `error_max_turns` logged as not retryable. Case 4: one attempt, ERROR. Separately verified streaming with the same injection: two attempts, same session id, RunCompleted, and the stored run kept the tool calls from both attempts.
+
+---
+
+### claude_retries.py
+
+**Status:** PASS
+
+**Description:** Ran the cookbook with claude-agent-sdk from the demo environment, then a fault-injection run with the real SDK: the first attempt's result message was made to raise after the SDK session had started, with `retries=2`.
+
+**Result:** The cookbook answered normally. In both streaming and non-streaming runs the first attempt failed, the retry resumed the SDK session the failed attempt started (same session id stored on the Agno session) and completed with `pong`.
+
+---
+
+### claude_retries.py (non-retryable errors)
+
+**Status:** PASS
+
+**Description:** Reran with error classification added. Live run with `max_turns=1`, `retries=2` and a prompt that needs two tool calls, then the fault-injection run that raises a generic error after the SDK session starts.
+
+**Result:** The `max_turns` run ended after one attempt with `error_max_turns` and logged that it was not retried (before the change it ran three attempts, three turns against a limit of one). The injected transient error was still retried, resumed the same SDK session and completed with `pong`.
+
 ---
 
 ### continue_from.py (2026-10-08)
@@ -187,3 +543,153 @@ checks; the earlier live provider cancellation runs were not repeated.
 
 **Result:** Explicit sharing works end to end; non-members are refused.
 
+---
+
+### claude_agentos.py — DX review refresh, 10 October 2026
+
+**Status:** PASS
+
+**Description:** Restored the standalone server command and streaming curl request in the module docstring. Imported the actual example and verified the configured agent ID and `/agents/{agent_id}/runs` OpenAPI route without a model call.
+
+**Result:** Startup configuration and documented route/ID checks passed. The merged-main refresh also passed 310 adapter/background-stream tests, including metrics, replay, typed options and persistence. `scripts/format.sh` and `scripts/validate.sh` passed in `.venvs/claude-dx-validation`; this entry does not claim a new live provider run. Existing live results above retain their original source/version scope.
+
+### claude_media.py
+
+**Status:** PASS (2026-10-10, claude-sonnet-4-6)
+
+**Description:** Attaches a solid red PNG and a text file with a codename to one run via `images=` and `files=`. Checks the answer names both, that the run's `input` records the attachments, and that `cwd/.agno/uploads` is gone afterwards. Also verified through the AgentOS API with multipart uploads of a PNG and a text file, non-streamed and background-streamed.
+
+**Result:** "The image is red, and the release codename in the notes is tangerine-walrus-88." Attachments recorded on the run, staging folder removed. Over HTTP: the non-streamed run answered both questions and recorded the files; the background stream completed with the answer. Audio attachments return a 400 or a `RunError` event instead of the earlier 500 or broken stream.
+
+---
+
+### claude_media.py (later turns re-read earlier attachments)
+
+**Status:** PASS (2026-10-10, claude-sonnet-4-6)
+
+**Description:** Added a second step: a new agent instance with its own working directory (standing in for another replica) asks Claude to read the earlier run's notes file again. Earlier runs' attachments are re-staged from the recorded run input before each turn, under their original run folders, and removed afterwards; when the replica's working directory differs, the prompt names the new path. Also reran the multi-turn check: image attached on replica A, recalled without tools after cleanup, recalled on replica B resumed from the database, and re-read with the Read tool on replica B.
+
+**Result:** The later turn on the other replica quoted the owner line from the re-staged file. Replica B answered the colour from memory and, asked to re-read, opened the re-staged image (before this change it reported the file missing).
+### Overlapping turns on one session (2026-10-10)
+
+**Status:** PASS (claude-sonnet-4-6)
+
+**Description:** Soak finding: a second turn on a session whose first turn was still running was accepted and appended to the same transcript. Reproduced with two concurrent `arun` calls on one session, the first running a 6s shell command. Fixed with a one-turn-per-session check in the base class (in-process turns and pending or running run rows).
+
+**Result:** Before: both turns ran and both appended to the session's transcript concurrently. After: the second turn raises `SessionBusyError` in under a millisecond naming the run in flight, no run row is written for it, the first turn completes, and a turn sent afterwards runs normally.
+
+---
+
+## 2026-10-11 release acceptance
+
+Framework source: `9e1f77f52a9bb16ee5dde3ccff9fa2491e86db5f`. Python 3.12, Claude SDK 0.2.165, Codex SDK 0.162.1. Claude uses `claude-sonnet-5-5` with API-key authentication; Codex uses `gpt-5.6-luna`. Separate native homes and working directories per example. Cookbook configuration updates in this batch use typed options and remove incidental run limits; explicit limits remain in limit/recovery demonstrations.
+
+### claude_native_sdk.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 4.7 seconds.
+
+---
+### claude_basic.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 4.7 seconds.
+
+---
+### claude_tools.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 8.7 seconds.
+
+---
+### claude_mcp_tools.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 7.1 seconds.
+
+---
+### claude_session.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 45.7 seconds.
+
+---
+### transcript_store.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 13.5 seconds.
+
+---
+### metrics.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 7.5 seconds.
+
+---
+### structured_output.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 47.5 seconds.
+
+---
+### structured_output_tools.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 9.7 seconds.
+
+---
+### claude_media.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 10.4 seconds.
+
+---
+### compaction.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 23.9 seconds.
+
+---
+
+### session_busy_agentos.py (2026-10-12)
+
+**Status:** PASS (claude-sonnet-4-6)
+
+**Description:** AgentOS served in-process; a background turn running a 10s shell command; two more turns for the same session sent over one raw keep-alive connection while it ran; a third sent on the same connection after it finished.
+
+**Result:** Before the fix, the 409 for a busy session reached the catch-all exception handler, which re-raises after responding, so uvicorn logged a traceback and closed the connection: the second request on the same connection failed with `RemoteDisconnected`. After: both busy-time requests answered 409 with `error_id: session_busy` on the same connection with keep-alive intact, the first turn completed, and the next turn on that connection answered 200.
+
+---

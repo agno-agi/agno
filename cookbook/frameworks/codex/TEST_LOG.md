@@ -1,5 +1,12 @@
 # Codex cookbook test log
 
+All examples now live in this directory. Earlier entries retain the paths and
+filenames used at the time of each run. See the final section for validation
+of the consolidated paths.
+
+## Earlier framework examples
+
+
 Tested 2026-10-08 with openai-codex 0.161.0 (bundled Codex CLI 0.161.0), model gpt-5.6-luna, ChatGPT login.
 
 ### codex_basic.py
@@ -39,6 +46,16 @@ Tested 2026-10-08 with openai-codex 0.161.0 (bundled Codex CLI 0.161.0), model g
 **Description:** Connect Codex to the Agno docs MCP server via `config` overrides; verifies MCP tool calls surface as Agno tool calls.
 
 **Result:** Tool Calls panel showed `mcp__agno_docs__search_docs(query=..., ...)` and the answer cited the Agno documentation.
+
+---
+
+### codex_structured_output.py (Pydantic output_schema, 2026-10-10)
+
+**Status:** PASS
+
+**Description:** Reran with openai-codex 0.161.0 after `output_schema` moved to the base class. `output_schema=Movie` (Pydantic, sent as a strict schema): a non-streaming run, a streaming run, then a per-run JSON Schema dict. Also reran `codex_basic.py` to check a run without a schema is unchanged.
+
+**Result:** Non-streaming content was a `Movie` with `content_type` "Movie". The streaming `RunCompleted` event carried a `Movie`. The per-run schema returned `{'title': 'The Hive Within'}` with `content_type` "dict". Codex accepted the strict schema built from the Pydantic model. `codex_basic.py` streamed a normal answer.
 
 ---
 
@@ -102,6 +119,229 @@ Tested 2026-10-08 with openai-codex 0.161.0 (bundled Codex CLI 0.161.0), model g
 
 ---
 
+
+## Refreshed starting examples
+
+
+**Date:** 2026-10-09 (Europe/London)
+
+**Source:** main `ff9b86d5be5245bd349e55c459bce45ba3d3cc21` plus this PR's cookbook/test changes, run from an isolated worktree before commit. The imported Agno path was the worktree's `libs/agno/agno/__init__.py`, not a released wheel or the user's checkout.
+
+**Environment:** Python 3.12.8; editable Agno 3.1.2; SQLAlchemy 2.0.52; pytest 9.1.1. Fresh worktree development venv. Existing local CLI authentication; no credential values read or printed.
+
+**Harness:** openai-codex 0.162.1; bundled codex-cli 0.162.1; model gpt-5.6-luna.
+
+**Command:** `AGNO_TEST_CLAUDE_SDK=1 AGNO_TEST_CODEX_SDK=1 .venv/bin/python -m pytest libs/agno/tests/integration/agents/test_harness_cookbooks.py -q -o addopts=''`. Both providers together: 8 passed in 70.07 seconds; none skipped; no retries.
+
+### basic.py
+
+**Status:** PASS
+
+**Description:** Real one-shot Agno wrapper run with the inclusive shipping-threshold prompt.
+
+**Result:** Returned zero-dollar shipping and a COMPLETED RunOutput. A separate run with an invalid model exited 1 at the terminal-status assertion. A provider failure cannot silently pass this example.
+
+---
+
+### native_sdk.py
+
+**Status:** PASS
+
+**Description:** Same prompt/model using the native SDK directly.
+
+**Result:** Returned zero-dollar shipping, a native Codex thread ID and successful terminal status. This is a one-shot API comparison, not a timing benchmark or native-resume test.
+
+---
+
+### tools.py
+
+**Status:** PASS
+
+**Description:** Real streamed review of shipping.py and orders.json through the Agno wrapper.
+
+**Result:** Text deltas and tool start/end events appeared; returned tool data contained the fixture's subtotal and boundary values. The answer correctly explained fees 8, 0, 0. The final RunOutput completed with successful tool data. Fixture file hashes stayed unchanged.
+
+---
+
+### agent_os.py
+
+**Status:** PASS
+
+**Description:** Started this exact server script on a loopback port with a temporary SQLite directory. Exercised health, agent discovery, one non-streaming tool run and one SSE tool run in independent sessions. Retrieved both runs through GET /agents/{id}/runs/{run_id}?session_id=... .
+
+**Result:** Both runs were COMPLETED and retained one shell result each. The SSE response contained 125 events in this run, including RunStarted, RunContent, ToolCallStarted, ToolCallCompleted and RunCompleted. IDs were consistent; no RunError/RunCancelled appeared. Both answers correctly explained the boundary. Fixture hashes were unchanged. Event counts vary and are not acceptance thresholds.
+
+---
+
+## Limits
+
+**Clean-install follow-up:** This provider's four cases also passed in the
+minimal README environment: agno[os,sqlite], the pinned SDKs, pytest and
+pytest-asyncio, with SQLAlchemy 2.1.4. Both providers together: 8 passed in
+74.15 seconds. The first collection attempt exposed a missing pytest-asyncio
+setup instruction; it was corrected before rerunning. See the root test log.
+
+No browser disconnect, server restart, native transcript recovery, production authorization, queue retry, compaction, approval, subagent or sandbox-replacement claim is made by these tests. API access was real loopback HTTP, not an in-process ASGI mock. The SQLite result checks are separate from native conversation durability. Older tests in cookbook/frameworks retain their historical scope.
+
+
+## Claude API update regression — 2026-10-09
+
+**Status:** PASS
+
+**Description:** Reran all four Codex cases from the normal checkout as part of
+the expanded nine-case harness suite. Codex code and model configuration were
+unchanged. Used openai-codex 0.162.1, `gpt-5.6-luna`, and existing CLI credentials.
+
+**Result:** All four passed; the combined suite passed nine cases in 70.28s.
+Each HTTP run retained one successful shell tool result. The fixture remained
+unchanged and the answers gave fees 8, 0, 0. See the root log for environment details.
+
+
+## Shared adapter API update — 2026-10-09
+
+### basic.py, native_sdk.py, tools.py and agent_os.py
+
+**Status:** PASS
+
+**Description:** Reran the combined opt-in live suite after switching basic.py
+to the shared failure-aware printer and making adapter constructors keyword-only.
+
+**Result:** All nine Claude/Codex cases passed in 61.99s, including the four
+Codex script/HTTP cases. The full run also checks native Claude options.
+Model and SDK versions are unchanged from the preceding entry. Runs used the
+normal checkout at `924d4ceb90` plus the API update. Fixture integrity and stored
+tool output checks passed. Full evidence and limits are in the
+[root test log](../TEST_LOG.md#shared-adapter-dx-for-32--2026-10-09).
+
+The shared regression suite passed 265 cases, including both sync/async printers
+for success, error and cancellation, keyword-only signatures, unsupported media
+rejection, SDK metadata compatibility and public typing.
+
+
+### Live failed-run printing
+
+**Status:** PASS
+
+**Description:** Loaded each basic example without its main block, changed the
+model only in memory to `invalid-harness-cookbook-model`, and invoked the printer.
+
+**Result:** Both native providers rejected the request. Each wrapper displayed
+`Run failed` and `Status: ERROR`, raised `AgentRunException`, and exited 1.
+No example source or model default was changed, and neither check was retried.
+
+
+## Consolidated paths — 2026-10-09
+
+### codex_basic.py, codex_native_sdk.py, codex_tools.py and codex_agentos.py
+
+**Status:** PASS
+
+**Description:** Ran the actual examples from this directory, alongside the
+existing advanced examples, through the updated live acceptance suite.
+
+**Result:** All nine combined Claude/Codex cases passed in 60.23s with no skips
+or retries. Correct shipping answers, actual tool data, HTTP/SSE, saved results
+and fixture integrity checks passed. Native Claude options reuse also passed.
+Source was `1d91efd765` plus the path consolidation in the normal checkout;
+SDK/model versions are unchanged from the preceding runs. See the
+[root log](../TEST_LOG.md#consolidated-framework-paths--2026-10-09) for complete
+evidence and limits. This does not rerun this directory's advanced examples.
+
+
+## Codex configuration DX — 2026-10-09
+
+### Codex adapter regression suite
+
+**Status:** PASS
+
+**Description:** Native `client_options`, typed `thread_options` / `turn_options`,
+common named settings, explicit override precedence, non-mutating option copies,
+start/resume filtering, ephemeral thread bookkeeping and string-input validation.
+
+**Result:** 37 Codex unit cases pass, including 15 new cases. The combined external
+agent and selected AgentOS regression suite passes all 280 cases, including static
+return-type and typed-options checks. Python 3.9 passes 90 Codex/shared-DX cases;
+two checks skip because that environment has neither the native SDK nor mypy.
+The SDK signature check verifies the typed option keys against installed 0.162.1.
+Full `./scripts/format.sh` and `./scripts/validate.sh` pass (1114 Agno and 21 agnoctl
+files); unrelated formatter changes were restored. Eight starting-example pattern
+checks, compileall and whitespace checks pass. All ten live cases skip without
+opt-in flags.
+
+### codex_native_sdk.py, codex_basic.py, codex_tools.py, codex_agentos.py
+
+**Status:** PASS
+
+**Description:** Real SDK and wrapper scripts, shared streaming response printer,
+HTTP/SSE tool execution and saved results, plus native client configuration with
+named model overrides and ephemeral sessions.
+
+**Result:** All five Codex live acceptance cases pass in 40.98s with no retries
+or skips (the five Claude cases were deselected). This includes three scripts,
+two AgentOS HTTP/SSE model calls and one native-options call. The tools printer
+returns completed output with actual shipping.py and orders.json contents;
+HTTP runs persist tool results. Read-only fixture hashes are unchanged. The
+native-options case overrides deliberately invalid model values and verifies
+that no ephemeral thread ID is saved to either memory or SQLite.
+
+### codex_mcp_tools.py
+
+**Status:** PASS
+
+**Description:** Ran the updated top-level `mcp_servers` example against the real
+Agno documentation MCP server using the native SDK.
+
+**Result:** Exit 0, COMPLETED status, `mcp__agno_docs__search_docs` in the Tool Calls
+panel, and an answer explaining AgentOS with a documentation citation.
+
+**Source/environment:** `42e8d4191d` plus this Codex update in the normal checkout
+`/Users/ab/code/agno`; Python 3.12.8; editable Agno; openai-codex / bundled CLI
+0.162.1; `gpt-5.6-luna`; existing local CLI authentication. Commands:
+
+```bash
+python -m pytest libs/agno/tests/unit/agents \
+  libs/agno/tests/unit/os/test_schemas.py \
+  libs/agno/tests/unit/os/test_external_agent_background_stream.py \
+  libs/agno/tests/unit/os/interfaces/test_a2a.py -q
+AGNO_TEST_CODEX_SDK=1 python -m pytest \
+  libs/agno/tests/integration/agents/test_harness_cookbooks.py -k codex -q
+python cookbook/frameworks/codex/codex_mcp_tools.py
+```
+
+Raw logs and returned-run evidence are retained locally in `.context/codex-dx/`.
+Claude was not rerun for this Codex-only implementation change; its previous live
+results remain above. Native input objects are explicitly unsupported, not new
+multimodal support. These tests do not establish disconnect recovery, durability,
+multi-replica execution, retries or deployment readiness.
+
+
+## Streaming examples — 2026-10-09
+
+**Status:** PASS
+
+**Description:** codex_basic.py and codex_native_sdk.py stream their text. codex_structured_output.py uses the streaming printer and parses its returned final JSON. codex_tools.py already used print_response(prompt, stream=True).
+
+**Result:** All ten live acceptance cases pass in 60.88s. Additional live structured-output and transcript runs pass. Full format/validation, compile, whitespace and starting-example pattern checks pass. See the [shared test log](../TEST_LOG.md#streaming-examples--2026-10-09) for commands, versions, evidence and the corrected transcript test-wrapper failure.
+
+
+### codex_compaction.py
+
+**Status:** PASS (2026-10-09, openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Seeds a fact, adds three turns including a 1200-line filler document, calls `CodexAgent.acompact(session_id)`, then asks for the fact on the same session. `acompact` returns False before any thread exists, then resumes the thread on the low-level client, sends `thread/compact/start` and waits for the thread status to go active and back to idle on the global notification queue.
+
+**Result:** `acompact` returned False before the first run and True after; the thread went idle again in about eight seconds and the rollout gained a `compacted` entry. The next turn answered `tangerine-walrus-88`. The `thread/compacted` notification itself is routed to a per-turn queue the caller never registered, which is why the adapter waits on thread status instead.
+
+---
+
+### codex_compaction.py (review fixes, cookbook extended)
+
+**Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Review found that `acompact` resumed the thread on the low-level client with the adapter's high-level kwargs, which are sent verbatim: `sandbox="full-access"` was rejected (`unknown variant full-access`) and instructions and approval mode were silently dropped. Replicated with a probe against the app-server. The resume now goes through `AsyncCodex.thread_resume` exactly as runs do, and only `thread/compact/start` uses the low-level client. Also: a missing rollout returns False and forgets the stored thread id; compaction refuses while a run on the session is pending or running; the wait maps `asyncio.TimeoutError` to the builtin.
+
+**Result:** The cookbook now uses `sandbox="full-access"`, `instructions` and `approval_mode="deny_all"`, the configuration the first version could not compact. It compacted after three turns and recalled the fact on the next turn. With a background run pending on the session, `acompact` raised `RuntimeError` naming the run; after the run finished it compacted again. Pointing the session at a nonexistent thread id returned False with a warning and removed the id.
+
 ### codex_metrics.py
 
 **Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
@@ -129,5 +369,137 @@ Tested 2026-10-08 with openai-codex 0.161.0 (bundled Codex CLI 0.161.0), model g
 **Description:** Review finding: `usage.last` is one model request, not the turn, and `TurnResult.usage` is only the latest report, so a turn with tool calls under-counted on both paths. Replicated with a prompt that makes two shell calls, tapping every `thread/tokenUsage/updated` as (last, total). Fixed by computing the turn as the final thread total minus the thread total before the turn (first report's total minus its own request); the non-streaming path now consumes the notification stream itself instead of `handle.run()`. Reran `codex_metrics.py`, `codex_metrics_agentos.py --verify`, `codex_structured_output.py` and `codex_tools.py` to check the non-streaming path is unchanged.
 
 **Result:** Before: streamed turn recorded 14972 of 44739 actual, non-streamed 14502 of 43341. After: streamed 44725 of 44725, non-streamed 43289 of 43289 (three requests each). Other cookbooks unchanged.
+
+---
+
+
+### codex_agentos.py — DX review refresh, 10 October 2026
+
+**Status:** PASS
+
+**Description:** Restored the standalone server command and streaming curl request in the module docstring. Imported the actual example and verified the configured agent ID and `/agents/{agent_id}/runs` OpenAPI route without a model call.
+
+**Result:** Startup configuration and documented route/ID checks passed. The merged-main refresh also passed 310 adapter/background-stream tests, including metrics, replay, typed options and persistence. `scripts/format.sh` and `scripts/validate.sh` passed in `.venvs/claude-dx-validation`; this entry does not claim a new live provider run. Existing live results above retain their original source/version scope.
+
+### codex_media.py
+
+**Status:** PASS (2026-10-10, openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Attaches a solid blue PNG and a CSV to one run via `images=` and `files=`. The image is sent as a native local-image input, the CSV is staged in the workspace and named in the prompt. Checks the answer names the colour and the column total, that the run's `input` records the attachments, and that `cwd/.agno/uploads` is gone afterwards.
+
+**Result:** "Blue; total amount: 200." Attachments recorded on the run, staging folder removed.
+### Codex tool error flag (2026-10-10)
+
+**Status:** PASS (openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Soak finding: a failing MCP tool stored its error text with `tool_call_error=null`. Reproduced with `cat` on a missing file (exit code 1) and a stdio MCP server whose tool raises, on the streamed and non-streamed paths. Codex marks both items `status=failed`; the MCP item has `error=null` because the server returned the error as a text result. Fixed by setting `tool_call_error` from the item status, the exit code and the MCP error on every path.
+
+**Result:** Before: `tool_call_error=None` in all four cases. After: `True` in all four, with the result text unchanged (`[exit code 1]` suffix for the command, the server's error message for the MCP call).
+
+---
+
+### Overlapping turns on one session (2026-10-10)
+
+**Status:** PASS (openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Soak finding: a second turn on a session whose first turn was still running was accepted and failed on the app-server's thread lock. Reproduced with two concurrent `arun` calls on one session, the first running a 6s shell command. Fixed with a one-turn-per-session check in the base class (in-process turns and pending or running run rows), plus the app-server's "already has an active writer" rejection mapped to the same error.
+
+**Result:** Before: the second turn ended as an ERROR run in the session with `JSON-RPC error -32600: thread ... already has an active writer` after 0.1s. After: the second turn raises `SessionBusyError` in under a millisecond naming the run in flight, no run row is written for it, the first turn completes, and a turn sent afterwards runs normally.
+
+---
+
+### codex_structured_output.py (review follow-ups, 2026-10-11)
+
+**Status:** PASS (openai-codex 0.161.0, gpt-5.6-luna)
+
+**Description:** Review of the output_schema change. Live: a model with an `Optional` field (strict schema, nullable), non-streamed; a streamed turn on the resumed thread and its stored run; a `RootModel[List[str]]` and an array JSON Schema; the cookbook rerun after the fixes.
+
+**Result:** Optional field came back `null` and parsed to `None`; the resumed streamed turn parsed and stored the model with `content_type` Movie. An array-rooted schema failed the turn with Codex's `invalid_json_schema: schema must be a JSON Schema of 'type: "object"'`; it is now refused with `ValueError` before the turn. Cookbook reran unchanged.
+
+---
+
+## 2026-10-11 release acceptance
+
+Framework source: `9e1f77f52a9bb16ee5dde3ccff9fa2491e86db5f`. Python 3.12, Claude SDK 0.2.165, Codex SDK 0.162.1. Claude uses `claude-sonnet-5-5` with API-key authentication; Codex uses `gpt-5.6-luna`. Separate native homes and working directories per example. Cookbook configuration updates in this batch use typed options and remove incidental run limits; explicit limits remain in limit/recovery demonstrations.
+
+### codex_native_sdk.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 4.0 seconds.
+
+---
+### codex_basic.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 4.3 seconds.
+
+---
+### codex_tools.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 7.0 seconds.
+
+---
+### codex_mcp_tools.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 8.3 seconds.
+
+---
+### codex_session.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 8.4 seconds.
+
+---
+### codex_metrics.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 7.7 seconds.
+
+---
+### codex_structured_output.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 8.1 seconds.
+
+---
+### codex_media.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 14.4 seconds.
+
+---
+### codex_compaction.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 29.7 seconds.
 
 ---
