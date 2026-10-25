@@ -42,6 +42,11 @@ Try it:
    guaranteed via polling; reconnecting replays missed events. Durability
    attaches to the RUN; the stream is the best-effort live view.
 
+With auto-provisioning enabled, the worker prepares agno_jobs before polling;
+a fresh database needs no priming enqueue. With auto_provision_dbs=False, provision
+queue storage yourself. A failed startup prepare logs a warning and preserves
+lazy creation on enqueue.
+
 The queue store defaults to the AgentOS db (the Postgres below - zero extra
 infrastructure). To isolate queue load on a dedicated Redis instead:
 
@@ -60,12 +65,16 @@ Requirements:
 - OPENAI_API_KEY set
 """
 
+from os import getenv
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, QueueConfig
 
-db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+db = PostgresDb(
+    db_url=getenv("DATABASE_URL", "postgresql+psycopg://ai:ai@localhost:5532/ai")
+)
 
 agent = Agent(
     name="Durable Agent",

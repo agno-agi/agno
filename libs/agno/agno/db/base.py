@@ -3,7 +3,7 @@ import threading
 from abc import ABC, abstractmethod
 from datetime import date, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -18,6 +18,9 @@ from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
 from agno.session import Session
 from agno.utils.log import log_debug
+
+# Distinguish an omitted comparison from an observed SQL NULL timestamp.
+_UNSET_UPDATED_AT = cast(Optional[int], object())
 
 
 class SessionType(str, Enum):
@@ -259,7 +262,7 @@ class TableResolutionCache:
         for key in [k for k in self._tables if k[1] == table_name]:
             self._tables.pop(key, None)
             evicted += 1
-        log_debug(f"Table cache: invalidated '{table_name}' ({evicted} cached resolution(s) evicted)")
+        log_debug(f"Table cache: invalidated '{table_name}' ({evicted} cached resolution(s) evicted)", log_level=2)
 
     def clear(self) -> None:
         self._tables.clear()
@@ -267,6 +270,7 @@ class TableResolutionCache:
 
 _FK_EDGES = {
     "runs": [("sessions", "session_table_name")],
+    "sandbox_bindings": [("sessions", "session_table_name"), ("runs", "runs_table_name")],
     "spans": [("traces", "trace_table_name")],
     "schedule_runs": [("schedules", "schedules_table_name")],
     "component_configs": [("components", "components_table_name")],
@@ -314,6 +318,10 @@ class BaseDb(ABC):
         component_links_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
+        products_table: Optional[str] = None,
+        sources_table: Optional[str] = None,
+        projects_table: Optional[str] = None,
+        tasks_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         job_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
@@ -352,9 +360,15 @@ class BaseDb(ABC):
         self.component_links_table_name = component_links_table or "agno_component_links"
         self.learnings_table_name = learnings_table or "agno_learnings"
         self.schedules_table_name = schedules_table or "agno_schedules"
+        self.products_table_name = products_table or "agno_company_products"
+        self.sources_table_name = sources_table or "agno_company_sources"
+        self.projects_table_name = projects_table or "agno_company_projects"
+        self.tasks_table_name = tasks_table or "agno_company_tasks"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.job_table_name = job_table or "agno_jobs"
         self.tool_results_table_name = "agno_tool_results"
+        self.compactions_table_name = "agno_compactions"
+        self.transcripts_table_name = "agno_transcripts"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
@@ -364,6 +378,14 @@ class BaseDb(ABC):
         self.mcp_oauth_codes_table_name = mcp_oauth_codes_table or "agno_mcp_oauth_codes"
         self.mcp_oauth_refresh_tokens_table_name = mcp_oauth_refresh_tokens_table or "agno_mcp_oauth_refresh_tokens"
         self.mcp_oauth_keys_table_name = mcp_oauth_keys_table or "agno_mcp_oauth_keys"
+        # Authorization tables. Renameable like any other agno table; only the sync
+        # SQLAlchemy backends implement the methods that use them.
+        self.authz_policy_table_name = "agno_authz_policy"
+        self.authz_grouping_table_name = "agno_authz_grouping"
+        self.authz_roles_table_name = "agno_authz_roles"
+        self.authz_users_table_name = "agno_authz_users"
+        self.authz_audit_table_name = "agno_authz_audit"
+        self.authz_decisions_table_name = "agno_authz_decisions"
 
         # Avoids re-running the existence check and schema validation on
         # every query; see TableResolutionCache.
@@ -388,7 +410,7 @@ class BaseDb(ABC):
         if cached is not None:
             return cached
         if not create_table_if_not_found and not self.table_exists(table_name):
-            log_debug(f"Table '{table_name}' does not exist")
+            log_debug(f"Table '{table_name}' does not exist", log_level=2)
             return None
         with self._resolve_lock:
             cached = self._table_cache.get(table_type, table_name)
@@ -437,6 +459,10 @@ class BaseDb(ABC):
             "component_links_table": self.component_links_table_name,
             "learnings_table": self.learnings_table_name,
             "schedules_table": self.schedules_table_name,
+            "products_table": self.products_table_name,
+            "sources_table": self.sources_table_name,
+            "projects_table": self.projects_table_name,
+            "tasks_table": self.tasks_table_name,
             "schedule_runs_table": self.schedule_runs_table_name,
             "approvals_table": self.approvals_table_name,
             "auth_tokens_table": self.auth_tokens_table_name,
@@ -468,6 +494,10 @@ class BaseDb(ABC):
             component_links_table=data.get("component_links_table"),
             learnings_table=data.get("learnings_table"),
             schedules_table=data.get("schedules_table"),
+            products_table=data.get("products_table"),
+            sources_table=data.get("sources_table"),
+            projects_table=data.get("projects_table"),
+            tasks_table=data.get("tasks_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
             approvals_table=data.get("approvals_table"),
             auth_tokens_table=data.get("auth_tokens_table"),
@@ -525,6 +555,10 @@ class BaseDb(ABC):
     # the session's runs explicitly before/after removing the session doc.
     # Best-effort — a crash between the two writes can leave orphan runs;
     # partial-migration cleanup and admin tooling should tolerate this.
+    def reassign_session_owner(self, session_id: str, *, previous_user_id: str, user_id: Optional[str]) -> bool:
+        """Transfer an idle session only when its stored owner still matches."""
+        raise NotImplementedError
+
     @abstractmethod
     def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         raise NotImplementedError
@@ -602,6 +636,22 @@ class BaseDb(ABC):
         Adapters that have not been ported to v3 storage return ``None``.
         """
         return None
+
+    def cancel_pending_run(
+        self,
+        run_id: str,
+        *,
+        session_id: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        expected_status: str = "PENDING",
+    ) -> bool:
+        """Atomically cancel an observed Pending or Running run, preserving other statuses and data.
+
+        Return whether the row changed. Unsupported adapters must fail rather
+        than fall back to a read followed by an unconditional write.
+        """
+        raise NotImplementedError
 
     def get_runs(
         self,
@@ -1758,6 +1808,240 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    # --- Sources (Optional) ---
+
+    def add_product_routine(self, product_id: str, schedule_id: str) -> Dict[str, Any]:
+        """Atomically append a Routine id without overwriting Product metadata."""
+        raise NotImplementedError("Company products not supported by the configured database")
+
+    def create_source(self, source_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
+        """Create a Source; reuse atomically returns an identical reference or refuses conflicting settings."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    def get_source(
+        self, source_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Read a Source. None user_id is unscoped; a string filters by owner."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    def get_sources(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        product_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List Sources and their total, filtering by owner before pagination."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    def update_source(self, source_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+        """Update descriptive fields on an active Source within the owner scope."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    def delete_source(self, source_id: str, user_id: Optional[str] = None) -> bool:
+        """Soft-delete an active Source within the owner scope."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    def restore_source(self, source_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a deleted Source within the owner scope; otherwise return None."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    # --- Products (Optional) ---
+
+    def create_product(self, product_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a Product; product_data carries its owner and timestamps."""
+        raise NotImplementedError("Company products not supported by the configured database")
+
+    def get_product(
+        self, product_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Read a Product. None user_id is unscoped; a string filters by owner."""
+        raise NotImplementedError("Company products not supported by the configured database")
+
+    def get_products(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List Products and their total, filtering by owner before pagination."""
+        raise NotImplementedError("Company products not supported by the configured database")
+
+    def update_product(self, product_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+        """Update descriptive fields on an active Product within the owner scope."""
+        raise NotImplementedError("Company products not supported by the configured database")
+
+    def get_product_counts(self, product_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Count visible children for a page in one grouped query, including zero statuses."""
+        raise NotImplementedError("Company product counts not supported by the configured database")
+
+    def delete_product(self, product_id: str, user_id: Optional[str] = None) -> bool:
+        """Archive a Product and its children atomically; raise ValueError with active Task ids and titles."""
+        raise NotImplementedError("Company products not supported by the configured database")
+
+    def restore_product(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a Product and exactly the children archived by it within the owner scope."""
+        raise NotImplementedError("Company products not supported by the configured database")
+
+    # --- Projects (Optional) ---
+
+    def create_project(self, project_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
+        """Create a Project; project_data carries its owner and timestamps."""
+        raise NotImplementedError("Company projects not supported by the configured database")
+
+    def get_project(
+        self, project_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Read a Project. None user_id is unscoped; a string filters by owner."""
+        raise NotImplementedError("Company projects not supported by the configured database")
+
+    def get_projects(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        product_id: Optional[str] = None,
+        status: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List Projects and their total, filtering by owner before pagination."""
+        raise NotImplementedError("Company projects not supported by the configured database")
+
+    def update_project(
+        self, project_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update descriptive fields on an active Project within the owner scope."""
+        raise NotImplementedError("Company projects not supported by the configured database")
+
+    def get_project_counts(self, project_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Count visible children for a page in one grouped query, including zero statuses."""
+        raise NotImplementedError("Company project counts not supported by the configured database")
+
+    def delete_project(
+        self, project_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
+    ) -> bool:
+        """Archive a Project and its Tasks atomically; refuse active Tasks. Cutoff requires old terminal work."""
+        raise NotImplementedError("Company projects not supported by the configured database")
+
+    def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a Project and exactly the Tasks archived by it within the owner scope."""
+        raise NotImplementedError("Company projects not supported by the configured database")
+
+    def transition_project(
+        self,
+        project_id: str,
+        target: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        accepted_by: Optional[str] = None,
+        expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
+        auto_accept: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Transition a visible Project and record the caller and reason.
+
+        Automatic completion requires expected_updated_at. Explicit None matches
+        SQL NULL; omission leaves manual transitions without a timestamp guard.
+        Timestamps are epoch seconds; the current non-terminal-Task gate still
+        applies even when two writes share a timestamp.
+        """
+        raise NotImplementedError("Company projects not supported by the configured database")
+
+    # --- Tasks (Optional) ---
+
+    def create_task(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a Task; task_data carries its owner and timestamps."""
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
+    def get_task(
+        self, task_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Read a Task. None user_id is unscoped; a string filters by owner."""
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
+    def get_tasks(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        product_id: Optional[str] = None,
+        status: Optional[str] = None,
+        project_id: Optional[str] = None,
+        failed: Optional[bool] = None,
+        session_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List Tasks and their total, filtering by owner before pagination."""
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
+    def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+        """Update descriptive fields on an active Task within the owner scope."""
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
+    def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
+        """Soft-delete an active Task within the owner scope."""
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
+    def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a deleted Task within the owner scope; otherwise return None."""
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
+    def start_task_run(
+        self,
+        task_id: str,
+        attempt: int,
+        expected_transitions: List[Dict[str, Any]],
+        user_id: Optional[str] = None,
+        run_db_id: Optional[str] = None,
+        session_user_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Reserve a Task attempt conditionally; user_id records the starting caller."""
+        raise NotImplementedError("Company execution not supported by this database")
+
+    def complete_task_run(
+        self,
+        task_id: str,
+        job_id: str,
+        result: Dict[str, Any],
+        expected_transitions: Optional[List[Dict[str, Any]]] = None,
+        checkout: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Save a completed run's result and move its still-current Task to review."""
+        raise NotImplementedError("Company execution not supported by this database")
+
+    def count_company_acceptances(
+        self, routine_id: str, policy: str, exclude_task_id: str, user_id: Optional[str] = None
+    ) -> int:
+        """Count accepted Tasks and completed Projects, including archived records."""
+        raise NotImplementedError("Company automatic acceptance not supported by this database")
+
+    def transition_task(
+        self,
+        task_id: str,
+        target: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        accepted_by: Optional[str] = None,
+        executor_type: Optional[str] = None,
+        executor_id: Optional[str] = None,
+        expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
+        auto_accept: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Transition a visible Task and record the caller and reason.
+
+        Automatic acceptance requires expected_updated_at. Explicit None matches
+        SQL NULL; omission leaves manual transitions without a timestamp guard.
+        Timestamps are epoch seconds, so same-second writes are indistinguishable.
+        """
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
     # --- Schedules (Optional) ---
     # These methods are optional. Override in subclasses to enable scheduler persistence.
     # ``user_id`` scopes the user-facing reads, updates and deletes; ``claim_due_schedule`` and
@@ -1842,11 +2126,22 @@ class BaseDb(ABC):
         """Atomically claim a due schedule for execution."""
         raise NotImplementedError
 
-    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
-        """Release a claimed schedule and optionally update next_run_at."""
+    def release_schedule(
+        self,
+        schedule_id: str,
+        next_run_at: Optional[int] = None,
+        *,
+        worker_id: Optional[str] = None,
+        locked_at: Optional[int] = None,
+    ) -> bool:
+        """Release a schedule, optionally matching its worker and individual claim timestamp."""
         raise NotImplementedError
 
     # --- Schedule Runs (Optional) ---
+
+    def delete_schedule_runs(self, schedule_id: str, *, before: int) -> int:
+        """Delete completed history older than the cutoff for one schedule."""
+        raise NotImplementedError
 
     def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a schedule run record. ``run_data["user_id"]`` is denormalised from the parent schedule."""
@@ -1858,6 +2153,10 @@ class BaseDb(ABC):
 
     def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule run by ID."""
+        raise NotImplementedError
+
+    def get_latest_schedule_runs(self, schedule_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Return the latest run for each requested schedule in one query."""
         raise NotImplementedError
 
     def get_schedule_runs(
@@ -1897,6 +2196,40 @@ class BaseDb(ABC):
 
     def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
         """Rows whose expires_at has passed."""
+        raise NotImplementedError
+
+    # --- Compactions (Optional) ---
+    # Optional: the record table for conversation compaction (agno_compactions).
+    # A record is an immutable fact - one fold, produced by one run - so rows are
+    # written once and never updated. The fold in force for a run is a query over
+    # them, not a stored value, which is what keeps concurrent writers from
+    # clobbering one another.
+    #
+    # ``archived_messages`` carries the folded transcript verbatim. A backend that
+    # cannot store a large text column may leave it null: the summary still stands,
+    # and only recoverability is lost.
+
+    def upsert_compaction(self, row: Dict[str, Any]) -> None:
+        """Insert one compaction record."""
+        raise NotImplementedError
+
+    def get_compaction(self, compaction_id: str) -> Optional[Dict[str, Any]]:
+        """Get one compaction record by id."""
+        raise NotImplementedError
+
+    def get_compactions_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """The session's compaction records, newest first."""
+        raise NotImplementedError
+
+    def delete_compactions_for_session(self, session_id: str) -> int:
+        """Delete a session's records. Returns the number deleted."""
+        raise NotImplementedError
+
+    def search_compactions(
+        self, session_id: str, query: Union[str, Sequence[str]], limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Records in this session whose archived transcript contains ``query`` - or, given several
+        terms, any one of them - newest first."""
         raise NotImplementedError
 
     # --- Approvals (Optional) ---
@@ -2043,6 +2376,180 @@ class BaseDb(ABC):
         """Insert a signing key. Returns False on a uniqueness conflict (lost the cold-start race), True on success."""
         raise NotImplementedError
 
+    # --- Authorization (Optional) ---
+    # Backs the pluggable authorization tier (agno.os.authz): the policy and assignment
+    # tables the native engine decides from, role metadata, the credential-less user
+    # directory carrying the disabled-user kill switch, and the two audit trails.
+    # Implemented by the sync SQLAlchemy backends (PostgresDb / SqliteDb); every other
+    # backend inherits these NotImplementedError stubs, so a db that cannot persist
+    # authorization says so at construction instead of being duck-typed for an engine.
+    #
+    # Decisions are read fresh -- there is no cache below this line -- because a
+    # revocation on one replica must be enforced everywhere on the next request.
+
+    # policy: what a role may do
+    def get_authz_policies(self, roles: List[str]) -> List[Tuple[str, str, str, str]]:
+        """All (role, resource, action, effect) rows whose role is in ``roles``."""
+        raise NotImplementedError
+
+    def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
+        """One role's (resource, action, effect) rows."""
+        raise NotImplementedError
+
+    def set_authz_role_policies(self, role: str, rows: List[Tuple[str, str, str]]) -> None:
+        """Replace a role's policy rows with ``rows`` ((resource, action, effect)), atomically."""
+        raise NotImplementedError
+
+    def upsert_authz_policy(self, *, role: str, resource: str, action: str, effect: str) -> None:
+        """Add or flip the effect of one (role, resource, action) grant."""
+        raise NotImplementedError
+
+    def delete_authz_policy(self, *, role: str, resource: Optional[str] = None, action: Optional[str] = None) -> None:
+        """Delete policy rows for a role, optionally narrowed to a resource and action."""
+        raise NotImplementedError
+
+    # grouping: who holds which role (and role-to-role inheritance)
+    def get_authz_direct_roles(self, subject: str) -> List[str]:
+        """Roles directly assigned to ``subject``."""
+        raise NotImplementedError
+
+    def get_authz_direct_roles_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        """Roles directly assigned to each of ``subjects`` (empty list when none), as
+        one bulk read instead of one query per subject."""
+        raise NotImplementedError
+
+    def list_authz_role_subjects(self, role: str) -> List[str]:
+        """Names directly assigned ``role`` (subjects, plus roles when nesting)."""
+        raise NotImplementedError
+
+    def authz_name_is_role(self, name: str) -> bool:
+        """True if ``name`` is used as a ROLE: it carries policy, or something is assigned
+        to it. Used by the collision guard, so it runs on every subject decision."""
+        raise NotImplementedError
+
+    def assign_authz_role(self, subject: str, role: str) -> None:
+        """Add an assignment (idempotent)."""
+        raise NotImplementedError
+
+    def unassign_authz_role(self, subject: str, role: str) -> None:
+        """Remove an assignment (idempotent)."""
+        raise NotImplementedError
+
+    def replace_authz_subject_roles(self, subject: str, role: str) -> None:
+        """Atomically make ``role`` the subject's only role.
+
+        One transaction, so there is no instant where the subject holds nothing and no
+        interleaving in which two concurrent assigns each clear only what they saw and
+        leave the subject holding both.
+        """
+        raise NotImplementedError
+
+    def list_authz_roles(self) -> List[str]:
+        """Every role name known to policy or assignments."""
+        raise NotImplementedError
+
+    def delete_authz_role(self, role: str) -> None:
+        """Drop a role's policy, its assignments, and its metadata."""
+        raise NotImplementedError
+
+    # role metadata: what an admin UI renders
+    def get_authz_role_meta(self, slug: str) -> Optional[Dict[str, Any]]:
+        """A role's metadata row, or None."""
+        raise NotImplementedError
+
+    def list_authz_role_meta(self) -> List[Dict[str, Any]]:
+        """Every role metadata row."""
+        raise NotImplementedError
+
+    def upsert_authz_role_meta(self, slug: str, values: Dict[str, Any]) -> None:
+        """Create or update a role's metadata."""
+        raise NotImplementedError
+
+    def delete_authz_role_meta(self, slug: str) -> None:
+        """Delete a role's metadata row."""
+        raise NotImplementedError
+
+    # user directory: identity is asserted by the JWT; no credentials are stored here
+    def get_authz_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """A directory row, or None."""
+        raise NotImplementedError
+
+    def list_authz_users(
+        self,
+        limit: int = 1000,
+        offset: int = 0,
+        include_disabled: bool = True,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+    ) -> List[Dict[str, Any]]:
+        """A page of directory rows. ``search`` matches id/email/name case-insensitively;
+        NULLs in the sort column sort last in either direction."""
+        raise NotImplementedError
+
+    def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+        """How many directory rows match, for pagination alongside list_authz_users."""
+        raise NotImplementedError
+
+    def count_authz_users_by_status(self) -> Dict[str, int]:
+        """``{"total": n, "disabled": n}`` read in one statement."""
+        raise NotImplementedError
+
+    def list_authz_user_ids(self, include_disabled: bool = True) -> List[str]:
+        """Every directory id, for bulk lookups keyed on the id."""
+        raise NotImplementedError
+
+    def count_authz_users_by_day(
+        self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+    ) -> List[Dict[str, int]]:
+        """Users created per UTC day as ``{"date": <day start epoch>, "count": n}`` rows,
+        oldest first, bounded by ``created_at`` in ``[starting_at, ending_before)``."""
+        raise NotImplementedError
+
+    def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
+        """Create or update a directory row's profile fields. Never overwrites
+        ``disabled`` on an existing row -- that is the revocation tombstone, changed only
+        via :meth:`set_authz_user_disabled` (so a profile edit cannot revert a revocation)."""
+        raise NotImplementedError
+
+    def set_authz_user_disabled(self, user_id: str, disabled: bool) -> None:
+        """Atomically set/clear the revocation tombstone (single-column write, no
+        read-modify-write, so it can't be lost to a concurrent profile edit/provision)."""
+        raise NotImplementedError
+
+    def delete_authz_user(self, user_id: str) -> None:
+        """Remove a directory row."""
+        raise NotImplementedError
+
+    def is_authz_user_disabled(self, user_id: str) -> bool:
+        """The kill switch, read on every request for a known subject."""
+        raise NotImplementedError
+
+    # audit: the change trail and the access trail
+    def record_authz_audit_event(self, values: Dict[str, Any]) -> None:
+        """Append a change-trail event (who changed what)."""
+        raise NotImplementedError
+
+    def record_authz_decision(self, values: Dict[str, Any]) -> None:
+        """Append an access-trail event (one allow/deny decision)."""
+        raise NotImplementedError
+
+    def read_authz_audit_events(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+        decisions: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """A page of audit events; ``decisions`` selects the access trail over the change trail."""
+        raise NotImplementedError
+
+    def count_authz_audit_events(self, search: Optional[str] = None, decisions: bool = False) -> int:
+        """How many audit events match, for pagination."""
+        raise NotImplementedError
+
     # --- Service Accounts (Optional) ---
     # These methods are optional. Override in subclasses to enable service account persistence.
 
@@ -2096,6 +2603,40 @@ class BaseDb(ABC):
         """Hard-delete a service account by ID. Returns True if deleted."""
         raise NotImplementedError
 
+    # Optional transcript storage for external agents.
+
+    def append_transcript_entries(
+        self,
+        framework: str,
+        project_key: str,
+        session_id: str,
+        entries: List[Dict[str, Any]],
+        agno_session_id: str,
+        subpath: Optional[str] = None,
+    ) -> None:
+        """Append opaque transcript entries in order, ignoring entry UUIDs already in the transcript."""
+        raise NotImplementedError
+
+    def get_transcript_entries(
+        self, framework: str, project_key: str, session_id: str, subpath: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Read transcript entries in append order."""
+        raise NotImplementedError
+
+    def list_transcript_sessions(self, framework: str, project_key: str) -> List[Dict[str, Any]]:
+        """List main transcripts with session_id and mtime in epoch milliseconds."""
+        raise NotImplementedError
+
+    def list_transcript_subpaths(self, framework: str, project_key: str, session_id: str) -> List[str]:
+        """List subagent transcript paths for a session."""
+        raise NotImplementedError
+
+    def delete_transcript(
+        self, framework: str, project_key: str, session_id: str, subpath: Optional[str] = None
+    ) -> None:
+        """Delete one subpath, or the main transcript and all subpaths."""
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -2115,6 +2656,10 @@ class AsyncBaseDb(ABC):
         components_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
+        products_table: Optional[str] = None,
+        sources_table: Optional[str] = None,
+        projects_table: Optional[str] = None,
+        tasks_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         job_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
@@ -2146,12 +2691,27 @@ class AsyncBaseDb(ABC):
         self.components_table_name = components_table or "agno_components"
         self.learnings_table_name = learnings_table or "agno_learnings"
         self.schedules_table_name = schedules_table or "agno_schedules"
+        self.products_table_name = products_table or "agno_company_products"
+        self.sources_table_name = sources_table or "agno_company_sources"
+        self.projects_table_name = projects_table or "agno_company_projects"
+        self.tasks_table_name = tasks_table or "agno_company_tasks"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.job_table_name = job_table or "agno_jobs"
         self.tool_results_table_name = "agno_tool_results"
+        self.compactions_table_name = "agno_compactions"
+        self.transcripts_table_name = "agno_transcripts"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
+        # Authorization tables. Renameable like any other agno table; implemented by the
+        # async SQLAlchemy backends (AsyncPostgresDb, AsyncSqliteDb) the same way the sync
+        # backends implement them, so authz works under an async db too.
+        self.authz_policy_table_name = "agno_authz_policy"
+        self.authz_grouping_table_name = "agno_authz_grouping"
+        self.authz_roles_table_name = "agno_authz_roles"
+        self.authz_users_table_name = "agno_authz_users"
+        self.authz_audit_table_name = "agno_authz_audit"
+        self.authz_decisions_table_name = "agno_authz_decisions"
 
         # Async adapters cannot create component config/link tables yet, but
         # the FK dependency map needs their configured names.
@@ -2163,6 +2723,61 @@ class AsyncBaseDb(ABC):
         # See BaseDb._resolve_lock: task-reentrant, because resolving a table
         # may resolve FK parents and stamp the versions table.
         self._resolve_lock_async = _ReentrantAsyncLock()
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize common async database configuration and table overrides."""
+        return {
+            "id": self.id,
+            "session_table": self.session_table_name,
+            "runs_table": self.runs_table_name,
+            "memory_table": self.memory_table_name,
+            "metrics_table": self.metrics_table_name,
+            "eval_table": self.eval_table_name,
+            "knowledge_table": self.knowledge_table_name,
+            "traces_table": self.trace_table_name,
+            "spans_table": self.span_table_name,
+            "versions_table": self.versions_table_name,
+            "components_table": self.components_table_name,
+            "learnings_table": self.learnings_table_name,
+            "schedules_table": self.schedules_table_name,
+            "products_table": self.products_table_name,
+            "sources_table": self.sources_table_name,
+            "projects_table": self.projects_table_name,
+            "tasks_table": self.tasks_table_name,
+            "schedule_runs_table": self.schedule_runs_table_name,
+            "job_table": self.job_table_name,
+            "approvals_table": self.approvals_table_name,
+            "auth_tokens_table": self.auth_tokens_table_name,
+            "service_accounts_table": self.service_accounts_table_name,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AsyncBaseDb":
+        """Reconstruct common fields; adapters extend connection configuration."""
+        return cls(
+            id=data.get("id"),
+            session_table=data.get("session_table"),
+            runs_table=data.get("runs_table"),
+            memory_table=data.get("memory_table"),
+            metrics_table=data.get("metrics_table"),
+            eval_table=data.get("eval_table"),
+            knowledge_table=data.get("knowledge_table"),
+            traces_table=data.get("traces_table"),
+            spans_table=data.get("spans_table"),
+            versions_table=data.get("versions_table"),
+            components_table=data.get("components_table"),
+            learnings_table=data.get("learnings_table"),
+            schedules_table=data.get("schedules_table"),
+            products_table=data.get("products_table"),
+            sources_table=data.get("sources_table"),
+            projects_table=data.get("projects_table"),
+            tasks_table=data.get("tasks_table"),
+            schedule_runs_table=data.get("schedule_runs_table"),
+            job_table=data.get("job_table"),
+            approvals_table=data.get("approvals_table"),
+            auth_tokens_table=data.get("auth_tokens_table"),
+            service_accounts_table=data.get("service_accounts_table"),
+        )
 
     async def _get_or_create_table(
         self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
@@ -2176,7 +2791,7 @@ class AsyncBaseDb(ABC):
         if cached is not None:
             return cached
         if not create_table_if_not_found and not await self.table_exists(table_name):
-            log_debug(f"Table '{table_name}' does not exist")
+            log_debug(f"Table '{table_name}' does not exist", log_level=2)
             return None
         async with self._resolve_lock_async:
             cached = self._table_cache.get(table_type, table_name)
@@ -2241,6 +2856,10 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     # --- Sessions ---
+    async def reassign_session_owner(self, session_id: str, *, previous_user_id: str, user_id: Optional[str]) -> bool:
+        """Transfer an idle session only when its stored owner still matches."""
+        raise NotImplementedError
+
     @abstractmethod
     async def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         raise NotImplementedError
@@ -2302,6 +2921,22 @@ class AsyncBaseDb(ABC):
     ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
         """Async read of a single run. Adapters ported to v3 storage override this."""
         return None
+
+    async def cancel_pending_run(
+        self,
+        run_id: str,
+        *,
+        session_id: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        expected_status: str = "PENDING",
+    ) -> bool:
+        """Atomically cancel an observed Pending or Running run, preserving other statuses and data.
+
+        Return whether the row changed. Unsupported adapters must fail rather
+        than fall back to a read followed by an unconditional write.
+        """
+        raise NotImplementedError
 
     async def get_runs(
         self,
@@ -3147,6 +3782,246 @@ class AsyncBaseDb(ABC):
         """
         raise NotImplementedError
 
+    # --- Sources (Optional) ---
+
+    async def add_product_routine(self, product_id: str, schedule_id: str) -> Dict[str, Any]:
+        """Atomically append a Routine id without overwriting Product metadata."""
+        raise NotImplementedError("Company products not supported by the configured database")
+
+    async def create_source(self, source_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
+        """Create a Source; reuse atomically returns an identical reference or refuses conflicting settings."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    async def get_source(
+        self, source_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Read a Source. None user_id is unscoped; a string filters by owner."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    async def get_sources(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        product_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List Sources and their total, filtering by owner before pagination."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    async def update_source(
+        self, source_id: str, user_id: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update descriptive fields on an active Source within the owner scope."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    async def delete_source(self, source_id: str, user_id: Optional[str] = None) -> bool:
+        """Soft-delete an active Source within the owner scope."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    async def restore_source(self, source_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a deleted Source within the owner scope; otherwise return None."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    # --- Products (Optional) ---
+
+    async def create_product(self, product_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a Product; product_data carries its owner and timestamps."""
+        raise NotImplementedError("Company products not supported by the configured database")
+
+    async def get_product(
+        self, product_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Read a Product. None user_id is unscoped; a string filters by owner."""
+        raise NotImplementedError("Company products not supported by the configured database")
+
+    async def get_products(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List Products and their total, filtering by owner before pagination."""
+        raise NotImplementedError("Company products not supported by the configured database")
+
+    async def update_product(
+        self, product_id: str, user_id: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update descriptive fields on an active Product within the owner scope."""
+        raise NotImplementedError("Company products not supported by the configured database")
+
+    async def get_product_counts(self, product_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Count visible children for a page in one grouped query, including zero statuses."""
+        raise NotImplementedError("Company product counts not supported by the configured database")
+
+    async def delete_product(self, product_id: str, user_id: Optional[str] = None) -> bool:
+        """Archive a Product and its children atomically; raise ValueError with active Task ids and titles."""
+        raise NotImplementedError("Company products not supported by the configured database")
+
+    async def restore_product(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a Product and exactly the children archived by it within the owner scope."""
+        raise NotImplementedError("Company products not supported by the configured database")
+
+    # --- Projects (Optional) ---
+
+    async def create_project(self, project_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
+        """Create a Project; project_data carries its owner and timestamps."""
+        raise NotImplementedError("Company projects not supported by the configured database")
+
+    async def get_project(
+        self, project_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Read a Project. None user_id is unscoped; a string filters by owner."""
+        raise NotImplementedError("Company projects not supported by the configured database")
+
+    async def get_projects(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        product_id: Optional[str] = None,
+        status: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List Projects and their total, filtering by owner before pagination."""
+        raise NotImplementedError("Company projects not supported by the configured database")
+
+    async def update_project(
+        self, project_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update descriptive fields on an active Project within the owner scope."""
+        raise NotImplementedError("Company projects not supported by the configured database")
+
+    async def get_project_counts(self, project_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Count visible children for a page in one grouped query, including zero statuses."""
+        raise NotImplementedError("Company project counts not supported by the configured database")
+
+    async def delete_project(
+        self, project_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
+    ) -> bool:
+        """Archive a Project and its Tasks atomically; refuse active Tasks. Cutoff requires old terminal work."""
+        raise NotImplementedError("Company projects not supported by the configured database")
+
+    async def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a Project and exactly the Tasks archived by it within the owner scope."""
+        raise NotImplementedError("Company projects not supported by the configured database")
+
+    async def transition_project(
+        self,
+        project_id: str,
+        target: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        accepted_by: Optional[str] = None,
+        expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
+        auto_accept: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Transition a visible Project and record the caller and reason.
+
+        Automatic completion requires expected_updated_at. Explicit None matches
+        SQL NULL; omission leaves manual transitions without a timestamp guard.
+        Timestamps are epoch seconds; the current non-terminal-Task gate still
+        applies even when two writes share a timestamp.
+        """
+        raise NotImplementedError("Company projects not supported by the configured database")
+
+    # --- Tasks (Optional) ---
+
+    async def create_task(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a Task; task_data carries its owner and timestamps."""
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
+    async def get_task(
+        self, task_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Read a Task. None user_id is unscoped; a string filters by owner."""
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
+    async def get_tasks(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        product_id: Optional[str] = None,
+        status: Optional[str] = None,
+        project_id: Optional[str] = None,
+        failed: Optional[bool] = None,
+        session_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List Tasks and their total, filtering by owner before pagination."""
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
+    async def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+        """Update descriptive fields on an active Task within the owner scope."""
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
+    async def delete_task(
+        self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
+    ) -> bool:
+        """Soft-delete an active Task within the owner scope."""
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
+    async def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a deleted Task within the owner scope; otherwise return None."""
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
+    async def start_task_run(
+        self,
+        task_id: str,
+        attempt: int,
+        expected_transitions: List[Dict[str, Any]],
+        user_id: Optional[str] = None,
+        run_db_id: Optional[str] = None,
+        session_user_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Reserve a Task attempt conditionally; user_id records the starting caller."""
+        raise NotImplementedError("Company execution not supported by this database")
+
+    async def complete_task_run(
+        self,
+        task_id: str,
+        job_id: str,
+        result: Dict[str, Any],
+        expected_transitions: Optional[List[Dict[str, Any]]] = None,
+        checkout: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Save a completed run's result and move its still-current Task to review."""
+        raise NotImplementedError("Company execution not supported by this database")
+
+    async def count_company_acceptances(
+        self, routine_id: str, policy: str, exclude_task_id: str, user_id: Optional[str] = None
+    ) -> int:
+        """Count accepted Tasks and completed Projects, including archived records."""
+        raise NotImplementedError("Company automatic acceptance not supported by this database")
+
+    async def transition_task(
+        self,
+        task_id: str,
+        target: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        accepted_by: Optional[str] = None,
+        executor_type: Optional[str] = None,
+        executor_id: Optional[str] = None,
+        expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
+        auto_accept: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Transition a visible Task and record the caller and reason.
+
+        Automatic acceptance requires expected_updated_at. Explicit None matches
+        SQL NULL; omission leaves manual transitions without a timestamp guard.
+        Timestamps are epoch seconds, so same-second writes are indistinguishable.
+        """
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
     # --- Schedules (Optional) ---
     # These methods are optional. Override in subclasses to enable scheduler persistence.
     # See BaseDb for the ``user_id`` semantics.
@@ -3217,11 +4092,22 @@ class AsyncBaseDb(ABC):
         """Atomically claim a due schedule for execution."""
         raise NotImplementedError
 
-    async def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
-        """Release a claimed schedule and optionally update next_run_at."""
+    async def release_schedule(
+        self,
+        schedule_id: str,
+        next_run_at: Optional[int] = None,
+        *,
+        worker_id: Optional[str] = None,
+        locked_at: Optional[int] = None,
+    ) -> bool:
+        """Release a schedule, optionally matching its worker and individual claim timestamp."""
         raise NotImplementedError
 
     # --- Schedule Runs (Optional) ---
+
+    async def delete_schedule_runs(self, schedule_id: str, *, before: int) -> int:
+        """Delete completed history older than the cutoff for one schedule."""
+        raise NotImplementedError
 
     async def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a schedule run record."""
@@ -3233,6 +4119,10 @@ class AsyncBaseDb(ABC):
 
     async def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule run by ID."""
+        raise NotImplementedError
+
+    async def get_latest_schedule_runs(self, schedule_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Return the latest run for each requested schedule in one query."""
         raise NotImplementedError
 
     async def get_schedule_runs(
@@ -3393,4 +4283,193 @@ class AsyncBaseDb(ABC):
 
     async def delete_service_account(self, service_account_id: str) -> bool:
         """Hard-delete a service account by ID. Returns True if deleted."""
+        raise NotImplementedError
+
+    # -------------------------------------------------------------------------
+    # Authorization (async twin of the BaseDb ``*_authz_*`` contract). Same method
+    # names as the sync contract, declared ``async``; implemented by the async
+    # SQLAlchemy backends and inherited as NotImplementedError everywhere else.
+    # -------------------------------------------------------------------------
+    async def get_authz_policies(self, roles: List[str]) -> List[Tuple[str, str, str, str]]:
+        """All (role, resource, action, effect) rows whose role is in ``roles``."""
+        raise NotImplementedError
+
+    async def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
+        """One role's (resource, action, effect) rows."""
+        raise NotImplementedError
+
+    async def set_authz_role_policies(self, role: str, rows: List[Tuple[str, str, str]]) -> None:
+        """Replace a role's policy rows in one transaction."""
+        raise NotImplementedError
+
+    async def upsert_authz_policy(self, *, role: str, resource: str, action: str, effect: str) -> None:
+        """Add a grant, or flip the effect of the existing one for this (role, resource, action)."""
+        raise NotImplementedError
+
+    async def delete_authz_policy(
+        self, *, role: str, resource: Optional[str] = None, action: Optional[str] = None
+    ) -> None:
+        """Delete a role's policy rows, optionally narrowed to one resource and action."""
+        raise NotImplementedError
+
+    async def get_authz_direct_roles(self, subject: str) -> List[str]:
+        """Roles directly assigned to ``subject``."""
+        raise NotImplementedError
+
+    async def get_authz_direct_roles_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        """Roles directly assigned to each of ``subjects`` (empty list when none), as
+        one bulk read instead of one query per subject."""
+        raise NotImplementedError
+
+    async def list_authz_role_subjects(self, role: str) -> List[str]:
+        """Names directly assigned ``role`` (subjects, plus roles when nesting)."""
+        raise NotImplementedError
+
+    async def authz_name_is_role(self, name: str) -> bool:
+        """True if ``name`` carries policy or has something assigned to it."""
+        raise NotImplementedError
+
+    async def assign_authz_role(self, subject: str, role: str) -> None:
+        """Add an assignment (idempotent)."""
+        raise NotImplementedError
+
+    async def unassign_authz_role(self, subject: str, role: str) -> None:
+        """Remove an assignment (idempotent)."""
+        raise NotImplementedError
+
+    async def replace_authz_subject_roles(self, subject: str, role: str) -> None:
+        """Atomically make ``role`` the subject's only role."""
+        raise NotImplementedError
+
+    async def list_authz_roles(self) -> List[str]:
+        """Every role name known to policy or to assignments."""
+        raise NotImplementedError
+
+    async def delete_authz_role(self, role: str) -> None:
+        """Drop a role entirely -- policy, assignments, metadata -- in one transaction."""
+        raise NotImplementedError
+
+    async def get_authz_role_meta(self, slug: str) -> Optional[Dict[str, Any]]:
+        """Role metadata row, or None."""
+        raise NotImplementedError
+
+    async def list_authz_role_meta(self) -> List[Dict[str, Any]]:
+        """All role metadata rows."""
+        raise NotImplementedError
+
+    async def upsert_authz_role_meta(self, slug: str, values: Dict[str, Any]) -> None:
+        """Create or update a role metadata row."""
+        raise NotImplementedError
+
+    async def delete_authz_role_meta(self, slug: str) -> None:
+        """Delete a role metadata row."""
+        raise NotImplementedError
+
+    async def get_authz_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """A directory user row, or None."""
+        raise NotImplementedError
+
+    async def list_authz_users(
+        self,
+        limit: int = 1000,
+        offset: int = 0,
+        include_disabled: bool = True,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+    ) -> List[Dict[str, Any]]:
+        """A page of directory users."""
+        raise NotImplementedError
+
+    async def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+        """Total number of directory users."""
+        raise NotImplementedError
+
+    async def count_authz_users_by_status(self) -> Dict[str, int]:
+        """``{"total": n, "disabled": n}`` read in one statement."""
+        raise NotImplementedError
+
+    async def list_authz_user_ids(self, include_disabled: bool = True) -> List[str]:
+        """Every directory id, for bulk lookups keyed on the id."""
+        raise NotImplementedError
+
+    async def count_authz_users_by_day(
+        self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+    ) -> List[Dict[str, int]]:
+        """Users created per UTC day as ``{"date": <day start epoch>, "count": n}`` rows,
+        oldest first, bounded by ``created_at`` in ``[starting_at, ending_before)``."""
+        raise NotImplementedError
+
+    async def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
+        """Write a directory row (never overwriting the ``disabled`` tombstone)."""
+        raise NotImplementedError
+
+    async def set_authz_user_disabled(self, user_id: str, disabled: bool) -> None:
+        """Atomically set (or clear) a user's ``disabled`` flag."""
+        raise NotImplementedError
+
+    async def delete_authz_user(self, user_id: str) -> None:
+        """Delete a directory user."""
+        raise NotImplementedError
+
+    async def is_authz_user_disabled(self, user_id: str) -> bool:
+        """The kill switch: True only if the user exists AND is disabled."""
+        raise NotImplementedError
+
+    async def record_authz_audit_event(self, values: Dict[str, Any]) -> None:
+        """Append one change-audit row."""
+        raise NotImplementedError
+
+    async def record_authz_decision(self, values: Dict[str, Any]) -> None:
+        """Append one decision-audit row."""
+        raise NotImplementedError
+
+    async def read_authz_audit_events(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+        decisions: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """A page of audit rows (change trail, or decision trail when ``decisions``)."""
+        raise NotImplementedError
+
+    async def count_authz_audit_events(self, search: Optional[str] = None, decisions: bool = False) -> int:
+        """Total number of audit rows (change or decision trail)."""
+        raise NotImplementedError
+
+    # Optional transcript storage for external agents.
+
+    async def append_transcript_entries(
+        self,
+        framework: str,
+        project_key: str,
+        session_id: str,
+        entries: List[Dict[str, Any]],
+        agno_session_id: str,
+        subpath: Optional[str] = None,
+    ) -> None:
+        """Append opaque transcript entries in order, ignoring entry UUIDs already in the transcript."""
+        raise NotImplementedError
+
+    async def get_transcript_entries(
+        self, framework: str, project_key: str, session_id: str, subpath: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Read transcript entries in append order."""
+        raise NotImplementedError
+
+    async def list_transcript_sessions(self, framework: str, project_key: str) -> List[Dict[str, Any]]:
+        """List main transcripts with session_id and mtime in epoch milliseconds."""
+        raise NotImplementedError
+
+    async def list_transcript_subpaths(self, framework: str, project_key: str, session_id: str) -> List[str]:
+        """List subagent transcript paths for a session."""
+        raise NotImplementedError
+
+    async def delete_transcript(
+        self, framework: str, project_key: str, session_id: str, subpath: Optional[str] = None
+    ) -> None:
+        """Delete one subpath, or the main transcript and all subpaths."""
         raise NotImplementedError

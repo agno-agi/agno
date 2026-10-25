@@ -1,21 +1,45 @@
 import asyncio
+import base64
 import json
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional, Protocol, runtime_checkable
 from uuid import uuid4
 
 from agno.utils.log import log_debug, log_error, log_exception
 
 try:
-    from mcp import ClientSession
     from mcp.shared.exceptions import MCPError
-    from mcp.types import CallToolResult, EmbeddedResource, ImageContent, TextContent
+    from mcp.types import AudioContent, CallToolResult, EmbeddedResource, ImageContent, TextContent
     from mcp.types import Tool as MCPTool
 except ModuleNotFoundError:
     raise ImportError("`mcp` not installed. Please install using `pip install 'mcp>=2.1.0,<3.0.0'`")
 
 
-from agno.media import Image
+from agno.media import Audio, Image
 from agno.tools.function import ToolResult
+
+
+@runtime_checkable
+class MCPSession(Protocol):
+    """The session surface this package uses, satisfied by both session types.
+
+    A connection is driven either by a ``fastmcp.Client`` the toolkit built or by a
+    ``ClientSession`` the caller supplied. The two are unrelated classes, so this
+    structural type is what lets the shared code paths stay checked instead of falling
+    back to ``Any``.
+
+    Only the three methods every caller needs are required. Liveness probing is left
+    out deliberately: ``ClientSession`` spells it ``send_ping`` and ``fastmcp.Client``
+    spells it ``ping``, so ``ping_session`` resolves it by name at the one call site.
+    """
+
+    async def call_tool(
+        self, name: str, arguments: Optional[Dict[str, Any]] = None, *args: Any, **kwargs: Any
+    ) -> Any: ...
+
+    async def list_tools(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    async def initialize(self, *args: Any, **kwargs: Any) -> Any: ...
+
 
 if TYPE_CHECKING:
     from agno.agent import Agent
@@ -84,9 +108,44 @@ def _strip_url_for_name(url: str) -> str:
     return authority + slash + path
 
 
+def _is_fastmcp_client(session: Any) -> bool:
+    """True when the session is a fastmcp Client rather than a raw ClientSession."""
+    try:
+        from fastmcp import Client
+    except ModuleNotFoundError:
+        return False
+    return isinstance(session, Client)
+
+
+def _audio_format_from_mime_type(mime_type: Optional[str]) -> Optional[str]:
+    if not mime_type:
+        return None
+
+    subtype = mime_type.partition("/")[2].split(";", 1)[0].lower()
+    return {"mpeg": "mp3", "x-wav": "wav"}.get(subtype, subtype or None)
+
+
+async def ping_session(session: MCPSession) -> None:
+    """Send an MCP ping, or do nothing when the negotiated protocol has none.
+
+    The sessionless 2026-07-28 era removed ping, so a client that negotiated it would
+    raise "Method not found" on every probe. There is no connection to keep alive
+    there, so skipping is the correct behaviour rather than a swallowed failure.
+    """
+    protocol_version = getattr(session, "protocol_version", None)
+    # Compare only a real version string: a mock attribute must not look like an era.
+    if isinstance(protocol_version, str) and protocol_version >= "2026-07-28":
+        return
+
+    # A ClientSession exposes send_ping(); fastmcp's Client exposes ping(). Neither is
+    # on MCPSession, which is why both are resolved by name here rather than called.
+    ping = getattr(session, "send_ping", None) or getattr(session, "ping")
+    await ping()
+
+
 def get_entrypoint_for_tool(
     tool: MCPTool,
-    session: ClientSession,
+    session: MCPSession,
     mcp_tools_instance: Optional["MCPTools"] = None,
 ):
     """
@@ -116,14 +175,22 @@ def get_entrypoint_for_tool(
         # server as an ordinary argument of the declared tool.
         tool_name = tool.name
 
-        async def _call_with_session(active_session: ClientSession) -> ToolResult:
+        async def _call_with_session(active_session: MCPSession) -> ToolResult:
             try:
-                await active_session.send_ping()
+                await ping_session(active_session)
             except Exception as e:
                 log_exception(e)
 
             log_debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
-            result: CallToolResult = await active_session.call_tool(tool_name, kwargs)  # type: ignore
+            # fastmcp's Client raises ToolError on a failed call, where a ClientSession
+            # returns is_error=True. Ask it not to, so both types land on the is_error
+            # branch below: a failing tool is ordinary model-loop traffic, and routing it
+            # through the generic handler drops the result's meta/structured_content and
+            # logs a stack trace for it. Only fastmcp's Client takes the kwarg.
+            if _is_fastmcp_client(active_session):
+                result: CallToolResult = await active_session.call_tool(tool_name, kwargs, raise_on_error=False)
+            else:
+                result = await active_session.call_tool(tool_name, kwargs)
 
             # Return an error if the tool call failed
             if result.is_error:
@@ -135,6 +202,7 @@ def get_entrypoint_for_tool(
             # Process the result content
             response_str = ""
             images = []
+            audios = []
 
             for content_item in result.content:
                 if isinstance(content_item, TextContent):
@@ -155,8 +223,6 @@ def get_entrypoint_for_tool(
                             mime_type = parsed_json.get("mimeType", "image/png")
 
                             if image_data and isinstance(image_data, str):
-                                import base64
-
                                 image_bytes: Optional[bytes]
                                 try:
                                     image_bytes = base64.b64decode(image_data)
@@ -185,8 +251,6 @@ def get_entrypoint_for_tool(
                     image_data = getattr(content_item, "data", None)
 
                     if image_data and isinstance(image_data, str):
-                        import base64
-
                         try:
                             image_data = base64.b64decode(image_data)
                         except Exception as e:
@@ -197,10 +261,35 @@ def get_entrypoint_for_tool(
                         id=str(uuid4()),
                         url=getattr(content_item, "url", None),
                         content=image_data,
-                        mime_type=getattr(content_item, "mime_type", "image/png"),
+                        mime_type=getattr(content_item, "mime_type", None),
                     )
                     images.append(img_artifact)
                     response_str += "Image has been generated and added to the response.\n"
+                elif isinstance(content_item, AudioContent):
+                    # Handle standard MCP AudioContent
+                    audio_data = getattr(content_item, "data", None)
+                    audio_bytes: Optional[bytes] = None
+
+                    if audio_data and isinstance(audio_data, str):
+                        try:
+                            audio_bytes = base64.b64decode(audio_data)
+                        except Exception as e:
+                            log_debug(f"Failed to decode base64 audio data: {e}")
+
+                    # Undecodable audio must not discard content already collected from this result
+                    if audio_bytes:
+                        mime_type = getattr(content_item, "mime_type", None)
+                        audio_artifact = Audio(
+                            id=str(uuid4()),
+                            content=audio_bytes,
+                            format=_audio_format_from_mime_type(mime_type),
+                            mime_type=mime_type,
+                        )
+                        audios.append(audio_artifact)
+                        response_str += "Audio has been generated and added to the response.\n"
+                    else:
+                        response_str += "[Audio content could not be decoded]\n"
+
                 elif isinstance(content_item, EmbeddedResource):
                     # Handle embedded resources
                     response_str += f"[Embedded resource: {content_item.resource.model_dump_json(by_alias=True)}]\n"
@@ -215,6 +304,7 @@ def get_entrypoint_for_tool(
                 content=response_str.strip(),
                 metadata=_build_mcp_metadata(result),
                 images=images if images else None,
+                audios=audios if audios else None,
             )
 
         # Execute the MCP tool call

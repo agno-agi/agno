@@ -29,8 +29,8 @@ try:
 except ImportError:
     raise ImportError("`valkey-glide-sync` not installed. Please install it using `pip install valkey-glide-sync`")
 
-from agno.filters import FilterExpr
 from agno.exceptions import EmbeddingError
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
@@ -153,7 +153,7 @@ class ValkeyDb(VectorDb):
             search_type (SearchType): Type of search to perform.
             distance (Distance): Distance metric for vector comparisons.
             vector_algorithm (str): Vector indexing algorithm ("HNSW" or "FLAT").
-            reranker (Optional[Reranker]): Reranker instance.
+            reranker (Optional[Reranker]): Reranker instance. Deprecated: pass the reranker to Knowledge instead.
             id (Optional[str]): Optional custom ID. If not provided, an id will be generated.
             name (Optional[str]): Optional name for the vector database.
             description (Optional[str]): Optional description for the vector database.

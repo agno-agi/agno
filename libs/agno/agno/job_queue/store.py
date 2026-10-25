@@ -8,15 +8,24 @@ settle_swept_job, get_job, count_queued_jobs) against process memory.
 This is the contract-test fixture and the single-process dev fallback - it is
 NOT durable (a restart loses the queue) and is never a substitute for the
 DB-backed store in production. One instance per process.
+
+Persistent stores may provide an optional ``ensure_jobs_table()`` hook (sync or
+async, matching their other methods). Workers call it before polling when
+auto-provisioning is enabled; failures are reported and lazy enqueue remains
+available. Third-party stores without the hook keep read-only startup priming.
 """
 
 import asyncio
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from agno.job_queue.session import is_serialized, next_session_seq, session_blocked, session_blocker, with_session_seq
+
 
 class InMemoryQueueStore:
     """Process-local job queue store with the DB adapters' queue contract."""
+
+    serializes_sessions: bool = True
 
     def __init__(self) -> None:
         self._jobs: Dict[str, Dict[str, Any]] = {}
@@ -48,6 +57,8 @@ class InMemoryQueueStore:
             # fenced out.
             if job["id"] in self._jobs:
                 raise RuntimeError(f"enqueue_job: job {job['id']} already exists; ids are never reused")
+            if is_serialized(job):
+                job = with_session_seq(job, next_session_seq(job, self._jobs.values()))
             self._jobs[job["id"]] = dict(job)
             return {"accepted": True, "reason": None, "job": dict(job)}
 
@@ -63,7 +74,8 @@ class InMemoryQueueStore:
             candidates = [
                 j
                 for j in self._jobs.values()
-                if j["available_at"] <= now
+                if not session_blocked(j, self._jobs.values())
+                and j["available_at"] <= now
                 and (j.get("deployment_id") is None or j.get("deployment_id") == deployment_id)
                 and (
                     j["status"] == "queued"
@@ -77,7 +89,7 @@ class InMemoryQueueStore:
             ]
             if not candidates:
                 return None
-            job = min(candidates, key=lambda j: j["created_at"])
+            job = min(candidates, key=lambda j: (j["created_at"], j["id"]))
             job.update(
                 status="running",
                 locked_by=worker_id,
@@ -238,6 +250,14 @@ class InMemoryQueueStore:
             job = self._jobs.get(job_id)
             return dict(job) if job is not None else None
 
+    async def session_blocker(self, job_id: str) -> Optional[str]:
+        """The id of the ticket a queued serialized job waits behind, or None."""
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job["status"] != "queued":
+                return None
+            return session_blocker(job, self._jobs.values())
+
     async def count_queued_jobs(self) -> int:
         async with self._lock:
             return sum(1 for j in self._jobs.values() if j["status"] == "queued")
@@ -251,16 +271,30 @@ class InMemoryQueueStore:
         page: int = 1,
         sort_by: Optional[str] = "created_at",
         sort_order: Optional[str] = "desc",
+        *,
+        session_id: Optional[Union[str, List[str]]] = None,
+        user_id: Optional[str] = None,
+        raise_on_error: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Paginated job listing: (page of jobs, total matching count).
 
-        status accepts one value or a list (match any). An unknown sort_by is
+        raise_on_error=True requires read errors to propagate. This store
+        already propagates errors in both modes.
+
+        status and session_id accept one value or a list (match any). An unknown sort_by is
         silently ignored (the list-API convention); None-valued sort fields
         group together rather than erroring. Sorting by updated_at falls back
         to created_at when updated_at is None, matching the DB adapters."""
         statuses = [status] if isinstance(status, str) else status
+        session_ids = [session_id] if isinstance(session_id, str) else session_id
         async with self._lock:
-            jobs = [dict(j) for j in self._jobs.values() if statuses is None or j["status"] in statuses]
+            jobs = [
+                dict(j)
+                for j in self._jobs.values()
+                if (statuses is None or j["status"] in statuses)
+                and (session_ids is None or j.get("session_id") in session_ids)
+                and (user_id is None or j.get("user_id") == user_id)
+            ]
         total_count = len(jobs)
         if sort_by and jobs and sort_by in jobs[0]:
 
@@ -285,6 +319,8 @@ class InMemoryQueueStore:
             if job is None or job["status"] not in ("failed", "cancelled"):
                 return False
             now = int(time.time())
+            if is_serialized(job):
+                job["payload"] = with_session_seq(job, next_session_seq(job, self._jobs.values()))["payload"]
             job.update(
                 status="queued",
                 max_attempts=job["attempt"] + 1,

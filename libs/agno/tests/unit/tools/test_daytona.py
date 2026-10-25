@@ -1,4 +1,4 @@
-"""Test DaytonaTools functionality."""
+"""Test DaytonaTools class."""
 
 import shlex
 import sys

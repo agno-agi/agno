@@ -248,6 +248,7 @@ def save_paused_session(
         workflow_run_response: The workflow run output.
     """
     workflow._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+    workflow._log_run_outcome(workflow_run_response)
     session.upsert_run(run=workflow_run_response)
     workflow._persist_session_and_run(session=session, run=workflow_run_response)
 
@@ -268,6 +269,7 @@ async def asave_paused_session(
         workflow_run_response: The workflow run output.
     """
     workflow._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+    workflow._log_run_outcome(workflow_run_response)
     session.upsert_run(run=workflow_run_response)
     # asave_* absorbs a sync DB; branching would take the sync media path, which raises on an async backend.
     await workflow._apersist_session_and_run(session=session, run=workflow_run_response)

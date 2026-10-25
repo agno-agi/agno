@@ -14,6 +14,7 @@ import pytest
 pytest.importorskip("fastmcp")
 
 import asyncio  # noqa: E402
+import inspect  # noqa: E402
 import re  # noqa: E402
 import time  # noqa: E402
 from contextlib import asynccontextmanager  # noqa: E402
@@ -22,6 +23,7 @@ from uuid import uuid4  # noqa: E402
 
 import httpx  # noqa: E402
 from fastmcp import Client, Context  # noqa: E402
+from fastmcp.utilities.versions import VersionSpec  # noqa: E402
 from starlette.middleware import Middleware  # noqa: E402
 from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
 
@@ -34,6 +36,7 @@ from agno.models.response import ModelResponse  # noqa: E402
 from agno.os import AgentOS, MCPConfig, MCPServerConfig  # noqa: E402
 from agno.os.config import AuthorizationConfig  # noqa: E402
 from agno.os.mcp import _resolve_user_id, build_mcp_server, get_mcp_server  # noqa: E402
+from agno.os.middleware.jwt import AuthMiddleware  # noqa: E402
 from agno.os.service_accounts import ServiceAccountVerification, VerificationStatus, generate_token  # noqa: E402
 from agno.os.settings import AgnoAPISettings  # noqa: E402
 from agno.run.agent import RunOutput  # noqa: E402
@@ -136,7 +139,7 @@ async def test_custom_plain_callable_is_registered_and_callable():
         """Reverse the given text."""
         return text[::-1]
 
-    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(tools=[reverse_text]))
+    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(default_tools=True, tools=[reverse_text]))
 
     assert "reverse_text" in await _tool_names(os)
     result = await _call_tool(os, "reverse_text", {"text": "abc"})
@@ -164,7 +167,7 @@ async def test_custom_agno_tool_is_registered_with_its_name():
 async def test_unregisterable_custom_tool_raises():
     """A non-callable custom tool fails loudly rather than being silently dropped."""
     with pytest.raises(TypeError):
-        build_mcp_server(AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(tools=[object()])))
+        build_mcp_server(AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(default_tools=True, tools=[object()])))
 
 
 # ==================== Scoping the built-ins ====================
@@ -174,6 +177,105 @@ async def test_default_registers_all_builtin_tools():
     """With plain mcp_server=True, every built-in tool is registered (unchanged behavior)."""
     os = AgentOS(agents=[_agent()], mcp_server=True)
     assert await _tool_names(os) == ALL_BUILTIN_TOOLS
+
+
+@pytest.mark.parametrize("config", [True, MCPConfig(default_tools=True), MCPConfig(enable_builtin_tools=True)])
+async def test_default_tools_are_explicit_with_config(config):
+    os = AgentOS(agents=[_agent()], mcp=config)
+    assert await _tool_names(os) == ALL_BUILTIN_TOOLS
+
+
+@pytest.mark.parametrize("config_class", [MCPConfig, MCPServerConfig])
+async def test_custom_config_defaults_to_only_its_tools(config_class):
+    config = config_class(tools=[_noop_tool])
+    assert config.default_tools is False
+    os = AgentOS(agents=[_agent()], mcp=config)
+    assert await _tool_names(os) == {"_noop_tool"}
+    assert (await _call_tool(os, "_noop_tool", {})).data == "ok"
+
+
+@pytest.mark.parametrize("options", [{}, {"name": "Support"}, {"stateless": True}, {"include_tags": {"core"}}])
+def test_config_without_a_tool_surface_has_migration_guidance(options):
+    with pytest.raises(ValueError) as exc:
+        MCPConfig(**options)
+    message = str(exc.value)
+    assert "MCPConfig(tools=[...])" in message
+    assert "MCPConfig(default_tools=True)" in message
+    assert "AgentOS(mcp=True)" in message
+
+
+async def test_include_tags_does_not_enable_default_tools():
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[_noop_tool], include_tags={"core"}))
+    assert await _tool_names(os) == {"_noop_tool"}
+
+
+@pytest.mark.parametrize(
+    "kwargs, reported",
+    [
+        pytest.param({"include_tags": {"session"}}, ["session"], id="session"),
+        # Advice must name a path that works: lifecycle_tools=True adds the pair only
+        # alongside an exposed component, so a callable-only surface needs default_tools.
+        pytest.param({"include_tags": {"lifecycle"}}, ["lifecycle"], id="lifecycle-callable-only"),
+        pytest.param(
+            {"include_tags": {"lifecycle"}, "lifecycle_tools": True},
+            ["lifecycle"],
+            id="lifecycle-without-exposure",
+        ),
+        pytest.param({"include_tags": {"core", "session"}}, ["core", "session"], id="several-tags"),
+    ],
+)
+def test_include_tags_without_default_tools_warns(monkeypatch, kwargs, reported):
+    warnings: list = []
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    MCPConfig(tools=[_noop_tool], **kwargs)
+
+    assert len(warnings) == 1
+    assert "include_tags has no effect" in warnings[0]
+    assert "default_tools=True" in warnings[0]
+    assert str(reported) in warnings[0]
+
+
+def test_include_tags_lifecycle_is_quiet_when_the_ride_along_serves_it(monkeypatch):
+    """An exposed component plus lifecycle_tools=True registers the pair, so nothing is missing."""
+    warnings: list = []
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    MCPConfig(tools=[_agent().as_tool(name="ask")], lifecycle_tools=True, include_tags={"lifecycle"})
+
+    assert warnings == []
+
+
+def test_include_tags_reports_only_the_tags_the_ride_along_cannot_serve(monkeypatch):
+    """The ride-along covers ``lifecycle``; ``session`` still needs default_tools=True."""
+    warnings: list = []
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    MCPConfig(
+        tools=[_agent().as_tool(name="ask")],
+        lifecycle_tools=True,
+        include_tags={"lifecycle", "session"},
+    )
+
+    assert len(warnings) == 1
+    assert "['session']" in warnings[0]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"include_tags": set()}, id="empty-include-tags"),
+        pytest.param({"exclude_tags": {"lifecycle"}, "lifecycle_tools": True}, id="exclude-only"),
+        pytest.param({"default_tools": True, "include_tags": {"session"}}, id="default-tools-on"),
+    ],
+)
+def test_include_tags_warning_skips_effective_configs(monkeypatch, kwargs):
+    warnings: list = []
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    MCPConfig(tools=[_noop_tool], **kwargs)
+
+    assert warnings == []
 
 
 async def test_disabling_builtins_yields_only_custom_tools():
@@ -229,7 +331,7 @@ def test_tag_scoping_to_zero_builtins_without_custom_tools_warns(monkeypatch, kw
     warnings: list = []
     monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
 
-    MCPServerConfig(**kwargs)
+    MCPServerConfig(default_tools=True, **kwargs)
 
     assert len(warnings) == 1
     assert "resolves to zero tools" in warnings[0]
@@ -238,9 +340,9 @@ def test_tag_scoping_to_zero_builtins_without_custom_tools_warns(monkeypatch, kw
 @pytest.mark.parametrize(
     "kwargs",
     [
-        pytest.param({}, id="defaults"),
-        pytest.param({"include_tags": {"core"}}, id="scoped-to-core"),
-        pytest.param({"exclude_tags": {"session"}}, id="drops-session"),
+        pytest.param({"default_tools": True}, id="defaults"),
+        pytest.param({"default_tools": True, "include_tags": {"core"}}, id="scoped-to-core"),
+        pytest.param({"default_tools": True, "exclude_tags": {"session"}}, id="drops-session"),
         pytest.param({"include_tags": set(), "tools": [_noop_tool]}, id="no-builtins-but-custom-tools"),
         pytest.param({"tools": [_noop_tool], "enable_builtin_tools": False}, id="custom-tools-only"),
     ],
@@ -262,17 +364,17 @@ async def test_zero_tool_tag_scoping_still_builds_an_empty_server(monkeypatch):
     # The pre-lifecycle spelling: excluding the two original tags must still resolve to
     # an empty server on upgrade (the dual-tagged pair must not ride back via an
     # implicitly enabled ``lifecycle``).
-    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(exclude_tags={"core", "session"}))
+    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(default_tools=True, exclude_tags={"core", "session"}))
     assert await _tool_names(os) == set()
 
 
 async def test_include_tags_scopes_builtins_to_core():
-    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(include_tags={"core"}))
+    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(default_tools=True, include_tags={"core"}))
     assert await _tool_names(os) == CORE_TOOLS
 
 
 async def test_exclude_tags_drops_session_builtins():
-    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(exclude_tags={"session"}))
+    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(default_tools=True, exclude_tags={"session"}))
     names = await _tool_names(os)
     assert names == CORE_TOOLS
     assert not (names & SESSION_TOOLS)
@@ -282,27 +384,27 @@ async def test_exclude_core_removes_the_lifecycle_pair():
     """continue_run/cancel_run are core tools: excluding ``core`` removes them exactly
     as it did before the ``lifecycle`` tag existed. A read-only surface built with
     ``exclude_tags={"core"}`` must not silently retain run mutation."""
-    os = AgentOS(agents=[_agent()], mcp=MCPConfig(exclude_tags={"core"}))
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=True, exclude_tags={"core"}))
     assert await _tool_names(os) == SESSION_TOOLS
 
 
 async def test_exclude_lifecycle_keeps_the_default_surface_intact():
     """``lifecycle`` gates only the exposure ride-along: excluding it with the default
     surface on leaves the pair in place (they are core tools there)."""
-    os = AgentOS(agents=[_agent()], mcp=MCPConfig(exclude_tags={"lifecycle"}))
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=True, exclude_tags={"lifecycle"}))
     assert await _tool_names(os) == CORE_TOOLS | SESSION_TOOLS
 
 
 async def test_lifecycle_tools_flag_leaves_the_default_surface_alone():
     """``lifecycle_tools=False`` turns off the exposure ride-along, not the pair's core
     membership -- with no exposures configured the default surface is unchanged."""
-    os = AgentOS(agents=[_agent()], mcp=MCPConfig(lifecycle_tools=False))
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=True, lifecycle_tools=False))
     assert await _tool_names(os) == CORE_TOOLS | SESSION_TOOLS
 
 
 async def test_include_lifecycle_alone_serves_only_the_pair():
     """The tag is explicitly includable: a surface of just the run-resumption pair."""
-    os = AgentOS(agents=[_agent()], mcp=MCPConfig(include_tags={"lifecycle"}))
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=True, include_tags={"lifecycle"}))
     assert await _tool_names(os) == {"continue_run", "cancel_run"}
 
 
@@ -310,20 +412,20 @@ def test_unknown_include_tag_is_rejected():
     """A typo like ``{"sessions"}`` (plural) would silently produce an empty server. The
     ``MCPBuiltinTag`` Literal makes pydantic reject it at construction."""
     with pytest.raises(ValueError, match="Input should be 'core', 'session' or 'lifecycle'"):
-        MCPServerConfig(include_tags={"sessions"})
+        MCPServerConfig(default_tools=True, include_tags={"sessions"})
 
 
 def test_removed_memory_tag_is_rejected():
     """The memory tools were removed from the MCP surface; the old tag must fail loudly
     instead of silently scoping nothing."""
     with pytest.raises(ValueError, match="Input should be 'core', 'session' or 'lifecycle'"):
-        MCPServerConfig(exclude_tags={"memory"})
+        MCPServerConfig(default_tools=True, exclude_tags={"memory"})
 
 
 def test_known_tags_are_accepted():
     """Sanity: the typed fields don't fight the documented values."""
-    MCPServerConfig(include_tags={"core", "session"})
-    MCPServerConfig(exclude_tags={"core"})
+    MCPServerConfig(default_tools=True, include_tags={"core", "session"})
+    MCPServerConfig(default_tools=True, exclude_tags={"core"})
 
 
 async def test_custom_tools_coexist_with_scoped_builtins():
@@ -335,7 +437,7 @@ async def test_custom_tools_coexist_with_scoped_builtins():
 
     os = AgentOS(
         agents=[_agent()],
-        mcp_server=MCPServerConfig(tools=[ping], include_tags={"core"}),
+        mcp_server=MCPServerConfig(default_tools=True, tools=[ping], include_tags={"core"}),
     )
     assert await _tool_names(os) == CORE_TOOLS | {"ping"}
 
@@ -634,6 +736,44 @@ async def test_run_agent_omitted_session_end_to_end_returns_distinct_ids(monkeyp
     assert agent.session_id is None
 
 
+async def test_custom_tool_session_follow_up_needs_no_builtin_tools(monkeypatch, tmp_path):
+    """An exposed agent persists and loads conversation history without lifecycle tools."""
+    from agno.db.sqlite import SqliteDb
+
+    monkeypatch.setattr(mcp_mod, "_resolve_user_id", lambda caller: None)
+    model = _MockModel()
+    histories = []
+
+    async def record_stream(*args, **kwargs):
+        histories.append([(message.role, message.content) for message in kwargs["messages"]])
+        yield model._r
+
+    monkeypatch.setattr(model, "ainvoke_stream", record_stream)
+    agent = Agent(
+        id="product-agent",
+        model=model,
+        db=SqliteDb(db_file=str(tmp_path / "sessions.db")),
+        add_history_to_context=True,
+        num_history_runs=3,
+    )
+    os = AgentOS(agents=[agent], mcp=MCPConfig(tools=[agent.as_tool(name="ask_product_agent")]))
+
+    async with Client(build_mcp_server(os)) as client:
+        assert {tool.name for tool in await client.list_tools()} == {"ask_product_agent"}
+        first = await client.call_tool("ask_product_agent", {"message": "Remember the cycle is two weeks."})
+        session_id = _result_session_id(first)
+        assert session_id
+        second = await client.call_tool(
+            "ask_product_agent", {"message": "How long is the cycle?", "session_id": session_id}
+        )
+
+    assert _result_session_id(second) == session_id
+    assert len(histories) == 2
+    assert ("user", "Remember the cycle is two weeks.") in histories[1]
+    assert ("assistant", "ok") in histories[1]
+    assert ("user", "How long is the cycle?") in histories[1]
+
+
 async def test_continue_run_targets_the_given_session_and_never_mints(monkeypatch):
     """continue_run must resume the exact session it was handed, never mint a new one --
     so the PAUSED -> continue_run HITL flow resolves the original run/session."""
@@ -832,7 +972,7 @@ def test_authorize_with_jwt_does_not_warn(monkeypatch):
 def _parent_auth_middleware(os: AgentOS):
     """The single AuthMiddleware on the parent app (covers REST + the mounted /mcp)."""
     app = os.get_app()
-    return next(m for m in app.user_middleware if m.cls.__name__ == "AuthMiddleware")
+    return next(m for m in app.user_middleware if isinstance(m.cls, type) and issubclass(m.cls, AuthMiddleware))
 
 
 def test_auth_middleware_carries_jwt_constraints():
@@ -881,9 +1021,9 @@ def test_mounted_mcp_app_carries_no_auth_middleware():
         authorization_config=AuthorizationConfig(verification_keys=["dummy"]),
         settings=AgnoAPISettings(os_security_key="test-key"),
     )
-    names = [m.cls.__name__ for m in get_mcp_server(os).user_middleware]
-    assert "AuthMiddleware" not in names
-    assert "JWTMiddleware" not in names
+    middleware = get_mcp_server(os).user_middleware
+    names = [m.cls.__name__ for m in middleware]
+    assert not any(isinstance(m.cls, type) and issubclass(m.cls, AuthMiddleware) for m in middleware)
     assert "_MCPKeyAuthMiddleware" not in names
 
 
@@ -959,6 +1099,34 @@ async def test_transport_security_rejects_unknown_origin():
         )
     assert response.status_code == 400
     assert "invalid_origin" in response.text
+
+
+async def test_transport_security_allows_an_origin_the_cors_policy_admits():
+    """A browser origin AgentOS already trusts for REST is trusted on the MCP surface too.
+
+    The operator UI reads the card and runs tools from its own origin. Admitting that origin
+    only under ``PublicSurface(enforce_browser_origins=True)`` rejected it with
+    ``invalid_origin`` on every plain local server, while ``/config`` answered the same page.
+    """
+    from agno.os import CORSConfig
+
+    os = AgentOS(
+        agents=[_agent()],
+        cors=CORSConfig(origins=["https://ui.example"]),
+        mcp_server=MCPServerConfig(tools=[_ok_tool], enable_builtin_tools=False, allowed_hosts=[]),
+    )
+    async with _mcp_http_client(os) as client:
+        card = await client.get("/mcp/server-card", headers={"Host": "localhost", "Origin": "https://ui.example"})
+        transport = await client.post(
+            "/mcp", json=_MCP_INIT_BODY, headers=_headers(host="localhost", origin="https://ui.example")
+        )
+        other = await client.get("/mcp/server-card", headers={"Host": "localhost", "Origin": "https://other.example"})
+
+    assert card.status_code == 200, card.text
+    assert transport.status_code == 200, transport.text
+    # The policy, not the presence of an Origin header, is what admits a page.
+    assert other.status_code == 400
+    assert "invalid_origin" in other.text
 
 
 async def test_open_server_gets_default_rebinding_protection():
@@ -1138,8 +1306,10 @@ async def test_open_mode_with_db_stays_open_and_ignores_stale_pats(tmp_path):
 def test_no_auth_mode_installs_no_auth_layer():
     """No security key and no db (no verifier): no auth middleware anywhere, /mcp stays open."""
     os = _auth_os(security_key=None)
-    assert not any(m.cls.__name__ == "AuthMiddleware" for m in os.get_app().user_middleware)
-    assert not any(m.cls.__name__ == "AuthMiddleware" for m in get_mcp_server(os).user_middleware)
+    assert not any(isinstance(m.cls, type) and issubclass(m.cls, AuthMiddleware) for m in os.get_app().user_middleware)
+    assert not any(
+        isinstance(m.cls, type) and issubclass(m.cls, AuthMiddleware) for m in get_mcp_server(os).user_middleware
+    )
 
 
 async def test_no_auth_mode_stays_open():
@@ -1209,6 +1379,164 @@ async def test_assigning_config_to_mcp_server_attribute_applies_config():
     assert await _tool_names(os) == {"ping"}
 
 
+def test_managed_role_provider_is_mirrored_onto_mcp_subapp():
+    """The MCP tools are a mounted sub-app whose ``request.app`` is the sub-app, not the
+    main AgentOS app. The tool gate resolves its AuthorizationProvider from that ``.app``,
+    so a managed-roles / custom provider must be mirrored onto the sub-app's state. Without
+    the mirror the gate silently falls back to the default ScopeAuthorizationProvider and a
+    scope-less (role-only) token is denied every tool -- managed RBAC degrades to scope-only
+    over MCP. This locks the mirror in.
+    """
+    import tempfile
+
+    from agno.db.sqlite import SqliteDb
+    from agno.os.authz import Authorization
+
+    with tempfile.NamedTemporaryFile(suffix=".db") as f:
+        roles = Authorization(db=SqliteDb(db_file=f.name), verification_keys=["x" * 40], algorithm="HS256")
+        roles.set_role_scopes("admin", ["agent_os:admin"])
+        os = AgentOS(
+            id="mcp-authz",
+            agents=[_agent()],
+            mcp_server=True,
+            authorization=roles,
+        )
+        app = os.get_app()
+        main_provider = getattr(app.state, "authorization_provider", None)
+        assert main_provider is not None, "main app should carry the managed-role provider"
+        sub_provider = getattr(getattr(os._mcp_app, "state", None), "authorization_provider", None)
+        assert sub_provider is main_provider, "MCP sub-app must resolve the SAME provider as the main app"
+
+
+def test_authz_mirror_survives_a_rebuilt_mcp_subapp():
+    """The mirror lives next to the mount, so a REBUILT sub-app gets it re-applied.
+
+    Previously the mirror happened only at seed time, which was correct purely because
+    _mcp_app is built once and never replaced. If anything ever rebuilds it (or remounts
+    onto a fresh app), a seed-time-only mirror would leave the new sub-app with no
+    provider -- silently degrading managed-role RBAC to scope-only over MCP, the exact
+    bug this guards. Simulate the rebuild and assert the state is restored.
+    """
+    import tempfile
+
+    from agno.db.sqlite import SqliteDb
+    from agno.os.authz import Authorization
+    from agno.os.authz.audit import LoggingAuditSink
+
+    with tempfile.NamedTemporaryFile(suffix=".db") as f:
+        sink = LoggingAuditSink()
+        roles = Authorization(db=SqliteDb(db_file=f.name), verification_keys=["x" * 40], algorithm="HS256", audit=sink)
+        roles.set_role_scopes("admin", ["agent_os:admin"])
+        os = AgentOS(
+            id="mcp-mirror",
+            agents=[_agent()],
+            mcp_server=True,
+            authorization=roles,
+        )
+        app = os.get_app()
+        provider = app.state.authorization_provider
+        assert os._mcp_app.state.authorization_provider is provider
+        assert os._mcp_app.state.authz_audit is sink
+
+        # Simulate a rebuilt sub-app by clearing the state a fresh one would not have.
+        sub = os._mcp_app
+        for attr in ("authorization_provider", "authz_audit"):
+            delattr(sub.state, attr)
+        assert not hasattr(sub.state, "authorization_provider")
+
+        # Re-mounting must restore both, rather than leaving the gate scope-only.
+        os._mount_mcp_app(app)
+        assert sub.state.authorization_provider is provider
+        assert sub.state.authz_audit is sink
+
+
+def test_mcp_identity_bridge_carries_the_role_store_for_first_provision():
+    """The MCP path provisions a first-time user itself, since mcp_auth exempts /mcp from the
+    parent AuthMiddleware. Granting that user their default role needs the managed role store,
+    which lives on the Authorization object, not on AuthorizationConfig. If the bridge does not
+    carry it, an MCP-first user is created but lands with no role: usable over HTTP, inert over
+    MCP.
+    """
+    import tempfile
+
+    from agno.db.sqlite import SqliteDb
+    from agno.os.authz import Authorization
+    from agno.os.mcp import _identity_bridge_kwargs
+
+    with tempfile.NamedTemporaryFile(suffix=".db") as f:
+        db = SqliteDb(db_file=f.name)
+        authz = Authorization(db=db, verification_keys=["x" * 40], algorithm="HS256")
+        authz.define_role("viewer", ["agents:*:read"], default=True)
+        authz.define_role("admin", ["agent_os:admin"])
+        # The directory (and auto_provision) is a top-level concern now, a peer of user_isolation.
+        os = AgentOS(
+            id="mcp-provision", db=db, agents=[_agent()], mcp_server=True, user_directory=True, authorization=authz
+        )
+        os.get_app()
+
+        kw = _identity_bridge_kwargs(os)
+        assert kw["role_store"] is authz  # the object owns the roles, so the default role can be granted
+        assert kw["user_auto_provision"] is True
+
+
+# ----------------------------- stateless transport -----------------------------
+
+
+def _captured_http_app_kwargs(monkeypatch, os_instance) -> dict:
+    """Build the MCP app, returning the kwargs handed to fastmcp's ``http_app``."""
+    captured: dict = {}
+    real_build = mcp_mod.build_mcp_server
+
+    def _spy_build(os_arg):
+        server = real_build(os_arg)
+        real_http_app = server.http_app
+
+        def _spy_http_app(**kwargs):
+            captured.update(kwargs)
+            return real_http_app(**kwargs)
+
+        # functools.wraps keeps the signature that get_mcp_server introspects.
+        _spy_http_app.__signature__ = inspect.signature(real_http_app)  # type: ignore[attr-defined]
+        monkeypatch.setattr(server, "http_app", _spy_http_app)
+        return server
+
+    monkeypatch.setattr(mcp_mod, "build_mcp_server", _spy_build)
+    get_mcp_server(os_instance)
+    return captured
+
+
+def test_stateless_defaults_off_and_is_not_passed(monkeypatch):
+    """Default config leaves fastmcp's own default in place rather than forcing False."""
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=True))
+
+    kwargs = _captured_http_app_kwargs(monkeypatch, os)
+
+    assert "stateless_http" not in kwargs
+
+
+def test_stateless_true_is_passed_to_http_app(monkeypatch):
+    """The stateless flag reaches fastmcp as ``stateless_http=True``."""
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=True, stateless=True))
+
+    kwargs = _captured_http_app_kwargs(monkeypatch, os)
+
+    assert kwargs["stateless_http"] is True
+
+
+def test_stateless_is_not_passed_for_plain_mcp_true(monkeypatch):
+    """``mcp=True`` builds no MCPConfig, so the flag is simply absent."""
+    os = AgentOS(agents=[_agent()], mcp=True)
+
+    kwargs = _captured_http_app_kwargs(monkeypatch, os)
+
+    assert "stateless_http" not in kwargs
+
+
+def test_stateless_config_field_defaults_to_false():
+    assert MCPConfig(default_tools=True).stateless is False
+    assert MCPConfig(default_tools=True, stateless=True).stateless is True
+
+
 # ----------------------------- server identity -----------------------------
 
 
@@ -1238,7 +1566,9 @@ def test_mcp_config_identity_overrides_the_agentos_values():
         name="Docs AgentOS",
         version="0.1.0",
         agents=[_agent()],
-        mcp=MCPConfig(name="Docs", version="1.0.0", instructions="Prefer the docs over prior knowledge."),
+        mcp=MCPConfig(
+            default_tools=True, name="Docs", version="1.0.0", instructions="Prefer the docs over prior knowledge."
+        ),
     )
 
     server = build_mcp_server(os)
@@ -1252,7 +1582,7 @@ async def test_initialize_response_carries_name_version_and_instructions():
     """The values reach a client through the handshake, not only the server object."""
     os = AgentOS(
         agents=[_agent()],
-        mcp=MCPConfig(name="Docs", version="1.0.0", instructions="Cite the page you used."),
+        mcp=MCPConfig(default_tools=True, name="Docs", version="1.0.0", instructions="Cite the page you used."),
     )
 
     async with Client(build_mcp_server(os), mode="legacy") as client:
@@ -1270,6 +1600,7 @@ SERVER_CARD_SCHEMA = "https://static.modelcontextprotocol.io/schemas/v1/server-c
 
 
 def _docs_os(**mcp_kwargs) -> AgentOS:
+    mcp_kwargs.setdefault("default_tools", True)
     return AgentOS(
         name="Docs AgentOS",
         version="1.0.0",
@@ -1296,7 +1627,9 @@ def test_card_name_is_reverse_dns_and_slugged():
 
 async def test_server_card_describes_the_server_and_its_endpoint(monkeypatch):
     monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
-    app = get_mcp_server(_docs_os())
+    os = _docs_os()
+    os.description = "Search the docs — café."
+    app = get_mcp_server(os)
 
     async with _mcp_client(app) as client:
         response = await client.get("/mcp/server-card", headers={"accept": "application/mcp-server-card+json"})
@@ -1305,6 +1638,9 @@ async def test_server_card_describes_the_server_and_its_endpoint(monkeypatch):
     assert response.headers["content-type"].startswith("application/mcp-server-card+json")
     assert response.headers["access-control-allow-origin"] == "*"
     assert response.headers["cache-control"] == "public, max-age=300"
+    assert response.text.startswith('{\n  "$schema": ')
+    assert "Search the docs — café." in response.text
+    assert int(response.headers["content-length"]) == len(response.content)
     card = response.json()
     # The tool entries have their own tests; everything else is pinned exactly.
     assert {key: value for key, value in card.items() if key != "tools"} == {
@@ -1312,7 +1648,7 @@ async def test_server_card_describes_the_server_and_its_endpoint(monkeypatch):
         "name": "com.example/agno-docs",
         "title": "Agno Docs",
         "version": "1.0.0",
-        "description": "Search the docs.",
+        "description": "Search the docs — café.",
         "remotes": [{"type": "streamable-http", "url": "http://example.com/mcp"}],
     }
 
@@ -1325,7 +1661,7 @@ async def test_server_card_endpoint_follows_the_proxy_headers(monkeypatch):
         version="1.0.0",
         description="Search the docs.",
         agents=[_agent()],
-        mcp=MCPConfig(name="Agno Docs", allowed_hosts=["example.com", "docs.agno.com"]),
+        mcp=MCPConfig(default_tools=True, name="Agno Docs", allowed_hosts=["example.com", "docs.agno.com"]),
     )
     app = get_mcp_server(os)
 
@@ -1421,7 +1757,7 @@ async def test_card_version_matches_the_runtime_server_info(monkeypatch):
         name="Docs AgentOS",
         description="Search the docs.",
         agents=[_agent()],
-        mcp=MCPConfig(name="Agno Docs", allowed_hosts=["example.com"]),
+        mcp=MCPConfig(default_tools=True, name="Agno Docs", allowed_hosts=["example.com"]),
     )
     app = get_mcp_server(os)
 
@@ -1451,7 +1787,7 @@ async def test_forwarded_headers_are_ignored_without_allowed_hosts(monkeypatch):
         version="1.0.0",
         description="Search the docs.",
         agents=[_agent()],
-        mcp=MCPConfig(name="Agno Docs"),
+        mcp=MCPConfig(default_tools=True, name="Agno Docs"),
     )
     app = get_mcp_server(os)
 
@@ -1497,7 +1833,7 @@ async def test_card_fields_are_clipped_to_the_schema_limits(monkeypatch):
         version="1.0.0",
         description="d" * 400,
         agents=[_agent()],
-        mcp=MCPConfig(name="N" * 400, allowed_hosts=["example.com"]),
+        mcp=MCPConfig(default_tools=True, name="N" * 400, allowed_hosts=["example.com"]),
     )
     app = get_mcp_server(os)
 
@@ -1534,7 +1870,7 @@ async def test_the_card_conforms_to_the_server_card_schema(monkeypatch, descript
         version="1.0.0",
         description=description,
         agents=[_agent()],
-        mcp=MCPConfig(name=server_name, allowed_hosts=["example.com"]),
+        mcp=MCPConfig(default_tools=True, name=server_name, allowed_hosts=["example.com"]),
     )
     app = get_mcp_server(os)
 
@@ -1561,7 +1897,7 @@ async def test_an_unlisted_forwarded_host_is_not_advertised(monkeypatch):
         version="1.0.0",
         description="Search the docs.",
         agents=[_agent()],
-        mcp=MCPConfig(name="Agno Docs", allowed_hosts=["docs.agno.com"]),
+        mcp=MCPConfig(default_tools=True, name="Agno Docs", allowed_hosts=["docs.agno.com"]),
     )
     app = get_mcp_server(os)
 
@@ -1614,7 +1950,7 @@ def test_card_name_keeps_its_namespace_when_the_server_name_is_very_long():
 def test_server_card_url_must_be_an_absolute_http_url(url):
     """The value is published verbatim as the endpoint, so it is checked at construction."""
     with pytest.raises(ValueError, match="absolute http"):
-        MCPConfig(name="Agno Docs", server_card_url=url)
+        MCPConfig(default_tools=True, name="Agno Docs", server_card_url=url)
 
 
 @pytest.mark.parametrize(
@@ -1628,12 +1964,12 @@ def test_server_card_url_must_be_an_absolute_http_url(url):
 def test_server_card_url_must_not_carry_credentials(url):
     """The card is published publicly, so a userinfo segment would leak whatever it holds."""
     with pytest.raises(ValueError, match="must not contain credentials"):
-        MCPConfig(name="Agno Docs", server_card_url=url)
+        MCPConfig(default_tools=True, name="Agno Docs", server_card_url=url)
 
 
 @pytest.mark.parametrize("url", ["http://localhost:7777/mcp", "https://docs.agno.com/mcp", "http://127.0.0.1:7777/mcp"])
 def test_a_valid_server_card_url_is_accepted(url):
-    assert MCPConfig(name="Agno Docs", server_card_url=url).server_card_url == url
+    assert MCPConfig(default_tools=True, name="Agno Docs", server_card_url=url).server_card_url == url
 
 
 @pytest.mark.parametrize("proto", ["javascript", "ftp", "file", "HTTPS"])
@@ -1645,7 +1981,7 @@ async def test_only_http_schemes_are_taken_from_the_forwarded_proto(monkeypatch,
         version="1.0.0",
         description="Search the docs.",
         agents=[_agent()],
-        mcp=MCPConfig(name="Agno Docs", allowed_hosts=["docs.agno.com"]),
+        mcp=MCPConfig(default_tools=True, name="Agno Docs", allowed_hosts=["docs.agno.com"]),
     )
     app = get_mcp_server(os)
 
@@ -1672,7 +2008,7 @@ async def test_only_http_schemes_are_taken_from_the_forwarded_proto(monkeypatch,
 )
 def test_an_uppercase_scheme_is_lowercased(written, published):
     """The card's URL pattern matches lowercase http(s):// only."""
-    assert MCPConfig(name="Agno Docs", server_card_url=written).server_card_url == published
+    assert MCPConfig(default_tools=True, name="Agno Docs", server_card_url=written).server_card_url == published
 
 
 async def test_the_published_url_always_matches_the_schema_pattern(monkeypatch):
@@ -1775,3 +2111,607 @@ async def test_the_card_tool_entries_match_the_tools_list_wire_format(monkeypatc
             assert entry["inputSchema"] == served.input_schema
     # No internal transport metadata leaks into the published card.
     assert all("_meta" not in entry for entry in card["tools"])
+
+
+# ----------------------------- argument schemas -----------------------------
+
+
+async def test_every_builtin_argument_is_described():
+    """A client renders per-argument descriptions and a model reads them; a bare type is not enough."""
+    os = _docs_os()
+    async with Client(build_mcp_server(os)) as client:
+        served = {t.name: t for t in await client.list_tools()}
+    assert set(served) >= set(mcp_mod._BUILTIN_TOOL_NAMES) - {"continue_run", "cancel_run"}
+    for name, served_tool in served.items():
+        for argument, spec in served_tool.input_schema.get("properties", {}).items():
+            assert spec.get("description"), f"{name}.{argument} has no description"
+
+
+async def test_exposed_component_arguments_are_described():
+    os = AgentOS(
+        name="Docs AgentOS",
+        agents=[_agent()],
+        mcp=MCPConfig(
+            name="Agno Docs", default_tools=False, lifecycle_tools=True, tools=[_agent().as_tool(name="ask")]
+        ),
+    )
+    async with Client(build_mcp_server(os)) as client:
+        served = {t.name: t for t in await client.list_tools()}
+    for name in ("ask", "continue_run", "cancel_run"):
+        for argument, spec in served[name].input_schema["properties"].items():
+            assert spec.get("description"), f"{name}.{argument} has no description"
+
+
+async def test_get_sessions_page_bounds_are_in_the_schema_and_the_error():
+    """REST declares limit >= 1; the tool must say so too, and reject with a message, not a bare code."""
+    os = _docs_os()
+    async with Client(build_mcp_server(os)) as client:
+        schema = {t.name: t for t in await client.list_tools()}["get_sessions"].input_schema
+        assert schema["properties"]["limit"]["minimum"] == 1
+        assert schema["properties"]["page"]["minimum"] == 1
+        for arguments in ({"limit": 0}, {"limit": -5}, {"page": 0}):
+            result = await client.call_tool("get_sessions", arguments, raise_on_error=False)
+            assert result.is_error, arguments
+            text = "".join(getattr(block, "text", "") for block in result.content)
+            assert "greater than or equal to 1" in text, (arguments, text)
+
+
+async def test_continue_run_requires_the_session_id():
+    """Continuation always needs the session; the schema must not present it as optional."""
+    os = _docs_os()
+    async with Client(build_mcp_server(os)) as client:
+        served = {t.name: t for t in await client.list_tools()}
+        # continue_run only rides along with an exposure or the lifecycle tag.
+        if "continue_run" not in served:
+            os = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[_agent().as_tool(name="ask")]))
+    async with Client(build_mcp_server(os)) as client:
+        schema = {t.name: t for t in await client.list_tools()}["continue_run"].input_schema
+        assert "session_id" in schema["required"]
+        assert "run_id" in schema["required"]
+
+
+# ------------------------- tool run endpoint (HTTP) -------------------------
+#
+# The plain-HTTP tool surface an operator UI uses to test a tool without speaking the
+# protocol. The contract it must hold: a tool that ran and failed is a 200 carrying
+# ``isError``, and only a call that never happened is a 4xx.
+
+
+def _echo_os(**mcp_kwargs) -> AgentOS:
+    """An OS whose published tool runs without touching a db or a model."""
+
+    def echo(text: str = "hi") -> str:
+        """Returns what it was given."""
+        return f"echo: {text}"
+
+    return AgentOS(
+        name="Echo AgentOS",
+        agents=[_agent()],
+        mcp=MCPConfig(tools=[echo], allowed_hosts=["example.com"], **mcp_kwargs),
+    )
+
+
+async def test_tool_run_endpoint_runs_a_tool_and_returns_its_result():
+    app = get_mcp_server(_echo_os())
+    async with _mcp_client(app) as client:
+        response = await client.post("/mcp/server/tools/echo/run", json={"arguments": {"text": "there"}})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["isError"] is False
+    # Both shapes are carried so a caller can show the text or the parsed payload.
+    assert body["content"][0]["text"] == "echo: there"
+    assert body["structuredContent"]["result"] == "echo: there"
+    assert body["durationMs"] >= 0
+
+
+async def test_tool_run_endpoint_can_be_switched_off():
+    """A protocol-only deployment keeps one write path; the card is unaffected."""
+    app = get_mcp_server(_echo_os(tool_run_endpoint=False))
+    async with _mcp_client(app) as client:
+        run = await client.post("/mcp/server/tools/echo/run", json={"arguments": {"text": "there"}})
+        card = await client.get("/mcp/server-card")
+
+    assert run.status_code == 404
+    assert "echo: there" not in run.text
+    assert card.status_code == 200
+
+
+async def test_tool_run_endpoint_accepts_a_call_without_a_body():
+    """A tool whose arguments are all optional is runnable without sending any."""
+    app = get_mcp_server(_echo_os())
+    async with _mcp_client(app) as client:
+        response = await client.post("/mcp/server/tools/echo/run", json={})
+
+    assert response.status_code == 200
+    assert response.json()["isError"] is False
+
+
+async def test_tool_run_endpoint_reports_a_failing_tool_as_a_result_not_an_error():
+    """The tool ran; it just failed. That is a 200 with ``isError``, like ``tools/call``."""
+    app = get_mcp_server(_docs_os())
+    async with _mcp_client(app) as client:
+        response = await client.post(
+            "/mcp/server/tools/run_agent/run",
+            json={"arguments": {"agent_id": "ghost", "message": "hi"}},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["isError"] is True
+    assert "ghost" in "".join(block["text"] for block in body["content"])
+
+
+async def test_tool_run_endpoint_reports_every_failure_in_one_shape():
+    """A caller renders one thing whatever went wrong.
+
+    The protocol groups "the tool failed" and "no such tool" into a single failure class, so
+    every response here carries ``isError`` and ``content`` -- only the HTTP status separates
+    a call that never happened from a tool that ran and failed.
+    """
+    app = get_mcp_server(_echo_os())
+    async with _mcp_client(app) as client:
+        failures = [
+            await client.post("/mcp/server/tools/echo/run", json={"arguments": {"text": {"not": "a string"}}}),
+            await client.post("/mcp/server/tools/nope/run", json={"arguments": {}}),
+            await client.post("/mcp/server/tools/echo/run", content=b"not json"),
+        ]
+
+    for response in failures:
+        body = response.json()
+        assert body["isError"] is True, response.text
+        assert body["content"][0]["type"] == "text", response.text
+        assert body["content"][0]["text"], response.text
+        # ``error`` names the class for a caller that wants to branch on it.
+        assert isinstance(body["error"], str), response.text
+
+
+async def test_tool_run_endpoint_rejects_an_unknown_tool():
+    app = get_mcp_server(_docs_os())
+    async with _mcp_client(app) as client:
+        response = await client.post("/mcp/server/tools/not_a_tool/run", json={"arguments": {}})
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "tool_not_found"
+
+
+async def test_tool_run_endpoint_rejects_arguments_that_do_not_match_the_schema():
+    app = get_mcp_server(_docs_os())
+    async with _mcp_client(app) as client:
+        response = await client.post("/mcp/server/tools/run_agent/run", json={"arguments": {"agent_id": "docs-agent"}})
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_arguments"
+
+
+async def test_tool_run_endpoint_rejects_a_malformed_body():
+    app = get_mcp_server(_docs_os())
+    async with _mcp_client(app) as client:
+        malformed = await client.post("/mcp/server/tools/get_agentos_config/run", content=b"not json")
+        wrong_type = await client.post("/mcp/server/tools/get_agentos_config/run", json={"arguments": []})
+
+    assert malformed.status_code == 400
+    assert malformed.json()["error"] == "invalid_json"
+    assert wrong_type.status_code == 400
+    assert wrong_type.json()["error"] == "invalid_arguments"
+
+
+async def test_tool_run_endpoint_runs_the_version_whose_schema_it_published():
+    """The published schema and the executed tool must be the same version.
+
+    ``list_tools`` returns every version of a tool. If the card publishes one version's
+    input schema while ``call_tool`` resolves the name to another, a caller fills in the
+    form correctly and the run fails -- or worse, silently does something else.
+    """
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[_agent().as_tool(name="ask")]))
+    server = build_mcp_server(os)
+
+    @server.tool(name="versioned", version="1")
+    def _v1(only_in_v1: int) -> str:
+        """First version."""
+        return "v1 ran"
+
+    @server.tool(name="versioned", version="2")
+    def _v2(only_in_v2: str) -> str:
+        """Second version."""
+        return "v2 ran"
+
+    published = (await mcp_mod._published_tools(server))["versioned"]
+    schema_fields = set(published.to_mcp_tool().input_schema.get("properties", {}))
+
+    # Whichever version is published, calling it with that schema's arguments must run it.
+    arguments = {field: (1 if field == "only_in_v1" else "x") for field in schema_fields}
+    result = await server.call_tool(
+        "versioned", arguments, version=VersionSpec(eq=published.version) if published.version else None
+    )
+
+    expected = "v1 ran" if "only_in_v1" in schema_fields else "v2 ran"
+    assert "".join(getattr(block, "text", "") for block in result.content) == expected
+    # fastmcp resolves a bare name to its highest version, so the card must publish that one.
+    assert published.version == "2"
+
+
+async def test_tool_run_endpoint_only_serves_tools_this_server_publishes():
+    """A tool scoped out of the surface is not runnable, even though it exists."""
+    os = _docs_os(default_tools=True, exclude_tags={"session"})
+    app = get_mcp_server(os)
+    async with _mcp_client(app) as client:
+        published = {tool["name"] for tool in (await client.get("/mcp/server-card")).json()["tools"]}
+        response = await client.post("/mcp/server/tools/get_sessions/run", json={"arguments": {}})
+
+    assert "get_sessions" not in published
+    assert response.status_code == 404
+
+
+async def test_tool_run_endpoint_times_out_a_tool_that_does_not_finish():
+    async def _sleep() -> str:
+        """Sleeps past the timeout."""
+        await asyncio.sleep(30)
+        return "done"
+
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[_sleep], tool_run_timeout_seconds=0.05))
+    app = get_mcp_server(os)
+    async with _mcp_client(app, base_url="http://localhost") as client:
+        response = await client.post("/mcp/server/tools/_sleep/run", json={"arguments": {}})
+
+    assert response.status_code == 504
+    assert response.json()["error"] == "timeout"
+
+
+class _Tool:
+    """A tool that outlives any budget and records how it ended.
+
+    Unwinding takes a moment, as closing a model's HTTP stream does, so a handler can be
+    cancelled while the tool is still cancelling.
+    """
+
+    def __init__(self) -> None:
+        self.ended: Optional[str] = None
+
+    async def run(self) -> str:
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.1)
+            self.ended = "cancelled"
+            raise
+        self.ended = "finished"
+        return "done"
+
+
+async def test_tool_run_budget_cancels_the_tool_and_reports_a_timeout():
+    tool = _Tool()
+    with pytest.raises(asyncio.TimeoutError):
+        await mcp_mod._call_within_the_budget(tool.run(), timeout_seconds=0.01)
+    assert tool.ended == "cancelled"
+
+
+async def test_tool_run_budget_propagates_the_handlers_own_cancellation():
+    """A handler cancelled mid-call (a server shutting down) is cancelled, not timed out.
+
+    Covers both windows: before the budget expires, and after it expired while the tool
+    is still unwinding. The second is where ``work.cancelled()`` cannot tell whose
+    cancellation arrived, because the tool was already cancelled by the budget.
+    """
+    for cancel_after, window in ((0.0, "before the budget expires"), (0.05, "while the tool unwinds")):
+        tool = _Tool()
+        handler = asyncio.ensure_future(mcp_mod._call_within_the_budget(tool.run(), timeout_seconds=0.01))
+        await asyncio.sleep(cancel_after)
+        handler.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await handler
+        assert handler.cancelled(), window
+        # Either way nobody will read the result, so the tool is stopped.
+        await asyncio.sleep(0.2)
+        assert tool.ended == "cancelled", window
+
+
+async def test_tool_run_endpoint_does_not_claim_a_sibling_path():
+    """``/mcp/servers`` shares a prefix with ``/mcp/server`` but is a different route.
+
+    The plural is deliberately left free for the servers this OS connects to.
+    """
+    app = get_mcp_server(_docs_os())
+    async with _mcp_client(app) as client:
+        assert (await client.get("/mcp/servers")).status_code == 404
+        assert (await client.get("/mcp/server/toolshed")).status_code == 404
+
+
+async def test_tool_run_endpoint_refuses_an_unverified_bearer_token():
+    """A bearer header is not evidence: the token must have been verified.
+
+    fastmcp wraps only the ``/mcp`` transport route in RequireAuthMiddleware and
+    ``MCPConfig.authorize`` is registered with ``only_path="/mcp"``, so neither runs for
+    this custom route. Accepting any request that merely carries an Authorization header
+    let a caller run every published tool with ``Bearer anything``.
+    """
+    from fastmcp.server.auth.providers.jwt import JWTVerifier
+
+    def _ran() -> str:
+        """Returns a marker."""
+        return "ran"
+
+    verifier = JWTVerifier(
+        public_key="-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE"
+        + ("A" * 64)
+        + "\n-----END PUBLIC KEY-----",
+        issuer="https://issuer.example",
+        audience="test",
+    )
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[_ran]), mcp_auth=verifier)
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app, base_url="http://localhost") as client:
+        forged = await client.post(
+            "/mcp/server/tools/_ran/run", json={"arguments": {}}, headers={"Authorization": "Bearer forged"}
+        )
+        anonymous = await client.post("/mcp/server/tools/_ran/run", json={"arguments": {}})
+
+    for response in (forged, anonymous):
+        assert response.status_code == 401, response.text
+        assert response.json()["error"] == "unauthorized"
+        assert "ran" not in response.text
+
+
+async def test_tool_run_endpoint_accepts_an_mcp_auth_token_through_the_full_app():
+    """A provider token that works on /mcp must work on the runner too.
+
+    Exercised through ``get_app()`` rather than the MCP sub-app: the parent AuthMiddleware
+    only exists on the full app, and it is what used to decode a provider-issued (RS256)
+    token as an agno JWT (HS256) and reject it before the handler ran. A test built on the
+    sub-app alone passes while the real deployment returns 401.
+    """
+    import time
+
+    import jwt
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from fastmcp.server.auth.providers.jwt import JWTVerifier
+
+    from agno.os.config import AuthorizationConfig
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    ).decode()
+    public_pem = (
+        key.public_key()
+        .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        .decode()
+    )
+    issuer, audience = "https://issuer.example", "test-aud"
+
+    def _token(**overrides) -> str:
+        claims = {
+            "sub": "alice",
+            "iss": issuer,
+            "aud": audience,
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 3600,
+        }
+        claims.update(overrides)
+        return jwt.encode(claims, private_pem, algorithm="RS256")
+
+    def _ran() -> str:
+        """Returns a marker."""
+        return "ran"
+
+    os = AgentOS(
+        agents=[_agent()],
+        mcp=MCPConfig(tools=[_ran]),
+        mcp_auth=JWTVerifier(public_key=public_pem, issuer=issuer, audience=audience),
+        # The REST plane runs its own JWT scheme alongside the provider: this is the
+        # combination that used to 401.
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=["x" * 40], algorithm="HS256"),
+    )
+    app = os.get_app()
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as client:
+
+            async def _run(headers):
+                return await client.post("/mcp/server/tools/_ran/run", json={"arguments": {}}, headers=headers)
+
+            accepted = await _run({"Authorization": f"Bearer {_token()}"})
+            forged = await _run({"Authorization": "Bearer not-a-token"})
+            expired = await _run(
+                {"Authorization": f"Bearer {_token(iat=int(time.time()) - 7200, exp=int(time.time()) - 3600)}"}
+            )
+            anonymous = await _run({})
+
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["isError"] is False
+    assert "ran" in accepted.text
+    # Exempting the path from the parent middleware must not leave it open.
+    for refused in (forged, expired, anonymous):
+        assert refused.status_code == 401, refused.text
+        assert "ran" not in refused.text
+
+
+async def test_tool_run_endpoint_accepts_a_valid_mcp_auth_token():
+    """The gate must admit a real token, not just refuse bad ones.
+
+    A suite that only asserts 401 passes whether the route is correctly gated or simply
+    broken, so this signs a token the configured verifier actually accepts. fastmcp's auth
+    middleware wraps the whole MCP sub-app (it inspects the method and headers, never the
+    path), so this custom route is verified upstream and ``_denied`` reads that verdict
+    rather than re-verifying.
+    """
+    import time
+
+    import jwt
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from fastmcp.server.auth.providers.jwt import JWTVerifier
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    public_pem = (
+        key.public_key()
+        .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        .decode()
+    )
+    issuer, audience = "https://issuer.example", "test-aud"
+
+    def _token(**overrides) -> str:
+        claims = {
+            "sub": "alice",
+            "iss": issuer,
+            "aud": audience,
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 3600,
+        }
+        claims.update(overrides)
+        return jwt.encode(claims, private_pem, algorithm="RS256")
+
+    def _ran() -> str:
+        """Returns a marker."""
+        return "ran"
+
+    os = AgentOS(
+        agents=[_agent()],
+        mcp=MCPConfig(tools=[_ran]),
+        mcp_auth=JWTVerifier(public_key=public_pem, issuer=issuer, audience=audience),
+    )
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app, base_url="http://localhost") as client:
+
+        async def _run(header: str):
+            return await client.post(
+                "/mcp/server/tools/_ran/run", json={"arguments": {}}, headers={"Authorization": header}
+            )
+
+        accepted = await _run(f"Bearer {_token()}")
+        forged = await _run("Bearer not-a-token")
+        expired = await _run(f"Bearer {_token(iat=int(time.time()) - 7200, exp=int(time.time()) - 3600)}")
+        wrong_audience = await _run(f"Bearer {_token(aud='somewhere-else')}")
+
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["isError"] is False
+    assert "ran" in accepted.text
+    for refused in (forged, expired, wrong_audience):
+        assert refused.status_code == 401, refused.text
+        assert "ran" not in refused.text
+
+
+def _jwt_verifier():
+    from fastmcp.server.auth.providers.jwt import JWTVerifier
+
+    return JWTVerifier(
+        public_key="-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE"
+        + ("A" * 64)
+        + "\n-----END PUBLIC KEY-----",
+        issuer="https://issuer.example",
+        audience="test",
+    )
+
+
+async def test_tool_run_endpoint_refuses_a_self_asserted_query_string_identity():
+    """``?user_id=`` is a claim, not a credential.
+
+    With ``user_isolation`` and no REST auth, NoAuthIdentityMiddleware copies the query
+    param onto ``request.state.user_id`` for scoping. Treating that as a principal let an
+    anonymous caller run any published tool.
+    """
+
+    def _ran() -> str:
+        """Returns a marker."""
+        return "ran"
+
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[_ran]), mcp_auth=_jwt_verifier(), user_isolation=True)
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app, base_url="http://localhost") as client:
+        response = await client.post("/mcp/server/tools/_ran/run?user_id=attacker", json={"arguments": {}})
+
+    assert response.status_code == 401, response.text
+    assert response.json()["error"] == "unauthorized"
+    assert "ran" not in response.text
+
+
+async def test_tool_run_endpoint_does_not_double_apply_authorize():
+    """``authorize`` must run once per request.
+
+    Without ``mcp_auth`` the gate middleware is installed unscoped and already covers this
+    route, so applying the predicate in the handler too would double-count an ``authorize``
+    that audits or rate-limits.
+    """
+    calls: list = []
+
+    def _authorize(user_id):
+        calls.append(user_id)
+        return True
+
+    def _ran() -> str:
+        """Returns a marker."""
+        return "ran"
+
+    os = AgentOS(
+        agents=[_agent()],
+        mcp=MCPConfig(tools=[_ran], authorize=_authorize),
+        settings=AgnoAPISettings(os_security_key="k"),
+    )
+    app = os.get_app()
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as client:
+            response = await client.post(
+                "/mcp/server/tools/_ran/run", json={"arguments": {}}, headers={"Authorization": "Bearer k"}
+            )
+
+    assert response.status_code == 200, response.text
+    assert len(calls) == 1, f"authorize ran {len(calls)} times"
+
+
+async def test_tool_run_endpoint_applies_the_authorize_predicate():
+    """``MCPConfig.authorize`` guards this route too.
+
+    Under ``mcp_auth`` the gate middleware is registered with ``only_path="/mcp"``, an exact
+    match that never covers ``/mcp/server/tools/...``. A caller the predicate rejects must
+    not be able to run tools here just because the transport is where the gate lives.
+    """
+
+    def _ran() -> str:
+        """Returns a marker."""
+        return "ran"
+
+    os = AgentOS(
+        agents=[_agent()],
+        mcp=MCPConfig(tools=[_ran], authorize=lambda user_id: False),
+        mcp_auth=_jwt_verifier(),
+        user_isolation=True,
+    )
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app, base_url="http://localhost") as client:
+        response = await client.post("/mcp/server/tools/_ran/run?user_id=x", json={"arguments": {}})
+
+    assert response.status_code == 401, response.text
+    assert "ran" not in response.text
+
+
+def test_a_transport_path_may_not_sit_inside_another_paths_sub_routes():
+    """Reserved sub-routes are a subtree, not one exact prefix.
+
+    ``/mcp/server/tools`` sits under ``/mcp``'s ``/server`` just as ``/mcp/server`` does;
+    an alias there would swallow requests meant for the transport.
+    """
+    for alias in ("/mcp/server", "/mcp/server/tools", "/mcp/server/tools/deeper", "/mcp/server-card"):
+        with pytest.raises(ValueError, match="must not overlap"):
+            MCPConfig(default_tools=True, path="/mcp", path_aliases=[alias])
+
+    # A path that merely shares a prefix is not inside the subtree.
+    MCPConfig(default_tools=True, path="/mcp/servertools")
+    MCPConfig(default_tools=True, path="/mcp", path_aliases=["/legacy"])
+
+
+def test_server_path_may_not_collide_with_a_transport_path():
+    """One alias may not sit on another's ``/server`` subtree, which would shadow the runner."""
+    with pytest.raises(ValueError, match="must not overlap"):
+        MCPConfig(default_tools=True, path="/a", path_aliases=["/a/server"])

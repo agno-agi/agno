@@ -62,6 +62,7 @@ def test_canonical_provider_display_matches_class(key):
     [
         # The crash from the components table: Azure models all report provider "Azure".
         ("Azure", "AzureOpenAI", "azure-openai"),
+        ("Azure", "AzureOpenAIResponses", "azure-openai-responses"),
         ("Azure", "AzureAIFoundry", "azure-ai-foundry"),
         ("AzureFoundry", "AzureFoundryClaude", "azure-foundry-claude"),
         # SDK-gated providers, validated via their serialized (provider, name) pairs.
@@ -131,6 +132,7 @@ def test_resolve_provider_aliases(provider, name, expected_key):
         # (same class), so it resolves to the canonical "openai" key -- still the OpenAIResponses class.
         ("OpenAI", "OpenAIResponses", "openai"),
         ("Azure", "AzureAIFoundry", "azure-ai-foundry"),
+        ("Azure", "AzureOpenAIResponses", "azure-openai-responses"),
     ],
 )
 def test_name_does_not_override_conflicting_provider(provider, name, expected_key):

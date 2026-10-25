@@ -42,6 +42,8 @@ StudioErrorCode = Literal[
     "ambiguous_reference",
     "schedule_not_found",
     "schedule_conflict",
+    # Company Routines change only through Company, which keeps them linked to their Product.
+    "company_routine",
     "target_not_published",
     "db_not_configured",
     # The catalog table exists but is on an older shape. Distinct from

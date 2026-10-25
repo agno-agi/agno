@@ -13,6 +13,9 @@ from ``agno.db.utils`` and passes it to ``create_engine`` in ``__init__``.
 from __future__ import annotations
 
 import inspect
+import json
+from datetime import datetime
+from unittest.mock import patch
 
 import pytest
 
@@ -48,21 +51,22 @@ class TestParityWithSiblingSqlAdapters:
     of the SQL adapters, this catches it immediately."""
 
     @pytest.mark.parametrize(
-        "module_path,class_name",
+        "module_path,class_name,factory_name",
         [
-            ("agno.db.mysql.mysql", "MySQLDb"),
-            ("agno.db.postgres.postgres", "PostgresDb"),
-            ("agno.db.singlestore.singlestore", "SingleStoreDb"),
+            ("agno.db.mysql.mysql", "MySQLDb", "create_engine"),
+            ("agno.db.postgres.postgres", "PostgresDb", "create_engine"),
+            ("agno.db.postgres.async_postgres", "AsyncPostgresDb", "create_async_engine"),
+            ("agno.db.singlestore.singlestore", "SingleStoreDb", "create_engine"),
         ],
     )
-    def test_sql_adapter_uses_custom_json_serializer(self, module_path: str, class_name: str):
+    def test_sql_adapter_uses_custom_json_serializer(self, module_path: str, class_name: str, factory_name: str):
         try:
             module = __import__(module_path, fromlist=[class_name])
         except ImportError as e:
             pytest.skip(f"driver missing for {class_name}: {e}")
-        src = inspect.getsource(module)
-        assert "json_serializer=json_serializer" in src, (
-            f"{class_name} must pass json_serializer to create_engine — "
-            "otherwise non-JSON-native types (datetime, Decimal, enums) in "
-            "JSON columns crash on insert."
-        )
+        with patch.object(module, factory_name) as create:
+            getattr(module, class_name)(id="serializer-test", db_url="unused://")
+
+        create.assert_called_once()
+        serializer = create.call_args.kwargs["json_serializer"]
+        assert json.loads(serializer({"created": datetime(2026, 1, 2)})) == {"created": "2026-01-02T00:00:00"}

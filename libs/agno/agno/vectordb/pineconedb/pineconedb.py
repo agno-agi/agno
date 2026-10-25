@@ -95,6 +95,7 @@ class PineconeDb(VectorDb):
         use_hybrid_search: bool = False,
         hybrid_alpha: float = 0.5,
         reranker: Optional[Reranker] = None,
+        return_vectors: bool = False,
         **kwargs,
     ):
         # Validate required parameters
@@ -149,6 +150,9 @@ class PineconeDb(VectorDb):
             log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = _embedder
         self.reranker: Optional[Reranker] = reranker
+        # Pinecone omits vectors unless asked. Fetching them enlarges every response, so
+        # this stays off until a reranker that scores on embeddings needs them.
+        self.return_vectors: bool = return_vectors
 
     @property
     def client(self) -> Pinecone:
@@ -497,6 +501,12 @@ class PineconeDb(VectorDb):
         hdense = [v * alpha for v in dense]
         return hdense, hsparse
 
+    def _include_values(self, include_values: Optional[bool]) -> bool:
+        """An explicit argument wins; otherwise follow the instance setting."""
+        if include_values is not None:
+            return include_values
+        return self.return_vectors
+
     def search(
         self,
         query: str,
@@ -513,7 +523,8 @@ class PineconeDb(VectorDb):
             limit (int, optional): The maximum number of results to return. Defaults to 5.
             filters (Optional[Dict[str, Union[str, float, int, bool, List, dict]]], optional): The filter for the search. Defaults to None.
             namespace (Optional[str], optional): The namespace to search in. Defaults to None.
-            include_values (Optional[bool], optional): Whether to include values in the search results. Defaults to None.
+            include_values (Optional[bool], optional): Whether to include vectors in the results.
+                Defaults to None, which follows the return_vectors setting on the instance.
             include_metadata (Optional[bool], optional): Whether to include metadata in the search results. Defaults to None.
             user_id (Optional[str], optional): Scope results to this user plus shared chunks.
                 Defaults to None, which applies no scope.
@@ -543,7 +554,7 @@ class PineconeDb(VectorDb):
                 top_k=limit,
                 namespace=namespace or self.namespace,
                 filter=filters,
-                include_values=include_values,
+                include_values=self._include_values(include_values),
                 include_metadata=True,
             )
         else:
@@ -552,7 +563,7 @@ class PineconeDb(VectorDb):
                 top_k=limit,
                 namespace=namespace or self.namespace,
                 filter=filters,
-                include_values=include_values,
+                include_values=self._include_values(include_values),
                 include_metadata=True,
             )
 
@@ -560,6 +571,7 @@ class PineconeDb(VectorDb):
             Document(
                 content=(result.metadata.get("text", "") if result.metadata is not None else ""),
                 id=result.id,
+                embedder=self.embedder,
                 embedding=result.values,
                 meta_data=result.metadata,
             )

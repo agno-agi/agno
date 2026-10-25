@@ -256,11 +256,9 @@ def test_generate_video_success(mock_gemini_tools, mock_agent, mock_video_operat
         assert video_artifact.original_prompt == prompt
         assert video_artifact.mime_type == "video/mp4"
 
-        import base64
-
-        expected_base64_string = base64.b64encode(b"fake_video_bytes").decode("utf-8")
-        expected_content = expected_base64_string.encode("utf-8")  # Convert string to UTF-8 bytes
-        assert video_artifact.content == expected_content
+        # The artifact carries the raw video bytes, not the base64 text encoding of them
+        assert video_artifact.content == b"fake_video_bytes"
+        assert video_artifact.get_content_bytes() == b"fake_video_bytes"
 
         assert mock_gemini_tools.client.models.generate_videos.called
         call_args = mock_gemini_tools.client.models.generate_videos.call_args
