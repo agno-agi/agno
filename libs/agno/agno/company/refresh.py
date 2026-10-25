@@ -5,7 +5,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.company.execution import _call
-from agno.company.playbook import _require_owner
+from agno.company.playbook import _require_product_scope
 from agno.db.schemas.products import product_metadata
 from agno.utils.string import hash_string_sha256
 
@@ -56,7 +56,7 @@ async def arefresh_product(manager: Any, product_id: str, user_id: Optional[str]
     product = await _call(manager, "get", product_id)
     if product is None:
         raise LookupError("Product not found")
-    _require_owner(product, user_id)
+    _require_product_scope(product)
     days = product_metadata(product.get("metadata"))["archive_window_days"]
     cutoff = int(time.time()) - days * 86400
     result: Dict[str, Any] = {
@@ -77,8 +77,7 @@ async def arefresh_product(manager: Any, product_id: str, user_id: Optional[str]
             ):
                 continue
             # Recheck terminal state and age in the existing soft-delete statement.
-            # Owner-scoped like the archive routes: another user's work stays.
-            if await _call(manager, "delete_" + kind, record["id"], user_id=user_id, updated_before=cutoff):
+            if await _call(manager, "delete_" + kind, record["id"], user_id=None, updated_before=cutoff):
                 result["archived_" + kind + "s"].append(record["id"])
 
     from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID

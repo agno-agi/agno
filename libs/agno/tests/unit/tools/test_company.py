@@ -36,6 +36,66 @@ def test_optional_schema_describes_null_and_hides_identity(tmp_path, use_async, 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
 @pytest.mark.parametrize("processed", [False, True])
+async def test_source_capabilities_guide_reads_without_changing_saved_sources(tmp_path, use_async, processed):
+    db = SqliteDb(db_file=str(tmp_path / "capabilities.db"))
+    manager = CompanyManager(db)
+    product = manager.create(name="SDK")
+    path = tmp_path / "README.md"
+    path.write_text("Local repository evidence")
+    sources = [
+        manager.create_source(product_id=product["id"], type="git", reference=str(tmp_path)),
+        manager.create_source(product_id=product["id"], type="markdown", reference=str(path)),
+        manager.create_source(product_id=product["id"], type="website", reference="https://docs.agno.com"),
+        manager.create_source(
+            product_id=product["id"],
+            type="git",
+            reference="https://github.com/agno-agi/agno",
+            credential_ref="REPO_TOKEN",
+        ),
+    ]
+    tools = CompanyTools(db)
+    context = RunContext(run_id="scan", session_id="session", user_id="alice")
+
+    async def invoke(name, **kwargs):
+        function = (tools.get_async_functions() if use_async else tools.functions)[name]
+        fn = getattr(tools, ("a" if use_async else "") + name)
+        if processed:
+            function.process_entrypoint()
+            fn = function.entrypoint
+        result = fn(**kwargs, _agno_run_context=context)
+        return json.loads(await result if inspect.isawaitable(result) else result)
+
+    try:
+        rows = []
+        for page in (1, 2):
+            result = await invoke("list_product_sources", product_id=product["id"], limit=2, page=page)
+            assert result["meta"]["total_count"] == 4
+            assert result["meta"]["page"] == page
+            rows.extend(result["data"])
+        by_id = {row["id"]: row for row in rows}
+        assert set(by_id) == {source["id"] for source in sources}
+        for source in sources[:3]:
+            assert by_id[source["id"]]["readable"] is True
+            assert by_id[source["id"]]["checkout_supported"] is False
+        remote = by_id[sources[-1]["id"]]
+        assert remote["readable"] is False
+        assert remote["checkout_supported"] is True
+        assert all("credential_ref" not in row for row in rows)
+        for source in sources:
+            assert manager.get_source(source["id"]) == source
+
+        # Capabilities guide selection; they neither grant access nor bypass the reader.
+        content = await invoke("read_product_source", source_id=sources[0]["id"], path="README.md")
+        assert content["content"] == "Local repository evidence"
+        with pytest.raises(ValueError, match="Git URL Sources are for sandbox checkout"):
+            await invoke("read_product_source", source_id=remote["id"])
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("processed", [False, True])
 @pytest.mark.parametrize(
     "name", ["propose_company_task", "list_company_tasks", "list_company_wiki", "search_company_decisions"]
 )
@@ -107,7 +167,7 @@ async def test_empty_optionals_do_not_weaken_required_validation(tmp_path, use_a
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
 @pytest.mark.parametrize("processed", [False, True])
-@pytest.mark.parametrize("name", ["list_company_sources", "read_company_source"])
+@pytest.mark.parametrize("name", ["list_product_sources", "read_product_source"])
 async def test_source_optionals_equal_omission(tmp_path, use_async, processed, name):
     db = SqliteDb(db_file=str(tmp_path / "sources.db"))
     manager = CompanyManager(db)
@@ -130,7 +190,7 @@ async def test_source_optionals_equal_omission(tmp_path, use_async, processed, n
         function = (tools.get_async_functions() if use_async else tools.functions)[name]
         function.process_entrypoint()
         fn = function.entrypoint
-    required = {"product_id": product["id"]} if name == "list_company_sources" else {"source_id": source["id"]}
+    required = {"product_id": product["id"]} if name == "list_product_sources" else {"source_id": source["id"]}
 
     async def invoke(options):
         result = fn(**required, **options, _agno_run_context=context)
@@ -140,7 +200,7 @@ async def test_source_optionals_equal_omission(tmp_path, use_async, processed, n
     for argument in optional:
         assert await invoke({argument: ""}) == expected, argument
         assert await invoke({argument: None}) == expected, argument
-    if name == "read_company_source":
+    if name == "read_product_source":
         selected = await invoke({"path": path.name, "max_chars": None, "content_offset": ""})
         assert selected["content"] == "Observed content"
     db.close()
