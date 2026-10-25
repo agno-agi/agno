@@ -13,8 +13,7 @@ from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.company.routines import _routine_executor_endpoint, _routine_message, _schedule_fields
 from agno.db.base import AsyncBaseDb
 from agno.os.auth import get_authentication_dependency
-from agno.os.middleware.user_scope import get_scoped_user_id
-from agno.os.routers.company.products import _require_write_ownership
+from agno.os.middleware.user_scope import caller_is_admin, get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.schedules.router import get_schedule_router
 from agno.os.routers.schedules.schema import ScheduleCreate, ScheduleResponse, ScheduleRunResponse, ScheduleUpdate
 from agno.os.schema import PaginatedResponse, PaginationInfo
@@ -96,13 +95,10 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(422, str(exc))
 
-    async def product(product_id, request, include_deleted=False, owned=True):
+    async def product(product_id, include_deleted=False):
         row = await call(manager.get, product_id, include_deleted=include_deleted)
         if row is None:
             raise HTTPException(404, "Product not found")
-        # Routines are owned by their creator, so any writer may add one to a Product, like Projects and Tasks.
-        if owned:
-            _require_write_ownership(row, get_scoped_user_id(request))
         return row
 
     async def routine(routine_id, request):
@@ -115,8 +111,6 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             raise HTTPException(404, "Routine not found")
         if not (row.get("payload") or {}).get("metadata", {}).get("product_id"):
             raise HTTPException(409, "Routine is missing its Product metadata")
-        if request.method != "GET":
-            _require_write_ownership(row, get_scoped_user_id(request))
         return row
 
     async def routine_responses(rows):
@@ -159,24 +153,23 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         return await call(
             manager.create_source,
             **body.model_dump(exclude={"id"}),
-            user_id=get_scoped_user_id(request) or getattr(request.state, "user_id", None),
-            scoped_user_id=get_scoped_user_id(request),
+            user_id=resolve_run_user_id(request),
         )
 
     @router.delete("/sources/{source_id}", status_code=204)
-    async def delete_source(source_id: str, request: Request, _: bool = Depends(auth)):
-        if not await call(manager.delete_source, source_id, user_id=get_scoped_user_id(request)):
+    async def delete_source(source_id: str, _: bool = Depends(auth)):
+        if not await call(manager.delete_source, source_id):
             raise HTTPException(404, "Source not found")
 
     @router.post("/sources/{source_id}/restore")
-    async def restore_source(source_id: str, request: Request, _: bool = Depends(auth)):
+    async def restore_source(source_id: str, _: bool = Depends(auth)):
         row = await call(manager.get_source, source_id, include_deleted=True)
         if row is None:
             raise HTTPException(404, "Source not found")
-        await product(row["product_id"], request)
+        await product(row["product_id"])
         if row.get("deleted_at") is None:
             raise HTTPException(409, "Source is not archived")
-        return await call(manager.restore_source, source_id, user_id=get_scoped_user_id(request))
+        return await call(manager.restore_source, source_id)
 
     @router.get("/routines", response_model=PaginatedResponse[RoutineResponse])
     async def list_routines(
@@ -207,14 +200,20 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     @router.post("/routines/{routine_id}/trigger", response_model=ScheduleRunResponse)
     async def trigger_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
-        await product(row["payload"]["metadata"]["product_id"], request, owned=False)
+        # Automatic acceptance runs on the saved grant, so only the user who granted it may start it
+        # manually, whether or not user isolation is on. The grant records the raw caller, so compare that.
+        if row["payload"]["metadata"].get("auto_accept") and not caller_is_admin(request):
+            grantor = (row["payload"].get("_agno_company_acceptance") or {}).get("user_id")
+            if getattr(request.state, "user_id", None) != grantor:
+                raise HTTPException(403, "Only the user who authorized automatic acceptance may run this Routine")
+        await product(row["payload"]["metadata"]["product_id"])
         if not row["enabled"]:
             raise HTTPException(409, "Routine is paused")
         return await call(handlers["trigger_schedule"], routine_id, request)
 
     @router.post("/routines", status_code=201, response_model=RoutineResponse)
     async def create_routine(body: RoutineCreate, request: Request, _: bool = Depends(auth)):
-        await product(body.product_id, request, owned=False)
+        await product(body.product_id)
         fields = await call(_schedule_fields, body.product_id, body, agent_os.registry, agent_os=agent_os)
         if body.auto_accept:
             from agno.company.routines import _authorize_auto_accept
@@ -230,7 +229,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     @router.patch("/routines/{routine_id}", response_model=RoutineResponse)
     async def update_routine(routine_id: str, body: RoutineUpdate, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
-        await product(row["payload"]["metadata"]["product_id"], request, owned=False)
+        await product(row["payload"]["metadata"]["product_id"])
         updates: Dict[str, Any] = body.model_dump(exclude_unset=True)
         if any(value is None for key, value in updates.items() if key != "cron_expr"):
             raise HTTPException(422, "Routine fields cannot be null")
@@ -274,14 +273,14 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     @router.post("/routines/{routine_id}/pause", response_model=RoutineResponse)
     async def pause_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
-        await product(row["payload"]["metadata"]["product_id"], request, include_deleted=True, owned=False)
+        await product(row["payload"]["metadata"]["product_id"], include_deleted=True)
         return await routine_response(await call(handlers["disable_schedule"], routine_id, request))
 
     @router.post("/routines/{routine_id}/resume", response_model=RoutineResponse)
     async def resume_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
         product_id = row["payload"]["metadata"]["product_id"]
-        await product(product_id, request, owned=False)
+        await product(product_id)
         from agno.registry._reserved import RESERVED_MANAGER_IDS
 
         if row["target_id"] in RESERVED_MANAGER_IDS:
@@ -308,7 +307,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         from agno.os.routers.run_permissions import _require_endpoint_permission
         from agno.run.authorization import current_authorization
 
-        owner = get_scoped_user_id(request) or getattr(request.state, "user_id", None)
+        owner = resolve_run_user_id(request)
         authority = current_authorization()
         if body.sources and authority is not None:
             await authority.arequire("sources", "write")
@@ -323,7 +322,6 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
                 await _require_endpoint_permission(request, fields["endpoint"], "POST")
         existing = await call(manager.get, "company-setup", include_deleted=True)
         if existing is not None:
-            _require_write_ownership(existing, get_scoped_user_id(request))
             response.status_code = 200
         else:
             rows, _ = await call(manager.list, limit=1, include_deleted=True)
@@ -336,7 +334,6 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             product_declaration,
             agent_os.registry,
             schedule_db=schedule_db,
-            scoped_user_id=get_scoped_user_id(request),
             agent_os=agent_os,
         )
 

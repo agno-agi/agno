@@ -385,3 +385,32 @@ cancellation. Updated the migration guidance for the next 3.0.x release.
 Agent execution and SQLite history through an in-memory MCP client with an offline
 model: the follow-up receives the first user message and assistant response even
 though ask_product_agent is the only published tool. No live provider calls.
+### inspect_tools.py
+
+**Status:** PASS
+
+**Description:** Added and first tested LIVE on 2026-09-29 on the
+`feat/mcp-tool-run-api` branch, when `POST /mcp/server/tools/{name}/run` landed. The
+tool list is read from the Server Card, which already publishes each tool's
+input schema, so the runner adds no listing of its own. Ran the server and drove
+it with the `--client` flow: read the eight default tools with their `required`
+arrays off the card, ran `get_agentos_config` (19 ms) and `run_agent` against a
+live model (2188 ms), then exercised the three failure classes.
+
+**Result:** `get_agentos_config` returned `isError: false` with the
+`support-agent` id in `structuredContent`, and `run_agent` returned the model's
+answer as text. A run naming a missing agent came back HTTP 200 with
+`isError: true` -- the tool ran and failed, which is a result, not a transport
+error. Omitting the required `message` was refused with HTTP 400
+`invalid_arguments` before the tool ran, and an unpublished name with HTTP 404
+`tool_not_found`. The server logs a traceback for each of those two deliberate
+failures; that is the tool erroring as intended, not the endpoint failing.
+
+Re-run LIVE on 2026-10-05, after a timed-out call began stopping the work. With
+`tool_run_timeout_seconds=5`, a 1500-word essay returned HTTP 504 at 5011 ms, the model's
+own HTTP request recorded `aborted` rather than `completed` -- generation stopped instead
+of finishing unobserved -- and the run was persisted as `CANCELLED`. The custom
+`research` tool, which drives an agent internally, timed out the same way at 5013 ms:
+the budget governs every published tool, not just the built-in ones.
+
+---

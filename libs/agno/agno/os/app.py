@@ -226,10 +226,14 @@ async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
     if internal_token is None:
         raise ValueError("internal_service_token must be set when scheduler is enabled")
 
-    from agno.company.routines import _ensure_automation_schedule
+    from agno.company.routines import _AUTOMATION_CRON, _ensure_automation_schedule
 
     # Reconcile before the poller can claim a stale Company schedule.
-    await _ensure_automation_schedule(agent_os.db, enabled=agent_os.company is not None)
+    await _ensure_automation_schedule(
+        agent_os.db,
+        enabled=agent_os.company is not None,
+        cron_expr=agent_os.company.cron_expr if agent_os.company is not None else _AUTOMATION_CRON,
+    )
     executor: ScheduleExecutor
     if agent_os.company is not None:
         from agno.company.routines import _CompanyScheduleExecutor
@@ -2077,10 +2081,11 @@ class AgentOS:
             # isolation are ADVISORY here, not enforced. Warn (don't raise) so an operator who expected
             # enforcement knows to add authorization.
             log_warning(
-                "AgentOS is configured with a user directory / per-user isolation but no authorization. "
-                "They work off the run's user_id for local/demo use (a roster fills in, a run scopes its "
-                "own data), but that id is self-asserted -- so the disabled kill-switch and isolation are "
-                "ADVISORY, not enforced. Add AgentOS(authorization=True) with a verification key to enforce."
+                "AgentOS has user_directory or user_isolation set without authorization. The user_id on each "
+                "request comes from the caller and is not verified, so a disabled user can send a different "
+                "user_id and any caller can read another user's data by sending theirs. This is fine for local "
+                "development. To enforce it, set AgentOS(authorization=True) and configure JWT_VERIFICATION_KEY "
+                "or JWT_JWKS_FILE."
             )
         if self.authorization:
             # Set authorization_enabled flag on settings so security key validation is skipped
@@ -2389,6 +2394,17 @@ class AgentOS:
             from agno.os.mcp_auth import mcp_auth_route_paths
 
             mcp_auth_paths = mcp_auth_route_paths(mcp_auth_provider)
+            # The tool runner is part of that surface, so it is exempted on the same
+            # terms: a client holding a provider-issued token would otherwise have it
+            # decoded as an agno JWT here and rejected before reaching the route. The
+            # route is not left open -- fastmcp verifies the token and the handler
+            # refuses anything without a verified principal. Only under mcp_auth: with
+            # no provider this middleware is the only credential check on that path.
+            # A switched-off runner is not exempted: the path then has no route behind it.
+            if self.mcp and (self.mcp_config is None or self.mcp_config.tool_run_endpoint):
+                from agno.os.config import MCP_SERVER_TOOLS_PATH
+
+                mcp_auth_paths.append(f"{MCP_SERVER_TOOLS_PATH}/*")
         # The Server Card is discovery before authentication: public by design, no secrets.
         server_card_paths: List[str] = []
         if self.mcp and (self.mcp_config is None or self.mcp_config.server_card):

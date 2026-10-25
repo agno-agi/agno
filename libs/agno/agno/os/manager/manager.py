@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 from agno.agent import Agent
+from agno.agents.base import BaseExternalAgent
 from agno.os.manager.config import OSManager
 from agno.os.manager.prompts import (
     BUILDER_INSTRUCTIONS,
@@ -267,7 +268,9 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
             StudioRunnerTools(
                 registry=registry,
                 db=db,
-                include_agents=LiveSequence(lambda: agent_os._agents),
+                include_agents=LiveSequence(
+                    lambda: [a for a in (agent_os.agents or []) if isinstance(a, (Agent, BaseExternalAgent))]
+                ),
                 include_teams=LiveSequence(lambda: agent_os._teams),
                 include_workflows=LiveSequence(lambda: agent_os._workflows),
                 include_all_components=True,

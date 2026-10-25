@@ -737,3 +737,26 @@ Builder and Product Manager receive the shared rules but not the explanation
 guidance. Live-model checks were not rerun for this change.
 
 ---
+
+## External engineer dispatch, 2026-10-22
+
+### `libs/agno/tests/unit/os/test_manager.py::test_manager_discovers_and_runs_external_agents`
+
+**Status:** PASS
+
+**Description:** Both Claude Engineer and Codex Engineer appear in OS Manager's
+roster and execute through the sync and async runner tools. The real adapter
+lifecycle uses stubbed harness responses and a temporary SQLite database. Checks
+cover ID/name lookup, follow-up history, user isolation, saved runs, dispatch
+metadata, permission denial, the shared session-admission guard, and removal
+from the live roster after copying the manager.
+
+**Result:** All four cases passed. The manager and runner suites passed 644 tests;
+the Studio and Claude/Codex adapter suites passed 1,279 tests (including the
+runner suite again). The four new cases also passed in an isolated development
+environment. Full format/validation passed there with SQLAlchemy 2.0.55; the
+shared demo environment reports unrelated Google/AWS provider typing errors.
+The README example was not run against live models or harness processes; no
+provider calls were made.
+
+---
