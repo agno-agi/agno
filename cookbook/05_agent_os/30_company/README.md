@@ -283,8 +283,8 @@ parent. Lifecycle status stays unchanged. Restore brings back only those
 children; records archived separately or before the parent stay archived.
 Restore the parent before restoring individual children.
 
-A Product or Project with Ready, In progress, or In review Tasks refuses archive,
-even if an active Task was separately archived.
+A Product or Project with Ready, In progress, or In review Tasks refuses archive.
+Tasks that were separately archived don't count, since lists and counts hide them.
 The API returns 409 with `detail.message` and `detail.tasks`, an array of `{id,
 title}` objects. Managers raise `ValueError` with the same detail dictionary.
 Finish or cancel that work first. Backlog Tasks may move to another active
