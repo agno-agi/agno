@@ -1,9 +1,8 @@
 """
 This is an example of how to use the StringWebAccessTools.
 
-String Web Access searches the web, fetches any URL as clean Markdown and extracts structured
-data from a page, with proxy rotation, anti-bot handling, CAPTCHA solving and JavaScript
-rendering handled server-side.
+String Web Access searches the web, fetches any URL as clean, LLM-ready Markdown and extracts
+structured data from a page.
 
 Prerequisites:
 - Create a String account and get an API key at https://usestring.ai
@@ -34,11 +33,9 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Should use search
-    agent.print_response(
-        "Search the web for the latest on 'anti-bot detection techniques'"
-    )
+    agent.print_response("Search the web for the latest on 'AI agent frameworks'")
 
-    # Should use fetch, on a page that ordinary requests get blocked from
+    # Should use fetch
     agent.print_response(
         "Read https://docs.agno.com/introduction and summarize it in five bullets"
     )

@@ -81,11 +81,14 @@ def test_fetch_url_requests_markdown(tools):
         "format": "markdown",
         "markdownMode": "full",
         "mainContentOnly": False,
+        "solveCaptcha": False,
     }
 
 
-def test_fetch_url_passes_rendering_and_proxy_options():
-    tools = StringWebAccessTools(api_key=TEST_API_KEY, execute_js=True, country_code="GB", main_content_only=True)
+def test_fetch_url_passes_rendering_country_and_challenge_options():
+    tools = StringWebAccessTools(
+        api_key=TEST_API_KEY, execute_js=True, country_code="GB", main_content_only=True, solve_captcha=True
+    )
     with patch("agno.tools.string_web_access.httpx.post", return_value=_mock_response(text="page")) as post:
         tools.fetch_url("https://example.com")
 
@@ -93,6 +96,7 @@ def test_fetch_url_passes_rendering_and_proxy_options():
     assert kwargs["json"]["executeJS"] is True
     assert kwargs["json"]["countryCode"] == "GB"
     assert kwargs["json"]["mainContentOnly"] is True
+    assert kwargs["json"]["solveCaptcha"] is True
 
 
 def test_fetch_url_truncates_to_max_content_length():
@@ -112,7 +116,12 @@ def test_extract_from_url_sends_schema():
 
     assert json.loads(result) == {"title": "A Light in the Attic"}
     _, kwargs = post.call_args
-    assert kwargs["json"] == {"url": "https://example.com", "format": "json", "jsonSchema": schema}
+    assert kwargs["json"] == {
+        "url": "https://example.com",
+        "format": "json",
+        "jsonSchema": schema,
+        "solveCaptcha": False,
+    }
 
 
 def test_missing_api_key_returns_a_message_instead_of_calling_the_api():

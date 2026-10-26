@@ -12,10 +12,8 @@ DEFAULT_BASE_URL = "https://request.usestring.ai/v1"
 
 class StringWebAccessTools(Toolkit):
     """
-    String Web Access gives an agent the live web: search, fetch any URL as clean Markdown, and
-    extract structured data from a page. Proxy rotation, anti-bot handling, CAPTCHA solving and
-    JavaScript rendering happen server-side, so a rate-limited, geo-gated or bot-blocked page comes
-    back as content rather than a block screen.
+    String Web Access gives an agent the live web: search results, any URL as clean, LLM-ready
+    Markdown, and structured data extracted from a page.
 
     Get an API key at https://usestring.ai and set it as STRING_API_KEY.
 
@@ -30,7 +28,10 @@ class StringWebAccessTools(Toolkit):
         markdown_mode (str): Markdown preservation level, "full" or "readable". Default is "full".
         main_content_only (bool): Strip page chrome from fetched Markdown. Default is False.
         execute_js (bool): Render the page in a browser before capturing it. Default is False.
-        country_code (Optional[str]): ISO 3166-1 alpha-2 country for the fetch proxy exit IP.
+        country_code (Optional[str]): ISO 3166-1 alpha-2 country code, e.g. "US". The page comes back
+            as it is served in that country.
+        solve_captcha (bool): Have a fetch attempt a challenge page. Default is False, so a challenge
+            page fails fast and comes back as an error.
         max_content_length (Optional[int]): Truncate returned page content to this many characters.
         timeout (int): HTTP timeout in seconds. Default is 120.
         base_url (str): API base URL. Default is https://request.usestring.ai/v1.
@@ -49,6 +50,7 @@ class StringWebAccessTools(Toolkit):
         main_content_only: bool = False,
         execute_js: bool = False,
         country_code: Optional[str] = None,
+        solve_captcha: bool = False,
         max_content_length: Optional[int] = None,
         timeout: int = 120,
         base_url: str = DEFAULT_BASE_URL,
@@ -64,6 +66,7 @@ class StringWebAccessTools(Toolkit):
         self.main_content_only: bool = main_content_only
         self.execute_js: bool = execute_js
         self.country_code: Optional[str] = country_code
+        self.solve_captcha: bool = solve_captcha
         self.max_content_length: Optional[int] = max_content_length
         self.timeout: int = timeout
         self.base_url: str = base_url.rstrip("/")
@@ -103,9 +106,6 @@ class StringWebAccessTools(Toolkit):
     def fetch_url(self, url: str) -> str:
         """Fetch a URL and return the page as clean, LLM-ready Markdown.
 
-        Works on sites that rate-limit, geo-gate or block automated traffic: proxy rotation,
-        anti-bot handling, CAPTCHA solving and JavaScript rendering are handled server-side.
-
         Args:
             url (str): The http/https URL to fetch.
 
@@ -117,6 +117,7 @@ class StringWebAccessTools(Toolkit):
             "format": "markdown",
             "markdownMode": self.markdown_mode,
             "mainContentOnly": self.main_content_only,
+            "solveCaptcha": self.solve_captcha,
         }
         if self.execute_js:
             payload["executeJS"] = True
@@ -138,7 +139,12 @@ class StringWebAccessTools(Toolkit):
             str: The extracted object as JSON. If extraction was not possible, the response
                 carries "extracted": false and a machine-readable "reason".
         """
-        payload: Dict[str, Any] = {"url": url, "format": "json", "jsonSchema": json_schema}
+        payload: Dict[str, Any] = {
+            "url": url,
+            "format": "json",
+            "jsonSchema": json_schema,
+            "solveCaptcha": self.solve_captcha,
+        }
         if self.execute_js:
             payload["executeJS"] = True
         if self.country_code:
