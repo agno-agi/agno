@@ -10,7 +10,11 @@ from ag_ui.core.types import Tool as AGUITool
 
 from agno.agent.remote import RemoteAgent
 from agno.os.interfaces.agui.router import run_entity
+from agno.run.agent import RunContentEvent
+from agno.run.workflow import StepStartedEvent
 from agno.team.remote import RemoteTeam
+
+from ._agui_stream_rules import assert_valid_agui_stream
 
 
 class FakeRunInput:
@@ -218,3 +222,30 @@ async def test_run_entity_remote_agent_warns_and_drops_client_tools(caplog):
     assert "run_context" not in captured
     assert any("client tools are not forwarded" in record.message for record in caplog.records)
     assert events[-1].type == EventType.RUN_FINISHED
+
+
+class FailsPartWayThroughEntity:
+    """An entity whose run opens a workflow step and then raises out of the stream."""
+
+    async def arun(self, **kwargs):
+        yield StepStartedEvent(step_name="One", step_id="one")
+        yield RunContentEvent(content="half an answer", step_id="one")
+        raise RuntimeError("the executor blew up")
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_fails_part_way_through_still_serves_a_valid_stream():
+    """The route ends a failed run with RUN_ERROR, and nothing may still be open at it.
+
+    The route catches the exception below the mapper, so the spans the client is holding
+    open are the mapper's to close: without them the served stream is one the client
+    rejects, which costs the user the error the run failed with.
+    """
+    events = [event async for event in run_entity(FailsPartWayThroughEntity(), FakeRunInput())]
+
+    assert_valid_agui_stream(events)
+
+    types = [event.type for event in events]
+    assert types[-1] == EventType.RUN_ERROR
+    assert types.index(EventType.STEP_FINISHED) < types.index(EventType.RUN_ERROR)
+    assert events[-1].message == "the executor blew up"
