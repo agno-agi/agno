@@ -400,6 +400,10 @@ def resolve_callable_members(entity: Any, run_context: "RunContext") -> None:
     else:
         result = list(result)
 
+    from agno.utils.team import validate_unique_member_ids
+
+    validate_unique_member_ids(result, team_id=getattr(entity, "id", None), team_name=getattr(entity, "name", None))
+
     # Store in cache
     if cache_enabled and cache_key is not None:
         cache[cache_key] = result
@@ -436,6 +440,10 @@ async def aresolve_callable_members(entity: Any, run_context: "RunContext") -> N
         raise TypeError(f"Callable members factory must return a list or tuple, got {type(result).__name__}")
     else:
         result = list(result)
+
+    from agno.utils.team import validate_unique_member_ids
+
+    validate_unique_member_ids(result, team_id=getattr(entity, "id", None), team_name=getattr(entity, "name", None))
 
     # Store in cache
     if cache_enabled and cache_key is not None:
