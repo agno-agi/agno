@@ -23,6 +23,12 @@ except ImportError:
 
 
 # -- DB util methods --
+def is_foreign_key_violation(error: Exception) -> bool:
+    """Whether a database error is PostgreSQL's foreign_key_violation (SQLSTATE 23503)."""
+    cause = getattr(error, "orig", error)
+    return getattr(cause, "sqlstate", getattr(cause, "pgcode", None)) == "23503"
+
+
 def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order: Optional[str] = None):
     """Apply sorting to the given SQLAlchemy statement.
 
