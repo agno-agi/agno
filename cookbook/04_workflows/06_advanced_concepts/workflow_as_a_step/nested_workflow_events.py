@@ -1,21 +1,24 @@
 """
-Nested Workflow Example - Event Inspection
+Nested Workflow Example - Event Inspection with AgentOS
 
-Runs a nested workflow and prints every workflow/step event with full details
-so you can see workflow_id, workflow_name, nested_depth, and
-how inner vs outer events differ.
+Serves a nested workflow through AgentOS so you can inspect every
+workflow/step event streamed over SSE and see workflow_id, workflow_name,
+nested_depth, and how inner vs outer events differ.
+
+Try: Start the server, then stream a run and watch the events:
+
+    curl -N -X POST http://localhost:7777/workflows/outer-workflow/runs \
+        -F "message=Tell me about the history of artificial intelligence" \
+        -F "stream=true"
+
+Inner workflow events carry nested_depth > 0 and workflow_name="Inner Workflow".
+You can also connect the server to https://os.agno.com to view the run.
 """
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
-from agno.run.workflow import (
-    BaseWorkflowRunOutputEvent,
-    StepCompletedEvent,
-    StepStartedEvent,
-    WorkflowCompletedEvent,
-    WorkflowStartedEvent,
-)
+from agno.os import AgentOS
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
@@ -40,6 +43,7 @@ research_agent = Agent(
 )
 
 inner_workflow = Workflow(
+    id="inner-workflow",
     name="Inner Workflow",
     description="A simple workflow that researches a topic",
     steps=[
@@ -56,6 +60,7 @@ writer_agent = Agent(
 )
 
 outer_workflow = Workflow(
+    id="outer-workflow",
     name="Outer Workflow",
     description="A workflow that researches a topic and then writes about it",
     steps=[
@@ -65,84 +70,20 @@ outer_workflow = Workflow(
     db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),
 )
 
+# ---------------------------------------------------------------------------
+# Create AgentOS
+# ---------------------------------------------------------------------------
 
-def print_event_details(event: BaseWorkflowRunOutputEvent, label: str) -> None:
-    """Print key fields of a workflow event."""
-    indent = "  " * getattr(event, "nested_depth", 0)
-    print(f"\n{indent}{'=' * 60}")
-    print(f"{indent}[{label}]")
-    print(f"{indent}  event type       : {type(event).__name__}")
-    print(f"{indent}  workflow_id       : {getattr(event, 'workflow_id', None)}")
-    print(f"{indent}  workflow_name     : {getattr(event, 'workflow_name', None)}")
-    print(f"{indent}  nested_depth     : {getattr(event, 'nested_depth', None)}")
-    print(f"{indent}  run_id           : {getattr(event, 'run_id', None)}")
-    print(f"{indent}  session_id       : {getattr(event, 'session_id', None)}")
-    print(f"{indent}  step_id          : {getattr(event, 'step_id', None)}")
-    print(f"{indent}  step_name        : {getattr(event, 'step_name', None)}")
-    print(f"{indent}  step_index       : {getattr(event, 'step_index', None)}")
+agent_os = AgentOS(
+    id="nested-workflow-events",
+    description="AgentOS serving a nested workflow for event inspection.",
+    workflows=[outer_workflow],
+)
+app = agent_os.get_app()
 
-    # Extra fields for specific event types
-    if isinstance(event, (StepCompletedEvent, WorkflowCompletedEvent)):
-        content = getattr(event, "content", None)
-        if content:
-            preview = str(content)[:120].replace("\n", " ")
-            print(f"{indent}  content (preview) : {preview}...")
-
-    if isinstance(event, WorkflowCompletedEvent):
-        step_results = getattr(event, "step_results", None)
-        if step_results:
-            print(f"{indent}  step_results count: {len(step_results)}")
-            for i, sr in enumerate(step_results):
-                sr_name = getattr(sr, "step_name", None) or f"step_{i}"
-                sr_type = getattr(sr, "executor_type", "?")
-                sr_metrics = getattr(sr, "metrics", None)
-                print(
-                    f"{indent}    [{i}] {sr_name} (type={sr_type}, metrics={sr_metrics is not None})"
-                )
-
-    print(f"{indent}{'=' * 60}")
-
+# ---------------------------------------------------------------------------
+# Run AgentOS
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    print("Running nested workflow example with event inspection...")
-    print("=" * 60)
-
-    EVENT_TYPES = (
-        WorkflowStartedEvent,
-        WorkflowCompletedEvent,
-        StepStartedEvent,
-        StepCompletedEvent,
-    )
-
-    event_log = []
-
-    for event in outer_workflow.run(
-        input="Tell me about the history of artificial intelligence",
-        stream=True,
-        stream_events=True,
-    ):
-        if isinstance(event, EVENT_TYPES):
-            label = type(event).__name__
-            # Tag inner vs outer
-            source = getattr(event, "workflow_name", None) or "?"
-            current = getattr(event, "workflow_name", None) or "?"
-            depth = getattr(event, "nested_depth", 0)
-            if depth > 0:
-                label = f"INNER (depth={depth}, source={source}) | {label}"
-            else:
-                label = f"OUTER (source={source}) | {label}"
-            print_event_details(event, label)
-            event_log.append(event)
-
-    # --- Summary ---
-    print("\n\n" + "=" * 60)
-    print("EVENT SUMMARY")
-    print("=" * 60)
-    print(f"Total workflow/step events captured: {len(event_log)}")
-    for i, ev in enumerate(event_log):
-        depth = getattr(ev, "nested_depth", 0)
-        source = getattr(ev, "workflow_name", None) or "?"
-        indent = "  " * depth
-        print(
-            f"  {i + 1}. {indent}{type(ev).__name__:<30s} depth={depth}  source={source}"
-        )
+    agent_os.serve(app="nested_workflow_events:app", reload=True)

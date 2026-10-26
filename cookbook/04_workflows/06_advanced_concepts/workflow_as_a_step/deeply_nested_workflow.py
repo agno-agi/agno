@@ -1,14 +1,24 @@
 """
-Deeply Nested Workflow (3 Levels)
+Deeply Nested Workflow (3 Levels) with AgentOS
 
-Demonstrates composing workflows three levels deep:
+Demonstrates composing workflows three levels deep, served through AgentOS:
   Level 1 (outermost): Orchestrates the full pipeline
   Level 2: Research workflow with parallel data gathering
   Level 3: Each parallel branch is itself a mini-workflow
+
+Try: Start the server, then stream a run:
+
+    curl -N -X POST http://localhost:7777/workflows/full-pipeline/runs \
+        -F "message=What is the future of renewable energy?" \
+        -F "stream=true"
+
+You can also connect the server to https://os.agno.com to view the run.
 """
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
+from agno.os import AgentOS
 from agno.workflow import Parallel
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
@@ -39,6 +49,7 @@ analysis_agent = Agent(
 
 # Level 3a: Data collection mini-workflow
 data_workflow = Workflow(
+    id="data-collection",
     name="Data Collection",
     description="Collects and analyzes raw data",
     steps=[
@@ -55,6 +66,7 @@ opinion_agent = Agent(
 
 # Level 3b: Expert opinion mini-workflow
 opinion_workflow = Workflow(
+    id="expert-opinion",
     name="Expert Opinion",
     description="Gathers expert perspectives",
     steps=[
@@ -67,6 +79,7 @@ opinion_workflow = Workflow(
 # ==========================================================================
 
 level2_workflow = Workflow(
+    id="comprehensive-research",
     name="Comprehensive Research",
     description="Runs data collection and expert opinion in parallel",
     steps=[
@@ -90,25 +103,31 @@ writer = Agent(
 )
 
 outer_workflow = Workflow(
+    id="full-pipeline",
     name="Full Pipeline",
     description="3-level nested workflow: research (parallel mini-workflows) -> write",
     steps=[
         Step(name="research", workflow=level2_workflow),
         Step(name="write", agent=writer),
     ],
+    db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),
 )
 
 
-if __name__ == "__main__":
-    print("Running 3-level nested workflow...")
-    print("Level 1: Full Pipeline")
-    print("  Level 2: Comprehensive Research (parallel)")
-    print("    Level 3a: Data Collection (gather -> analyze)")
-    print("    Level 3b: Expert Opinion")
-    print("  Writer")
-    print("=" * 50)
+# ---------------------------------------------------------------------------
+# Create AgentOS
+# ---------------------------------------------------------------------------
 
-    outer_workflow.print_response(
-        input="What is the future of renewable energy?",
-        stream=True,
-    )
+agent_os = AgentOS(
+    id="deeply-nested-workflow",
+    description="AgentOS serving a 3-level nested workflow.",
+    workflows=[outer_workflow],
+)
+app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run AgentOS
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    agent_os.serve(app="deeply_nested_workflow:app", reload=True)
