@@ -159,6 +159,41 @@ async def test_disabled_on_demand_routine_stays_disabled_when_its_product_is_arc
 
 
 @pytest.mark.asyncio
+async def test_restored_on_demand_routine_recovers_through_resume_then_triggers(system):
+    client, db, worker, _, _ = system
+    routine = await create_routine(client)
+    path = "/company/routines/" + routine["id"]
+    assert (await client.delete(path)).status_code == 204
+    for action in ("trigger", "pause", "resume"):
+        assert (await client.post(path + "/" + action)).status_code == 404, action
+    restored = await client.post(path + "/restore")
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["enabled"] is False and restored.json()["deleted_at"] is None
+    assert (await client.post(path + "/trigger")).status_code == 409
+    assert (await client.post(path + "/pause")).status_code == 409
+    resumed = await client.post(path + "/resume")
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["enabled"] and resumed.json()["next_run_at"] is None
+    assert (await _call(db, "get_schedule_runs", routine["id"]))[1] == 0
+    worker.authorization_app.state.scheduler_executor = await routine_executor(system)
+    started = await client.post(path + "/trigger")
+    assert started.status_code == 200, started.text
+    assert started.json()["status"] == "success", started.text
+    assert (await _call(db, "get_schedule_runs", routine["id"]))[1] == 1
+
+
+@pytest.mark.asyncio
+async def test_archived_routines_are_filtered_before_sorting_and_paging(system):
+    client, db, _, _, _ = system
+    product_id = await seed_routines(client, db, {"r-a": (100, 500), "r-b": (200, 300), "r-c": (300, 400)})
+    assert (await client.delete("/company/routines/r-b")).status_code == 204
+    params = {"product_id": product_id, "sort_by": "updated_at", "sort_order": "asc"}
+    assert await listed_ids(client, **params) == (["r-c", "r-a"], 2)
+    everything = await listed_ids(client, include_deleted=True, **params)
+    assert sorted(everything[0]) == ["r-a", "r-b", "r-c"] and everything[1] == 3
+
+
+@pytest.mark.asyncio
 async def test_last_run_is_one_query_per_page(system):
     client, db, _, _, _ = system
     routines = [await create_routine(client) for _ in range(5)]
