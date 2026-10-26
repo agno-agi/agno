@@ -52,6 +52,8 @@ except ImportError:
 
 
 class RedisDb(BaseDb):
+    serializes_sessions: bool = True
+
     def __init__(
         self,
         id: Optional[str] = None,
@@ -2519,8 +2521,44 @@ class RedisDb(BaseDb):
             return None
         return json.loads(raw if isinstance(raw, str) else raw.decode())
 
+    def _q_session_key(self, job: Dict[str, Any]) -> str:
+        from hashlib import sha256
+
+        from agno.job_queue.session import session_identity
+
+        identity = json.dumps(session_identity(job), separators=(",", ":"))
+        return self._q_key("session:" + sha256(identity.encode()).hexdigest())
+
+    def _q_stamp_session_seq(self, pipe: Any, job: Dict[str, Any]) -> Dict[str, Any]:
+        """Sequence a ticket entering its session index after every live ticket.
+
+        The index holds exactly the live tickets, scored by sequence; watching it orders
+        concurrent entries (submit, requeue) by the commit that wins."""
+        from agno.job_queue.session import with_session_seq
+
+        session_key = self._q_session_key(job)
+        pipe.watch(session_key)
+        top = pipe.zrevrange(session_key, 0, 0, withscores=True)
+        return with_session_seq(job, int(top[0][1]) + 1 if top else 1)
+
+    def _q_session_members(self, session_key: str) -> List[Dict[str, Any]]:
+        """The live serialized tickets of a session, read outside any transaction (advisory)."""
+        member_ids = [_q_to_str(value) for value in self.redis_client.zrange(session_key, 0, -1)]
+        if not member_ids:
+            return []
+        raw = self.redis_client.mget([self._q_job_key(value) for value in member_ids])
+        return [json.loads(value) for value in raw if value is not None]
+
     def _q_save_job_in_pipe(self, pipe: Any, job: Dict[str, Any]) -> None:
+        from agno.job_queue.session import LIVE_STATUSES
+
         pipe.set(self._q_job_key(job["id"]), json.dumps(job))
+        if (job.get("payload") or {}).get("serialize_session") is True:
+            key = self._q_session_key(job)
+            if job["status"] in LIVE_STATUSES:
+                pipe.zadd(key, {job["id"]: job["payload"].get("session_seq") or 0})
+            else:
+                pipe.zrem(key, job["id"])
 
     def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
         """Insert an accepted run job (idempotency-first, then depth gate).
@@ -2545,8 +2583,10 @@ class RedisDb(BaseDb):
         idem_key = self._q_idem_key(job.get("user_id"), idem) if idem is not None else None
 
         job_key = self._q_job_key(job["id"])
+        # Same-session submits also contend on the session index; every round commits one of them.
+        attempts = 100 if (job.get("payload") or {}).get("serialize_session") is True else 10
 
-        for _ in range(10):
+        for _ in range(attempts):
             with self.redis_client.pipeline() as pipe:
                 try:
                     # The job key is always WATCHed: the MULTI below SETs it,
@@ -2586,6 +2626,9 @@ class RedisDb(BaseDb):
                         pipe.unwatch()
                         raise RuntimeError(f"enqueue_job: job {job['id']} already exists; ids are never reused")
 
+                    if (job.get("payload") or {}).get("serialize_session") is True:
+                        job = self._q_stamp_session_seq(pipe, job)
+
                     pipe.multi()
                     if idem_key is not None:
                         pipe.set(idem_key, job["id"])
@@ -2596,7 +2639,7 @@ class RedisDb(BaseDb):
                     return {"accepted": True, "reason": None, "job": dict(job)}
                 except WatchError:
                     continue  # another submitter raced this key; re-evaluate
-        raise RuntimeError("enqueue_job: idempotency-key contention did not settle after 10 attempts")
+        raise RuntimeError(f"enqueue_job: submit contention did not settle after {attempts} attempts")
 
     def claim_job(
         self, worker_id: str, lock_grace_seconds: int = 60, deployment_id: Optional[str] = None
@@ -2650,8 +2693,11 @@ class RedisDb(BaseDb):
         rank shifted mid-scan (a peer claimed something on an earlier page).
         That only ends THIS burst early - every poll tick rescans from rank
         0, so a skipped job is picked up next tick; no starvation."""
+        from agno.job_queue.session import session_blocked
+
         page_size = 64
         offset = 0
+        session_views: Dict[str, List[Dict[str, Any]]] = {}
         while True:
             raw_ids = self.redis_client.zrangebyscore(zset_key, "-inf", max_score, start=offset, num=page_size)
             if not raw_ids:
@@ -2667,6 +2713,16 @@ class RedisDb(BaseDb):
                     continue
                 if candidate.get("deployment_id") is not None and candidate.get("deployment_id") != deployment_id:
                     continue
+                if (candidate.get("payload") or {}).get("serialize_session") is True:
+                    # Advisory pre-check from one view of the session per scan: a backlog
+                    # waiting behind a running or paused head would otherwise load the
+                    # whole session once per waiting ticket, every poll. The CAS in
+                    # _q_try_claim re-reads the session under WATCH and stays the authority.
+                    session_key = self._q_session_key(candidate)
+                    if session_key not in session_views:
+                        session_views[session_key] = self._q_session_members(session_key)
+                    if session_blocked(candidate, session_views[session_key]):
+                        continue
                 job = self._q_try_claim(
                     job_id,
                     worker_id,
@@ -2716,6 +2772,21 @@ class RedisDb(BaseDb):
                 if not claimable:
                     pipe.unwatch()
                     return None
+                if (job.get("payload") or {}).get("serialize_session") is True:
+                    from agno.job_queue.session import session_blocked
+
+                    # Membership changes commit with each job transition. Watching the
+                    # session index fences a concurrent submit, completion or continuation.
+                    session_key = self._q_session_key(job)
+                    pipe.watch(session_key)
+                    member_ids = [_q_to_str(value) for value in pipe.zrange(session_key, 0, -1)]
+                    keys = [self._q_job_key(value) for value in member_ids]
+                    if keys:
+                        pipe.watch(*keys)
+                        members = [json.loads(value) for value in pipe.mget(keys) if value is not None]
+                        if session_blocked(job, members):
+                            pipe.unwatch()
+                            return None
                 job.update(
                     status="running", locked_by=worker_id, locked_at=now, attempt=job["attempt"] + 1, updated_at=now
                 )
@@ -3001,6 +3072,15 @@ class RedisDb(BaseDb):
         docstring); this load propagates Redis errors in both modes."""
         return self._q_load_job(job_id)
 
+    def session_blocker(self, job_id: str) -> Optional[str]:
+        """The id of the ticket a queued serialized job waits behind, or None."""
+        from agno.job_queue.session import is_serialized, session_blocker
+
+        job = self._q_load_job(job_id)
+        if job is None or job["status"] != "queued" or not is_serialized(job):
+            return None
+        return session_blocker(job, self._q_session_members(self._q_session_key(job)))
+
     def count_queued_jobs(self) -> int:
         return int(self.redis_client.zcard(self._q_key("queued")))
 
@@ -3011,20 +3091,33 @@ class RedisDb(BaseDb):
         page: int = 1,
         sort_by: Optional[str] = "created_at",
         sort_order: Optional[str] = "desc",
+        *,
+        session_id: Optional[Union[str, List[str]]] = None,
+        user_id: Optional[str] = None,
+        raise_on_error: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Paginated job listing: (page of jobs, total matching count).
 
-        status accepts one value or a list (match any). Loads the full index
+        raise_on_error=True requires read errors to propagate. This store
+        already propagates errors in both modes.
+
+        status and session_id accept one value or a list (match any). Loads the full index
         and filters/sorts in Python, like the other Redis list APIs -
         total_count and arbitrary sort fields need the whole set anyway, and
         the index stays small by construction (bounded by max_queue_depth
         plus the retention sweep)."""
         statuses = [status] if isinstance(status, str) else status
+        session_ids = [session_id] if isinstance(session_id, str) else session_id
         jobs: List[Dict[str, Any]] = []
         raw_ids = self.redis_client.zrevrange(self._q_key("all"), 0, -1)
         for raw_id in raw_ids:
             job = self._q_load_job(_q_to_str(raw_id))
-            if job is not None and (statuses is None or job["status"] in statuses):
+            if (
+                job is not None
+                and (statuses is None or job["status"] in statuses)
+                and (session_ids is None or job.get("session_id") in session_ids)
+                and (user_id is None or job.get("user_id") == user_id)
+            ):
                 jobs.append(job)
         total_count = len(jobs)
         jobs = apply_sorting(records=jobs, sort_by=sort_by, sort_order=sort_order)
@@ -3037,34 +3130,39 @@ class RedisDb(BaseDb):
         from redis.exceptions import WatchError
 
         job_key = self._q_job_key(job_id)
-        now = self._q_server_now()
-        try:
-            with self.redis_client.pipeline() as pipe:
-                pipe.watch(job_key)
-                raw = pipe.get(job_key)
-                if raw is None:
-                    pipe.unwatch()
-                    return False
-                job = json.loads(raw if isinstance(raw, str) else raw.decode())
-                if job["status"] not in ("failed", "cancelled"):
-                    pipe.unwatch()
-                    return False
-                job.update(
-                    status="queued",
-                    max_attempts=job["attempt"] + 1,
-                    available_at=now,
-                    locked_by=None,
-                    locked_at=None,
-                    completed_at=None,
-                    updated_at=now,
-                )
-                pipe.multi()
-                self._q_save_job_in_pipe(pipe, job)
-                pipe.zadd(self._q_key("queued"), {job_id: now})
-                pipe.execute()
-                return True
-        except WatchError:
-            return False
+        # A same-session submit can win the session index; re-evaluate instead of refusing.
+        for _ in range(100):
+            now = self._q_server_now()
+            try:
+                with self.redis_client.pipeline() as pipe:
+                    pipe.watch(job_key)
+                    raw = pipe.get(job_key)
+                    if raw is None:
+                        pipe.unwatch()
+                        return False
+                    job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                    if job["status"] not in ("failed", "cancelled"):
+                        pipe.unwatch()
+                        return False
+                    if (job.get("payload") or {}).get("serialize_session") is True:
+                        job = self._q_stamp_session_seq(pipe, job)
+                    job.update(
+                        status="queued",
+                        max_attempts=job["attempt"] + 1,
+                        available_at=now,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=None,
+                        updated_at=now,
+                    )
+                    pipe.multi()
+                    self._q_save_job_in_pipe(pipe, job)
+                    pipe.zadd(self._q_key("queued"), {job_id: now})
+                    pipe.execute()
+                    return True
+            except WatchError:
+                continue
+        return False
 
     def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
         """Continuation CAS: flip the EXISTING paused ticket back to queued,
@@ -3088,7 +3186,8 @@ class RedisDb(BaseDb):
         from redis.exceptions import WatchError
 
         job_key = self._q_job_key(job_id)
-        for _ in range(10):
+        # Same-session submits also contend on the session index; every round commits one of them.
+        for _ in range(100):
             now = self._q_server_now()
             try:
                 with self.redis_client.pipeline() as pipe:
@@ -3123,7 +3222,7 @@ class RedisDb(BaseDb):
                     return {"outcome": "queued", "job": job}
             except WatchError:
                 continue  # ticket changed under us; re-evaluate its new status
-        raise RuntimeError("continue_job: ticket contention did not settle after 10 attempts")
+        raise RuntimeError("continue_job: ticket contention did not settle after 100 attempts")
 
     def queue_stats(self) -> Dict[str, Any]:
         now = int(time.time())

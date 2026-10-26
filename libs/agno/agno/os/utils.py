@@ -25,8 +25,10 @@ from agno.media import File as FileMedia
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
 from agno.registry import Registry, ToolSource
+from agno.registry._reserved import RESERVED_MANAGER_IDS, _reserved_manager_id_message
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
+from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import RemoteTeam, Team, TeamFactory
@@ -119,6 +121,23 @@ def drop_media_references(media_dicts: Any) -> Any:
     return media_dicts
 
 
+def _check_object_json_schema(schema: Dict[str, Any]) -> None:
+    """Raise HTTP 422 unless schema is a structurally valid JSON Schema with an explicit object root."""
+    if schema.get("type") != "object":
+        raise HTTPException(status_code=422, detail='Invalid output_schema: root must declare "type": "object"')
+    try:
+        from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+        from jsonschema.exceptions import SchemaError  # type: ignore[import-untyped]
+    except ImportError:
+        raise ImportError("`jsonschema` not installed. Please install using `pip install jsonschema`")
+    try:
+        Draft202012Validator.check_schema(schema)
+    except SchemaError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid output_schema: {exc.message}") from exc
+    except RecursionError as exc:
+        raise HTTPException(status_code=422, detail="Invalid output_schema: schema is nested too deeply") from exc
+
+
 async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
     """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
 
@@ -199,16 +218,23 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
         "input_files": ("files", reconstruct_files),
     }
     for form_key, (kwarg_key, reconstructor) in media_params.items():
-        media_value = kwargs.get(form_key)
-        if not media_value or not isinstance(media_value, str):
+        if form_key not in kwargs:
             continue
-        kwargs.pop(form_key)
+        media_value = kwargs.pop(form_key)
         try:
-            reconstructed_media = reconstructor(drop_media_references(json.loads(media_value)))
-            if reconstructed_media:
-                kwargs[kwarg_key] = reconstructed_media
-        except json.JSONDecodeError as e:
-            log_warning(f"Invalid {form_key} parameter couldn't be loaded: {str(e)}")
+            decoded_media = json.loads(media_value) if isinstance(media_value, str) else media_value
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise HTTPException(
+                status_code=422, detail=f"Invalid {form_key}: expected a JSON array of objects"
+            ) from exc
+        if not isinstance(decoded_media, list) or any(not isinstance(item, dict) for item in decoded_media):
+            raise HTTPException(status_code=422, detail=f"Invalid {form_key}: expected a JSON array of objects")
+        # Storage reconstruction tolerates damaged historical entries. Incoming requests
+        # must instead fail as a whole, before a run can execute with missing inputs.
+        reconstructed_media = reconstructor(drop_media_references(decoded_media)) or []
+        if len(reconstructed_media) != len(decoded_media):
+            raise HTTPException(status_code=422, detail=f"Invalid {form_key}: could not reconstruct every media item")
+        kwargs[kwarg_key] = reconstructed_media
 
     if knowledge_filters := kwargs.get("knowledge_filters"):
         try:
@@ -250,24 +276,36 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
     if isinstance(use_json_schema, str):
         use_json_schema = use_json_schema.lower() == "true"
 
-    if output_schema := kwargs.get("output_schema"):
+    if "output_schema" in kwargs:
+        output_schema = kwargs["output_schema"]
         try:
-            if isinstance(output_schema, str):
-                schema_dict = json.loads(output_schema)
-
-                if use_json_schema:
-                    # Keep as dict schema for direct JSON output
-                    kwargs["output_schema"] = schema_dict
-                else:
-                    # Convert to Pydantic model (default behavior)
-                    dynamic_model = json_schema_to_pydantic_model(schema_dict)
-                    kwargs["output_schema"] = dynamic_model
-        except json.JSONDecodeError as e:
-            kwargs.pop("output_schema")
-            log_warning(f"Invalid output_schema JSON: {output_schema}: {str(e)}")
-        except Exception as e:
-            kwargs.pop("output_schema")
-            log_warning(f"Failed to create output_schema model: {str(e)}")
+            schema_dict = json.loads(output_schema) if isinstance(output_schema, str) else output_schema
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise HTTPException(status_code=422, detail="Invalid output_schema: expected a JSON object schema") from exc
+        if not isinstance(schema_dict, dict):
+            raise HTTPException(status_code=422, detail="Invalid output_schema: expected a JSON object schema")
+        # Raw mode also accepts provider response formats: {"type": "json_object"} and {"type": "json_schema", ...}
+        object_schema: Optional[Any] = schema_dict
+        if use_json_schema and schema_dict.get("type") == "json_object":
+            object_schema = None
+        elif use_json_schema and schema_dict.get("type") == "json_schema":
+            wrapped = schema_dict.get("json_schema")
+            object_schema = wrapped.get("schema") if isinstance(wrapped, dict) else None
+            if not isinstance(object_schema, dict):
+                raise HTTPException(
+                    status_code=422, detail="Invalid output_schema: json_schema.schema must be an object"
+                )
+        if object_schema is not None:
+            _check_object_json_schema(object_schema)
+        try:
+            if use_json_schema:
+                kwargs["output_schema"] = schema_dict
+            else:
+                kwargs["output_schema"] = json_schema_to_pydantic_model(schema_dict)
+        except (TypeError, ValueError, AttributeError, RecursionError) as exc:
+            raise HTTPException(
+                status_code=422, detail="Invalid output_schema: could not construct output model"
+            ) from exc
 
     # Parse boolean and null values
     for key, value in kwargs.items():
@@ -277,6 +315,15 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
             kwargs[key] = None
 
     return kwargs
+
+
+async def is_form_field_omitted(request: Request, name: str) -> bool:
+    """Whether the client left the form field ``name`` out of the request.
+
+    FastAPI 0.147+ reads an omitted boolean form field as False whatever its default, so a route
+    whose boolean default is not False checks the raw form before trusting the parsed value.
+    """
+    return name not in await request.form()
 
 
 def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent]) -> str:
@@ -504,16 +551,43 @@ def stored_event_replay_dicts(
     """
     floor = last_event_index if last_event_index is not None else -1
     dicts: List[Dict[str, Any]] = []
+    last_index = -1
     for position, event in enumerate(getattr(run_output, "events", None) or []):
         event_dict = event.to_dict()
         stored_index = event_dict.get("event_index")
         if stored_index is not None and int(stored_index) <= floor:
             continue
-        event_dict["event_index"] = int(stored_index) if stored_index is not None else position
+        if stored_index is not None:
+            index = int(stored_index)
+        else:
+            # Positional fallback, but never behind a stamped event that came before it in the
+            # row (an unstamped terminal event after stamped ones), so the replay stays ordered.
+            index = max(position, last_index + 1)
+        last_index = max(last_index, index)
+        event_dict["event_index"] = index
         if "run_id" not in event_dict:
             event_dict["run_id"] = run_id
         dicts.append(event_dict)
     return dicts
+
+
+def no_stored_events_replay_meta(run_output: Any, run_id: str) -> Dict[str, Any]:
+    """The replay meta for a run found in the database with no stored events.
+
+    A run submitted with stream=false, inline or in the background, never publishes to the
+    event stream and stores no events, so there is nothing to attach to: the message says
+    whether the run is still going (poll the run endpoint) or finished with only its final
+    output, instead of claiming it completed.
+    """
+    status = run_output.status.value if hasattr(run_output.status, "value") else (run_output.status or "unknown")
+    if status in (RunStatus.pending.value, RunStatus.running.value):
+        message = (
+            f"Run is {status} and was submitted without streaming, so it has no event stream to attach to. "
+            "Poll the run endpoint for its result."
+        )
+    else:
+        message = f"Run {status} with no stored events: a run submitted without streaming keeps only its final output."
+    return {"event": "replay", "run_id": run_id, "status": status, "total_events": 0, "message": message}
 
 
 def stored_event_replay_frames(run_output: Any, run_id: str, last_event_index: Optional[int] = None) -> List[str]:
@@ -1326,29 +1400,86 @@ def find_factory_by_id(
     return None
 
 
+def factory_row_handle(factory: Union[AgentFactory, TeamFactory, WorkflowFactory]) -> Union[Agent, Team, Workflow]:
+    """A component bound to the factory's id and db, for reading and writing its
+    run rows without invoking the factory (no request context, no input)."""
+    if isinstance(factory, AgentFactory):
+        return Agent(id=factory.id, db=factory.db)
+    if isinstance(factory, TeamFactory):
+        return Team(id=factory.id, db=factory.db, members=[])
+    return Workflow(id=factory.id, db=factory.db)
+
+
 def draft_preview_identity(request: Any) -> tuple:
     """(actor, privileged) for the draft-preview gate.
 
     ``privileged`` is True only for a caller allowed to preview anyone's
-    draft: the admin scope, or no authentication at all (no request, or no
-    auth middleware ran). A plain authenticated caller keeps its raw
-    identity even when ``user_isolation`` is off - that flag widens reads,
-    never the right to run another owner's draft.
+    draft: an admin, or no authentication at all (no request, or no auth
+    middleware ran). A plain authenticated caller keeps its raw identity
+    even when ``user_isolation`` is off - that flag widens reads, never the
+    right to run another owner's draft.
+
+    "Admin" is decided the way every other gate decides it: the token's admin
+    scope counts only when the caller's scopes are their authority
+    (:func:`~agno.os.middleware.user_scope.caller_is_admin`), and under managed
+    roles an admin ROLE counts (the store's ``can_manage``, as on the ``/authz``
+    gate). Under a managed-roles or ReBAC plane a JWT's ``scopes`` claim is inert
+    everywhere else, so reading it raw here let any validly-signed token carrying
+    ``agent_os:admin`` preview every owner's drafts while being denied every
+    other admin action. Prefer :func:`adraft_preview_identity` on an async path:
+    the store may be bound to an async database, which its sync read refuses (a
+    managed-role admin then reads as a plain caller here).
     """
     if request is None:
         return None, True
-    from agno.os.middleware.user_scope import _has_admin_scope
+    from agno.os.middleware.user_scope import caller_is_admin
 
     user_id = getattr(request.state, "user_id", None)
     scopes = getattr(request.state, "scopes", None)
-    admin_scope_raw = getattr(request.state, "admin_scope", None)
-    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
     if scopes is None and user_id is None:
         # No auth middleware ran: authorization is off.
         return None, True
-    if _has_admin_scope(list(scopes or []), admin_scope=admin_scope):
+    if caller_is_admin(request):
         return None, True
+    role_store = _deciding_role_store(request)
+    if role_store is not None:
+        try:
+            if role_store.can_manage(user_id, getattr(request.state, "claims", None) or {}):
+                return None, True
+        except Exception:
+            pass  # an async-bound store refuses a sync read; a read failure is never a privilege
     return (user_id if isinstance(user_id, str) else None), False
+
+
+async def adraft_preview_identity(request: Any) -> tuple:
+    """Async twin of :func:`draft_preview_identity`: the managed-admin check awaits the store, so
+    it works against an async database."""
+    if request is None:
+        return None, True
+    from agno.os.middleware.user_scope import caller_is_admin
+
+    user_id = getattr(request.state, "user_id", None)
+    scopes = getattr(request.state, "scopes", None)
+    if scopes is None and user_id is None:
+        return None, True
+    if caller_is_admin(request):
+        return None, True
+    role_store = _deciding_role_store(request)
+    if role_store is not None:
+        try:
+            if await role_store.acan_manage(user_id, getattr(request.state, "claims", None) or {}):
+                return None, True
+        except Exception:
+            pass
+    return (user_id if isinstance(user_id, str) else None), False
+
+
+def _deciding_role_store(request: Any) -> Any:
+    """The Authorization object on the app, only when its managed-role engine is the plane that
+    decides (``roles_decide``); under an authorization_provider= override roles never took part."""
+    state = getattr(getattr(request, "app", None), "state", None)
+    role_store = getattr(state, "role_store", None) if state is not None else None
+    return role_store if role_store is not None and getattr(role_store, "roles_decide", False) else None
 
 
 def may_read_draft_configs(
@@ -1470,6 +1601,11 @@ def get_agent_by_id(
                 # RemoteAgent or other
                 return agent
 
+    # AgentOS may serve framework-owned agents, but reserved IDs must never
+    # fall back to user-created or legacy catalog components.
+    if agent_id in RESERVED_MANAGER_IDS:
+        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(agent_id)))
+
     # Try to get the agent from the database
     if db and isinstance(db, BaseDb):
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
@@ -1530,6 +1666,11 @@ async def get_agent_by_id_async(
                     return result
                 # RemoteAgent or other
                 return agent
+
+    # AgentOS may serve framework-owned agents, but reserved IDs must never
+    # fall back to user-created or legacy catalog components.
+    if agent_id in RESERVED_MANAGER_IDS:
+        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(agent_id)))
 
     if db and isinstance(db, BaseDb):
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
@@ -1608,6 +1749,9 @@ def get_team_by_id(
                     return result
                 return team
 
+    if team_id in RESERVED_MANAGER_IDS:
+        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(team_id)))
+
     if db and isinstance(db, BaseDb):
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
@@ -1661,6 +1805,9 @@ async def get_team_by_id_async(
                     result = await team.resolve_async(ctx, expected_type=Team)
                     return result
                 return team
+
+    if team_id in RESERVED_MANAGER_IDS:
+        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(team_id)))
 
     if db and isinstance(db, BaseDb):
         from agno.team.team import get_team_by_id as get_team_by_id_db
@@ -1744,6 +1891,9 @@ def get_workflow_by_id(
                     return result
                 return workflow
 
+    if workflow_id in RESERVED_MANAGER_IDS:
+        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(workflow_id)))
+
     if db and isinstance(db, BaseDb):
         from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
 
@@ -1799,6 +1949,9 @@ async def get_workflow_by_id_async(
                     result = await workflow.resolve_async(ctx, expected_type=Workflow)
                     return result
                 return workflow
+
+    if workflow_id in RESERVED_MANAGER_IDS:
+        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(workflow_id)))
 
     if db and isinstance(db, BaseDb):
         from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
@@ -1981,6 +2134,11 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
                     user_id_claim=kwargs.get("user_id_claim", "sub"),
                     session_id_claim=kwargs.get("session_id_claim", "session_id"),
                     audience_claim=kwargs.get("audience_claim", "aud"),
+                    # Thread the issuer pin so the WebSocket validator enforces it too --
+                    # otherwise a token from an untrusted issuer that REST rejects would be
+                    # accepted on the WS handshake (the pin held only on the HTTP path).
+                    issuer=kwargs.get("issuer"),
+                    issuer_claim=kwargs.get("issuer_claim", "iss"),
                 )
             except Exception as e:
                 log_warning(f"Could not lazily construct JWTValidator for WebSocket auth: {e}")
@@ -2019,38 +2177,56 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
     return blank
 
 
-def update_cors_middleware(app: FastAPI, new_origins: list):
-    existing_origins: List[str] = []
+def _is_cors_middleware(middleware: Any) -> bool:
+    return isinstance(middleware.cls, type) and issubclass(middleware.cls, CORSMiddleware)
 
-    # TODO: Allow more options where CORS is properly merged and user can disable this behaviour
 
-    # Extract existing origins from current CORS middleware
-    for middleware in app.user_middleware:
-        if middleware.cls == CORSMiddleware:
-            if hasattr(middleware, "kwargs"):
-                origins_value = middleware.kwargs.get("allow_origins", [])
-                if isinstance(origins_value, list):
-                    existing_origins = origins_value
-                else:
-                    existing_origins = []
-            break
-    # Merge origins
-    merged_origins = list(set(new_origins + existing_origins))
-    final_origins = [origin for origin in merged_origins if origin != "*"]
+def update_cors_middleware(
+    app: FastAPI, new_origins: list, *, origin_regex: Optional[str] = None, merge_existing: bool = True
+):
+    from agno.os.middleware.cors import OriginPolicy, OriginPolicyCORSMiddleware
 
-    # Remove existing CORS
-    app.user_middleware = [m for m in app.user_middleware if m.cls != CORSMiddleware]
+    origins = list(new_origins)
+    patterns = [origin_regex] if origin_regex is not None else []
+    if merge_existing:
+        for middleware in app.user_middleware:
+            if not _is_cors_middleware(middleware):
+                continue
+            existing_policy = middleware.kwargs.get("origin_policy")
+            if isinstance(existing_policy, OriginPolicy):
+                origins.extend(existing_policy.origins)
+                patterns.extend(existing_policy.patterns)
+                continue
+            existing_origins = middleware.kwargs.get("allow_origins", [])
+            if isinstance(existing_origins, (list, tuple)):
+                origins.extend(existing_origins)
+            existing_pattern = middleware.kwargs.get("allow_origin_regex")
+            if isinstance(existing_pattern, str):
+                patterns.append(existing_pattern)
+    final_origins = list(dict.fromkeys(origin for origin in origins if origin != "*"))
+    policy = OriginPolicy(final_origins, list(dict.fromkeys(patterns)))
+    app.user_middleware = [m for m in app.user_middleware if not _is_cors_middleware(m)]
     app.middleware_stack = None
-
-    # Add updated CORS
-    app.add_middleware(
-        CORSMiddleware,  # type: ignore
-        allow_origins=final_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["*"],
-    )
+    if len(policy.patterns) > 1:
+        app.add_middleware(
+            OriginPolicyCORSMiddleware,
+            origin_policy=policy,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+            expose_headers=["*"],
+        )
+    else:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=final_origins,
+            allow_origin_regex=policy.patterns[0] if policy.patterns else None,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+            expose_headers=["*"],
+        )
+    return policy
 
 
 def flatten_routes(routes: Sequence[Any]) -> List[Any]:
@@ -2294,7 +2470,7 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
     ``visited`` tracks already-walked agents/teams/workflows (by object id) to
     avoid redundant work and infinite recursion on cyclic composition graphs.
     """
-    if id(agent) in visited:
+    if id(agent) in visited or registry.is_component_excluded(agent):
         return
     visited.add(id(agent))
 
@@ -2312,6 +2488,9 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
     registry.add_schema(getattr(agent, "input_schema", None))
     registry.add_schema(getattr(agent, "output_schema", None))
     registry.add_db(getattr(agent, "db", None))
+    for filesystem, _read_only in getattr(agent, "filesystems", []):
+        filesystem_backend = getattr(filesystem, "backend", None)
+        registry.add_db(getattr(filesystem_backend, "db", None))
     _collect_components_from_knowledge(getattr(agent, "knowledge", None), registry)
     # A named LearningMachine on a code-defined component is a registry
     # resource: its stored config references it by name, so the registry the
@@ -2322,7 +2501,7 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
 
 def collect_components_from_team(team: Any, registry: Registry, visited: Set[int]) -> None:
     """Add a team's components to the registry, recursing into all of its members."""
-    if id(team) in visited:
+    if id(team) in visited or registry.is_component_excluded(team):
         return
     visited.add(id(team))
 
@@ -2354,7 +2533,7 @@ def collect_components_from_team(team: Any, registry: Registry, visited: Set[int
 
 def collect_components_from_workflow(workflow: Any, registry: Registry, visited: Set[int]) -> None:
     """Add a workflow's components (coordinator agent and step tree) to the registry."""
-    if id(workflow) in visited:
+    if id(workflow) in visited or registry.is_component_excluded(workflow):
         return
     visited.add(id(workflow))
 
@@ -2804,7 +2983,7 @@ async def resolve_agent(
 
         scoped_user_id = get_scoped_user_id(request)
     # An explicit draft version is a control-plane preview: owner/admin only.
-    preview_actor, preview_privileged = draft_preview_identity(request)
+    preview_actor, preview_privileged = await adraft_preview_identity(request)
     if not allow_draft_preview(db, agent_id, version, preview_actor, privileged=preview_privileged):
         # Byte-identical to the route's plain not-found: the denial must not
         # read differently from the component being absent.
@@ -2853,12 +3032,19 @@ async def resolve_agent(
             # Broken is not "not found": answer with the error's own status so
             # the refusal survives on caller-supplied apps with no handlers.
             raise HTTPException(status_code=e.status_code, detail=str(e))
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
 
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
+    if isinstance(agent, Agent) and request is not None and (agent.filesystem or agent.tools):
+        # An agent rebuilt from the database gets the OS isolation policy like a configured one.
+        from agno.agent import _init as agent_init
+
+        agent_init.apply_filesystem_user_isolation(agent, bool(getattr(request.state, "user_isolation_enabled", False)))
     return agent
 
 
@@ -2883,7 +3069,7 @@ async def resolve_team(
 
         scoped_user_id = get_scoped_user_id(request)
     # An explicit draft version is a control-plane preview: owner/admin only.
-    preview_actor, preview_privileged = draft_preview_identity(request)
+    preview_actor, preview_privileged = await adraft_preview_identity(request)
     if not allow_draft_preview(db, team_id, version, preview_actor, privileged=preview_privileged):
         # Byte-identical to the route's plain not-found: the denial must not
         # read differently from the component being absent.
@@ -2932,6 +3118,8 @@ async def resolve_team(
             # Broken is not "not found": answer with the error's own status so
             # the refusal survives on caller-supplied apps with no handlers.
             raise HTTPException(status_code=e.status_code, detail=str(e))
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -2962,7 +3150,7 @@ async def resolve_workflow(
 
         scoped_user_id = get_scoped_user_id(request)
     # An explicit draft version is a control-plane preview: owner/admin only.
-    preview_actor, preview_privileged = draft_preview_identity(request)
+    preview_actor, preview_privileged = await adraft_preview_identity(request)
     if not allow_draft_preview(db, workflow_id, version, preview_actor, privileged=preview_privileged):
         # Byte-identical to the route's plain not-found: the denial must not
         # read differently from the component being absent.
@@ -3011,6 +3199,8 @@ async def resolve_workflow(
             # Broken is not "not found": answer with the error's own status so
             # the refusal survives on caller-supplied apps with no handlers.
             raise HTTPException(status_code=e.status_code, detail=str(e))
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")

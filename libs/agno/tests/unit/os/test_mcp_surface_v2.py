@@ -588,7 +588,7 @@ async def test_empty_include_tags_registers_no_builtin_tools():
     """An explicitly empty include_tags set means no built-in tools, not all of them."""
     from agno.os.config import MCPServerConfig
 
-    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(include_tags=set()))
+    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(default_tools=True, include_tags=set()))
     async with Client(build_mcp_server(os)) as client:
         tools = await client.list_tools()
     assert tools == []

@@ -1115,3 +1115,45 @@ async def test_acontinue_run_dispatch_skips_response_format_when_parser_model_se
     )
 
     assert captured["response_format"] is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_of_hitl_continue_while_waiting_for_a_slot_is_paused():
+    """A background continuation cancelled before it acquires its concurrency
+    slot resumes a run that already paused for HITL: the persisted stage is
+    PAUSED, never "never started". Twin of the team test."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from agno.agent._run import _acontinue_run_background_stream
+    from agno.exceptions import RunCancelledException
+    from agno.run import RunStatus
+    from agno.run.base import CancellationStage
+
+    agent = MagicMock()
+    agent.db = None  # helper falls back to the session-save path
+    run_context = MagicMock()
+    session_run = MagicMock()
+    session_run.status = RunStatus.paused
+    session_run.cancellation_stage = None
+    agent_session = MagicMock()
+    agent_session.get_run.return_value = session_run
+    stream = MagicMock()
+    for name in ("register_run", "set_run_status", "complete_run", "add_event", "reopen_run", "begin_attempt"):
+        setattr(stream, name, AsyncMock())
+
+    with (
+        patch("agno.agent._run.background_run_slot") as mock_slot,
+        patch("agno.agent._storage.aread_or_create_session", new_callable=AsyncMock, return_value=agent_session),
+        patch("agno.agent._storage.update_metadata"),
+        patch("agno.agent._session.asave_session", new_callable=AsyncMock),
+        patch("agno.agent._session.asave_run", new_callable=AsyncMock),
+        patch("agno.os.event_streams.get_event_stream", return_value=stream),
+        patch("agno.agent._run.acleanup_run", new_callable=AsyncMock),
+    ):
+        mock_slot.return_value.__aenter__ = AsyncMock(side_effect=RunCancelledException("r-1"))
+        mock_slot.return_value.__aexit__ = AsyncMock()
+        async for _ in _acontinue_run_background_stream(agent, run_context=run_context, session_id="s-1", run_id="r-1"):
+            pass
+
+    assert session_run.status == RunStatus.cancelled
+    assert session_run.cancellation_stage is CancellationStage.paused
