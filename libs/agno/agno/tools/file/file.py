@@ -6,6 +6,7 @@ from typing import Any, List, Optional
 from agno.exceptions import PathSecurityError
 from agno.tools import Toolkit
 from agno.tools._local_file_utils import DEFAULT_EXCLUDE_PATTERNS, path_matches_exclude
+from agno.tools._local_file_utils import extract_snippet as _extract_snippet
 from agno.utils.log import log_debug, log_error
 from agno.utils.path_safety import safe_join_relative_path
 
@@ -39,23 +40,6 @@ def _format_size(size: int) -> str:
             return f"{size:.1f}{unit}" if unit != "B" else f"{size}{unit}"
         size /= 1024  # type: ignore
     return f"{size:.1f}GB"
-
-
-def _extract_snippet(content: str, query: str, context_chars: int = 200) -> str:
-    """Extract a snippet of content around the first occurrence of query."""
-    lower_content = content.lower()
-    lower_query = query.lower()
-    idx = lower_content.find(lower_query)
-    if idx == -1:
-        return ""
-    start = max(0, idx - context_chars)
-    end = min(len(content), idx + len(query) + context_chars)
-    snippet = content[start:end]
-    if start > 0:
-        snippet = "..." + snippet
-    if end < len(content):
-        snippet = snippet + "..."
-    return snippet
 
 
 class FileTools(Toolkit):
