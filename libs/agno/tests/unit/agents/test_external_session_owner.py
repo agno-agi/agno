@@ -112,3 +112,37 @@ async def test_unowned_session_is_not_readable_by_identified_users(agent):
     run = await agent.arun("anonymous", session_id="anon")
     assert await agent.aget_session("anon", user_id="mallory") is None
     assert await agent.aget_run_output(run.run_id, "anon", user_id="mallory") is None
+
+
+@pytest.mark.asyncio
+async def test_lost_claim_is_refused_before_any_run_is_written(agent, monkeypatch):
+    from agno.db.base import AsyncBaseDb
+
+    await agent.arun("open", session_id="s")
+
+    async def lost_async(*args, **kwargs):
+        return None
+
+    def lost_sync(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(agent.db, "upsert_session", lost_async if isinstance(agent.db, AsyncBaseDb) else lost_sync)
+    with pytest.raises(ValueError, match="belongs to another user"):
+        await agent.arun("mine", session_id="s", user_id="bob")
+    assert await _run_count(agent, "s") == 1
+
+
+@pytest.mark.asyncio
+async def test_saving_an_older_snapshot_keeps_the_stored_sharing(agent):
+    from agno.session.sharing import ashare_session, session_members
+
+    await agent.arun("mine", session_id="s", user_id="alice")
+    stale = await agent.aget_session("s")
+    await ashare_session(agent.db, "s", ["bob"], user_id="alice")
+    await agent.aupsert_session(stale)
+    assert session_members(await agent.aget_session("s")) == ["bob"]
+
+    stale = await agent.aget_session("s")
+    await ashare_session(agent.db, "s", [], user_id="alice")
+    await agent.aupsert_session(stale)
+    assert session_members(await agent.aget_session("s")) == []

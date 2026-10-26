@@ -6,12 +6,14 @@ session and run in it; each run keeps its own author in ``run.user_id``. A sessi
 an owner is unclaimed: the first identified caller to run in it becomes its owner.
 """
 
+import asyncio
 from typing import Any, Dict, Iterable, List, Optional
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.utils import owner_key
 
 SHARING_KEY = "agno_sharing"
+MEMBER_JOIN_ATTEMPTS = 5
 
 
 def _field(session: Any, name: str) -> Any:
@@ -40,7 +42,7 @@ def can_run_in_session(session: Any, user_id: Optional[str]) -> bool:
 def can_share_session(session: Any, user_id: Optional[str], is_admin: bool = False) -> bool:
     """Only the owner or an admin changes who a session is shared with."""
     owner = _field(session, "user_id")
-    return is_admin or user_id is None or owner is None or owner_key(owner) == owner_key(user_id)
+    return is_admin or user_id is None or (owner is not None and owner_key(owner) == owner_key(user_id))
 
 
 def without_sharing(metadata: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -58,11 +60,37 @@ def keep_sharing(metadata: Optional[Dict[str, Any]], stored: Optional[Dict[str, 
     return cleaned or None
 
 
+def refresh_sharing(db: BaseDb, session: Any) -> None:
+    """Replace the session's sharing with what is stored.
+
+    A run saves the session it loaded, so without this a share or unshare made since would be
+    undone by that save. One row read; the runs are not loaded.
+    """
+    stored = db.get_session(
+        session_id=session.session_id, session_type=SessionType.AGENT, deserialize=False, runs_limit=1
+    )
+    if stored is not None:
+        session.metadata = keep_sharing(session.metadata, _field(stored, "metadata"))
+
+
+async def arefresh_sharing(db: Any, session: Any) -> None:
+    """Async refresh_sharing; a sync database is read in place, as the agent's async save path does."""
+    if not isinstance(db, AsyncBaseDb):
+        refresh_sharing(db, session)
+        return
+    stored = await db.get_session(
+        session_id=session.session_id, session_type=SessionType.AGENT, deserialize=False, runs_limit=1
+    )
+    if stored is not None:
+        session.metadata = keep_sharing(session.metadata, _field(stored, "metadata"))
+
+
 def _apply_members(session: Any, members: Iterable[str], user_id: Optional[str], is_admin: bool) -> Any:
     if not can_share_session(session, user_id, is_admin):
         raise PermissionError("Only the session owner or an admin can share a session")
-    if session.user_id is None and user_id is not None:
-        session.user_id = user_id
+    if session.user_id is None:
+        # Ownership comes from running in the session, never from sharing it.
+        raise ValueError(f"Session {session.session_id} has no owner yet and cannot be shared")
     owner = owner_key(session.user_id)
     unique = list(dict.fromkeys(str(member) for member in members if member is not None and str(member) != owner))
     metadata = dict(session.metadata or {})
@@ -101,9 +129,9 @@ async def ashare_session(
     user_id: Optional[str] = None,
     is_admin: bool = False,
 ) -> Any:
-    """Async share_session; accepts a sync or async database."""
+    """Async share_session; accepts a sync or async database, reading a sync one off the event loop."""
     if not isinstance(db, AsyncBaseDb):
-        return share_session(db, session_id, members, user_id=user_id, is_admin=is_admin)
+        return await asyncio.to_thread(share_session, db, session_id, members, user_id=user_id, is_admin=is_admin)
     session = await db.get_session(session_id=session_id, session_type=SessionType.AGENT)
     if session is None:
         raise ValueError(f"Session {session_id} not found")
@@ -118,17 +146,21 @@ async def aadd_session_member(db: Any, session_id: str, user_id: Optional[str]) 
     """
     if db is None or user_id is None:
         return
-    if isinstance(db, AsyncBaseDb):
-        session = await db.get_session(session_id=session_id, session_type=SessionType.AGENT)
-    else:
-        session = db.get_session(session_id=session_id, session_type=SessionType.AGENT)
-    owner = _field(session, "user_id") if session is not None else None
-    if owner is None:
-        return
-    members = session_members(session)
-    if owner_key(owner) == owner_key(user_id) or owner_key(user_id) in members:
-        return
-    await ashare_session(db, session_id, [*members, user_id], is_admin=True)
+    # The member list is replaced as a whole, so two senders joining at once can overwrite each
+    # other. Re-read after writing and retry until this member is in the stored list.
+    for _ in range(MEMBER_JOIN_ATTEMPTS):
+        if isinstance(db, AsyncBaseDb):
+            session = await db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+        else:
+            session = await asyncio.to_thread(db.get_session, session_id=session_id, session_type=SessionType.AGENT)
+        owner = _field(session, "user_id") if session is not None else None
+        if owner is None:
+            return
+        members = session_members(session)
+        if owner_key(owner) == owner_key(user_id) or owner_key(user_id) in members:
+            return
+        await ashare_session(db, session_id, [*members, user_id], is_admin=True)
+    raise RuntimeError(f"Could not add {user_id} to session {session_id}: the member list kept changing")
 
 
 async def ajoin_shared_session(entity: Any, session_id: str, user_id: Optional[str]) -> None:

@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
+from starlette.concurrency import run_in_threadpool
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
@@ -12,6 +13,7 @@ from agno.exceptions import AgnoError
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import (
+    caller_is_admin,
     enforce_owner_on_entity,
     get_scoped_user_id,
     resolve_db_and_scope,
@@ -57,10 +59,16 @@ async def _member_read_scope(
 
     if user_id is None or isinstance(db, RemoteDb) or session_type not in (None, SessionType.AGENT):
         return user_id
+    # Only the owner and the member list are needed, so the runs stay unloaded; a sync database
+    # is read off the event loop.
     if isinstance(db, AsyncBaseDb):
-        row = await db.get_session(session_id=session_id, session_type=SessionType.AGENT, deserialize=False)
+        row = await db.get_session(
+            session_id=session_id, session_type=SessionType.AGENT, deserialize=False, runs_limit=1
+        )
     else:
-        row = db.get_session(session_id=session_id, session_type=SessionType.AGENT, deserialize=False)
+        row = await run_in_threadpool(
+            db.get_session, session_id=session_id, session_type=SessionType.AGENT, deserialize=False, runs_limit=1
+        )
     if row and can_read_session(row, user_id):
         return None
     return user_id
@@ -1390,19 +1398,22 @@ def attach_routes(
         db, _ = await resolve_db_and_scope(request, dbs, db_id, table)
         if isinstance(db, RemoteDb):
             raise HTTPException(status_code=400, detail="Session sharing is not supported for remote databases")
-        scoped_user_id = get_scoped_user_id(request)
+        # Admin is the token's actual authority, never "unscoped": with auth on and isolation
+        # off every caller is unscoped, so the ownership check uses the authenticated identity.
+        is_admin = caller_is_admin(request)
+        actor = get_scoped_user_id(request) or getattr(request.state, "user_id", None)
         if isinstance(db, AsyncBaseDb):
             existing = await db.get_session(session_id=session_id, session_type=SessionType.AGENT)
         else:
-            existing = db.get_session(session_id=session_id, session_type=SessionType.AGENT)
-        if existing is None or not can_read_session(existing, scoped_user_id):
+            existing = await run_in_threadpool(db.get_session, session_id=session_id, session_type=SessionType.AGENT)
+        if existing is None or not (is_admin or can_read_session(existing, actor)):
             raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")
         try:
-            shared = await ashare_session(
-                db, session_id, share_request.members, user_id=scoped_user_id, is_admin=scoped_user_id is None
-            )
+            shared = await ashare_session(db, session_id, share_request.members, user_id=actor, is_admin=is_admin)
         except PermissionError as e:
             raise HTTPException(status_code=403, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e))
         return AgentSessionDetailSchema.from_session(shared)
 
     return router

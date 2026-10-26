@@ -128,3 +128,98 @@ async def test_unowned_session_is_not_readable_by_identified_users(setup):
     assert await agent.aget_session("anon", user_id="mallory") is None
     assert await agent.aget_run_output(run.run_id, "anon", user_id="mallory") is None
     assert await agent.aget_session("anon") is not None
+
+
+async def _runs(db: Any, session_id: str, user_id: str) -> List[Any]:
+    from agno.db.base import AsyncBaseDb
+
+    if isinstance(db, AsyncBaseDb):
+        result = await db.get_runs(session_id=session_id, user_id=user_id)
+    else:
+        result = db.get_runs(session_id=session_id, user_id=user_id)
+    return list(result[0] if isinstance(result, tuple) else result)
+
+
+@pytest.mark.asyncio
+async def test_member_runs_are_stored_under_the_member(setup):
+    agent, db, _ = setup
+    await agent.arun("a1", session_id="team", user_id="alice")
+    await ashare_session(db, "team", ["bob"], user_id="alice")
+    await agent.arun("b1", session_id="team", user_id="bob")
+    assert [run.user_id for run in await _runs(db, "team", "bob")] == ["bob"]
+    assert [run.user_id for run in await _runs(db, "team", "alice")] == ["alice"]
+
+
+@pytest.mark.asyncio
+async def test_claim_is_persisted_before_the_run_and_a_lost_claim_is_refused(setup, monkeypatch):
+    from agno.db.base import AsyncBaseDb
+
+    agent, db, seen = setup
+    await agent.arun("open", session_id="s")
+    real_upsert = db.upsert_session
+    claims: List[Any] = []
+
+    if isinstance(db, AsyncBaseDb):
+
+        async def record(session, *args, **kwargs):
+            claims.append((session.user_id, len(seen)))
+            return await real_upsert(session, *args, **kwargs)
+
+        async def lost(*args, **kwargs):
+            return None
+    else:
+
+        def record(session, *args, **kwargs):  # type: ignore[misc]
+            claims.append((session.user_id, len(seen)))
+            return real_upsert(session, *args, **kwargs)
+
+        def lost(*args, **kwargs):  # type: ignore[misc]
+            return None
+
+    monkeypatch.setattr(db, "upsert_session", record)
+    await agent.arun("a1", session_id="s", user_id="alice")
+    # The first write after the read carries the claim, before the model is called for this run.
+    assert claims[0] == ("alice", 1)
+
+    await agent.arun("open", session_id="t")
+    monkeypatch.setattr(db, "upsert_session", lost)
+    await assert_refused(agent, "b1", "t", "bob")
+    assert len(await _runs(db, "t", "bob")) == 0
+
+
+@pytest.mark.asyncio
+async def test_unowned_session_cannot_be_shared(setup):
+    agent, db, _ = setup
+    await agent.arun("open", session_id="anon")
+    with pytest.raises(PermissionError):
+        await ashare_session(db, "anon", ["eve"], user_id="mallory")
+    with pytest.raises(ValueError, match="no owner"):
+        await ashare_session(db, "anon", ["eve"], is_admin=True)
+    assert (await agent.aget_session("anon")).user_id is None
+
+
+async def _members(db: Any, session_id: str) -> List[str]:
+    from agno.db.base import AsyncBaseDb, SessionType
+    from agno.session.sharing import session_members
+
+    if isinstance(db, AsyncBaseDb):
+        session = await db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+    else:
+        session = db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+    return session_members(session)
+
+
+@pytest.mark.asyncio
+async def test_a_run_saving_an_older_snapshot_keeps_the_stored_sharing(setup):
+    agent, db, _ = setup
+    # A cached session is the stalest snapshot a run can save from.
+    agent.cache_session = True
+    await agent.arun("a1", session_id="team", user_id="alice")
+    await ashare_session(db, "team", ["bob"], user_id="alice")
+    await agent.arun("a2", session_id="team", user_id="alice")
+    assert await _members(db, "team") == ["bob"], "a share made since the snapshot survives the save"
+
+    await ashare_session(db, "team", [], user_id="alice")
+    await agent.arun("a3", session_id="team", user_id="alice")
+    assert await _members(db, "team") == [], "an unshare made since the snapshot survives the save"
+    await assert_refused(agent, "b1", "team", "bob")

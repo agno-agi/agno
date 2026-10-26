@@ -112,3 +112,74 @@ def test_unowned_session_cannot_be_claimed_through_sharing(db):
     response = client(db, "mallory").put("/sessions/anon/sharing", json={"members": ["eve"]})
     assert response.status_code == 404
     assert db.get_session(session_id="anon", session_type=SessionType.AGENT).user_id is None
+
+
+def client_with(db, user: str, scopes, isolation: bool) -> TestClient:
+    app = FastAPI()
+    app.include_router(get_session_router({"default": [db]}, AgnoAPISettings()))
+
+    class JWT(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            request.state.user_id = user
+            request.state.user_isolation_enabled = isolation
+            request.state.scopes = list(scopes)
+            return await call_next(request)
+
+    app.add_middleware(JWT)
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def test_sharing_needs_real_admin_authority_when_isolation_is_off(db):
+    # With auth on and isolation off every caller is unscoped; only the owner or an admin may reshare.
+    mallory = client_with(db, "mallory", ["sessions:write"], isolation=False)
+    assert mallory.put("/sessions/team/sharing", json={"members": ["mallory"]}).status_code == 404
+    assert session_members(db.get_session(session_id="team", session_type=SessionType.AGENT)) == []
+    alice = client_with(db, "alice", ["sessions:write"], isolation=False)
+    assert alice.put("/sessions/team/sharing", json={"members": ["bob"]}).status_code == 200
+    root = client_with(db, "root", ["agent_os:admin"], isolation=False)
+    assert root.put("/sessions/team/sharing", json={"members": []}).status_code == 200
+    assert session_members(db.get_session(session_id="team", session_type=SessionType.AGENT)) == []
+
+
+def test_sharing_an_unowned_session_is_refused_for_trusted_callers_too(db):
+    db.upsert_session(AgentSession(session_id="anon", agent_id="a1"))
+    assert client(db, None).put("/sessions/anon/sharing", json={"members": ["eve"]}).status_code == 409
+    assert db.get_session(session_id="anon", session_type=SessionType.AGENT).user_id is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_joins_keep_both_members(db, monkeypatch):
+    from agno.session.sharing import aadd_session_member
+
+    real_upsert = db.upsert_session
+    rival_landed = []
+
+    def racing_upsert(session, *args, **kwargs):
+        stored = real_upsert(session, *args, **kwargs)
+        if not rival_landed:
+            # Another sender's join, made from the same stale read, lands right after ours.
+            rival_landed.append(True)
+            rival = db.get_session(session_id="team", session_type=SessionType.AGENT)
+            rival.metadata = {SHARING_KEY: {"members": ["bob"]}}
+            real_upsert(rival)
+        return stored
+
+    monkeypatch.setattr(db, "upsert_session", racing_upsert)
+    await aadd_session_member(db, "team", "carol")
+    assert session_members(db.get_session(session_id="team", session_type=SessionType.AGENT)) == ["bob", "carol"]
+
+
+@pytest.mark.asyncio
+async def test_member_lookup_reads_a_sync_database_off_the_event_loop(db, monkeypatch):
+    from agno.os.routers.session import session as session_module
+
+    offloaded = []
+
+    async def record(func, *args, **kwargs):
+        offloaded.append(kwargs.get("runs_limit"))
+        return func(*args, **kwargs)
+
+    share(db, "alice", ["bob"])
+    monkeypatch.setattr(session_module, "run_in_threadpool", record)
+    assert await session_module._member_read_scope(db, "team", SessionType.AGENT, "bob") is None
+    assert offloaded == [1], "one bounded row read, in the thread pool"

@@ -381,15 +381,39 @@ def _visible_to(session: Any, session_type: SessionType, user_id: Optional[str])
     return None
 
 
-def _claim_or_refuse(session: AgentSession, user_id: Optional[str]) -> AgentSession:
-    """An unclaimed session becomes the caller's; one the caller cannot access is refused."""
+def _should_claim(session: AgentSession, user_id: Optional[str]) -> bool:
+    """Refuses a session the caller cannot run in; True when the caller claims it (unowned, caller identified)."""
     from agno.session.sharing import can_run_in_session
 
     if not can_run_in_session(session, user_id):
         # Writing here would add this run to another user's history.
         raise ValueError(f"Session {session.session_id} belongs to another user")
-    if session.user_id is None and user_id is not None:
+    return session.user_id is None and user_id is not None
+
+
+def _claim_or_refuse(agent: Agent, session: AgentSession, user_id: Optional[str]) -> AgentSession:
+    """An unclaimed session becomes the caller's; one the caller cannot access is refused."""
+    if _should_claim(session, user_id):
         session.user_id = user_id
+        # Persist the claim now, under storage's owner predicate: of two callers racing for an
+        # unowned session only one write lands, and the other is refused before it runs.
+        if agent.db.upsert_session(session=session) is None:  # type: ignore[union-attr]
+            raise ValueError(f"Session {session.session_id} belongs to another user")
+    return session
+
+
+async def _aclaim_or_refuse(agent: Agent, session: AgentSession, user_id: Optional[str]) -> AgentSession:
+    """Async _claim_or_refuse."""
+    from agno.agent import _init
+
+    if _should_claim(session, user_id):
+        session.user_id = user_id
+        if _init.has_async_db(agent):
+            claimed = await agent.db.upsert_session(session=session)  # type: ignore[union-attr, misc]
+        else:
+            claimed = agent.db.upsert_session(session=session)  # type: ignore[union-attr]
+        if claimed is None:
+            raise ValueError(f"Session {session.session_id} belongs to another user")
     return session
 
 
@@ -464,6 +488,10 @@ def upsert_session(
     try:
         if not agent.db:
             raise ValueError("Db not initialized")
+        if isinstance(session, AgentSession) and session.user_id is not None:
+            from agno.session.sharing import refresh_sharing
+
+            refresh_sharing(agent.db, session)  # type: ignore[arg-type]
         return agent.db.upsert_session(session=session)  # type: ignore
     except Exception as e:
         import traceback
@@ -490,6 +518,10 @@ async def aupsert_session(
     try:
         if not agent.db:
             raise ValueError("Db not initialized")
+        if isinstance(session, AgentSession) and session.user_id is not None:
+            from agno.session.sharing import arefresh_sharing
+
+            await arefresh_sharing(agent.db, session)
         if _init.has_async_db(agent):
             return await agent.db.upsert_session(session=session)  # type: ignore
         else:
@@ -700,7 +732,7 @@ def read_or_create_session(
 
         agent_session = cast(AgentSession, read_session(agent, session_id=session_id))
         if agent_session is not None:
-            agent_session = _claim_or_refuse(agent_session, user_id)
+            agent_session = _claim_or_refuse(agent, agent_session, user_id)
 
     if agent_session is None:
         # Creating new session if none found
@@ -774,7 +806,7 @@ async def aread_or_create_session(
         else:
             agent_session = cast(AgentSession, read_session(agent, session_id=session_id))
         if agent_session is not None:
-            agent_session = _claim_or_refuse(agent_session, user_id)
+            agent_session = await _aclaim_or_refuse(agent, agent_session, user_id)
 
     if agent_session is None:
         # Creating new session if none found

@@ -363,7 +363,10 @@ def attach_routes(
             cfg = bot_state.session_config
             if cfg.has_db:
                 try:
-                    found = await find_latest_session_id(cfg, user_id, bot_state.entity_id, session_scope)
+                    # A group's session belongs to whoever started it (a /new leaves a random suffix),
+                    # so the lookup must not be narrowed to the current sender.
+                    lookup_user_id = None if is_group else user_id
+                    found = await find_latest_session_id(cfg, lookup_user_id, bot_state.entity_id, session_scope)
                     if found:
                         session_id = found
                 except Exception as e:

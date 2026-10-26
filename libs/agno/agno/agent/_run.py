@@ -6056,7 +6056,7 @@ def persist_run_in_session(
         agent,
         run=storage_copy,
         session_id=session.session_id,
-        user_id=session.user_id,
+        user_id=storage_copy.user_id or session.user_id,
         run_index=run_index,
     )
 
@@ -6092,7 +6092,7 @@ async def apersist_run_in_session(
         agent,
         run=storage_copy,
         session_id=session.session_id,
-        user_id=session.user_id,
+        user_id=storage_copy.user_id or session.user_id,
         run_index=run_index,
     )
 
@@ -6317,7 +6317,7 @@ def _mark_run_regenerated(
                 agent,
                 run=cast(RunOutput, flipped),
                 session_id=session.session_id,
-                user_id=session.user_id,
+                user_id=flipped.user_id or session.user_id,
                 run_index=resolve_run_index(session, flipped),
             )
             return
@@ -6345,7 +6345,7 @@ async def _amark_run_regenerated(
                 agent,
                 run=cast(RunOutput, flipped),
                 session_id=session.session_id,
-                user_id=session.user_id,
+                user_id=flipped.user_id or session.user_id,
                 run_index=resolve_run_index(session, flipped),
             )
             return

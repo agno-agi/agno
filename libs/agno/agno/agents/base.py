@@ -756,26 +756,35 @@ class BaseExternalAgent:
             created_at=int(time()),
         )
 
-    def _owned_session_or_new(self, row: Any, session_id: str, user_id: Optional[str]) -> AgentSession:
-        """The stored session, claimed by the caller when unowned, or a new one. Refuses one the caller cannot access."""
+    def _owned_session_or_new(self, row: Any, session_id: str, user_id: Optional[str]) -> Tuple[AgentSession, bool]:
+        """The stored session, or a new one, and whether the caller claims it (unowned, caller identified).
+
+        Refuses a session the caller cannot access.
+        """
         from agno.session.sharing import can_run_in_session
 
         session = AgentSession.from_dict(row) if isinstance(row, dict) else row
         if not isinstance(session, AgentSession):
-            return self._create_session(session_id, user_id)
+            return self._create_session(session_id, user_id), False
         if not can_run_in_session(session, user_id):
             # Writing here would add this run to another user's history.
             raise ValueError(f"Session {session_id} belongs to another user")
         if session.user_id is None and user_id is not None:
             session.user_id = user_id
-        return session
+            return session, True
+        return session, False
 
     def read_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> AgentSession:
         """Read a session from the DB, or create a new one. Refuses a session owned by another user."""
         row = None
         if self.db is not None and isinstance(self.db, BaseDb):
             row = self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
-        return self._owned_session_or_new(row, session_id, user_id)
+        session, claimed = self._owned_session_or_new(row, session_id, user_id)
+        # Persist a claim now, under storage's owner predicate: of two callers racing for an
+        # unowned session only one write lands, and the other is refused before it runs.
+        if claimed and isinstance(self.db, BaseDb) and self.db.upsert_session(session) is None:
+            raise ValueError(f"Session {session_id} belongs to another user")
+        return session
 
     async def aread_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> AgentSession:
         """Async read a session from the DB, or create a new one. Refuses a session owned by another user."""
@@ -785,20 +794,38 @@ class BaseExternalAgent:
                 row = await self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
             elif isinstance(self.db, BaseDb):
                 row = self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
-        return self._owned_session_or_new(row, session_id, user_id)
+        session, claimed = self._owned_session_or_new(row, session_id, user_id)
+        if claimed:
+            if isinstance(self.db, AsyncBaseDb):
+                stored = await self.db.upsert_session(session)
+            elif isinstance(self.db, BaseDb):
+                stored = self.db.upsert_session(session)
+            else:
+                stored = session
+            if stored is None:
+                raise ValueError(f"Session {session_id} belongs to another user")
+        return session
 
     def upsert_session(self, session: AgentSession) -> None:
-        """Persist a session to the DB (sync)."""
+        """Persist a session to the DB (sync). Sharing is taken from the stored row, never from this snapshot."""
+        from agno.session.sharing import refresh_sharing
+
         if self.db is None or not isinstance(self.db, BaseDb):
             return
         session.updated_at = int(time())
+        if session.user_id is not None:
+            refresh_sharing(self.db, session)
         self.db.upsert_session(session)
 
     async def aupsert_session(self, session: AgentSession) -> None:
-        """Persist a session to the DB (async)."""
+        """Persist a session to the DB (async). Sharing is taken from the stored row, never from this snapshot."""
+        from agno.session.sharing import arefresh_sharing
+
         if self.db is None:
             return
         session.updated_at = int(time())
+        if session.user_id is not None and isinstance(self.db, (BaseDb, AsyncBaseDb)):
+            await arefresh_sharing(self.db, session)
         if isinstance(self.db, AsyncBaseDb):
             await self.db.upsert_session(session)
         elif isinstance(self.db, BaseDb):
