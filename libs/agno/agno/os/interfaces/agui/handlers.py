@@ -1,7 +1,6 @@
 import copy
 import json
-import uuid
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from ag_ui.core import (
     BaseEvent,
@@ -71,24 +70,32 @@ def _extract_team_response_chunk_content(response: TeamRunContentEvent) -> str:
     return main_content + members_response
 
 
-def _format_reasoning_step(step: Optional[ReasoningStep], step_number: int = 0) -> str:
-    """Format a ReasoningStep as text for REASONING_MESSAGE_CONTENT."""
+def _format_reasoning_step(step: Optional[Union[ReasoningStep, Dict[str, Any]]], step_number: int = 0) -> str:
+    """Format a reasoning step as text for REASONING_MESSAGE_CONTENT.
+
+    A step reaches a replayed stream as the plain mapping it was serialized to
+    rather than as a ReasoningStep, so both shapes are read the same way.
+    """
     if step is None:
         return ""
+
+    def field(name: str) -> Any:
+        return step.get(name) if isinstance(step, dict) else getattr(step, name, None)
+
     parts: List[str] = []
-    title = step.title or "Thinking"
+    title = field("title") or "Thinking"
     if step_number > 0:
         parts.append(f"## Step {step_number}: {title}")
     else:
         parts.append(f"## {title}")
-    if step.reasoning:
-        parts.append(step.reasoning)
-    if step.action:
-        parts.append(f"Action: {step.action}")
-    if step.result:
-        parts.append(f"Result: {step.result}")
-    if step.confidence is not None:
-        parts.append(f"Confidence: {step.confidence}")
+    if field("reasoning"):
+        parts.append(str(field("reasoning")))
+    if field("action"):
+        parts.append(f"Action: {field('action')}")
+    if field("result"):
+        parts.append(f"Result: {field('result')}")
+    if field("confidence") is not None:
+        parts.append(f"Confidence: {field('confidence')}")
     return "\n".join(parts) + "\n\n" if parts else ""
 
 
@@ -178,7 +185,7 @@ def on_tool_call_started(chunk: BaseRunOutputEvent, state: StreamState) -> List[
 
     # Create empty parent message if none exists (AG-UI protocol requirement)
     if not parent_message_id:
-        parent_message_id = str(uuid.uuid4())
+        parent_message_id = state.new_message_id()
         events.append(
             TextMessageStartEvent(
                 type=EventType.TEXT_MESSAGE_START,
@@ -217,6 +224,11 @@ def on_tool_call_completed(chunk: BaseRunOutputEvent, state: StreamState) -> Lis
         return events
 
     if tool.tool_call_id in state.ended_tool_call_ids:
+        return events
+
+    if state.require_started_tool_calls and tool.tool_call_id not in state.active_tool_call_ids:
+        # This stream never saw the call start, so it has no span to end and no
+        # call for a result to belong to. Both are dropped together.
         return events
 
     events.append(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool.tool_call_id))
@@ -388,7 +400,7 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
                 paused_tools.append(req.tool_execution)
 
     if paused_tools:
-        assistant_message_id = str(uuid.uuid4())
+        assistant_message_id = state.new_message_id()
         events.append(
             TextMessageStartEvent(
                 type=EventType.TEXT_MESSAGE_START,
