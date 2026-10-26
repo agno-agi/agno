@@ -140,6 +140,33 @@ def test_gemini_model_with_none_params():
     assert is_gemini_reasoning_model(model) is False
 
 
+def test_gemini_reasoning_model_disabled_with_zero_thinking_budget():
+    """Test Gemini model with thinking_budget=0 returns False."""
+    model = MockModel(
+        class_name="Gemini",
+        model_id="gemini-2.5-flash",
+        thinking_budget=0,
+    )
+    assert is_gemini_reasoning_model(model) is False
+
+
+def test_gemini_reasoning_model_disabled_with_include_thoughts_false():
+    """Test Gemini model with include_thoughts=False returns False."""
+    model = MockModel(
+        class_name="Gemini",
+        model_id="gemini-2.5-flash",
+        include_thoughts=False,
+    )
+    assert is_gemini_reasoning_model(model) is False
+
+
+def test_gemini_reasoning_model_regional_and_latest_aliases():
+    """Test regional Gemini 3.5 and latest aliases return True without API round-trip."""
+    assert is_gemini_reasoning_model(MockModel(class_name="Gemini", model_id="au.gemini-3.5-flash")) is True
+    assert is_gemini_reasoning_model(MockModel(class_name="Gemini", model_id="gemini-flash-latest")) is True
+    assert is_gemini_reasoning_model(MockModel(class_name="Gemini", model_id="gemini-pro-latest")) is True
+
+
 # ============================================================================
 # OpenAI Reasoning Model Tests
 # ============================================================================
