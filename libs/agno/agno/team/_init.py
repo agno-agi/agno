@@ -519,10 +519,11 @@ def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: O
             log_info(f"Agent '{member.name or member.id}' inheriting model from Team: {team.model.id}")
 
     elif isinstance(member, BaseExternalAgent):
-        # A harness agent (Claude Code, Codex) runs its own model and tools; the team only needs to
-        # know it owns it, which makes the member keep its own state, and with a sandbox its own
-        # computer binding, in a session per team session and member.
-        member.team_id = team.id
+        # A harness agent (Claude Code, Codex) runs its own model and tools. Nothing is set on it:
+        # the same instance can also run on its own, so the team passes its id on each member call.
+        # That makes the member keep its own state, and with a sandbox its own computer binding, in a
+        # session per team session and member.
+        pass
 
     elif isinstance(member, Team):
         member.parent_team_id = team.id

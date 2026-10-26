@@ -38,6 +38,8 @@
 
 **Result:** The team response listed `claude-engineer` (sdk `claude-agent-sdk`), `codex-reviewer` (sdk `codex`) and `writer`. The streamed run delegated only to `codex-reviewer`, whose events reached the client, and ended with `TeamRunCompleted`. An earlier version imported the team from `mixed_team.py`, whose fixed order made the leader delegate to all three members; this one defines its own team and instructs the leader to involve only the members a request needs.
 
+Re-run with the agents also served directly (`AgentOS(agents=[engineer, reviewer, writer], teams=[team])`), so AgentOS and the team share one Claude Engineer instance. A team run on session `team-s1` delegated to `claude-engineer` and completed. Afterwards, a non-streaming and a streaming `POST /agents/claude-engineer/runs` on sessions `solo-1` and `solo-2` both completed, and `GET /sessions/{id}/runs` returned each run. The database held the standalone runs in their own agent sessions with no team metadata, the member's state session `team-s1:claude-engineer` with `team_id` `mixed-team`, and no `solo-1:claude-engineer` row.
+
 ---
 
 ### sandboxed_member.py

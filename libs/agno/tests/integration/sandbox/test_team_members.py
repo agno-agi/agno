@@ -102,6 +102,27 @@ def test_a_sandboxed_member_runs_team_turns_on_its_own_computer_and_session(setu
     assert set(sandbox_runs) <= {run.run_id for run in member_session.runs}
 
 
+def test_a_sandboxed_member_still_runs_on_its_own_after_a_team_run(setup):
+    db, member_of, _ = setup
+    engineer = member_of("engineer")
+    team = Team(
+        id="team",
+        name="Team",
+        members=[engineer],
+        model=_ScriptedModel([_delegate("engineer", "draft", "c1"), ("content", "done")]),
+        db=db,
+    )
+    team.run("go", session_id="s1")
+
+    # The same instance, as AgentOS serves it, runs a standalone turn in the session it was given.
+    solo = engineer.run("on my own", session_id="solo")
+
+    assert solo.status == RunStatus.completed and solo.session_id == "solo"
+    session = db.get_session(session_id="solo", session_type=SessionType.AGENT)
+    assert session is not None and solo.run_id in {run.run_id for run in session.runs}
+    assert db.get_session(session_id="solo:engineer", session_type=SessionType.AGENT) is None
+
+
 def test_two_sandboxed_members_of_one_team_each_get_their_own_computer(setup):
     db, member_of, _ = setup
     engineer, reviewer = member_of("engineer"), member_of("reviewer")

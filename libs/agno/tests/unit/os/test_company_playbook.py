@@ -43,7 +43,7 @@ def test_company_manager_assembly_and_model_precedence(tmp_path, manager):
     os.resync(os.get_app())
     assert pm not in registry.agents and not registry.tools
     tools = pm.tools[0]
-    assert {"create_company_product", "create_company_routine"} <= tools.functions.keys()
+    assert {"create_company_product", "create_product_routine"} <= tools.functions.keys()
     assert tools.registry is registry
     assert not any("schedule" in name or "transition" in name for name in tools.functions)
     assert "log_company_decision" not in tools.functions
@@ -56,6 +56,8 @@ def test_company_manager_assembly_and_model_precedence(tmp_path, manager):
     }
     inherited = AgentOS(db=db, registry=Registry(models=[first, override]), company=CompanyConfig(), telemetry=False)
     assert inherited.company_manager.model is first
+    with pytest.raises(ValueError, match="cron_expr"):
+        CompanyConfig(cron_expr="")
 
 
 def test_company_tools_published_only_over_mcp_are_bound(tmp_path):
@@ -129,7 +131,7 @@ async def test_tools_identity_fence_and_learning(tmp_path, use_async):
     )
     with pytest.raises(ValueError, match="Backlog"):
         await invoke("edit_company_task", task["id"], "changed", "no", _agno_run_context=alice)
-    await invoke("update_company_status", product["id"], "draft ready", 1, _agno_run_context=alice)
+    await invoke("update_product_status", product["id"], "draft ready", 1, _agno_run_context=alice)
     entry = json.loads(
         await invoke("log_company_decision", "Draft first", reasoning="review needed", _agno_run_context=alice)
     )
@@ -216,7 +218,7 @@ async def test_company_manager_runs_tools_with_injected_identity(tmp_path, mode)
                         },
                     ),
                     (
-                        "update_company_status",
+                        "update_product_status",
                         {"product_id": product["id"], "content": "Draft proposed", "expected_version": 1},
                     ),
                     ("log_company_decision", {"decision": "Review first", "reasoning": "Approval required"}),
@@ -370,8 +372,8 @@ async def test_owner_less_routine_runs_unscoped_on_its_product_under_isolation(t
     async def status(product_id):
         version = manager.read_wiki(product_id, "status.md").metadata.version
         if use_async:
-            return await tools.aupdate_company_status(product_id, "Checked", version, _agno_run_context=run)
-        return tools.update_company_status(product_id, "Checked", version, _agno_run_context=run)
+            return await tools.aupdate_product_status(product_id, "Checked", version, _agno_run_context=run)
+        return tools.update_product_status(product_id, "Checked", version, _agno_run_context=run)
 
     with authorization_scope(lambda: _owner_less_routine_authority(declared["id"])):
         assert json.loads(await status(declared["id"]))["path"] == "status.md"
@@ -381,7 +383,7 @@ async def test_owner_less_routine_runs_unscoped_on_its_product_under_isolation(t
         await status(declared["id"])
 
 
-def test_refresh_archives_only_the_callers_finished_work(tmp_path):
+def test_refresh_archives_every_members_finished_work(tmp_path):
     import time
 
     from agno.company.refresh import refresh_product
@@ -398,8 +400,9 @@ def test_refresh_archives_only_the_callers_finished_work(tmp_path):
         manager.transition_task(task_id=task["id"], target="cancelled", reason="Dropped")
     time.sleep(1.1)
 
-    assert refresh_product(manager, product["id"], user_id="alice")["archived_tasks"] == [tasks["alice"]["id"]]
-    assert refresh_product(manager, product["id"])["archived_tasks"] == [tasks["bob"]["id"]]
+    # Refresh is Product housekeeping, so it archives finished work whoever created it.
+    archived = refresh_product(manager, product["id"], user_id="alice")["archived_tasks"]
+    assert sorted(archived) == sorted(task["id"] for task in tasks.values())
 
 
 @pytest.mark.asyncio

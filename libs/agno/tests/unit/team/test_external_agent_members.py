@@ -180,7 +180,6 @@ def test_a_claude_member_takes_a_delegated_task_and_its_run_lands_in_the_team_se
     assert member_run.agent_id == "claude-coder" and member_run.content == "answer from sdk-1"
     assert member_run.parent_run_id == output.run_id
     assert "Write hello.py" in sdk.calls[0]["prompt"]
-    assert member.team_id == "team"
 
     team_session = db.get_session(session_id="s1", session_type=SessionType.TEAM)
     assert team_session is not None, "the team's session row is the team's, not overwritten by the member"
@@ -245,7 +244,6 @@ def test_a_sandboxed_member_forwards_only_sandbox_options_on_its_own_session(db,
     from agno.run.agent import RunContentEvent, RunOutput
 
     member = _member(db)
-    member.team_id = "team"
     team_options = dict(
         run_id="r1",
         session_id="s1",
@@ -260,7 +258,7 @@ def test_a_sandboxed_member_forwards_only_sandbox_options_on_its_own_session(db,
         knowledge_filters=None,
         debug_mode=False,
     )
-    forwarded = member._sandboxed_member_kwargs(team_options, "s1", "r1")
+    forwarded = member._sandboxed_member_kwargs(team_options, "s1", "r1", "team")
     assert forwarded == dict(
         run_id="r1.sandbox",
         session_id="s1:claude-coder",
@@ -295,6 +293,30 @@ def test_message_input_from_a_team_becomes_text():
     rendered = ClaudeAgent._input_text([Message(role="user", content="hi"), {"role": "assistant", "content": "yo"}])
     assert rendered == "user: hi\nassistant: yo"
     assert ClaudeAgent._input_text("plain") == "plain"
+    blocks = [{"type": "text", "text": "hi"}]
+    assert ClaudeAgent._input_text(blocks) is blocks, "a list that is not messages passes through unchanged"
+
+
+def test_input_that_is_not_messages_never_leaves_the_session_claimed(db, sdk):
+    member = _member(db)
+
+    first = member.run([{"type": "text", "text": "hi"}], session_id="x")
+    second = member.run("hello", session_id="x")
+
+    assert first.status == RunStatus.completed and second.status == RunStatus.completed
+    session = db.get_session(session_id="x", session_type=SessionType.AGENT)
+    assert session is not None and len(session.runs) == 2
+
+
+def test_a_message_input_is_stored_as_its_text_on_both_paths(db, sdk):
+    member = _member(db)
+
+    member.run(Message(role="user", content="hello"), session_id="m1")
+    list(member.run(Message(role="user", content="hello"), session_id="m2", stream=True))
+
+    for session_id in ("m1", "m2"):
+        session = db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+        assert session is not None and session.runs[0].input.input_content == "hello"
 
 
 def test_a_standalone_harness_agent_keeps_its_session_and_runs(db, sdk):
@@ -303,6 +325,70 @@ def test_a_standalone_harness_agent_keeps_its_session_and_runs(db, sdk):
     assert output.status == RunStatus.completed
     session = db.get_session(session_id="solo", session_type=SessionType.AGENT)
     assert session is not None and session.team_id is None and len(session.runs) == 1
+
+
+def test_running_in_a_team_does_not_change_how_the_agent_saves_standalone_runs(db, sdk):
+    member = _member(db)
+    team = _team(db, [member], [_delegate("claude-coder", "Build", "c1"), ("content", "done")])
+    team.run("Build", session_id="s1")
+
+    output = member.run("hi", session_id="solo")
+    streamed = list(member.run("again", session_id="solo-stream", stream=True, yield_run_output=True))
+
+    assert output.status == RunStatus.completed
+    session = db.get_session(session_id="solo", session_type=SessionType.AGENT)
+    assert session is not None and session.team_id is None and [run.run_id for run in session.runs] == [output.run_id]
+    assert db.get_session(session_id="solo:claude-coder", session_type=SessionType.AGENT) is None
+    streamed_session = db.get_session(session_id="solo-stream", session_type=SessionType.AGENT)
+    assert streamed_session is not None and [run.run_id for run in streamed_session.runs] == [streamed[-1].run_id]
+
+    # The team's own state for the member is untouched by the standalone runs.
+    state = db.get_session(session_id="s1:claude-coder", session_type=SessionType.AGENT)
+    assert state is not None and (state.metadata or {}).get("team_id") == "team" and not state.runs
+
+
+def test_one_harness_instance_serves_a_team_and_its_own_callers_at_once(db, sdk):
+    # AgentOS hands out the same harness agent instance that a team holds as a member.
+    member = _member(db)
+    team = _team(db, [member], [_delegate("claude-coder", "Build", "c1"), ("content", "done")])
+
+    async def both():
+        return await asyncio.gather(team.arun("Build", session_id="s1"), member.arun("hi", session_id="solo"))
+
+    team_output, solo_output = asyncio.run(both())
+
+    assert team_output.status == RunStatus.completed and solo_output.status == RunStatus.completed
+    [member_run] = team_output.member_responses
+    team_session = db.get_session(session_id="s1", session_type=SessionType.TEAM)
+    assert team_session is not None and any(run.run_id == member_run.run_id for run in team_session.runs or [])
+    solo = db.get_session(session_id="solo", session_type=SessionType.AGENT)
+    assert solo is not None and [run.run_id for run in solo.runs] == [solo_output.run_id]
+
+
+def test_a_broadcast_team_streams_to_a_harness_member(db, sdk):
+    from agno.team.mode import TeamMode
+
+    member = _member(db)
+    team = Team(
+        id="team",
+        name="Team",
+        members=[member],
+        mode=TeamMode.broadcast,
+        model=_ScriptedModel([("tool", "delegate_task_to_members", {"task": "Review"}, "c1"), ("content", "done")]),
+        db=db,
+    )
+
+    async def consume():
+        return [event async for event in team.arun("Review it", session_id="s1", stream=True, stream_events=True)]
+
+    events = asyncio.run(consume())
+
+    assert getattr(events[-1], "event", None) == "TeamRunCompleted"
+    assert any(
+        getattr(event, "agent_id", None) == "claude-coder" and getattr(event, "content", None) == "answer from sdk-1"
+        for event in events
+    )
+    assert db.get_session(session_id="s1:claude-coder", session_type=SessionType.AGENT) is not None
 
 
 def test_a_codex_member_takes_a_delegated_task_and_resumes_its_thread(db, monkeypatch):
@@ -385,6 +471,25 @@ def test_a_harness_agent_does_not_pretend_to_have_native_member_settings(db, sdk
         "store_history_messages",
     ):
         assert not hasattr(member, name), name
+
+
+def test_member_setting_helpers_give_a_harness_member_the_defaults(db, sdk):
+    from types import SimpleNamespace
+
+    from agno.agent import Agent
+    from agno.team._members import member_knowledge_filters, member_storage
+
+    harness = _member(db)
+    assert member_storage(harness).keeps_all
+    opted_out = member_storage(Agent(id="native", store_media=False))
+    assert not opted_out.media and opted_out.tool_messages and not opted_out.keeps_all
+
+    run_context = SimpleNamespace(knowledge_filters={"topic": "billing"})
+    assert member_knowledge_filters(harness, run_context) is None  # type: ignore[arg-type]
+    with_knowledge = SimpleNamespace(knowledge=object(), knowledge_filters=None)
+    assert member_knowledge_filters(with_knowledge, run_context) == {"topic": "billing"}  # type: ignore[arg-type]
+    own_filters = SimpleNamespace(knowledge=object(), knowledge_filters={"topic": "own"})
+    assert member_knowledge_filters(own_filters, run_context) is None  # type: ignore[arg-type]
 
 
 def test_storage_paths_that_read_member_flags_keep_a_harness_members_run_whole(db, sdk):

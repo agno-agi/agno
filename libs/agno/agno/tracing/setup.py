@@ -2,6 +2,7 @@
 Setup helper functions for configuring Agno tracing.
 """
 
+from os import getenv
 from typing import Union
 
 from agno.db.base import AsyncBaseDb, BaseDb
@@ -12,7 +13,7 @@ from agno.utils.log import log_debug, log_error, log_info
 try:
     from openinference.instrumentation.agno import AgnoInstrumentor  # type: ignore
     from opentelemetry import trace as trace_api  # type: ignore
-    from opentelemetry.sdk.trace import TracerProvider  # type: ignore
+    from opentelemetry.sdk.trace import SpanLimits, TracerProvider  # type: ignore
     from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor, SpanProcessor  # type: ignore
 
     OPENTELEMETRY_AVAILABLE = True
@@ -31,6 +32,8 @@ def setup_tracing(
     Set up OpenTelemetry tracing with database export for Agno agents.
 
     This function configures automatic tracing for all Agno agents, teams, and workflows.
+    Uses OpenInference's span attribute limits for message and tool metadata,
+    while respecting explicit OpenTelemetry attribute limit settings.
     Traces are automatically captured for:
     - Agent runs (agent.run, agent.arun)
     - Model calls (model.response)
@@ -75,8 +78,12 @@ def setup_tracing(
         return
 
     try:
-        # Create tracer provider
-        tracer_provider = TracerProvider()
+        # Match OpenInference's default for flattened message and tool attributes.
+        # Explicit operator limits still use OpenTelemetry's normal precedence.
+        span_limits = None
+        if not getenv("OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT") and not getenv("OTEL_ATTRIBUTE_COUNT_LIMIT"):
+            span_limits = SpanLimits(max_span_attributes=1024)
+        tracer_provider = TracerProvider(span_limits=span_limits)
 
         # Create database exporter
         exporter = DatabaseSpanExporter(db=db)
