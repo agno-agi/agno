@@ -1,6 +1,7 @@
 """Actual enqueue loss, completion read failures, and mixed Mongo/SQL Routine storage."""
 
 import os
+import time
 from uuid import uuid4
 
 import pytest
@@ -198,6 +199,19 @@ async def test_routine_apis_with_mongo_schedules_and_sql_company(system, asynchr
             assert (await client.post(path + "/trigger")).status_code == 409
             assert (await client.post(path + "/resume")).json()["last_run"] == latest
             assert (await client.patch(path, json={"name": "Updated"})).json()["last_run"] == latest
+            # A user edit advances updated_at; a scheduled run of the routine does not.
+            clock = [int(time.time())]
+            monkeypatch.setattr(time, "time", lambda: clock[0])
+            clock[0] += 100
+            assert (await client.patch(path, json={"name": "Edited again"})).status_code == 200
+            assert (await _call(schedule_db, "get_schedule", first["id"]))["updated_at"] == clock[0]
+            await _call(schedule_db, "update_schedule", first["id"], next_run_at=1)
+            claimed = await _call(schedule_db, "claim_due_schedule", "worker")
+            assert claimed["id"] == first["id"]
+            edited = (await _call(schedule_db, "get_schedule", first["id"]))["updated_at"]
+            clock[0] += 1000
+            assert (await app.state.scheduler_executor.execute(claimed, schedule_db))["status"] == "success"
+            assert (await _call(schedule_db, "get_schedule", first["id"]))["updated_at"] == edited
             for index, routine in enumerate(routines):
                 for stamp in (10, 20):
                     await _call(

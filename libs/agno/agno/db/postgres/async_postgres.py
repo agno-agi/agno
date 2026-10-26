@@ -4519,7 +4519,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             raise
 
     async def update_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+        self, schedule_id: str, user_id: Optional[str] = None, *, preserve_updated_at: bool = False, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.scheduler import validate_schedule_update
 
@@ -4532,7 +4532,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="schedules")
             if table is None:
                 return None
-            kwargs["updated_at"] = int(time.time())
+            if not preserve_updated_at:
+                kwargs["updated_at"] = int(time.time())
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     stmt = table.update().where(table.c.id == schedule_id)
@@ -4585,6 +4586,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         rows and generic rows whose endpoint is the component's run endpoint,
         across owners, and records the system reason in disabled_reason.
         """
+        from sqlalchemy import literal
+
         from agno.db.schemas.scheduler import build_run_endpoint
 
         try:
@@ -4607,7 +4610,15 @@ class AsyncPostgresDb(AsyncBaseDb):
                             ),
                             table.c.enabled.is_(True),
                         )
-                        .values(enabled=False, disabled_reason=reason, updated_at=int(time.time()))
+                        # An archive cascade is not a user edit, so a Company routine keeps its last-edit time.
+                        .values(
+                            enabled=False,
+                            disabled_reason=reason,
+                            updated_at=case(
+                                (table.c.managed_by == "company", table.c.updated_at),
+                                else_=literal(int(time.time()), table.c.updated_at.type),
+                            ),
+                        )
                     )
             return int(getattr(result, "rowcount", 0) or 0)
         except Exception as e:
@@ -4691,12 +4702,15 @@ class AsyncPostgresDb(AsyncBaseDb):
         *,
         worker_id: Optional[str] = None,
         locked_at: Optional[int] = None,
+        preserve_updated_at: bool = False,
     ) -> bool:
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
                 return False
-            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+            if not preserve_updated_at:
+                updates["updated_at"] = int(time.time())
             # A cron may be cleared while this claim is running. Never re-arm
             # an on-demand schedule using the executor's older schedule snapshot.
             updates["next_run_at"] = case(
