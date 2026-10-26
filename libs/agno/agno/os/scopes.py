@@ -584,6 +584,7 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
                 "PATCH /company/routines/*": ["routines:write", "schedules:write"],
                 "POST /company/routines/*/pause": ["routines:write", "schedules:write"],
                 "POST /company/routines/*/resume": ["routines:write", "schedules:write"],
+                "POST /company/routines/*/cancel": ["routines:write", "schedules:write"],
                 "POST /company/setup": ["products:write"],
                 "GET /company/products": ["products:read"],
                 "GET /company/products/*": ["products:read"],

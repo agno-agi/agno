@@ -841,9 +841,10 @@ execution and returns its schedule-run record when it finishes. It uses the
 same owner and executor permission checks as the other Routine controls;
 paused Routines return 409. Automation and non-Company schedule IDs return 404.
 A concurrent GET exposes the live `last_run.run_id` and `session_id` while
-execution is running. Stop uses the existing executor cancel route, such as
-`POST /agents/{executor_id}/runs/{run_id}/cancel` (or the equivalent Team or
-Workflow route). There is no separate Routine stop operation.
+execution is running. `POST /company/routines/{id}/cancel` stops that run through
+the executor's cancel route, with the same Routine scopes as pause and resume plus
+the caller's run permission on the executor. It returns 409 when no run is running.
+The schedule run then records `failed` with the error `Run was cancelled`.
 
 `08_custom_routines.py` demonstrates on-demand declaration, single read, pause,
 resume, and adding/removing a cron without calling a model.

@@ -58,6 +58,38 @@ def test_routine_scheduler_wrappers(system):
     assert len(client.get("/company/routines").json()["data"]) == 1
 
 
+def test_routine_cancel_stops_the_running_run(system):
+    from agno.run.cancel import is_cancelled
+
+    client, _, db = system
+    product = client.post("/company/products", json={"name": "Docs"}).json()
+    body = dict(
+        product_id=product["id"], name="review", executor_type="agent", executor_id="reader", instructions="Review"
+    )
+    routine_id = client.post("/company/routines", json=body).json()["id"]
+    path = "/company/routines/" + routine_id
+    assert client.post(path + "/cancel").status_code == 409
+    db.create_schedule_run(
+        {
+            "id": "schedule-run",
+            "schedule_id": routine_id,
+            "attempt": 1,
+            "triggered_at": 1,
+            "status": "running",
+            "run_id": "routine-run",
+            "session_id": "routine-session",
+            "created_at": 1,
+        }
+    )
+    response = client.post(path + "/cancel")
+    assert response.status_code == 200, response.text
+    assert is_cancelled("routine-run")
+    db.update_schedule_run("schedule-run", status="failed", error="Run was cancelled")
+    response = client.post(path + "/cancel")
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Routine has no running run"
+
+
 def test_product_metadata_edits_keep_linked_routines(system):
     client, _, db = system
     product = client.post("/company/products", json={"name": "Docs", "metadata": {"team": "a"}}).json()
@@ -139,6 +171,7 @@ def test_routine_routes_hide_automation_and_report_missing_product(system):
             client.post(path + "/trigger"),
             client.post(path + "/pause"),
             client.post(path + "/resume"),
+            client.post(path + "/cancel"),
             client.get(path + "/runs"),
         ]
         expected = 404 if identifier == COMPANY_AUTOMATION_SCHEDULE_ID else 409

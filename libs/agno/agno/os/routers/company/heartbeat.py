@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 from typing import Any, Dict, Literal, Optional, Union
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.routing import APIRoute
@@ -289,6 +290,26 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             )
         await call(db.add_product_routine, product_id, routine_id)
         return await routine_response(await call(handlers["enable_schedule"], routine_id, request))
+
+    @router.post("/routines/{routine_id}/cancel")
+    async def cancel_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
+        row = await routine(routine_id, request)
+        await product(row["payload"]["metadata"]["product_id"], include_deleted=True)
+        run = (await call(schedule_db.get_latest_schedule_runs, [routine_id])).get(routine_id)
+        if run is None or run["status"] != "running" or not run.get("run_id"):
+            raise HTTPException(409, "Routine has no running run")
+        from agno.os.routers.company.runs import _run_route
+        from agno.os.routers.run_permissions import _require_endpoint_permission
+
+        # Cancelling enters the executor route under the internal service token, so re-check the caller's own permission.
+        await _require_endpoint_permission(request, row["endpoint"], "POST")
+        return await _run_route(
+            request,
+            row["endpoint"] + "/" + quote(run["run_id"], safe="") + "/cancel",
+            "POST",
+            owner=run.get("user_id"),
+            session_id=run.get("session_id"),
+        )
 
     @router.get("/routines/{routine_id}/runs")
     async def routine_runs(
