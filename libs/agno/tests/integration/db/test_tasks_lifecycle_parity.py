@@ -316,7 +316,7 @@ async def test_stale_acceptance_cannot_overwrite_a_backlog_roundtrip(db, monkeyp
 @pytest.mark.asyncio
 @pytest.mark.parametrize("resource", ["projects", "tasks"])
 @pytest.mark.parametrize("isolation", [False, True])
-async def test_http_collaborative_work_and_owner_scoped_deletion(db, resource, isolation):
+async def test_http_collaborative_work_and_shared_deletion(db, resource, isolation):
     import jwt
     from httpx import ASGITransport, AsyncClient
 
@@ -417,5 +417,8 @@ async def test_http_collaborative_work_and_owner_scoped_deletion(db, resource, i
         assert (await client.delete(path, headers=headers("alice"))).status_code == 204
         assert (await client.get(path, headers=headers("bob"))).status_code == 404
         assert (await client.get(path, params={"include_deleted": True}, headers=headers("bob"))).status_code == 200
-        assert (await client.post(path + "/restore", headers=headers("bob"))).status_code == (403 if isolation else 200)
+        # Archive and restore need only the delete scope; the creator stays recorded.
+        restored = await client.post(path + "/restore", headers=headers("bob"))
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["user_id"] == "alice"
         assert (await client.patch(root + "/missing", json={field: "No"}, headers=headers("bob"))).status_code == 404

@@ -383,7 +383,7 @@ async def test_owner_less_routine_runs_unscoped_on_its_product_under_isolation(t
         await status(declared["id"])
 
 
-def test_refresh_archives_only_the_callers_finished_work(tmp_path):
+def test_refresh_archives_every_members_finished_work(tmp_path):
     import time
 
     from agno.company.refresh import refresh_product
@@ -400,8 +400,9 @@ def test_refresh_archives_only_the_callers_finished_work(tmp_path):
         manager.transition_task(task_id=task["id"], target="cancelled", reason="Dropped")
     time.sleep(1.1)
 
-    assert refresh_product(manager, product["id"], user_id="alice")["archived_tasks"] == [tasks["alice"]["id"]]
-    assert refresh_product(manager, product["id"])["archived_tasks"] == [tasks["bob"]["id"]]
+    # Refresh is Product housekeeping, so it archives finished work whoever created it.
+    archived = refresh_product(manager, product["id"], user_id="alice")["archived_tasks"]
+    assert sorted(archived) == sorted(task["id"] for task in tasks.values())
 
 
 @pytest.mark.asyncio

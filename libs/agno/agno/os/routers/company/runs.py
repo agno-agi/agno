@@ -29,7 +29,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.tasks import task_run_fields, task_run_id
 from agno.os.auth import get_authentication_dependency
 from agno.os.job_queue import ticket_status_to_api, validate_seam_input
-from agno.os.middleware.user_scope import get_scoped_user_id
+from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.company.schema import TaskRunCreate
 from agno.os.routers.run_permissions import _require_endpoint_permission
 from agno.os.schema import PaginatedResponse, PaginationInfo
@@ -192,7 +192,7 @@ def get_company_runs_router(os: Any) -> APIRouter:
                 except PermissionError as exc:
                     raise HTTPException(403, str(exc)) from exc
         queue = worker(request)
-        caller = get_scoped_user_id(request) or getattr(request.state, "user_id", None)
+        caller = resolve_run_user_id(request)
         if observed is not None:
             caller = value.get("accepted_by")
         # Review requests start the next attempt; an old attempt is not a revision.

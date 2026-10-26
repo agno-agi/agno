@@ -6,6 +6,7 @@ PostgreSQL is supported for production, with the same sync and async methods.
 | File | What it teaches |
 | --- | --- |
 | `01_manage_products.py` | Create two owners' Products, list unscoped or by owner, soft-delete, inspect and restore. |
+| [`10_customer_feedback/`](10_customer_feedback/README.md) | Live GPT-6.1 Sol feedback review, human acceptance, and a saved product brief through the AgentOS UI. |
 
 Run with the development environment:
 
@@ -26,10 +27,9 @@ Read and create/update require `products:read` and `products:write` respectively
 `CompanyManager` takes a sync database; `AsyncCompanyManager` takes an async
 database and exposes the same methods as coroutines. `list()` returns rows and
 a total. `user_id=None` is unscoped; a string filters by owner before paging.
-The HTTP layer derives ownership from authenticated identity. Reads are
-company-wide for callers with the read scope. With isolation on, writes to
-another owner's Product return 403. Unscoped callers with the write scope can
-change every Product; admins bypass owner isolation.
+The HTTP layer records the authenticated caller as the creator. Company records
+are shared: reads need the read scope and writes need the write or delete scope,
+whoever created the Product. User isolation does not restrict Company records.
 
 ## Weekly Company Manager review
 
@@ -75,6 +75,18 @@ retains those grants and Routine restrictions. Company-wide collaborative reads
 keep their existing visibility; Source contents and mutations retain Product
 checks, and private sessions retain the deployment's ownership isolation.
 
+Any caller with `routines:write`, `schedules:write` and the executor's run
+permission can manually trigger, edit, pause or resume a Routine, including one
+created by another user or seeded without an owner. Manual runs use the caller's
+authority and record that caller in the run's `user_id`. The scheduler follows
+the run with that authority, so the caller also needs the executor's read
+permission for the run to be recorded as successful. The saved Routine creator
+and authorization remain unchanged for scheduled runs; only edits to the
+executor, instructions or acceptance policy save the editor's authorization. A
+Routine with automatic acceptance accepts proposals with the saved grant of the
+user who authorized it, so under user isolation only that user can trigger it
+manually.
+
 ## Work records
 
 | File | Demonstrates |
@@ -111,8 +123,7 @@ scope can update or transition another creator's work, even with user isolation
 enabled. This includes cancellation and returning Tasks to Backlog. The creator
 stays unchanged, and transition history records the acting caller. Ready still
 requires the caller's executor run permission; accepted Tasks must return to
-Backlog before editing. Delete and restore remain owner-scoped when user
-isolation is enabled, with the existing admin bypass.
+Backlog before editing. Delete and restore need the delete scope, not ownership.
 New work can use another owner's Product or Project, with the Task and
 Project still required to belong to the same Product. Manager and storage
 methods retain explicit owner filters for direct callers.
@@ -133,10 +144,9 @@ The company namespace has the same surface at `/company/wiki`. Writes require th
 filesystem `expected_version` read with the page; zero means create only. Conflicts
 return 409. Pages are Markdown and paths must be relative and normalized.
 
-Wiki reads require `wiki:read`; writes require `wiki:write`. Product ownership
-controls writes under isolation. Company pages are unowned shared documents, so
-only unscoped callers (admins, or isolation disabled) can change them. Every caller
-with read permission can read both namespaces. Company services use FileSystem;
+Wiki reads require `wiki:read`; writes require `wiki:write`. Product and company
+pages are shared documents, so any caller with `wiki:write` can change them, and
+every caller with read permission can read both namespaces. Company services use FileSystem;
 its existing backend owns storage and version checks.
 
 GET and POST `/company/decisions` use `decisions:read` and `decisions:write`.
@@ -273,8 +283,8 @@ parent. Lifecycle status stays unchanged. Restore brings back only those
 children; records archived separately or before the parent stay archived.
 Restore the parent before restoring individual children.
 
-A Product or Project with Ready, In progress, or In review Tasks refuses archive,
-even if an active Task was separately archived.
+A Product or Project with Ready, In progress, or In review Tasks refuses archive.
+Tasks that were separately archived don't count, since lists and counts hide them.
 The API returns 409 with `detail.message` and `detail.tasks`, an array of `{id,
 title}` objects. Managers raise `ValueError` with the same detail dictionary.
 Finish or cancel that work first. Backlog Tasks may move to another active
@@ -403,20 +413,19 @@ pause. Resume also repairs a missing Product link before activation.
 
 Routine reads and histories are company-wide, including under user isolation.
 Like Projects and Tasks, any caller with the Routine write scopes can add a
-Routine to any active Product, including an unowned declared Product; the
-creator owns the new Routine. Writes retain scheduler ownership; under user
-isolation, another user's mutation returns 403, including the Product owner's.
+Routine to any active Product, including an unowned declared Product, and edit,
+pause or resume any Routine; the creator stays recorded on the schedule.
 Pause/resume use scheduler disable/enable and its filtered state response; saved
 authorization claims are never returned. Routine schedule names follow scheduler
 validation, including the 255-character limit on `product_id + "." + name`.
 Invalid names return 422 before creation, including setup. Sources use `sources:read`,
-`sources:write` and `sources:delete`, with Product ownership on writes.
+`sources:write` and `sources:delete` on any Product.
 `POST /company/setup` uses `products:write` to seed a blank deployment; nested
 Sources and Routines also require their own write permissions. Retries and
 restarts repair interrupted creation and linking, retain existing edits and do not
 restore archived records. Setup returns 201 for creation and 200 for a retry.
 If the deployment already has Products other than this setup identity, setup
-returns 409 instead of returning another owner's Product.
+returns 409.
 
 Summary uses Product metadata such as
 `{"summary": {"interface": "slack", "destination": "C012345"}}` and the matching

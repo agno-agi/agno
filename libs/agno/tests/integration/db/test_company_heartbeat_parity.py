@@ -164,7 +164,7 @@ async def test_source_paging_soft_delete_and_restart(heartbeat, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_setup_rechecks_owner_after_concurrent_product_insert(heartbeat, tmp_path, monkeypatch):
+async def test_setup_race_loser_joins_the_winners_product(heartbeat, tmp_path, monkeypatch):
     db, _, call = heartbeat
     original = db.create_product
     winner = Product(id="company-setup", name="First owner", user_id="alice")
@@ -187,9 +187,10 @@ async def test_setup_rechecks_owner_after_concurrent_product_insert(heartbeat, t
         user_id="bob",
         sources=[Source(type="markdown", reference=str(tmp_path / "private.md"))],
     )
-    with pytest.raises(PermissionError):
-        await arehydrate_product(db, loser, scoped_user_id="bob")
-    assert (await call("list_sources"))[1] == 0
+    # Setup is not owner-scoped: the loser adds its declarations and the winner stays the owner.
+    await arehydrate_product(db, loser)
+    assert (await call("list_sources"))[1] == 1
+    assert (await call("get", "company-setup"))["user_id"] == "alice"
 
 
 def test_website_uses_existing_reader_and_hashes_extracted_content(monkeypatch):
@@ -804,9 +805,9 @@ async def test_agent_website_source_reuse_provenance_conflicts_and_archive(heart
             executor_type=executor_type,
             run_id="discovery-run",
         )
+    # Another member's agent may add to the Product too; the same website reuses the Source.
     context.user_id = "other"
-    with pytest.raises(PermissionError):
-        await add()
+    assert (await add())["id"] == first["id"]
     context.user_id = "owner"
     with pytest.raises(ValueError, match="identity"):
         await add(**{"_agno_" + executor_type: None})
