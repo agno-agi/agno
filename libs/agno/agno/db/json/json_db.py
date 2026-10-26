@@ -655,7 +655,7 @@ class JsonDb(BaseDb):
                 if end_timestamp is not None and (session_data.get("created_at") or 0) > end_timestamp:
                     continue
                 if session_name is not None:
-                    stored_name = (session_data.get("session_data") or {}).get("session_name", "")
+                    stored_name = (session_data.get("session_data") or {}).get("session_name") or ""
                     if session_name.lower() not in stored_name.lower():
                         continue
                 if session_type is not None:

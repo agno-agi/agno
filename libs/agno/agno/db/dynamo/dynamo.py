@@ -906,7 +906,7 @@ class DynamoDb(BaseDb):
                 sessions_data = [
                     s
                     for s in sessions_data
-                    if session_name.lower() in (s.get("session_data") or {}).get("session_name", "").lower()
+                    if session_name.lower() in ((s.get("session_data") or {}).get("session_name") or "").lower()
                 ]
 
             # Apply in-memory sorting
