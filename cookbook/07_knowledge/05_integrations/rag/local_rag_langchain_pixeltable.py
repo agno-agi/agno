@@ -14,7 +14,7 @@ vector database server are required. Pixeltable stores the table in an
 embedded database under the Pixeltable home directory.
 
 Setup:
-    uv pip install langchain-pixeltable langchain-huggingface sentence-transformers ollama openai
+    uv pip install langchain-pixeltable langchain-huggingface langchain-text-splitters sentence-transformers ollama openai
 
 Importing ``agno.models.ollama`` also imports Agno's OpenAI client, so
 ``openai`` has to be installed even when the agent uses Ollama.

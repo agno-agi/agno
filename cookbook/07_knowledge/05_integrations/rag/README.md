@@ -14,7 +14,7 @@ Examples for third-party RAG and retrieval-stack integrations.
 - Load environment variables with `direnv allow` (including `OPENAI_API_KEY` and provider-specific keys where needed).
 - Create the demo environment with `./scripts/demo_setup.sh`, then run cookbooks with `.venvs/demo/bin/python`.
 - Some examples require optional local services and dependencies (for example Infinity, Ollama, or extra pip packages).
-- `local_rag_langchain_pixeltable.py` needs `langchain-pixeltable`, `langchain-huggingface`, `sentence-transformers`, `ollama`, and `openai`. Embeddings are local sentence-transformers. The agent model is Ollama, and importing that model also imports Agno's OpenAI client.
+- `local_rag_langchain_pixeltable.py` needs `langchain-pixeltable`, `langchain-huggingface`, `langchain-text-splitters`, `sentence-transformers`, `ollama`, and `openai`. Embeddings are local sentence-transformers. The agent model is Ollama, and importing that model also imports Agno's OpenAI client.
 
 ## Run
 
