@@ -433,3 +433,98 @@ async def test_release_and_update_still_stamp_ordinary_schedules(system, clock):
     clock[0] += 1000
     await _call(db, "update_schedule", ordinary.id, enabled=False)
     assert await stored_updated_at(db, ordinary.id) == clock[0]
+
+
+async def seed_routines(client, db, rows):
+    """Store routines of one Product with fixed timestamps, as {id: (created_at, updated_at)}."""
+    template = await create_routine(client)
+    stored = await _call(db, "get_schedule", template["id"])
+    product_id = stored["payload"]["metadata"]["product_id"]
+    assert await _call(db, "delete_schedule", template["id"])
+    for routine_id, (created_at, updated_at) in rows.items():
+        name = product_id + "." + routine_id
+        await _call(
+            db,
+            "create_schedule",
+            {**stored, "id": routine_id, "name": name, "created_at": created_at, "updated_at": updated_at},
+        )
+    return product_id
+
+
+async def listed_ids(client, **params):
+    """Walk every page of one item and return (ids, total_count)."""
+    ids, page = [], 1
+    while True:
+        response = await client.get("/company/routines", params={**params, "limit": 1, "page": page})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        ids += [row["id"] for row in body["data"]]
+        if page >= body["meta"]["total_pages"]:
+            return ids, body["meta"]["total_count"]
+        page += 1
+
+
+@pytest.mark.asyncio
+async def test_routine_sorting_precedes_paging(system):
+    client, db, _, _, _ = system
+    # Creation order differs from update order; one NULL updated_at; two pairs of equal timestamps.
+    product_id = await seed_routines(
+        client,
+        db,
+        {
+            "r-a": (100, 500),
+            "r-b": (200, 300),
+            "r-c": (300, None),
+            "r-d": (400, 400),
+            "r-e": (400, 400),
+        },
+    )
+    other = await create_routine(client)
+    ordinary = await ScheduleManager(db).acreate(name="ordinary", cron="0 * * * *", endpoint="/agents/writer/runs")
+    expected = {
+        ("created_at", "desc"): ["r-e", "r-d", "r-c", "r-b", "r-a"],
+        ("created_at", "asc"): ["r-a", "r-b", "r-c", "r-d", "r-e"],
+        ("updated_at", "desc"): ["r-a", "r-e", "r-d", "r-c", "r-b"],
+        ("updated_at", "asc"): ["r-b", "r-c", "r-d", "r-e", "r-a"],
+    }
+    for (sort_by, sort_order), ids in expected.items():
+        found = await listed_ids(client, product_id=product_id, sort_by=sort_by, sort_order=sort_order)
+        assert found == (ids, 5), (sort_by, sort_order)
+    # A single parameter takes the other one's default.
+    assert await listed_ids(client, product_id=product_id) == (expected[("created_at", "desc")], 5)
+    updated = await listed_ids(client, product_id=product_id, sort_by="updated_at")
+    assert updated == (expected[("updated_at", "desc")], 5)
+    assert await listed_ids(client, product_id=product_id, sort_order="asc") == (expected[("created_at", "asc")], 5)
+    # Filtering happens before counting; ordinary schedules never appear.
+    everything, total = await listed_ids(client, sort_by="created_at", sort_order="asc")
+    assert total == 6 and everything[:5] == expected[("created_at", "asc")] and everything[5] == other["id"]
+    assert ordinary.id not in everything
+    assert await listed_ids(client, product_id=other["payload"]["metadata"]["product_id"]) == ([other["id"]], 1)
+    for bad in ({"sort_by": "name"}, {"sort_order": "sideways"}):
+        assert (await client.get("/company/routines", params=bad)).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_execution_keeps_routine_order_and_edit_changes_it(system, clock):
+    client, db, _, _, _ = system
+    older = await create_routine(client, cron_expr="0 * * * *")
+    clock[0] += 100
+    newer = await create_routine(client, cron_expr="0 * * * *")
+
+    async def order(sort_by):
+        response = await client.get("/company/routines", params={"sort_by": sort_by})
+        return [row["id"] for row in response.json()["data"]]
+
+    clock[0] += 100
+    claimed = await claim_routine(db, older["id"])
+    clock[0] += 100
+    assert (await client.patch("/company/routines/" + newer["id"], json={"name": "edited"})).status_code == 200
+    assert await order("updated_at") == [newer["id"], older["id"]]
+    # Running the older routine must not lift it above the one edited before the run.
+    clock[0] += 1000
+    assert (await (await routine_executor(system)).execute(claimed, db))["status"] == "success"
+    assert await order("updated_at") == [newer["id"], older["id"]]
+    clock[0] += 1000
+    assert (await client.patch("/company/routines/" + older["id"], json={"name": "edited"})).status_code == 200
+    assert await order("updated_at") == [older["id"], newer["id"]]
+    assert await order("created_at") == [newer["id"], older["id"]]

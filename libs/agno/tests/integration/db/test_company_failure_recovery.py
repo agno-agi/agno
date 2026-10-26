@@ -247,6 +247,12 @@ async def test_routine_apis_with_mongo_schedules_and_sql_company(system, asynchr
                 assert all(row["last_run"]["run_id"] == "newest-20" for row in listed.json()["data"])
                 assert len(queries) == 1, queries
             assert await _call(schedule_db, "get_latest_schedule_runs", ["unknown"]) == {}
+            # Sorting is independent of the schedule adapter; ids break created_at ties in the active direction.
+            by_age = sorted(routines, key=lambda row: (row["created_at"], row["id"]))
+            for sort_order, rows in (("asc", by_age), ("desc", by_age[::-1])):
+                ordered = await client.get("/company/routines", params={"sort_order": sort_order})
+                assert ordered.status_code == 200, ordered.text
+                assert [row["id"] for row in ordered.json()["data"]] == [row["id"] for row in rows]
     finally:
         if asynchronous:
             await schedule_db.db_client.drop_database(schedule_db.db_name)
