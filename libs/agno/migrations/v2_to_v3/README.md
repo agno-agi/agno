@@ -103,6 +103,33 @@ Two things decide whether a backend needs work:
 Each script has a config block at the top. Fill in the connection details for the backend(s)
 you use, then run the file:
 
+> **Five backends can find their own stores.** Omit the store-name list and the script
+> migrates every Agno store it finds — useful when names come from application config rather
+> than being known up front:
+>
+> | Backend | Omit this | Discovers |
+> | --- | --- | --- |
+> | pgvector, singlestore | `table_names` | every Agno vector table in the schema |
+> | clickhouse | `table_names` | every Agno vector table in the database |
+> | milvus | `collections` | every Agno collection on the server |
+> | redis | `index_names` | every Agno index on the server |
+>
+> Discovery matches Agno's own store shape — `content_hash` plus `content_id`, alongside the
+> vector field — so a store another tool created on the same server is left alone. Set the list
+> explicitly to migrate exactly those stores; an **empty list migrates nothing**, which is not
+> the same as omitting it.
+>
+> **Why the rest take explicit names.** Discovery is only offered where a store can be *proved*
+> to be Agno's before it is altered; enumerating without that proof risks migrating another
+> tool's data. LanceDB stores `content_hash`/`content_id` inside its `payload` JSON blob rather
+> than as columns, so its tables are indistinguishable from any other table with a vector and an
+> id without reading rows. Cassandra's table is created by `cassio` and keeps both fields inside
+> the `metadata_s` map, so column inspection cannot identify it either. SurrealDB declares
+> `content_id` but keeps `content_hash` in `meta_data`, leaving a weaker signature than the
+> other backends match on. Couchbase is already addressed by bucket, scope, collection and an
+> FTS index name, so discovery would save almost nothing. Weaviate cannot be migrated in place
+> at all, so discovering its collections would only produce a list the script then refuses.
+
 ```bash
 python libs/agno/migrations/v2_to_v3/migrate_sql_vectordbs.py
 python libs/agno/migrations/v2_to_v3/migrate_field_vectordbs.py

@@ -122,6 +122,46 @@ class TestMigrateAllDatabases:
         assert response.status_code == 200
         assert response.json()["skipped"] == ["remote-1"]
 
+    def test_knowledge_contents_dbs_are_migrated(self, tmp_path):
+        """Knowledge contents dbs live in ``knowledge_dbs``, not ``dbs``, and must still migrate."""
+        db_file = str(tmp_path / "knowledge.db")
+        core_db = SqliteDb(id="core", db_file=db_file)
+        contents_db = SqliteDb(id="contents", db_file=db_file, knowledge_table="dash_contents")
+        agent_os = AgentOS(id="os", db=core_db)
+        client = _client(agent_os)
+        agent_os.knowledge_dbs["contents"] = [contents_db]
+
+        response = client.post("/databases/all/migrate")
+
+        assert response.status_code == 200
+        with sqlite3.connect(db_file) as conn:
+            versions = dict(conn.execute("SELECT table_name, version FROM agno_schema_versions").fetchall())
+        latest = str(MigrationManager(core_db).latest_schema_version)
+        assert versions.get("dash_contents") == latest
+
+    def test_handles_sharing_a_db_id_all_migrate(self, tmp_path):
+        """One db id can cover several handles -- keying the migration set by id drops all but one.
+
+        Two Knowledge instances over the same database each get their own contents handle;
+        both carry the same ``db.id``, so a dict keyed on id silently migrates only one.
+        """
+        db_file = str(tmp_path / "shared_id.db")
+        core_db = SqliteDb(id="core", db_file=db_file)
+        first = SqliteDb(id="shared", db_file=db_file, knowledge_table="first_contents")
+        second = SqliteDb(id="shared", db_file=db_file, knowledge_table="second_contents")
+        agent_os = AgentOS(id="os", db=core_db)
+        client = _client(agent_os)
+        agent_os.knowledge_dbs["shared"] = [first, second]
+
+        response = client.post("/databases/all/migrate")
+
+        assert response.status_code == 200
+        with sqlite3.connect(db_file) as conn:
+            versions = dict(conn.execute("SELECT table_name, version FROM agno_schema_versions").fetchall())
+        latest = str(MigrationManager(core_db).latest_schema_version)
+        assert versions.get("first_contents") == latest
+        assert versions.get("second_contents") == latest
+
 
 class TestMigrateDatabase:
     def test_fresh_database_migrates(self, sqlite_db):
