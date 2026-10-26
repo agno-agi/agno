@@ -102,15 +102,19 @@ tools. HTTP rejects omission with 422; Python managers and tools raise
 then pass its ID to the Task proposal. A Backlog Task can move between Projects
 but cannot clear its Project. Existing nullable storage rows remain readable.
 
-Projects start `proposed` and move to `active`, then `done`. Tasks are created in `backlog` by default; `POST /company/tasks` also accepts
+Projects start `proposed` and move to `active`, then `done`. A Project can be
+`cancelled` from any non-terminal state, and its terminal states cannot transition.
+Tasks are created in `backlog` by default; `POST /company/tasks` also accepts
 `status` set to `ready` (with `executor_type` and `executor_id`, under the same
 acceptance checks as the Ready transition) or `cancelled`. Tasks move through
-`ready`, `in_progress`, `in_review`, and `done`.
-Either can be `cancelled` from any non-terminal state. Each transition takes
-`target` and a non-empty `reason`; history is returned on the record. Tasks
-may return to Backlog to clear acceptance and change scope, and In review may
-return to In progress for revisions by starting the next run attempt. Direct HTTP
-transitions to In progress return 409 and name the runs endpoint. Terminal states cannot transition.
+`ready`, `in_progress`, `in_review`, and `done`. Each transition takes `target`
+and a non-empty `reason`; history is returned on the record. A Task can move to
+Backlog, Ready or Cancelled from any other state, including `done` and `cancelled`.
+Backlog clears acceptance so scope can change. In progress is entered only by
+starting a run: direct HTTP transitions to In progress return 409 and name the
+runs endpoint. In review and Done follow a run; reaching them from any state other
+than In progress and In review respectively requires an earlier run attempt.
+A done or cancelled Task cannot reopen inside a done or cancelled Project.
 
 The HTTP routes use `/company/projects` and `/company/tasks`, with the same
 CRUD, paging, soft delete and restore conventions as Products, plus
@@ -266,7 +270,7 @@ GET `/company/attention?product_id=...` returns `proposals`, `in_review` and
 `failed` counts using the Task list filters. Omitting Product counts all work.
 Attention and run reads are company-wide with `tasks:read`; Task lists also
 accept `failed=true`. Failed work means an In progress Task whose latest result
-is `ERROR` or `CANCELLED`. Moving the Task to Cancelled, Backlog, Ready or In review
+is `ERROR` or `CANCELLED`. Moving the Task to Cancelled, Backlog, Ready, In review or Done
 clears it from failed attention while preserving the result as history. Starting
 a new attempt clears the previous result. `failed=false`
 includes all other Tasks, including those with no result. The Task table is

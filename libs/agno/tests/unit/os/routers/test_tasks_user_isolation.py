@@ -424,7 +424,7 @@ def test_collaborators_return_or_cancel_accepted_tasks(make_client, start, targe
     else:
         assert (
             c.post(path + "/transitions", json={"target": "backlog", "reason": "Reopen"}, headers=writer).status_code
-            == 409
+            == 200
         )
 
 

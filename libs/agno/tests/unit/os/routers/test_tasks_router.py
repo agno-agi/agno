@@ -83,7 +83,7 @@ def test_lifecycle(client):
     assert [x["target"] for x in response.json()["transitions"]] == states
     assert all(x["reason"] == "Reviewed" for x in response.json()["transitions"] if "attempt" not in x)
     assert response.json()["transitions"][1]["attempt"] == 1
-    assert transition(client, path, "cancelled").status_code == 409
+    assert transition(client, path, "done").status_code == 409
     assert client.post(path + "/restore").status_code == 409
     assert client.delete(path).status_code == 204
     assert client.get(path).status_code == 404
@@ -103,7 +103,7 @@ def test_cancel_from_every_nonterminal_state(client, states):
             continue
         assert transition(client, path, state).status_code == 200
     assert transition(client, path, "cancelled").status_code == 200
-    assert transition(client, path, "ready").status_code == 409
+    assert transition(client, path, "ready").status_code == 200
 
 
 def test_create_in_status(client):
@@ -120,6 +120,22 @@ def test_create_in_status(client):
     assert client.post("/company/tasks", json={**body, "status": "cancelled"}).json()["status"] == "cancelled"
     assert client.post("/company/tasks", json={**body, "status": "ready"}).status_code == 422
     assert client.post("/company/tasks", json={**body, "status": "in_progress"}).status_code == 422
+
+
+def test_reopen_finished_work(client):
+    record = create(client)
+    path = "/company/tasks/" + record["id"]
+    transition(client, path, "ready")
+    reserve_run(client, path)
+    for state in ["in_review", "done", "backlog", "ready"]:
+        assert transition(client, path, state).status_code == 200
+    assert transition(client, path, "done").status_code == 200
+    project = "/company/projects/" + record["project_id"]
+    assert client.post(project + "/transitions", json={"target": "active", "reason": "Go"}).status_code == 200
+    assert client.post(project + "/transitions", json={"target": "done", "reason": "Shipped"}).status_code == 200
+    response = transition(client, path, "backlog")
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Cannot add open work to a completed or cancelled Project"
 
 
 @pytest.mark.parametrize("body", [{"status": "done"}, {"user_id": "spoof"}, {"created_at": 0}, {"title": " "}])
