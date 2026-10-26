@@ -9,6 +9,8 @@ This test suite verifies that:
 """
 
 import os
+from copy import deepcopy
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -470,6 +472,104 @@ class TestResourceLeakPrevention:
         # Multiple retrievals return the same instance
         for _ in range(10):
             assert get_default_sync_client() is global_client
+
+
+class TestDeepCopyClientOwnership:
+    """A deep copy keeps a caller-supplied client (custom auth survives) but drops an agno-built one,
+    so each copy rebuilds its own connection (preserving the per-instance-connection design)."""
+
+    def test_caller_supplied_client_survives_deepcopy(self):
+        from agno.models.aws import AwsBedrock
+        from agno.models.message import Message
+
+        spy = MagicMock()
+        spy.converse.return_value = {
+            "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
+            "stopReason": "end_turn",
+        }
+        copied = deepcopy(AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", client=spy))
+
+        assert copied.client is spy
+        copied.invoke(messages=[Message(role="user", content="hi")], assistant_message=Message(role="assistant"))
+        assert spy.converse.call_count == 1
+
+    async def test_caller_supplied_async_client_survives_deepcopy(self):
+        from agno.models.aws import AwsBedrock
+        from agno.models.message import Message
+
+        spy = MagicMock()
+        spy.converse = AsyncMock(
+            return_value={
+                "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
+                "stopReason": "end_turn",
+            }
+        )
+        copied = deepcopy(AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", async_client=spy))
+
+        assert copied.async_client is spy
+        await copied.ainvoke(messages=[Message(role="user", content="hi")], assistant_message=Message(role="assistant"))
+        assert spy.converse.await_count == 1
+
+    def test_caller_supplied_http_client_survives_deepcopy(self):
+        with httpx.Client() as http_client:
+            model = OpenAIChat(id="gpt-4o", api_key="test", http_client=http_client)
+
+            assert deepcopy(model).http_client is http_client
+
+    def test_agno_built_client_dropped_on_deepcopy(self):
+        # An agno-built client must NOT survive the copy: each copy rebuilds its own so concurrent
+        # copies (main run + memory pass) do not share one connection pool.
+        model = OpenAIChat(id="gpt-4o", api_key="test")
+        built = model.get_client()
+
+        assert model.client is built
+        assert deepcopy(model).client is None
+
+    def test_fallback_resolve_keeps_supplied_client(self):
+        from agno.models.aws import AwsBedrock
+        from agno.models.fallback import FallbackConfig
+
+        spy = MagicMock()
+        config = FallbackConfig(on_error=[AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", async_client=spy)])
+        config.resolve_models()
+
+        assert config.on_error[0].async_client is spy
+
+    # Regression guards: these providers define their own __post_init__ and must call super(),
+    # or a caller-supplied client is silently dropped on copy again.
+    def test_anthropic_claude_keeps_caller_client(self):
+        from agno.models.anthropic import Claude
+
+        sentinel = MagicMock()
+        assert deepcopy(Claude(id="claude-3-5-sonnet-20241022", api_key="test", client=sentinel)).client is sentinel
+
+    def test_azure_claude_keeps_caller_client(self):
+        from agno.models.azure.claude import Claude
+
+        sentinel = MagicMock()
+        assert deepcopy(Claude(id="claude-3-5-sonnet", api_key="test", client=sentinel)).client is sentinel
+
+    def test_cloudflare_keeps_caller_client(self):
+        from agno.models.cloudflare import Cloudflare
+
+        sentinel = MagicMock()
+        assert (
+            deepcopy(Cloudflare(id="@cf/meta/llama-3-8b-instruct", api_key="test", client=sentinel)).client is sentinel
+        )
+
+    def test_rebuilt_client_not_shared_on_deepcopy(self):
+        # If a provider rebuilds a closed caller-supplied client, the replacement is agno-built and
+        # must not be shared on a copy. Ownership is by object identity, not attribute name.
+        from agno.models.anthropic import Claude
+
+        caller = MagicMock()
+        caller.is_closed.return_value = True
+        model = Claude(id="claude-3-5-sonnet-20241022", api_key="test", client=caller)
+
+        rebuilt = model.get_client()
+        assert model.client is rebuilt and model.client is not caller
+
+        assert deepcopy(model).client is None
 
 
 if __name__ == "__main__":
