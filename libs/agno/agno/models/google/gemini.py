@@ -927,15 +927,26 @@ class Gemini(Model):
             final_message = Content(role=role, parts=message_parts)
             formatted_messages.append(final_message)
 
-        # Merge consecutive messages with the same role (Gemini API rejects consecutive same-role messages)
+        # Merge consecutive messages with the same role (Gemini API rejects consecutive same-role messages).
+        # Function responses are only merged with other function responses (e.g. parallel tool calls):
+        # a function response turn must not carry fresh user input, so a user message that follows
+        # a tool result (e.g. after stop_after_tool_call) is kept as its own turn.
         merged: List[Content] = []
         for msg in formatted_messages:
-            if merged and merged[-1].role == msg.role:
+            if (
+                merged
+                and merged[-1].role == msg.role
+                and self._has_function_response(merged[-1]) == self._has_function_response(msg)
+            ):
                 merged[-1].parts.extend(msg.parts)
             else:
                 merged.append(msg)
 
         return merged, system_message
+
+    @staticmethod
+    def _has_function_response(content: Content) -> bool:
+        return any(part.function_response is not None for part in content.parts or [])
 
     def _to_function_response_part(self, part: Part) -> Optional[FunctionResponsePart]:
         if not self._supports_multimodal_function_responses():
