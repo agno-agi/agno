@@ -28,6 +28,19 @@ except ImportError as e:
     raise ImportError("`openai` not installed. Please install using `pip install openai -U`") from e
 
 
+def _reduce_type_unions(tool: Dict[str, Any]) -> None:
+    """Reduce each property's type list to its first entry, except a nullable pair.
+
+    `["string", "null"]` is how OpenAI documents an optional parameter of a strict tool: the name
+    stays in `required` and null means "not given". Reduced to `"string"`, the model has no way to
+    leave it unset and invents a value instead (`""`, `"."`).
+    """
+    for prop in tool.get("parameters", {}).get("properties", {}).values():
+        kind = prop.get("type", "")
+        if isinstance(kind, list) and not (len(kind) == 2 and "null" in kind):
+            prop["type"] = kind[0]
+
+
 @dataclass
 class OpenAIResponses(Model):
     """
@@ -606,16 +619,12 @@ class OpenAIResponses(Model):
                 if isinstance(_tool, Function):
                     _tool_dict = _tool.to_dict()
                     _tool_dict["type"] = "function"
-                    for prop in _tool_dict.get("parameters", {}).get("properties", {}).values():
-                        if isinstance(prop.get("type", ""), list):
-                            prop["type"] = prop["type"][0]
+                    _reduce_type_unions(_tool_dict)
                     formatted_tools.append(_tool_dict)
                 elif _tool.get("type") == "function":
                     _tool_dict = _tool.get("function", {})
                     _tool_dict["type"] = "function"
-                    for prop in _tool_dict.get("parameters", {}).get("properties", {}).values():
-                        if isinstance(prop.get("type", ""), list):
-                            prop["type"] = prop["type"][0]
+                    _reduce_type_unions(_tool_dict)
                     formatted_tools.append(_tool_dict)
                 else:
                     formatted_tools.append(_tool)
