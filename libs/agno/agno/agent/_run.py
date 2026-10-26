@@ -39,6 +39,7 @@ from agno.exceptions import (
     RunCancelledException,
     RunNotContinuableError,
     RunNotFoundError,
+    SessionNotSavedError,
 )
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
@@ -724,6 +725,9 @@ def _run(
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
 
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 if attempt < num_attempts - 1:
                     # Calculate delay with exponential backoff if enabled
@@ -1267,6 +1271,9 @@ def _run_stream(
                 if yield_run_output:
                     yield run_response
                 break
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 if attempt < num_attempts - 1:
                     # Calculate delay with exponential backoff if enabled
@@ -1895,6 +1902,9 @@ async def _arun(
                 if isinstance(cancel_exc, asyncio.CancelledError):
                     raise
                 return run_response
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 # Check if this is the last attempt
                 if attempt < num_attempts - 1:
@@ -2645,6 +2655,9 @@ async def _arun_stream(
                 if yield_run_output:
                     yield run_response
                 break
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 # Check if this is the last attempt
                 if attempt < num_attempts - 1:
@@ -3837,6 +3850,9 @@ def _continue_run(
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
 
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 run_response = cast(RunOutput, run_response)
                 # Check if this is the last attempt
@@ -4147,6 +4163,9 @@ def _continue_run_stream(
                     yield run_response
                 break
 
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 run_response = cast(RunOutput, run_response)
                 # Check if this is the last attempt
@@ -5134,6 +5153,9 @@ async def _acontinue_run(
                 # ERROR run row, which for an unresolvable run_id overwrites the
                 # target run (owner, status and content) or fabricates a junk row.
                 raise
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 run_response = cast(RunOutput, run_response)
                 # Check if this is the last attempt
@@ -5768,6 +5790,9 @@ async def _acontinue_run_stream(
                 # through to the generic handler below: that one stamps a terminal
                 # ERROR run row, which for an unresolvable run_id overwrites the
                 # target run (owner, status and content) or fabricates a junk row.
+                raise
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
                 raise
             except Exception as e:
                 if run_response is None:

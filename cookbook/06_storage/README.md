@@ -33,6 +33,29 @@ agent = Agent(
 )
 ```
 
+## Session Ownership and Failed Saves
+
+An owned session can only be updated with its existing `user_id`; an unowned session can be claimed.
+Keep session ownership stable and record each requester's identity on individual runs when your application authorizes a shared conversation.
+Changing the run author does not transfer session ownership.
+
+`Agent` and `Team` raise `agno.exceptions.SessionNotSavedError` from `save_session()` and `asave_session()` when a configured database does not confirm the write.
+This includes ownership conflicts and database failures.
+Optional mid-run checkpoints can log and continue, but terminal save failures reach callers without retrying completed agent or team work.
+Direct database calls retain their existing return contracts.
+
+```python
+from agno.exceptions import SessionNotSavedError
+from agno.session import AgentSession
+
+session = AgentSession(session_id="conversation", user_id="alice", session_data={})
+
+try:
+    agent.save_session(session)
+except SessionNotSavedError as error:
+    print(f"Could not persist conversation: {error}")
+```
+
 ## Supported Databases
 
 - [`postgres`](postgres/) - PostgreSQL relational database integration
