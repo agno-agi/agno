@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -23,12 +23,14 @@ from typing import (
 from pydantic import BaseModel
 
 from agno.agent import Agent
+from agno.agent.followup import FollowupConfig
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
+from agno.registry._reserved import RESERVED_MANAGER_IDS, _reserved_manager_id_message
 
 if TYPE_CHECKING:
     from agno.learn.machine import LearningMachine
@@ -368,11 +370,12 @@ class Team:
     reasoning_agent: Optional[Agent] = None
 
     # --- Team Followups ---
-    # If True, generate followup prompts after the main response
-    followups: bool = False
-    # Number of followup prompts to generate (default 3)
+    # False, True for the defaults, or a FollowupConfig that enables followups and carries their
+    # model, instructions and count. Kept as given; a string model is resolved on a copy of it.
+    followups: Union[bool, FollowupConfig] = False
+    # Number of followup prompts to generate (default 3); with a FollowupConfig, the maximum it allows
     num_followups: int = 3
-    # Optional model to use for generating followups (defaults to team's model)
+    # Optional model to use for generating followups (defaults to team's model); with a FollowupConfig, its model
     followup_model: Optional[Model] = None
 
     # --- Team Streaming ---
@@ -458,6 +461,9 @@ class Team:
     _callable_tools_cache: Dict[str, List[Any]] = None  # type: ignore[assignment]
     _callable_knowledge_cache: Dict[str, Any] = None  # type: ignore[assignment]
     _callable_members_cache: Dict[str, List[Any]] = None  # type: ignore[assignment]
+
+    # Keep this team out of the registry while allowing it to run.
+    _registry_excluded: bool = field(default=False, init=False, repr=False, compare=False)
 
     def __init__(
         self,
@@ -558,8 +564,8 @@ class Team:
         metadata: Optional[Dict[str, Any]] = None,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
-        followups: bool = False,
-        num_followups: int = 3,
+        followups: Union[bool, FollowupConfig] = False,
+        num_followups: Optional[int] = None,
         followup_model: Optional[Union[Model, str]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
@@ -1909,9 +1915,13 @@ def get_team_by_id(
         Team instance or None.
 
     Raises:
-        ComponentRehydrationError: If strict and a member or registry reference cannot be resolved.
+        ComponentRehydrationError: If the ID is reserved for OS Manager, or if strict
+            and a member or registry reference cannot be resolved.
     """
     from agno.exceptions import ComponentRehydrationError
+
+    if id in RESERVED_MANAGER_IDS:
+        raise ComponentRehydrationError(_reserved_manager_id_message(id))
 
     try:
         from agno.utils.component_scope import component_owner_scope
@@ -2000,6 +2010,7 @@ def get_teams(
     Returns:
         List of Team instances loaded from the database
     """
+    exclude_component_ids = set(exclude_component_ids or ()) | RESERVED_MANAGER_IDS
     teams: List[Team] = []
     try:
         from agno.utils.component_scope import component_owner_scope

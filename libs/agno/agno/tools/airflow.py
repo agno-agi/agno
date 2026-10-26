@@ -42,7 +42,7 @@ class AirflowTools(Toolkit):
             log_debug(f"Saving contents to {file_path}")
             if not file_path.parent.exists():
                 file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_text(contents)
+            file_path.write_text(contents, encoding="utf-8")
             log_info(f"Saved: {file_path}")
             return str(file_path)
         except PathSecurityError as e:
@@ -61,7 +61,7 @@ class AirflowTools(Toolkit):
         try:
             log_info(f"Reading file: {dag_file}")
             file_path = safe_join_relative_path(self.dags_dir, dag_file)
-            contents = file_path.read_text()
+            contents = file_path.read_text(encoding="utf-8")
             return str(contents)
         except PathSecurityError as e:
             log_warning(f"Error reading file: {str(e)}")

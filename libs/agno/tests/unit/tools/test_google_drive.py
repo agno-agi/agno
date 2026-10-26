@@ -1,3 +1,4 @@
+import io
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -5,8 +6,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from google.oauth2.credentials import Credentials
 from googleapiclient.errors import HttpError
+from pptx import Presentation
+from pptx.util import Inches
 
-from agno.tools.google.drive import GoogleDriveTools
+from agno.tools.google.drive import PPTX_MIME_TYPE, GoogleDriveTools
 
 
 @pytest.fixture
@@ -494,6 +497,40 @@ def test_read_file_google_slides(drive_tools):
     assert result["exportMimeType"] is not None
     assert result["exportMimeType"] == "text/plain"
     assert result["content"] == "Slide content here"
+
+
+def test_read_file_pptx_grouped_shapes_and_line_breaks(drive_tools):
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide.shapes.add_textbox(Inches(1), Inches(1), Inches(3), Inches(1)).text_frame.text = "Top level box"
+    group = slide.shapes.add_group_shape()
+    group.shapes.add_textbox(Inches(1), Inches(3), Inches(3), Inches(1)).text_frame.text = "Grouped box"
+    paragraph = slide.shapes.add_textbox(Inches(1), Inches(5), Inches(3), Inches(1)).text_frame.paragraphs[0]
+    paragraph.add_run().text = "first"
+    paragraph.add_line_break()
+    paragraph.add_run().text = "second"
+    buffer = io.BytesIO()
+    prs.save(buffer)
+
+    drive_tools.service.files.return_value.get.return_value.execute.return_value = {
+        "id": "p1",
+        "name": "deck.pptx",
+        "mimeType": PPTX_MIME_TYPE,
+        "size": str(len(buffer.getvalue())),
+    }
+    mock_downloader = MagicMock()
+    mock_downloader.next_chunk.return_value = (MagicMock(), True)
+    with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=mock_downloader) as mock_dl:
+
+        def capture_buffer(buf, req):
+            buf.write(buffer.getvalue())
+            return mock_downloader
+
+        mock_dl.side_effect = capture_buffer
+        result = json.loads(drive_tools.read_file("p1"))
+
+    assert result["extractedFrom"] == "pptx"
+    assert result["content"] == "=== Slide 1 ===\nTop level box\nGrouped box\nfirst\nsecond"
 
 
 # ---------------------------------------------------------------------------
