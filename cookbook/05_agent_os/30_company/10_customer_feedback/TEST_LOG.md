@@ -142,3 +142,41 @@ on Backlog Tasks were treated as suggestions, not acceptance; state and job
 records determined whether work was authorized.
 
 ---
+
+### Overlapping Routine review regression — framework fix
+
+**Status:** PASS
+
+**Description:** Repeated the previously failing CSV export, timezone-label and
+invite-expiry scenarios with `gpt-6.1-sol`, PostgreSQL and the durable queue.
+Six independent Products each received two simultaneous manual review triggers,
+followed by a sequential review. One trigger per pair was refused before model
+execution; the other completed. All six Products retained exactly one Project
+and one evidence-backed Backlog Task after the follow-up review. No Task was
+accepted or dispatched.
+
+**Result:** The Product admission guard prevents the observed overlap race.
+Deterministic regression tests also verify different Routines on one Product,
+independent executors/database connections, timeout and cancellation retention,
+paused runs, rejected submissions, restart recovery, exact Product identity and
+Company storage isolation. Eight database cases force 80 simultaneous claims
+across sync/async SQLite and PostgreSQL, including takeover after completion;
+each race admits exactly one contender. All 31 overlap regression cases pass.
+The durable-queue integration suite also verifies that a failed attempt with a
+queued retry blocks another review until the retry completes. It passes (20 passed, 4 intentional
+sync/async compatibility skips).
+
+The broader Company and scheduler suite has 434 passing tests and one existing
+Python 3.10 mock/signature failure in
+`TestAsyncDbSupport.test_async_db_methods`. That same test fails on untouched
+base `6d5af04a72f7b152f433394b1bd4ab740fde8aed` in the same environment.
+Full repository formatting and validation pass. This is a concurrency guard,
+not a general guarantee of semantic deduplication in sequential model output.
+Ambiguous submission recovery is documented in the parent README.
+
+The final queue-aware code was also restarted and tested with three fresh live
+concurrent pairs (CSV, timezone labels, and invite expiry), followed by three
+sequential reviews. All three Products retained exactly one Project and one
+Backlog Task; competing triggers were refused and all follow-ups completed.
+
+---

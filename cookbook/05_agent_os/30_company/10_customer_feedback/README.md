@@ -69,10 +69,13 @@ Company Manager handles discovery. Feedback Analyst executes accepted Tasks;
 the built-in managers cannot be selected as business Task executors.
 `auto_accept=False` keeps discovery from authorizing execution.
 
-Run one review at a time for a Product. Overlapping manual or scheduled reviews
-can create duplicate proposals: separate runs may choose different issue keys
-before either sees the other's work. Check existing run status before triggering
-another review, and inspect proposals before accepting them.
+Agno admits one Routine review at a time per Product, across manual triggers,
+schedules, and server processes sharing the Company database. An overlapping
+trigger records a failed run with an "Another Routine review" message before
+calling the model. Retry after the active review finishes. Different Products
+can be reviewed concurrently. This prevents the overlap race; inspect proposals
+before accepting them, since semantic deduplication still depends on the review.
+See [Routine recovery](../README.md#routine-recovery) for interrupted or paused runs.
 
 The UI requires its own sign-in. The UI walkthrough and persisted REST results were tested locally. After selecting
 **Agent → Feedback Analyst**, save the Task, then change its status from

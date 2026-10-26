@@ -503,6 +503,11 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
     def __init__(self, agent_os, app, **kwargs):
         kwargs.setdefault("company_db", agent_os._company_db)
         kwargs.setdefault("schedule_db", agent_os.db)
+        queue = getattr(agent_os, "queue", None)
+        if queue is not None and queue.durable:
+            from agno.os.job_queue import resolve_queue_store
+
+            kwargs.setdefault("queue_store", resolve_queue_store(queue, agent_os.db))
         super().__init__(**kwargs)
         self.agent_os = agent_os
         self.app = app

@@ -9,8 +9,7 @@ from sqlalchemy import text
 
 from agno.company.execution import _call
 from agno.company.manager import AsyncCompanyManager, CompanyManager
-from agno.company.routines import _RoutineAuthorization
-from agno.company.scheduler import CompanyScheduleExecutor
+from agno.company.routines import _CompanyScheduleExecutor, _RoutineAuthorization
 from agno.db.base import AsyncBaseDb
 from agno.db.postgres import AsyncPostgresDb, PostgresDb
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
@@ -102,7 +101,9 @@ async def test_manager_review_through_durable_queue(tmp_path, backend, mode):
                     jobs.append(job)
                 return response
 
-            executor = CompanyScheduleExecutor(
+            executor = _CompanyScheduleExecutor(
+                os,
+                app,
                 company_db=db,
                 schedule_db=queue_db,
                 base_url="http://test",
@@ -129,6 +130,24 @@ async def test_manager_review_through_durable_queue(tmp_path, backend, mode):
             assert tasks[0]["evidence"][0]["content_hash"]
             status = await _call(manager, "read_wiki", product["id"], "status.md")
             assert "API guide proposed" in status.content
+
+            # An ERROR run row is not terminal admission while its ticket awaits retry.
+            config.max_attempts = 2
+            config.retry_delay_seconds = 0
+            os.company_manager.model = ScriptedModel([("read_product_source", {"source_id": "missing"})])
+            failed = await executor.execute(row, queue_db, release_schedule=False)
+            assert failed["status"] == "failed", failed
+            assert jobs[-1]["status"] == "queued"
+            before = len(jobs)
+            overlap = await executor.execute(row, queue_db, release_schedule=False)
+            assert "Another Routine review" in overlap["error"], overlap
+            assert len(jobs) == before
+            os.company_manager.model = ScriptedModel()
+            retried = await execute(worker)
+            assert retried["status"] == "completed", retried
+            later = await executor.execute(row, queue_db, release_schedule=False)
+            assert later["status"] == "success", later
+            assert (await _call(db, "get_tasks", product_id=product["id"]))[1] == 1
     finally:
         if db is not queue_db:
             if isinstance(db, AsyncBaseDb):

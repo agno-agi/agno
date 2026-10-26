@@ -87,6 +87,38 @@ Routine with automatic acceptance accepts proposals with the saved grant of the
 user who authorized it, so under user isolation only that user can trigger it
 manually.
 
+## Routine recovery
+
+Routine review admission is shared per Product through the Company database's
+versioned filesystem. All Routines for that Product use the same reservation.
+Overlapping manual or scheduled triggers fail before discovery starts; retry
+after the active review finishes. Completed, errored, or cancelled underlying
+runs permit another review once any durable queue ticket has also settled;
+a failed attempt awaiting retry keeps the reservation. Paused runs retain it until continued
+to completion or cancelled. A scheduler timeout or restart does not release a
+background run that may still be writing.
+
+If a submission response is lost before its run ID is saved, or the stored run
+is deleted, Agno cannot prove the review has stopped and keeps the reservation.
+For operator recovery, first pause the Product's Routines, stop manual triggers,
+and reconcile or stop all potentially active reviews and queue retries. Only
+once no old review can resume, clear the reservation using the same Company DB:
+
+```python
+from agno.company.review_lock import _review_filesystem
+
+# Internal recovery helper: db is the configured Company database.
+state = _review_filesystem(db, product_id)
+current = await state.aread_with_meta("review.md")
+if current is not None:
+    await state.awrite("review.md", "{}", expected_version=current.metadata.version)
+```
+
+The version check prevents clearing a reservation changed since it was read.
+Do not clear a reservation merely because its scheduler run timed out. An operator
+requeue of an old failed ticket can replay that review; do not requeue it while
+another review of the Product is active.
+
 ## Work records
 
 | File | Demonstrates |
