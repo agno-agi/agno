@@ -7,6 +7,20 @@ from agno.utils.log import log_debug, log_error
 T = TypeVar("T")
 
 
+def _accepts_string(schema: Any) -> bool:
+    """Return True if a JSON schema property declares "string" as an accepted type."""
+    if not isinstance(schema, dict):
+        return False
+    schema_type = schema.get("type")
+    if schema_type == "string" or (isinstance(schema_type, list) and "string" in schema_type):
+        return True
+    for key in ("anyOf", "oneOf"):
+        variants = schema.get(key)
+        if isinstance(variants, list) and any(_accepts_string(variant) for variant in variants):
+            return True
+    return False
+
+
 def get_function_call(
     name: str,
     arguments: Optional[str] = None,
@@ -52,9 +66,14 @@ def get_function_call(
             return function_call
 
         try:
+            properties = (function_to_call.parameters or {}).get("properties")
+            if not isinstance(properties, dict):
+                properties = {}
             clean_arguments: Dict[str, Any] = {}
             for k, v in _arguments.items():
-                if isinstance(v, str):
+                # Models sometimes send "true"/"null" as strings for boolean or nullable parameters,
+                # so coerce those literals, but never for parameters declared as strings.
+                if isinstance(v, str) and not _accepts_string(properties.get(k)):
                     _v = v.strip().lower()
                     if _v in ("none", "null"):
                         clean_arguments[k] = None
