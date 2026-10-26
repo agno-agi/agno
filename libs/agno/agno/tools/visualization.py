@@ -2,8 +2,10 @@ import json
 import os
 from typing import Any, Dict, List, Optional, Union
 
+from agno.exceptions import PathSecurityError
 from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
+from agno.utils.path_safety import safe_join_filename
 
 
 class VisualizationTools(Toolkit):
@@ -144,7 +146,9 @@ class VisualizationTools(Toolkit):
             if filename is None:
                 filename = f"bar_chart_{len(os.listdir(self.output_dir)) + 1}.png"
 
-            file_path = os.path.join(self.output_dir, filename)
+            # filename is a model-supplied tool argument: contain it within output_dir
+            # (rejects path traversal and absolute paths). See safe_join_filename.
+            file_path = str(safe_join_filename(self.output_dir, filename))
             plt.savefig(file_path, dpi=300, bbox_inches="tight")
             plt.close()
 
@@ -160,6 +164,9 @@ class VisualizationTools(Toolkit):
                 }
             )
 
+        except PathSecurityError as e:
+            # Unsafe model-supplied filename — a routine rejection, not an internal error.
+            return json.dumps({"chart_type": "bar_chart", "error": str(e), "status": "error"})
         except Exception as e:
             logger.exception("Error creating bar chart")
             return json.dumps({"chart_type": "bar_chart", "error": str(e), "status": "error"})
@@ -217,7 +224,9 @@ class VisualizationTools(Toolkit):
             if filename is None:
                 filename = f"line_chart_{len(os.listdir(self.output_dir)) + 1}.png"
 
-            file_path = os.path.join(self.output_dir, filename)
+            # filename is a model-supplied tool argument: contain it within output_dir
+            # (rejects path traversal and absolute paths). See safe_join_filename.
+            file_path = str(safe_join_filename(self.output_dir, filename))
             plt.savefig(file_path, dpi=300, bbox_inches="tight")
             plt.close()
 
@@ -233,6 +242,9 @@ class VisualizationTools(Toolkit):
                 }
             )
 
+        except PathSecurityError as e:
+            # Unsafe model-supplied filename — a routine rejection, not an internal error.
+            return json.dumps({"chart_type": "line_chart", "error": str(e), "status": "error"})
         except Exception as e:
             logger.exception("Error creating line chart")
             return json.dumps({"chart_type": "line_chart", "error": str(e), "status": "error"})
@@ -282,7 +294,9 @@ class VisualizationTools(Toolkit):
             if filename is None:
                 filename = f"pie_chart_{len(os.listdir(self.output_dir)) + 1}.png"
 
-            file_path = os.path.join(self.output_dir, filename)
+            # filename is a model-supplied tool argument: contain it within output_dir
+            # (rejects path traversal and absolute paths). See safe_join_filename.
+            file_path = str(safe_join_filename(self.output_dir, filename))
             plt.savefig(file_path, dpi=300, bbox_inches="tight")
             plt.close()
 
@@ -298,6 +312,9 @@ class VisualizationTools(Toolkit):
                 }
             )
 
+        except PathSecurityError as e:
+            # Unsafe model-supplied filename — a routine rejection, not an internal error.
+            return json.dumps({"chart_type": "pie_chart", "error": str(e), "status": "error"})
         except Exception as e:
             logger.exception("Error creating pie chart")
             return json.dumps({"chart_type": "pie_chart", "error": str(e), "status": "error"})
@@ -371,7 +388,9 @@ class VisualizationTools(Toolkit):
             if filename is None:
                 filename = f"scatter_plot_{len(os.listdir(self.output_dir)) + 1}.png"
 
-            file_path = os.path.join(self.output_dir, filename)
+            # filename is a model-supplied tool argument: contain it within output_dir
+            # (rejects path traversal and absolute paths). See safe_join_filename.
+            file_path = str(safe_join_filename(self.output_dir, filename))
             plt.savefig(file_path, dpi=300, bbox_inches="tight")
             plt.close()
 
@@ -387,6 +406,9 @@ class VisualizationTools(Toolkit):
                 }
             )
 
+        except PathSecurityError as e:
+            # Unsafe model-supplied filename — a routine rejection, not an internal error.
+            return json.dumps({"chart_type": "scatter_plot", "error": str(e), "status": "error"})
         except Exception as e:
             logger.exception("Error creating scatter plot")
             return json.dumps({"chart_type": "scatter_plot", "error": str(e), "status": "error"})
@@ -445,7 +467,9 @@ class VisualizationTools(Toolkit):
             if filename is None:
                 filename = f"histogram_{len(os.listdir(self.output_dir)) + 1}.png"
 
-            file_path = os.path.join(self.output_dir, filename)
+            # filename is a model-supplied tool argument: contain it within output_dir
+            # (rejects path traversal and absolute paths). See safe_join_filename.
+            file_path = str(safe_join_filename(self.output_dir, filename))
             plt.savefig(file_path, dpi=300, bbox_inches="tight")
             plt.close()
 
@@ -462,6 +486,9 @@ class VisualizationTools(Toolkit):
                 }
             )
 
+        except PathSecurityError as e:
+            # Unsafe model-supplied filename — a routine rejection, not an internal error.
+            return json.dumps({"chart_type": "histogram", "error": str(e), "status": "error"})
         except Exception as e:
             logger.exception("Error creating histogram")
             return json.dumps({"chart_type": "histogram", "error": str(e), "status": "error"})
