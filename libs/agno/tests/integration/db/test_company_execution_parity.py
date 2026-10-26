@@ -208,6 +208,59 @@ async def test_execution_duplicate_context_history_and_attention(system, kind, i
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("when", ["queued", "running"])
+async def test_brief_edit_keeps_captured_input_and_later_attempt_uses_it(system, monkeypatch, when):
+    client, db, worker, _, components = system
+    value = await accepted(client)
+    path = f"/company/tasks/{value['id']}"
+    first = await client.post(path + "/runs")
+    assert first.status_code == 202, first.text
+    job = await worker.store.get_job(first.json()["run_id"])
+    captured = job["payload"]["input"]
+    assert json.loads(captured)["brief"] == "Write a draft"
+    keys = set(json.loads(captured))
+    before = (await client.get(path)).json()
+    assert before["status"] == "in_progress"
+
+    async def edit():
+        current = (await client.get(path)).json()
+        response = await client.patch(path, json={"title": "Renamed", "brief": "Write a better draft"})
+        assert response.status_code == 200, response.text
+        edited = response.json()
+        assert (edited["title"], edited["brief"]) == ("Renamed", "Write a better draft")
+        changed = {"title", "brief", "updated_at"}
+        assert {k: v for k, v in edited.items() if k not in changed} == {
+            k: v for k, v in current.items() if k not in changed
+        }
+
+    if when == "queued":
+        await edit()
+    else:
+        original = components["writer"].arun
+
+        async def edit_then_run(*args, **kwargs):
+            await edit()
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(components["writer"], "arun", edit_then_run)
+    assert (await worker.store.get_job(first.json()["run_id"]))["payload"]["input"] == captured
+    assert (await execute(worker))["status"] == "completed"
+    assert (await worker.store.get_job(first.json()["run_id"]))["payload"]["input"] == captured
+    assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is None
+    saved = (await client.get(path)).json()
+    assert (saved["title"], saved["brief"]) == ("Renamed", "Write a better draft")
+    assert saved["status"] == "in_review" and "draft" in saved["result"]["content"]
+    assert len(saved["transitions"]) == len(before["transitions"]) + 1
+    second = await client.post(path + "/runs", json={"attempt": 2})
+    assert second.status_code == 202, second.text
+    assert second.json()["run_id"] != first.json()["run_id"] and second.json()["session_id"] == before["session_id"]
+    later = json.loads((await worker.store.get_job(second.json()["run_id"]))["payload"]["input"])
+    assert later["brief"] == "Write a better draft" and set(later) == keys
+    assert "Renamed" not in json.dumps(later)
+    assert (await execute(worker))["status"] == "completed"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("automatic", [False, True])
 @pytest.mark.parametrize("first_failed", [False, True])
 async def test_reaccepted_ready_starts_next_attempt(system, monkeypatch, automatic, first_failed):

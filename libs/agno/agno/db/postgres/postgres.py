@@ -9744,7 +9744,9 @@ class PostgresDb(BaseDb):
         table = self._get_table(table_type="tasks")
         if table is None:
             return None
-        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None), table.c.status == "backlog")
+        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None))
+        if set(fields) - {"title", "brief"}:
+            stmt = stmt.where(table.c.status == "backlog")
         if user_id is not None:
             stmt = stmt.where(table.c.user_id == user_id)
         products = self._get_table(table_type="products", create_table_if_not_found=True)

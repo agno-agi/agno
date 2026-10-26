@@ -130,8 +130,9 @@ async def test_tools_identity_fence_and_learning(tmp_path, use_async):
         executor_id="writer",
         accepted_by="alice",
     )
-    with pytest.raises(ValueError, match="Backlog"):
-        await invoke("edit_company_task", task["id"], "changed", "no", _agno_run_context=alice)
+    accepted_edit = json.loads(await invoke("edit_company_task", task["id"], "changed", "yes", _agno_run_context=alice))
+    assert accepted_edit["title"] == "changed" and accepted_edit["brief"] == "yes"
+    assert accepted_edit["status"] == "ready" and accepted_edit["executor_id"] == "writer"
     await invoke("update_product_status", product["id"], "draft ready", 1, _agno_run_context=alice)
     entry = json.loads(
         await invoke("log_company_decision", "Draft first", reasoning="review needed", _agno_run_context=alice)

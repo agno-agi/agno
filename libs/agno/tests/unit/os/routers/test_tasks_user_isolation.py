@@ -420,7 +420,10 @@ def test_collaborators_return_or_cancel_accepted_tasks(make_client, start, targe
             continue
         advanced = c.post(path + "/transitions", json={"target": next_state, "reason": "Progress"}, headers=writer)
         assert advanced.status_code == 200, advanced.text
-    assert c.patch(path, json={"brief": "Changed"}, headers=writer).status_code == 409
+    assert c.patch(path, json={"executor_id": "other"}, headers=writer).status_code == 409
+    content = c.patch(path, json={"brief": "Changed"}, headers=writer)
+    assert content.status_code == 200, content.text
+    assert content.json()["user_id"] == "alice" and content.json()["status"] == start
     changed = c.post(path + "/transitions", json={"target": target, "reason": "Team decision"}, headers=writer)
     assert changed.status_code == 200, changed.text
     record = changed.json()

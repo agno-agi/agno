@@ -637,7 +637,7 @@ class CompanyTools(Toolkit):
 
     @requires_permission()
     def edit_company_task(self, task_id: str, title: str, brief: str, _agno_run_context: Optional[Any] = None) -> str:
-        """Edit the title and brief of Backlog work; never change lifecycle or ownership."""
+        """Edit the title and brief of a Task at any stage; never change lifecycle, executor or ownership."""
         _permission("tasks", "write", _agno_run_context)
         manager = self._sync()
         row = manager.get_task(task_id)
@@ -931,7 +931,7 @@ class CompanyTools(Toolkit):
     async def aedit_company_task(
         self, task_id: str, title: str, brief: str, _agno_run_context: Optional[Any] = None
     ) -> str:
-        """Edit the title and brief of Backlog work; never change lifecycle or ownership."""
+        """Edit the title and brief of a Task at any stage; never change lifecycle, executor or ownership."""
         await _apermission("tasks", "write", _agno_run_context)
         manager = self._async()
         row = await manager.get_task(task_id)

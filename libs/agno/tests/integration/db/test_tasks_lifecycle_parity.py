@@ -223,11 +223,85 @@ async def test_task_acceptance_and_project_consistency(db):
     assert ready["accepted_by"] == "alice"
     assert ready["accepted_at"] >= task["created_at"]
     with pytest.raises(ValueError, match="Backlog"):
-        await call(m.update_task, task["id"], brief="Changed")
-    assert await call(db.update_task, task["id"], brief="Bypass") is None
+        await call(m.update_task, task["id"], executor_id="stale")
+    assert await call(db.update_task, task["id"], executor_id="stale") is None
     backlog = await call(m.transition_task, task_id=task["id"], target="backlog", reason="Rescope", accepted_by="alice")
     assert all(backlog[k] is None for k in ["executor_id", "executor_type", "accepted_at", "accepted_by"])
     assert (await call(m.update_task, task["id"], brief="Changed"))["brief"] == "Changed"
+
+
+STAGES = ["backlog", "ready", "in_progress", "in_review", "done", "cancelled"]
+STRUCTURAL = [{"executor_id": "stale"}, {"evidence": [{"url": "https://example.test"}]}, {"executor_type": "team"}]
+
+
+async def task_at(m, stage):
+    product = await call(m.create, name="SDK")
+    project = await call(m.create_project, product_id=product["id"], name="Release")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
+    task = await call(m.create_task, product_id=product["id"], title="Original", brief="Body", project_id=project["id"])
+    if stage == "cancelled":
+        return await call(m.transition_task, task_id=task["id"], target="cancelled", reason="Stop"), project
+    for target in ["ready", "in_progress", "in_review", "done"][: STAGES.index(stage)]:
+        kwargs = {"executor_type": "agent", "executor_id": "writer"} if target == "ready" else {}
+        task = await call(m.transition_task, task_id=task["id"], target=target, reason="Move", **kwargs)
+    return task, project
+
+
+def content_only(row):
+    return {k: v for k, v in row.items() if k not in {"title", "brief", "updated_at"}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", STAGES)
+async def test_title_and_brief_edit_at_every_stage_through_manager_and_storage(db, stage, monkeypatch):
+    m = manager(db)
+    task, _ = await task_at(m, stage)
+    monkeypatch.setattr(time, "time", lambda: 2_000_000_000)
+    edited = await call(m.update_task, task["id"], title="Retitled", brief="Rewritten")
+    assert (edited["title"], edited["brief"], edited["updated_at"]) == ("Retitled", "Rewritten", 2_000_000_000)
+    assert content_only(edited) == content_only(task)
+    for fields in [{"title": "Storage title"}, {"brief": "Storage brief"}, {"brief": None}]:
+        direct = await call(db.update_task, task["id"], **fields)
+        assert direct is not None and content_only(direct) == content_only(task)
+        assert {k: direct[k] for k in fields} == fields
+    twice = await call(m.update_task, task["id"], title="Again")
+    assert twice["title"] == "Again" and twice["brief"] is None and content_only(twice) == content_only(task)
+    assert (await call(m.update_task, "missing", title="Nope")) is None
+    assert (await call(db.update_task, "missing", title="Nope")) is None
+    with pytest.raises(ValueError, match="title"):
+        await call(m.update_task, task["id"], title=" ")
+    assert (await call(m.get_task, task["id"]))["title"] == "Again"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", STAGES[1:])
+@pytest.mark.parametrize("structural", STRUCTURAL, ids=lambda f: next(iter(f)))
+async def test_structural_edit_outside_backlog_stays_refused_and_mixed_edit_is_atomic(db, stage, structural):
+    m = manager(db)
+    task, project = await task_at(m, stage)
+    other = await call(m.create_project, product_id=task["product_id"], name="Other")
+    for fields in [structural, {"project_id": other["id"]}]:
+        with pytest.raises(ValueError, match="Backlog"):
+            await call(m.update_task, task["id"], **fields)
+        with pytest.raises(ValueError, match="Backlog"):
+            await call(m.update_task, task["id"], title="Mixed", brief="Mixed", **fields)
+        assert await call(db.update_task, task["id"], **fields) is None
+        assert await call(db.update_task, task["id"], title="Mixed", brief="Mixed", **fields) is None
+    assert await call(m.get_task, task["id"]) == task
+
+
+@pytest.mark.asyncio
+async def test_archived_task_and_archived_parent_still_refuse_content_edits(db):
+    m = manager(db)
+    task, project = await task_at(m, "done")
+    assert await call(m.delete_task, task["id"])
+    assert await call(m.update_task, task["id"], title="Archived") is None
+    assert await call(db.update_task, task["id"], title="Archived") is None
+    await call(m.restore_task, task["id"])
+    assert await call(m.delete_project, project["id"])
+    assert await call(m.update_task, task["id"], title="Archived parent") is None
+    with pytest.raises(ValueError, match="archived"):
+        await call(db.update_task, task["id"], title="Archived parent")
 
 
 @pytest.mark.asyncio
@@ -410,7 +484,7 @@ async def test_http_collaborative_work_and_shared_deletion(db, resource, isolati
         assert accepted.json()["transitions"][-1]["user_id"] == "bob"
         if resource == "tasks":
             assert accepted.json()["accepted_by"] == "bob"
-            assert (await client.patch(path, json={field: "Frozen"}, headers=headers("bob"))).status_code == 409
+            assert (await client.patch(path, json={"executor_id": "other"}, headers=headers("bob"))).status_code == 409
             returned = await client.post(
                 path + "/transitions", json={"target": "backlog", "reason": "Clarify scope"}, headers=headers("bob")
             )

@@ -226,7 +226,8 @@ def test_acceptance_freezes_scope_and_backlog_clears_it(client):
     ready = transition(client, path, "ready").json()
     assert ready["executor_type"] == "agent" and ready["executor_id"] == "writer"
     assert isinstance(ready["accepted_at"], int)
-    assert client.patch(path, json={"brief": "Changed"}).status_code == 409
+    assert client.patch(path, json={"executor_id": "other"}).status_code == 409
+    assert client.patch(path, json={"brief": "Changed"}).json()["executor_id"] == "writer"
     assert transition(client, path, "backlog").status_code == 200
     backlog = client.get(path).json()
     assert all(backlog[key] is None for key in ["executor_type", "executor_id", "accepted_by", "accepted_at"])
@@ -236,6 +237,50 @@ def test_acceptance_freezes_scope_and_backlog_clears_it(client):
     reserve_run(client, path)
     assert transition(client, path, "in_review").status_code == 200
     assert transition(client, path, "in_progress").status_code == 409
+
+
+def walk_stages(client):
+    """Yield (stage, path) while one Task advances to done, then a second one to cancelled."""
+    path = "/company/tasks/" + create(client)["id"]
+    yield "backlog", path
+    for stage in ["ready", "in_progress", "in_review", "done"]:
+        if stage == "in_progress":
+            reserve_run(client, path)
+        else:
+            assert transition(client, path, stage).status_code == 200
+        yield stage, path
+    path = "/company/tasks/" + create(client)["id"]
+    assert transition(client, path, "cancelled").status_code == 200
+    yield "cancelled", path
+
+
+def test_title_and_brief_edit_at_every_stage_but_structure_stays_restricted(client):
+    for stage, path in walk_stages(client):
+        before = client.get(path).json()
+        edited = client.patch(path, json={"title": "Renamed " + stage, "brief": "Rewritten " + stage})
+        assert edited.status_code == 200, (stage, edited.text)
+        after = edited.json()
+        assert (after["title"], after["brief"]) == ("Renamed " + stage, "Rewritten " + stage)
+        ignored = {"title", "brief", "updated_at"}
+        assert {k: v for k, v in after.items() if k not in ignored} == {
+            k: v for k, v in before.items() if k not in ignored
+        }
+        assert client.patch(path, json={"title": "Title only"}).json()["brief"] == "Rewritten " + stage
+        assert client.patch(path, json={"brief": "Brief only"}).json()["title"] == "Title only"
+        assert client.patch(path, json={"brief": None}).json()["brief"] is None
+        assert client.patch(path, json={"title": " "}).status_code == 422
+        snapshot = client.get(path).json()
+        if stage == "backlog":
+            continue
+        for body in [
+            {"executor_id": "other"},
+            {"executor_type": "team"},
+            {"evidence": [{"url": "https://example.test"}]},
+        ]:
+            assert client.patch(path, json=body).status_code == 409, (stage, body)
+            assert client.patch(path, json={"title": "Mixed", **body}).status_code == 409, (stage, body)
+        assert client.get(path).json() == snapshot
+        assert client.patch(path, json={}).json() == snapshot
 
 
 def test_task_project_must_belong_to_same_product(client):

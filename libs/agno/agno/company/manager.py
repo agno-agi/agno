@@ -449,14 +449,14 @@ class CompanyManager:
         )
 
     def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
-        """Update descriptive fields; accepted Task scope requires a return to Backlog."""
+        """Update a Task; outside Backlog only title and brief change, the rest requires a return to Backlog."""
         from agno.db.schemas.tasks import validate_task_fields
 
         validate_task_fields(fields)
         existing = self.db.get_task(task_id, user_id=user_id)
         if existing is None:
             return None
-        if existing["status"] != "backlog":
+        if existing["status"] != "backlog" and set(fields) - {"title", "brief"}:
             raise ValueError("Accepted task scope requires a return to Backlog")
         if "project_id" in fields and not fields["project_id"]:
             raise ValueError("A Task requires a Project")
@@ -1354,14 +1354,14 @@ class AsyncCompanyManager:
         )
 
     async def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
-        """Update descriptive fields; accepted Task scope requires a return to Backlog."""
+        """Update a Task; outside Backlog only title and brief change, the rest requires a return to Backlog."""
         from agno.db.schemas.tasks import validate_task_fields
 
         validate_task_fields(fields)
         existing = await self.db.get_task(task_id, user_id=user_id)
         if existing is None:
             return None
-        if existing["status"] != "backlog":
+        if existing["status"] != "backlog" and set(fields) - {"title", "brief"}:
             raise ValueError("Accepted task scope requires a return to Backlog")
         if "project_id" in fields and not fields["project_id"]:
             raise ValueError("A Task requires a Project")
