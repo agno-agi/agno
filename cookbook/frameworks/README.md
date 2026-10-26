@@ -31,7 +31,7 @@ The harness owns its agent loop, tool execution and native context management.
 Agno adapts its output to runs and events. AgentOS adds the HTTP API and run
 storage used in this first exercise.
 
-This directory also contains [LangGraph](langgraph/), [DSPy](dspy/),
+This directory also contains [Prime Agent](prime-agent/README.md), [LangGraph](langgraph/), [DSPy](dspy/),
 [Antigravity](antigravity/README.md), and the [mixed-framework quickstart](00_quickstart/README.md).
 Claude and Codex each keep their starting and advanced examples in one folder.
 
@@ -125,7 +125,7 @@ These are follow-up topics, not guarantees made by this first set.
 Configure built-in adapters with keywords, for example `ClaudeAgent(name="Reviewer",
 model="claude-sonnet-5-5")`. Positional constructor arguments are no longer accepted.
 Related fields are grouped in the constructor signature.
-This applies to Claude, Codex, LangGraph, DSPy and Antigravity. Python 3.9 remains
+This applies to Claude, Codex, Prime, LangGraph, DSPy and Antigravity. Python 3.9 remains
 supported by the adapter layer; each native SDK has its own Python requirements.
 
 
