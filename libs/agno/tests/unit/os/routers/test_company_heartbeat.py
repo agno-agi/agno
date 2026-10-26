@@ -555,9 +555,20 @@ def test_members_trigger_routines_as_themselves(tmp_path, monkeypatch, isolation
 
         # Generic schedule routes cannot be used to bypass the Company wrapper.
         assert client.post("/schedules/" + routine_id + "/trigger", headers=auth).status_code in (403, 404, 409)
-        # Members manage Routines they did not create; timing changes keep the saved grant.
-        assert client.post(path + "/pause", headers=auth).json()["enabled"] is False
-        assert client.post(path + "/resume", headers=auth).json()["enabled"] is True
+        # On-demand Routines refuse Pause and Resume while enabled; a disabled one recovers through Resume.
+        assert client.post(path + "/pause", headers=auth).status_code == 409
+        assert client.post(path + "/resume", headers=auth).status_code == 409
+        assert db.get_schedule(routine_id) == saved
+        db.update_schedule(routine_id, enabled=False)
+        for missing in ("routines:write", "schedules:write"):
+            denied = client.post(path + "/resume", headers=headers([scope for scope in scopes if scope != missing]))
+            assert denied.status_code == 403, denied.text
+            assert db.get_schedule(routine_id)["enabled"] is False
+        # Members recover Routines they did not create; the saved grant is kept.
+        auth = headers(scopes)  # managed roles keep the last scopes passed to headers()
+        recovered = client.post(path + "/resume", headers=auth)
+        assert recovered.status_code == 200, recovered.text
+        assert recovered.json()["enabled"] is True and recovered.json()["next_run_at"] is None
         assert db.get_schedule(routine_id)["payload"] == saved["payload"]
         db.update_schedule(routine_id, enabled=False)
         assert client.post(path + "/trigger", headers=auth).status_code == 409
@@ -677,7 +688,7 @@ def test_members_manage_products_and_routines_they_did_not_create_under_isolatio
         authorization=True,
         authorization_config=AuthorizationConfig(verification_keys=[secret], algorithm="HS256", user_isolation=True),
     )
-    body = dict(name="intake", template="intake", executor_type="agent", executor_id="reader")
+    body = dict(name="intake", template="intake", executor_type="agent", executor_id="reader", cron_expr="0 * * * *")
     with TestClient(os.get_app()) as client:
         owned = client.post("/company/products", headers=headers("alice"), json={"name": "Alice's"}).json()
         for product_id in ("declared", owned["id"]):

@@ -195,9 +195,17 @@ async def test_routine_apis_with_mongo_schedules_and_sql_company(system, asynchr
             assert triggered.json()["status"] == "success", triggered.text
             latest = (await client.get(path)).json()["last_run"]
             assert latest["run_id"] == triggered.json()["run_id"]
-            assert (await client.post(path + "/pause")).json()["last_run"] == latest
+            stored = await _call(schedule_db, "get_schedule", first["id"])
+            with monkeypatch.context() as later:
+                later.setattr(time, "time", lambda: stored["updated_at"] + 100)
+                for _ in range(2):
+                    assert (await client.post(path + "/pause")).status_code == 409
+                    assert (await client.post(path + "/resume")).status_code == 409
+            assert await _call(schedule_db, "get_schedule", first["id"]) == stored
+            await _call(schedule_db, "update_schedule", first["id"], enabled=False)
             assert (await client.post(path + "/trigger")).status_code == 409
             assert (await client.post(path + "/resume")).json()["last_run"] == latest
+            assert (await client.post(path + "/resume")).status_code == 409
             assert (await client.patch(path, json={"name": "Updated"})).json()["last_run"] == latest
             # A user edit advances updated_at; a scheduled run of the routine does not.
             clock = [int(time.time())]

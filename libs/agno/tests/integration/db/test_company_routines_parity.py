@@ -67,6 +67,97 @@ async def test_trigger_read_pause_and_latest_run(system):
         assert (await client.post("/company/routines/" + hidden + "/trigger")).status_code == 404
 
 
+def spy_product_links(db, monkeypatch):
+    calls = []
+    original = type(db).add_product_routine
+    if isinstance(db, AsyncBaseDb):
+
+        async def link(self, *args, **kwargs):
+            calls.append(args)
+            return await original(self, *args, **kwargs)
+
+    else:
+
+        def link(self, *args, **kwargs):
+            calls.append(args)
+            return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(db), "add_product_routine", link)
+    return calls
+
+
+async def stored_state(db, routine):
+    return (
+        await _call(db, "get_schedule", routine["id"]),
+        await _call(db, "get_schedule_runs", routine["id"]),
+        await _call(db, "get_product", routine["payload"]["metadata"]["product_id"]),
+    )
+
+
+@pytest.mark.asyncio
+async def test_enabled_on_demand_routine_refuses_pause_and_resume(system, monkeypatch):
+    client, db, _, _, _ = system
+    routine = await create_routine(client)
+    path = "/company/routines/" + routine["id"]
+    assert routine["schedule_type"] == "on_demand" and routine["enabled"]
+    before = await stored_state(db, routine)
+    links = spy_product_links(db, monkeypatch)
+    # A later clock keeps a refused request that still wrote updated_at from hiding in the same second.
+    monkeypatch.setattr(time, "time", lambda: before[0]["updated_at"] + 100)
+    for _ in range(2):
+        paused = await client.post(path + "/pause")
+        assert paused.status_code == 409, paused.text
+        assert paused.json()["detail"] == "On-demand routines cannot be paused."
+        resumed = await client.post(path + "/resume")
+        assert resumed.status_code == 409, resumed.text
+        assert resumed.json()["detail"] == "On-demand routine is already enabled."
+    assert links == []
+    assert await stored_state(db, routine) == before
+
+
+@pytest.mark.asyncio
+async def test_disabled_on_demand_routine_recovers_through_resume_without_running(system, monkeypatch):
+    client, db, _, _, _ = system
+    routine = await create_routine(client)
+    path = "/company/routines/" + routine["id"]
+    await _call(db, "update_schedule", routine["id"], enabled=False)
+    assert (await client.post(path + "/trigger")).status_code == 409
+    disabled = await stored_state(db, routine)
+    monkeypatch.setattr(time, "time", lambda: disabled[0]["updated_at"] + 100)
+    for _ in range(2):
+        paused = await client.post(path + "/pause")
+        assert paused.status_code == 409, paused.text
+        assert paused.json()["detail"] == "On-demand routines cannot be paused."
+    assert await stored_state(db, routine) == disabled
+    links = spy_product_links(db, monkeypatch)
+    resumed = await client.post(path + "/resume")
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["enabled"] and resumed.json()["next_run_at"] is None
+    assert resumed.json()["schedule_type"] == "on_demand"
+    assert len(links) == 1
+    assert (await _call(db, "get_schedule_runs", routine["id"]))[1] == 0
+    recovered = await stored_state(db, routine)
+    monkeypatch.setattr(time, "time", lambda: recovered[0]["updated_at"] + 100)
+    again = await client.post(path + "/resume")
+    assert again.status_code == 409 and again.json()["detail"] == "On-demand routine is already enabled."
+    assert len(links) == 1 and await stored_state(db, routine) == recovered
+
+
+@pytest.mark.asyncio
+async def test_disabled_on_demand_routine_stays_disabled_when_its_product_is_archived(system):
+    client, db, _, _, _ = system
+    routine = await create_routine(client)
+    path = "/company/routines/" + routine["id"]
+    await _call(db, "update_schedule", routine["id"], enabled=False)
+    product_id = routine["payload"]["metadata"]["product_id"]
+    assert (await client.delete("/company/products/" + product_id)).status_code == 204
+    disabled = await _call(db, "get_schedule", routine["id"])
+    assert disabled["enabled"] is False
+    refused = await client.post(path + "/resume")
+    assert refused.status_code == 404, refused.text
+    assert await _call(db, "get_schedule", routine["id"]) == disabled
+
+
 @pytest.mark.asyncio
 async def test_last_run_is_one_query_per_page(system):
     client, db, _, _, _ = system
@@ -158,6 +249,7 @@ async def test_on_demand_never_polled_restart_and_cron_changes(system):
     assert (await client.post(path + "/trigger")).status_code == 409
     resumed = (await client.post(path + "/resume")).json()
     assert resumed["enabled"] and resumed["next_run_at"] is None
+    assert (await client.post(path + "/resume")).status_code == 409
     assert (await client.get(path + "/runs")).json()["data"] == history
     await arehydrate_product(db, declaration, os.registry)
     assert (await client.get(path)).json()["next_run_at"] is None
