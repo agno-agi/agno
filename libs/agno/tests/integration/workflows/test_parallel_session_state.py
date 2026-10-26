@@ -909,3 +909,96 @@ def test_merge_with_no_changes():
 
     # Should remain unchanged
     assert original == original_copy
+
+
+def test_merge_keeps_sibling_changes_to_the_same_nested_dict():
+    """Two parallel steps writing different keys of one nested dict keep both changes"""
+
+    original = {"counters": {"shared": 0}, "untouched": "value"}
+
+    # Each step got a deepcopy of the state and wrote its own key into "counters",
+    # so each hands back the whole nested dict
+    modified_states = [
+        {"counters": {"shared": 0, "a": 1}, "untouched": "value"},
+        {"counters": {"shared": 0, "b": 2}, "untouched": "value"},
+    ]
+
+    merge_parallel_session_states(original, modified_states)
+
+    assert original == {"counters": {"shared": 0, "a": 1, "b": 2}, "untouched": "value"}
+
+
+def test_merge_keeps_sibling_changes_to_a_newly_added_nested_dict():
+    """Two parallel steps that both create the same nested dict keep both changes"""
+
+    original = {"initial": "data"}
+
+    modified_states = [
+        {"initial": "data", "metrics": {"a": 1}},
+        {"initial": "data", "metrics": {"b": 2}},
+    ]
+
+    merge_parallel_session_states(original, modified_states)
+
+    assert original == {"initial": "data", "metrics": {"a": 1, "b": 2}}
+
+
+def test_merge_nested_conflict_takes_the_last_step():
+    """When parallel steps write the same nested key, the last one wins"""
+
+    original = {"counters": {"shared": 0}}
+
+    modified_states = [
+        {"counters": {"shared": 1}},
+        {"counters": {"shared": 2}},
+    ]
+
+    merge_parallel_session_states(original, modified_states)
+
+    assert original == {"counters": {"shared": 2}}
+
+
+def test_merge_nested_dict_replaced_by_a_scalar():
+    """A step that replaces a nested dict with a scalar still applies"""
+
+    original = {"config": {"debug": False}}
+
+    merge_parallel_session_states(original, [{"config": "disabled"}])
+
+    assert original == {"config": "disabled"}
+
+
+def test_merge_applies_a_removed_nested_key():
+    """A step that removes a nested key removes it from the merged state"""
+
+    original = {"config": {"a": 1, "b": 2}}
+
+    merge_parallel_session_states(original, [{"config": {"b": 2}}])
+
+    assert original == {"config": {"b": 2}}
+
+
+def test_merge_keeps_a_sibling_addition_next_to_a_removal():
+    """A removal by one step does not drop a key another step added to the same nested dict"""
+
+    original = {"config": {"a": 1, "b": 2}}
+
+    modified_states = [
+        {"config": {"a": 1, "b": 2, "c": 3}},
+        {"config": {"b": 2}},
+    ]
+
+    merge_parallel_session_states(original, modified_states)
+
+    assert original == {"config": {"b": 2, "c": 3}}
+
+
+def test_merge_does_not_apply_unchanged_nested_values():
+    """A step that only read the nested state changes nothing"""
+
+    original = {"counters": {"shared": 0, "a": 1}}
+    original_copy = deepcopy(original)
+
+    merge_parallel_session_states(original, [{"counters": {"shared": 0, "a": 1}}])
+
+    assert original == original_copy
