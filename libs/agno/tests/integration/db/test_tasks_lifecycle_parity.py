@@ -96,8 +96,15 @@ async def test_lifecycle_and_owner_guards(db):
         assert result["status"] == state
     assert [entry["target"] for entry in result["transitions"]] == states
     assert all(entry["user_id"] == "reviewer" for entry in result["transitions"])
+    done = result
+    result = await call(m.transition_task, task_id=rid, target="cancelled", reason="Withdrawn", accepted_by="reviewer")
+    assert result["status"] == "cancelled"
+    assert [entry["target"] for entry in result["transitions"]] == states + ["cancelled"]
+    assert result["transitions"][-1]["from"] == "done" and result["transitions"][-1]["user_id"] == "reviewer"
+    for kept in ("executor_type", "executor_id", "accepted_by", "accepted_at", "result"):
+        assert result[kept] == done[kept]
     with pytest.raises(ValueError):
-        await call(m.transition_task, task_id=rid, target="cancelled", reason="Terminal")
+        await call(m.transition_task, task_id=rid, target="cancelled", reason="Again")
     assert await call(m.restore_task, rid) is None
     assert await call(m.delete_task, rid)
     assert await call(m.get_task, rid) is None
@@ -106,7 +113,7 @@ async def test_lifecycle_and_owner_guards(db):
     assert (await call(m.list_tasks))[1] == 0
     assert (await call(m.list_tasks, include_deleted=True))[1] == 1
     assert await call(m.restore_task, rid, user_id="bob") is None
-    assert (await call(m.restore_task, rid))["status"] == "done"
+    assert (await call(m.restore_task, rid))["status"] == "cancelled"
     assert await call(m.get_task, "missing") is None
     assert await call(m.transition_task, task_id="missing", target="cancelled", reason="Missing") is None
 
