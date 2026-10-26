@@ -44,6 +44,5 @@ The Claude cookbooks work on a temporary copy of the [sample project](../sample_
 
 ## Not yet supported
 
-- Harness agents as workflow steps.
 - Saving a team with harness members as a Studio component: the harness members are not serialized.
 - If a member's native conversation cannot be resumed, for example on another machine without Claude's database-backed transcript store, it starts a new conversation without the team history; the leader still passes the context it chooses in the task.

@@ -1188,7 +1188,8 @@ class AgentOS:
         Tables are created here only when the OS provisions databases; otherwise an existing
         table is validated and a missing one is left to the deployment, as the first run was.
         """
-        for entry in [*(self.agents or []), *(member for member, _ in self._sandboxed_team_members())]:
+        nested = [*self._sandboxed_team_members(), *self._sandboxed_workflow_agents()]
+        for entry in [*(self.agents or []), *(agent for agent, _ in nested)]:
             if isinstance(entry, BaseExternalAgent) and entry.sandbox is not None and entry.db is not None:
                 from agno.sandbox import _harness
 
@@ -1217,12 +1218,69 @@ class AgentOS:
             visit(team)
         return found
 
-    def _prepare_sandboxed_member(self, member: BaseExternalAgent, team: Any) -> None:
-        """Give a sandboxed team member a database and fail at startup on what would fail its first turn."""
+    def _sandboxed_workflow_agents(self) -> List[Any]:
+        """(agent, owner) for sandboxed harness agents that run inside a served workflow, at any depth.
+
+        The owner is the workflow for a step, or the team for a member of a team used as a step.
+        Steps built by a callable are not walked.
+        """
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.router import Router
+        from agno.workflow.step import Step
+        from agno.workflow.steps import Steps
+        from agno.workflow.workflow import Workflow
+
+        found: List[Any] = []
+        seen: set = set()
+
+        def visit_team(team: Any) -> None:
+            if id(team) in seen or not isinstance(getattr(team, "members", None), list):
+                return
+            seen.add(id(team))
+            for member in team.members:
+                if isinstance(member, BaseExternalAgent) and member.sandbox is not None:
+                    found.append((member, team))
+                elif isinstance(member, Team):
+                    visit_team(member)
+
+        def visit(item: Any, workflow: Any) -> None:
+            if isinstance(item, BaseExternalAgent):
+                if item.sandbox is not None:
+                    found.append((item, workflow))
+            elif isinstance(item, Team):
+                visit_team(item)
+            elif isinstance(item, Workflow):
+                visit_workflow(item)
+            elif isinstance(item, (Step, Steps, Loop, Parallel, Condition, Router)):
+                for attr in ("agent", "team", "workflow"):
+                    if getattr(item, attr, None) is not None:
+                        visit(getattr(item, attr), workflow)
+                for attr in ("steps", "else_steps", "choices"):
+                    children = getattr(item, attr, None)
+                    if isinstance(children, list):
+                        for child in children:
+                            visit(child, workflow)
+
+        def visit_workflow(workflow: Any) -> None:
+            if id(workflow) in seen or not isinstance(getattr(workflow, "steps", None), list):
+                return
+            seen.add(id(workflow))
+            for step in workflow.steps:
+                visit(step, workflow)
+
+        for workflow in self._workflows or []:
+            visit_workflow(workflow)
+        return found
+
+    def _prepare_sandboxed_member(self, member: BaseExternalAgent, owner: Any) -> None:
+        """Give a sandboxed team member or workflow step a database and fail at startup on what would
+        fail its first turn."""
         from agno.sandbox import _harness
 
         if member.db is None:
-            member.db = getattr(team, "db", None) or self.db
+            member.db = getattr(owner, "db", None) or self.db
         _harness._check_db(member)
         if self.queue is not None and self.queue.durable:
             _harness.check_queue_checkpoints(member)
@@ -1330,6 +1388,11 @@ class AgentOS:
             if self.db is not None and workflow.db is None:
                 workflow.db = self.db
 
+        # Sandboxed harness steps coordinate their computers on Postgres, as served sandboxed agents do.
+        for agent, owner in self._sandboxed_workflow_agents():
+            self._prepare_sandboxed_member(agent, owner)
+
+        for workflow in self._workflows:
             # Track MCP tools recursively in workflow members
             collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
 

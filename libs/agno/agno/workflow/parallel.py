@@ -155,6 +155,7 @@ class Parallel:
     def _prepare_steps(self):
         """Prepare the steps for execution - mirrors workflow logic"""
         from agno.agent.agent import Agent
+        from agno.agents.base import BaseExternalAgent
         from agno.team.team import Team
         from agno.workflow.loop import Loop
         from agno.workflow.router import Router
@@ -166,7 +167,7 @@ class Parallel:
         for step in self.steps:
             if callable(step) and hasattr(step, "__name__"):
                 prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
-            elif isinstance(step, Agent):
+            elif isinstance(step, (Agent, BaseExternalAgent)):
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
             elif isinstance(step, Team):
                 prepared_steps.append(Step(name=step.name, description=step.description, team=step))

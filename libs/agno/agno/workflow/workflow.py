@@ -37,6 +37,7 @@ else:
     WebSocket = Any
 
 from agno.agent.agent import Agent
+from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
@@ -2535,7 +2536,7 @@ class Workflow:
             for step in self.steps:  # type: ignore
                 if callable(step):
                     step_type = StepType.STEP
-                elif isinstance(step, Agent) or isinstance(step, Team):
+                elif isinstance(step, (Agent, BaseExternalAgent)) or isinstance(step, Team):
                     step_type = StepType.STEP
                 elif isinstance(step, Workflow):
                     step_type = StepType.WORKFLOW
@@ -11046,7 +11047,7 @@ class Workflow:
                     step_name = step.__name__
                     log_debug(f"Step {i + 1}: Wrapping callable function '{step_name}'", log_level=2)
                     prepared_steps.append(Step(name=step_name, description="User-defined callable step", executor=step))  # type: ignore
-                elif isinstance(step, Agent):
+                elif isinstance(step, (Agent, BaseExternalAgent)):
                     step_name = step.name or f"step_{i + 1}"
                     log_debug(f"Step {i + 1}: Agent '{step_name}'", log_level=2)
                     prepared_steps.append(Step(name=step_name, description=step.description, agent=step))
@@ -11245,7 +11246,7 @@ class Workflow:
                 return step_dict
 
             # Handle Agent and Team objects directly
-            if isinstance(step, Agent):
+            if isinstance(step, (Agent, BaseExternalAgent)):
                 step_dict = {
                     "name": step.name or "unnamed_agent",
                     "description": step.description or "Agent step",
@@ -11839,7 +11840,7 @@ class Workflow:
             return Step(**step_kwargs)
 
         # Handle direct Agent
-        if isinstance(step, Agent):
+        if isinstance(step, (Agent, BaseExternalAgent)):
             return step.deep_copy() if hasattr(step, "deep_copy") else step
 
         # Handle direct Team

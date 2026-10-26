@@ -111,6 +111,10 @@ remove SDK-native session files.
 
 Claude Code and Codex can be members of an Agno team next to native agents; the leader delegates to them like any member. See [harness_teams](harness_teams/README.md).
 
+## Harness agents in a workflow
+
+Claude Code and Codex can also run as workflow steps, in a `Step` or directly in `Parallel`, `Loop`, `Condition` and `Router`. See [harness_workflows](harness_workflows/README.md).
+
 ## Existing examples and the next exercises
 
 The [Claude guide](claude-agent-sdk/README.md#more-claude-examples) and
