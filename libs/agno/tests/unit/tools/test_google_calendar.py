@@ -3,6 +3,7 @@
 import json
 import os
 import tempfile
+from datetime import datetime
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -526,6 +527,35 @@ class TestFindAvailableSlots:
         params = mock_calendar_service.events().list.call_args.kwargs
         assert params["timeMin"] == "2026-10-02T09:00:00+00:00"
         assert params["timeMax"] == "2026-10-02T17:00:00+00:00"
+
+    @patch.object(GoogleCalendarTools, "_get_working_hours")
+    def test_find_available_slots_blocks_busy_event_on_last_day(
+        self, mock_working_hours, calendar_tools, mock_calendar_service
+    ):
+        mock_working_hours.return_value = json.dumps(
+            {"start_hour": 9, "end_hour": 17, "timezone": "UTC", "locale": "en"}
+        )
+        busy_event = {
+            "start": {"dateTime": "2026-10-02T14:00:00+00:00"},
+            "end": {"dateTime": "2026-10-02T15:00:00+00:00"},
+        }
+
+        def execute_list_request():
+            params = mock_calendar_service.events().list.call_args.kwargs
+            time_min = datetime.fromisoformat(params["timeMin"])
+            time_max = datetime.fromisoformat(params["timeMax"])
+            event_start = datetime.fromisoformat(busy_event["start"]["dateTime"])
+            event_end = datetime.fromisoformat(busy_event["end"]["dateTime"])
+            if event_end > time_min and event_start < time_max:
+                return {"items": [busy_event]}
+            return {"items": []}
+
+        mock_calendar_service.events().list().execute.side_effect = execute_list_request
+
+        result = json.loads(calendar_tools.find_available_slots("2026-10-01", "2026-10-02", duration_minutes=60))
+
+        assert result["events_analyzed"] == 1
+        assert "2026-10-02T14:00:00+00:00" not in [slot["start"] for slot in result["available_slots"]]
 
     def test_find_available_slots_invalid_date(self, calendar_tools):
         result = calendar_tools.find_available_slots(
