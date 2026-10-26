@@ -5,6 +5,32 @@ import pytest
 from agno.tools.duckdb import DuckDbTools
 
 
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("SELECT value FROM records WHERE value = 'hello`world'", "value\nhello`world"),
+        ("SELECT value FROM records WHERE value = 'it''s`here'", "value\nit's`here"),
+        (r"SELECT value FROM records WHERE value = E'it\'s`here'", "value\nit's`here"),
+        ("SELECT value FROM records WHERE value = $$hello`world$$", "value\nhello`world"),
+        ("SELECT value FROM records WHERE value = $tag$hello`world$tag$", "value\nhello`world"),
+        ("SELECT \"tick`column\" FROM records WHERE value = 'plain'", "tick`column\n3"),
+        ("SELECT `value` FROM `records` WHERE value = 'plain'", "value\nplain"),
+        ("SELECT '北京`' AS city, `value` FROM `records` WHERE value = 'plain'", "city,value\n北京`,plain"),
+        ("SELECT `value` FROM records /* outer ` /* inner \" */ ' ` */ WHERE value = 'plain'", "value\nplain"),
+    ],
+)
+def test_run_query_preserves_backticks_in_sql_values(query, expected):
+    duckdb = pytest.importorskip("duckdb")
+    with duckdb.connect() as connection:
+        connection.execute('CREATE TABLE records (value VARCHAR, "tick`column" INTEGER)')
+        connection.executemany(
+            "INSERT INTO records VALUES (?, ?)", [("hello`world", 1), ("it's`here", 2), ("plain", 3)]
+        )
+        tools = DuckDbTools(connection=connection)
+
+        assert tools.run_query(query) == expected
+
+
 @pytest.fixture
 def mock_duckdb_connection():
     """Mock DuckDB connection used by DuckDbTools."""

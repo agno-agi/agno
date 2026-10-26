@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.tools import Toolkit
+from agno.utils._sql import _strip_backtick_identifier_quotes
 from agno.utils.log import log_debug, log_info, log_warning, logger
 
 try:
@@ -128,13 +129,11 @@ class DuckDbTools(Toolkit):
             str: Result of the query
         """
 
-        # -*- Format the SQL Query
-        # Remove backticks
-        formatted_sql = query.replace("`", "")
-        # If there are multiple statements, only run the first one
-        formatted_sql = formatted_sql.split(";")[0]
-
         try:
+            # Preserve SQL values and quoted identifiers while accepting legacy backticks.
+            formatted_sql = _strip_backtick_identifier_quotes(query)
+            # If there are multiple statements, only run the first one
+            formatted_sql = formatted_sql.split(";")[0]
             log_info(f"Running: {formatted_sql}")
 
             query_result = self.connection.sql(formatted_sql)
