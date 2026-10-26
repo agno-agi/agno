@@ -49,6 +49,7 @@ from agno.os.mcp_auth import (  # noqa: E402
     ServiceAccountTokenVerifier,
     mcp_auth_route_paths,
 )
+from agno.os.middleware.jwt import AuthMiddleware  # noqa: E402
 from agno.os.service_accounts import generate_token  # noqa: E402
 from agno.os.settings import AgnoAPISettings  # noqa: E402
 
@@ -286,7 +287,7 @@ def test_agentos_managed_auth_does_not_trip_the_guard(tmp_path):
     db = _sqlite_db(tmp_path)
     os = _oauth_os(db=db, security_key="k")
     os.get_app()  # no raise; exemptions are on AgentOS's own middleware
-    assert any(m.cls.__name__ == "AuthMiddleware" for m in os.get_app().user_middleware)
+    assert any(isinstance(m.cls, type) and issubclass(m.cls, AuthMiddleware) for m in os.get_app().user_middleware)
 
 
 def test_mcp_auth_rejects_non_provider():

@@ -176,3 +176,55 @@ class TestWorkerStreamingWorkflowJob:
 
         received = [idx async for idx, _sse in fresh_stream.tail("wr1")]
         assert received == [0, 1]
+
+
+@pytest.mark.asyncio
+async def test_native_function_progress_survives_queue_stream_and_run_storage(fresh_stream):
+    import json
+
+    from agno.db.in_memory import InMemoryDb
+    from agno.job_queue.config import QueueConfig
+    from agno.job_queue.store import InMemoryQueueStore
+    from agno.os.job_queue import QueueWorker
+    from agno.workflow.step import Step
+    from agno.workflow.types import StepOutput, StepProgress
+
+    async def sync(step_input):
+        yield StepProgress(content="one page", data={"processed": 1})
+        yield StepOutput(content="done")
+
+    workflow = Workflow(
+        id="wf-progress", steps=[Step(name="sync", executor=sync)], db=InMemoryDb(), store_events=True, telemetry=False
+    )
+    store = InMemoryQueueStore()
+    await store.enqueue_job(
+        dict(
+            id="progress-job",
+            component_type="workflow",
+            component_id=workflow.id,
+            session_id="s1",
+            job_type="run",
+            payload={"input": "go", "kwargs": {}, "stream": True},
+            status="queued",
+            attempt=0,
+            max_attempts=1,
+            available_at=0,
+            created_at=0,
+        )
+    )
+    worker = QueueWorker(
+        store=store,
+        resolve_component=lambda kind, ident: workflow,
+        config=QueueConfig(durable=True, poll_interval=0.05, lock_grace_seconds=60),
+    )
+    await worker._execute_claimed(await store.claim_job(worker.worker_id))
+    assert (await store.get_job("progress-job"))["status"] == "completed"
+    received = [payload async for _, payload in fresh_stream.tail("progress-job")]
+    events = [
+        json.loads(line[6:]) for payload in received for line in payload.splitlines() if line.startswith("data: ")
+    ]
+    progress = [event for event in events if event["event"] == "StepProgress"]
+    assert len(progress) == 1 and progress[0]["run_id"] == "progress-job"
+    assert progress[0]["data"] == {"processed": 1}
+    stored = await workflow.aget_run_output(run_id="progress-job", session_id="s1")
+    assert stored.content == "done" and len(stored.step_results) == 1

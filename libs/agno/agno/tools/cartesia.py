@@ -20,7 +20,7 @@ class CartesiaTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model_id: str = "sonic-2",
+        model_id: str = "sonic-3.6",
         default_voice_id: str = "78ab82d5-25be-4f7d-82b3-7ad64e5b85b2",
         enable_text_to_speech: bool = True,
         enable_list_voices: bool = True,

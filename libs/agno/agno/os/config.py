@@ -1,8 +1,11 @@
 """Schemas related to the AgentOS configuration"""
 
+import re
 from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Set, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from agno.company.declarations import CompanyDeclarations
 
 # Tags carried by the built-in MCP tools, exposed here so callers (and the IDE) can see
 # the valid values for ``MCPConfig.include_tags`` / ``exclude_tags`` without reading
@@ -16,6 +19,11 @@ MCPBuiltinTag = Literal["core", "session", "lifecycle"]
 
 # Where the MCP server publishes its Server Card: the MCP endpoint path plus ``/server-card``.
 MCP_SERVER_CARD_PATH = "/mcp/server-card"
+
+# Where the MCP server runs one published tool over plain HTTP, for an operator UI that tests
+# a tool without speaking the protocol.
+MCP_SERVER_TOOLS_PATH = "/mcp/server/tools"
+MCP_TOOL_RUN_PATH = "/mcp/server/tools/{tool_name}/run"
 
 
 def _apply_legacy_enable_builtin_tools(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -81,6 +89,19 @@ class MCPConfig(BaseModel):
     # host would otherwise be echoed into a publicly cacheable document.
     server_card_url: Optional[str] = None
 
+    # Serve ``POST /mcp/server/tools/{name}/run``, the plain-HTTP runner an operator UI uses to
+    # test a published tool without implementing an MCP client. It runs the same tools under the
+    # same gates as the transport, so it is on by default; a protocol-only deployment switches it
+    # off to keep one write path. ``/info`` reports the effective value.
+    tool_run_endpoint: bool = True
+
+    # How long a single ``/mcp/server/tools/{name}/run`` call -- the plain-HTTP runner an
+    # operator UI uses to test a published tool -- may take before it is abandoned with a
+    # 504. A run tool drives a model, so this is generous; it exists so a hung tool cannot
+    # hold a connection open indefinitely. The MCP transport has no such limit -- a protocol
+    # client manages its own.
+    tool_run_timeout_seconds: float = Field(default=120.0, gt=0)
+
     # External transport path and optional legacy aliases. Policies use one native MCP route.
     path: str = "/mcp"
     path_aliases: List[str] = Field(default_factory=list)
@@ -95,8 +116,18 @@ class MCPConfig(BaseModel):
             if not re.fullmatch(r"/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+", path):
                 raise ValueError("MCP paths must be non-root absolute paths with plain segments; use root_host for /")
         paths = [self.path, *self.path_aliases]
-        if len(set(paths)) != len(paths) or any(p + "/server-card" in paths for p in paths):
-            raise ValueError("MCP transport and server-card paths must not overlap")
+        # A transport path that lands anywhere inside another path's reserved sub-routes
+        # would be shadowed by them, so compare against the whole subtree rather than the
+        # exact prefix: "/mcp/server/tools" sits under "/mcp"'s "/server" just as
+        # "/mcp/server" does, and either would swallow requests meant for the transport.
+        reserved = ("/server-card", "/server")
+        if len(set(paths)) != len(paths) or any(
+            other == p + suffix or other.startswith(p + suffix + "/")
+            for p in paths
+            for suffix in reserved
+            for other in paths
+        ):
+            raise ValueError("MCP transport, server-card and server paths must not overlap")
         if self.root_host is not None:
             if not re.fullmatch(
                 r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?",
@@ -412,6 +443,34 @@ MCPServerConfig = MCPConfig
 _AUTHZ_FIELDS_MOVED_TO_AUTHORIZATION = ("issuer", "authorization_provider", "audit", "role_store")
 
 
+class CORSConfig(BaseModel):
+    """Browser origin policy for AgentOS, passed as ``AgentOS(cors=CORSConfig(...))``.
+
+    The same policy answers CORS preflights, adds CORS headers to auth errors, admits
+    browser origins on the MCP surface, and is what ``PublicSurface(enforce_browser_origins=True)``
+    admits.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Exact browser origins. None uses the settings defaults; [] allows no exact origins.
+    origins: Optional[List[str]] = None
+    # Additional origins, matched against the whole Origin value.
+    origin_regex: Optional[str] = None
+    # Keep CORS origins and patterns already configured on a base_app.
+    merge_base_app: bool = True
+
+    @field_validator("origin_regex")
+    @classmethod
+    def _compile_origin_regex(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None:
+            try:
+                re.compile(value)
+            except re.error as exc:
+                raise ValueError(f"origin_regex is not a valid regular expression: {exc}") from exc
+        return value
+
+
 class AuthorizationConfig(BaseModel):
     """Low-level JWT verification config. Deprecated as a public type.
 
@@ -504,6 +563,12 @@ class MemoryDomainConfig(BaseModel):
     display_name: Optional[str] = None
 
 
+class CompanyDomainConfig(BaseModel):
+    """Display configuration for the Company domain."""
+
+    display_name: Optional[str] = None
+
+
 class LearningDomainConfig(BaseModel):
     """Configuration for the Learning domain of the AgentOS"""
 
@@ -543,6 +608,12 @@ class MemoryConfig(MemoryDomainConfig):
     """Configuration for the Memory domain of the AgentOS"""
 
     dbs: Optional[List[DatabaseConfig[MemoryDomainConfig]]] = None
+
+
+class CompanySectionConfig(CompanyDomainConfig):
+    """Company database and table configuration exposed to clients."""
+
+    dbs: List[DatabaseConfig[CompanyDomainConfig]] = Field(default_factory=list)
 
 
 class LearningConfig(LearningDomainConfig):
@@ -601,6 +672,10 @@ class Manifest(BaseModel):
     quick_prompts: Optional[List[str]] = None
 
 
+class CompanySettings(CompanySectionConfig, CompanyDeclarations):
+    """Company declarations and optional display overrides in AgentOS configuration."""
+
+
 class AgentOSConfig(BaseModel):
     """General configuration for an AgentOS instance"""
 
@@ -614,6 +689,14 @@ class AgentOSConfig(BaseModel):
     knowledge: Optional[KnowledgeConfig] = None
     memory: Optional[MemoryConfig] = None
     learning: Optional[LearningConfig] = None
+    company: Optional[CompanySettings] = None
     session: Optional[SessionConfig] = None
     metrics: Optional[MetricsConfig] = None
     traces: Optional[TracesConfig] = None
+
+    @field_validator("company", mode="before")
+    @classmethod
+    def _company_settings(cls, value: Any) -> Any:
+        if isinstance(value, BaseModel):
+            return value.model_dump()
+        return value

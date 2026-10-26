@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "3.1.0"
+version = "3.1.10"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -40,6 +40,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+agentcore-sandbox = ["boto3>=1.43.113"]
 dev = [
   "mypy==2.1.0",
   "ruff==0.15.20",
@@ -77,7 +78,7 @@ dev = [
 ]
 
 # AgentOS server bundle
-os = ["fastapi", "python-multipart>=0.0.18", "uvicorn", "websockets", "sqlalchemy[asyncio]", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "agno[scheduler]"]
+os = ["fastapi", "python-multipart>=0.0.18", "jsonschema", "uvicorn", "websockets", "sqlalchemy[asyncio]", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "agno[scheduler]"]
 mcp = ["mcp>=2.1.0,<3.0.0", "fastmcp>=4.0.0,<5"]
 # Optional extra for fine-grained / relationship-based authorization (ReBAC) via OpenFGA.
 fga = ["openfga-sdk>=0.9"]
@@ -89,6 +90,10 @@ weave = ["weave"]
 openlit = ["openlit", "agno[opentelemetry]"]
 arize = ["arize-phoenix", "agno[opentelemetry]", "opentelemetry-exporter-otlp-proto-grpc", "opentelemetry-distro"]
 langfuse = ["langfuse"]
+
+# Dependencies for External Agent Harnesses
+claude = ["claude-agent-sdk>=0.2.148"]
+codex = ["openai-codex"]
 
 # Dependencies for Models
 # >=0.77.0: the first release accepting output_config on the stable messages endpoint
@@ -119,6 +124,7 @@ cel = ["cel-python"]
 
 # Dependencies for Tools
 agentql = ["agentql"]
+anakin = []  # uses httpx, already a core dependency
 apify = ["apify-client"]
 arxiv = ["arxiv"]
 brave = ["brave-search"]
@@ -295,6 +301,7 @@ models = [
 # All tools
 tools = [
   "agno[agentql]",
+  "agno[anakin]",
   "agno[apify]",
   "agno[arxiv]",
   # "agno[brave]",  # Excluded: brave-search 0.2.0 ships invalid metadata (bad httpx specifier) that uv cannot parse; test_setup.sh installs it with --no-deps
@@ -421,6 +428,7 @@ embedders = [
 
 # All libraries for testing
 tests = [
+    "claude-agent-sdk>=0.2.148",
   "agno[pages]",
     "agno[a2a]",
     "agno[slack]",
@@ -436,6 +444,8 @@ tests = [
     "agno[cookbooks]",
     "agno[agui]",
     "agno[integration-tests]",
+    # In-process S3 for the sandbox checkpoint store tests.
+    "moto[s3]>=5",
     "twine",
     "build",
     "grpcio>=1.76.0",
@@ -490,6 +500,7 @@ demo = [
     "yfinance",
     "youtube-transcript-api",
     "claude-agent-sdk",
+    "openai-codex",
     "langgraph",
     "langchain-openai",
     "dspy",
@@ -511,7 +522,7 @@ build-backend = "setuptools.build_meta"
 include = ["agno*"]
 
 [tool.setuptools.package-data]
-agno = ["py.typed"]
+agno = ["py.typed", "company/skills/*/SKILL.md"]
 include = ["LICENSE"]
 
 [tool.pytest.ini_options]
@@ -519,6 +530,7 @@ log_cli = true
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
+  "live: opt-in tests against public external services",
   "integration: tests that need live services (kernels, databases)",
 ]
 
@@ -632,6 +644,7 @@ module = [
   "newspaper.*",
   "numpy.*",
   "ollama.*",
+  "openai_codex.*",
   "openfga_sdk.*",
   "openpyxl.*",
   "openai.*",

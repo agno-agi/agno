@@ -93,9 +93,7 @@ def resolve_authorization_provider(app_or_request: Any) -> AuthorizationProvider
     """
     app = getattr(app_or_request, "app", app_or_request)
     provider = getattr(getattr(app, "state", None), "authorization_provider", None)
-    if provider is not None:
-        return provider
-    return _default_authorization_provider()
+    return provider if provider is not None else _default_authorization_provider()
 
 
 def _store_default_role(role_store: Any) -> Optional[str]:
@@ -492,11 +490,15 @@ async def _authenticate_service_account(
     admin_scope_raw = getattr(request.app.state, "admin_scope", None)
     admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
 
+    scope_mappings = getattr(request.app.state, "scope_mappings", None)
+    if scope_mappings is None:
+        scope_mappings = _default_scope_mappings()
+
     error = await authenticate_service_account_request(
         request,
         token,
         verifier=verifier,
-        scope_mappings=_default_scope_mappings(),
+        scope_mappings=scope_mappings,
         admin_scope=admin_scope,
     )
     if error is not None:
@@ -626,21 +628,11 @@ def get_authentication_dependency(settings: AgnoAPISettings):
         if _is_jwt_configured():
             return True
 
-        # If no security key is set, skip authentication entirely
-        if not settings or not settings.os_security_key:
-            return True
-
-        # If security is enabled but no authorization header provided, fail
-        if not credentials:
-            raise HTTPException(status_code=401, detail="Authorization header required")
-
-        token = credentials.credentials
-
         # Check internal service token (used by scheduler executor).
         # ``INTERNAL_SCHEDULER_USER_ID`` identifies the caller, not the owner of the work:
         # routes prefer the executor's form-field ``user_id`` so writes land on the schedule owner.
         internal_token = getattr(request.app.state, "internal_service_token", None)
-        if internal_token and hmac.compare_digest(token, internal_token):
+        if token and internal_token and _constant_time_equal(token, internal_token):
             request.state.authenticated = True
             request.state.user_id = INTERNAL_SCHEDULER_USER_ID
             request.state.scopes = list(INTERNAL_SERVICE_SCOPES)
@@ -650,6 +642,16 @@ def get_authentication_dependency(settings: AgnoAPISettings):
             # server-only — no client input maps onto this attribute.
             request.state.is_internal_service = True
             return True
+
+        # If no security key is set, skip authentication entirely
+        if not settings or not settings.os_security_key:
+            return True
+
+        # If security is enabled but no authorization header provided, fail
+        if not credentials:
+            raise HTTPException(status_code=401, detail="Authorization header required")
+
+        token = credentials.credentials
 
         # Verify the token against the security key in constant time, like the internal token
         # above and the middleware path, so a mismatch position cannot be timed.

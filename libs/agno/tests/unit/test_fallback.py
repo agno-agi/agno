@@ -775,3 +775,193 @@ class TestEdgeCases:
         """FallbackConfig callback defaults to None."""
         config = FallbackConfig()
         assert config.callback is None
+
+
+# =============================================================================
+# Overflow recovery must never mask the provider's error
+# =============================================================================
+
+
+class TestFailingOverflowRecovery:
+    """The recovery hook runs inside the handler for the provider's error. If it raises, the
+    provider's error and the fallback chain must still run as if recovery had not been tried."""
+
+    @staticmethod
+    def _broken_hook() -> bool:
+        raise ValueError("bad config")
+
+    def test_the_providers_error_is_raised_not_the_hooks(self):
+        primary = _make_model("primary")
+        with patch.object(primary, "response", side_effect=ContextWindowExceededError("too long")):
+            with pytest.raises(ContextWindowExceededError):
+                call_model_with_fallback(primary, None, recover_from_overflow=self._broken_hook, messages=[])
+
+    def test_the_fallback_chain_still_runs(self):
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_context_overflow=[fallback])
+        with patch.object(primary, "response", side_effect=ContextWindowExceededError("too long")):
+            with patch.object(fallback, "response", return_value=ModelResponse(content="fallback-ok")):
+                result = call_model_with_fallback(primary, config, recover_from_overflow=self._broken_hook, messages=[])
+        assert result.content == "fallback-ok"
+
+    def test_streaming_and_async_paths_behave_the_same(self):
+        import asyncio
+
+        primary = _make_model("primary")
+        error = ContextWindowExceededError("too long")
+
+        def stream(**kwargs):
+            raise error
+            yield  # pragma: no cover
+
+        async def aresponse(**kwargs):
+            raise error
+
+        async def astream(**kwargs):
+            raise error
+            yield  # pragma: no cover
+
+        async def consume_async_stream():
+            async for _ in acall_model_stream_with_fallback(
+                primary, None, recover_from_overflow=self._broken_hook, messages=[]
+            ):
+                pass
+
+        with patch.object(primary, "response_stream", side_effect=stream):
+            with pytest.raises(ContextWindowExceededError):
+                list(
+                    call_model_stream_with_fallback(primary, None, recover_from_overflow=self._broken_hook, messages=[])
+                )
+        with patch.object(primary, "aresponse", side_effect=aresponse):
+            with pytest.raises(ContextWindowExceededError):
+                asyncio.run(
+                    acall_model_with_fallback(primary, None, recover_from_overflow=self._broken_hook, messages=[])
+                )
+        with patch.object(primary, "aresponse_stream", side_effect=astream):
+            with pytest.raises(ContextWindowExceededError):
+                asyncio.run(consume_async_stream())
+
+
+class TestAsyncOverflowHook:
+    """The async wrappers await a hook that returns an awaitable, so recovery - a summarizer call -
+    never blocks the event loop. A sync hook keeps working."""
+
+    def test_an_async_hook_is_awaited_and_the_call_retried(self):
+        import asyncio
+
+        primary = _make_model("primary")
+        recovered = []
+
+        async def hook():
+            await asyncio.sleep(0)
+            recovered.append(True)
+            return True
+
+        responses = [ContextWindowExceededError("too long"), ModelResponse(content="ok")]
+
+        async def aresponse(**kwargs):
+            outcome = responses.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        with patch.object(primary, "aresponse", side_effect=aresponse):
+            result = asyncio.run(acall_model_with_fallback(primary, None, recover_from_overflow=hook, messages=[]))
+
+        assert result.content == "ok"
+        assert recovered == [True]
+
+    def test_a_sync_hook_still_works_on_the_async_path(self):
+        import asyncio
+
+        primary = _make_model("primary")
+        responses = [ContextWindowExceededError("too long"), ModelResponse(content="ok")]
+
+        async def aresponse(**kwargs):
+            outcome = responses.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        with patch.object(primary, "aresponse", side_effect=aresponse):
+            result = asyncio.run(
+                acall_model_with_fallback(primary, None, recover_from_overflow=lambda: True, messages=[])
+            )
+
+        assert result.content == "ok"
+
+    def test_a_failing_async_hook_does_not_mask_the_providers_error(self):
+        import asyncio
+
+        primary = _make_model("primary")
+
+        async def broken():
+            raise ValueError("bad config")
+
+        with patch.object(primary, "aresponse", side_effect=ContextWindowExceededError("too long")):
+            with pytest.raises(ContextWindowExceededError):
+                asyncio.run(acall_model_with_fallback(primary, None, recover_from_overflow=broken, messages=[]))
+
+
+# =============================================================================
+# A failed retry after overflow recovery raises the retry's error
+# =============================================================================
+
+
+class TestFailedOverflowRetry:
+    """After recovery shrinks the request and the retry still overflows, the caller must see the
+    retry's error - it describes the request as last sent, not the one before the fold."""
+
+    first = ContextWindowExceededError("input is 300000 tokens")
+    second = ContextWindowExceededError("input is 210000 tokens")
+
+    def test_sync(self):
+        primary = _make_model("primary")
+        with patch.object(primary, "response", side_effect=[self.first, self.second]):
+            with pytest.raises(ContextWindowExceededError) as raised:
+                call_model_with_fallback(primary, None, recover_from_overflow=lambda: True, messages=[])
+        assert raised.value is self.second
+
+    def test_async(self):
+        import asyncio
+
+        primary = _make_model("primary")
+        with patch.object(primary, "aresponse", AsyncMock(side_effect=[self.first, self.second])):
+            with pytest.raises(ContextWindowExceededError) as raised:
+                asyncio.run(acall_model_with_fallback(primary, None, recover_from_overflow=lambda: True, messages=[]))
+        assert raised.value is self.second
+
+    def test_stream(self):
+        primary = _make_model("primary")
+        errors = iter([self.first, self.second])
+
+        def stream(**kwargs):
+            raise next(errors)
+            yield  # pragma: no cover
+
+        with patch.object(primary, "response_stream", side_effect=stream):
+            with pytest.raises(ContextWindowExceededError) as raised:
+                list(call_model_stream_with_fallback(primary, None, recover_from_overflow=lambda: True, messages=[]))
+        assert raised.value is self.second
+
+    def test_async_stream(self):
+        import asyncio
+
+        primary = _make_model("primary")
+        errors = iter([self.first, self.second])
+
+        async def astream(**kwargs):
+            raise next(errors)
+            yield  # pragma: no cover
+
+        async def consume():
+            async for _ in acall_model_stream_with_fallback(
+                primary, None, recover_from_overflow=lambda: True, messages=[]
+            ):
+                pass
+
+        with patch.object(primary, "aresponse_stream", side_effect=astream):
+            with pytest.raises(ContextWindowExceededError) as raised:
+                asyncio.run(consume())
+        assert raised.value is self.second
