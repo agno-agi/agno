@@ -713,18 +713,30 @@ class TestFindAvailableSlots:
         assert result["available_slots"] == []
 
     def test_find_available_slots_unknown_timezone_falls_back_to_utc(self, calendar_tools):
-        result, _ = self._find_slots(calendar_tools, "Not/AZone", "2026-10-27", "2026-10-27")
+        with patch("agno.tools.google.calendar.log_warning") as mock_warning:
+            result, _ = self._find_slots(calendar_tools, "Not/AZone", "2026-10-27", "2026-10-27")
 
+        mock_warning.assert_called_once()
+        assert "Could not load timezone 'Not/AZone'" in mock_warning.call_args.args[0]
+        assert "using UTC" in mock_warning.call_args.args[0]
         assert result["timezone"] == "UTC"
         assert result["available_slots"][0]["start"] == "2026-10-27T09:00:00+00:00"
+        assert all(slot["end"].endswith("+00:00") for slot in result["available_slots"])
 
     def test_find_available_slots_without_timezone_database(self, calendar_tools):
         # Windows without the tzdata package cannot resolve any zone, not even "UTC"
-        with patch("agno.tools.google.calendar.ZoneInfo", side_effect=ZoneInfoNotFoundError("no tzdata")):
+        with (
+            patch("agno.tools.google.calendar.ZoneInfo", side_effect=ZoneInfoNotFoundError("no tzdata")),
+            patch("agno.tools.google.calendar.log_warning") as mock_warning,
+        ):
             result, _ = self._find_slots(calendar_tools, "Asia/Kolkata", "2026-10-27", "2026-10-27")
 
+        mock_warning.assert_called_once()
+        assert "Could not load timezone 'Asia/Kolkata'" in mock_warning.call_args.args[0]
+        assert "using UTC" in mock_warning.call_args.args[0]
         assert result["timezone"] == "UTC"
         assert result["available_slots"][0]["start"] == "2026-10-27T09:00:00+00:00"
+        assert all(slot["end"].endswith("+00:00") for slot in result["available_slots"])
 
 
 class TestListCalendars:

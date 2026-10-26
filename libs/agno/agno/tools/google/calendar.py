@@ -542,7 +542,8 @@ class GoogleCalendarTools(GoogleToolkit):
         """
         Find available time slots within a date range based on your calendar.
         Checks existing events against working hours to find free windows.
-        Dates, working hours and the returned slots are in your Google Calendar timezone.
+        Dates, working hours and the returned slots are in your Google Calendar timezone, or UTC if that
+        timezone cannot be loaded; the result's "timezone" field names the one used.
 
         Args:
             start_date (str): Start date in ISO format (YYYY-MM-DD)
@@ -574,7 +575,7 @@ class GoogleCalendarTools(GoogleToolkit):
             try:
                 user_tz = ZoneInfo(tz)
             except (ZoneInfoNotFoundError, ValueError):
-                log_warning(f"Unknown timezone '{tz}' in calendar settings, using UTC")
+                log_warning(f"Could not load timezone '{tz}' from calendar settings, using UTC")
                 user_tz, tz = datetime.timezone.utc, "UTC"
 
             start_day = _to_local_date(start_date, user_tz)
