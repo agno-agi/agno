@@ -69,8 +69,8 @@ class FileSystemKnowledge:
             raise ValueError(f"Path is not a directory: {self.base_dir}")
 
     def _should_include_file(self, file_path: Path) -> bool:
-        """Check if a file should be included based on patterns."""
-        path_str = str(file_path)
+        """Check patterns against paths within the knowledge root."""
+        path_str = str(file_path.relative_to(self.base_path))
 
         # Check exclude patterns
         for pattern in self.exclude_patterns:
