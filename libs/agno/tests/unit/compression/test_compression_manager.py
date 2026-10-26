@@ -2,6 +2,19 @@ import pytest
 
 from agno.models.message import Message
 
+STORED_RESULT_ENVELOPE = """<result id="res_abc123" tool="fetch_page" lines="3" size="1KB">
+line 1
+line 2
+</result>
+Full result stored; read with read_result("res_abc123") or search_result("res_abc123", pattern)."""
+
+REFUSED_RESULT_ENVELOPE = """<result tool="fetch_page" lines="3" size="1KB" stored="false" reason="quota">
+line 1
+[... 1 lines omitted ...]
+line 3
+</result>
+Full result was NOT stored. Re-run the tool with a narrower query if you need the rest."""
+
 
 @pytest.mark.asyncio
 async def test_ashould_compress_below_token_limit():
@@ -158,6 +171,85 @@ def test_should_compress_excludes_already_compressed():
     result = cm.should_compress(messages)
 
     assert result is False
+
+
+@pytest.mark.parametrize("content", [STORED_RESULT_ENVELOPE, REFUSED_RESULT_ENVELOPE])
+def test_result_store_envelopes_are_detected(content):
+    from agno.compression.manager import CompressionManager
+
+    assert CompressionManager._is_result_envelope(content) is True
+
+
+def test_result_envelope_detection_requires_complete_marker():
+    from agno.compression.manager import CompressionManager
+
+    assert CompressionManager._is_result_envelope('<result id="res_abc123">preview</result>') is True
+    assert CompressionManager._is_result_envelope('<result stored="false">preview</result>') is True
+    assert CompressionManager._is_result_envelope("<result>plain output</result>") is False
+    assert CompressionManager._is_result_envelope('<result id="res_abc123">plain output') is False
+    assert CompressionManager._is_result_envelope("plain tool output") is False
+
+
+def test_should_compress_excludes_result_store_envelopes_from_count():
+    from agno.compression.manager import CompressionManager
+
+    messages = [Message(role="tool", content=STORED_RESULT_ENVELOPE, tool_name="fetch_page")]
+    cm = CompressionManager(compress_tool_results=True, compress_tool_results_limit=1)
+
+    assert cm.should_compress(messages) is False
+
+
+def test_compress_skips_result_store_envelopes(monkeypatch):
+    from agno.compression.manager import CompressionManager
+
+    envelope = Message(role="tool", content=STORED_RESULT_ENVELOPE, tool_name="fetch_page")
+    ordinary = Message(role="tool", content="ordinary result", tool_name="other_tool")
+    calls = []
+
+    def fake_compress(tool_result, run_metrics=None):
+        calls.append(tool_result)
+        return "compressed ordinary result"
+
+    cm = CompressionManager(compress_tool_results=True, compress_tool_results_limit=1)
+    monkeypatch.setattr(cm, "_compress_tool_result", fake_compress)
+
+    cm.compress([envelope, ordinary])
+
+    assert calls == [ordinary]
+    assert envelope.compressed_content is None
+    assert ordinary.compressed_content == "compressed ordinary result"
+    assert cm.stats == {
+        "tool_results_compressed": 1,
+        "original_size": len("ordinary result"),
+        "compressed_size": len("compressed ordinary result"),
+    }
+
+
+@pytest.mark.asyncio
+async def test_acompress_skips_result_store_envelopes(monkeypatch):
+    from agno.compression.manager import CompressionManager
+
+    envelope = Message(role="tool", content=REFUSED_RESULT_ENVELOPE, tool_name="fetch_page")
+    ordinary = Message(role="tool", content="ordinary result", tool_name="other_tool")
+    calls = []
+
+    async def fake_compress(tool_result, run_metrics=None):
+        calls.append(tool_result)
+        return "compressed ordinary result"
+
+    cm = CompressionManager(compress_tool_results=True, compress_tool_results_limit=1)
+    monkeypatch.setattr(cm, "_acompress_tool_result", fake_compress)
+
+    await cm.acompress([envelope, ordinary])
+
+    assert calls == [ordinary]
+    assert envelope.compressed_content is None
+    assert ordinary.compressed_content == "compressed ordinary result"
+    assert cm.stats == {
+        "tool_results_compressed": 1,
+        "original_size": len("ordinary result"),
+        "compressed_size": len("compressed ordinary result"),
+    }
 
 
 @pytest.mark.asyncio
