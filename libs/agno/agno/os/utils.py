@@ -2877,9 +2877,17 @@ def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any],
             # Handle live Message objects
             if isinstance(input_content[0], Message):
                 return json.dumps([m.to_dict() for m in input_content])
-            # Handle serialized Message dicts
-            elif isinstance(input_content[0], dict) and input_content[0].get("role") == "user":
-                return input_content[0].get("content", str(input_content))
+            # Handle serialized Message dicts: the effective user input is the last
+            # user message — earlier ones are history prepended to the list (e.g.
+            # when a team runs a member with its history plus the delegated task).
+            elif isinstance(input_content[0], dict) and "role" in input_content[0]:
+                user_contents = [
+                    message.get("content")
+                    for message in input_content
+                    if isinstance(message, dict) and message.get("role") == "user" and message.get("content")
+                ]
+                if user_contents:
+                    return user_contents[-1]
         return str(input_content)
     else:
         return str(input_content)
