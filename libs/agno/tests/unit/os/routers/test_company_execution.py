@@ -1,6 +1,7 @@
 """Execution gates, shared reads and existing run ownership rules."""
 
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -291,6 +292,9 @@ async def test_automatic_pickup_keeps_accepting_identity_and_run_scope(system):
     job = await queue.store.get_job(result["run_id"])
     assert job["user_id"] == "alice", job
     assert "schedules:write" not in str(job["payload"].get(AUTHORIZATION_KEY))
+    context = json.loads(job["payload"]["input"])["execution_context"]
+    assert context["stage"] == "accepted_task_execution"
+    assert context["task_id"] == task["id"]
     # A different executor cannot reuse the caller's accepted run grant.
     with pytest.raises(PermissionError):
         from agno.os.authz.run_context import restore_authorization
@@ -771,3 +775,70 @@ def test_pending_routine_retry_rechecks_and_refreshes_human_grant(system, monkey
     assert grant["user_id"] == "alice"
     assert grant != pending["payload"]["_agno_company_acceptance"]
     assert grant[AUTHORIZATION_KEY] == current["payload"][AUTHORIZATION_KEY]
+
+
+def test_accepted_execution_preserves_scope_and_excludes_private_state(system):
+    client, db, os, queue = system
+    path, task = accepted(client)
+    response = client.post(
+        path + "/transitions", json={"target": "backlog", "reason": "Refine scope"}, headers=headers()
+    )
+    assert response.status_code == 200, response.text
+    brief = "Prepare the local patch and tests. Do not publish, deploy, or use production credentials."
+    response = client.patch(path, json={"brief": brief}, headers=headers())
+    assert response.status_code == 200, response.text
+    before = db.get_task(task["id"])
+    denied = client.post(path + "/runs", headers=headers())
+    assert denied.status_code == 409, denied.text
+    assert db.get_task(task["id"]) == before
+    assert asyncio.run(queue.store.list_jobs()) == ([], 0)
+    response = client.post(
+        path + "/transitions",
+        json={"target": "ready", "reason": "Approved", "executor_type": "agent", "executor_id": "writer"},
+        headers=headers(),
+    )
+    assert response.status_code == 200, response.text
+    response = client.post(path + "/runs", headers=headers())
+    assert response.status_code == 202, response.text
+    job = asyncio.run(queue.store.get_job(response.json()["run_id"]))
+    message = job["payload"]["input"]
+    payload = json.loads(message)
+    assert payload["brief"] == brief
+    assert payload["evidence"] == (task.get("evidence") or [])
+    assert set(payload) == {"brief", "wiki", "evidence", "execution_context"}
+    assert payload["execution_context"]["stage"] == "accepted_task_execution"
+    assert payload["execution_context"]["task_id"] == task["id"]
+    assert set(payload["execution_context"]) == {"stage", "task_id", "instructions"}
+    assert "restrictions" in payload["execution_context"]["instructions"]
+    assert "blocker" in payload["execution_context"]["instructions"]
+    assert "accepted_by" not in message
+    assert db.get_task(task["id"])["brief"] == brief
+
+
+@pytest.mark.asyncio
+async def test_input_builder_does_not_imply_acceptance(system):
+    from agno.company.execution import _task_input
+
+    client, db, os, queue = system
+    path, task = accepted(client)
+    manager = CompanyManager(db)
+    payload = json.loads(
+        await _task_input(manager, {**db.get_task(task["id"]), "metadata": {"private_marker": "not-for-executor"}})
+    )
+    assert set(payload) == {"brief", "wiki", "evidence"}
+
+
+def test_execution_context_does_not_bypass_input_schema(system):
+    from pydantic import BaseModel
+
+    class RequiredInput(BaseModel):
+        required_business_field: str
+
+    client, db, os, queue = system
+    path, task = accepted(client)
+    os.registry.agents[0].input_schema = RequiredInput
+    before = db.get_task(task["id"])
+    response = client.post(path + "/runs", headers=headers())
+    assert response.status_code == 400, response.text
+    assert db.get_task(task["id"]) == before
+    assert asyncio.run(queue.store.list_jobs()) == ([], 0)

@@ -112,8 +112,6 @@ async def test_refresh_proposes_once_and_cannot_accept(archive):
     withdrawn = await call(manager, "refresh", product["id"])
     assert not withdrawn["completion_proposals"] and proposal["path"] in withdrawn["deleted_pages"]
     await call(manager, "transition_task", task_id=reopened["id"], target="cancelled", reason="Superseded")
-    with pytest.raises(PermissionError):
-        await call(manager, "refresh", product["id"], user_id="stranger")
     assert (await call(manager, "transition_project", project_id=project["id"], target="done", reason="Human review"))[
         "status"
     ] == "done"

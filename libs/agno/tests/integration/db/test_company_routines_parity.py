@@ -180,7 +180,7 @@ async def test_task_and_intake_require_project(system):
         prefix = "a" if async_tools else ""
         for name, args in (
             ("propose_company_task", (product["id"], "Work")),
-            ("intake_company_source", ("source", "Work", "Brief", "key", ["link"], {"link": "hash"})),
+            ("intake_product_source", ("source", "Work", "Brief", "key", ["link"], {"link": "hash"})),
         ):
             with pytest.raises(ValueError, match="requires a Project"):
                 result = getattr(tools, prefix + name)(*args)
