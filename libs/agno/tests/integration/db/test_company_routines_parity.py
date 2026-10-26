@@ -316,6 +316,8 @@ async def test_task_and_intake_require_project(system):
                 if asyncio.iscoroutine(result):
                     await result
     project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Release"})).json()
+    approval = {"target": "active", "reason": "Approved"}
+    await client.post("/company/projects/" + project["id"] + "/transitions", json=approval)
     task = await client.post(
         "/company/tasks", json={"product_id": product["id"], "project_id": project["id"], "title": "Work"}
     )

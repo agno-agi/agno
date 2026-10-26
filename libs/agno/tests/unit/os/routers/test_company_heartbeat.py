@@ -301,6 +301,7 @@ def test_routine_cannot_accept(system):
     product = manager.create(name="Docs")
     project = manager.create_project(product_id=product["id"], name="Documentation")
     project = manager.create_project(product_id=product["id"], name="Release")
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     task = manager.create_task(product_id=product["id"], title="Draft", project_id=project["id"])
     with authorization_scope(lambda: _RoutineAuthorization(None)):
         with pytest.raises(PermissionError, match="cannot accept"):
@@ -778,6 +779,7 @@ async def test_source_tools_only_require_source_and_proposal_scopes(tmp_path, as
     manager = CompanyManager(db)
     product = manager.create(name="Docs")
     project = manager.create_project(product_id=product["id"], name="Documentation")
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     path = tmp_path / "page.md"
     path.write_text("Document the released API")
     source = manager.create_source(product_id=product["id"], type="markdown", reference=str(path))
@@ -882,6 +884,8 @@ def test_custom_company_tools_resolve_os_interfaces_and_human_origin(tmp_path, m
             json={"name": "Summary", "metadata": {"summary": {"interface": "slack", "destination": "configured"}}},
         ).json()
         project = client.post("/company/projects", json={"product_id": product["id"], "name": "Release"}).json()
+        approval = {"target": "active", "reason": "Approved"}
+        client.post("/company/projects/" + project["id"] + "/transitions", json=approval)
         task = client.post(
             "/company/tasks", json={"product_id": product["id"], "project_id": project["id"], "title": "Human work"}
         ).json()
@@ -956,6 +960,7 @@ async def test_routine_cannot_use_plain_task_proposals(tmp_path, async_tools, ro
     manager = CompanyManager(db)
     product = manager.create(name="Docs")
     project = manager.create_project(product_id=product["id"], name="Documentation")
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     tools = CompanyTools(db)
     context = RunContext(run_id="run", session_id="session", authorization=_RoutineAuthorization(None, routine_id))
     for _ in range(3):

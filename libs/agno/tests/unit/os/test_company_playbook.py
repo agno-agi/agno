@@ -110,6 +110,9 @@ async def test_tools_identity_fence_and_learning(tmp_path, use_async):
         fn = getattr(tools, ("a" if use_async else "") + name)
         return await fn(*args, **kwargs) if use_async else fn(*args, **kwargs)
 
+    renamed = json.loads(await invoke("edit_company_project", project["id"], "Launch", "Ship", _agno_run_context=bob))
+    assert renamed["name"] == "Launch" and renamed["user_id"] == "alice"
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     task = json.loads(
         await invoke("propose_company_task", product["id"], "Draft", project_id=project["id"], _agno_run_context=alice)
     )
@@ -119,8 +122,6 @@ async def test_tools_identity_fence_and_learning(tmp_path, use_async):
     edited = json.loads(await invoke("edit_company_task", task["id"], "Draft v2", "bob's", _agno_run_context=bob))
     assert edited["title"] == "Draft v2" and edited["user_id"] == "alice"
     await invoke("edit_company_task", task["id"], "Draft", "better", _agno_run_context=alice)
-    renamed = json.loads(await invoke("edit_company_project", project["id"], "Launch", "Ship", _agno_run_context=bob))
-    assert renamed["name"] == "Launch" and renamed["user_id"] == "alice"
     manager.transition_task(
         task_id=task["id"],
         target="ready",
@@ -160,6 +161,7 @@ async def test_direct_mcp_has_only_bounded_tools(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "mcp.db"))
     product = CompanyManager(db).create(name="SDK")
     project = CompanyManager(db).create_project(product_id=product["id"], name="Release")
+    CompanyManager(db).transition_project(project_id=project["id"], target="active", reason="Approved")
     tools = CompanyTools(db)
     os = AgentOS(db=db, company=CompanyConfig(), mcp=MCPConfig(tools=[tools], default_tools=False), telemetry=False)
     async with Client(build_mcp_server(os)) as client:
@@ -193,6 +195,7 @@ async def test_company_manager_runs_tools_with_injected_identity(tmp_path, mode)
     db = SqliteDb(db_file=str(tmp_path / "runtime.db"))
     product = CompanyManager(db).create(name="SDK", user_id="alice")
     project = CompanyManager(db).create_project(product_id=product["id"], name="Release", user_id="alice")
+    CompanyManager(db).transition_project(project_id=project["id"], target="active", reason="Approved")
 
     class PlanningModel(Model):
         def __init__(self):
@@ -392,6 +395,7 @@ def test_refresh_archives_every_members_finished_work(tmp_path):
     manager = CompanyManager(db)
     product = manager.create(name="SDK", user_id="alice", metadata={"archive_window_days": 0})
     project = manager.create_project(product_id=product["id"], name="Release", user_id="alice")
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     tasks = {
         owner: manager.create_task(product_id=product["id"], title=owner, project_id=project["id"], user_id=owner)
         for owner in ("alice", "bob")

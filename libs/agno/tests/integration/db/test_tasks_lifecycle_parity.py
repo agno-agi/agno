@@ -65,6 +65,7 @@ async def test_lifecycle_and_owner_guards(db):
     assert await call(m.list_tasks) == ([], 0)
     parent = await call(m.create, name="SDK", user_id="alice")
     project = await call(m.create_project, product_id=parent["id"], name="Release", user_id="alice")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     record = await call(
         m.create_task,
         product_id=parent["id"],
@@ -142,6 +143,7 @@ async def test_validation_parent_visibility_and_immutable_fields(db):
     m = manager(db)
     parent = await call(m.create, name="SDK", user_id="alice")
     project = await call(m.create_project, product_id=parent["id"], name="Release", user_id="alice")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     with pytest.raises(LookupError):
         await call(
             m.create_task,
@@ -152,6 +154,7 @@ async def test_validation_parent_visibility_and_immutable_fields(db):
             project_id=project["id"],
         )
     project = await call(m.create_project, product_id=parent["id"], name="Release", user_id="alice")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     record = await call(m.create_task, product_id=parent["id"], title="Work", project_id=project["id"])
     for fields in [
         {"status": "done"},
@@ -178,6 +181,7 @@ async def test_custom_table_migrations_and_configuration_roundtrip(db):
     m = manager(db)
     parent = await call(m.create, name="SDK")
     project = await call(m.create_project, product_id=parent["id"], name="Release", user_id="alice")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     record = await call(
         m.create_task, product_id=parent["id"], title="Roundtrip", user_id="alice", project_id=project["id"]
     )
@@ -203,6 +207,7 @@ async def test_task_acceptance_and_project_consistency(db):
     with pytest.raises(ValueError):
         await call(m.create_task, product_id=a["id"], title="Wrong", project_id=project["id"])
     own_project = await call(m.create_project, product_id=a["id"], name="Release")
+    await call(m.transition_project, project_id=own_project["id"], target="active", reason="Approved")
     task = await call(m.create_task, product_id=a["id"], title="Work", project_id=own_project["id"])
     with pytest.raises(ValueError):
         await call(m.update_task, task["id"], project_id=project["id"])
@@ -232,6 +237,7 @@ async def test_stale_acceptance_cannot_overwrite_a_backlog_roundtrip(db, monkeyp
     m = manager(db)
     parent = await call(m.create, name="SDK")
     project = await call(m.create_project, product_id=parent["id"], name="Release")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     task = await call(m.create_task, product_id=parent["id"], title="Work", project_id=project["id"])
     # Capture the observed row at the SQL validation boundary. The later writer
     # sees Backlog again, but must not overwrite the intervening history.
@@ -343,6 +349,8 @@ async def test_http_collaborative_work_and_shared_deletion(db, resource, isolati
     m = manager(db)
     product = await call(m.create, name="Shared", user_id="alice")
     project = await call(m.create_project, product_id=product["id"], name="Shared project", user_id="alice")
+    if resource == "tasks":
+        await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     app = AgentOS(
         agents=[Agent(id="writer")],
         id=os_id,

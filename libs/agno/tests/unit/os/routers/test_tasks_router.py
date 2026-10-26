@@ -37,6 +37,7 @@ def client(request, tmp_path):
 def create(client):
     parent = client.post("/company/products", json={"name": "SDK"}).json()["id"]
     project = client.post("/company/projects", json={"product_id": parent, "name": "Release"}).json()
+    client.post("/company/projects/" + project["id"] + "/transitions", json={"target": "active", "reason": "Approved"})
     response = client.post(
         "/company/tasks", json={"product_id": parent, "project_id": project["id"], "title": "Ship", "brief": "Build"}
     )
@@ -106,9 +107,25 @@ def test_cancel_from_every_nonterminal_state(client, states):
     assert transition(client, path, "ready").status_code == 200
 
 
+def test_new_task_in_proposed_project_is_refused_until_approval(client):
+    parent = client.post("/company/products", json={"name": "SDK"}).json()["id"]
+    project = client.post("/company/projects", json={"product_id": parent, "name": "Release"}).json()["id"]
+    body = {"product_id": parent, "project_id": project, "title": "Ship"}
+    ready = {"status": "ready", "executor_type": "agent", "executor_id": "writer"}
+    for extra in ({}, {"status": "backlog"}, ready, {"status": "cancelled"}):
+        refused = client.post("/company/tasks", json={**body, **extra})
+        assert refused.status_code == 422, refused.text
+        assert refused.json()["detail"] == "Cannot create Tasks in a proposed Project; approve the Project first"
+    assert client.get("/company/tasks", params={"project_id": project}).json()["meta"]["total_count"] == 0
+    path = "/company/projects/" + project + "/transitions"
+    assert client.post(path, json={"target": "active", "reason": "Approved"}).status_code == 200
+    assert client.post("/company/tasks", json=body).status_code == 201
+
+
 def test_create_in_status(client):
     parent = client.post("/company/products", json={"name": "SDK"}).json()["id"]
     project = client.post("/company/projects", json={"product_id": parent, "name": "Release"}).json()["id"]
+    client.post("/company/projects/" + project + "/transitions", json={"target": "active", "reason": "Approved"})
     body = {"product_id": parent, "project_id": project, "title": "Ship"}
     ready = client.post(
         "/company/tasks", json={**body, "status": "ready", "executor_type": "agent", "executor_id": "writer"}
@@ -131,7 +148,6 @@ def test_reopen_finished_work(client):
         assert transition(client, path, state).status_code == 200
     assert transition(client, path, "done").status_code == 200
     project = "/company/projects/" + record["project_id"]
-    assert client.post(project + "/transitions", json={"target": "active", "reason": "Go"}).status_code == 200
     assert client.post(project + "/transitions", json={"target": "done", "reason": "Shipped"}).status_code == 200
     response = transition(client, path, "backlog")
     assert response.status_code == 409
