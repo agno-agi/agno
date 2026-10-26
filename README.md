@@ -9,20 +9,20 @@
 </div>
 
 <p align="center">
-  The self-improving platform for agents<br/>
+  The self-improving agent platform<br/>
 </p>
 
 ## Introduction
 
-Agno is a self-improving platform for agents. Build agents. Run them as durable services. Improve them with use.
+Agno is a self-improving agent platform. Build agents. Run them as durable services. Improve them with use.
 
-- **Build** agents with the Agno, Claude Code, or Codex SDKs. Use any model, connect them to your tools and build agents for your product, your team, or your customers. Build agents using code, a no-code UI or by chatting with the OS Manager in your platform. Organize agents into teams or multi-step workflows.
+- **Build** agents for your product, your team, or your customers with the Agno, Claude Code, or Codex SDKs. Choose your models and connect your tools. Start with code, use the no-code UI, or chat with the OS Manager in your platform. Organize agents into teams or multi-step workflows.
 - **Run** your agents as durable services. Get an API and MCP server out of the box. Build products on top of the API or connect your agents to AI applications using MCP. Run your platform in your own cloud, keep all your data in your own database, and manage everything using the [AgentOS UI](https://os.agno.com). Review conversations, inspect traces, manage knowledge, and track your agent activity in one place.
-- **Improve** your agents and the platform they run on. Give coding agents access to source code, conversations, traces, and evaluations so they can investigate failures, simulate user scenarios, and test changes to instructions, tools, knowledge, and code. Start by running the `/eval-and-improve` skill in Claude Code or Codex. Retain useful changes and regression tests, and choose which changes to adopt. When you're ready, configure scheduled improvement runs in a sandbox that return pull requests for review.
+- **Improve** your agents and the platform they run on. Give coding agents access to source code, conversations, traces, and evaluations so they can investigate failures, simulate user scenarios, and test changes to instructions, tools, knowledge, and code. Start by running the `/eval-and-improve` skill in Claude Code or Codex. You choose which changes to adopt. Keep useful changes and regression tests so each round of improvement builds on the last. When you're ready, configure scheduled improvement runs in a sandbox that return pull requests for review.
 
 ## Get started
 
-We recommend using our pre-built templates to bootstrap your agent platform.
+Start with a pre-built template to build, run, and improve your own agent platform.
 
 Give this prompt to your coding agent:
 
@@ -47,7 +47,7 @@ Connect your platform to [os.agno.com](https://os.agno.com) to start using it.
 
 Choose a template for your cloud: [Docker](https://github.com/agno-agi/agentos-docker) · [Railway](https://github.com/agno-agi/agentos-railway) · [AWS](https://github.com/agno-agi/agentos-aws) · [GCP](https://github.com/agno-agi/agentos-gcp) · [Azure](https://github.com/agno-agi/agentos-azure) · [Fly.io](https://github.com/agno-agi/agentos-fly) · [Render](https://github.com/agno-agi/agentos-render) · [Modal](https://github.com/agno-agi/agentos-modal) · [Helm](https://github.com/agno-agi/agentos-helm)
 
-### What's included
+## What's included
 
 | Capability | What you can do |
 |---|---|
