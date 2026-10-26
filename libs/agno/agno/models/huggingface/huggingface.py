@@ -73,9 +73,6 @@ class HuggingFace(Model):
 
     def __post_init__(self):
         super().__post_init__()
-        # InferenceClient takes (model, provider, token, timeout, headers, cookies, bill_to,
-        # base_url, api_key). These two have no counterpart, and passing them on raised
-        # TypeError before any request was made.
         if self.max_retries is not None:
             warnings.warn(
                 "HuggingFace.max_retries is deprecated and ignored: InferenceClient has no retry setting. "
@@ -167,7 +164,7 @@ class HuggingFace(Model):
             _request_params["top_logprobs"] = self.top_logprobs
         if self.top_p is not None:
             _request_params["top_p"] = self.top_p
-        if tools is not None:
+        if tools:
             _request_params["tools"] = tools
             if tool_choice is None:
                 _request_params["tool_choice"] = "auto"

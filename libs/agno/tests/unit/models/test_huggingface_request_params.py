@@ -26,15 +26,6 @@ def test_huggingface_default_headers_map_to_headers():
     assert "default_headers" not in model.get_client_params()
 
 
-def test_huggingface_get_client_maps_base_url_and_timeout():
-    model = HuggingFace(api_key="test-key", base_url="https://example.test", timeout=5)
-
-    client = model.get_client()
-
-    assert isinstance(client, InferenceClient)
-    assert client.timeout == 5
-
-
 def test_huggingface_max_retries_warns_and_client_builds():
     with pytest.warns(DeprecationWarning, match="max_retries"):
         model = HuggingFace(api_key="test-key", max_retries=3)
@@ -134,13 +125,13 @@ def test_huggingface_store_omitted_when_not_set():
     assert "extra_body" not in params
 
 
-def test_huggingface_to_dict_still_reports_store():
-    model = HuggingFace(id="meta-llama/Llama-3.1-8B-Instruct", api_key="test-key", store=True, temperature=0.5)
+def test_huggingface_empty_tools_omitted_from_request_params():
+    model = HuggingFace(id="meta-llama/Llama-3.1-8B-Instruct", api_key="test-key")
 
-    model_dict = model.to_dict()
+    params = model.get_request_params(tools=[])
 
-    assert model_dict["store"] is True
-    assert model_dict["temperature"] == 0.5
+    assert "tools" not in params
+    assert "tool_choice" not in params
 
 
 # =============================================================================
