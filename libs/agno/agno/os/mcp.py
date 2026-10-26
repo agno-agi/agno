@@ -3178,6 +3178,7 @@ def _identity_bridge_kwargs(os: "AgentOS") -> Dict[str, Any]:
     directory = getattr(os, "user_directory", None)
     return {
         "admin_scope": admin_scope or AgentOSScope.ADMIN.value,
+        "tenant_claim": getattr(os, "_authz_tenant_claim", None),
         "user_isolation": user_isolation,
         "user_store": directory,  # the directory is the roster store
         "user_auto_provision": bool(directory.auto_provision) if directory is not None else False,

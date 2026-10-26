@@ -542,6 +542,7 @@ class AgentOS:
         self._authz_role_store: Any = None
         self._authz_provider: Any = None
         self._authz_issuer: Optional[str] = None
+        self._authz_tenant_claim: Optional[str] = None
 
         # authorization= takes the switch or the object, never the low-level config: one spelling
         # for the deprecated type is enough, and it is the keyword that already exists.
@@ -577,6 +578,7 @@ class AgentOS:
             self._authz_role_store = authorization if authorization.uses_roles else None
             self._authz_provider = authorization.provider
             self._authz_issuer = authorization.issuer
+            self._authz_tenant_claim = authorization.tenant_claim
             authorization = True
 
         self.authorization = authorization
@@ -2307,6 +2309,7 @@ class AgentOS:
             authorization=self.authorization,
             service_account_verifier=self._get_service_account_verifier(),
             issuer=self._authz_issuer,
+            tenant_claim=self._authz_tenant_claim,
         )
         # The top-level user_isolation flag is the primary spelling; OR it with the legacy
         # AuthorizationConfig(user_isolation=...) so either turns per-user scoping on.
@@ -2346,6 +2349,7 @@ class AgentOS:
                 jwks_file=jwks_file,
                 algorithm=algorithm,
                 issuer=middleware_kwargs.get("issuer"),
+                tenant_claim=middleware_kwargs.get("tenant_claim"),
             )
         # Expose audience config + admin scope on app.state so WebSocket auth
         # (which does not flow through HTTP middleware) can honour them.

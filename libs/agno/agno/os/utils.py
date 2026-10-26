@@ -1374,7 +1374,7 @@ def build_request_context(
     scopes = getattr(request.state, "scopes", None) or frozenset()
     if isinstance(scopes, (list, set)):
         scopes = frozenset(scopes)
-    trusted = TrustedContext(claims=claims, scopes=scopes)
+    trusted = TrustedContext(claims=claims, scopes=scopes, tenant_id=getattr(request.state, "tenant_id", None))
 
     return RequestContext(
         user_id=user_id,
@@ -2139,6 +2139,7 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
                     # accepted on the WS handshake (the pin held only on the HTTP path).
                     issuer=kwargs.get("issuer"),
                     issuer_claim=kwargs.get("issuer_claim", "iss"),
+                    tenant_claim=kwargs.get("tenant_claim"),
                 )
             except Exception as e:
                 log_warning(f"Could not lazily construct JWTValidator for WebSocket auth: {e}")

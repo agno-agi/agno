@@ -101,6 +101,7 @@ class Authorization:
         verify_audience: Optional[bool] = None,
         audience: Optional[str] = None,
         issuer: Optional[str] = None,
+        tenant_claim: Optional[str] = None,
         admin_scope: Optional[str] = None,
         excluded_route_paths: Optional[List[str]] = None,
         # --- switches ---
@@ -118,6 +119,8 @@ class Authorization:
             verification_keys, jwks_file, algorithm, verify_audience, audience, issuer,
                 admin_scope, excluded_route_paths: JWT verification settings. Used with or
                 without roles (verify-only / scope-based / isolation deployments set just these).
+            tenant_claim: Verified JWT claim containing an opaque tenant ID. Missing claims
+                produce no tenant identity. This does not enable tenant resource isolation.
             audit: ``True`` builds a ``DbAuditSink`` from the bound db (feeds both the change and
                 decision trails); pass an ``AuditSink`` to use your own; ``False`` disables it.
             trust_token_scopes: run a scope plane alongside managed roles, so operators authorized
@@ -157,6 +160,10 @@ class Authorization:
             "admin_scope": admin_scope,
             "excluded_route_paths": excluded_route_paths,
         }
+        from agno.os.authz.identity import validate_tenant_claim
+
+        validate_tenant_claim(tenant_claim)
+        self._tenant_claim = tenant_claim
         self._issuer = issuer
         self._audit_arg = audit
         self._trust_token_scopes = trust_token_scopes
@@ -760,6 +767,11 @@ class Authorization:
     def issuer(self) -> Optional[str]:
         """The pinned token issuer (the ``iss`` claim), or None when not pinned."""
         return self._issuer
+
+    @property
+    def tenant_claim(self) -> Optional[str]:
+        """The verified JWT claim used for tenant identity, when configured."""
+        return self._tenant_claim
 
     @property
     def uses_roles(self) -> bool:
