@@ -156,12 +156,23 @@ def get_tasks_router(
     async def transition_task(
         task_id: str, body: TaskTransition, request: Request, _: bool = Depends(auth_dependency)
     ) -> Dict[str, Any]:
-        await _existing(task_id)
+        existing = await _existing(task_id)
         if body.target == "in_progress":
             raise HTTPException(
                 status_code=409,
                 detail=f"Start a run with POST /company/tasks/{task_id}/runs to enter In progress",
             )
+        from agno.company.execution import _pending_task_attempt
+
+        # A queued attempt is withdrawn by the move; an executing one must be cancelled first.
+        queue = getattr(request.app.state, "queue_worker", None)
+        if _pending_task_attempt(existing) is not None and queue is not None:
+            job = await queue.store.get_job(existing["job_id"])
+            if job is not None and job["status"] == "running":
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Cancel the run with POST /company/runs/{existing['job_id']}/cancel to leave In progress",
+                )
         if body.target == "ready":
             await _require_accept(request, body.executor_type, body.executor_id)
         record = await _call(
