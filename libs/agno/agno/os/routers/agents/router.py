@@ -92,6 +92,7 @@ from agno.os.utils import (
     format_sse_event,
     get_agent_by_id,
     get_request_kwargs,
+    is_form_field_omitted,
     parse_files_metadata,
     process_audio,
     process_document,
@@ -728,6 +729,8 @@ def get_agent_router(
         ),
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
+        if await is_form_field_omitted(request, "stream"):
+            stream = True
 
         files_metadata_list = parse_files_metadata(files_metadata)
 
@@ -1453,6 +1456,10 @@ def get_agent_router(
         ),
     ):
         kwargs = await get_request_kwargs(request, continue_agent_run)
+        if await is_form_field_omitted(request, "stream"):
+            stream = True
+        if await is_form_field_omitted(request, "replace_original"):
+            replace_original = None
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id

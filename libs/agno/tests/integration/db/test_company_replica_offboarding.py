@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -47,9 +48,12 @@ async def test_ticketless_checkpoint_on_another_replica_remains_running(system, 
         **{name: str(tmp_path / name) for name in ("started", "release", "tool")},
     }
     log_path = tmp_path / "replica.log"
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[3])
     with log_path.open("w") as log:
         process = subprocess.Popen(
             [sys.executable, "-m", "tests.integration.db.company_replica_worker", json.dumps(config)],
+            env=env,
             stdout=log,
             stderr=log,
         )

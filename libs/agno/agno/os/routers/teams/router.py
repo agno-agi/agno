@@ -86,6 +86,7 @@ from agno.os.utils import (
     format_sse_event,
     get_request_kwargs,
     get_team_by_id,
+    is_form_field_omitted,
     parse_files_metadata,
     process_audio,
     process_document,
@@ -640,6 +641,10 @@ def get_team_router(
         ),
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
+        if await is_form_field_omitted(request, "stream"):
+            stream = True
+        if await is_form_field_omitted(request, "monitor"):
+            monitor = True
 
         files_metadata_list = parse_files_metadata(files_metadata)
 
@@ -1413,6 +1418,10 @@ def get_team_router(
         background: bool = Form(False),
     ):
         kwargs = await get_request_kwargs(request, continue_team_run)
+        if await is_form_field_omitted(request, "stream"):
+            stream = True
+        if await is_form_field_omitted(request, "replace_original"):
+            replace_original = None
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id

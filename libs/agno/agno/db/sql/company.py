@@ -349,3 +349,22 @@ def link_product_routine(sess: Any, products: Any, product_id: str, schedule_id:
             .returning(products)
         ).one()
     return dict(row._mapping)
+
+
+def update_product_row(
+    sess: Any, products: Any, product_id: str, user_id: Optional[str], fields: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """Update an active Product; replacing metadata keeps the Routine ids linked to it."""
+    stmt = products.update().where(products.c.id == product_id, products.c.deleted_at.is_(None))
+    if user_id is not None:
+        stmt = stmt.where(products.c.user_id == user_id)
+    if "metadata" in fields and "routine_ids" not in fields["metadata"]:
+        # A no-op UPDATE takes the write lock link_product_routine uses before reading the links.
+        row = sess.execute(stmt.values(updated_at=products.c.updated_at).returning(products.c.metadata)).first()
+        if row is None:
+            return None
+        routine_ids = (row[0] or {}).get("routine_ids")
+        if routine_ids:
+            fields = {**fields, "metadata": {**fields["metadata"], "routine_ids": routine_ids}}
+    result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(products)).fetchone()
+    return dict(result._mapping) if result else None

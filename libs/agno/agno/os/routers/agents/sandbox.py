@@ -27,12 +27,9 @@ async def enqueue_sandbox_run(
     if (
         worker is None
         or worker.config.durable is not True
-        or worker.config.redis is None
         or getattr(worker.store, "serializes_sessions", False) is not True
     ):
-        raise ValueError(
-            "Sandbox API execution requires a durable queue with Redis coordination and shared session admission"
-        )
+        raise ValueError("Sandbox API execution requires a durable queue with shared session admission")
     registered = await worker._aresolve_job_component({"component_type": "agent", "component_id": agent.get_id()})
     if registered is not agent:
         raise ValueError("Sandbox submissions must use the registered agent instance")

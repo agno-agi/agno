@@ -226,10 +226,14 @@ async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
     if internal_token is None:
         raise ValueError("internal_service_token must be set when scheduler is enabled")
 
-    from agno.company.routines import _ensure_automation_schedule
+    from agno.company.routines import _AUTOMATION_CRON, _ensure_automation_schedule
 
     # Reconcile before the poller can claim a stale Company schedule.
-    await _ensure_automation_schedule(agent_os.db, enabled=agent_os.company is not None)
+    await _ensure_automation_schedule(
+        agent_os.db,
+        enabled=agent_os.company is not None,
+        cron_expr=agent_os.company.cron_expr if agent_os.company is not None else _AUTOMATION_CRON,
+    )
     executor: ScheduleExecutor
     if agent_os.company is not None:
         from agno.company.routines import _CompanyScheduleExecutor
@@ -659,23 +663,23 @@ class AgentOS:
         from agno.os.manager import OSManager
         from agno.os.manager.manager import _build_manager
 
-        self._product_manager: Optional[Agent] = None
-        self.product_manager_unavailable_reason: Optional[str] = None
+        self._company_manager: Optional[Agent] = None
+        self.company_manager_unavailable_reason: Optional[str] = None
         if self.company is not None:
+            from agno.company.company_manager import _build_company_manager
             from agno.company.execution import _mount_executors
-            from agno.company.product_manager import _build_product_manager
 
             _mount_executors(self)
 
             company_model = self.company.model
             if company_model is None and self.registry is not None and self.registry.models:
                 company_model = self.registry.models[0]
-            self._product_manager = _build_product_manager(self, company_model)
-            if self._product_manager is None:
-                self.product_manager_unavailable_reason = (
-                    "Product Manager unavailable: configure CompanyConfig(model=...) or Registry(models=[...])"
+            self._company_manager = _build_company_manager(self, company_model)
+            if self._company_manager is None:
+                self.company_manager_unavailable_reason = (
+                    "Company Manager unavailable: configure CompanyConfig(model=...) or Registry(models=[...])"
                     if company_model is None
-                    else "Product Manager unavailable: Company requires a database"
+                    else "Company Manager unavailable: Company requires a database"
                 )
 
         self._manager: Optional["_Manager"] = None
@@ -688,22 +692,34 @@ class AgentOS:
             self._manager = _build_manager(self, manager_config)
             self.agents = list(self.agents or [])
             self.teams = [*(self.teams or []), self._manager.team]
-            self._apply_manager_manifest()
 
-        if self._product_manager is not None:
+        if self._company_manager is not None:
             if self.registry is None:
                 self.registry = Registry()
-            self.registry.exclude_components([self._product_manager])
+            self.registry.exclude_components([self._company_manager])
             if self._manager is not None:
-                self._manager.product_manager = self._product_manager
+                from agno.company.company_manager import _build_company_manager
+                from agno.os.manager.prompts import FOCUSED_EXECUTION_INSTRUCTIONS
+
+                # A separate member keeps the manager's execution policy off the served
+                # Company Manager, which direct chat and Routines run.
+                member = _build_company_manager(self, self._company_manager.model)
+                assert member is not None
+                member.tool_call_limit = self._manager.config.member_tool_call_limit
+                assert isinstance(member.instructions, str)
+                member.instructions = [member.instructions, FOCUSED_EXECUTION_INSTRUCTIONS]
+                self.registry.exclude_components([member])
+                self._manager.company_manager = member
                 assert isinstance(self._manager.team.members, list)
-                self._manager.team.members.append(self._product_manager)
+                self._manager.team.members.append(member)
                 assert isinstance(self._manager.team.instructions, list)
                 self._manager.team.instructions.append(
-                    "Delegate Company planning, playbook updates and decisions to Product Manager."
+                    "Delegate Company Products, Projects, Tasks, Sources, Routines, playbook pages and decisions to "
+                    "Company Manager, including setup requests and questions about their status. Routines are "
+                    "Company schedules: ask Company Manager, not Platform Builder, to create them."
                 )
-            else:
-                self.agents = [*(self.agents or []), self._product_manager]
+            self.agents = [*(self.agents or []), self._company_manager]
+        self._apply_manager_manifest()
 
         self._initialize_agents()
         self._initialize_teams()
@@ -741,9 +757,23 @@ class AgentOS:
         return self._manager.team if self._manager is not None else None
 
     @property
+    def company_manager(self) -> Optional[Agent]:
+        """The built-in Company Manager, or None with an unavailable reason."""
+        return self._company_manager
+
+    @property
     def product_manager(self) -> Optional[Agent]:
-        """The built-in Product Manager, or None with an unavailable reason."""
-        return self._product_manager
+        """Deprecated alias of ``company_manager``."""
+        log_warning("AgentOS.product_manager is deprecated; use AgentOS.company_manager.")
+        return self._company_manager
+
+    @property
+    def product_manager_unavailable_reason(self) -> Optional[str]:
+        """Deprecated alias of ``company_manager_unavailable_reason``."""
+        log_warning(
+            "AgentOS.product_manager_unavailable_reason is deprecated; use AgentOS.company_manager_unavailable_reason."
+        )
+        return self.company_manager_unavailable_reason
 
     def _owned_by_manager(self, component: Any) -> bool:
         """True for the manager's team and members, which never enter the registry."""
@@ -754,14 +784,20 @@ class AgentOS:
     def _apply_manager_manifest(self) -> None:
         """Set default UI descriptions and prompts without replacing application settings."""
         from agno.os.config import AgentOSConfig
-        from agno.registry._reserved import RESERVED_MEMBER_IDS
+        from agno.registry._reserved import COMPANY_MANAGER_ID, RESERVED_MEMBER_IDS
 
-        if self._manager is None:
+        defaults = self._manager.manifest() if self._manager is not None else {}
+        # Company Manager is served with or without OS Manager, so it always gets its own chat card.
+        if self._company_manager is not None:
+            from agno.company.company_manager import _company_manager_manifest
+
+            defaults[COMPANY_MANAGER_ID] = _company_manager_manifest()
+        if not defaults:
             return
         if self.config is None:
             self.config = AgentOSConfig()
         manifest = {key: value for key, value in (self.config.manifest or {}).items() if key not in RESERVED_MEMBER_IDS}
-        for component_id, entry in self._manager.manifest().items():
+        for component_id, entry in defaults.items():
             manifest.setdefault(component_id, entry)
         self.config.manifest = manifest
 
@@ -1098,7 +1134,7 @@ class AgentOS:
             [*(self.agents or []), *(self.teams or []), *(self.workflows or [])],
             owned=[
                 *(self._manager.components if self._manager is not None else []),
-                *([self._product_manager] if self._product_manager is not None else []),
+                *([self._company_manager] if self._company_manager is not None else []),
             ],
         )
         duplicate_ids: List[str] = []
@@ -1171,6 +1207,8 @@ class AgentOS:
 
                     # Fail at startup, not on the first run, when the sandbox has no Postgres to coordinate on.
                     _harness._check_db(entry)
+                    if self.queue is not None and self.queue.durable:
+                        _harness.check_queue_checkpoints(entry)
 
         # Manager specialists need normal initialization, but are not served agents.
         agents_to_initialize = [*self._agents, *(self._manager.agents if self._manager else [])]
@@ -1489,19 +1527,27 @@ class AgentOS:
         """Give Company toolkits this OS's configured transports and blocking result checks."""
         if self.company is None:
             return
+        from weakref import ref
+
         from agno.company.routines import _RoutineResultGuardrail
         from agno.tools.company import CompanyTools
 
-        for component in self._iter_component_carriers():
+        company = self.company
+
+        def bind(entries: Any) -> bool:
             found = False
-            for entry in getattr(component, "tools", None) or []:
+            for entry in entries or []:
                 toolkit = getattr(entry, "source_toolkit", None) or entry
                 if isinstance(toolkit, CompanyTools):
                     found = True
                     if not toolkit._interfaces_explicit:
                         toolkit.interfaces = self.interfaces
+                    if toolkit.registry is None:
+                        toolkit.registry = self.registry
                     toolkit._schedule_db = self.db
-                    toolkit._automation_history_retention_days = self.company.automation_history_retention_days
+                    # Keep owner lookup live without copying the OS into per-run toolkits.
+                    toolkit._agent_os_ref = ref(self)
+                    toolkit._automation_history_retention_days = company.automation_history_retention_days
                     toolkit.user_isolation = toolkit.user_isolation or bool(
                         self.user_isolation
                         or (
@@ -1510,6 +1556,12 @@ class AgentOS:
                             and self.authorization_config.user_isolation
                         )
                     )
+            return found
+
+        # Toolkits published only through MCPConfig(tools=...) are served without a component.
+        bind(getattr(self.mcp_config, "tools", None))
+        for component in self._iter_component_carriers():
+            found = bind(getattr(component, "tools", None))
             if found and hasattr(component, "post_hooks"):
                 hooks = list(component.post_hooks or [])
                 if not any(isinstance(getattr(hook, "__self__", hook), _RoutineResultGuardrail) for hook in hooks):
@@ -2029,10 +2081,11 @@ class AgentOS:
             # isolation are ADVISORY here, not enforced. Warn (don't raise) so an operator who expected
             # enforcement knows to add authorization.
             log_warning(
-                "AgentOS is configured with a user directory / per-user isolation but no authorization. "
-                "They work off the run's user_id for local/demo use (a roster fills in, a run scopes its "
-                "own data), but that id is self-asserted -- so the disabled kill-switch and isolation are "
-                "ADVISORY, not enforced. Add AgentOS(authorization=True) with a verification key to enforce."
+                "AgentOS has user_directory or user_isolation set without authorization. The user_id on each "
+                "request comes from the caller and is not verified, so a disabled user can send a different "
+                "user_id and any caller can read another user's data by sending theirs. This is fine for local "
+                "development. To enforce it, set AgentOS(authorization=True) and configure JWT_VERIFICATION_KEY "
+                "or JWT_JWKS_FILE."
             )
         if self.authorization:
             # Set authorization_enabled flag on settings so security key validation is skipped
@@ -2341,6 +2394,17 @@ class AgentOS:
             from agno.os.mcp_auth import mcp_auth_route_paths
 
             mcp_auth_paths = mcp_auth_route_paths(mcp_auth_provider)
+            # The tool runner is part of that surface, so it is exempted on the same
+            # terms: a client holding a provider-issued token would otherwise have it
+            # decoded as an agno JWT here and rejected before reaching the route. The
+            # route is not left open -- fastmcp verifies the token and the handler
+            # refuses anything without a verified principal. Only under mcp_auth: with
+            # no provider this middleware is the only credential check on that path.
+            # A switched-off runner is not exempted: the path then has no route behind it.
+            if self.mcp and (self.mcp_config is None or self.mcp_config.tool_run_endpoint):
+                from agno.os.config import MCP_SERVER_TOOLS_PATH
+
+                mcp_auth_paths.append(f"{MCP_SERVER_TOOLS_PATH}/*")
         # The Server Card is discovery before authentication: public by design, no secrets.
         server_card_paths: List[str] = []
         if self.mcp and (self.mcp_config is None or self.mcp_config.server_card):

@@ -128,6 +128,50 @@ def test_default_checkpoints_are_refused_under_a_queue_worker(tmp_path, monkeypa
         _harness.coordinator(agent)
 
 
+def test_retain_checkpoints_is_validated_and_reaches_the_coordinator(tmp_path):
+    from agno.db.postgres import PostgresDb
+    from agno.sandbox.checkpoint import FileCheckpointStore
+
+    for invalid in (0, -1, 1.5, True):
+        with pytest.raises(ValueError, match="retain_checkpoints"):
+            DockerSandbox("agno-sandbox:claude", retain_checkpoints=invalid)
+    assert DockerSandbox("agno-sandbox:claude").retain_checkpoints == 3
+    db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:1/ai")
+    keep_all = DockerSandbox(
+        "agno-sandbox:claude", network="isolated", checkpoints=FileCheckpointStore(tmp_path), retain_checkpoints=None
+    )
+    assert _harness.coordinator(ClaudeAgent(id="coder", db=db, sandbox=keep_all)).retain_checkpoints is None
+
+
+def test_coordinator_registers_on_its_database_for_session_delete_cleanup(tmp_path):
+    from agno.db.postgres import PostgresDb
+    from agno.sandbox.checkpoint import FileCheckpointStore
+
+    db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:1/ai")
+    shared = DockerSandbox("agno-sandbox:claude", network="isolated", checkpoints=FileCheckpointStore(tmp_path))
+    first = _harness.coordinator(ClaudeAgent(id="first", db=db, sandbox=shared))
+    assert _harness.coordinator(ClaudeAgent(id="second", db=db, sandbox=shared)) is first
+    assert db.sandbox_coordinators == [first] and first.agent_ids == {"first", "second"}
+
+
+def test_agentos_with_a_durable_queue_refuses_default_checkpoints_at_startup(tmp_path):
+    from agno.db.postgres import PostgresDb
+    from agno.job_queue import QueueConfig
+    from agno.os import AgentOS
+    from agno.sandbox.checkpoint import FileCheckpointStore
+
+    db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:1/ai")
+    unset = ClaudeAgent(id="coder", db=db, sandbox=DockerSandbox("agno-sandbox:claude", network="isolated"))
+    with pytest.raises(ValueError, match="checkpoints="):
+        AgentOS(agents=[unset], db=db, queue=QueueConfig(durable=True), telemetry=False)
+    named = DockerSandbox("agno-sandbox:claude", network="isolated", checkpoints=FileCheckpointStore(tmp_path))
+    AgentOS(
+        agents=[ClaudeAgent(id="coder", db=db, sandbox=named)], db=db, queue=QueueConfig(durable=True), telemetry=False
+    )
+    # Without a durable queue the host-local default stays allowed.
+    AgentOS(agents=[unset], db=db, telemetry=False)
+
+
 @pytest.mark.asyncio
 async def test_sandbox_env_overrides_the_host_model_key(coordinator, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "host-key")

@@ -5,6 +5,7 @@ import json
 import os
 import time
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Dict
 from uuid import uuid4
 
@@ -16,7 +17,7 @@ from agno.db.postgres import AsyncPostgresDb, PostgresDb
 from agno.run.agent import RunCompletedEvent, RunInput, RunOutput
 from agno.run.base import RunStatus
 from agno.sandbox import SandboxError
-from agno.sandbox.checkpoint import CheckpointRef, FileCheckpointStore
+from agno.sandbox.checkpoint import CheckpointObjectNotFound, CheckpointRef
 from agno.sandbox.coordinator import SandboxCoordinator
 from agno.sandbox.docker import DockerCheckpointTransfer, DockerSandbox
 from agno.sandbox.postgres import SandboxSessionBusy
@@ -36,7 +37,7 @@ class Target:
 
 
 @pytest_asyncio.fixture(params=[PostgresDb, AsyncPostgresDb])
-async def system(request, tmp_path):
+async def system(request, tmp_path, checkpoint_store):
     suffix = uuid4().hex[:12]
     db = request.param(
         db_url=URL,
@@ -45,7 +46,7 @@ async def system(request, tmp_path):
         sandbox_table="co_bindings_" + suffix,
     )
     provider = DockerSandbox(IMAGE, namespace="coordinator-" + suffix, memory_mb=512, workspace_mb=32)
-    transfer = DockerCheckpointTransfer(provider, FileCheckpointStore(tmp_path / "objects"))
+    transfer = DockerCheckpointTransfer(provider, checkpoint_store)
     # Cold replacement every turn, which most of these tests rely on; warm reuse has its own tests.
     coordinator = SandboxCoordinator(db, provider, transfer, poll_wait=1, warm_computer_seconds=0)
     spec = Target("agent", "session", env={"AGNO_SANDBOX_TEST_RUNTIME": "1"})
@@ -254,6 +255,58 @@ async def test_lost_compute_before_checkpoint_fails_without_model_replay(system,
     assert (await binding(coordinator))["record"]["checkpoint"] is None
 
 
+def before_result(coordinator, monkeypatch, command):
+    """Run ``command`` in the turn's computer once it has finished, before its result is staged."""
+    poll = coordinator.client.apoll
+    outputs = []
+
+    async def finish(execution, **kwargs):
+        page = await poll(execution, **kwargs)
+        if page.result is not None and not outputs:
+            outputs.append(await coordinator.provider.aexec(execution.computer, command))
+        return page
+
+    monkeypatch.setattr(coordinator.client, "apoll", finish)
+    return outputs
+
+
+async def test_a_virtualenv_in_the_workspace_checkpoints_and_runs_on_new_compute(system, monkeypatch):
+    coordinator, spec, root = system
+    made = before_result(coordinator, monkeypatch, ["python", "-m", "venv", "--without-pip", "/workspace/.venv"])
+    assert (await run(coordinator, spec)).status == RunStatus.completed
+    assert made[0].exit_code == 0
+    used = before_result(
+        coordinator, monkeypatch, ["/workspace/.venv/bin/python", "-c", "import sys; print(sys.prefix)"]
+    )
+    assert (await run(coordinator, spec, "second")).status == RunStatus.completed
+    assert used[0].exit_code == 0 and used[0].stdout.strip() == "/workspace/.venv"
+    first, second = handles_of(coordinator)
+    assert second.generation > first.generation
+    # The host-side extraction leaves the interpreter link out rather than pointing it at this host.
+    workspace = await restored_workspace(coordinator, root)
+    assert (workspace / ".venv/pyvenv.cfg").is_file()
+    links = [Path(parent, name) for parent, dirs, files in os.walk(workspace) for name in dirs + files]
+    links = [path for path in links if path.is_symlink()]
+    assert links and not any(os.readlink(path).startswith("/") for path in links)
+
+
+async def test_files_that_cannot_be_checkpointed_end_the_turn_and_release_the_session(system, monkeypatch):
+    coordinator, spec, root = system
+    assert (await run(coordinator, spec)).status == RunStatus.completed
+    before = (await binding(coordinator))["record"]
+    before_result(coordinator, monkeypatch, ["mkfifo", "/workspace/pipe"])
+    failed = await run(coordinator, spec, "second")
+    assert failed.status == RunStatus.error and "workspace/pipe" in failed.content
+    assert failed.metadata["retryable"] is False
+    after = (await binding(coordinator))["record"]
+    assert after["phase"] == "idle" and after["computer"] is None
+    assert after["checkpoint"] == before["checkpoint"]
+    monkeypatch.undo()
+    assert (await run(coordinator, spec, "second")).status == RunStatus.error
+    assert (await run(coordinator, spec, "third")).status == RunStatus.completed
+    assert await recovered_effects(coordinator, root) == ["first", "third"]
+
+
 async def test_restore_manifest_mismatch_is_rejected_before_execution(system, monkeypatch):
     coordinator, spec, root = system
     await run(coordinator, spec)
@@ -428,6 +481,156 @@ async def test_restore_missing_native_state_fails_before_the_turn_runs(system, m
     assert record["phase"] == "idle" and record["native"]["fixture_session_id"]
     # The model never ran: the recovery point still holds only the first turn.
     assert await recovered_effects(coordinator, root) == ["first"]
+
+
+async def test_missing_checkpoint_object_ends_the_turn_without_a_retry(system):
+    coordinator, spec, _ = system
+    await run(coordinator, spec)
+    committed = (await binding(coordinator))["record"]["checkpoint"]
+    await coordinator.transfer.store.adelete(CheckpointRef(**committed))
+    second = await run(coordinator, spec, "second")
+    assert second.status == RunStatus.error and "checkpoint is missing" in second.content
+    assert second.metadata["retryable"] is False
+    record = (await binding(coordinator))["record"]
+    assert record["phase"] == "idle" and record["checkpoint"] == committed
+    # The computer created for the restore is retired with the turn.
+    assert len(handles_of(coordinator)) == 2
+    assert await coordinator.provider.aget(handles_of(coordinator)[1].provider_ref) is None
+
+
+async def stored(coordinator, reference):
+    try:
+        await coordinator.transfer.store.averify(CheckpointRef(**reference))
+    except CheckpointObjectNotFound:
+        return False
+    return True
+
+
+async def test_retention_keeps_the_newest_checkpoints_and_deletes_the_rest(system):
+    coordinator, spec, root = system
+    coordinator.retain_checkpoints = 2
+    committed = []
+    for run_id in ("first", "second", "third"):
+        await run(coordinator, spec, run_id)
+        committed.append((await binding(coordinator))["record"]["checkpoint"])
+    record = (await binding(coordinator))["record"]
+    assert record["retained_checkpoints"] == committed[1:] and record["retired_checkpoints"] == []
+    assert [await stored(coordinator, reference) for reference in committed] == [False, True, True]
+    assert await recovered_effects(coordinator, root) == ["first", "second", "third"]
+
+
+async def test_without_retention_every_checkpoint_is_kept(system):
+    coordinator, spec, _ = system
+    coordinator.retain_checkpoints = None
+    committed = []
+    for run_id in ("first", "second", "third"):
+        await run(coordinator, spec, run_id)
+        committed.append((await binding(coordinator))["record"]["checkpoint"])
+    assert [await stored(coordinator, reference) for reference in committed] == [True, True, True]
+
+
+async def test_a_failed_checkpoint_delete_is_retried_by_the_next_turn(system, monkeypatch):
+    coordinator, spec, _ = system
+    coordinator.retain_checkpoints = 1
+    await run(coordinator, spec)
+    first = (await binding(coordinator))["record"]["checkpoint"]
+    delete = coordinator.transfer.store.adelete
+
+    async def unavailable(reference):
+        raise OSError("checkpoint store unavailable")
+
+    monkeypatch.setattr(coordinator.transfer.store, "adelete", unavailable)
+    assert (await run(coordinator, spec, "second")).status == RunStatus.completed
+    assert (await binding(coordinator))["record"]["retired_checkpoints"] == [first]
+    assert await stored(coordinator, first)
+    monkeypatch.setattr(coordinator.transfer.store, "adelete", delete)
+    await run(coordinator, spec, "third")
+    record = (await binding(coordinator))["record"]
+    assert record["retired_checkpoints"] == [] and not await stored(coordinator, first)
+
+
+async def test_an_unpublished_staged_checkpoint_is_deleted(system, monkeypatch):
+    coordinator, spec, _ = system
+    commit = coordinator.store.acommit
+    staged = []
+
+    async def finished_elsewhere(lease, **kwargs):
+        staged.append((await coordinator.store.aget(lease)).record["staged_checkpoint"])
+
+        def complete(connection):
+            runs = coordinator.store.runs
+            run_data = connection.execute(select(runs.c.run_data).where(runs.c.run_id == lease.run_id)).scalar_one()
+            connection.execute(
+                runs.update()
+                .where(runs.c.run_id == lease.run_id)
+                .values(status="COMPLETED", run_data={**run_data, "status": "COMPLETED", "content": "elsewhere"})
+            )
+
+        await coordinator.store._transaction(complete)
+        return await commit(lease, **kwargs)
+
+    monkeypatch.setattr(coordinator.store, "acommit", finished_elsewhere)
+    assert (await run(coordinator, spec)).content == "elsewhere"
+    assert staged[0] is not None and not await stored(coordinator, staged[0])
+    assert (await binding(coordinator))["record"]["retired_checkpoints"] == []
+
+
+async def delete_sessions(db, session_ids, user_id=None):
+    if isinstance(db, AsyncPostgresDb):
+        return await db.delete_sessions(session_ids, user_id=user_id)
+    return await asyncio.to_thread(db.delete_sessions, session_ids, user_id)
+
+
+async def delete_session(db, session_id, user_id=None):
+    if isinstance(db, AsyncPostgresDb):
+        return await db.delete_session(session_id, user_id=user_id)
+    return await asyncio.to_thread(db.delete_session, session_id, user_id)
+
+
+def register_cleanup(coordinator, spec):
+    coordinator.agent_ids.add(spec.agent_id)
+    coordinator.store.db.sandbox_coordinators = [coordinator]
+
+
+@pytest.mark.parametrize("bulk", [False, True])
+async def test_deleting_a_session_removes_its_warm_computer_and_every_checkpoint(system, bulk):
+    coordinator, spec, _ = system
+    coordinator.warm_computer_seconds = 300
+    register_cleanup(coordinator, spec)
+    await run(coordinator, spec)
+    await run(coordinator, spec, "second")
+    record = (await binding(coordinator))["record"]
+    computer, references = record["computer"], record["retained_checkpoints"]
+    assert computer is not None and len(references) == 2
+    db = coordinator.store.db
+    if bulk:
+        await delete_sessions(db, [spec.session_id])
+    else:
+        assert await delete_session(db, spec.session_id)
+    assert await coordinator.provider.aget(computer["provider_ref"]) is None
+    assert [await stored(coordinator, reference) for reference in references] == [False, False]
+
+
+async def test_a_delete_scoped_to_another_user_leaves_the_sandbox_alone(system):
+    coordinator, spec, _ = system
+    coordinator.warm_computer_seconds = 300
+    register_cleanup(coordinator, spec)
+    await run(coordinator, spec)
+    record = (await binding(coordinator))["record"]
+    assert not await delete_session(coordinator.store.db, spec.session_id, user_id="someone-else")
+    await delete_sessions(coordinator.store.db, [spec.session_id], user_id="someone-else")
+    assert await coordinator.provider.aget(record["computer"]["provider_ref"]) is not None
+    assert await stored(coordinator, record["checkpoint"])
+
+
+async def test_without_a_registered_coordinator_a_delete_leaves_the_sandbox_alone(system):
+    coordinator, spec, _ = system
+    coordinator.warm_computer_seconds = 300
+    await run(coordinator, spec)
+    record = (await binding(coordinator))["record"]
+    assert await delete_session(coordinator.store.db, spec.session_id)
+    assert await coordinator.provider.aget(record["computer"]["provider_ref"]) is not None
+    assert await stored(coordinator, record["checkpoint"])
 
 
 async def test_completion_without_native_conversation_cannot_publish(system, monkeypatch):

@@ -1,3 +1,92 @@
+# Company chat Product creation hardening — October 19, 2026
+
+Branch: `fix/company-chat-products-hardening`, based on `codex/company-chat-products`.
+
+### 05_product_manager.py
+
+**Status:** PASS
+
+**Description:** Re-ran the chat step after the hardening changes: Routine
+creation deletes its schedule when linking or enabling fails, Product creation
+discards a partially created Product, the Product is checked before its
+executor, both chat tools require `routines:write` with `schedules:write`, and
+toolkits published only over MCP receive the OS registry. The example runs
+unchanged and still creates the Product, website Source and intake Routine
+under Alice's identity.
+
+**Result:** Passed with `.venv/bin/python` on SQLite. No model call was made.
+The chat suite with its five new cases and the Product Manager unit suite:
+159 passed, 46 conditional skips (sync tools on async adapters). Every new case
+fails on the `codex/company-chat-products` head and passes here. The Company
+integration selection below: 1,534 passed, 48 conditional skips; the 44 cases in `test_company_sandbox_admission.py` fail on a `pymongo` import in this environment; the four MongoDB-dependent modules
+were left out because `pymongo` is not installed in this environment. Company,
+scheduler and heartbeat unit suites: 563 passed, one Telegram transport case
+needs `telebot`, which is not installed here.
+
+Reproduce the integration selection with:
+
+```bash
+PYTHONPATH=libs/agno \
+AGNO_TEST_POSTGRES_URL=postgresql+psycopg://ai:ai@localhost:5532/ai \
+.venv/bin/python -m pytest \
+  libs/agno/tests/integration/db/test_company_*.py \
+  libs/agno/tests/integration/db/test_{products,projects,tasks,schedule}_lifecycle_parity.py \
+  libs/agno/tests/integration/db/sqlite/test_{products,projects,tasks}.py \
+  -q --disable-warnings --tb=short -o log_cli=false
+```
+
+`ruff format` and `ruff check` pass. The shared development environment reports
+mypy errors only in untouched database adapter and model provider files.
+
+---
+
+# Company chat Product creation — October 19, 2026
+
+Branch: `codex/company-chat-products`, based on main `287bc588c3`.
+
+### 05_product_manager.py
+
+**Status:** PASS
+
+**Description:** Added the chat step "Set up a Product for our docs site with an
+intake Routine." The example invokes the same Company tool as Product Manager,
+creates the Product, website Source and on-demand intake Routine under Alice's
+identity, and checks that the records appear in the Product, Source and Routine
+lists. The existing proposal, status and decision steps still pass.
+
+**Result:** Passed with `.venv/bin/python` on SQLite. No model or external Source
+fetch was made. The new integration suite also exercises Product Manager with a
+deterministic model and a real Routine trigger on SQLite and PostgreSQL, sync
+and async: 116 passed, 36 conditional skips (sync tools on async adapters).
+All 14 core acceptance cases fail on clean main because the tools are absent.
+
+The complete Company integration and Product/Project/Task/schedule lifecycle
+selection passed 1,944 cases with 52 conditional skips. Eight replica subprocess
+cases initially failed to import their worker module; all eight passed after
+rerunning with `PYTHONPATH=libs/agno`. The final focused suite adds 12 passing
+provider/dispatch cases beyond that selection: 1,964 distinct integration passes
+and 56 conditional skips in total. MongoDB-only checks were not enabled.
+The affected Company-tool, Product Manager, heartbeat, execution and scheduler
+unit suites passed all 372 cases.
+
+Reproduce the full integration selection with:
+
+```bash
+PYTHONPATH=libs/agno \
+AGNO_TEST_POSTGRES_URL=postgresql+psycopg://ai:ai@localhost:5532/ai \
+.venv/bin/python -m pytest \
+  libs/agno/tests/integration/db/test_company_*.py \
+  libs/agno/tests/integration/db/test_{products,projects,tasks,schedule}_lifecycle_parity.py \
+  libs/agno/tests/integration/db/sqlite/test_{products,projects,tasks}.py \
+  -n 4 -q --disable-warnings --tb=short -o log_cli=false
+```
+
+Formatting and full validation passed in the isolated Python 3.10 environment.
+The shared development Python 3.12 environment reports nine typing errors in
+three untouched provider files; the same nine errors reproduce on clean main.
+
+---
+
 # Company validation record — Task ownership and recovery
 
 **Date:** October 16, 2026
@@ -238,5 +327,75 @@ No paid model calls or real outbound notification deliveries were exercised.
 **Description:** Moved `sandboxed` to the end of `AgentResponse`. Renamed the PostgreSQL queue listing flag to `raise_on_error`, updated Company admission, and accepted the same keyword on Redis and in-memory stores. Explicit error propagation works across all built-in stores; PostgreSQL retains its default fallback, while Redis and in-memory retain their existing error propagation.
 
 **Result:** All 164 focused queue and sandbox unit cases and all 309 queue-store parity/Company admission integration cases passed, with no skips. New coverage checks errors across sync/async PostgreSQL, Redis and in-memory stores, and matching listing results with both flag values on in-memory, fake/real Redis and sync/async PostgreSQL. Full format, clean Python 3.10 validation and whitespace checks passed. No model calls were made.
+
+---
+
+### 10_weekly_product_review.py — framework manager Routine executors (2026-10-20)
+
+**Status:** PASS
+
+**Description:** Checked the opt-in weekly Product Manager review with OS Manager disabled and enabled using `--check` and `--check --with-os-manager`. Both construct and persist the owned-manager schedule without running a model. Offline scripted-model tests exercise bootstrap, API and human chat configuration, native/Studio delegation, queued execution, caller permissions, Product restrictions, private run ownership, reserved-ID collisions, evidence-backed intake, deduplication and versioned status updates.
+
+**Result:** On main base `cb14cab365`, all 1,059 affected unit cases passed, including the 69 manager Routine cases; those 69 also passed in a clean Python 3.10 environment. All 409 selected existing Routine/heartbeat/automatic-execution integration cases passed. The new manager queue/configuration tests and existing chat tests passed 176 cases, with 52 unsupported synchronous-tool/asynchronous-database combinations skipped. The 18 supported chat cases passed again after isolating their schedule database fixture. Integration coverage uses sync/async SQLite and PostgreSQL Company stores and a real PostgreSQL durable worker. Full format, clean CI-dependency validation and whitespace checks passed. The shared Python 3.12 environment's nine mypy diagnostics also reproduce on the unchanged original base; the clean validation gate has none. No paid model calls. Live proposal quality and semantic duplicate detection are not evaluated by scripted responses.
+
+---
+
+### 10_weekly_product_review.py — Routine result recovery follow-up (2026-10-20)
+
+**Status:** PASS
+
+**Description:** Rechecked both `--check` configurations after correcting Routine result reporting. Regression tests verify that a status version conflict can recover through a confirmed later write to the same Product, while denied writes and unresolved conflicts remain failures. Native and Studio delegation report provider failures, and nested failed or cancelled member results remain failures.
+
+**Result:** All 82 manager Routine tests passed on Python 3.12 and Python 3.10, including 13 new regression cases; seven new cases failed before the fix. Another 729 Company, manager and scheduler unit cases passed. SQLite chat integration passed nine cases, with three unsupported synchronous-tool/asynchronous-database cases skipped. Both cookbook checks, the full format script, clean Python 3.10 validation and whitespace checks passed. Formatting-only changes to two unrelated baseline files were excluded. PostgreSQL queue integration was not rerun for this follow-up. No paid model calls.
+
+---
+
+### 05_company_manager.py and 10_weekly_product_review.py — Company Manager rename and Routine executor rule (2026-10-20)
+
+**Status:** PASS
+
+**Description:** Product Manager is renamed Company Manager (`company-manager-internal`); `product-manager-internal` stays reserved and `AgentOS.product_manager` is a deprecated alias. Company Manager is the only framework manager that can execute a Routine. Ran `05_company_manager.py`, `10_weekly_product_review.py --check` and `--check --with-os-manager`.
+
+**Result:** All three runs passed without model calls; both weekly variants persist `/agents/company-manager-internal/runs`. Offline tests cover refusal of OS Manager, both specialists and the legacy id through the endpoint resolver, bootstrap, the Routine API and human chat tools, with no partial Product written.
+
+---
+
+### 05_company_manager.py and 10_weekly_product_review.py — merge with main and separate manager member (2026-10-21)
+
+**Status:** PASS
+
+**Description:** Merged main (Routine linkage and ownership, OS Manager tool budgets) into the Company Manager Routine branch. With OS Manager enabled, the team now holds its own Company Manager member carrying `member_tool_call_limit` and focused instructions, while the served Company Manager used by chat and Routines keeps its standalone policy. Ran `05_company_manager.py`, `10_weekly_product_review.py --check` and `--check --with-os-manager`.
+
+**Result:** All three runs passed without model calls. A new regression case fails when the member and served agent are the same object (the served agent inherits the member limit) and passes with separate instances.
+
+---
+
+### 05_company_manager.py — Product tool names (2026-10-22)
+
+**Status:** PASS
+
+**Description:** Ran the offline Company Manager example with `update_product_status`.
+
+**Result:** Saved the Backlog proposal, Product status and decision; no model calls.
+
+---
+
+### 08_custom_routines.py — Product tool names (2026-10-22)
+
+**Status:** PASS
+
+**Description:** Ran the offline custom Routine example with `add_product_source`.
+
+**Result:** Repeated website discovery reused the same attributed Source; Routine controls and Source archival passed without model calls or website requests.
+
+---
+
+### 10_weekly_product_review.py — Product tool names (2026-10-22)
+
+**Status:** PASS
+
+**Description:** Updated review instructions to `read_product_source` and `intake_product_source`; ran `--check` and `--check --with-os-manager`.
+
+**Result:** Both configurations persisted the Company Manager Routine with automatic acceptance disabled. These checks validate configuration; they do not execute a review or make model calls.
 
 ---

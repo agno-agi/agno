@@ -12,7 +12,7 @@ from contextlib import suppress
 from copy import deepcopy
 from dataclasses import asdict
 from queue import Queue
-from typing import Any, AsyncGenerator, Dict, Iterator, Mapping, Optional, Sequence, Union
+from typing import Any, AsyncGenerator, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Union
 from uuid import uuid4
 
 from agno.db.postgres import AsyncPostgresDb, PostgresDb
@@ -27,13 +27,19 @@ from agno.run.agent import (
     run_output_event_from_dict,
 )
 from agno.run.base import RunStatus
-from agno.sandbox.base import Sandbox, SandboxError, SandboxHandle
-from agno.sandbox.checkpoint import CheckpointRef
+from agno.sandbox.base import Sandbox, SandboxError, SandboxHandle, _retention, _sync
+from agno.sandbox.checkpoint import CheckpointContentError, CheckpointObjectNotFound, CheckpointRef
 from agno.sandbox.client import RuntimeExecution, SandboxRuntimeClient
 from agno.sandbox.media import decode_media, encode_media
 from agno.sandbox.postgres import SandboxLease, SandboxLeaseLost, SandboxRunFinished, _drain, _SandboxStore, _settled
 from agno.sandbox.protocol import NATIVE_SESSION_KEYS
 from agno.sandbox.transfer import CheckpointTransfer
+from agno.utils.log import log_warning
+
+_CHECKPOINT_MISSING = (
+    "This session's sandbox checkpoint is missing from checkpoint storage, so its workspace and conversation "
+    "cannot be restored; start a new session, and check that every replica uses the same checkpoints= store"
+)
 
 
 class SandboxCoordinator:
@@ -65,6 +71,7 @@ class SandboxCoordinator:
         lease_seconds: float = 600,
         poll_wait: float = 5,
         warm_computer_seconds: float = 300,
+        retain_checkpoints: Optional[int] = 3,
     ) -> None:
         # poll_wait is how long one poll waits inside the container for new events; it also
         # bounds how long a cancellation can go unnoticed while a turn emits nothing.
@@ -75,6 +82,9 @@ class SandboxCoordinator:
         self.store, self.provider, self.transfer = _SandboxStore(db), provider, transfer
         self.client = SandboxRuntimeClient(provider)
         self.lease_seconds, self.poll_wait, self.warm_computer_seconds = lease_seconds, poll_wait, warm_computer_seconds
+        self.retain_checkpoints = _retention(retain_checkpoints)
+        # Agents whose sessions this coordinator cleans up when they are deleted.
+        self.agent_ids: Set[str] = set()
 
     async def arun(
         self,
@@ -248,6 +258,27 @@ class SandboxCoordinator:
 
     def sweep_warm(self) -> int:
         return self.store._sync(self.asweep_warm)
+
+    def collect_deleted_sessions(self, connection: Any, session_ids: List[str]) -> List[Dict[str, Any]]:
+        """Read, inside a session delete, what its cascade would otherwise orphan."""
+        return self.store.leftovers(connection, session_ids, sorted(self.agent_ids))
+
+    async def arelease_deleted_sessions(self, leftovers: List[Dict[str, Any]]) -> None:
+        """Remove deleted sessions' computers and checkpoint objects; best-effort after the delete commits."""
+        for leftover in leftovers:
+            if leftover["computer"] is not None:
+                try:
+                    await self.provider.adestroy(SandboxHandle(**leftover["computer"]))
+                except Exception as error:
+                    log_warning(f"Could not remove a deleted session's sandbox computer: {error}")
+            for reference in leftover["checkpoints"]:
+                try:
+                    await self.transfer.store.adelete(CheckpointRef(**reference))
+                except Exception as error:
+                    log_warning(f"Could not delete a deleted session's checkpoint {reference.get('sha256')}: {error}")
+
+    def release_deleted_sessions(self, leftovers: List[Dict[str, Any]]) -> None:
+        _sync(self.arelease_deleted_sessions(leftovers))
 
     def stream(
         self,
@@ -501,6 +532,16 @@ class SandboxCoordinator:
                         restored = await self.transfer.arestore(handle, CheckpointRef(**record["checkpoint"]))
                         if restored.get("binding") != record.get("checkpoint_identity"):
                             raise SandboxError("Checkpoint manifest does not match committed session identity")
+                except CheckpointObjectNotFound:
+                    # No retry can bring the object back; stop the turn instead of failing every attempt.
+                    record.update(
+                        phase="stopping",
+                        stop_status="ERROR",
+                        stop_reason=_CHECKPOINT_MISSING,
+                        computer=asdict(handle),
+                        computer_stopped=False,
+                    )
+                    return record
                 except BaseException:
                     await self.provider.adestroy(handle)
                     raise
@@ -656,6 +697,24 @@ class SandboxCoordinator:
                 # Shielded so a further cancel cannot abort the release and leave the lease to run out.
                 with suppress(SandboxLeaseLost):
                     await _settled(self.store.arelinquish(lease))
+            else:
+                await self._aprune_checkpoints(session_id)
+
+    async def _aprune_checkpoints(self, session_id: str) -> None:
+        """Delete the checkpoints retention retired; best-effort, a later turn retries what is left."""
+        try:
+            deleted = []
+            for reference in await self.store.aretired_checkpoints(session_id):
+                try:
+                    await self.transfer.store.adelete(CheckpointRef(**reference))
+                except Exception as error:
+                    log_warning(f"Could not delete retired sandbox checkpoint {reference.get('sha256')}: {error}")
+                    continue
+                deleted.append(reference)
+            if deleted:
+                await self.store.aforget_checkpoints(session_id, deleted)
+        except Exception as error:
+            log_warning(f"Sandbox checkpoint retention for session {session_id} failed: {error}")
 
     async def _retire_invalid(self, lease: SandboxLease, error: ValueError) -> Dict[str, Any]:
         # A request the runtime can never accept was only caught after the claim, before anything
@@ -730,7 +789,21 @@ class SandboxCoordinator:
                 digest = hashlib.sha256(
                     json.dumps(record["result"], sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
                 ).hexdigest()
-                reference = await self.transfer.acapture(handle, state={"binding": identity, "result_sha256": digest})
+                try:
+                    reference = await self.transfer.acapture(
+                        handle, state={"binding": identity, "result_sha256": digest}
+                    )
+                except CheckpointContentError as error:
+                    # Capturing the same files again fails the same way; a retry would only keep the session busy.
+                    record.update(
+                        phase="stopping",
+                        stop_status="ERROR",
+                        stop_reason=(
+                            "Completed turn's files cannot be checkpointed, so they were discarded and the session "
+                            f"continues from the previous checkpoint: {error}"
+                        )[:8192],
+                    )
+                    return record
                 await self.transfer.store.averify(reference)
                 record.update(staged_checkpoint=asdict(reference), staged_identity=identity)
             await self.transfer.store.averify(CheckpointRef(**record["staged_checkpoint"]))
@@ -749,7 +822,9 @@ class SandboxCoordinator:
                 raise SandboxError("Provider has not confirmed compute removal")
             await self.store.aconfirm_stopped(lease, handle.provider_ref)
         try:
-            return await self.store.acommit(lease, keep_computer_until=keep_until)
+            return await self.store.acommit(
+                lease, keep_computer_until=keep_until, retain_checkpoints=self.retain_checkpoints
+            )
         except SandboxRunFinished as finished:
             # Another writer finished the run; the commit already released the session and kept
             # the previous checkpoint, so the stored outcome is the result.

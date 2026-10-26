@@ -5762,6 +5762,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         self, product_id: str, user_id: Optional[str] = None, **fields: Any
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.products import product_metadata, validate_product_fields
+        from agno.db.sql.company import update_product_row
 
         validate_product_fields(fields)
         if "metadata" in fields:
@@ -5769,14 +5770,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         table = await self._get_table(table_type="products")
         if table is None:
             return None
-        stmt = table.update().where(table.c.id == product_id, table.c.deleted_at.is_(None))
-        if user_id is not None:
-            stmt = stmt.where(table.c.user_id == user_id)
         async with self.async_session_factory() as sess, sess.begin():
-            result = (
-                await sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table))
-            ).fetchone()
-            return dict(result._mapping) if result else None
+            return await sess.run_sync(update_product_row, table, product_id, user_id, fields)
 
     async def get_product_counts(self, product_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         from agno.db.sql.company import product_counts

@@ -30,6 +30,44 @@ def _routine_message(product_id: str, instructions: str) -> str:
     return "Operate only on Product " + json.dumps(product_id) + ".\n\n" + instructions
 
 
+def _recovered_status_conflict(tool: Dict[str, Any], later_tools: List[Dict[str, Any]]) -> bool:
+    """Only a later confirmed write to the same Product can recover a status conflict."""
+    import json
+    import re
+
+    # Persisted tool errors carry text, not the original VersionConflictError.
+    # Recognize only the filesystem's conflict messages; permission errors stay fatal.
+    result = tool.get("result")
+    if not isinstance(result, str) or not (
+        re.fullmatch(r"version conflict on status\.md: expected \d+, actual (?:\d+|None)", result)
+        or result == "file already exists: status.md"
+    ):
+        return False
+    product_id = (tool.get("tool_args") or {}).get("product_id")
+    if not product_id:
+        return False
+    for later in later_tools:
+        args = later.get("tool_args") or {}
+        if (
+            later.get("tool_name") != "update_product_status"
+            or later.get("tool_call_error")
+            or args.get("product_id") != product_id
+            or not isinstance(args.get("expected_version"), int)
+        ):
+            continue
+        try:
+            metadata = json.loads(later.get("result") or "")
+        except (ValueError, TypeError):
+            continue
+        if (
+            isinstance(metadata, dict)
+            and metadata.get("path") == "status.md"
+            and metadata.get("version") == args["expected_version"] + 1
+        ):
+            return True
+    return False
+
+
 def _routine_failure(output: Any) -> Optional[str]:
     """Read structured execution results, never infer success from model prose."""
     if hasattr(output, "to_dict"):
@@ -40,22 +78,53 @@ def _routine_failure(output: Any) -> Optional[str]:
             if error:
                 return error
     elif isinstance(output, dict):
-        for tool in output.get("tools") or []:
+        tools = output.get("tools") or []
+        for index, tool in enumerate(tools):
             if tool.get("tool_call_error") and tool.get("tool_name") in {
-                "add_company_source",
-                "read_company_source",
-                "intake_company_source",
+                "create_company_product",
+                "create_product_routine",
+                "add_product_source",
+                "read_product_source",
+                "intake_product_source",
                 "propose_company_task",
+                "update_product_status",
                 "summarize_company_product",
                 "refresh_company_product",
             }:
+                if tool["tool_name"] == "update_product_status" and _recovered_status_conflict(
+                    tool, tools[index + 1 :]
+                ):
+                    continue
                 return str(tool["tool_name"]) + " failed: " + str(tool.get("result") or "Company operation failed")
+            if tool.get("tool_name") in {"run_agent", "run_team", "run_workflow"}:
+                # Studio dispatch returns a structured child result rather than
+                # adding it to native Team member_responses.
+                import json
+
+                result = tool.get("result")
+                if isinstance(result, str):
+                    try:
+                        result = json.loads(result)
+                    except (ValueError, TypeError):
+                        result = None
+                if tool.get("tool_call_error") or (
+                    isinstance(result, dict)
+                    and (
+                        result.get("error") or str(result.get("status", "")).upper() in {"ERROR", "FAILED", "CANCELLED"}
+                    )
+                ):
+                    return str(tool["tool_name"]) + " failed: " + str(result or "Routine delegation failed")
         if output.get("success") is False:
             return str(output.get("error") or "Routine step failed")
         for key in ("member_responses", "step_results", "steps"):
             error = _routine_failure(output.get(key))
             if error:
                 return error
+        # Native delegation can return a failed child as a successful tool call.
+        # Its structured terminal status remains authoritative even without tools.
+        status = str(output.get("status", "")).upper()
+        if status in {"ERROR", "FAILED", "CANCELLED"}:
+            return str(output.get("error") or output.get("content") or "Routine execution failed with status " + status)
     return None
 
 
@@ -106,10 +175,23 @@ async def _afailed_routines(db: Any, products: Any) -> int:
     return failed
 
 
-def _routine_executor_endpoint(executor_type: str, executor_id: str, registry: Any) -> str:
-    component = getattr(registry, "get_" + executor_type)(executor_id) if registry else None
-    if component is None:
-        raise ValueError("Routine executor is missing from the registry")
+def _routine_executor_endpoint(executor_type: str, executor_id: str, registry: Any, *, agent_os: Any = None) -> str:
+    from agno.registry._reserved import COMPANY_MANAGER_ID, RESERVED_MANAGER_IDS
+
+    if executor_id == COMPANY_MANAGER_ID:
+        if executor_type != "agent":
+            raise ValueError("Company Manager Routine executor_type must be 'agent'")
+        component = agent_os.company_manager if agent_os is not None else None
+        if component is None:
+            reason = getattr(agent_os, "company_manager_unavailable_reason", None)
+            raise ValueError(reason or "Company Manager unavailable: configure CompanyConfig on the owning AgentOS")
+    elif executor_id in RESERVED_MANAGER_IDS:
+        # OS Manager and its specialists can edit the platform; Routines run unattended on untrusted Sources.
+        raise ValueError("Only the Company Manager can execute Routines among framework managers")
+    else:
+        component = getattr(registry, "get_" + executor_type)(executor_id) if registry else None
+        if component is None:
+            raise ValueError("Routine executor is missing from the registry")
     _validate_executor_tools(component)
     endpoint = f"/{executor_type}s/{executor_id}/runs"
     if RUN_ENDPOINT_RE.fullmatch(endpoint) is None:
@@ -117,8 +199,8 @@ def _routine_executor_endpoint(executor_type: str, executor_id: str, registry: A
     return endpoint
 
 
-def _schedule_fields(product_id: str, routine: Routine, registry: Any) -> Dict[str, Any]:
-    endpoint = _routine_executor_endpoint(routine.executor_type, routine.executor_id, registry)
+def _schedule_fields(product_id: str, routine: Routine, registry: Any, *, agent_os: Any = None) -> Dict[str, Any]:
+    endpoint = _routine_executor_endpoint(routine.executor_type, routine.executor_id, registry, agent_os=agent_os)
     instructions = routine.instructions
     if instructions is None and routine.template is not None:
         skill = load_routine_skills().get_skill(routine.template)
@@ -143,6 +225,15 @@ def _schedule_fields(product_id: str, routine: Routine, registry: Any) -> Dict[s
 
     ScheduleCreate.model_validate(fields)
     return fields
+
+
+def _declared_schedule_fields(
+    product_id: str, routine: Routine, registry: Any, *, agent_os: Any = None
+) -> Dict[str, Any]:
+    """Schedule fields for a declared Routine; automatic acceptance needs the Routine API's authorization."""
+    if routine.auto_accept:
+        raise ValueError("Authorize automatic acceptance through the Routine API")
+    return _schedule_fields(product_id, routine, registry, agent_os=agent_os)
 
 
 class _RoutineAuthorization(_ExecutorAuthorization):
@@ -338,6 +429,7 @@ def _acceptance_checks(agent_os):
 
 
 _AUTOMATION_SCHEDULE_ID = COMPANY_AUTOMATION_SCHEDULE_ID
+_AUTOMATION_CRON = "0 * * * *"
 _AUTOMATION_TICK_SECONDS = 240
 _automation_deadline: ContextVar[Optional[float]] = ContextVar("company_tick_deadline", default=None)
 
@@ -350,13 +442,16 @@ def _check_automation_deadline():
         raise TimeoutError("Company automation tick exhausted its claim budget")
 
 
-async def _ensure_automation_schedule(db, *, enabled=True):
+async def _ensure_automation_schedule(db, *, enabled=True, cron_expr=_AUTOMATION_CRON):
     """Reconcile the runtime-owned schedule with the deployment configuration."""
     import time
 
     from agno.db.schemas.scheduler import Schedule
     from agno.db.utils import is_unique_violation
+    from agno.scheduler.cron import is_on_demand, next_run_for, validate_cron_expr
 
+    if is_on_demand(cron_expr) or not validate_cron_expr(cron_expr):
+        raise ValueError(f"Invalid cron expression: {cron_expr}")
     existing = await _call(db, "get_schedule", _AUTOMATION_SCHEDULE_ID)
     if existing is None:
         if not enabled:
@@ -364,7 +459,7 @@ async def _ensure_automation_schedule(db, *, enabled=True):
         row = Schedule(
             id=_AUTOMATION_SCHEDULE_ID,
             name="Company automation",
-            cron_expr="* * * * *",
+            cron_expr=cron_expr,
             endpoint="/company/attention",
             method="GET",
             managed_by="company",
@@ -384,6 +479,11 @@ async def _ensure_automation_schedule(db, *, enabled=True):
         or existing["method"] != "GET"
     ):
         raise ValueError("Company automation schedule identity is already in use")
+    if existing["cron_expr"] != cron_expr:
+        next_run_at = next_run_for(cron_expr, existing.get("timezone") or "UTC")
+        existing = await _call(
+            db, "update_schedule", _AUTOMATION_SCHEDULE_ID, cron_expr=cron_expr, next_run_at=next_run_at
+        )
     if enabled and not existing["enabled"] and existing.get("disabled_reason") == "company_off":
         existing = await _call(db, "update_schedule", _AUTOMATION_SCHEDULE_ID, enabled=True, disabled_reason=None)
     elif not enabled and existing["enabled"]:

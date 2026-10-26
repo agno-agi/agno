@@ -1259,6 +1259,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             transcripts_table = await self._get_table(table_type="transcripts")
 
             async with self.async_session_factory() as sess, sess.begin():
+                sandbox_leftovers = await self._collect_sandbox_leftovers(sess, [session_id])
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
                 if user_id is not None:
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
@@ -1281,6 +1282,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             # Cascade offloaded tool results after the session delete commits.
             await self._cascade_tool_results([session_id])
+            await self._release_sandbox_leftovers(sandbox_leftovers)
             # A deleted session's deserialized history must not stay resident.
             self._run_object_cache.drop_session(session_id)
             return True
@@ -1321,6 +1323,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 # to protect, so it also cleans up after a session whose row
                 # is already gone.
                 cascade_ids = session_ids if user_id is None else deletable_ids
+                sandbox_leftovers = await self._collect_sandbox_leftovers(sess, deletable_ids)
 
                 delete_stmt = table.delete().where(table.c.session_id.in_(deletable_ids))
                 result = await sess.execute(delete_stmt)
@@ -1341,11 +1344,40 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             # Cascade offloaded tool results after the session delete commits.
             await self._cascade_tool_results(cascade_ids)
+            await self._release_sandbox_leftovers(sandbox_leftovers)
             for deleted_id in cascade_ids:
                 self._run_object_cache.drop_session(deleted_id)
 
         except Exception as e:
             log_error(f"Error deleting sessions: {str(e)}")
+
+    async def _collect_sandbox_leftovers(self, sess: Any, session_ids: List[str]) -> List[Any]:
+        """Read what deleting these sessions would orphan in a sandbox, before the cascade drops their bindings.
+
+        A savepoint keeps a failed read from rolling back the delete itself.
+        """
+        collected = []
+        for coordinator in list(getattr(self, "sandbox_coordinators", None) or []):
+            try:
+                async with sess.begin_nested():
+                    leftovers = await sess.run_sync(
+                        lambda sync, c=coordinator: c.collect_deleted_sessions(sync.connection(), session_ids)
+                    )
+                collected.append((coordinator, leftovers))
+            except Exception as e:
+                log_warning(f"Could not read sandbox resources of deleted sessions: {e}")
+        return collected
+
+    @staticmethod
+    async def _release_sandbox_leftovers(collected: List[Any]) -> None:
+        """Remove deleted sessions' sandbox computers and checkpoints, after the delete commits."""
+        for coordinator, leftovers in collected:
+            if not leftovers:
+                continue
+            try:
+                await coordinator.arelease_deleted_sessions(leftovers)
+            except Exception as e:
+                log_warning(f"Could not remove sandbox resources of deleted sessions: {e}")
 
     async def _cascade_tool_results(self, session_ids: List[str]) -> None:
         """Cascade result offloading on session delete: read the index rows,
@@ -2333,55 +2365,78 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return []
             runs_table = await self._get_table(table_type="runs")
 
-            columns = [
+            filters = []
+            if start_timestamp is not None:
+                filters.append(table.c.created_at >= start_timestamp)
+            if end_timestamp is not None:
+                filters.append(table.c.created_at <= end_timestamp)
+
+            stmt = select(
                 table.c.session_id,
                 table.c.user_id,
                 table.c.session_data,
                 table.c.created_at,
                 table.c.session_type,
-            ]
-            # Include the legacy runs column if it still exists, to count not yet migrated runs
-            if "runs" in table.c:
-                columns.append(table.c.runs)
-
-            stmt = select(*columns)
-
-            if start_timestamp is not None:
-                stmt = stmt.where(table.c.created_at >= start_timestamp)
-            if end_timestamp is not None:
-                stmt = stmt.where(table.c.created_at <= end_timestamp)
+            ).where(*filters)
 
             async with self.async_session_factory() as sess:
                 result = await sess.execute(stmt)
                 records = result.fetchall()
                 sessions = [dict(record._mapping) for record in records]
+                if not sessions:
+                    return sessions
 
-                # Attach lightweight run info (model and provider) from the runs table
-                if runs_table is not None and sessions:
-                    session_ids = [s["session_id"] for s in sessions]
-                    runs_stmt = select(
-                        runs_table.c.session_id,
-                        runs_table.c.run_data["model"].astext.label("model"),
-                        runs_table.c.run_data["model_provider"].astext.label("model_provider"),
-                    ).where(runs_table.c.session_id.in_(session_ids))
+                # Only each run's model and provider are read, never whole runs
+                runs_stmts = []
+                if runs_table is not None:
+                    # Subquery, not a list of ids: one bind parameter per session overflows the driver's limit
+                    runs_stmts.append(
+                        select(
+                            runs_table.c.session_id,
+                            runs_table.c.run_data["model"].astext.label("model"),
+                            # A missing provider counts as "", not "None"
+                            func.coalesce(runs_table.c.run_data["model_provider"].astext, "").label("model_provider"),
+                        ).where(runs_table.c.session_id.in_(select(table.c.session_id).where(*filters)))
+                    )
+                # Runs not yet migrated out of the legacy column, extracted in the database instead of loading the column
+                if "runs" in table.c:
+                    legacy_runs = sa_cast(table.c.runs, postgresql.JSONB)
+                    legacy_run = func.jsonb_array_elements(
+                        case(
+                            (func.jsonb_typeof(legacy_runs) == "array", legacy_runs),
+                            else_=func.jsonb_build_array(),
+                        ),
+                        type_=postgresql.JSONB,
+                    ).column_valued("legacy_run", joins_implicitly=True)
+                    legacy_runs_stmt = select(
+                        table.c.session_id,
+                        legacy_run["model"].astext.label("model"),
+                        func.coalesce(legacy_run["model_provider"].astext, "").label("model_provider"),
+                    ).where(*filters)
+                    if runs_table is not None:
+                        legacy_runs_stmt = legacy_runs_stmt.where(
+                            ~select(runs_table.c.session_id)
+                            .where(runs_table.c.session_id == table.c.session_id)
+                            .exists()
+                        )
+                    runs_stmts.append(legacy_runs_stmt)
 
+                runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+                for runs_stmt in runs_stmts:
                     runs_result = await sess.execute(runs_stmt)
-                    runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
                     for session_id, model, model_provider in runs_result.fetchall():
                         runs_by_session.setdefault(session_id, []).append(
                             {"model": model, "model_provider": model_provider}
                         )
 
-                    for s in sessions:
-                        runs_data = runs_by_session.get(s["session_id"], [])
-                        if runs_data or not s.get("runs"):
-                            s["runs"] = runs_data
+                for s in sessions:
+                    s["runs"] = runs_by_session.get(s["session_id"], [])
 
                 return sessions
 
         except Exception as e:
             log_error(f"Exception reading from sessions table: {str(e)}")
-            return []
+            raise e
 
     async def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
         """Get the first date for which metrics calculation is needed:
@@ -2415,9 +2470,12 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return starting_date
 
         # 2. No metrics records. Return the date of the first recorded session.
-        first_session, _ = await self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
-
-        first_session_date = first_session[0]["created_at"] if first_session else None  # type: ignore[index]
+        # Queried directly rather than through get_sessions, which hides read errors behind an empty result
+        sessions_table = await self._get_table(table_type="sessions")
+        if sessions_table is None:
+            return None
+        async with self.async_session_factory() as sess:
+            first_session_date = (await sess.execute(select(func.min(sessions_table.c.created_at)))).scalar()
 
         # 3. No metrics records and no sessions records. Return None.
         if first_session_date is None:
@@ -6535,6 +6593,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         self, product_id: str, user_id: Optional[str] = None, **fields: Any
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.products import product_metadata, validate_product_fields
+        from agno.db.sql.company import update_product_row
 
         validate_product_fields(fields)
         if "metadata" in fields:
@@ -6542,14 +6601,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         table = await self._get_table(table_type="products")
         if table is None:
             return None
-        stmt = table.update().where(table.c.id == product_id, table.c.deleted_at.is_(None))
-        if user_id is not None:
-            stmt = stmt.where(table.c.user_id == user_id)
         async with self.async_session_factory() as sess, sess.begin():
-            result = (
-                await sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table))
-            ).fetchone()
-            return dict(result._mapping) if result else None
+            return await sess.run_sync(update_product_row, table, product_id, user_id, fields)
 
     async def get_product_counts(self, product_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         from agno.db.sql.company import product_counts

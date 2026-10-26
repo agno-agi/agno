@@ -8267,6 +8267,7 @@ class SqliteDb(BaseDb):
 
     def update_product(self, product_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.products import product_metadata, validate_product_fields
+        from agno.db.sql.company import update_product_row
 
         validate_product_fields(fields)
         if "metadata" in fields:
@@ -8274,12 +8275,8 @@ class SqliteDb(BaseDb):
         table = self._get_table(table_type="products")
         if table is None:
             return None
-        stmt = table.update().where(table.c.id == product_id, table.c.deleted_at.is_(None))
-        if user_id is not None:
-            stmt = stmt.where(table.c.user_id == user_id)
         with self.Session() as sess, sess.begin():
-            result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table)).fetchone()
-            return dict(result._mapping) if result else None
+            return update_product_row(sess, table, product_id, user_id, fields)
 
     def get_product_counts(self, product_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         from agno.db.sql.company import product_counts

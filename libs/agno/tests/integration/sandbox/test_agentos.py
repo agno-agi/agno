@@ -12,11 +12,10 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select, text
 
-from agno.db.postgres import PostgresDb
+from agno.db.postgres import AsyncPostgresDb, PostgresDb
 from agno.job_queue.config import QueueConfig, RedisCoordination
 from agno.os import AgentOS
 from agno.sandbox import _harness
-from agno.sandbox.checkpoint import FileCheckpointStore
 from agno.sandbox.docker import DockerSandbox
 from agno.sandbox.fixture import FixtureAgent
 
@@ -25,18 +24,24 @@ IMAGE = os.environ.get("AGNO_TEST_RUNTIME_IMAGE")
 REDIS = os.environ.get("AGNO_TEST_REDIS_URL")
 pytestmark = [
     pytest.mark.asyncio,
-    pytest.mark.skipif(not URL or not IMAGE or not REDIS, reason="Enable dedicated Docker, Postgres and Redis"),
+    pytest.mark.skipif(not URL or not IMAGE, reason="Enable dedicated Docker and Postgres"),
 ]
 
 
 @pytest_asyncio.fixture
-async def service(tmp_path, request):
+async def service(tmp_path, request, checkpoint_store):
     import redis
     import redis.asyncio
 
     import agno.os.event_streams as streams
     import agno.run.cancel as cancel
     from agno.run.cancellation_management.in_memory_cancellation_manager import InMemoryRunCancellationManager
+
+    settings = dict(getattr(request, "param", {}))
+    adapter = settings.pop("adapter", PostgresDb)
+    use_redis = settings.pop("use_redis", True)
+    if use_redis and not REDIS:
+        pytest.skip("Set AGNO_TEST_REDIS_URL")
 
     old = (
         streams._event_stream,
@@ -48,8 +53,9 @@ async def service(tmp_path, request):
     cancel._cancellation_manager, cancel._cancellation_manager_explicitly_set = InMemoryRunCancellationManager(), False
     suffix = uuid4().hex[:12]
     prefix = "sandbox-http-" + suffix
-    redis_sync, redis_async = redis.Redis.from_url(REDIS), redis.asyncio.Redis.from_url(REDIS)
-    db = PostgresDb(
+    redis_sync = redis.Redis.from_url(REDIS) if use_redis else None
+    redis_async = redis.asyncio.Redis.from_url(REDIS) if use_redis else None
+    db = adapter(
         db_url=URL,
         session_table="http_sessions_" + suffix,
         runs_table="http_runs_" + suffix,
@@ -62,7 +68,7 @@ async def service(tmp_path, request):
         memory_mb=512,
         workspace_mb=32,
         env={"AGNO_SANDBOX_TEST_RUNTIME": "1"},
-        checkpoints=FileCheckpointStore(tmp_path / "objects"),
+        checkpoints=checkpoint_store,
     )
     handles = []
     original = provider.acreate
@@ -77,13 +83,15 @@ async def service(tmp_path, request):
     config = QueueConfig(
         durable=True,
         db=db,
-        redis=RedisCoordination(sync_client=redis_sync, async_client=redis_async, key_prefix=prefix),
+        redis=RedisCoordination(sync_client=redis_sync, async_client=redis_async, key_prefix=prefix)
+        if use_redis
+        else None,
         poll_interval=0.05,
         max_attempts=2,
         retry_delay_seconds=0,
         stop_timeout_seconds=1,
         # Indirect parametrization overrides queue settings for one test.
-        **getattr(request, "param", {}),
+        **settings,
     )
     app = AgentOS(id=prefix, agents=[agent], db=db, queue=config, telemetry=False).get_app()
     try:
@@ -95,17 +103,27 @@ async def service(tmp_path, request):
     finally:
         for handle in handles:
             await provider.adestroy(handle)
-        with db.db_engine.begin() as connection:
-            for table_type in ("sandbox_bindings", "jobs", "runs", "sessions"):
-                table = db._get_table(table_type)
-                if table is not None:
-                    table.drop(connection, checkfirst=True)
-        db.db_engine.dispose()
-        keys = await redis_async.keys(prefix + "*")
-        if keys:
-            await redis_async.delete(*keys)
-        await redis_async.aclose()
-        redis_sync.close()
+        if isinstance(db, AsyncPostgresDb):
+            tables = [await db._get_table(kind) for kind in ("sandbox_bindings", "jobs", "runs", "sessions")]
+            async with db.db_engine.begin() as connection:
+                for table in tables:
+                    if table is not None:
+                        await connection.run_sync(lambda conn, table=table: table.drop(conn, checkfirst=True))
+            await db.db_engine.dispose()
+        else:
+            with db.db_engine.begin() as connection:
+                for table_type in ("sandbox_bindings", "jobs", "runs", "sessions"):
+                    table = db._get_table(table_type)
+                    if table is not None:
+                        table.drop(connection, checkfirst=True)
+            db.db_engine.dispose()
+        if redis_async is not None:
+            keys = await redis_async.keys(prefix + "*")
+            if keys:
+                await redis_async.delete(*keys)
+            await redis_async.aclose()
+        if redis_sync is not None:
+            redis_sync.close()
         (
             streams._event_stream,
             streams._event_stream_explicitly_set,
@@ -125,6 +143,43 @@ async def settled(app, run_id):
     return await asyncio.wait_for(wait(), 25)
 
 
+@pytest.mark.parametrize(
+    "service",
+    [
+        pytest.param({"adapter": PostgresDb, "use_redis": False}, id="sync-local"),
+        pytest.param({"adapter": AsyncPostgresDb, "use_redis": False}, id="async-local"),
+        pytest.param({"adapter": PostgresDb, "use_redis": True}, id="sync-redis"),
+        pytest.param({"adapter": AsyncPostgresDb, "use_redis": True}, id="async-redis"),
+    ],
+    indirect=True,
+)
+@pytest.mark.parametrize("mode", ["background", "foreground", "stream"])
+async def test_durable_queue_execution_with_optional_redis(service, mode):
+    client, agent, app, handles = service
+    response = await client.post(
+        "/agents/coder/runs",
+        data={
+            "message": "optional redis",
+            "session_id": "session",
+            "stream": str(mode == "stream").lower(),
+            "background": str(mode == "background").lower(),
+        },
+    )
+    assert response.status_code == (202 if mode == "background" else 200), response.text
+    if mode == "stream":
+        assert "RunContent" in response.text and "RunCompleted" in response.text
+        session = await agent.aget_session("session")
+        run_id = session.runs[-1].run_id
+    else:
+        run_id = response.json()["run_id"]
+    job = await settled(app, run_id)
+    assert job["status"] == "completed", job
+    assert job["payload"]["serialize_session"] is True
+    result = await agent.aget_run_output(run_id, "session")
+    assert result.status == "COMPLETED" and result.content == "optional redis"
+    assert result.metadata["sandbox"]["checkpoint"] and handles
+
+
 async def test_foreground_request_uses_durable_worker_and_committed_checkpoint(service):
     client, agent, app, handles = service
     response = await client.post(
@@ -141,6 +196,24 @@ async def test_foreground_request_uses_durable_worker_and_committed_checkpoint(s
     # The AgentOS harness keeps the computer warm for the next turn: paused, not removed.
     computers = await asyncio.gather(*(_harness.coordinator(agent).provider.aget(h.provider_ref) for h in handles))
     assert all(value is not None and value.state == "paused" for value in computers), computers
+
+
+async def test_deleting_a_session_over_http_removes_its_computer_and_checkpoint(service):
+    from agno.sandbox.checkpoint import CheckpointObjectNotFound, CheckpointRef
+
+    client, agent, _, handles = service
+    response = await client.post(
+        "/agents/coder/runs", data={"message": "first", "session_id": "session", "stream": "false"}
+    )
+    assert response.status_code == 200, response.text
+    reference = CheckpointRef(**response.json()["metadata"]["sandbox"]["checkpoint"])
+    runner = _harness.coordinator(agent)
+    assert await runner.provider.aget(handles[0].provider_ref) is not None
+    deleted = await client.delete("/sessions/session")
+    assert deleted.status_code == 204, deleted.text
+    assert await runner.provider.aget(handles[0].provider_ref) is None
+    with pytest.raises(CheckpointObjectNotFound):
+        await runner.transfer.store.averify(reference)
 
 
 async def test_background_acceptance_poll_and_idempotency(service):
@@ -189,7 +262,7 @@ async def test_queued_same_session_turns_do_not_spend_attempts_on_contention(ser
     assert len((await agent.aget_session("session")).runs) == 2
 
 
-async def test_checkpoint_outage_retries_finalization_only(service, monkeypatch):
+async def test_checkpoint_outage_retries_finalization_only(service, monkeypatch, tmp_path):
     client, agent, app, _ = service
     capture = _harness.coordinator(agent).transfer.acapture
     calls = []
@@ -213,7 +286,7 @@ async def test_checkpoint_outage_retries_finalization_only(service, monkeypatch)
     )
     from agno.sandbox.checkpoint import CheckpointRef
 
-    destination = _harness.coordinator(agent).transfer.store.root / "verify"
+    destination = tmp_path / "verify"
     await _harness.coordinator(agent).transfer.store.arestore(CheckpointRef(**row["record"]["checkpoint"]), destination)
     assert (destination / "workspace/fixture-effects.txt").read_text().splitlines() == [job["id"]]
 
@@ -318,14 +391,16 @@ async def test_sdk_background_uses_same_registered_queue(service):
     assert (await settled(app, pending.run_id))["status"] == "completed"
 
 
-async def test_missing_durable_queue_rejects_before_allocating(service):
+@pytest.mark.parametrize("queue", [None, QueueConfig(durable=False)])
+async def test_missing_durable_queue_rejects_before_allocating(service, queue):
     _, agent, _, handles = service
-    app = AgentOS(id="no-queue", agents=[agent], db=agent.db, telemetry=False).get_app()
+    app = AgentOS(id="no-queue", agents=[agent], db=agent.db, queue=queue, telemetry=False).get_app()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
             "/agents/coder/runs", data={"message": "no", "session_id": "session", "stream": "false"}
         )
-    assert response.status_code == 400 and "durable queue" in response.text
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Sandbox API execution requires a durable queue with shared session admission"
     assert not handles
 
 

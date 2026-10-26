@@ -8,6 +8,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agno.agent import Agent
+from agno.agents.claude import ClaudeAgent
+from agno.agents.codex import CodexAgent
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.exceptions import ComponentRehydrationError
 from agno.models.base import Model
@@ -20,7 +22,13 @@ from agno.os.config import AgentOSConfig, Manifest
 from agno.os.manager.config import MANAGER_TEAM_NAME
 from agno.os.utils import AgnoHTTPException
 from agno.registry import Registry
-from agno.registry._reserved import BUILDER_ID, MANAGER_TEAM_ID, OPERATOR_ID, PRODUCT_MANAGER_ID
+from agno.registry._reserved import (
+    BUILDER_ID,
+    COMPANY_MANAGER_ID,
+    LEGACY_PRODUCT_MANAGER_ID,
+    MANAGER_TEAM_ID,
+    OPERATOR_ID,
+)
 from agno.run import RunContext
 from agno.tools.agentos import AgentOSTools
 from agno.tools.studio import StudioTools
@@ -315,6 +323,21 @@ def test_manifest_defaults_yield_to_the_application_config(db):
     assert "platform-engineer" not in os.config.manifest
 
 
+@pytest.mark.parametrize("with_manager", [False, True])
+def test_company_manager_has_default_quick_prompts(db, with_manager):
+    from agno.os import CompanyConfig
+
+    manager = OSManager(model=OfflineModel()) if with_manager else None
+    os = AgentOS(db=db, manager=manager, company=CompanyConfig(model=OfflineModel()), telemetry=False)
+    config = TestClient(os.get_app()).get("/config").json()
+    assert config["manifest"][COMPANY_MANAGER_ID]["quick_prompts"]
+    assert bool(config["manifest"].get(MANAGER_TEAM_ID)) is with_manager
+
+    custom = AgentOSConfig(manifest={COMPANY_MANAGER_ID: Manifest(quick_prompts=["Ours"])})
+    os = AgentOS(db=db, manager=manager, company=CompanyConfig(model=OfflineModel()), config=custom, telemetry=False)
+    assert os.config.manifest[COMPANY_MANAGER_ID].quick_prompts == ["Ours"]
+
+
 def test_manager_serves_over_the_ordinary_planes(db):
     os = AgentOS(db=db, manager=OSManager(name="Jarvis", model=OfflineModel()), telemetry=False)
     client = TestClient(os.get_app())
@@ -597,6 +620,105 @@ def test_manager_runner_tracks_served_components_after_list_replacement(db, use_
     assert "error" in json.loads(result)
 
 
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("agent_class", [ClaudeAgent, CodexAgent])
+def test_manager_discovers_and_runs_external_agents(db, monkeypatch, agent_class, use_async):
+    from agno.os.authz.provider import AuthorizationContext
+    from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+    from agno.run.authorization import RunAuthorization
+
+    calls = []
+
+    async def adapter(self, message, **kwargs):
+        calls.append((self, message, kwargs))
+        return f"done: {message}"
+
+    monkeypatch.setattr(agent_class, "_arun_adapter", adapter)
+    claude = ClaudeAgent(id="claude-engineer", name="Claude Engineer")
+    codex = CodexAgent(id="codex-engineer", name="Codex Engineer")
+    agent = claude if agent_class is ClaudeAgent else codex
+    os = AgentOS(db=db, agents=[claude, codex], manager=OSManager(model=OfflineModel()), telemetry=False)
+    runner = next(t for t in os.manager.deep_copy().tools if isinstance(t, StudioRunnerTools))
+    listing = json.loads(asyncio.run(runner.alist_agents()) if use_async else runner.list_agents())
+    assert {row["id"] for row in listing["agents"]} == {"claude-engineer", "codex-engineer"}
+    assert runner._iter_agents() == []  # External adapters are not Studio build/edit targets.
+    assert runner._find_agent(agent.id) is None
+    context = RunContext(run_id="manager-run", session_id="conversation", user_id="alice")
+
+    def run(reference, message, caller=context):
+        kwargs = dict(agent_id=reference, message=message, _agno_run_context=caller, _agno_team=os.manager)
+        return json.loads(asyncio.run(runner.arun_agent(**kwargs)) if use_async else runner.run_agent(**kwargs))
+
+    first = run(agent.id, "first")
+    second = run(agent.name, "follow-up")
+    other = run(agent.id, "other user", RunContext(run_id="bob-run", session_id="conversation", user_id="bob"))
+    assert first["content"] == "done: first"
+    assert second["content"] == "done: follow-up"
+    assert other["content"] == "done: other user"
+    assert first["status"] == second["status"] == other["status"] == "COMPLETED"
+    assert first["session_id"] == second["session_id"] != context.session_id
+    assert other["session_id"] != first["session_id"]
+    assert all(call[0] is agent for call in calls)
+    assert calls[1][2]["history"] == [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "done: first"},
+    ]
+    assert not calls[2][2]["history"]
+    assert calls[0][2]["metadata"]["agno_dispatch_chain"] == [f"team:{MANAGER_TEAM_ID}", f"agent:{agent.id}"]
+    assert calls[0][2]["metadata"]["agno_dispatch_depth"] == 1
+    saved = db.get_runs(session_id=first["session_id"])
+    assert {row.run_id for row in saved} == {first["run_id"], second["run_id"]}
+    assert all(row.user_id == "alice" for row in saved)
+    # The adapter's original admission guard must still prevent overlapping turns.
+    agent._sessions_in_flight[first["session_id"]] = "active-run"
+    try:
+        refused = run(agent.id, "overlap")
+        assert "already has run active-run in flight" in refused["error"]
+        assert len(calls) == 3
+    finally:
+        agent._sessions_in_flight.clear()
+    context.authorization = RunAuthorization(
+        provider=ScopeAuthorizationProvider(),
+        context=AuthorizationContext(principal_id="alice", scopes=["teams:os-manager-internal:run"]),
+    )
+    hidden = json.loads(asyncio.run(runner.alist_agents(context)) if use_async else runner.list_agents(context))
+    assert hidden["agents"] == []
+    with pytest.raises(PermissionError, match=f"agents:{agent.id}:run"):
+        run(agent.id, "denied")
+    assert len(calls) == 3
+    context.authorization = None
+    # The live allowlist must follow replacement, including on a copied manager.
+    os.agents = []
+    assert "error" in run(agent.id, "removed")
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_registry_runners_do_not_dispatch_external_agents(db, monkeypatch, use_async):
+    calls = []
+
+    async def adapter(self, message, **kwargs):
+        calls.append(message)
+        return f"done: {message}"
+
+    monkeypatch.setattr(ClaudeAgent, "_arun_adapter", adapter)
+    claude = ClaudeAgent(id="claude-engineer", name="Claude Engineer")
+    os = AgentOS(db=db, agents=[claude], manager=OSManager(model=OfflineModel()), telemetry=False)
+    assert claude in os.registry.agents
+    builder_studio = next(t for t in manager_member(os, BUILDER_ID).tools if isinstance(t, StudioTools))
+    registry_runner = StudioRunnerTools(registry=os.registry, db=db, include_all_components=True)
+    context = RunContext(run_id="run", session_id="conversation", user_id="alice")
+    for tools in (builder_studio, registry_runner):
+        if use_async:
+            result = asyncio.run(tools.arun_agent(claude.id, "hi", _agno_run_context=context))
+        else:
+            result = tools.run_agent(claude.id, "hi", _agno_run_context=context)
+        assert json.loads(result)["error"] == f"Agent not found: {claude.id}"
+    listing = asyncio.run(registry_runner.alist_agents(context)) if use_async else registry_runner.list_agents(context)
+    assert json.loads(listing)["agents"] == []
+    assert calls == []
+
+
 @pytest.mark.parametrize("component_id", [BUILDER_ID, OPERATOR_ID, MANAGER_TEAM_ID])
 @pytest.mark.parametrize("in_registry", [False, True])
 def test_manager_reserves_fixed_ids(db, component_id, in_registry):
@@ -676,7 +798,13 @@ def test_disabled_manager_needs_neither_a_model_nor_a_workspace(db, enabled):
     os = AgentOS(db=db, manager=enabled, telemetry=False)
     assert os.manager is None
     assert not os.agents and not os.teams
-    assert os.registry.excluded_component_ids == {MANAGER_TEAM_ID, BUILDER_ID, OPERATOR_ID, PRODUCT_MANAGER_ID}
+    assert os.registry.excluded_component_ids == {
+        MANAGER_TEAM_ID,
+        BUILDER_ID,
+        OPERATOR_ID,
+        COMPANY_MANAGER_ID,
+        LEGACY_PRODUCT_MANAGER_ID,
+    }
 
 
 @pytest.mark.parametrize("invalid", ["true", {}, 1, 0])
@@ -790,7 +918,7 @@ def test_registry_exclusion_surface_is_public_and_read_only():
     registry = Registry()
     registry.reserve_component_ids(["reserved-id", ""])
     assert registry.excluded_component_ids == frozenset(
-        {"reserved-id", MANAGER_TEAM_ID, BUILDER_ID, OPERATOR_ID, PRODUCT_MANAGER_ID}
+        {"reserved-id", MANAGER_TEAM_ID, BUILDER_ID, OPERATOR_ID, COMPANY_MANAGER_ID, LEGACY_PRODUCT_MANAGER_ID}
     )
     with pytest.raises(AttributeError):
         registry.excluded_component_ids.add("other")  # type: ignore[attr-defined]
@@ -965,7 +1093,8 @@ def test_internal_identity_metadata_reaches_discovery_detail_and_runs(db, worksp
         rows += client.get("/agents").json() + client.get("/teams").json()
         team = client.get(f"/teams/{MANAGER_TEAM_ID}").json()
         rows.append(team)
-        assert not team.get("members")
+        assert [member["id"] for member in team["members"]] == [BUILDER_ID, OPERATOR_ID]
+        rows.extend(team["members"])
         assert [agent["id"] for agent in config["agents"]] == ["ordinary"]
         assert [agent["id"] for agent in client.get("/agents").json()] == ["ordinary"]
         assert not {BUILDER_ID, OPERATOR_ID}.intersection(config["manifest"])
@@ -1030,6 +1159,7 @@ def test_docs_mcp_defaults_on_is_private_and_uses_os_lifecycle(db, monkeypatch, 
     os = AgentOS(db=db, manager=config, telemetry=False)
     docs = [tool for tool in manager_member(os, OPERATOR_ID).tools if isinstance(tool, MCPTools)]
     assert len(docs) == int(enabled)
+    assert [tool for tool in os.manager.tools if isinstance(tool, MCPTools)] == docs
     assert not os.registry.tools
     if enabled:
         assert docs[0].url == "https://docs.agno.com/mcp"
@@ -1044,6 +1174,56 @@ def test_docs_mcp_defaults_on_is_private_and_uses_os_lifecycle(db, monkeypatch, 
         assert all(url == "https://docs.agno.com/mcp" for _, url in calls)
     else:
         assert not calls
+
+
+@pytest.mark.parametrize("async_mode", [False, True])
+def test_manager_can_answer_framework_question_using_docs_without_delegation(db, monkeypatch, async_mode):
+    from agno.tools.function import Function
+    from agno.tools.mcp import MCPTools
+
+    queries = []
+
+    def search_docs(query: str) -> str:
+        queries.append(query)
+        return "Agentic learning saves and recalls user context through tools."
+
+    async def connect(tool, force=False):
+        tool.functions["search_docs"] = Function(name="search_docs", entrypoint=search_docs)
+        tool._initialized = True
+
+    monkeypatch.setattr(MCPTools, "connect", connect)
+    model = ManagerToolModel("search_docs", {"query": "How does learning work?"})
+    os = AgentOS(db=db, manager=OSManager(model=model), telemetry=False)
+    # The fake model selects a docs call; this verifies the execution path and
+    # persistence, not a real model's ability to choose the narrower route.
+    with TestClient(os.get_app()):
+        manager = os.manager.deep_copy()
+        run = (
+            asyncio.run(manager.arun("How does learning work?"))
+            if async_mode
+            else manager.run("How does learning work?")
+        )
+    assert queries == ["How does learning work?"]
+    assert [tool.tool_name for tool in run.tools] == ["search_docs"]
+    assert not run.member_responses
+    assert model.calls == 2
+
+
+@pytest.mark.parametrize("custom_provider", [False, True])
+def test_manager_can_inspect_requested_tmp_artifacts(db, workspace, custom_provider):
+    from agno.context.workspace import WorkspaceContextProvider
+
+    (workspace / "tmp").mkdir()
+    (workspace / "tmp" / "evidence.json").write_text('{"learning": "irrelevant run dump"}')
+    (workspace / "learning.py").write_text("learning = True")
+    root = WorkspaceContextProvider(root=workspace, exclude_patterns=[]) if custom_provider else workspace
+    os = AgentOS(db=db, manager=OSManager(model=OfflineModel(), root=root), telemetry=False)
+    tool = next(t for t in manager_member(os, OPERATOR_ID).tools if "search_content" in getattr(t, "functions", {}))
+    result = json.loads(tool.search_content("learning"))
+    assert result["matches_found"] == 2
+    assert {file["file"] for file in result["files"]} == {"learning.py", "tmp/evidence.json"}
+    assert "evidence.json" in tool.list_files(recursive=True)
+    assert "irrelevant run dump" in tool.read_file("tmp/evidence.json")
 
 
 @pytest.mark.parametrize("enabled", [False, True])
@@ -1517,16 +1697,72 @@ def test_manager_member_confirmation_continues_through_manager(db, stream):
     assert any(run.get("agent_id") == OPERATOR_ID for run in history)
 
 
-@pytest.mark.asyncio
-async def test_team_detail_hides_only_framework_owned_members():
-    from agno.os.routers.teams.schema import TeamResponse
-    from agno.team import Team
+@pytest.mark.parametrize("company_enabled", [False, True])
+def test_manager_details_show_members_without_exposing_them_in_registry(db, company_enabled):
+    from agno.company import CompanyConfig
 
-    member = Agent(id=OPERATOR_ID, model=OfflineModel())
-    team = Team(id="ordinary", members=[member], model=OfflineModel())
-    assert (await TeamResponse.from_team(team)).members
-    member._registry_excluded = True
-    assert not (await TeamResponse.from_team(team)).members
+    ordinary = Agent(id="ordinary", model=OfflineModel())
+    registry = Registry(models=[OfflineModel()])
+    os = AgentOS(
+        db=db,
+        agents=[ordinary],
+        registry=registry,
+        manager=OSManager(access_docs=False),
+        company=CompanyConfig() if company_enabled else None,
+        telemetry=False,
+    )
+    app = os.get_app()
+    client = TestClient(app)
+    expected_ids = [BUILDER_ID, OPERATOR_ID, *([COMPANY_MANAGER_ID] if company_enabled else [])]
+    expected_names = ["Platform Builder", "Platform Manager", *(["Company Manager"] if company_enabled else [])]
+
+    for resync in (False, True):
+        if resync:
+            os.resync(app)
+        detail = client.get(f"/teams/{MANAGER_TEAM_ID}")
+        assert detail.status_code == 200, detail.text
+        listing = client.get("/teams")
+        assert listing.status_code == 200, listing.text
+        listed_manager = next(team for team in listing.json() if team["id"] == MANAGER_TEAM_ID)
+        for team in (detail.json(), listed_manager):
+            assert [member["id"] for member in team["members"]] == expected_ids
+            assert [member["name"] for member in team["members"]] == expected_names
+
+        assert [agent.id for agent in registry.agents] == ["ordinary"]
+        assert registry.teams == []
+        assert all(registry.is_component_excluded(member) for member in os.manager.members)
+        # Company Manager is also served on its own; the platform specialists never are.
+        served = ["ordinary", *([COMPANY_MANAGER_ID] if company_enabled else [])]
+        assert [agent["id"] for agent in client.get("/agents").json()] == served
+        assert [agent["id"] for agent in client.get("/config").json()["agents"]] == served
+        for component_id in (BUILDER_ID, OPERATOR_ID):
+            assert client.get(f"/agents/{component_id}").status_code == 422
+
+
+@pytest.mark.parametrize("company_enabled", [False, True])
+def test_manager_member_details_show_tools_without_instructions_or_source_root(db, workspace, company_enabled):
+    from agno.company import CompanyConfig
+
+    os = AgentOS(
+        db=db,
+        registry=Registry(models=[OfflineModel()]),
+        manager=OSManager(root=workspace, access_docs=False),
+        company=CompanyConfig() if company_enabled else None,
+        telemetry=False,
+    )
+    client = TestClient(os.get_app())
+    for path in ("/teams", f"/teams/{MANAGER_TEAM_ID}"):
+        response = client.get(path)
+        assert response.status_code == 200, response.text
+        assert str(workspace) not in response.text
+    members = client.get(f"/teams/{MANAGER_TEAM_ID}").json()["members"]
+    expected_ids = [BUILDER_ID, OPERATOR_ID, *([COMPANY_MANAGER_ID] if company_enabled else [])]
+    assert [member["id"] for member in members] == expected_ids
+    for member in members:
+        assert member["name"] and member["model"]
+        assert member["metadata"]["_agno"] == {"internal": True, "id": member["id"]}
+        assert member["tools"]["tools"]
+        assert member.get("system_message") is None
 
 
 @pytest.mark.parametrize("kind", ["agent", "team", "workflow"])
@@ -1593,3 +1829,195 @@ async def test_reserved_errors_match_sync_and_async_os_lookup(db, tmp_path, kind
         assert sync_error.value.detail == async_error.value.detail
     assert getattr(utils, f"get_{kind}_by_id")("missing", db=os_db) is None
     assert await getattr(utils, f"get_{kind}_by_id_async")("missing", db=os_db) is None
+
+
+@pytest.mark.parametrize("field", ["tool_call_limit", "member_tool_call_limit"])
+@pytest.mark.parametrize("value", [-1, 1.5, True, "8"])
+def test_manager_rejects_invalid_tool_limits(field, value):
+    with pytest.raises(ValueError, match=field):
+        OSManager(**{field: value})
+
+
+@pytest.mark.parametrize(
+    "limits",
+    [
+        {},
+        {"tool_call_limit": 2, "member_tool_call_limit": 3},
+        {"tool_call_limit": None, "member_tool_call_limit": None},
+        {"tool_call_limit": 0, "member_tool_call_limit": 0},
+    ],
+)
+def test_manager_limits_cover_company_members_without_changing_application_agents(db, limits):
+    from agno.os import CompanyConfig
+
+    config = OSManager(model=OfflineModel(), instructions="Application context", **limits)
+    application_agent = Agent(id="application", model=OfflineModel())
+    os = AgentOS(
+        db=db, agents=[application_agent], manager=config, company=CompanyConfig(model=OfflineModel()), telemetry=False
+    )
+    assert os.manager.tool_call_limit == limits.get("tool_call_limit", 8)
+    assert len(os.manager.members) == 3
+    assert all(member.tool_call_limit == limits.get("member_tool_call_limit", 24) for member in os.manager.members)
+    assert application_agent.tool_call_limit is None
+    assert "Application context" in os.manager.instructions
+    assert all("Application context" not in member.instructions for member in os.manager.members)
+    os.resync(os.get_app())
+    assert all(member.tool_call_limit == config.member_tool_call_limit for member in os.manager.members)
+    assert application_agent.tool_call_limit is None
+
+
+class BudgetProbeModel(OfflineModel):
+    """Request more tools than allowed, then expose the refused call in the answer."""
+
+    def __init__(self, tool_name, arguments, calls_per_turn=1):
+        super().__init__()
+        self.tool_name = tool_name
+        self.arguments = arguments
+        self.calls_per_turn = calls_per_turn
+        self.calls = 0
+
+    def invoke(self, messages, *args, **kwargs):
+        from agno.os.manager.prompts import FOCUSED_EXECUTION_INSTRUCTIONS
+
+        system = "\n".join(m.content for m in messages if m.role == "system" and isinstance(m.content, str))
+        assert FOCUSED_EXECUTION_INSTRUCTIONS in system
+        self.calls += 1
+        assert self.calls <= 5, "Budget refusal must reach the model"
+        if any(m.role == "tool" and "Tool call limit reached" in str(m.content) for m in messages):
+            return ModelResponse(
+                content="Investigation limit reached; reporting verified evidence only.",
+                role="assistant",
+                response_usage=MessageMetrics(),
+            )
+        return ModelResponse(
+            role="assistant",
+            response_usage=MessageMetrics(),
+            tool_calls=[
+                {
+                    "id": f"probe-{self.calls}-{i}",
+                    "type": "function",
+                    "function": {"name": self.tool_name, "arguments": json.dumps(self.arguments)},
+                }
+                for i in range(self.calls_per_turn)
+            ],
+        )
+
+    async def ainvoke(self, *args, **kwargs):
+        return self.invoke(*args, **kwargs)
+
+    def invoke_stream(self, *args, **kwargs):
+        yield self.invoke(*args, **kwargs)
+
+    async def ainvoke_stream(self, *args, **kwargs):
+        yield self.invoke(*args, **kwargs)
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("calls_per_turn", [1, 4])
+@pytest.mark.parametrize("target", [MANAGER_TEAM_ID, BUILDER_ID, OPERATOR_ID, COMPANY_MANAGER_ID])
+async def test_manager_executes_no_more_than_configured_limit(db, use_async, stream, calls_per_turn, target):
+    from agno.os import CompanyConfig
+
+    os = AgentOS(
+        db=db,
+        manager=OSManager(model=OfflineModel(), tool_call_limit=2, member_tool_call_limit=2),
+        company=CompanyConfig(model=OfflineModel()),
+        telemetry=False,
+    )
+    owner = os.manager if target == MANAGER_TEAM_ID else manager_member(os, target)
+    calls = []
+
+    def focused_lookup() -> str:
+        """Look up the requested concept."""
+        calls.append("lookup")
+        return "Learning stores information for later retrieval; it does not retrain model weights."
+
+    owner.tools.append(focused_lookup)
+    owner.model = BudgetProbeModel("focused_lookup", {}, calls_per_turn)
+    # Reuse the same manager: limits must reset between user turns.
+    for turn in range(2):
+        owner.model.calls = 0
+        kwargs = dict(session_id=f"budget-{turn}", user_id="alice", stream=stream)
+        if use_async:
+            if stream:
+                result = [event async for event in owner.arun("How does learning work?", **kwargs)]
+            else:
+                result = await owner.arun("How does learning work?", **kwargs)
+        elif stream:
+            result = list(owner.run("How does learning work?", **kwargs))
+        else:
+            result = owner.run("How does learning work?", **kwargs)
+        assert result
+        assert len(calls) == 2 * (turn + 1)
+        assert owner.model.calls == (4 if calls_per_turn == 1 else 2)
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_manager_limits_apply_on_both_sides_of_delegation(db, use_async):
+    os = AgentOS(
+        db=db, manager=OSManager(model=OfflineModel(), tool_call_limit=1, member_tool_call_limit=2), telemetry=False
+    )
+    member = manager_member(os, OPERATOR_ID)
+    calls = []
+
+    def focused_lookup() -> str:
+        """Read the relevant configuration."""
+        calls.append("lookup")
+        return "Verified configuration"
+
+    member.tools.append(focused_lookup)
+    member.model = BudgetProbeModel("focused_lookup", {})
+    os.manager.model = BudgetProbeModel(
+        "delegate_task_to_member",
+        {
+            "member_id": OPERATOR_ID,
+            "task": "Read the learning configuration; at most two lookups, then report evidence.",
+        },
+    )
+    result = (
+        await os.manager.arun("Explain this configuration")
+        if use_async
+        else os.manager.run("Explain this configuration")
+    )
+    assert result.content
+    assert calls == ["lookup", "lookup"]
+    assert member.model.calls == 4  # One delegation, two executions, one refusal, then an answer.
+    assert os.manager.model.calls == 3  # The second delegation is refused.
+
+
+def test_explanation_guidance_reaches_only_documentation_roles(db):
+    from agno.os import CompanyConfig
+    from agno.os.manager.prompts import EXPLANATION_INSTRUCTIONS, FOCUSED_EXECUTION_INSTRUCTIONS
+
+    os = AgentOS(
+        db=db, manager=OSManager(model=OfflineModel()), company=CompanyConfig(model=OfflineModel()), telemetry=False
+    )
+    assert EXPLANATION_INSTRUCTIONS in os.manager.instructions
+    assert EXPLANATION_INSTRUCTIONS in manager_member(os, OPERATOR_ID).instructions
+    for member_id in (BUILDER_ID, COMPANY_MANAGER_ID):
+        instructions = manager_member(os, member_id).instructions
+        assert FOCUSED_EXECUTION_INSTRUCTIONS in instructions
+        assert EXPLANATION_INSTRUCTIONS not in instructions
+
+
+@pytest.mark.parametrize("with_manager", [False, True])
+def test_standalone_company_manager_keeps_its_existing_execution_policy(db, with_manager):
+    from agno.os import CompanyConfig
+    from agno.os.manager.prompts import FOCUSED_EXECUTION_INSTRUCTIONS
+
+    os = AgentOS(
+        db=db,
+        company=CompanyConfig(model=OfflineModel()),
+        manager=OSManager(model=OfflineModel(), member_tool_call_limit=7) if with_manager else None,
+        telemetry=False,
+    )
+    # Direct chat and Routines run the served instance; only the manager's member is bounded.
+    assert os.company_manager.tool_call_limit is None
+    assert FOCUSED_EXECUTION_INSTRUCTIONS not in os.company_manager.instructions
+    if with_manager:
+        member = manager_member(os, COMPANY_MANAGER_ID)
+        assert member is not os.company_manager
+        assert member.tool_call_limit == 7 and FOCUSED_EXECUTION_INSTRUCTIONS in member.instructions
+        os.resync(os.get_app())
+        assert os.company_manager.tool_call_limit is None and member.tool_call_limit == 7

@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "3.1.4"
+version = "3.1.10"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -445,6 +445,8 @@ tests = [
     "agno[cookbooks]",
     "agno[agui]",
     "agno[integration-tests]",
+    # In-process S3 for the sandbox checkpoint store tests.
+    "moto[s3]>=5",
     "twine",
     "build",
     "grpcio>=1.76.0",

@@ -317,6 +317,15 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
     return kwargs
 
 
+async def is_form_field_omitted(request: Request, name: str) -> bool:
+    """Whether the client left the form field ``name`` out of the request.
+
+    FastAPI 0.147+ reads an omitted boolean form field as False whatever its default, so a route
+    whose boolean default is not False checks the raw form before trusting the parsed value.
+    """
+    return name not in await request.form()
+
+
 def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent]) -> str:
     """Parse JSON data into SSE-compliant format.
 

@@ -15,7 +15,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Sequence, Tuple
 
-from agno.sandbox.base import ExecResult, Sandbox, SandboxError, SandboxHandle, _identity, _sync
+from agno.sandbox.base import ExecResult, Sandbox, SandboxError, SandboxHandle, _identity, _retention, _sync
 
 if TYPE_CHECKING:
     from agno.sandbox.checkpoint import CheckpointStore
@@ -91,6 +91,7 @@ class DockerSandbox(Sandbox):
         checkpoints: Optional["CheckpointStore"] = None,
         env: Optional[Mapping[str, str]] = None,
         execution_timeout: float = 900,
+        retain_checkpoints: Optional[int] = 3,
     ) -> None:
         for value in (image, namespace, network):
             if not isinstance(value, str) or not value or "\x00" in value:
@@ -144,6 +145,7 @@ class DockerSandbox(Sandbox):
         self.checkpoints = checkpoints
         self.env = dict(env) if env is not None else None
         self.execution_timeout = execution_timeout
+        self.retain_checkpoints = _retention(retain_checkpoints)
         self._http: Dict[asyncio.AbstractEventLoop, Tuple[Any, "asyncio.Task[None]"]] = {}
         # Sync calls from several threads share the cache, and each loop's closer removes its own entry.
         self._http_lock = threading.Lock()

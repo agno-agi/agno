@@ -164,7 +164,7 @@ async def test_source_paging_soft_delete_and_restart(heartbeat, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_setup_rechecks_owner_after_concurrent_product_insert(heartbeat, tmp_path, monkeypatch):
+async def test_setup_race_loser_joins_the_winners_product(heartbeat, tmp_path, monkeypatch):
     db, _, call = heartbeat
     original = db.create_product
     winner = Product(id="company-setup", name="First owner", user_id="alice")
@@ -187,9 +187,10 @@ async def test_setup_rechecks_owner_after_concurrent_product_insert(heartbeat, t
         user_id="bob",
         sources=[Source(type="markdown", reference=str(tmp_path / "private.md"))],
     )
-    with pytest.raises(PermissionError):
-        await arehydrate_product(db, loser, scoped_user_id="bob")
-    assert (await call("list_sources"))[1] == 0
+    # Setup is not owner-scoped: the loser adds its declarations and the winner stays the owner.
+    await arehydrate_product(db, loser)
+    assert (await call("list_sources"))[1] == 1
+    assert (await call("get", "company-setup"))["user_id"] == "alice"
 
 
 def test_website_uses_existing_reader_and_hashes_extracted_content(monkeypatch):
@@ -619,7 +620,7 @@ async def test_routine_service_cannot_create_a_plain_task(heartbeat):
     product = await call("create", name="Bounded proposals")
     product_project = await call("create_project", product_id=product["id"], name="Work")
     with authorization_scope(lambda: _RoutineAuthorization(None, "routine")):
-        with pytest.raises(PermissionError, match="intake_company_source"):
+        with pytest.raises(PermissionError, match="intake_product_source"):
             await call("create_task", product_id=product["id"], title="Plain task", project_id=product_project["id"])
     assert (await call("list_tasks", product_id=product["id"]))[1] == 0
 
@@ -784,8 +785,8 @@ async def test_agent_website_source_reuse_provenance_conflicts_and_archive(heart
         args["_agno_" + executor_type] = agent
         args.update(overrides)
         if isinstance(db, AsyncBaseDb):
-            return json.loads(await toolkit.aadd_company_source(**args))
-        return json.loads(await asyncio.to_thread(toolkit.add_company_source, **args))
+            return json.loads(await toolkit.aadd_product_source(**args))
+        return json.loads(await asyncio.to_thread(toolkit.add_product_source, **args))
 
     first, second = await asyncio.gather(add(), add())
     assert first["id"] == second["id"]
@@ -804,9 +805,9 @@ async def test_agent_website_source_reuse_provenance_conflicts_and_archive(heart
             executor_type=executor_type,
             run_id="discovery-run",
         )
+    # Another member's agent may add to the Product too; the same website reuses the Source.
     context.user_id = "other"
-    with pytest.raises(PermissionError):
-        await add()
+    assert (await add())["id"] == first["id"]
     context.user_id = "owner"
     with pytest.raises(ValueError, match="identity"):
         await add(**{"_agno_" + executor_type: None})
@@ -904,3 +905,20 @@ async def test_concurrent_summary_does_not_redeliver_the_same_delta(heartbeat, m
     assert len(delivered) == 1
     await call("summarize", product_id=product["id"], run_id="later", interfaces=[], narrative="Quiet")
     assert "No Task changes since the last delivered summary" in delivered[-1]
+
+
+@pytest.mark.asyncio
+async def test_product_metadata_edits_keep_linked_routines(heartbeat):
+    db, _, call = heartbeat
+    product = await call("create", name="Docs", metadata={"team": "a"})
+    link = db.add_product_routine(product["id"], "routine-1")
+    if inspect.isawaitable(link):
+        await link
+
+    updated = await call("update", product["id"], metadata={"team": "b", "routine_ids": []})
+    assert updated["metadata"]["team"] == "b"
+    assert updated["metadata"]["routine_ids"] == ["routine-1"]
+    cleared = await call("update", product["id"], metadata=None)
+    assert cleared["metadata"]["routine_ids"] == ["routine-1"]
+    renamed = await call("update", product["id"], name="Docs site")
+    assert renamed["metadata"]["routine_ids"] == ["routine-1"]
