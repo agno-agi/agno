@@ -98,8 +98,10 @@ manually.
 A Product contains Projects and Routines. Every new Task belongs to a Project
 in that Product: `project_id` is required by Task creation and proposal/Intake
 tools. HTTP rejects omission with 422; Python managers and tools raise
-`ValueError`. When no Project fits, propose one with `propose_company_project`,
-then pass its ID to the Task proposal. A Backlog Task can move between Projects
+`ValueError`. When no Project fits, propose one with `propose_company_project`.
+A human approves it (`active`) before any Task can be created in it; Company tools
+cannot approve a Project, so an unattended Routine waits and proposes work on a
+later invocation. A Backlog Task can move between Projects
 but cannot clear its Project. Existing nullable storage rows remain readable.
 
 Projects start `proposed` and move to `active`, then `done`. A Project can be
@@ -130,8 +132,10 @@ read scope, matching Products. Edits and transitions are collaborative: callers 
 scope can update or transition another creator's work, even with user isolation
 enabled. This includes cancellation and returning Tasks to Backlog. The creator
 stays unchanged, and transition history records the acting caller. Ready still
-requires the caller's executor run permission; accepted Tasks must return to
-Backlog before editing. Delete and restore need the delete scope, not ownership.
+requires the caller's executor run permission; accepted Tasks keep their Project,
+evidence and executor until returned to Backlog, while title and brief stay
+editable at any stage (Company tools run by Routines and executors edit Backlog
+Tasks only). Delete and restore need the delete scope, not ownership.
 New work can use another owner's Product or Project, with the Task and
 Project still required to belong to the same Product. Manager and storage
 methods retain explicit owner filters for direct callers.

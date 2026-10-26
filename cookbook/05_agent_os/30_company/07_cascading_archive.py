@@ -43,6 +43,12 @@ async def exercise(db):
     second = await call(
         manager.create_project, product_id=product["id"], name="Next release"
     )
+    await call(
+        manager.transition_project,
+        project_id=first["id"],
+        target="active",
+        reason="Scope approved",
+    )
     old = await call(
         manager.create_task,
         product_id=product["id"],

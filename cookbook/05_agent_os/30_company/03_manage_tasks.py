@@ -22,6 +22,9 @@ if __name__ == "__main__":
         manager = CompanyManager(db, registry=Registry(agents=[writer]))
         product = manager.create(name="SDK", user_id="alice")
         project = manager.create_project(product_id=product["id"], name="Release")
+        manager.transition_project(
+            project_id=project["id"], target="active", reason="Scope approved"
+        )
         first = manager.create_task(
             product_id=product["id"],
             title="Ship release",
@@ -47,7 +50,7 @@ if __name__ == "__main__":
         )
         assert ready["accepted_by"] == "alice"
         try:
-            manager.update_task(first["id"], brief="Changed after acceptance")
+            manager.update_task(first["id"], executor_id="other")
         except ValueError:
             print("Accepted scope is protected")
         else:
