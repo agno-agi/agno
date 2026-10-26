@@ -1043,6 +1043,7 @@ def handle_model_response_stream(
 
     reasoning_state = {
         "reasoning_started": False,
+        "reasoning_completed": False,
         "reasoning_time_taken": 0.0,
     }
     model_response = ModelResponse(content="")
@@ -1164,7 +1165,7 @@ def handle_model_response_stream(
     run_response.messages = messages_for_run_response
 
     # Determine reasoning completed
-    if stream_events and reasoning_state["reasoning_started"]:
+    if stream_events and reasoning_state["reasoning_started"] and not reasoning_state.get("reasoning_completed"):
         all_reasoning_steps: List[ReasoningStep] = []
         if run_response and run_response.reasoning_steps:
             all_reasoning_steps = cast(List[ReasoningStep], run_response.reasoning_steps)
@@ -1184,6 +1185,16 @@ def handle_model_response_stream(
                 events_to_skip=agent.events_to_skip,  # type: ignore
                 store_events=agent.store_events,
             )
+        else:
+            yield handle_event(  # type: ignore
+                create_reasoning_completed_event(
+                    from_run_response=run_response,
+                ),
+                run_response,
+                events_to_skip=agent.events_to_skip,  # type: ignore
+                store_events=agent.store_events,
+            )
+        reasoning_state["reasoning_completed"] = True
 
     # Update the run_response audio if streaming
     if model_response.audio is not None:
@@ -1207,6 +1218,7 @@ async def ahandle_model_response_stream(
 
     reasoning_state = {
         "reasoning_started": False,
+        "reasoning_completed": False,
         "reasoning_time_taken": 0.0,
     }
     model_response = ModelResponse(content="")
@@ -1330,7 +1342,7 @@ async def ahandle_model_response_stream(
     # Update the RunOutput messages
     run_response.messages = messages_for_run_response
 
-    if stream_events and reasoning_state["reasoning_started"]:
+    if stream_events and reasoning_state["reasoning_started"] and not reasoning_state.get("reasoning_completed"):
         all_reasoning_steps: List[ReasoningStep] = []
         if run_response and run_response.reasoning_steps:
             all_reasoning_steps = cast(List[ReasoningStep], run_response.reasoning_steps)
@@ -1350,6 +1362,16 @@ async def ahandle_model_response_stream(
                 events_to_skip=agent.events_to_skip,  # type: ignore
                 store_events=agent.store_events,
             )
+        else:
+            yield handle_event(  # type: ignore
+                create_reasoning_completed_event(
+                    from_run_response=run_response,
+                ),
+                run_response,
+                events_to_skip=agent.events_to_skip,  # type: ignore
+                store_events=agent.store_events,
+            )
+        reasoning_state["reasoning_completed"] = True
 
     # Update the run_response audio if streaming
     if model_response.audio is not None:
@@ -1439,6 +1461,77 @@ def handle_model_response_chunk(
             if model_response_event.citations is not None:
                 run_response.citations = model_response_event.citations
 
+            # Handle streaming reasoning events
+            reasoning_delta = (
+                model_response_event.reasoning_content
+                if model_response_event.reasoning_content is not None
+                else model_response_event.redacted_reasoning_content
+            )
+            if stream_events and reasoning_delta is not None:
+                if reasoning_state and (
+                    not reasoning_state.get("reasoning_started") or reasoning_state.get("reasoning_completed")
+                ):
+                    yield handle_event(  # type: ignore
+                        create_reasoning_started_event(from_run_response=run_response),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                    reasoning_state["reasoning_started"] = True
+                    reasoning_state["reasoning_completed"] = False
+
+                yield handle_event(  # type: ignore
+                    create_reasoning_content_delta_event(
+                        from_run_response=run_response,
+                        reasoning_content=reasoning_delta,
+                    ),
+                    run_response,
+                    events_to_skip=agent.events_to_skip,  # type: ignore
+                    store_events=agent.store_events,
+                )
+
+            # If model begins emitting regular content or tool calls while reasoning was active, mark reasoning completed
+            if (
+                stream_events
+                and (
+                    model_response_event.content is not None
+                    or model_response_event.tool_calls
+                    or model_response_event.tool_executions
+                )
+                and reasoning_state
+                and reasoning_state.get("reasoning_started")
+                and not reasoning_state.get("reasoning_completed")
+            ):
+                all_reasoning_steps: List[ReasoningStep] = []
+                if run_response and run_response.reasoning_steps:
+                    all_reasoning_steps = cast(List[ReasoningStep], run_response.reasoning_steps)
+
+                if all_reasoning_steps:
+                    add_reasoning_metrics_to_metadata(
+                        run_response=run_response,
+                        reasoning_time_taken=reasoning_state.get("reasoning_time_taken", 0.0),
+                    )
+                    yield handle_event(  # type: ignore
+                        create_reasoning_completed_event(
+                            from_run_response=run_response,
+                            content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
+                            content_type=ReasoningSteps.__name__,
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                else:
+                    yield handle_event(  # type: ignore
+                        create_reasoning_completed_event(
+                            from_run_response=run_response,
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                reasoning_state["reasoning_completed"] = True
+
             # Only yield if we have content to show
             if content_type != "str":
                 yield handle_event(  # type: ignore
@@ -1451,7 +1544,7 @@ def handle_model_response_chunk(
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
                 )
-            elif (
+            elif not stream_events and (
                 model_response_event.content is not None
                 or model_response_event.reasoning_content is not None
                 or model_response_event.redacted_reasoning_content is not None
@@ -1464,6 +1557,22 @@ def handle_model_response_chunk(
                         content=model_response_event.content,
                         reasoning_content=model_response_event.reasoning_content,
                         redacted_reasoning_content=model_response_event.redacted_reasoning_content,
+                        citations=model_response_event.citations,
+                        model_provider_data=model_response_event.provider_data,
+                    ),
+                    run_response,
+                    events_to_skip=agent.events_to_skip,  # type: ignore
+                    store_events=agent.store_events,
+                )
+            elif stream_events and (
+                model_response_event.content is not None
+                or model_response_event.citations is not None
+                or model_response_event.provider_data is not None
+            ):
+                yield handle_event(  # type: ignore
+                    create_run_output_content_event(
+                        from_run_response=run_response,
+                        content=model_response_event.content,
                         citations=model_response_event.citations,
                         model_provider_data=model_response_event.provider_data,
                     ),
@@ -1692,7 +1801,9 @@ def handle_model_response_chunk(
 
             if stream_events:
                 if reasoning_step is not None:
-                    if reasoning_state and not reasoning_state["reasoning_started"]:
+                    if reasoning_state and (
+                        not reasoning_state.get("reasoning_started") or reasoning_state.get("reasoning_completed")
+                    ):
                         yield handle_event(  # type: ignore
                             create_reasoning_started_event(from_run_response=run_response),
                             run_response,
@@ -1700,6 +1811,7 @@ def handle_model_response_chunk(
                             store_events=agent.store_events,
                         )
                         reasoning_state["reasoning_started"] = True
+                        reasoning_state["reasoning_completed"] = False
 
                     yield handle_event(  # type: ignore
                         create_reasoning_step_event(
