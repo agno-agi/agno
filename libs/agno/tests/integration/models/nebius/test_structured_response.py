@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent
 from agno.models.nebius import Nebius
 
-NEBIUS_MODEL_ID = "Qwen/Qwen3-4B-fast"
+NEBIUS_MODEL_ID = "openai/gpt-oss-120b"
 
 
 class MovieScript(BaseModel):
