@@ -1,6 +1,7 @@
 """Routine HTTP controls and Project-required proposals across the SQL adapters."""
 
 import asyncio
+import time
 from unittest.mock import AsyncMock
 
 import pytest
@@ -11,8 +12,9 @@ from agno.company.declarations import CompanyDeclarations
 from agno.company.execution import _call
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.company.routines import _manager_call
+from agno.company.scheduler import CompanyScheduleExecutor
 from agno.db.base import AsyncBaseDb
-from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID
+from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID, Schedule
 from agno.scheduler import ScheduleManager
 from agno.scheduler.poller import SchedulePoller
 from agno.tools.company import CompanyTools
@@ -258,3 +260,176 @@ async def test_clearing_cron_during_claim_cannot_rearm_routine(system):
     saved = await _call(db, "get_schedule", routine["id"])
     assert saved["enabled"] and saved["next_run_at"] is None and saved["locked_by"] is None
     assert await _call(db, "claim_due_schedule", "worker") is None
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """A time.time the test advances itself, so no two writes share a second."""
+    now = [int(time.time())]
+    monkeypatch.setattr(time, "time", lambda: now[0])
+    return now
+
+
+async def company_executor(system):
+    _, db, _, _, _ = system
+    plain = await routine_executor(system)
+    executor = CompanyScheduleExecutor(
+        company_db=db,
+        schedule_db=db,
+        base_url="http://test",
+        internal_service_token="contract-internal",
+        poll_interval=0,
+    )
+    executor._get_client = plain._get_client
+    return executor
+
+
+async def claim_routine(db, routine_id):
+    # The setup write stamps updated_at; tests read the stored value after it.
+    await _call(db, "update_schedule", routine_id, next_run_at=1)
+    claimed = await _call(db, "claim_due_schedule", "worker")
+    assert claimed["id"] == routine_id
+    return claimed
+
+
+async def stored_updated_at(db, routine_id):
+    return (await _call(db, "get_schedule", routine_id))["updated_at"]
+
+
+@pytest.mark.asyncio
+async def test_user_edits_advance_routine_updated_at(system, clock):
+    client, db, _, _, _ = system
+    routine = await create_routine(client, cron_expr="0 * * * *")
+    path = "/company/routines/" + routine["id"]
+    edits = [
+        ("PATCH", "", {"name": "renamed"}),
+        ("PATCH", "", {"instructions": "Review again"}),
+        ("PATCH", "", {"cron_expr": "30 * * * *", "timezone": "Asia/Kolkata"}),
+        ("PATCH", "", {"executor_type": "team", "executor_id": "editors"}),
+        ("POST", "/pause", None),
+        ("POST", "/resume", None),
+    ]
+    for method, suffix, body in edits:
+        clock[0] += 100
+        response = await client.request(method, path + suffix, json=body)
+        assert response.status_code == 200, response.text
+        assert await stored_updated_at(db, routine["id"]) == clock[0], (method, suffix, body)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trigger", ["scheduled", "manual"])
+async def test_execution_leaves_routine_updated_at(system, clock, trigger):
+    client, db, worker, _, _ = system
+    routine = await create_routine(client, cron_expr="0 * * * *")
+    path = "/company/routines/" + routine["id"]
+    executor = await company_executor(system)
+    worker.authorization_app.state.scheduler_executor = executor
+    for _ in range(2):
+        clock[0] += 1000
+        claimed = await claim_routine(db, routine["id"]) if trigger == "scheduled" else None
+        edited = await stored_updated_at(db, routine["id"])
+        clock[0] += 1000
+        if claimed:
+            assert (await executor.execute(claimed, db))["status"] == "success"
+        else:
+            assert (await client.post(path + "/trigger")).status_code == 200
+        saved = await _call(db, "get_schedule", routine["id"])
+        assert saved["updated_at"] == edited
+        assert saved["locked_by"] is None
+        if claimed:
+            assert saved["next_run_at"] not in (None, 1)
+        assert (await client.get(path)).json()["last_run"]["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_user_edit_during_run_survives_release(system, clock):
+    client, db, _, _, _ = system
+    routine = await create_routine(client, cron_expr="0 * * * *")
+    claimed = await claim_routine(db, routine["id"])
+    clock[0] += 500
+    edited = await client.patch("/company/routines/" + routine["id"], json={"name": "edited mid-run"})
+    assert edited.status_code == 200, edited.text
+    edit_time = clock[0]
+    clock[0] += 500
+    # A release from another worker is fenced out and writes nothing.
+    assert not await _call(
+        db, "release_schedule", routine["id"], next_run_at=1, worker_id="other", locked_at=claimed["locked_at"]
+    )
+    assert await stored_updated_at(db, routine["id"]) == edit_time
+    # The run finishes with the claim-time snapshot and releases the lock.
+    assert (await (await company_executor(system)).execute(claimed, db))["status"] == "success"
+    saved = await _call(db, "get_schedule", routine["id"])
+    assert saved["locked_by"] is None and saved["updated_at"] == edit_time
+    assert saved["name"].endswith("edited mid-run")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cause,reason",
+    [
+        ("endpoint_drift", "endpoint_drift:/agents/other/runs!=agent:writer"),
+        ("invalid_cron", None),
+        ("archived_product", "company_product_archived"),
+    ],
+)
+async def test_automatic_disable_leaves_routine_updated_at(system, clock, cause, reason):
+    client, db, _, _, _ = system
+    routine = await create_routine(client, cron_expr="0 * * * *")
+    if cause == "endpoint_drift":
+        await _call(db, "update_schedule", routine["id"], endpoint="/agents/other/runs")
+    elif cause == "invalid_cron":
+        await _call(db, "update_schedule", routine["id"], cron_expr="not a cron")
+    else:
+        product_id = (await _call(db, "get_schedule", routine["id"]))["payload"]["metadata"]["product_id"]
+        assert (await client.delete("/company/products/" + product_id)).status_code == 204
+    claimed = await claim_routine(db, routine["id"])
+    edited = await stored_updated_at(db, routine["id"])
+    clock[0] += 1000
+    await (await company_executor(system)).execute(claimed, db)
+    saved = await _call(db, "get_schedule", routine["id"])
+    assert saved["enabled"] is False and saved["disabled_reason"] == reason
+    assert saved["locked_by"] is None
+    assert saved["updated_at"] == edited
+
+
+@pytest.mark.asyncio
+async def test_target_archive_cascade_leaves_routine_updated_at(system, clock):
+    client, db, _, _, _ = system
+    routine = await create_routine(client)
+    ordinary = await ScheduleManager(db).acreate(name="ordinary", cron="0 * * * *", endpoint="/agents/writer/runs")
+    legacy = Schedule(
+        id="legacy",
+        name="legacy",
+        cron_expr="",
+        endpoint="/agents/writer/runs",
+        managed_by="company",
+        target_type="agent",
+        target_id="writer",
+    )
+    await _call(db, "create_schedule", legacy.to_dict())
+    edited = await stored_updated_at(db, routine["id"])
+    clock[0] += 1000
+    reason = "target_archived:agent:writer"
+    assert await _call(db, "disable_schedules_for_target", "agent", "writer", reason=reason) == 3
+    saved = await _call(db, "get_schedule", routine["id"])
+    assert saved["enabled"] is False and saved["disabled_reason"] == reason
+    assert saved["updated_at"] == edited
+    assert await stored_updated_at(db, "legacy") is None
+    assert await stored_updated_at(db, ordinary.id) == clock[0]
+
+
+@pytest.mark.asyncio
+async def test_release_and_update_still_stamp_ordinary_schedules(system, clock):
+    _, db, _, _, _ = system
+    ordinary = await ScheduleManager(db).acreate(name="ordinary", cron="0 * * * *", endpoint="/agents/writer/runs")
+    await _call(db, "update_schedule", ordinary.id, next_run_at=1)
+    claimed = await _call(db, "claim_due_schedule", "worker")
+    assert claimed["id"] == ordinary.id
+    clock[0] += 1000
+    assert await _call(
+        db, "release_schedule", ordinary.id, next_run_at=2, worker_id="worker", locked_at=claimed["locked_at"]
+    )
+    assert await stored_updated_at(db, ordinary.id) == clock[0]
+    clock[0] += 1000
+    await _call(db, "update_schedule", ordinary.id, enabled=False)
+    assert await stored_updated_at(db, ordinary.id) == clock[0]
