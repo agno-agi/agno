@@ -21,6 +21,7 @@ API.
 | `05_team_factory.py` | Generalize per-request construction to a two-member Team. |
 | `06_workflow_factory.py` | Generalize per-request construction to a two-step Workflow. |
 | `07_async_factory.py` | Register synchronous and asynchronous factory callables on one AgentOS. |
+| `08_durable_queue.py` | Run factory background runs on the durable job queue, and see a factory that reads `ctx.request` fail on the worker. |
 
 ## Prerequisites
 
@@ -32,7 +33,8 @@ export OPENAI_API_KEY=...
 ```
 
 The examples use SQLite files under `tmp/`; no external database service is
-required.
+required, except `08_durable_queue.py`, whose job queue needs PostgreSQL
+(`./cookbook/scripts/run_pgvector.sh`).
 
 ## Run
 
@@ -46,6 +48,7 @@ Start one factory server at a time:
 .venvs/demo/bin/python cookbook/05_agent_os/21_factories/05_team_factory.py
 .venvs/demo/bin/python cookbook/05_agent_os/21_factories/06_workflow_factory.py
 .venvs/demo/bin/python cookbook/05_agent_os/21_factories/07_async_factory.py
+.venvs/demo/bin/python cookbook/05_agent_os/21_factories/08_durable_queue.py
 ```
 
 Then run the same file with `--demo` in another terminal. The demo checks

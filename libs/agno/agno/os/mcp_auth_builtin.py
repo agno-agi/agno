@@ -17,7 +17,7 @@ What the SDK/fastmcp provide vs what lives here:
   page (the single deployer-secret gate -- fastmcp has no login building block), and the
   server-decided scope grant. The persistence itself lives on the db behind the
   ``BaseDb.*_mcp_oauth_*`` contract (schemas in ``agno.db.schemas.mcp_oauth``, shared SQL
-  in ``agno.db.mcp_oauth_store``, implemented by the sync SQLAlchemy backends), so the
+  in ``agno.db.sql.mcp_oauth``, implemented by the sync SQLAlchemy backends), so the
   namespaced tables are created on first use by the same schema-aware path as every other
   agno table -- this module holds only OAuth protocol logic, not DDL.
 
