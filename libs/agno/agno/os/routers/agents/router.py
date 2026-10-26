@@ -811,6 +811,10 @@ def get_agent_router(
         base64_videos: List[Video] = []
         input_files: List[FileMedia] = []
 
+        from agno.agents.base import BaseExternalAgent
+
+        sandboxed = isinstance(agent, BaseExternalAgent) and agent.sandbox is not None
+
         if files:
             for idx, file in enumerate(files):
                 file_meta = files_metadata_list[idx] if idx < len(files_metadata_list) else None
@@ -850,6 +854,11 @@ def get_agent_router(
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
 
+        # An upload the loop above could not read was logged and skipped; a sandboxed run must not go on without it.
+        uploads = (list(base64_images), list(base64_audios), list(base64_videos), list(input_files))
+        if sandboxed and sum(len(group) for group in uploads) != len(files or []):
+            raise HTTPException(status_code=400, detail="An uploaded attachment could not be read")
+
         # Merge media passed as JSON form fields (sent by AgnoClient, e.g. when a team
         # delegates to this agent as a remote member) with media from uploaded files.
         # Popped from kwargs since they are passed explicitly to the run methods below.
@@ -873,11 +882,15 @@ def get_agent_router(
         # Extract auth token for remote agents
         auth_token = get_auth_token_from_request(request)
 
-        from agno.agents.base import BaseExternalAgent
+        if sandboxed:
+            from agno.os.routers.agents.sandbox import request_attachments, sandbox_run_response
 
-        if isinstance(agent, BaseExternalAgent) and agent.sandbox is not None:
-            from agno.os.routers.agents.sandbox import sandbox_run_response
-
+            try:
+                attachments = request_attachments(
+                    await request.form(), images=uploads[0], audio=uploads[1], videos=uploads[2], files=uploads[3]
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=400, detail=str(error)) from error
             return await sandbox_run_response(
                 agent,
                 getattr(request.app.state, "queue_worker", None),
@@ -889,9 +902,8 @@ def get_agent_router(
                 stream=stream,
                 background=background,
                 version=version,
-                images=base64_images,
-                files=input_files,
-                unsupported_media=bool(base64_audios or base64_videos),
+                images=attachments.get("images"),
+                files=attachments.get("files"),
             )
 
         # Background execution

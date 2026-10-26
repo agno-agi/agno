@@ -1,16 +1,127 @@
 """Durable submission for sandboxed agents in every HTTP response mode."""
 
 import asyncio
+import base64
 import contextlib
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.db.schemas.jobs import QueuedJob
+from agno.media import File, Image
 from agno.os.job_queue import _new_queued_run_id, aenqueue_ticket, aprepare_accepted_or_abort, normalize_idempotency_key
 from agno.sandbox.base import SandboxError
+
+_JSON_ATTACHMENT_KEYS = {
+    "images": {"content", "format", "mime_type", "id"},
+    "files": {"content", "filename", "name", "format", "mime_type", "id"},
+}
+_FORBIDDEN_SOURCES = ("filepath", "url", "media_reference", "external")
+
+
+def _attachment(item: Any, kind: str, index: int) -> Any:
+    """One uploaded object or JSON item as an Image/File holding inline bytes, or a ValueError naming it."""
+    cls = Image if kind == "images" else File
+    label = f"{kind[:-1]} {index + 1}"
+    if isinstance(item, dict):
+        if "filepath" in item:
+            raise ValueError(f"Sandboxed runs accept uploaded bytes; server file paths are not accepted ({label})")
+        unknown = sorted(set(item) - _JSON_ATTACHMENT_KEYS[kind])
+        if unknown:
+            raise ValueError(f"Unsupported field(s) on {label}: {', '.join(unknown)}")
+        content = item.get("content")
+        if not isinstance(content, str) or not content:
+            raise ValueError(f"The {label} needs non-empty base64 content")
+        mime_type = item.get("mime_type")
+        if kind == "files" and isinstance(mime_type, str) and mime_type.startswith("text/"):
+            # As File.from_base64 and File.to_dict do: text/* content travels as raw UTF-8, never base64, so
+            # decoding it would reject ordinary text or change text that happens to be valid base64.
+            data = content.encode()
+        else:
+            try:
+                data = base64.b64decode(content, validate=True)
+            except ValueError as error:
+                raise ValueError(f"The {label} content is not valid base64") from error
+        fields: Dict[str, Any] = {"format": item.get("format"), "mime_type": item.get("mime_type")}
+        if kind == "files":
+            name, filename = item.get("name"), item.get("filename")
+            if name is not None and filename is not None and name != filename:
+                raise ValueError(f"The {label} gives different name and filename values")
+            fields["filename"] = filename if filename is not None else name
+        try:
+            return cls(content=data, **fields)
+        except Exception as error:
+            raise ValueError(f"The {label} has an unsupported format, mime_type or filename") from error
+    if not isinstance(item, cls):
+        raise ValueError(f"The {label} must be an uploaded file or a JSON object")
+    if any(getattr(item, source, None) for source in _FORBIDDEN_SOURCES):
+        raise ValueError(f"The {label} may not name a service path or a remote reference")
+    if getattr(item, "metadata", None):
+        raise ValueError(f"The {label} has metadata, which sandbox attachments do not carry")
+    if not isinstance(item.content, bytes) or not item.content:
+        raise ValueError(f"The {label} is empty")
+    return item
+
+
+def sandbox_attachments(
+    *,
+    images: Optional[Sequence[Any]] = None,
+    audio: Optional[Sequence[Any]] = None,
+    videos: Optional[Sequence[Any]] = None,
+    files: Optional[Sequence[Any]] = None,
+) -> Dict[str, List[Any]]:
+    """The request's attachments as the ``media`` run option, or ValueError for anything not accepted.
+
+    Uploads arrive as Image/File objects; JSON ``images``/``files`` items are limited to inline base64
+    ``content`` plus format, mime type and, for files, a filename. Service paths, remote references,
+    unknown keys, metadata, audio and video are refused so nothing is dropped or fetched silently.
+    Counts and sizes are checked by the harness, which sees Python callers and the queue worker too.
+    """
+    if audio or videos:
+        raise ValueError("Sandboxed runs accept images and files; audio and video are not supported")
+    media: Dict[str, List[Any]] = {}
+    for kind, items in (("images", images), ("files", files)):
+        if items:
+            media[kind] = [_attachment(item, kind, index) for index, item in enumerate(items)]
+    return media
+
+
+def request_attachments(
+    form: Any,
+    *,
+    images: Sequence[Any] = (),
+    audio: Sequence[Any] = (),
+    videos: Sequence[Any] = (),
+    files: Sequence[Any] = (),
+) -> Dict[str, List[Any]]:
+    """Attachments from a request: the uploads already read, plus the raw JSON ``images``,
+    ``input_files``, ``audio`` and ``videos`` form fields.
+
+    The generic route rebuilds those JSON fields into objects and silently drops unknown keys and
+    media references, so they are read from the raw form here and validated as sent.
+    """
+    parts: Dict[str, List[Any]] = {
+        "images": list(images),
+        "audio": list(audio),
+        "videos": list(videos),
+        "files": list(files),
+    }
+    for field, target in (("images", "images"), ("audio", "audio"), ("videos", "videos"), ("input_files", "files")):
+        raw = form.get(field)
+        if raw is None or raw == "":
+            continue
+        if not isinstance(raw, str):
+            raise ValueError(f"'{field}' must be a JSON array")
+        try:
+            decoded = json.loads(raw)
+        except (TypeError, ValueError, RecursionError) as error:
+            raise ValueError(f"'{field}' must be a JSON array") from error
+        if not isinstance(decoded, list):
+            raise ValueError(f"'{field}' must be a JSON array")
+        parts[target].extend(decoded)
+    return sandbox_attachments(**parts)
 
 
 async def enqueue_sandbox_run(
@@ -142,6 +253,8 @@ async def sandbox_run_response(
         raise HTTPException(
             status_code=400, detail="Sandboxed runs accept images and files; audio and video are not supported"
         )
+    if "media" in kwargs:
+        raise HTTPException(status_code=400, detail="'media' is reserved; send files or input_files")
     try:
         if images or files:
             kwargs = {**kwargs, "media": _uploaded_media(images or [], files or [])}

@@ -59,6 +59,23 @@ Every process sharing the host's bridge must use the same subnet; remove the bri
 
 `run`/`arun` on a sandboxed `ClaudeAgent` or `CodexAgent` accept `images=` and `files=`, and the AgentOS run route accepts them as uploads (`-F files=@photo.png`). Only bytes cross into the sandbox: each attachment is written under `/workspace/.agno/uploads/<run_id>/` and named in the prompt, and the turn's checkpoint keeps it, so later turns on a new computer can still read it. Images given without a format take one from their file suffix or byte signature. A request carries at most 16 attachments and 512 KiB in total. URLs, media references and, over HTTP, server file paths are refused; audio and video are rejected. A `File` whose MIME type is not a document type is refused with a pointer to `images=`, but a `File` given without a MIME type is accepted as a document whatever its bytes, so pass pictures as `images=`. Queued runs store the attachments with the submission, so a retry sends the same bytes, and reusing an idempotency key with different attachments returns 409.
 
+### HTTP requests, the body limit and retention
+
+Over HTTP send multipart `files` uploads, and/or the JSON form fields `images` and `input_files`: arrays of objects with base64 `content` and optionally `format`, `mime_type` and, for files, `filename`. The 16-attachment and 512 KiB decoded limits sit inside the 1 MiB runtime request. Unknown keys, metadata, empty or unreadable uploads and a filename on an image are also rejected with a 400 before anything is queued, so nothing is dropped silently; `text/*` file content is taken as raw UTF-8 and every other file or image content must be base64, as `AgnoClient` sends it. Images are named by the harness (`image-<n>.<format>`).
+
+The request body of a run submission to a sandboxed agent is bounded by the bytes actually received: over 4 MiB it is refused with a 413 whatever `Content-Length` says, and no further chunks are requested once the limit is crossed (the chunk that crossed it has already been received, so the bytes read can exceed 4 MiB by up to one chunk). It runs after authentication, so an unauthenticated caller gets a 401. This is a limit of its own, not one the attachment limits imply: a request written the usual way stays under about 3 MiB with a full 1 MiB runtime request, but a body padded with whitespace, `\u` escapes or percent-encoding can carry valid attachments in more bytes and is refused. The 512 KiB attachment limit is checked on the decoded bytes after that.
+
+The accepted attachments have one canonical queue representation, the base64 wire stored in the queue ticket (`payload.kwargs.media`), so a worker on any replica rebuilds the same input after the submitting process is gone. It is also copied, by the run, into other places with their own lifetimes:
+
+| Where | Removed by |
+| --- | --- |
+| Queue ticket (`payload.kwargs.media`) | the worker's hourly retention pass once the ticket is terminal and older than `QueueConfig.retention_seconds` (default 24 hours); tickets that are queued, running or paused are kept; deleting a session does not remove its tickets |
+| Run input (pending and final run rows) | deleting the run or its session |
+| Workspace files and the checkpoint archive | the compute is removed after each turn; **no code removes checkpoint objects**: each turn publishes a new one, and superseded objects and those orphaned by a deleted session stay in the checkpoint store until you delete them with `CheckpointStore.delete` |
+| Request spool | closed with the request |
+
+Deleting a session removes its runs and its sandbox binding, so a session recreated under the same id starts from an empty workspace and cannot restore the old files. It does not cancel runs: a run that was accepted but not yet executed is still executed by a worker, which recreates the session with that run's attachments, and a run that is executing when its session is deleted is attempted again by the queue. Cancel a run before deleting its session. Deleting a session or its tickets is not secure erasure: the checkpoint objects hold the files, and the ticket's idempotency key stops deduplicating once the ticket is purged. Logs do not contain attachment bytes. A ticket whose attachments no longer validate when a worker replays it is failed once with the reason on the run and nothing is executed. This moves bytes only: it does not show that a model reads them.
+
 ## A live Claude session in a sandbox
 
 ```bash

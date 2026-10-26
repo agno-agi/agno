@@ -2134,6 +2134,24 @@ class AgentOS:
                 origin_policy=origin_policy,
             )
 
+        # A sandboxed run's body is bounded by the bytes received, before the framework parses it. Middleware added
+        # later runs earlier, so adding this one before AuthMiddleware makes it run after authentication: an
+        # unauthenticated caller is turned away with a 401, never a 413.
+        # Only an id whose run URL is handled by AgentOS's own endpoint is limited: a route the application supplied
+        # on that URL keeps its own semantics.
+        from agno.os.middleware.sandbox_body_limit import SandboxRunBodyLimit, serves_generated_run_route
+
+        routes = flatten_routes(fastapi_app.routes)
+        sandboxed_ids = [
+            entry.get_id()
+            for entry in self.agents or []
+            if isinstance(entry, BaseExternalAgent)
+            and entry.sandbox is not None
+            and serves_generated_run_route(routes, entry.get_id())
+        ]
+        if sandboxed_ids:
+            fastapi_app.add_middleware(SandboxRunBodyLimit, agent_ids=sandboxed_ids)
+
         auth_configured = self._auth_configured()
         if auth_configured:
             # In JWT mode the security key is ignored (JWT takes precedence), matching

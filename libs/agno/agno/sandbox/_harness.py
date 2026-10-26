@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Tuple
 from uuid import uuid4
 
+from agno.exceptions import InputCheckError
 from agno.models.message import Message
 from agno.run.agent import RunInput, RunOutput
 from agno.run.base import RunStatus
@@ -307,11 +308,20 @@ def _media_wire(media: Any) -> List[Dict[str, Any]]:
 
 def _execution(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
     from agno.run.concurrency import get_worker_ownership
-    from agno.sandbox.media import decode_media
+    from agno.sandbox.media import decode_media, validate_media
 
-    options = submission(agent, input, kwargs)
     run_id = kwargs.get("run_id") or str(uuid4())
     owner = get_worker_ownership(run_id)
+    media = kwargs.get("media")
+    if owner is not None and media is not None:
+        # A queue worker replaying what its ticket stored, which is always the wire list (absent, null or empty
+        # means no attachments). Anything else, or a list that no longer validates, cannot be cured by running
+        # the turn again, so fail it as a permanent input error instead of retrying or dropping it.
+        try:
+            validate_media(media)
+        except ValueError as error:
+            raise InputCheckError(f"The accepted attachments can no longer be replayed: {error}") from error
+    options = submission(agent, input, kwargs)
     return dict(
         agent_id=agent.get_id(),
         run_id=run_id,
@@ -384,13 +394,23 @@ async def aprepare_pending_run(
 ) -> RunOutput:
     from agno.sandbox.media import decode_media
 
+    try:
+        attachments = decode_media(media or [])
+    except ValueError:
+        # A ticket that cannot be replayed fails when it is executed, with the reason on the run. Here, where a
+        # failure would only leave the claim to go stale, keep the row the accepted request wrote, or write a
+        # text-only one if there is none so that the failure has a run to land on.
+        existing = await agent.aget_run_output(run_id, session_id, user_id=user_id)
+        if existing is not None:
+            return existing
+        attachments = {}
     run = RunOutput(
         run_id=run_id,
         session_id=session_id,
         agent_id=agent.get_id(),
         user_id=user_id,
         agent_name=agent.name,
-        input=RunInput(input_content=input, **decode_media(media or [])),
+        input=RunInput(input_content=input, **attachments),
         # The user's turn is part of the history even if the run never produces output, as on
         # the host path; the runtime's messages replace these when the turn completes.
         messages=[Message(role="user", content=str(input), created_at=int(time.time()))],
