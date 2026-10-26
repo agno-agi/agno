@@ -721,7 +721,7 @@ class Model(ABC):
                 model_response=model_response,
                 response_format=response_format,
                 tools=_tool_dicts,
-                tool_choice=tool_choice or self._tool_choice,
+                tool_choice=self._get_tool_choice_for_call(tool_choice, function_call_count, tool_call_limit),
                 run_response=run_response,
                 compress_tool_results=_compress_tool_results,
             )
@@ -945,7 +945,7 @@ class Model(ABC):
                 model_response=model_response,
                 response_format=response_format,
                 tools=_tool_dicts,
-                tool_choice=tool_choice or self._tool_choice,
+                tool_choice=self._get_tool_choice_for_call(tool_choice, function_call_count, tool_call_limit),
                 run_response=run_response,
                 compress_tool_results=_compress_tool_results,
             )
@@ -1455,7 +1455,7 @@ class Model(ABC):
                         stream_data=stream_data,
                         response_format=response_format,
                         tools=_tool_dicts,
-                        tool_choice=tool_choice or self._tool_choice,
+                        tool_choice=self._get_tool_choice_for_call(tool_choice, function_call_count, tool_call_limit),
                         run_response=run_response,
                         compress_tool_results=_compress_tool_results,
                     ):
@@ -1480,7 +1480,7 @@ class Model(ABC):
                     model_response=model_response,
                     response_format=response_format,
                     tools=_tool_dicts,
-                    tool_choice=tool_choice or self._tool_choice,
+                    tool_choice=self._get_tool_choice_for_call(tool_choice, function_call_count, tool_call_limit),
                     run_response=run_response,
                     compress_tool_results=_compress_tool_results,
                 )
@@ -1736,7 +1736,7 @@ class Model(ABC):
                         stream_data=stream_data,
                         response_format=response_format,
                         tools=_tool_dicts,
-                        tool_choice=tool_choice or self._tool_choice,
+                        tool_choice=self._get_tool_choice_for_call(tool_choice, function_call_count, tool_call_limit),
                         run_response=run_response,
                         compress_tool_results=_compress_tool_results,
                     ):
@@ -1761,7 +1761,7 @@ class Model(ABC):
                     model_response=model_response,
                     response_format=response_format,
                     tools=_tool_dicts,
-                    tool_choice=tool_choice or self._tool_choice,
+                    tool_choice=self._get_tool_choice_for_call(tool_choice, function_call_count, tool_call_limit),
                     run_response=run_response,
                     compress_tool_results=_compress_tool_results,
                 )
@@ -2228,6 +2228,16 @@ class Model(ABC):
             tool_args=function_call.arguments,
             tool_call_error=True,
         )
+
+    def _get_tool_choice_for_call(
+        self,
+        tool_choice: Optional[Union[str, Dict[str, Any]]],
+        function_call_count: int,
+        tool_call_limit: Optional[int],
+    ) -> Optional[Union[str, Dict[str, Any]]]:
+        if tool_call_limit is not None and function_call_count >= tool_call_limit:
+            return "none"
+        return tool_choice or self._tool_choice
 
     def run_function_call(
         self,
