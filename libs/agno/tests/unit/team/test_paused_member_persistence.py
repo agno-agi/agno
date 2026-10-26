@@ -6058,3 +6058,233 @@ def test_a_routing_failure_restores_the_callers_team_level_requirements(tmp_path
 
     names = [r.tool_execution.tool_name for r in (run1.requirements or [])]
     assert names.count("publish") == 1, f"the caller's run object carries: {names}"
+
+
+# ---------------------------------------------------------------------------
+# Issue #9447: a caller-held paused run_response is a snapshot, not authority.
+# If the stored run is already COMPLETED or CANCELLED, refuse before the gated
+# tool can run again or a cancellation can be overwritten.
+# ---------------------------------------------------------------------------
+
+
+def _issue_9447_stored_status(db_file: str, session_id: str, run_id: str) -> RunStatus:
+    stored = [r for r in _reload_runs(db_file, session_id) if r.run_id == run_id]
+    assert len(stored) == 1
+    return stored[0].status
+
+
+def test_issue_9447_sync_stale_paused_object_cannot_reexecute_completed_run(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "issue_9447_sync_completed.db")
+    session_id = "s-issue-9447-sync-completed"
+
+    stale = _build_flat_team(SqliteDb(db_file=db_file), resuming=False).run(
+        "Email a@example.com", session_id=session_id
+    )
+    assert stale.status == RunStatus.paused
+    done = _build_flat_team(SqliteDb(db_file=db_file), resuming=True).continue_run(
+        run_id=stale.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(stale.requirements),
+    )
+    assert done.status == RunStatus.completed
+    assert stale.status == RunStatus.paused
+    assert _EXECUTED == ["a@example.com"]
+
+    with pytest.raises(RunNotContinuableError):
+        _build_flat_team(SqliteDb(db_file=db_file), resuming=True).continue_run(
+            run_response=stale,
+            session_id=session_id,
+            requirements=_wire_requirements(stale.requirements),
+        )
+
+    assert _issue_9447_stored_status(db_file, session_id, stale.run_id) == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"], f"the gated tool ran a second time: {_EXECUTED}"
+
+
+def test_issue_9447_sync_stale_paused_object_cannot_override_cancelled_run(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "issue_9447_sync_cancelled.db")
+    session_id = "s-issue-9447-sync-cancelled"
+
+    stale = _build_flat_team(SqliteDb(db_file=db_file), resuming=False).run(
+        "Email a@example.com", session_id=session_id
+    )
+    assert stale.status == RunStatus.paused
+    _set_stored_team_run_status(SqliteDb(db_file=db_file), session_id, stale.run_id, RunStatus.cancelled)
+
+    with pytest.raises(RunNotContinuableError):
+        _build_flat_team(SqliteDb(db_file=db_file), resuming=True).continue_run(
+            run_response=stale,
+            session_id=session_id,
+            requirements=_wire_requirements(stale.requirements),
+        )
+
+    assert _issue_9447_stored_status(db_file, session_id, stale.run_id) == RunStatus.cancelled
+    assert _EXECUTED == [], f"the gated tool ran on a cancelled run: {_EXECUTED}"
+
+
+def test_issue_9447_sync_stream_stale_paused_object_cannot_reexecute_completed_run(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "issue_9447_sync_stream_completed.db")
+    session_id = "s-issue-9447-sync-stream-completed"
+
+    stale = _build_flat_team(SqliteDb(db_file=db_file), resuming=False).run(
+        "Email a@example.com", session_id=session_id
+    )
+    assert stale.status == RunStatus.paused
+    done = _build_flat_team(SqliteDb(db_file=db_file), resuming=True).continue_run(
+        run_id=stale.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(stale.requirements),
+    )
+    assert done.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+    with pytest.raises(RunNotContinuableError):
+        _build_flat_team(SqliteDb(db_file=db_file), resuming=True).continue_run(
+            run_response=stale,
+            session_id=session_id,
+            requirements=_wire_requirements(stale.requirements),
+            stream=True,
+            stream_events=True,
+        )
+
+    assert _issue_9447_stored_status(db_file, session_id, stale.run_id) == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+
+def test_issue_9447_sync_stream_stale_paused_object_cannot_override_cancelled_run(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "issue_9447_sync_stream_cancelled.db")
+    session_id = "s-issue-9447-sync-stream-cancelled"
+
+    stale = _build_flat_team(SqliteDb(db_file=db_file), resuming=False).run(
+        "Email a@example.com", session_id=session_id
+    )
+    assert stale.status == RunStatus.paused
+    _set_stored_team_run_status(SqliteDb(db_file=db_file), session_id, stale.run_id, RunStatus.cancelled)
+
+    with pytest.raises(RunNotContinuableError):
+        _build_flat_team(SqliteDb(db_file=db_file), resuming=True).continue_run(
+            run_response=stale,
+            session_id=session_id,
+            requirements=_wire_requirements(stale.requirements),
+            stream=True,
+            stream_events=True,
+        )
+
+    assert _issue_9447_stored_status(db_file, session_id, stale.run_id) == RunStatus.cancelled
+    assert _EXECUTED == []
+
+
+@pytest.mark.asyncio
+async def test_issue_9447_async_stale_paused_object_cannot_reexecute_completed_run(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "issue_9447_async_completed.db")
+    session_id = "s-issue-9447-async-completed"
+
+    stale = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert stale.status == RunStatus.paused
+    done = await _build_flat_team(SqliteDb(db_file=db_file), resuming=True).acontinue_run(
+        run_id=stale.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(stale.requirements),
+    )
+    assert done.status == RunStatus.completed
+    assert stale.status == RunStatus.paused
+    assert _EXECUTED == ["a@example.com"]
+
+    with pytest.raises(RunNotContinuableError):
+        await _build_flat_team(SqliteDb(db_file=db_file), resuming=True).acontinue_run(
+            run_response=stale,
+            session_id=session_id,
+            requirements=_wire_requirements(stale.requirements),
+        )
+
+    assert _issue_9447_stored_status(db_file, session_id, stale.run_id) == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"], f"the gated tool ran a second time: {_EXECUTED}"
+
+
+@pytest.mark.asyncio
+async def test_issue_9447_async_stale_paused_object_cannot_override_cancelled_run(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "issue_9447_async_cancelled.db")
+    session_id = "s-issue-9447-async-cancelled"
+
+    stale = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert stale.status == RunStatus.paused
+    _set_stored_team_run_status(SqliteDb(db_file=db_file), session_id, stale.run_id, RunStatus.cancelled)
+
+    with pytest.raises(RunNotContinuableError):
+        await _build_flat_team(SqliteDb(db_file=db_file), resuming=True).acontinue_run(
+            run_response=stale,
+            session_id=session_id,
+            requirements=_wire_requirements(stale.requirements),
+        )
+
+    assert _issue_9447_stored_status(db_file, session_id, stale.run_id) == RunStatus.cancelled
+    assert _EXECUTED == [], f"the gated tool ran on a cancelled run: {_EXECUTED}"
+
+
+@pytest.mark.asyncio
+async def test_issue_9447_async_stream_stale_paused_object_cannot_reexecute_completed_run(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "issue_9447_async_stream_completed.db")
+    session_id = "s-issue-9447-async-stream-completed"
+
+    stale = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert stale.status == RunStatus.paused
+    done = await _build_flat_team(SqliteDb(db_file=db_file), resuming=True).acontinue_run(
+        run_id=stale.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(stale.requirements),
+    )
+    assert done.status == RunStatus.completed
+    assert stale.status == RunStatus.paused
+    assert _EXECUTED == ["a@example.com"]
+
+    with pytest.raises(RunNotContinuableError):
+        async for _ in _build_flat_team(SqliteDb(db_file=db_file), resuming=True).acontinue_run(
+            run_response=stale,
+            session_id=session_id,
+            requirements=_wire_requirements(stale.requirements),
+            stream=True,
+            stream_events=True,
+        ):
+            pass
+
+    assert _issue_9447_stored_status(db_file, session_id, stale.run_id) == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"], f"the gated tool ran a second time: {_EXECUTED}"
+
+
+@pytest.mark.asyncio
+async def test_issue_9447_async_stream_stale_paused_object_cannot_override_cancelled_run(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "issue_9447_async_stream_cancelled.db")
+    session_id = "s-issue-9447-async-stream-cancelled"
+
+    stale = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert stale.status == RunStatus.paused
+    _set_stored_team_run_status(SqliteDb(db_file=db_file), session_id, stale.run_id, RunStatus.cancelled)
+
+    with pytest.raises(RunNotContinuableError):
+        async for _ in _build_flat_team(SqliteDb(db_file=db_file), resuming=True).acontinue_run(
+            run_response=stale,
+            session_id=session_id,
+            requirements=_wire_requirements(stale.requirements),
+            stream=True,
+            stream_events=True,
+        ):
+            pass
+
+    assert _issue_9447_stored_status(db_file, session_id, stale.run_id) == RunStatus.cancelled
+    assert _EXECUTED == [], f"the gated tool ran on a cancelled run: {_EXECUTED}"
