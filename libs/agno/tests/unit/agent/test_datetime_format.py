@@ -3,7 +3,7 @@
 import re
 from unittest.mock import MagicMock
 
-from agno.agent._messages import get_system_message
+from agno.agent._messages import _get_dynamic_context_message, get_system_message
 from agno.agent.agent import Agent
 from agno.session import AgentSession
 
@@ -59,7 +59,7 @@ def test_datetime_format_from_dict_missing():
 
 
 # =============================================================================
-# System message tests
+# Dynamic context message tests
 # =============================================================================
 
 
@@ -76,11 +76,12 @@ def _make_agent_with_model(**kwargs) -> Agent:
 def test_default_format_includes_full_datetime():
     """When no datetime_format is set, the full default datetime str is used."""
     agent = _make_agent_with_model(add_datetime_to_context=True)
-    session = AgentSession(session_id="test-session")
 
-    msg = get_system_message(agent, session)
+    msg = _get_dynamic_context_message(agent)
 
     assert msg is not None
+    assert msg.role == "user"
+    assert msg.add_to_agent_memory is False
     # Default Python datetime str format: YYYY-MM-DD HH:MM:SS.ffffff
     assert re.search(r"The current time is \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", msg.content)
 
@@ -91,9 +92,8 @@ def test_custom_date_only_format():
         add_datetime_to_context=True,
         datetime_format="%Y-%m-%d",
     )
-    session = AgentSession(session_id="test-session")
 
-    msg = get_system_message(agent, session)
+    msg = _get_dynamic_context_message(agent)
 
     assert msg is not None
     # Should match YYYY-MM-DD followed by period (no time component)
@@ -106,22 +106,44 @@ def test_custom_format_slash_style():
         add_datetime_to_context=True,
         datetime_format="%d/%m/%Y %H:%M",
     )
-    session = AgentSession(session_id="test-session")
 
-    msg = get_system_message(agent, session)
+    msg = _get_dynamic_context_message(agent)
 
     assert msg is not None
     assert re.search(r"The current time is \d{2}/\d{2}/\d{4} \d{2}:\d{2}\.", msg.content)
 
 
 def test_no_datetime_when_disabled():
-    """When add_datetime_to_context is False, no datetime info is added."""
+    """When add_datetime_to_context is False, no dynamic context message is generated."""
     agent = _make_agent_with_model(
         add_datetime_to_context=False,
         datetime_format="%Y-%m-%d",
     )
+
+    msg = _get_dynamic_context_message(agent)
+
+    assert msg is None
+
+
+def test_datetime_not_in_system_message():
+    """Datetime context should NOT appear in the system message."""
+    agent = _make_agent_with_model(add_datetime_to_context=True)
     session = AgentSession(session_id="test-session")
+
     msg = get_system_message(agent, session)
 
     if msg is not None:
         assert "current time" not in msg.content.lower()
+
+
+def test_timezone_identifier():
+    """Timezone identifier should be respected in the output."""
+    agent = _make_agent_with_model(
+        add_datetime_to_context=True,
+        timezone_identifier="Asia/Shanghai",
+    )
+
+    msg = _get_dynamic_context_message(agent)
+
+    assert msg is not None
+    assert "+08:00" in msg.content
