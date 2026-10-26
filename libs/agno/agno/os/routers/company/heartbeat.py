@@ -2,6 +2,7 @@
 
 import asyncio
 import inspect
+import time
 from typing import Any, Dict, Literal, Optional, Union
 from urllib.parse import quote
 
@@ -41,6 +42,7 @@ class RoutineLastRun(BaseModel):
 class RoutineResponse(ScheduleResponse):
     schedule_type: Literal["scheduled", "on_demand"]
     last_run: Optional[RoutineLastRun] = None
+    deleted_at: Optional[int] = None
 
 
 class RoutineUpdate(BaseModel):
@@ -102,7 +104,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             raise HTTPException(404, "Product not found")
         return row
 
-    async def routine(routine_id, request):
+    async def routine(routine_id, request, include_deleted=False):
         from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID
 
         if routine_id == COMPANY_AUTOMATION_SCHEDULE_ID:
@@ -112,6 +114,8 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             raise HTTPException(404, "Routine not found")
         if not (row.get("payload") or {}).get("metadata", {}).get("product_id"):
             raise HTTPException(409, "Routine is missing its Product metadata")
+        if not include_deleted and row["payload"]["metadata"].get("deleted_at") is not None:
+            raise HTTPException(404, "Routine not found")
         return row
 
     async def routine_responses(rows):
@@ -121,6 +125,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
                 **row,
                 "schedule_type": "scheduled" if row["cron_expr"] else "on_demand",
                 "last_run": latest.get(row["id"]),
+                "deleted_at": (row.get("payload") or {}).get("metadata", {}).get("deleted_at"),
             }
             for row in rows
         ]
@@ -178,6 +183,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         product_id: Optional[str] = None,
         limit: int = Query(20, ge=1, le=1000),
         page: int = Query(1, ge=1),
+        include_deleted: bool = False,
         _: bool = Depends(auth),
     ):
         from agno.scheduler import ScheduleManager
@@ -190,13 +196,14 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             if row.managed_by == "company"
             and (row.payload or {}).get("metadata", {}).get("product_id")
             and (product_id is None or (row.payload or {}).get("metadata", {}).get("product_id") == product_id)
+            and (include_deleted or (row.payload or {}).get("metadata", {}).get("deleted_at") is None)
         ]
         rows = await routine_responses(selected[(page - 1) * limit : page * limit])
         return page_response(rows, len(selected), limit, page)
 
     @router.get("/routines/{routine_id}", response_model=RoutineResponse)
-    async def get_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
-        return await routine_response(await routine(routine_id, request))
+    async def get_routine(routine_id: str, request: Request, include_deleted: bool = False, _: bool = Depends(auth)):
+        return await routine_response(await routine(routine_id, request, include_deleted=include_deleted))
 
     @router.post("/routines/{routine_id}/trigger", response_model=ScheduleRunResponse)
     async def trigger_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
@@ -310,6 +317,36 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             owner=run.get("user_id"),
             session_id=run.get("session_id"),
         )
+
+    @router.delete("/routines/{routine_id}", status_code=204)
+    async def delete_routine(
+        routine_id: str, request: Request, permanent: bool = False, _: bool = Depends(auth)
+    ) -> None:
+        row = await routine(routine_id, request, include_deleted=permanent)
+        product_id = row["payload"]["metadata"]["product_id"]
+        await product(product_id, include_deleted=True)
+        run = (await call(schedule_db.get_latest_schedule_runs, [routine_id])).get(routine_id)
+        if run is not None and run["status"] == "running":
+            raise HTTPException(409, f"Cancel the run with POST /company/routines/{routine_id}/cancel first")
+        if permanent:
+            # Deleting the schedule also deletes its run history.
+            await call(handlers["delete_schedule"], routine_id, request)
+            await call(manager._unlink_routine, product_id, routine_id)
+            return
+        await call(handlers["disable_schedule"], routine_id, request)
+        metadata = {**row["payload"]["metadata"], "deleted_at": int(time.time())}
+        await call(schedule_db.update_schedule, routine_id, payload={**row["payload"], "metadata": metadata})
+
+    @router.post("/routines/{routine_id}/restore", response_model=RoutineResponse)
+    async def restore_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
+        row = await routine(routine_id, request, include_deleted=True)
+        await product(row["payload"]["metadata"]["product_id"])
+        metadata = dict(row["payload"]["metadata"])
+        if metadata.pop("deleted_at", None) is None:
+            raise HTTPException(409, "Routine is not archived")
+        # A restored Routine stays paused until it is resumed.
+        await call(schedule_db.update_schedule, routine_id, payload={**row["payload"], "metadata": metadata})
+        return await routine_response(await routine(routine_id, request))
 
     @router.get("/routines/{routine_id}/runs")
     async def routine_runs(

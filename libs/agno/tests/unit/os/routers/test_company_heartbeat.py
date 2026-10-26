@@ -58,6 +58,29 @@ def test_routine_scheduler_wrappers(system):
     assert len(client.get("/company/routines").json()["data"]) == 1
 
 
+def test_routine_archive_restore_and_permanent_delete(system):
+    client, _, db = system
+    product = client.post("/company/products", json={"name": "Docs"}).json()
+    body = dict(
+        product_id=product["id"], name="review", executor_type="agent", executor_id="reader", instructions="Review"
+    )
+    routine_id = client.post("/company/routines", json=body).json()["id"]
+    path = "/company/routines/" + routine_id
+    assert client.delete(path).status_code == 204
+    assert client.get(path).status_code == 404
+    archived = client.get(path, params={"include_deleted": True}).json()
+    assert archived["deleted_at"] is not None and archived["enabled"] is False
+    assert client.get("/company/routines").json()["meta"]["total_count"] == 0
+    assert client.get("/company/routines", params={"include_deleted": True}).json()["meta"]["total_count"] == 1
+    restored = client.post(path + "/restore")
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["deleted_at"] is None and restored.json()["enabled"] is False
+    assert client.post(path + "/restore").json()["detail"] == "Routine is not archived"
+    assert client.delete(path, params={"permanent": True}).status_code == 204
+    assert client.get(path, params={"include_deleted": True}).status_code == 404
+    assert routine_id not in client.get("/company/products/" + product["id"]).json()["metadata"].get("routine_ids", [])
+
+
 def test_routine_cancel_stops_the_running_run(system):
     from agno.run.cancel import is_cancelled
 
