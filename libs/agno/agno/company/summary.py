@@ -33,12 +33,12 @@ def _serialized_summary(fn):
 
         @wraps(fn)
         async def async_wrapped(self, *, product_id, **kwargs):
-            from agno.company.playbook import _require_owner
+            from agno.company.playbook import _require_product_scope
 
             product = await self.get(product_id)
             if product is None:
                 raise LookupError("Product not found")
-            _require_owner(product, kwargs.get("user_id"))
+            _require_product_scope(product)
             filesystem = _summary_state_filesystem(self.db, product_id)
             existing = await filesystem.aread_with_meta(_LOCK_PATH)
             content = _claim_content(existing)
@@ -56,12 +56,12 @@ def _serialized_summary(fn):
 
     @wraps(fn)
     def wrapped(self, *, product_id, **kwargs):
-        from agno.company.playbook import _require_owner
+        from agno.company.playbook import _require_product_scope
 
         product = self.get(product_id)
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, kwargs.get("user_id"))
+        _require_product_scope(product)
         filesystem = _summary_state_filesystem(self.db, product_id)
         existing = filesystem.read_with_meta(_LOCK_PATH)
         content = _claim_content(existing)

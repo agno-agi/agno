@@ -29,7 +29,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.tasks import task_run_fields, task_run_id
 from agno.os.auth import get_authentication_dependency
 from agno.os.job_queue import ticket_status_to_api, validate_seam_input
-from agno.os.middleware.user_scope import get_scoped_user_id
+from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.company.schema import TaskRunCreate
 from agno.os.routers.run_permissions import _require_endpoint_permission
 from agno.os.schema import PaginatedResponse, PaginationInfo
@@ -192,7 +192,7 @@ def get_company_runs_router(os: Any) -> APIRouter:
                 except PermissionError as exc:
                     raise HTTPException(403, str(exc)) from exc
         queue = worker(request)
-        caller = get_scoped_user_id(request) or getattr(request.state, "user_id", None)
+        caller = resolve_run_user_id(request)
         if observed is not None:
             caller = value.get("accepted_by")
         # Review requests start the next attempt; an old attempt is not a revision.
@@ -207,7 +207,16 @@ def get_company_runs_router(os: Any) -> APIRouter:
         if existing is not None:
             if (existing.get("payload") or {}).get("company_task_id") != task_id:
                 raise HTTPException(409, "Run identifier conflicts with another submission")
-            await _reserve_task(db, existing)
+            reserved = await _reserve_task(db, existing)
+            if (
+                reserved is not None
+                and existing["status"] in {"completed", "failed", "cancelled"}
+                and _pending_task_attempt(reserved) is not None
+            ):
+                from agno.company.execution import _recover_task
+
+                # A finished ticket's unsaved Task result is rebuilt from its run row.
+                await _recover_task(os, queue, reserved)
             return JSONResponse(
                 {
                     "run_id": run_id,
@@ -286,7 +295,7 @@ def get_company_runs_router(os: Any) -> APIRouter:
         owner = _task_session_owner(value, component)
         await _prepare_task_session(run_db, value, owner)
         try:
-            message = await _task_input(manager, value)
+            message = await _task_input(manager, value, accepted_execution=True)
         except LookupError as exc:
             raise HTTPException(404, str(exc))
         except ValueError as exc:
@@ -427,7 +436,10 @@ def get_company_runs_router(os: Any) -> APIRouter:
                 owner = _reservation_owner(value, run)
                 queue = getattr(request.app.state, "queue_worker", None)
                 await _cancel_ticketless_pending_run(original_db, value, run, owner, queue)
-                await _reconcile_task_run(db, original_db, value, run, owner, worker=queue)
+                ticket = await queue.store.get_job(run_id) if queue is not None else None
+                # A live ticket saves its own Task result when the queue settles it.
+                if ticket is None or ticket["status"] in {"completed", "failed", "cancelled"}:
+                    await _reconcile_task_run(db, original_db, value, run, owner, worker=queue)
         return response
 
     @router.get("/attention")

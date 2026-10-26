@@ -173,7 +173,7 @@ async def test_chat_declarations_use_owned_managers(db, use_async, mode, tmp_pat
     assert saved["target_id"] == cid and saved["user_id"] == "ana"
     second = await invoke(
         tools,
-        "create_company_routine",
+        "create_product_routine",
         use_async,
         product_id=product["id"],
         **{**declaration(kind, cid).model_dump(exclude={"auto_accept"}), "name": "another-review"},
@@ -183,7 +183,7 @@ async def test_chat_declarations_use_owned_managers(db, use_async, mode, tmp_pat
     with pytest.raises(ValueError, match="Only the Company Manager"):
         await invoke(
             tools,
-            "create_company_routine",
+            "create_product_routine",
             use_async,
             product_id=product["id"],
             **{**declaration("team", MANAGER_TEAM_ID).model_dump(exclude={"auto_accept"}), "name": "coordinated"},

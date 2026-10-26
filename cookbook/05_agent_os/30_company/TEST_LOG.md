@@ -369,3 +369,33 @@ No paid model calls or real outbound notification deliveries were exercised.
 **Result:** All three runs passed without model calls. A new regression case fails when the member and served agent are the same object (the served agent inherits the member limit) and passes with separate instances.
 
 ---
+
+### 05_company_manager.py — Product tool names (2026-10-22)
+
+**Status:** PASS
+
+**Description:** Ran the offline Company Manager example with `update_product_status`.
+
+**Result:** Saved the Backlog proposal, Product status and decision; no model calls.
+
+---
+
+### 08_custom_routines.py — Product tool names (2026-10-22)
+
+**Status:** PASS
+
+**Description:** Ran the offline custom Routine example with `add_product_source`.
+
+**Result:** Repeated website discovery reused the same attributed Source; Routine controls and Source archival passed without model calls or website requests.
+
+---
+
+### 10_weekly_product_review.py — Product tool names (2026-10-22)
+
+**Status:** PASS
+
+**Description:** Updated review instructions to `read_product_source` and `intake_product_source`; ran `--check` and `--check --with-os-manager`.
+
+**Result:** Both configurations persisted the Company Manager Routine with automatic acceptance disabled. These checks validate configuration; they do not execute a review or make model calls.
+
+---
