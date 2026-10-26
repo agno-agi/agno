@@ -1,5 +1,6 @@
 import csv
 import json
+from itertools import islice
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -81,10 +82,11 @@ class CsvTools(Toolkit):
             _row_limit = self.row_limit if row_limit is None else row_limit
             with open(str(file_path), encoding="utf-8-sig", newline="") as csvfile:
                 reader = csv.DictReader(csvfile)
-                if _row_limit is not None:
-                    csv_data = [row for row in reader][:_row_limit]
+                if _row_limit is not None and _row_limit < 0:
+                    # Preserve the existing slice semantics for negative limits.
+                    csv_data = list(reader)[:_row_limit]
                 else:
-                    csv_data = [row for row in reader]
+                    csv_data = list(islice(reader, _row_limit))
             return json.dumps(csv_data)
         except Exception as e:
             logger.exception("Error reading csv")
