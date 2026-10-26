@@ -102,8 +102,10 @@ tools. HTTP rejects omission with 422; Python managers and tools raise
 then pass its ID to the Task proposal. A Backlog Task can move between Projects
 but cannot clear its Project. Existing nullable storage rows remain readable.
 
-Projects start `proposed` and move to `active`, then `done`. Tasks start
-`backlog` and move through `ready`, `in_progress`, `in_review`, and `done`.
+Projects start `proposed` and move to `active`, then `done`. Tasks are created in `backlog` by default; `POST /company/tasks` also accepts
+`status` set to `ready` (with `executor_type` and `executor_id`, under the same
+acceptance checks as the Ready transition) or `cancelled`. Tasks move through
+`ready`, `in_progress`, `in_review`, and `done`.
 Either can be `cancelled` from any non-terminal state. Each transition takes
 `target` and a non-empty `reason`; history is returned on the record. Tasks
 may return to Backlog to clear acceptance and change scope, and In review may

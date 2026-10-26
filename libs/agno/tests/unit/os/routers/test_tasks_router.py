@@ -106,6 +106,22 @@ def test_cancel_from_every_nonterminal_state(client, states):
     assert transition(client, path, "ready").status_code == 409
 
 
+def test_create_in_status(client):
+    parent = client.post("/company/products", json={"name": "SDK"}).json()["id"]
+    project = client.post("/company/projects", json={"product_id": parent, "name": "Release"}).json()["id"]
+    body = {"product_id": parent, "project_id": project, "title": "Ship"}
+    ready = client.post(
+        "/company/tasks", json={**body, "status": "ready", "executor_type": "agent", "executor_id": "writer"}
+    )
+    assert ready.status_code == 201, ready.text
+    assert ready.json()["status"] == "ready"
+    assert ready.json()["executor_id"] == "writer"
+    assert [x["target"] for x in ready.json()["transitions"]] == ["ready"]
+    assert client.post("/company/tasks", json={**body, "status": "cancelled"}).json()["status"] == "cancelled"
+    assert client.post("/company/tasks", json={**body, "status": "ready"}).status_code == 422
+    assert client.post("/company/tasks", json={**body, "status": "in_progress"}).status_code == 422
+
+
 @pytest.mark.parametrize("body", [{"status": "done"}, {"user_id": "spoof"}, {"created_at": 0}, {"title": " "}])
 def test_no_lifecycle_or_identity_edits(client, body):
     path = "/company/tasks/" + create(client)["id"]

@@ -100,9 +100,21 @@ def get_tasks_router(
             meta=PaginationInfo(page=page, limit=limit, total_count=total, total_pages=(total + limit - 1) // limit),
         )
 
+    async def _require_accept(request: Request, executor_type: Optional[str], executor_id: Optional[str]) -> None:
+        assert executor_type is not None  # Validated by TaskCreate and TaskTransition.
+        resource = {"agent": "agents", "team": "teams", "workflow": "workflows"}[executor_type]
+        await _require_endpoint_permission(request, f"/{resource}/{executor_id}/runs", "POST", action="accept")
+
     @router.post("/tasks", response_model=TaskResponse, status_code=201)
     async def create_task(body: TaskCreate, request: Request, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
-        return await _call("create_task", **body.model_dump(), user_id=resolve_run_user_id(request))
+        if body.status == "ready":
+            await _require_accept(request, body.executor_type, body.executor_id)
+        return await _call(
+            "create_task",
+            **body.model_dump(),
+            user_id=resolve_run_user_id(request),
+            accepted_by=getattr(request.state, "user_id", None),
+        )
 
     @router.get("/tasks/{task_id}", response_model=TaskResponse)
     async def get_task(
@@ -151,9 +163,7 @@ def get_tasks_router(
                 detail=f"Start a run with POST /company/tasks/{task_id}/runs to enter In progress",
             )
         if body.target == "ready":
-            assert body.executor_type is not None  # Validated by TaskTransition.
-            resource = {"agent": "agents", "team": "teams", "workflow": "workflows"}[body.executor_type]
-            await _require_endpoint_permission(request, f"/{resource}/{body.executor_id}/runs", "POST", action="accept")
+            await _require_accept(request, body.executor_type, body.executor_id)
         record = await _call(
             "transition_task",
             task_id=task_id,
