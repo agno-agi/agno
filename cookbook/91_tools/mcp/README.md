@@ -57,6 +57,10 @@ This example shows how to choose which MCP protocol era `MCPTools` negotiates. T
 
 This example connects to Magic Hour's hosted MCP server to create images and videos. It shows bearer authentication, long-running render handling, reuse of project IDs after timeouts, and exact output URL retrieval.
 
+14. Bowmark Agent (`bowmark.py`)
+
+This example connects to Bowmark's hosted MCP server to give the agent typed functions for live websites. The agent calls `get_library` to find the functions for a site, then `run` to execute a short script against them and get structured results back.
+
 ## Getting Started
 
 ### Prerequisites

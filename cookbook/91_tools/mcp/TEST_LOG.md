@@ -1,5 +1,15 @@
 # Test Log
 
+### bowmark.py
+
+**Status:** PASS
+
+**Description:** Runs the cookbook agent end to end against Bowmark's production Streamable HTTP MCP endpoint through Agno 3.1.10 `MCPTools` (fastmcp 4.x) with bearer authentication and `include_tools=["get_library", "run"]`.
+
+**Result:** The agent called `get_library(query="news.ycombinator.com")`, then `run` with a script calling `bowmark.providers.hackernews.topStories({ limit: 3 })`, and answered with the three current top Hacker News stories, their points and comment counts in 21.9s. The example passes Python compilation and Ruff formatting and lint checks.
+
+---
+
 ### magic_hour.py
 
 **Status:** PASS
