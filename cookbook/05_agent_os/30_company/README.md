@@ -112,8 +112,8 @@ and a non-empty `reason`; history is returned on the record. A Task can move to
 Backlog, Ready or Cancelled from any other state, including `done` and `cancelled`.
 Backlog clears acceptance so scope can change. In progress is entered only by
 starting a run: direct HTTP transitions to In progress return 409 and name the
-runs endpoint. While a run attempt is still executing, moves out of In progress
-return 409 and name that run's cancel endpoint. In review and Done follow a run;
+runs endpoint. While a run attempt is still executing or paused awaiting approval,
+moves out of In progress return 409 and name that run's cancel endpoint. In review and Done follow a run;
 reaching them from any state other than In progress and In review respectively
 requires an earlier run attempt.
 A done or cancelled Task cannot reopen inside a done or cancelled Project.
