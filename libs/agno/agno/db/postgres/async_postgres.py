@@ -4526,7 +4526,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             raise
 
     async def update_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+        self, schedule_id: str, user_id: Optional[str] = None, *, preserve_updated_at: bool = False, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.scheduler import validate_schedule_update
 
@@ -4539,7 +4539,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="schedules")
             if table is None:
                 return None
-            kwargs["updated_at"] = int(time.time())
+            if not preserve_updated_at:
+                kwargs["updated_at"] = int(time.time())
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     stmt = table.update().where(table.c.id == schedule_id)
@@ -4592,6 +4593,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         rows and generic rows whose endpoint is the component's run endpoint,
         across owners, and records the system reason in disabled_reason.
         """
+        from sqlalchemy import literal
+
         from agno.db.schemas.scheduler import build_run_endpoint
 
         try:
@@ -4614,7 +4617,15 @@ class AsyncPostgresDb(AsyncBaseDb):
                             ),
                             table.c.enabled.is_(True),
                         )
-                        .values(enabled=False, disabled_reason=reason, updated_at=int(time.time()))
+                        # An archive cascade is not a user edit, so a Company routine keeps its last-edit time.
+                        .values(
+                            enabled=False,
+                            disabled_reason=reason,
+                            updated_at=case(
+                                (table.c.managed_by == "company", table.c.updated_at),
+                                else_=literal(int(time.time()), table.c.updated_at.type),
+                            ),
+                        )
                     )
             return int(getattr(result, "rowcount", 0) or 0)
         except Exception as e:
@@ -4698,12 +4709,15 @@ class AsyncPostgresDb(AsyncBaseDb):
         *,
         worker_id: Optional[str] = None,
         locked_at: Optional[int] = None,
+        preserve_updated_at: bool = False,
     ) -> bool:
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
                 return False
-            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+            if not preserve_updated_at:
+                updates["updated_at"] = int(time.time())
             # A cron may be cleared while this claim is running. Never re-arm
             # an on-demand schedule using the executor's older schedule snapshot.
             updates["next_run_at"] = case(
@@ -6989,7 +7003,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             rows = (await sess.execute(stmt)).fetchall()
             return [dict(row._mapping) for row in rows], total
 
-    async def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+    async def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.tasks import validate_task_fields
         from agno.db.sql.company import lock_child, require_project
 
@@ -6997,7 +7013,11 @@ class AsyncPostgresDb(AsyncBaseDb):
         table = await self._get_table(table_type="tasks")
         if table is None:
             return None
-        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None), table.c.status == "backlog")
+        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None))
+        if set(fields) - {"title", "brief"}:
+            stmt = stmt.where(table.c.status == "backlog")
+        if expected_status is not None:
+            stmt = stmt.where(table.c.status == expected_status)
         if user_id is not None:
             stmt = stmt.where(table.c.user_id == user_id)
         products = await self._get_table(table_type="products", create_table_if_not_found=True)
@@ -7186,7 +7206,7 @@ class AsyncPostgresDb(AsyncBaseDb):
     ) -> Optional[Dict[str, Any]]:
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.tasks import _acceptance_count, task_transition_fields
-        from agno.db.sql.company import lock_child
+        from agno.db.sql.company import lock_child, require_project
 
         table = await self._get_table(table_type="tasks")
         if table is None:
@@ -7228,6 +7248,9 @@ class AsyncPostgresDb(AsyncBaseDb):
                 fields["transitions"][-1]["auto_accept"] = auto_accept
             else:
                 await sess.run_sync(lock_child, products, projects, table, task_id)
+            if existing["status"] in {"done", "cancelled"}:
+                # Reopened work must not land in a completed or cancelled Project.
+                await sess.run_sync(require_project, projects, existing["project_id"], existing["product_id"], target)
             update = table.update().where(
                 table.c.id == task_id,
                 table.c.deleted_at.is_(None),
