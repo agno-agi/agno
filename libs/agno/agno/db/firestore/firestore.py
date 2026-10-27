@@ -30,6 +30,7 @@ from agno.db.utils import (
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_records,
+    runs_for_metrics,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -1563,7 +1564,9 @@ class FirestoreDb(BaseDb):
                     "session_id": data.get("session_id"),
                     "user_id": data.get("user_id"),
                     "session_data": data.get("session_data"),
-                    "runs": data.get("runs"),  # legacy field, for un-migrated sessions
+                    # Legacy field, for un-migrated sessions: reduced as each document arrives, so the
+                    # whole runs are never held for every session at once
+                    "runs": runs_for_metrics(data.get("runs")),
                     "created_at": data.get("created_at"),
                     "session_type": data.get("session_type"),
                 }
@@ -1613,14 +1616,12 @@ class FirestoreDb(BaseDb):
             if resume_date is not None:
                 return resume_date
 
-            # No metrics records. Return the date of the first recorded session.
-            first_session_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
+            # No metrics records. Return the date of the first recorded session, ordered and limited in the
+            # database: get_sessions streams every session document, legacy runs included, to return one
+            sessions_ref = self._get_collection(table_type="sessions")
             first_session_date = None
-
-            if isinstance(first_session_result, list) and len(first_session_result) > 0:
-                first_session_date = first_session_result[0].created_at  # type: ignore
-            elif isinstance(first_session_result, tuple) and len(first_session_result[0]) > 0:
-                first_session_date = first_session_result[0][0].get("created_at")
+            for doc in sessions_ref.order_by("created_at").limit(1).select(["created_at"]).stream():
+                first_session_date = (doc.to_dict() or {}).get("created_at")
 
             if first_session_date is None:
                 return None

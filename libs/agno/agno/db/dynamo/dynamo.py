@@ -42,6 +42,7 @@ from agno.db.utils import (
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_records,
+    runs_for_metrics,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -276,6 +277,30 @@ class DynamoDb(BaseDb):
         rows = [deserialize_from_dynamodb_item(it) for it in items]
         rows.sort(key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
         return [r["run_data"] for r in rows if "run_data" in r]
+
+    def _get_session_run_models(self, session_id: str) -> List[Dict[str, Any]]:
+        """Each run of a session reduced to what metrics read, a query page at a time: a session can hold many runs."""
+        table_name = self._get_table("runs", create_table_if_not_found=False)
+        query_kwargs: Dict[str, Any] = dict(
+            TableName=table_name,
+            IndexName="session_id-created_at-index",
+            KeyConditionExpression="session_id = :sid",
+            ExpressionAttributeValues={":sid": {"S": session_id}},
+        )
+        models: List[Dict[str, Any]] = []
+        try:
+            response = self.client.query(**query_kwargs)
+            while True:
+                for item in response.get("Items", []):
+                    row = deserialize_from_dynamodb_item(item)
+                    if "run_data" in row:
+                        models.extend(runs_for_metrics([row["run_data"]]))
+                if "LastEvaluatedKey" not in response:
+                    break
+                response = self.client.query(**query_kwargs, ExclusiveStartKey=response["LastEvaluatedKey"])
+        except self.client.exceptions.ResourceNotFoundException:
+            return []
+        return models
 
     def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         if not session_ids:
@@ -1790,11 +1815,13 @@ class DynamoDb(BaseDb):
         """
         try:
             table_name = self._get_table("sessions")
-            all_sessions = []
+            all_sessions: List[Dict[str, Any]] = []
 
-            # Query sessions by different types within the time range
+            # Query sessions by different types within the time range. Each page is reduced as it arrives:
+            # legacy runs, kept on the session item until cleanup_legacy_runs_field(), would otherwise all
+            # be held at once
             for session_type in ["agent", "team", "workflow"]:
-                response = self.client.query(
+                query_kwargs: Dict[str, Any] = dict(
                     TableName=table_name,
                     IndexName="session_type-created_at-index",
                     KeyConditionExpression="session_type = :session_type AND created_at BETWEEN :start_ts AND :end_ts",
@@ -1804,40 +1831,29 @@ class DynamoDb(BaseDb):
                         ":end_ts": {"N": str(end_timestamp)},
                     },
                 )
+                response = self.client.query(**query_kwargs)
+                while True:
+                    for item in response.get("Items", []):
+                        session_data = deserialize_from_dynamodb_item(item)
+                        if session_data:
+                            all_sessions.append(
+                                {
+                                    "session_id": session_data.get("session_id"),
+                                    "user_id": session_data.get("user_id"),
+                                    "session_data": session_data.get("session_data"),
+                                    "created_at": session_data.get("created_at"),
+                                    "session_type": session_data.get("session_type"),
+                                    "runs": runs_for_metrics(session_data.get("runs")),
+                                }
+                            )
+                    if "LastEvaluatedKey" not in response:
+                        break
+                    response = self.client.query(**query_kwargs, ExclusiveStartKey=response["LastEvaluatedKey"])
 
-                items = response.get("Items", [])
-
-                # Handle pagination
-                while "LastEvaluatedKey" in response:
-                    response = self.client.query(
-                        TableName=table_name,
-                        IndexName="session_type-created_at-index",
-                        KeyConditionExpression="session_type = :session_type AND created_at BETWEEN :start_ts AND :end_ts",
-                        ExpressionAttributeValues={
-                            ":session_type": {"S": session_type},
-                            ":start_ts": {"N": str(start_timestamp)},
-                            ":end_ts": {"N": str(end_timestamp)},
-                        },
-                        ExclusiveStartKey=response["LastEvaluatedKey"],
-                    )
-                    items.extend(response.get("Items", []))
-
-                # Deserialize sessions
-                for item in items:
-                    session_data = deserialize_from_dynamodb_item(item)
-                    if session_data:
-                        all_sessions.append(session_data)
-
-            # Attach runs from the runs table, merged with legacy blob
-            if all_sessions:
-                try:
-                    runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in all_sessions])
-                    for s in all_sessions:
-                        s["runs"] = merge_runs_table_with_legacy_blob(
-                            runs_by_session.get(s["session_id"], []), s.get("runs")
-                        )
-                except Exception as e:
-                    log_error(f"Failed to attach runs to sessions for metrics: {str(e)}")
+            # Attach runs from the runs table, merged with the legacy runs. Read one session at a time, so
+            # the runs' output is never held for every session at once
+            for s in all_sessions:
+                s["runs"] = merge_runs_table_with_legacy_blob(self._get_session_run_models(s["session_id"]), s["runs"])
 
             return all_sessions
 

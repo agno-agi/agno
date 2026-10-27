@@ -1,7 +1,7 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -36,6 +36,7 @@ from agno.db.utils import (
     merge_runs_table_with_legacy_blob,
     metric_record_day,
     metrics_starting_date_from_records,
+    runs_for_metrics,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -402,6 +403,57 @@ class RedisDb(BaseDb):
     def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         """Get raw run_data dicts for several sessions, grouped by session_id."""
         return {sid: self._get_session_runs_data(sid) for sid in session_ids}
+
+    def _iter_records(self, table_type: str) -> Iterator[Dict[str, Any]]:
+        """Yield every record of a table type, raising on read errors."""
+        keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type=table_type)
+        yield from self._iter_values(keys)
+
+    def _iter_values(self, keys: List[Any], max_batch_bytes: int = 1_000_000) -> Iterator[Dict[str, Any]]:
+        """Yield the records stored under the given keys, raising on read errors.
+
+        Values are read in batches capped by their stored size, not their count: a session still holding
+        legacy runs, or a run with a long output, can be megabytes, so a fixed number could not be held at once.
+        """
+        for start in range(0, len(keys), 1000):
+            chunk = keys[start : start + 1000]
+            pipeline = self.redis_client.pipeline(transaction=False)
+            for key in chunk:
+                pipeline.strlen(key)
+            batch: List[Any] = []
+            batch_bytes = 0
+            for key, size in zip(chunk, pipeline.execute()):
+                if batch and batch_bytes + size > max_batch_bytes:
+                    yield from self._read_records(batch)
+                    batch, batch_bytes = [], 0
+                batch.append(key)
+                batch_bytes += size
+            if batch:
+                yield from self._read_records(batch)
+
+    def _read_records(self, keys: List[Any]) -> Iterator[Dict[str, Any]]:
+        """Yield the records stored under the given keys, read in one round trip."""
+        pipeline = self.redis_client.pipeline(transaction=False)
+        for key in keys:
+            pipeline.get(key)
+        for data in pipeline.execute():
+            if data:
+                yield deserialize_data(data)  # type: ignore
+
+    def _get_session_run_models(self, session_id: str) -> List[Dict[str, Any]]:
+        """Each run of a session reduced to what metrics read, as it is read: a session can hold many runs."""
+        run_ids = list(self.redis_client.zrange(self._runs_by_session_index_key(session_id), 0, -1))  # type: ignore[arg-type]
+        keys = [
+            generate_redis_key(
+                prefix=self.db_prefix, table_type="runs", key_id=rid.decode() if isinstance(rid, bytes) else str(rid)
+            )
+            for rid in run_ids
+        ]
+        models: List[Dict[str, Any]] = []
+        for row in self._iter_values(keys):
+            if row.get("run_data") is not None:
+                models.extend(runs_for_metrics([row["run_data"]], None))
+        return models
 
     def _delete_session_runs(self, session_id: str) -> int:
         """Delete every run row associated with a session (and the session's run index)."""
@@ -1374,34 +1426,30 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while getting the sessions.
         """
         try:
-            all_sessions = self._get_all_records("sessions")
-
-            # Filter by timestamp if provided
-            if start_timestamp is not None or end_timestamp is not None:
-                filtered_sessions = []
-                for session in all_sessions:
-                    created_at = session.get("created_at", 0)
-                    if start_timestamp is not None and created_at < start_timestamp:
-                        continue
-                    if end_timestamp is not None and created_at > end_timestamp:
-                        continue
-                    filtered_sessions.append(session)
-                all_sessions = filtered_sessions
-
-            # Attach lightweight run info (model + provider) per session. For Redis, we
-            # walk the per-session sorted-set index and read each run row — cheap for
-            # typical session sizes, and `calculate_date_metrics` only needs len(runs)
-            # plus run["model"] / run["model_provider"].
-            for session in all_sessions:
-                sid = session.get("session_id")
-                if not sid:
+            # Each record is reduced as it is read: its legacy runs, kept on the session record until
+            # cleanup_legacy_runs_field(), would otherwise all be held at once
+            all_sessions: List[Dict[str, Any]] = []
+            for session in self._iter_records("sessions"):
+                created_at = session.get("created_at", 0)
+                if start_timestamp is not None and created_at < start_timestamp:
                     continue
-                runs_data = self._get_session_runs_data(sid)
-                lightweight = [
-                    {"model": rd.get("model"), "model_provider": rd.get("model_provider")} for rd in runs_data
-                ]
-                if lightweight or not session.get("runs"):
-                    session["runs"] = lightweight
+                if end_timestamp is not None and created_at > end_timestamp:
+                    continue
+                all_sessions.append(
+                    {
+                        "session_id": session.get("session_id"),
+                        "user_id": session.get("user_id"),
+                        "session_data": session.get("session_data"),
+                        "created_at": created_at,
+                        "session_type": session.get("session_type"),
+                        "runs": runs_for_metrics(session.get("runs")),
+                    }
+                )
+
+            # Runs in the runs table take precedence over the legacy field
+            for session in all_sessions:
+                if session["session_id"]:
+                    session["runs"] = self._get_session_run_models(session["session_id"]) or session["runs"]
 
             return all_sessions
 
@@ -1419,16 +1467,19 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while getting the metrics calculation starting date.
         """
         try:
-            all_metrics = self._get_all_records("metrics")
+            all_metrics = list(self._iter_records("metrics"))
 
             resume_date = metrics_starting_date_from_records(all_metrics)
             if resume_date is not None:
                 return resume_date
 
-            # No metrics records, find first session
-            sessions_raw, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
-            if sessions_raw:
-                first_session_date = sessions_raw[0]["created_at"]  # type: ignore
+            # No metrics records, find first session. Streamed rather than read through get_sessions,
+            # which loads every session record, legacy runs included, to return one
+            first_session_date = min(
+                (s["created_at"] for s in self._iter_records("sessions") if s.get("created_at") is not None),
+                default=None,
+            )
+            if first_session_date is not None:
                 return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
 
             return None

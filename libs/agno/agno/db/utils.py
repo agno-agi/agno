@@ -502,6 +502,33 @@ def merge_runs_table_with_legacy_blob(
     return merged
 
 
+def runs_for_metrics(runs: Any, missing_provider: Optional[str] = "") -> List[Dict[str, Any]]:
+    """Reduce runs to the fields a metrics refresh reads: run_id, model and model_provider.
+
+    Stores that return whole records reduce each run as it is read, so a refresh never holds every
+    run's output at once. ``runs`` is a list of run dicts or the JSON-encoded legacy ``runs`` value.
+    ``missing_provider`` stands in for a run without a ``model_provider`` key; callers pass what their
+    reads produced before, so the reported provider does not change.
+    """
+    if isinstance(runs, str):
+        try:
+            runs = json.loads(runs)
+        except (json.JSONDecodeError, TypeError):
+            log_warning("Could not parse legacy runs blob for metrics; ignoring it")
+            return []
+    if not isinstance(runs, list):
+        return []
+    return [
+        {
+            "run_id": run.get("run_id"),
+            "model": run.get("model"),
+            "model_provider": run.get("model_provider", missing_provider),
+        }
+        for run in runs
+        if isinstance(run, dict)
+    ]
+
+
 async def resolve_session_type(
     db: Union["BaseDb", "AsyncBaseDb"],
     session_id: str,
