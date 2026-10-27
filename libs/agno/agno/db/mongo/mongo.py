@@ -3051,7 +3051,7 @@ class MongoDb(BaseDb):
             raise e
 
     def update_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+        self, schedule_id: str, user_id: Optional[str] = None, *, preserve_updated_at: bool = False, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.scheduler import validate_schedule_update
 
@@ -3065,7 +3065,8 @@ class MongoDb(BaseDb):
             if collection is None:
                 return None
 
-            kwargs["updated_at"] = int(time.time())
+            if not preserve_updated_at:
+                kwargs["updated_at"] = int(time.time())
             query: Dict[str, Any] = {"id": schedule_id}
             if user_id is not None:
                 query["user_id"] = user_id
@@ -3137,7 +3138,18 @@ class MongoDb(BaseDb):
                         {"endpoint": {"$in": [endpoint, endpoint + "/"]}},
                     ],
                 },
-                {"$set": {"enabled": False, "disabled_reason": reason, "updated_at": int(time.time())}},
+                [
+                    {
+                        "$set": {
+                            "enabled": False,
+                            "disabled_reason": {"$literal": reason},
+                            # An archive cascade is not a user edit, so a Company routine keeps its last-edit time.
+                            "updated_at": {
+                                "$cond": [{"$eq": ["$managed_by", "company"]}, "$updated_at", int(time.time())]
+                            },
+                        }
+                    }
+                ],
             )
             return int(result.modified_count or 0)
         except Exception as e:
@@ -3214,13 +3226,16 @@ class MongoDb(BaseDb):
         *,
         worker_id: Optional[str] = None,
         locked_at: Optional[int] = None,
+        preserve_updated_at: bool = False,
     ) -> bool:
         try:
             collection = self._get_collection(table_type="schedules")
             if collection is None:
                 return False
 
-            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+            if not preserve_updated_at:
+                updates["updated_at"] = int(time.time())
             updates["next_run_at"] = {
                 "$cond": [
                     {"$eq": ["$cron_expr", ""]},
