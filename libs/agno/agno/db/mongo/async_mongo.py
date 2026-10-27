@@ -979,6 +979,7 @@ class AsyncMongoDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions.
 
@@ -1037,6 +1038,14 @@ class AsyncMongoDb(AsyncBaseDb):
                     query["created_at"] = {"$lte": end_timestamp}
             if session_name is not None:
                 query["session_data.session_name"] = {"$regex": re.escape(session_name), "$options": "i"}
+
+            if filter_expr is not None:
+                from agno.db.session_filters import normalize_session_filter, session_filter_to_mongo
+
+                expression = normalize_session_filter(filter_expr)
+                if expression is not None:
+                    advanced = session_filter_to_mongo(expression)
+                    query = {"$and": [query, advanced]} if query else advanced
 
             # Get total count
             total_count = await collection.count_documents(query)

@@ -461,6 +461,7 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
         "GET /sessions": ["sessions:read"],
         "GET /sessions/*": ["sessions:read"],
         "POST /sessions": ["sessions:write"],
+        "POST /sessions/search": ["sessions:read"],
         "POST /sessions/*/rename": ["sessions:write"],
         "PATCH /sessions/*": ["sessions:write"],
         "DELETE /sessions": ["sessions:delete"],
