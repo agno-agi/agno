@@ -985,6 +985,7 @@ class TeamRunSchema(BaseModel):
 
 class WorkflowRunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the workflow run")
+    parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     run_input: Optional[str] = Field(None, description="Input provided to the workflow")
     events: Optional[List[dict]] = Field(None, description="Events generated during the workflow")
     workflow_id: Optional[str] = Field(None, description="Workflow ID that was executed")
@@ -1021,6 +1022,7 @@ class WorkflowRunSchema(BaseModel):
         run_input = get_run_input(run_response, is_workflow_run=True)
         return cls(
             run_id=run_response.get("run_id", ""),
+            parent_run_id=run_response.get("parent_run_id"),
             run_input=run_input,
             events=run_response.get("events", []),
             workflow_id=run_response.get("workflow_id", ""),
