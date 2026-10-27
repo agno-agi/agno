@@ -134,10 +134,15 @@ def _restore_children(sess: Any, table: Any, condition: Any, parent: Dict[str, s
 
 
 def _refuse_open_tasks(sess: Any, tasks: Any, condition: Any) -> None:
+    # Archived Tasks are hidden from lists and counts, so they must not block either.
     rows = (
         sess.execute(
             select(tasks.c.id, tasks.c.title)
-            .where(condition, tasks.c.status.in_(["ready", "in_progress", "in_review"]))
+            .where(
+                condition,
+                tasks.c.deleted_at.is_(None),
+                tasks.c.status.in_(["ready", "in_progress", "in_review"]),
+            )
             .order_by(tasks.c.id)
         )
         .mappings()

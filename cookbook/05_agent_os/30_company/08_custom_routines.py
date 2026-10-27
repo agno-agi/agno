@@ -70,9 +70,9 @@ if __name__ == "__main__":
                 _agno_agent=researcher,
                 _agno_run_context=context,
             )
-            source = json.loads(tools.add_company_source(**arguments))
+            source = json.loads(tools.add_product_source(**arguments))
             assert (
-                json.loads(tools.add_company_source(**arguments))["id"] == source["id"]
+                json.loads(tools.add_product_source(**arguments))["id"] == source["id"]
             )
             assert source["config"]["metadata"]["agent_id"] == "researcher"
             print("Created a custom Routine without a template or initial Sources.")

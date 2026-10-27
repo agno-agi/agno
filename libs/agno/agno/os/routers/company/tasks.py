@@ -8,17 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
-from agno.os.middleware.user_scope import get_scoped_user_id
+from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.company.schema import TaskCreate, TaskResponse, TaskStatus, TaskTransition, TaskUpdate
 from agno.os.routers.run_permissions import _require_endpoint_permission
 from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.os.settings import AgnoAPISettings
-
-
-def _require_write_ownership(existing: Dict[str, Any], user_id: Optional[str]) -> None:
-    """Check the scoped caller against the owner after a company-wide read."""
-    if user_id is not None and existing.get("user_id") != user_id:
-        raise HTTPException(status_code=403, detail="Cannot modify task owned by another user")
 
 
 def get_tasks_router(
@@ -69,11 +63,10 @@ def get_tasks_router(
             )
             raise HTTPException(status_code=409 if conflict else 422, detail=str(exc))
 
-    async def _writable(task_id: str, user_id: Optional[str], include_deleted: bool = False) -> Dict[str, Any]:
+    async def _existing(task_id: str, include_deleted: bool = False) -> Dict[str, Any]:
         existing = await _call("get_task", task_id, user_id=None, include_deleted=include_deleted)
         if existing is None:
             raise HTTPException(status_code=404, detail="Task not found")
-        _require_write_ownership(existing, user_id)
         return existing
 
     @router.get("/tasks", response_model=PaginatedResponse[TaskResponse])
@@ -109,12 +102,7 @@ def get_tasks_router(
 
     @router.post("/tasks", response_model=TaskResponse, status_code=201)
     async def create_task(body: TaskCreate, request: Request, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
-        user_id = get_scoped_user_id(request)
-        return await _call(
-            "create_task",
-            **body.model_dump(),
-            user_id=user_id or getattr(request.state, "user_id", None),
-        )
+        return await _call("create_task", **body.model_dump(), user_id=resolve_run_user_id(request))
 
     @router.get("/tasks/{task_id}", response_model=TaskResponse)
     async def get_task(
@@ -127,7 +115,7 @@ def get_tasks_router(
 
     @router.patch("/tasks/{task_id}", response_model=TaskResponse)
     async def update_task(task_id: str, body: TaskUpdate, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
-        existing = await _writable(task_id, None)
+        existing = await _existing(task_id)
         fields = body.model_dump(exclude_unset=True)
         if not fields:
             return existing
@@ -137,19 +125,17 @@ def get_tasks_router(
         return task
 
     @router.delete("/tasks/{task_id}", status_code=204)
-    async def delete_task(task_id: str, request: Request, _: bool = Depends(auth_dependency)) -> None:
-        user_id = get_scoped_user_id(request)
-        await _writable(task_id, user_id)
-        if not await _call("delete_task", task_id, user_id=user_id):
+    async def delete_task(task_id: str, _: bool = Depends(auth_dependency)) -> None:
+        await _existing(task_id)
+        if not await _call("delete_task", task_id, user_id=None):
             raise HTTPException(status_code=404, detail="Task not found")
 
     @router.post("/tasks/{task_id}/restore", response_model=TaskResponse)
-    async def restore_task(task_id: str, request: Request, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
-        user_id = get_scoped_user_id(request)
-        existing = await _writable(task_id, user_id, include_deleted=True)
+    async def restore_task(task_id: str, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
+        existing = await _existing(task_id, include_deleted=True)
         if existing.get("deleted_at") is None:
             raise HTTPException(status_code=409, detail="Task is not archived")
-        task = await _call("restore_task", task_id, user_id=user_id)
+        task = await _call("restore_task", task_id, user_id=None)
         if task is None:
             raise HTTPException(status_code=409, detail="Task is not archived")
         return task
@@ -158,7 +144,7 @@ def get_tasks_router(
     async def transition_task(
         task_id: str, body: TaskTransition, request: Request, _: bool = Depends(auth_dependency)
     ) -> Dict[str, Any]:
-        await _writable(task_id, None)
+        await _existing(task_id)
         if body.target == "in_progress":
             raise HTTPException(
                 status_code=409,

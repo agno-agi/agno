@@ -8,6 +8,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agno.agent import Agent
+from agno.agents.claude import ClaudeAgent
+from agno.agents.codex import CodexAgent
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.exceptions import ComponentRehydrationError
 from agno.models.base import Model
@@ -616,6 +618,105 @@ def test_manager_runner_tracks_served_components_after_list_replacement(db, use_
     kwargs["agent_id"] = OPERATOR_ID
     result = asyncio.run(runner.arun_agent(**kwargs)) if use_async else runner.run_agent(**kwargs)
     assert "error" in json.loads(result)
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("agent_class", [ClaudeAgent, CodexAgent])
+def test_manager_discovers_and_runs_external_agents(db, monkeypatch, agent_class, use_async):
+    from agno.os.authz.provider import AuthorizationContext
+    from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+    from agno.run.authorization import RunAuthorization
+
+    calls = []
+
+    async def adapter(self, message, **kwargs):
+        calls.append((self, message, kwargs))
+        return f"done: {message}"
+
+    monkeypatch.setattr(agent_class, "_arun_adapter", adapter)
+    claude = ClaudeAgent(id="claude-engineer", name="Claude Engineer")
+    codex = CodexAgent(id="codex-engineer", name="Codex Engineer")
+    agent = claude if agent_class is ClaudeAgent else codex
+    os = AgentOS(db=db, agents=[claude, codex], manager=OSManager(model=OfflineModel()), telemetry=False)
+    runner = next(t for t in os.manager.deep_copy().tools if isinstance(t, StudioRunnerTools))
+    listing = json.loads(asyncio.run(runner.alist_agents()) if use_async else runner.list_agents())
+    assert {row["id"] for row in listing["agents"]} == {"claude-engineer", "codex-engineer"}
+    assert runner._iter_agents() == []  # External adapters are not Studio build/edit targets.
+    assert runner._find_agent(agent.id) is None
+    context = RunContext(run_id="manager-run", session_id="conversation", user_id="alice")
+
+    def run(reference, message, caller=context):
+        kwargs = dict(agent_id=reference, message=message, _agno_run_context=caller, _agno_team=os.manager)
+        return json.loads(asyncio.run(runner.arun_agent(**kwargs)) if use_async else runner.run_agent(**kwargs))
+
+    first = run(agent.id, "first")
+    second = run(agent.name, "follow-up")
+    other = run(agent.id, "other user", RunContext(run_id="bob-run", session_id="conversation", user_id="bob"))
+    assert first["content"] == "done: first"
+    assert second["content"] == "done: follow-up"
+    assert other["content"] == "done: other user"
+    assert first["status"] == second["status"] == other["status"] == "COMPLETED"
+    assert first["session_id"] == second["session_id"] != context.session_id
+    assert other["session_id"] != first["session_id"]
+    assert all(call[0] is agent for call in calls)
+    assert calls[1][2]["history"] == [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "done: first"},
+    ]
+    assert not calls[2][2]["history"]
+    assert calls[0][2]["metadata"]["agno_dispatch_chain"] == [f"team:{MANAGER_TEAM_ID}", f"agent:{agent.id}"]
+    assert calls[0][2]["metadata"]["agno_dispatch_depth"] == 1
+    saved = db.get_runs(session_id=first["session_id"])
+    assert {row.run_id for row in saved} == {first["run_id"], second["run_id"]}
+    assert all(row.user_id == "alice" for row in saved)
+    # The adapter's original admission guard must still prevent overlapping turns.
+    agent._sessions_in_flight[first["session_id"]] = "active-run"
+    try:
+        refused = run(agent.id, "overlap")
+        assert "already has run active-run in flight" in refused["error"]
+        assert len(calls) == 3
+    finally:
+        agent._sessions_in_flight.clear()
+    context.authorization = RunAuthorization(
+        provider=ScopeAuthorizationProvider(),
+        context=AuthorizationContext(principal_id="alice", scopes=["teams:os-manager-internal:run"]),
+    )
+    hidden = json.loads(asyncio.run(runner.alist_agents(context)) if use_async else runner.list_agents(context))
+    assert hidden["agents"] == []
+    with pytest.raises(PermissionError, match=f"agents:{agent.id}:run"):
+        run(agent.id, "denied")
+    assert len(calls) == 3
+    context.authorization = None
+    # The live allowlist must follow replacement, including on a copied manager.
+    os.agents = []
+    assert "error" in run(agent.id, "removed")
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_registry_runners_do_not_dispatch_external_agents(db, monkeypatch, use_async):
+    calls = []
+
+    async def adapter(self, message, **kwargs):
+        calls.append(message)
+        return f"done: {message}"
+
+    monkeypatch.setattr(ClaudeAgent, "_arun_adapter", adapter)
+    claude = ClaudeAgent(id="claude-engineer", name="Claude Engineer")
+    os = AgentOS(db=db, agents=[claude], manager=OSManager(model=OfflineModel()), telemetry=False)
+    assert claude in os.registry.agents
+    builder_studio = next(t for t in manager_member(os, BUILDER_ID).tools if isinstance(t, StudioTools))
+    registry_runner = StudioRunnerTools(registry=os.registry, db=db, include_all_components=True)
+    context = RunContext(run_id="run", session_id="conversation", user_id="alice")
+    for tools in (builder_studio, registry_runner):
+        if use_async:
+            result = asyncio.run(tools.arun_agent(claude.id, "hi", _agno_run_context=context))
+        else:
+            result = tools.run_agent(claude.id, "hi", _agno_run_context=context)
+        assert json.loads(result)["error"] == f"Agent not found: {claude.id}"
+    listing = asyncio.run(registry_runner.alist_agents(context)) if use_async else registry_runner.list_agents(context)
+    assert json.loads(listing)["agents"] == []
+    assert calls == []
 
 
 @pytest.mark.parametrize("component_id", [BUILDER_ID, OPERATOR_ID, MANAGER_TEAM_ID])
