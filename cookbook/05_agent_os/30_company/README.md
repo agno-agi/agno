@@ -839,7 +839,7 @@ counts unless `include_deleted=true`. `POST /company/routines/{id}/restore` brin
 it back paused under an active Product. `DELETE /company/routines/{id}?permanent=true`
 removes the Routine, its run history and its Product link. Both deletes return
 409 while a run is executing; cancel it first. Both need `routines:delete` and
-`schedules:delete`. A Routine declared in code is created again on the next
+`schedules:delete`, and `permanent=true` also needs `agent_os:admin`. A Routine declared in code is created again on the next
 startup unless its declaration is removed.
 
 On-demand execution is a scheduler rule for all schedules. The generic schedule

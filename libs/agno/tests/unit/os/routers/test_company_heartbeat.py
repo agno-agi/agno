@@ -81,6 +81,44 @@ def test_routine_archive_restore_and_permanent_delete(system):
     assert routine_id not in client.get("/company/products/" + product["id"]).json()["metadata"].get("routine_ids", [])
 
 
+def test_permanent_routine_delete_requires_admin(tmp_path):
+    import jwt
+
+    from agno.os.config import AuthorizationConfig
+
+    secret = "company-permanent-routine-delete-secret"
+    db = SqliteDb(db_file=str(tmp_path / "permanent.db"))
+    os = AgentOS(
+        id="permanent",
+        db=db,
+        agents=[Agent(id="reader", db=db, telemetry=False)],
+        company=CompanyConfig(),
+        telemetry=False,
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[secret], algorithm="HS256"),
+    )
+
+    def headers(scopes):
+        return {
+            "Authorization": "Bearer "
+            + jwt.encode({"sub": "owner", "aud": "permanent", "scopes": scopes}, secret, algorithm="HS256")
+        }
+
+    admin = headers(["agent_os:admin"])
+    deleter = headers(["routines:delete", "schedules:delete"])
+    with TestClient(os.get_app()) as client:
+        product = client.post("/company/products", json={"name": "Docs"}, headers=admin).json()
+        body = dict(
+            product_id=product["id"], name="review", executor_type="agent", executor_id="reader", instructions="Review"
+        )
+        path = "/company/routines/" + client.post("/company/routines", json=body, headers=admin).json()["id"]
+        denied = client.delete(path, params={"permanent": True}, headers=deleter)
+        assert denied.status_code == 403, denied.text
+        assert client.delete(path, headers=deleter).status_code == 204
+        assert client.delete(path, params={"permanent": True}, headers=admin).status_code == 204
+        assert client.get(path, params={"include_deleted": True}, headers=admin).status_code == 404
+
+
 def test_routine_cancel_stops_the_running_run(system):
     from agno.run.cancel import is_cancelled
 

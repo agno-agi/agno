@@ -322,6 +322,13 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     async def delete_routine(
         routine_id: str, request: Request, permanent: bool = False, _: bool = Depends(auth)
     ) -> None:
+        if permanent:
+            from agno.run.authorization import current_authorization
+
+            # Erasing the schedule and its run history cannot be undone, so it takes admin, not routines:delete.
+            authority = current_authorization()
+            if authority is not None:
+                await call(authority.arequire, "agent_os", "admin")
         row = await routine(routine_id, request, include_deleted=permanent)
         product_id = row["payload"]["metadata"]["product_id"]
         await product(product_id, include_deleted=True)
