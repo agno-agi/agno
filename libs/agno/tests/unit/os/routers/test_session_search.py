@@ -515,3 +515,37 @@ def test_remote_without_search_returns_501(remote_status):
     )
     response = build_client(remote).post("/sessions/search", json={})
     assert response.status_code == 501
+
+
+def test_fallback_batches_runs_for_unnamed_sessions(tmp_path):
+    from agno.models.message import Message
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+
+    db = JsonDb(db_path=str(tmp_path))
+    for i in range(3):
+        run = RunOutput(
+            run_id=f"run-{i}", status=RunStatus.completed, messages=[Message(role="user", content=f"Question {i}")]
+        )
+        db.upsert_session(
+            AgentSession(session_id=f"s-{i}", agent_id="support", user_id="alice", created_at=i, runs=[run])
+        )
+        db.upsert_run(run, session_id=f"s-{i}")
+    reads, batches = [], []
+    original_get_session, original_batch = db.get_session, db._get_sessions_runs
+
+    @functools.wraps(original_get_session)
+    def counting_get_session(*args, **kwargs):
+        reads.append(kwargs.get("session_id"))
+        return original_get_session(*args, **kwargs)
+
+    def counting_batch(session_ids):
+        batches.append(list(session_ids))
+        return original_batch(session_ids)
+
+    db.get_session, db._get_sessions_runs = counting_get_session, counting_batch
+    response = build_client(db).post("/sessions/search", json={"filter": eq("agent_id", "support")})
+    assert response.status_code == 200, response.text
+    assert [s["session_name"] for s in response.json()["data"]] == ["Question 2", "Question 1", "Question 0"]
+    assert reads == []
+    assert batches == [["s-2", "s-1", "s-0"]]

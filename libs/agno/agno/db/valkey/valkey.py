@@ -493,6 +493,10 @@ class ValkeyDb(BaseDb):
         """Get raw run_data dicts for a session, ordered by run_index."""
         return [row["run_data"] for row in self._get_session_run_rows(session_id) if row.get("run_data") is not None]
 
+    def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """Run dicts for several sessions in one read, used by the search fallback."""
+        return self._get_sessions_runs_data(session_ids)
+
     def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         """Get raw run_data dicts for several sessions, grouped by session_id."""
         return {sid: self._get_session_runs_data(sid) for sid in session_ids}
@@ -911,11 +915,8 @@ class ValkeyDb(BaseDb):
             sorted_sessions = apply_sorting(records=filtered_sessions, sort_by=sort_by, sort_order=sort_order)
             sessions = apply_pagination(records=sorted_sessions, limit=limit, page=page)
 
-            if not include_runs:
-                # Search scans don't need run history; leave it unattached (storage untouched).
-                for s in sessions:
-                    s["runs"] = None
-            else:
+            # Search scans skip the runs keys; the record's legacy runs field is kept for merging later.
+            if include_runs:
                 # Attach runs from the runs keys, merged with any legacy `runs` blob
                 runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in sessions])
                 for s in sessions:

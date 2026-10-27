@@ -641,14 +641,29 @@ class BaseDb(ABC):
         results = matches[(page - 1) * limit : page * limit]
         if skip_runs:
             # Runs were skipped while scanning; load them for unnamed sessions so display names can be inferred.
-            for index, session in enumerate(results):
-                if (session.get("session_data") or {}).get("session_name") is None:
-                    full_session = self.get_session(
-                        session_id=session["session_id"], user_id=user_id, deserialize=False
-                    )
-                    if isinstance(full_session, dict):
-                        results[index] = full_session
+            from agno.db.utils import merge_runs_table_with_legacy_blob
+
+            unnamed = [
+                index
+                for index, session in enumerate(results)
+                if session.get("session_name") is None
+                and (session.get("session_data") or {}).get("session_name") is None
+            ]
+            runs_by_session = self._get_sessions_runs([results[i]["session_id"] for i in unnamed]) if unnamed else {}
+            for index in unnamed:
+                session = results[index]
+                if runs_by_session is not None:
+                    table_runs = runs_by_session.get(session["session_id"], [])
+                    session["runs"] = merge_runs_table_with_legacy_blob(table_runs, session.get("runs"))
+                    continue
+                full_session = self.get_session(session_id=session["session_id"], user_id=user_id, deserialize=False)
+                if isinstance(full_session, dict):
+                    results[index] = full_session
         return results, len(matches)
+
+    def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """Run dicts for several sessions in one read, or None when the adapter can only load them per session."""
+        return None
 
     @abstractmethod
     def rename_session(

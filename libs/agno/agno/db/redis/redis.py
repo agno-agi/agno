@@ -399,6 +399,10 @@ class RedisDb(BaseDb):
                 ordered.append(run_data)
         return ordered
 
+    def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """Run dicts for several sessions in one read, used by the search fallback."""
+        return self._get_sessions_runs_data(session_ids)
+
     def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         """Get raw run_data dicts for several sessions, grouped by session_id."""
         return {sid: self._get_session_runs_data(sid) for sid in session_ids}
@@ -784,8 +788,7 @@ class RedisDb(BaseDb):
             # Attach runs from the runs keys, merged with any legacy `runs` blob
             for s in sessions:
                 if not include_runs:
-                    # Search scans don't need run history; leave it unattached (storage untouched).
-                    s["runs"] = None
+                    # Search scans skip the runs keys; the record's legacy runs field is kept for merging later.
                     continue
                 runs_data = self._get_session_runs_data(s["session_id"])
                 s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))

@@ -277,6 +277,10 @@ class DynamoDb(BaseDb):
         rows.sort(key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
         return [r["run_data"] for r in rows if "run_data" in r]
 
+    def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """Run dicts for several sessions in one read, used by the search fallback."""
+        return self._get_sessions_runs_data(session_ids)
+
     def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         if not session_ids:
             return {}
@@ -891,12 +895,9 @@ class DynamoDb(BaseDb):
                 if session_data:
                     sessions_data.append(session_data)
 
-            if not include_runs:
-                # Search scans don't need run history; leave it unattached (storage untouched).
-                for s in sessions_data:
-                    s["runs"] = None
+            # Search scans skip the runs table; the record's legacy runs field is kept for merging later.
             # Attach runs from the runs table, merged with legacy blob
-            elif sessions_data:
+            if include_runs and sessions_data:
                 try:
                     runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in sessions_data])
                     for s in sessions_data:
