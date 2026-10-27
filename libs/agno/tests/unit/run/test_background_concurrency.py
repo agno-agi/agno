@@ -1,6 +1,9 @@
 """Unit tests for the background run concurrency limiter."""
 
 import asyncio
+import gc
+import weakref
+from typing import Optional
 
 import pytest
 
@@ -143,6 +146,89 @@ class TestBackgroundRunSlot:
         async with background_run_slot():
             done = True
         assert done is True
+
+
+class TestSemaphoreCache:
+    @pytest.mark.parametrize("contended", [False, True])
+    @pytest.mark.parametrize("run_id", [None, "background-run"])
+    def test_closed_loop_is_released(self, run_id: Optional[str], contended: bool):
+        """The per-loop cache does not keep a closed loop alive, also when a run had to wait for a slot.
+
+        run_id selects the acquire path: background runs pass one and poll for cancellation while waiting.
+        """
+        set_background_max_concurrency(1)
+
+        async def job():
+            async with background_run_slot(run_id=run_id):
+                await asyncio.sleep(0)
+
+        async def jobs():
+            await asyncio.gather(*[job() for _ in range(2 if contended else 1)])
+
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(jobs())
+        finally:
+            loop.close()
+        loop_ref = weakref.ref(loop)
+        del loop
+        gc.collect()
+
+        assert loop_ref() is None
+        assert len(concurrency._semaphores) == 0
+
+    @pytest.mark.asyncio
+    async def test_semaphore_in_use_survives_collection(self):
+        """While a run holds the slot, a collection must not swap in a fresh semaphore that lets a new run in."""
+        set_background_max_concurrency(1)
+        holder_started = asyncio.Event()
+        release_holder = asyncio.Event()
+        order: list[str] = []
+
+        async def holder():
+            async with background_run_slot():
+                order.append("holder")
+                holder_started.set()
+                await release_holder.wait()
+
+        async def waiter():
+            async with background_run_slot(run_id="waiting-run", cancellation_poll_interval=0.02):
+                order.append("waiter")
+
+        holder_task = asyncio.create_task(holder())
+        await holder_started.wait()
+        gc.collect()
+        waiter_task = asyncio.create_task(waiter())
+        await asyncio.sleep(0.05)  # let the waiter start waiting on the semaphore
+        assert order == ["holder"]
+
+        release_holder.set()
+        await asyncio.wait_for(asyncio.gather(holder_task, waiter_task), timeout=2)
+        assert order == ["holder", "waiter"]
+
+    @pytest.mark.asyncio
+    async def test_cap_applies_after_idle_semaphore_is_dropped(self):
+        """Once no run holds or waits for a slot, the next burst gets a fresh semaphore with the same cap."""
+        set_background_max_concurrency(1)
+        async with background_run_slot():
+            pass
+        gc.collect()
+        assert concurrency._semaphores[asyncio.get_running_loop()][1]() is None
+
+        active = 0
+        max_active = 0
+
+        async def job():
+            nonlocal active, max_active
+            async with background_run_slot():
+                active += 1
+                max_active = max(max_active, active)
+                await asyncio.sleep(0.01)
+                active -= 1
+
+        await asyncio.gather(*[job() for _ in range(3)])
+
+        assert max_active == 1
 
 
 class TestCancellationWhileWaiting:
