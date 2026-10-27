@@ -158,10 +158,11 @@ def get_tasks_router(
     ) -> Dict[str, Any]:
         existing = await _existing(task_id)
         if body.target == "in_progress":
-            raise HTTPException(
-                status_code=409,
-                detail=f"Start a run with POST /company/tasks/{task_id}/runs to enter In progress",
-            )
+            detail = f"Start a run with POST /company/tasks/{task_id}/runs to enter In progress"
+            # Runs start only on accepted work, so other stages go through Ready first.
+            if existing["status"] not in {"ready", "in_progress", "in_review"}:
+                detail = f"Move the Task to Ready, then start a run with POST /company/tasks/{task_id}/runs to enter In progress"
+            raise HTTPException(status_code=409, detail=detail)
         from agno.company.execution import _pending_task_attempt
         from agno.job_queue.session import HOLDING_STATUSES
 
