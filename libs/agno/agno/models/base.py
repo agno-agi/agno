@@ -2574,6 +2574,12 @@ class Model(ABC):
                 result_store=result_store,
             )
 
+            # Check if we should stop after this tool call
+            if any(m.stop_after_tool_call for m in function_call_results) or any(
+                m.stop_after_tool_call for m in additional_input
+            ):
+                break
+
         # Add any additional messages at the end
         if additional_input:
             function_call_results.extend(additional_input)
@@ -2654,6 +2660,8 @@ class Model(ABC):
                     # Skip this function call
                     continue
             function_calls_to_run.append(fc)
+            if fc.function.stop_after_tool_call:
+                break
 
         # Yield tool_call_started events for all function calls or pause them
         for fc in function_calls_to_run:
@@ -3111,6 +3119,10 @@ class Model(ABC):
 
             # Add function call result to function call results
             function_call_results.append(function_call_result)
+
+            # Check if we should stop after this tool call
+            if function_call_result.stop_after_tool_call or any(m.stop_after_tool_call for m in additional_input):
+                break
 
         # Add any additional messages at the end
         if additional_input:
