@@ -207,7 +207,7 @@ def test_history(openai_model):
 
 def test_reasoning_tokens():
     """Assert reasoning_tokens is populated correctly and returned in the metrics"""
-    agent = Agent(model=OpenAIChat(id="o3-mini"), markdown=True, telemetry=False)
+    agent = Agent(model=OpenAIChat(id="gpt-5-mini"), markdown=True, telemetry=False)
 
     response = agent.run(
         "Solve the trolley problem. Evaluate multiple ethical frameworks. Include an ASCII diagram of your solution.",

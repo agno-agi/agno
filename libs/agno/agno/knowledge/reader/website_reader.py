@@ -44,6 +44,7 @@ class WebsiteReader(Reader):
         timeout: int = 10,
         proxy: Optional[str] = None,
         allowed_hosts: Optional[List[str]] = None,
+        public_only: bool = False,
         **kwargs,
     ):
         if chunking_strategy is None:
@@ -54,6 +55,7 @@ class WebsiteReader(Reader):
         self.max_links = max_links
         self.proxy = proxy
         self.timeout = timeout
+        self.public_only = public_only
         self.allowed_hosts: Optional[List[str]] = validate_allowed_hosts(allowed_hosts)
 
         self._visited = set()
@@ -413,7 +415,16 @@ class WebsiteReader(Reader):
 
         log_debug(f"Reading: {url}")
         try:
-            crawler_result = self.crawl(url)
+            if self.public_only:
+                from agno.knowledge.reader.utils.public_fetch import fetch_public_page
+
+                if not is_host_allowed(url, self.allowed_hosts):
+                    log_debug(f"Start URL host not in allowed_hosts, refusing to read: {url}")
+                    return []
+                _, body = fetch_public_page(url)
+                crawler_result = {url: self._extract_main_content(BeautifulSoup(body, "html.parser"))}
+            else:
+                crawler_result = self.crawl(url)
             documents = []
             for crawled_url, crawled_content in crawler_result.items():
                 if self.chunk:
@@ -455,7 +466,16 @@ class WebsiteReader(Reader):
         """
         log_debug(f"Reading asynchronously: {url}")
         try:
-            crawler_result = await self.async_crawl(url)
+            if self.public_only:
+                from agno.knowledge.reader.utils.public_fetch import afetch_public_page
+
+                if not is_host_allowed(url, self.allowed_hosts):
+                    log_debug(f"Start URL host not in allowed_hosts, refusing to read: {url}")
+                    return []
+                _, body = await afetch_public_page(url)
+                crawler_result = {url: self._extract_main_content(BeautifulSoup(body, "html.parser"))}
+            else:
+                crawler_result = await self.async_crawl(url)
             documents = []
 
             # Process documents in parallel

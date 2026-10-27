@@ -3,6 +3,7 @@ import contextlib
 import json
 import weakref
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union
 from uuid import uuid4
 
@@ -33,19 +34,26 @@ from agno.os.auth import (
     INTERNAL_SCHEDULER_USER_ID,
     get_auth_token_from_request,
     get_authentication_dependency,
+    require_approval_resolved,
     require_resource_access,
 )
 from agno.os.event_streams import get_event_stream
 from agno.os.job_queue import (
+    _new_queued_run_id,
+    aattach_waiting_on,
     acontinue_via_queue,
+    aenqueue_ticket,
     aprepare_accepted_or_abort,
     araise_if_ticket_owns_continue,
     aticket_poll_fallback,
+    component_is_queueable,
     ensure_duplicate_matches_component,
     normalize_idempotency_key,
     payload_is_queueable,
+    resolve_queue_scope,
     ticket_status_to_api,
     validate_seam_input,
+    wake_queue_worker,
 )
 from agno.os.middleware.user_scope import (
     MISSING_USER_IDENTITY,
@@ -58,6 +66,8 @@ from agno.os.middleware.user_scope import (
     get_scoped_user_id,
     get_scoped_user_id_for_ws,
     run_matches_component,
+    sync_directory_from_request,
+    verify_run_belongs_to_component,
     verify_run_in_session,
     verify_run_in_session_via_db,
 )
@@ -72,15 +82,18 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    adraft_preview_identity,
     afinalize_continue_stream,
     allow_draft_preview,
     amark_continue_stream_running,
-    draft_preview_identity,
+    factory_row_handle,
     find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
     get_workflow_by_id,
     get_workflow_by_id_async,
+    is_form_field_omitted,
+    no_stored_events_replay_meta,
     queued_run_tail_streamer,
     replayed_payload_to_sse,
     resolve_workflow,
@@ -101,7 +114,23 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
-_ws_tail_pumps: "weakref.WeakKeyDictionary[WebSocket, asyncio.Task]" = weakref.WeakKeyDictionary()
+# Live event tail pumps, per socket and per run. A socket may hold several:
+# a chat client submits a second run on its session while the first is
+# still streaming, and the first run's events must keep flowing to it.
+_ws_tail_pumps: "weakref.WeakKeyDictionary[WebSocket, Dict[str, asyncio.Task]]" = weakref.WeakKeyDictionary()
+
+# How often a pump probes a PENDING run before entering its live tail. On
+# Redis the live tail is a blocking read that holds a connection for as long
+# as it waits, and a pending run has produced nothing to read; a status probe
+# is one round trip and holds nothing.
+_PENDING_TAIL_PROBE_SECONDS = 2.0
+
+# Bound on non-terminal runs attached to one socket, checked before a ticket
+# commits: the abuse backstop for a client that keeps submitting into a slow
+# queue. Refusing before acceptance is the honest shape (a run accepted and
+# then left without a tail is the bug the per-run pumps fixed). A client
+# that needs more parallelism opens another connection.
+_MAX_ATTACHED_RUNS_PER_SOCKET = 32
 
 
 def _stream_payload_to_dict(payload: Any, ev_index: int, run_id: str) -> Dict[str, Any]:
@@ -136,6 +165,18 @@ async def _pump_event_stream_to_websocket(websocket: WebSocket, run_id: str, fro
     executes, and tail() bridges the two."""
     event_stream = get_event_stream()
     try:
+        # Wait out the queue without holding a connection: enter the live
+        # tail once the run has left PENDING. The stream buffers, so nothing
+        # produced in between is missed. A failed probe falls through to the
+        # tail, which carries its own fault tolerance.
+        while True:
+            try:
+                status = await event_stream.get_run_status(run_id)
+            except Exception:
+                break
+            if status != RunStatus.pending:
+                break
+            await asyncio.sleep(_PENDING_TAIL_PROBE_SECONDS)
         async for ev_index, sse_data in event_stream.tail(run_id, last_event_index=from_index):
             await websocket.send_text(
                 json.dumps(_stream_payload_to_dict(sse_data, ev_index, run_id), default=json_serializer)
@@ -159,11 +200,67 @@ async def _pump_event_stream_to_websocket(websocket: WebSocket, run_id: str, fro
 # the FE parser accepts both, and one pump beats two formats diverging.
 
 
-async def cancel_subscription_pump(websocket: WebSocket) -> None:
-    """Cancel the tail pump attached to this socket, if any (called on
-    disconnect by the WS dispatcher, and on re-subscribe)."""
-    task = _ws_tail_pumps.pop(websocket, None)
-    if task is not None:
+async def refuse_if_socket_at_tail_capacity(websocket: WebSocket, run_id: Optional[str] = None) -> bool:
+    """Enforce the per-socket bound on attached runs at every door that can
+    attach a tail: submission, durable continue and reconnect. Called BEFORE
+    the door accepts anything (the enqueue, the continue CAS, the replay),
+    so a refusal leaves no accepted run without a tail. A run this socket
+    already holds does not count: re-attaching it replaces its pump. Sends
+    the error frame and returns True when refused."""
+    pumps = _ws_tail_pumps.get(websocket) or {}
+    if run_id is not None and run_id in pumps:
+        return False
+    if len(pumps) < _MAX_ATTACHED_RUNS_PER_SOCKET:
+        return False
+    payload: Dict[str, Any] = {
+        "event": "error",
+        "error": f"Too many runs in flight on this connection ({len(pumps)}); "
+        "wait for some to finish or open another connection",
+    }
+    if run_id is not None:
+        payload["run_id"] = run_id
+    await websocket.send_text(json.dumps(payload))
+    return True
+
+
+def start_tail_pump(websocket: WebSocket, run_id: str, from_index: Optional[int]) -> asyncio.Task:
+    """Attach a live tail of one run to a socket.
+
+    Pumps are scoped per (socket, run): starting a tail for a new run never
+    touches the tails of runs already streaming to the same socket. A second
+    tail for the SAME run (a re-subscribe) replaces the first, since two
+    pumps on one run would double-deliver every event. A pump unregisters
+    itself when its tail ends, so a long-lived socket does not accumulate
+    finished tasks."""
+    pumps = _ws_tail_pumps.setdefault(websocket, {})
+    previous = pumps.pop(run_id, None)
+    if previous is not None:
+        previous.cancel()
+    task = asyncio.create_task(_pump_event_stream_to_websocket(websocket, run_id, from_index))
+    pumps[run_id] = task
+
+    def _unregister(done: asyncio.Task) -> None:
+        live = _ws_tail_pumps.get(websocket)
+        if live is not None and live.get(run_id) is done:
+            del live[run_id]
+
+    task.add_done_callback(_unregister)
+    return task
+
+
+async def cancel_subscription_pump(websocket: WebSocket, run_id: Optional[str] = None) -> None:
+    """Cancel the tail pumps attached to this socket: all of them on
+    disconnect (the WS dispatcher's finally), or one run's on request."""
+    pumps = _ws_tail_pumps.get(websocket)
+    if not pumps:
+        return
+    if run_id is None:
+        tasks = list(pumps.values())
+        pumps.clear()
+    else:
+        task = pumps.pop(run_id, None)
+        tasks = [task] if task is not None else []
+    for task in tasks:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await task
@@ -207,6 +304,19 @@ async def handle_workflow_via_websocket(
                 user_id = user_id or jwt_user_id
             else:
                 user_id = jwt_user_id
+
+        # Owner scope for DB-backed workflow components; ``None`` for admins and unscoped callers.
+        # Fails closed (403) for an identity-less token under isolation, like the REST routes.
+        try:
+            scoped_user_id = get_scoped_user_id_for_ws(
+                user_id,
+                jwt_enabled=bool(ws_auth and ws_auth.jwt_enabled),
+                is_admin=bool(ws_auth and ws_auth.is_admin),
+                user_isolation_enabled=bool(ws_auth and ws_auth.user_isolation_enabled),
+            )
+        except HTTPException:
+            await websocket.send_text(json.dumps({"event": "error", "error": MISSING_USER_IDENTITY}))
+            return
 
         # Owner scope for DB-backed workflow components; ``None`` for admins and unscoped callers.
         # Fails closed (403) for an identity-less token under isolation, like the REST routes.
@@ -329,22 +439,27 @@ async def handle_workflow_via_websocket(
         # frame so the client sees accepted/waiting instead of a silent
         # socket while the job waits for a claim.
         queue_worker = getattr(websocket.app.state, "queue_worker", None)
-        queued_ws_payload: Dict[str, Any] = {"input": user_message, "kwargs": {}, "stream": True}
+        # Version-stable preview: an explicitly pinned version is recorded on
+        # the run itself (run metadata), so the continue paths can reload the
+        # SAME version later instead of whatever is current by then. Stamped
+        # BEFORE the durable branch: a queued run's kwargs are what the worker
+        # executes with, so the stamp must ride the ticket too.
+        ws_run_kwargs: Dict[str, Any] = {}
+        stamp_component_version(ws_run_kwargs, version)
+        queued_ws_payload: Dict[str, Any] = {
+            "input": user_message,
+            "kwargs": ws_run_kwargs,
+            "stream": True,
+        }
         ws_submit_queueable = (
             queue_worker is not None
-            and not is_factory
             and getattr(workflow, "db", None) is not None
-            # The worker resolves the registry instance, so a ticket cannot
-            # carry a version pin: a pinned submission takes the in-process
-            # path below, where the pin is stamped on the run (as over HTTP)
-            and version is None
             and payload_is_queueable(queued_ws_payload)
-            and any(
-                getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
-                for candidate in (os.workflows or [])
-            )
+            and component_is_queueable(workflow, workflow_id, os.workflows, os.db)
         )
         if ws_submit_queueable:
+            if await refuse_if_socket_at_tail_capacity(websocket):
+                return
             # Accept must honor input_schema exactly like the inline path
             try:
                 validate_seam_input(workflow, user_message)
@@ -352,7 +467,24 @@ async def handle_workflow_via_websocket(
                 await websocket.send_text(json.dumps({"event": "error", "error": str(e.detail)}))
                 return
             assert queue_worker is not None  # narrowed by ws_submit_queueable
-            queued_run_id = str(uuid4())
+            queued_run_id = _new_queued_run_id()
+            # The WebSocket has no request.state: hand the scope the same claims
+            # and scopes the factory branch above built its TrustedContext from
+            ws_trusted_state = SimpleNamespace(
+                claims=(ws_user_context or {}).get("payload", {}),
+                scopes=(ws_user_context or {}).get("scopes", frozenset()),
+            )
+            queued_ws_payload["scope"] = resolve_queue_scope(
+                workflow_id,
+                os.workflows,
+                os.db,
+                scoped_user_id,
+                version,
+                state=ws_trusted_state,
+                context_user_id=user_id,
+                session_id=session_id,
+                factory_input=factory_input,
+            )
             job = QueuedJob(
                 id=queued_run_id,
                 component_type="workflow",
@@ -363,7 +495,7 @@ async def handle_workflow_via_websocket(
                 max_attempts=queue_worker.config.max_attempts,
                 deployment_id=queue_worker.config.deployment_id,
             ).to_dict()
-            enqueue_result = await queue_worker.store.enqueue_job(job, max_depth=queue_worker.config.max_queue_depth)
+            enqueue_result = await aenqueue_ticket(queue_worker, job, workflow)
             if not enqueue_result["accepted"]:
                 # No Idempotency-Key over WS, so "duplicate" cannot legitimately
                 # happen on a fresh uuid - either way nothing was enqueued and
@@ -388,6 +520,7 @@ async def handle_workflow_via_websocket(
                 await aprepare_accepted_or_abort(
                     queue_worker, workflow, "workflow", queued_run_id, session_id, user_id, user_message
                 )
+                wake_queue_worker(queue_worker)
             except HTTPException as he:
                 await websocket.send_text(json.dumps({"event": "error", "error": str(he.detail)}))
                 return
@@ -395,24 +528,16 @@ async def handle_workflow_via_websocket(
                 json.dumps({"event": "queued", "run_id": queued_run_id, "session_id": session_id})
             )
             # Tail the whole stream from the start (this socket is the primary
-            # view). One pump per socket; the dispatcher cancels it on
-            # disconnect/re-subscribe via the shared registry.
-            await cancel_subscription_pump(websocket)
-            _ws_tail_pumps[websocket] = asyncio.create_task(
-                _pump_event_stream_to_websocket(websocket, queued_run_id, None)
-            )
+            # view). The pump is scoped to this run: earlier runs still
+            # streaming to this socket keep their own tails, and the
+            # dispatcher cancels every pump on disconnect.
+            start_tail_pump(websocket, queued_run_id, None)
             return
         if queue_worker is not None:
             log_warning(
                 "WS workflow submission bypasses the durable queue (factory/off-registry/no-db/"
                 "version-pinned workflows are not queueable): bounded and observable, but NOT durable."
             )
-
-        # Version-stable preview: an explicitly pinned version is recorded on
-        # the run itself (run metadata), so the continue paths can reload the
-        # SAME version later instead of whatever is current by then.
-        ws_run_kwargs: Dict[str, Any] = {}
-        stamp_component_version(ws_run_kwargs, version)
 
         # Execute workflow in background with streaming via WebSocket
         await workflow.arun(  # type: ignore
@@ -605,7 +730,11 @@ async def handle_workflow_subscription(
                                     "total_events": len(replay_dicts),
                                     "message": "Run completed. Replaying stored events from database."
                                     if replay_dicts
-                                    else "Run completed but no events stored past the requested index.",
+                                    else (
+                                        "No stored events past the requested index."
+                                        if workflow_run.events
+                                        else no_stored_events_replay_meta(workflow_run, run_id)["message"]
+                                    ),
                                 }
                             )
                         )
@@ -646,7 +775,12 @@ async def handle_workflow_subscription(
             return
 
         # Run is still active - replay missed events, then follow live via a
-        # tail pump (works regardless of which replica executes the run)
+        # tail pump (works regardless of which replica executes the run).
+        # The attachment bound applies here and only here: a finished,
+        # paused or unknown run above replays without attaching anything.
+        # Checked before the replay so a refusal is a single clean frame.
+        if await refuse_if_socket_at_tail_capacity(websocket, run_id):
+            return
         missed_events = await event_stream.replay(run_id, last_event_index)
         current_event_count = await event_stream.get_event_count(run_id)
 
@@ -687,11 +821,9 @@ async def handle_workflow_subscription(
 
         # Live phase: tail() handles the replay/subscribe race internally, so
         # events landing between our replay and the pump start are not lost.
-        # One pump per socket: a re-subscribe replaces the previous pump.
-        await cancel_subscription_pump(websocket)
-        _ws_tail_pumps[websocket] = asyncio.create_task(
-            _pump_event_stream_to_websocket(websocket, run_id, last_replayed_index)
-        )
+        # A re-subscribe replaces this run's pump only; other runs streaming
+        # to the same socket are untouched.
+        start_tail_pump(websocket, run_id, last_replayed_index)
 
         log_debug(f"Client subscribed to workflow run {run_id} (last_event_index: {last_event_index})")
 
@@ -721,6 +853,18 @@ async def handle_workflow_continue_via_websocket(
         session_id = message.get("session_id")
         user_id = message.get("user_id")
         step_requirements_data = message.get("step_requirements")
+        # Owner scope for DB-backed workflow components on continue.
+        # Fails closed (403) for an identity-less token under isolation, like the REST routes.
+        try:
+            scoped_user_id = get_scoped_user_id_for_ws(
+                user_id,
+                jwt_enabled=bool(ws_auth and ws_auth.jwt_enabled),
+                is_admin=bool(ws_auth and ws_auth.is_admin),
+                user_isolation_enabled=bool(ws_auth and ws_auth.user_isolation_enabled),
+            )
+        except HTTPException:
+            await websocket.send_text(json.dumps({"event": "error", "error": MISSING_USER_IDENTITY}))
+            return
 
         # Defense-in-depth: an authenticated caller's identity is the token,
         # never the client frame. The WS dispatcher in router.py already forces
@@ -889,11 +1033,10 @@ async def handle_workflow_continue_via_websocket(
         # resolution that removed the SSE-wrapped execute pump).
         queue_worker = getattr(websocket.app.state, "queue_worker", None)
         continue_payload = {"step_requirements": step_requirements_data}
-        workflow_is_queueable = any(
-            getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
-            for candidate in (os.workflows or [])
-        )
+        workflow_is_queueable = component_is_queueable(workflow, workflow_id, os.workflows, os.db)
         if queue_worker is not None and workflow_is_queueable and payload_is_queueable(continue_payload):
+            if await refuse_if_socket_at_tail_capacity(websocket, run_id):
+                return
             # existing_run.is_paused was proven above. stream_requested: this
             # socket IS a stream - a non-streaming submission's ticket must be
             # refused before the CAS, not silently pumped from an empty stream
@@ -947,9 +1090,8 @@ async def handle_workflow_continue_via_websocket(
                 # (captured by the helper before the CAS) - the execute
                 # socket gets post-approval events only, exactly like the
                 # detached continue producer; earlier history belongs to the
-                # subscription/replay surface. One pump per socket, cancelled
-                # on disconnect/re-subscribe by the dispatcher (same registry
-                # the subscription pump uses).
+                # subscription/replay surface. The pump is scoped to this
+                # run; the dispatcher cancels every pump on disconnect.
                 # Also send the "queued" ack here: the continue socket has the
                 # same claim-delay window as a submission, and the FE ignores
                 # unknown frames until it wires this one up
@@ -957,10 +1099,7 @@ async def handle_workflow_continue_via_websocket(
                     await websocket.send_text(
                         json.dumps({"event": "queued", "run_id": run_id, "session_id": session_id})
                     )
-                await cancel_subscription_pump(websocket)
-                _ws_tail_pumps[websocket] = asyncio.create_task(
-                    _pump_event_stream_to_websocket(websocket, run_id, continue_outcome.get("tail_from"))
-                )
+                start_tail_pump(websocket, run_id, continue_outcome.get("tail_from"))
                 return
             # DELIBERATE transport asymmetry with the HTTP continue door
             # (which refuses this cell): the socket is itself the live event
@@ -1337,16 +1476,9 @@ async def _resume_stream_generator(
                     yield frame
                 return
             elif run_output:
-                meta = {
-                    "event": "replay",
-                    "run_id": run_id,
-                    "status": run_output.status.value
-                    if hasattr(run_output.status, "value")
-                    else (run_output.status or "unknown"),
-                    "total_events": 0,
-                    "message": "Run completed but no events stored.",
-                }
-                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
+                from agno.os.utils import no_stored_events_replay_meta
+
+                yield f"event: replay\ndata: {json.dumps(no_stored_events_replay_meta(run_output, run_id))}\n\n"
                 return
 
         # Run not found anywhere
@@ -1509,13 +1641,13 @@ def get_workflow_router(
         # Filter workflows based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
             from agno.os.auth import (
+                afilter_resources_by_access,
+                aget_accessible_resources,
                 build_insufficient_permissions_detail,
-                filter_resources_by_access,
-                get_accessible_resources,
             )
 
             # Check if user has any workflow scopes at all
-            accessible_ids = get_accessible_resources(request, "workflows")
+            accessible_ids = await aget_accessible_resources(request, "workflows")
             if not accessible_ids:
                 required_scopes = getattr(request.state, "required_scopes", None)
                 raise HTTPException(
@@ -1523,7 +1655,7 @@ def get_workflow_router(
                     detail=build_insufficient_permissions_detail(required_scopes),
                 )
 
-            accessible_workflows = filter_resources_by_access(request, os.workflows or [], "workflows")
+            accessible_workflows = await afilter_resources_by_access(request, os.workflows or [], "workflows")
         else:
             accessible_workflows = os.workflows or []
 
@@ -1554,7 +1686,7 @@ def get_workflow_router(
                 # still saw its config here (the agents endpoint already
                 # filters)
                 if getattr(request.state, "authorization_enabled", False):
-                    db_workflows = filter_resources_by_access(request, db_workflows, "workflows")
+                    db_workflows = await afilter_resources_by_access(request, db_workflows, "workflows")
             for db_workflow in db_workflows or []:
                 try:
                     workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow, is_component=True))
@@ -1606,7 +1738,7 @@ def get_workflow_router(
         # so without this gate any actor who can see it could pin - and read -
         # the owner's unpublished drafts. Same 404 the run routes raise, so a
         # denial is indistinguishable from the component being absent.
-        if not allow_draft_preview(os.db, workflow_id, version, *draft_preview_identity(request)):
+        if not allow_draft_preview(os.db, workflow_id, version, *await adraft_preview_identity(request)):
             raise HTTPException(status_code=404, detail="Workflow not found")
 
         try:
@@ -1691,6 +1823,8 @@ def get_workflow_router(
         ),
     ):
         kwargs = await get_request_kwargs(request, create_workflow_run)
+        if await is_form_field_omitted(request, "stream"):
+            stream = True
 
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.
@@ -1706,6 +1840,9 @@ def get_workflow_router(
             if user_id and user_id != state_user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = state_user_id
+        # No-auth roster: an unauthenticated run's user_id still registers the person in the
+        # directory (no-op when auth is on -- the middleware already provisioned/enforced).
+        sync_directory_from_request(request, user_id)
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")
@@ -1791,16 +1928,16 @@ def get_workflow_router(
                 # RUN (complete output guaranteed via the run row); the live
                 # stream is the best-effort view.
                 queue_worker = getattr(request.app.state, "queue_worker", None)
-                queued_stream_payload = {"input": message, "kwargs": kwargs, "stream": True}
+                queued_stream_payload = {
+                    "input": message,
+                    "kwargs": kwargs,
+                    "stream": True,
+                }
                 stream_queueable = (
                     queue_worker is not None
                     and getattr(workflow, "db", None) is not None
-                    and version is None
                     and payload_is_queueable(queued_stream_payload)
-                    and any(
-                        getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
-                        for candidate in (os.workflows or [])
-                    )
+                    and component_is_queueable(workflow, workflow_id, os.workflows, os.db)
                 )
                 if stream_queueable:
                     # 202/stream-accept must honor input_schema like the inline path (400)
@@ -1808,8 +1945,19 @@ def get_workflow_router(
                     assert queue_worker is not None  # narrowed by stream_queueable
                     from agno.run.base import RunStatus as _RS
 
-                    queued_run_id = str(uuid4())
+                    queued_run_id = _new_queued_run_id()
                     queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
+                    queued_stream_payload["scope"] = resolve_queue_scope(
+                        workflow_id,
+                        os.workflows,
+                        os.db,
+                        scoped_user_id,
+                        version,
+                        state=request.state,
+                        context_user_id=user_id,
+                        session_id=queued_session_id,
+                        factory_input=factory_input,
+                    )
                     job = QueuedJob(
                         id=queued_run_id,
                         component_type="workflow",
@@ -1821,9 +1969,7 @@ def get_workflow_router(
                         deployment_id=queue_worker.config.deployment_id,
                         idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
                     ).to_dict()
-                    enqueue_result = await queue_worker.store.enqueue_job(
-                        job, max_depth=queue_worker.config.max_queue_depth
-                    )
+                    enqueue_result = await aenqueue_ticket(queue_worker, job, workflow)
                     if enqueue_result["reason"] == "queue_full":
                         raise HTTPException(status_code=429, detail="Job queue is full")
                     if enqueue_result["reason"] == "duplicate":
@@ -1833,7 +1979,7 @@ def get_workflow_router(
                                 status_code=409,
                                 detail="Idempotency-Key was already used but the original run could not be retrieved",
                             )
-                        ensure_duplicate_matches_component(existing, "workflow", job["component_id"])
+                        ensure_duplicate_matches_component(existing, "workflow", job["component_id"], version=version)
                         if not (existing.get("payload") or {}).get("stream"):
                             # The key was used by a NON-stream submission: its
                             # run never registers in the event stream, so a
@@ -1866,11 +2012,12 @@ def get_workflow_router(
                     await aprepare_accepted_or_abort(
                         queue_worker, workflow, "workflow", queued_run_id, queued_session_id, user_id, message
                     )
+                    wake_queue_worker(queue_worker)
                     return StreamingResponse(queued_run_tail_streamer(queued_run_id), media_type="text/event-stream")
                 if queue_worker is not None:
                     log_warning(
                         "Streaming background workflow run bypasses the durable queue "
-                        "(remote/factory/version-pinned submissions are not queueable): "
+                        "(remote/factory submissions are not queueable): "
                         "bounded and observable, but NOT durable."
                     )
                 # background=True, stream=True: resumable SSE streaming
@@ -1896,25 +2043,31 @@ def get_workflow_router(
             # replica's worker claims the job executes it, surviving crashes
             # and deploys. Client contract identical: 202 + poll.
             queue_worker = getattr(request.app.state, "queue_worker", None)
-            # Queueable only if this is a plain registry instance: the worker
-            # resolves from the registry, so factory-backed or off-registry
-            # (db-resolved / version-pinned) components would be accepted here
-            # and then fail or run differently in the worker.
-            component_is_queueable = any(
-                getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
-                for candidate in (os.workflows or [])
-            )
-            queued_payload = {"input": message, "kwargs": kwargs}
-            if (
-                queue_worker is not None
-                and component_is_queueable
-                and version is None  # version-pinned resolution differs from the worker's registry instance
-                and payload_is_queueable(queued_payload)
-            ):
+            # Queueable when the worker can re-resolve the workflow at claim
+            # time: a plain registry instance, or a db-backed (components API
+            # / version-pinned) workflow replayed from the scope on the ticket.
+            # Factory-backed workflows need request context and never queue.
+            workflow_is_queueable = component_is_queueable(workflow, workflow_id, os.workflows, os.db)
+            queued_payload = {
+                "input": message,
+                "kwargs": kwargs,
+            }
+            if queue_worker is not None and workflow_is_queueable and payload_is_queueable(queued_payload):
                 # 202 must honor input_schema exactly like the inline path (400)
                 validate_seam_input(workflow, message)
-                queued_run_id = str(uuid4())
+                queued_run_id = _new_queued_run_id()
                 queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
+                queued_payload["scope"] = resolve_queue_scope(
+                    workflow_id,
+                    os.workflows,
+                    os.db,
+                    scoped_user_id,
+                    version,
+                    state=request.state,
+                    context_user_id=user_id,
+                    session_id=queued_session_id,
+                    factory_input=factory_input,
+                )
                 job = QueuedJob(
                     id=queued_run_id,
                     component_type="workflow",
@@ -1930,14 +2083,12 @@ def get_workflow_router(
                 # Enqueue FIRST: the committed queue row is the acceptance.
                 # Rejected or duplicate submissions must leave no phantom
                 # PENDING run behind in the session.
-                enqueue_result = await queue_worker.store.enqueue_job(
-                    job, max_depth=queue_worker.config.max_queue_depth
-                )
+                enqueue_result = await aenqueue_ticket(queue_worker, job, workflow)
                 if enqueue_result["reason"] == "queue_full":
                     raise HTTPException(status_code=429, detail="Job queue is full")
                 if enqueue_result["reason"] == "duplicate" and enqueue_result["job"] is not None:
                     existing = enqueue_result["job"]
-                    ensure_duplicate_matches_component(existing, "workflow", job["component_id"])
+                    ensure_duplicate_matches_component(existing, "workflow", job["component_id"], version=version)
                     return JSONResponse(
                         status_code=202,
                         content={
@@ -1962,6 +2113,7 @@ def get_workflow_router(
                 await aprepare_accepted_or_abort(
                     queue_worker, workflow, "workflow", queued_run_id, queued_session_id, user_id, message
                 )
+                wake_queue_worker(queue_worker)
                 return JSONResponse(
                     status_code=202,
                     content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
@@ -1976,15 +2128,14 @@ def get_workflow_router(
                         "accepting replica instead - bounded and observable, but NOT durable."
                     )
                 else:
-                    # Off-registry, factory-backed, or version-pinned: the
-                    # worker resolves from the registry, so these cannot ride
-                    # the queue - previously this dropped to the non-durable
-                    # path with no log line at all.
+                    # Remote or factory-backed: the worker cannot re-resolve
+                    # these at claim time (no request context), so they
+                    # cannot ride the queue - previously this dropped to the
+                    # non-durable path with no log line at all.
                     log_warning(
-                        "Background run bypasses the durable queue: the workflow is not a plain "
-                        "registry instance (remote, factory-backed, db-resolved, or version-pinned "
-                        "resolution differs from the worker's registry instance). Executing on the "
-                        "accepting replica instead - bounded and observable, but NOT durable."
+                        "Background run bypasses the durable queue: the workflow cannot be re-resolved "
+                        "by the queue worker (remote or factory-backed workflows need request context). "
+                        "Executing on the accepting replica instead - bounded and observable, but NOT durable."
                     )
 
             # Same input-error contract as the inline path: schema violations
@@ -2083,7 +2234,14 @@ def get_workflow_router(
                 "description": "Run is not paused. Only PAUSED runs can be continued.",
             },
         },
-        dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
+        dependencies=[
+            Depends(require_resource_access("workflows", "run", "workflow_id")),
+            # Same admin-approval gate agents and teams (and the MCP continue_run tool)
+            # enforce: a run paused on an admin-required approval must not be continued by
+            # its own initiator on `workflows:run` alone -- only a holder of approvals:write
+            # may resolve it. Without this the initiator could self-approve over REST.
+            Depends(require_approval_resolved(os.db)),
+        ],
     )
     async def continue_workflow_run(
         workflow_id: str,
@@ -2103,6 +2261,9 @@ def get_workflow_router(
             description="JSON object with factory-specific parameters for dynamic workflow reconstruction",
         ),
     ):
+        if await is_form_field_omitted(request, "stream"):
+            stream = True
+
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
@@ -2144,6 +2305,16 @@ def get_workflow_router(
                 component_type="workflows",
                 component_id=workflow_id,
             )
+        else:
+            # RBAC without isolation: the run must still belong to the gated component.
+            await verify_run_belongs_to_component(
+                request,
+                getattr(workflow, "db", None) or os.db,
+                component_type="workflows",
+                component_id=workflow_id,
+                run_id=run_id,
+                session_id=session_id,
+            )
 
         # Load existing run and validate it's paused
         existing_run = await workflow.aget_run_output(
@@ -2179,7 +2350,7 @@ def get_workflow_router(
             # resolve (defense against a forged/leaked stamp). Same 404 the
             # run-start route raises, so a denial is indistinguishable from the
             # component being absent.
-            if not allow_draft_preview(os.db, workflow_id, stamped_version, *draft_preview_identity(request)):
+            if not allow_draft_preview(os.db, workflow_id, stamped_version, *await adraft_preview_identity(request)):
                 raise HTTPException(status_code=404, detail="Workflow not found")
             try:
                 stamped_workflow = get_workflow_by_id(
@@ -2225,10 +2396,7 @@ def get_workflow_router(
             # non-background path below.
             queue_worker = getattr(request.app.state, "queue_worker", None)
             continue_payload = {"step_requirements": step_requirements_data}
-            workflow_is_queueable = any(
-                getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
-                for candidate in (os.workflows or [])
-            )
+            workflow_is_queueable = component_is_queueable(workflow, workflow_id, os.workflows, os.db)
             if queue_worker is not None and workflow_is_queueable and payload_is_queueable(continue_payload):
                 # The endpoint already proved the run row is PAUSED above
                 continue_outcome = await acontinue_via_queue(
@@ -2417,6 +2585,16 @@ def get_workflow_router(
                     component_type="workflows",
                     component_id=workflow_id,
                 )
+            else:
+                # RBAC without isolation: the run must still belong to the gated component.
+                await verify_run_belongs_to_component(
+                    request,
+                    getattr(factory, "db", None) or os.db,
+                    component_type="workflows",
+                    component_id=workflow_id,
+                    run_id=run_id,
+                    session_id=session_id,
+                )
 
             # Tombstone a still-queued durable ticket first: intent alone
             # does not stop a job no task is executing yet
@@ -2459,6 +2637,16 @@ def get_workflow_router(
                 component_type="workflows",
                 component_id=workflow_id,
             )
+        else:
+            # RBAC without isolation: the run must still belong to the gated component.
+            await verify_run_belongs_to_component(
+                request,
+                getattr(workflow, "db", None) or os.db,
+                component_type="workflows",
+                component_id=workflow_id,
+                run_id=run_id,
+                session_id=session_id,
+            )
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
@@ -2483,6 +2671,10 @@ def get_workflow_router(
             "1. **Run still active**: Sends catch-up events + continues live streaming\n"
             "2. **Run completed (in buffer)**: Replays missed buffered events\n"
             "3. **Run completed (in database)**: Replays events from database\n\n"
+            "A run submitted with `stream=false`, inline or with `background=true`, has no event stream: "
+            "nothing is published while it runs and no events are stored with it. For such a run this "
+            "endpoint sends one `replay` frame with `total_events: 0` and its current status; poll the "
+            "run endpoint for the result instead.\n\n"
             "**Client usage:**\n"
             "Track `event_index` from each SSE event. On reconnection, pass the last "
             "received `event_index` as `last_event_index`."
@@ -2523,6 +2715,16 @@ def get_workflow_router(
                     component_type="workflows",
                     component_id=workflow_id,
                 )
+            else:
+                # RBAC without isolation: the run must still belong to the gated component.
+                await verify_run_belongs_to_component(
+                    request,
+                    getattr(factory, "db", None) or os.db,
+                    component_type="workflows",
+                    component_id=workflow_id,
+                    run_id=run_id,
+                    session_id=session_id,
+                )
             raise HTTPException(
                 status_code=400,
                 detail="Stream resumption is not supported for factory workflows",
@@ -2553,6 +2755,16 @@ def get_workflow_router(
                 component_type="workflows",
                 component_id=workflow_id,
             )
+        else:
+            # RBAC without isolation: the run must still belong to the gated component.
+            await verify_run_belongs_to_component(
+                request,
+                getattr(workflow, "db", None) or os.db,
+                component_type="workflows",
+                component_id=workflow_id,
+                run_id=run_id,
+                session_id=session_id,
+            )
 
         return StreamingResponse(
             _resume_stream_generator(workflow, run_id, last_event_index, session_id, user_id=scoped_user_id),
@@ -2581,10 +2793,9 @@ def get_workflow_router(
         session_id: str = Query(..., description="Session ID for the run"),
         factory_input: Optional[str] = Query(
             None,
-            description="JSON object with factory-specific parameters for dynamic workflow reconstruction",
+            description="Ignored; kept for compatibility. Reading a run no longer invokes the factory",
         ),
     ):
-        user_id = getattr(request.state, "user_id", None)
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and query params, using request state")
@@ -2593,16 +2804,7 @@ def get_workflow_router(
         # Factory workflows: resolve to get a real workflow for session lookup
         factory = find_factory_by_id(workflow_id, os.workflows)
         if factory:
-            workflow = await resolve_workflow(  # type: ignore[assignment]
-                workflow_id,
-                os.workflows,
-                factory.db,
-                request=request,
-                user_id=user_id,
-                session_id=session_id,
-                factory_input=factory_input,
-                published_only=False,
-            )
+            workflow = factory_row_handle(factory)  # type: ignore[assignment]
         else:
             try:
                 workflow = get_workflow_by_id(
@@ -2670,7 +2872,7 @@ def get_workflow_router(
         if not run_matches_component(run_output, "workflows", workflow_id):
             raise HTTPException(status_code=404, detail="Run not found")
 
-        return run_output.to_dict()
+        return await aattach_waiting_on(getattr(request.app.state, "queue_worker", None), run_id, run_output.to_dict())
 
     @router.get(
         "/workflows/{workflow_id}/runs",
