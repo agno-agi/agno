@@ -16,6 +16,8 @@ from agno.os.middleware.user_scope import (
     get_scoped_user_id,
     resolve_db_and_scope,
 )
+from agno.os.routers.session.schemas import SESSION_FILTER_SCHEMA, SessionSearchRequest
+from agno.os.routers.traces.schemas import FilterSchemaResponse
 from agno.os.schema import (
     AgentSessionDetailSchema,
     BadRequestResponse,
@@ -37,7 +39,7 @@ from agno.os.schema import (
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
 )
-from agno.os.services.sessions import SessionNotFoundError, get_sessions_page
+from agno.os.services.sessions import SessionNotFoundError, get_sessions_page, search_sessions_page
 from agno.os.services.sessions import get_session_runs as get_session_runs_from_service
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import AgnoHTTPException
@@ -204,6 +206,87 @@ def attach_routes(
                 limit=limit,
                 total_count=total_count,  # type: ignore
                 total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,  # type: ignore
+            ),
+        )
+
+    @router.get(
+        "/sessions/filter-schema",
+        response_model=FilterSchemaResponse,
+        operation_id="get_sessions_filter_schema",
+        summary="Get Session Filter Schema",
+    )
+    async def get_sessions_filter_schema() -> FilterSchemaResponse:
+        return SESSION_FILTER_SCHEMA
+
+    @router.post(
+        "/sessions/search",
+        response_model=PaginatedResponse[SessionSchema],
+        response_model_exclude_none=True,
+        operation_id="search_sessions",
+        summary="Search Sessions",
+        description="Search session fields with nested AND/OR/NOT expressions, sorting, and pagination.",
+    )
+    async def search_sessions(
+        request: Request,
+        body: SessionSearchRequest,
+        db_id: Optional[str] = Query(default=None),
+        table: Optional[str] = Query(default=None),
+    ) -> PaginatedResponse[SessionSchema]:
+        from httpx import HTTPStatusError
+
+        from agno.db.session_filters import normalize_session_filter
+
+        try:
+            expression = normalize_session_filter(body.filter)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid session search: {exc}") from exc
+        try:
+            db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=f"{e}")
+        kwargs: Dict[str, Any] = dict(
+            filter_expr=expression,
+            session_type=body.session_type,
+            user_id=effective_user_id,
+            page=body.page,
+            limit=body.limit,
+            sort_by=body.sort_by,
+            sort_order=body.sort_order,
+        )
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            try:
+                return await db.search_sessions(
+                    **kwargs,
+                    db_id=db_id,
+                    table=table,
+                    headers={"Authorization": f"Bearer {auth_token}"} if auth_token else None,
+                )
+            except HTTPStatusError as e:
+                # Older remote servers predate this endpoint.
+                if e.response.status_code in (404, 405):
+                    raise HTTPException(
+                        status_code=501, detail="The remote AgentOS does not support session search"
+                    ) from e
+                raise
+        try:
+            sessions, total = await search_sessions_page(db, **kwargs)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid session search: {e}")
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            logger.exception("Error searching sessions")
+            raise HTTPException(status_code=500, detail=f"Error searching sessions: {e}")
+        return PaginatedResponse(
+            data=[SessionSchema.from_dict(session) for session in sessions],
+            meta=PaginationInfo(
+                page=body.page,
+                limit=body.limit,
+                total_count=total,
+                total_pages=(total + body.limit - 1) // body.limit,
             ),
         )
 

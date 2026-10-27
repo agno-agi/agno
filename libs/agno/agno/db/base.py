@@ -599,6 +599,72 @@ class BaseDb(ABC):
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
+    def search_sessions(
+        self,
+        filter_expr: Optional[Dict[str, Any]] = None,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Search session fields before pagination, retaining only the requested page.
+
+        Adapters whose ``get_sessions`` accepts ``filter_expr`` filter natively. Others use a
+        portable fallback that reads every visible session once, without run histories where
+        supported, so its cost scales with the number of sessions visible to the caller.
+        """
+        from inspect import signature
+
+        from agno.db.session_filters import matches_session_filter, normalize_session_filter
+
+        if page < 1 or limit < 1:
+            raise ValueError("Page and limit must be positive")
+        if sort_by not in ("created_at", "updated_at") or sort_order not in ("asc", "desc"):
+            raise ValueError("Invalid session sort")
+        expression = normalize_session_filter(filter_expr)
+        parameters = signature(self.get_sessions).parameters
+        query: Dict[str, Any] = dict(
+            session_type=session_type, user_id=user_id, sort_by=sort_by, sort_order=sort_order, deserialize=False
+        )
+        if expression is None or "filter_expr" in parameters:
+            native: Dict[str, Any] = {"filter_expr": expression} if expression is not None else {}
+            result = self.get_sessions(**query, **native, limit=limit, page=page)
+            return cast(Tuple[List[Dict[str, Any]], int], result)
+        # One unpaginated read gives a consistent snapshot and avoids rescanning adapters that page in memory.
+        skip_runs = "include_runs" in parameters
+        run_options: Dict[str, Any] = {"include_runs": False} if skip_runs else {}
+        result = self.get_sessions(**query, **run_options)
+        sessions, _ = cast(Tuple[List[Dict[str, Any]], int], result)
+        matches = [session for session in sessions if matches_session_filter(session, expression)]
+        results = matches[(page - 1) * limit : page * limit]
+        if skip_runs:
+            # Runs were skipped while scanning; load them for unnamed sessions so display names can be inferred.
+            from agno.db.utils import merge_runs_table_with_legacy_blob
+
+            unnamed = [
+                index
+                for index, session in enumerate(results)
+                if session.get("session_name") is None
+                and (session.get("session_data") or {}).get("session_name") is None
+            ]
+            runs_by_session = self._get_sessions_runs([results[i]["session_id"] for i in unnamed]) if unnamed else {}
+            for index in unnamed:
+                session = results[index]
+                if runs_by_session is not None:
+                    table_runs = runs_by_session.get(session["session_id"], [])
+                    session["runs"] = merge_runs_table_with_legacy_blob(table_runs, session.get("runs"))
+                    continue
+                full_session = self.get_session(session_id=session["session_id"], user_id=user_id, deserialize=False)
+                if isinstance(full_session, dict):
+                    results[index] = full_session
+        return results, len(matches)
+
+    def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """Run dicts for several sessions in one read, or None when the adapter can only load them per session."""
+        return None
+
     @abstractmethod
     def rename_session(
         self,
@@ -2897,6 +2963,57 @@ class AsyncBaseDb(ABC):
         include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
+
+    async def search_sessions(
+        self,
+        filter_expr: Optional[Dict[str, Any]] = None,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Search session fields before pagination, retaining only the requested page.
+
+        Adapters whose ``get_sessions`` accepts ``filter_expr`` filter natively. Others use a
+        portable fallback that reads every visible session once, without run histories where
+        supported, so its cost scales with the number of sessions visible to the caller.
+        """
+        from inspect import signature
+
+        from agno.db.session_filters import matches_session_filter, normalize_session_filter
+
+        if page < 1 or limit < 1:
+            raise ValueError("Page and limit must be positive")
+        if sort_by not in ("created_at", "updated_at") or sort_order not in ("asc", "desc"):
+            raise ValueError("Invalid session sort")
+        expression = normalize_session_filter(filter_expr)
+        parameters = signature(self.get_sessions).parameters
+        query: Dict[str, Any] = dict(
+            session_type=session_type, user_id=user_id, sort_by=sort_by, sort_order=sort_order, deserialize=False
+        )
+        if expression is None or "filter_expr" in parameters:
+            native: Dict[str, Any] = {"filter_expr": expression} if expression is not None else {}
+            result = await self.get_sessions(**query, **native, limit=limit, page=page)
+            return cast(Tuple[List[Dict[str, Any]], int], result)
+        # One unpaginated read gives a consistent snapshot and avoids rescanning adapters that page in memory.
+        skip_runs = "include_runs" in parameters
+        run_options: Dict[str, Any] = {"include_runs": False} if skip_runs else {}
+        result = await self.get_sessions(**query, **run_options)
+        sessions, _ = cast(Tuple[List[Dict[str, Any]], int], result)
+        matches = [session for session in sessions if matches_session_filter(session, expression)]
+        results = matches[(page - 1) * limit : page * limit]
+        if skip_runs:
+            # Runs were skipped while scanning; load them for unnamed sessions so display names can be inferred.
+            for index, session in enumerate(results):
+                if (session.get("session_data") or {}).get("session_name") is None:
+                    full_session = await self.get_session(
+                        session_id=session["session_id"], user_id=user_id, deserialize=False
+                    )
+                    if isinstance(full_session, dict):
+                        results[index] = full_session
+        return results, len(matches)
 
     @abstractmethod
     async def rename_session(

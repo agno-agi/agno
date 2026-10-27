@@ -70,6 +70,9 @@ class _Batch:
     def zadd(self, key, members_scores):
         self.commands.append(("zadd", key, members_scores))
 
+    def zrange(self, key, range_query, reverse=False):
+        self.commands.append(("zrange", key, range_query, reverse))
+
     def expire(self, key, seconds):
         self.commands.append(("expire", key, seconds))
 
@@ -172,6 +175,8 @@ class _FakeGlideClient:
                     results.append(self.srem(command[1], command[2]))
                 elif op == "zadd":
                     results.append(self.zadd(command[1], command[2]))
+                elif op == "zrange":
+                    results.append(self.zrange(command[1], command[2], command[3]))
                 else:
                     results.append(True)
             except _RequestError as exc:
