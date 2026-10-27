@@ -284,10 +284,13 @@ class DynamoDb(BaseDb):
     def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         if not session_ids:
             return {}
-        grouped: Dict[str, List[Dict[str, Any]]] = {}
-        for sid in session_ids:
-            grouped[sid] = self._get_session_runs_data(sid)
-        return grouped
+        if len(session_ids) == 1:
+            return {session_ids[0]: self._get_session_runs_data(session_ids[0])}
+        from concurrent.futures import ThreadPoolExecutor
+
+        # Runs are partitioned by session_id in the GSI, so each session needs its own Query; run them concurrently.
+        with ThreadPoolExecutor(max_workers=min(len(session_ids), 16)) as pool:
+            return dict(zip(session_ids, pool.map(self._get_session_runs_data, session_ids)))
 
     def upsert_run(
         self,

@@ -549,3 +549,100 @@ def test_fallback_batches_runs_for_unnamed_sessions(tmp_path):
     assert [s["session_name"] for s in response.json()["data"]] == ["Question 2", "Question 1", "Question 0"]
     assert reads == []
     assert batches == [["s-2", "s-1", "s-0"]]
+
+
+def _runs_for(session_id, count):
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+
+    return [RunOutput(run_id=f"{session_id}-run-{n}", status=RunStatus.completed) for n in range(count)]
+
+
+def test_redis_batches_run_reads_into_two_round_trips():
+    fakeredis = pytest.importorskip("fakeredis")
+    from agno.db.redis import RedisDb
+
+    client = fakeredis.FakeRedis()
+    db = RedisDb(redis_client=client)
+    session_ids = [f"s-{i}" for i in range(5)]
+    for sid in session_ids:
+        db.upsert_session(AgentSession(session_id=sid, agent_id="a", user_id="alice", created_at=1))
+        for run in _runs_for(sid, 2):
+            db.upsert_run(run, session_id=sid)
+    expected = {sid: db._get_session_runs_data(sid) for sid in session_ids}
+
+    direct, executes = [], []
+    for name in ("zrange", "get"):
+        original = getattr(client, name)
+        setattr(client, name, lambda *a, _n=name, _o=original, **k: direct.append(_n) or _o(*a, **k))
+    original_pipeline = client.pipeline
+
+    def counting_pipeline(*args, **kwargs):
+        pipeline = original_pipeline(*args, **kwargs)
+        original_execute = pipeline.execute
+        pipeline.execute = lambda *a, **k: executes.append(1) or original_execute(*a, **k)
+        return pipeline
+
+    client.pipeline = counting_pipeline
+    grouped = db._get_sessions_runs(session_ids)
+    assert grouped == expected
+    assert all(len(runs) == 2 for runs in grouped.values())
+    assert direct == []
+    assert len(executes) == 2
+
+
+def test_valkey_batches_run_reads_into_two_round_trips():
+    pytest.importorskip("glide_sync")
+    import json
+
+    from glide_sync import GlideClient
+
+    from agno.db.valkey import ValkeyDb
+
+    client = MagicMock(spec=GlideClient)
+    db = ValkeyDb(valkey_client=client)
+    rows = {
+        f"s-{i}-run-{n}": {"run_id": f"s-{i}-run-{n}", "run_index": n, "run_data": {"run_id": f"s-{i}-run-{n}"}}
+        for i in range(3)
+        for n in range(2)
+    }
+    client.exec.side_effect = [
+        [[f"s-{i}-run-1".encode(), f"s-{i}-run-0".encode()] for i in range(3)],
+        [json.dumps(rows[rid]).encode() for i in range(3) for rid in (f"s-{i}-run-1", f"s-{i}-run-0")],
+    ]
+    grouped = db._get_sessions_runs([f"s-{i}" for i in range(3)])
+    assert client.exec.call_count == 2
+    client.zrange.assert_not_called()
+    client.get.assert_not_called()
+    assert grouped == {f"s-{i}": [{"run_id": f"s-{i}-run-0"}, {"run_id": f"s-{i}-run-1"}] for i in range(3)}
+
+
+def test_dynamo_queries_sessions_concurrently():
+    import threading
+    import time
+
+    from agno.db.dynamo import DynamoDb
+    from agno.db.dynamo.utils import serialize_to_dynamo_item
+
+    client = MagicMock()
+    db = DynamoDb(db_client=client)
+    db._get_table = MagicMock(return_value="runs")
+    in_flight, peak, lock = [0], [0], threading.Lock()
+
+    def query(**kwargs):
+        sid = kwargs["ExpressionAttributeValues"][":sid"]["S"]
+        with lock:
+            in_flight[0] += 1
+            peak[0] = max(peak[0], in_flight[0])
+        time.sleep(0.05)
+        with lock:
+            in_flight[0] -= 1
+        item = {"run_id": f"{sid}-run", "session_id": sid, "run_index": 0, "run_data": {"run_id": f"{sid}-run"}}
+        return {"Items": [serialize_to_dynamo_item(item)]}
+
+    client.query.side_effect = query
+    session_ids = [f"s-{i}" for i in range(5)]
+    grouped = db._get_sessions_runs(session_ids)
+    assert grouped == {sid: [{"run_id": f"{sid}-run"}] for sid in session_ids}
+    assert client.query.call_count == 5
+    assert peak[0] > 1
