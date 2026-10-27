@@ -1427,6 +1427,19 @@ def test_runs_without_usage_still_report_duration(fake_sdk, tmp_db):
     assert run.metrics is not None and run.metrics.total_tokens == 0 and run.metrics.duration is not None
 
 
+def test_shared_session_continues_one_sdk_conversation_across_users(fake_sdk, tmp_db):
+    from agno.session.sharing import share_session
+
+    agent = ClaudeAgent(id="claude", db=tmp_db)
+    agent.run("from alice", session_id="team", user_id="alice")
+    share_session(tmp_db, "team", ["bob"], user_id="alice")
+    agent.run("from bob", session_id="team", user_id="bob")
+    assert [call["resume"] for call in fake_sdk.calls] == [None, "sdk-1"]
+    with pytest.raises(ValueError, match="belongs to another user"):
+        agent.run("intrude", session_id="team", user_id="carol")
+
+
+# ---------------------------------------------------------------------------
 # Media: attachments staged in the workspace
 # ---------------------------------------------------------------------------
 

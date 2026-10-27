@@ -533,6 +533,17 @@ evidence and limits. This does not rerun this directory's advanced examples.
 
 **Result:** Continue and checkpoints work end to end against the real SDK. Files touched after a checkpoint are not rewound.
 
+---
+
+### shared_session.py (2026-10-10)
+
+**Status:** PASS
+
+**Description:** Live run with claude-agent-sdk 0.2.95 and `claude-sonnet-4-6` on SQLite. Alice started the session and shared it with Bob; Bob asked for the codeword Alice set and the agent answered `PELICAN` from the same Claude conversation. Carol was refused with "Session team belongs to another user". Both runs were stored with their own `user_id`.
+
+**Result:** Explicit sharing works end to end; non-members are refused.
+
+---
 
 ### claude_agentos.py — DX review refresh, 10 October 2026
 

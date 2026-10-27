@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
+from starlette.concurrency import run_in_threadpool
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
@@ -12,6 +13,7 @@ from agno.exceptions import AgnoError
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import (
+    caller_is_admin,
     enforce_owner_on_entity,
     get_scoped_user_id,
     resolve_db_and_scope,
@@ -28,6 +30,7 @@ from agno.os.schema import (
     RunSchema,
     SessionRunPreviewSchema,
     SessionSchema,
+    ShareSessionRequest,
     SortOrder,
     TeamRunSchema,
     TeamSessionDetailSchema,
@@ -43,8 +46,33 @@ from agno.os.settings import AgnoAPISettings
 from agno.os.utils import AgnoHTTPException
 from agno.remote.base import RemoteDb
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
+from agno.session.sharing import ashare_session, can_read_session, keep_sharing, without_sharing
 from agno.utils.log import log_debug
 from agno.utils.media_offload import adelete_media_keys, session_media_keys
+
+
+async def _member_read_scope(
+    db: Any, session_id: str, session_type: Optional[SessionType], user_id: Optional[str]
+) -> Optional[str]:
+    """Read scope for one session: unscoped when the caller is a member of a shared agent session."""
+    from agno.session.sharing import can_read_session
+
+    if user_id is None or isinstance(db, RemoteDb) or session_type not in (None, SessionType.AGENT):
+        return user_id
+    # Only the owner and the member list are needed, so the runs stay unloaded; a sync database
+    # is read off the event loop.
+    if isinstance(db, AsyncBaseDb):
+        row = await db.get_session(
+            session_id=session_id, session_type=SessionType.AGENT, deserialize=False, runs_limit=1
+        )
+    else:
+        row = await run_in_threadpool(
+            db.get_session, session_id=session_id, session_type=SessionType.AGENT, deserialize=False, runs_limit=1
+        )
+    if row and can_read_session(row, user_id):
+        return None
+    return user_id
+
 
 logger = logging.getLogger(__name__)
 
@@ -269,7 +297,7 @@ def attach_routes(
         # persisted here would forge a version stamp or reset the dispatch
         # lineage from a caller-writable field. Scrub it the way the run-start
         # routes and the scheduler executor already do.
-        sanitized_metadata = strip_reserved_run_metadata(create_session_request.metadata)
+        sanitized_metadata = without_sharing(strip_reserved_run_metadata(create_session_request.metadata))
 
         # Get user_id from request state if available (from auth middleware).
         # For non-admin scoped callers the JWT sub wins via enforce_owner below.
@@ -522,6 +550,7 @@ def attach_routes(
         table: Optional[str] = Query(default=None, description="Table to query session from"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+        effective_user_id = await _member_read_scope(db, session_id, session_type, effective_user_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -586,6 +615,7 @@ def attach_routes(
                     detail=f"Invalid status value(s) {unknown}; expected one of {sorted(valid)}",
                 )
         db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+        effective_user_id = await _member_read_scope(db, session_id, session_type, effective_user_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -869,6 +899,7 @@ def attach_routes(
         table: Optional[str] = Query(default=None, description="Table to query run from"),
     ) -> Union[RunSchema, TeamRunSchema, WorkflowRunSchema]:
         db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+        effective_user_id = await _member_read_scope(db, session_id, session_type, effective_user_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -1266,7 +1297,7 @@ def attach_routes(
 
         # Same scrub as create_session: session metadata wins the merge into
         # every run of this session, so reserved keys never enter through it.
-        sanitized_metadata = strip_reserved_run_metadata(update_data.metadata)
+        sanitized_metadata = without_sharing(strip_reserved_run_metadata(update_data.metadata))
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -1315,7 +1346,7 @@ def attach_routes(
             existing_session.session_data["session_state"] = update_data.session_state  # type: ignore
 
         if update_data.metadata is not None:
-            existing_session.metadata = sanitized_metadata  # type: ignore
+            existing_session.metadata = keep_sharing(sanitized_metadata, existing_session.metadata)  # type: ignore
 
         if update_data.summary is not None:
             from agno.session.summary import SessionSummary
@@ -1340,5 +1371,49 @@ def attach_routes(
             return TeamSessionDetailSchema.from_session(updated_session)
         else:
             return WorkflowSessionDetailSchema.from_session(updated_session)  # type: ignore
+
+    @router.put(
+        "/sessions/{session_id}/sharing",
+        response_model=AgentSessionDetailSchema,
+        status_code=200,
+        operation_id="share_session",
+        summary="Share Session",
+        description=(
+            "Set the users an agent session is shared with. Members can read the session and run in it; "
+            "each run keeps its own user_id. Only the session owner or an admin can change sharing. "
+            "An empty list unshares the session."
+        ),
+        responses={
+            403: {"description": "Only the owner or an admin can change sharing"},
+            404: {"description": "Session not found", "model": NotFoundResponse},
+        },
+    )
+    async def share_session(
+        request: Request,
+        session_id: str = Path(description="Agent session ID to share"),
+        share_request: ShareSessionRequest = Body(description="Members to share the session with"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+        table: Optional[str] = Query(default=None, description="Table to use"),
+    ) -> AgentSessionDetailSchema:
+        db, _ = await resolve_db_and_scope(request, dbs, db_id, table)
+        if isinstance(db, RemoteDb):
+            raise HTTPException(status_code=400, detail="Session sharing is not supported for remote databases")
+        # Admin is the token's actual authority, never "unscoped": with auth on and isolation
+        # off every caller is unscoped, so the ownership check uses the authenticated identity.
+        is_admin = caller_is_admin(request)
+        actor = get_scoped_user_id(request) or getattr(request.state, "user_id", None)
+        if isinstance(db, AsyncBaseDb):
+            existing = await db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+        else:
+            existing = await run_in_threadpool(db.get_session, session_id=session_id, session_type=SessionType.AGENT)
+        if existing is None or not (is_admin or can_read_session(existing, actor)):
+            raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")
+        try:
+            shared = await ashare_session(db, session_id, share_request.members, user_id=actor, is_admin=is_admin)
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        return AgentSessionDetailSchema.from_session(shared)
 
     return router

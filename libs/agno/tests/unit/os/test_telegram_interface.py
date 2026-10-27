@@ -2867,3 +2867,37 @@ class TestIdempotencyGuard:
 
         assert resp1.json()["status"] == "processing"
         assert resp2.json()["status"] == "duplicate"
+
+
+def test_group_session_lookup_is_not_narrowed_to_the_sender(monkeypatch, tmp_path):
+    from agno.db.sqlite import SqliteDb
+
+    monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+    monkeypatch.setenv("APP_ENV", "development")
+    mock_response = MagicMock(status="COMPLETED", content="reply", reasoning_content=None, images=None)
+    agent = AsyncMock(id="test-agent")
+    agent.arun = AsyncMock(return_value=mock_response)
+    agent.db = SqliteDb(db_file=str(tmp_path / "tg.db"))
+    lookups = []
+
+    async def record_lookup(cfg, user_id, entity_id, session_scope):
+        lookups.append(user_id)
+        return None
+
+    mock_bot = AsyncMock()
+    mock_bot.get_me = AsyncMock(return_value=MagicMock(username="testbot", id=1))
+    with (
+        patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot),
+        patch(f"{ROUTER_MODULE}.find_latest_session_id", record_lookup),
+    ):
+        client = _build_telegram_client(agent=agent, reply_to_mentions_only=False)
+        for update_id, chat in ((1, {"id": -100, "type": "supergroup"}), (2, {"id": 12345, "type": "private"})):
+            client.post(
+                "/telegram/webhook",
+                json={
+                    "update_id": update_id,
+                    "message": {"message_id": 100, "from": {"id": 67890}, "chat": chat, "text": "hello"},
+                },
+            )
+    # A group's session is found for every participant; a private chat stays per user.
+    assert lookups == [None, "67890"]
