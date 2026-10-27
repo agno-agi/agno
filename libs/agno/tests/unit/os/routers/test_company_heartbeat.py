@@ -147,10 +147,12 @@ def test_routine_cancel_stops_the_running_run(system):
     response = client.post(path + "/cancel")
     assert response.status_code == 200, response.text
     assert is_cancelled("routine-run")
-    db.update_schedule_run("schedule-run", status="failed", error="Run was cancelled")
+    # No executor is left to settle this row, so the cancel records it.
+    assert db.get_schedule_run("schedule-run")["status"] == "cancelled"
     response = client.post(path + "/cancel")
     assert response.status_code == 409
     assert response.json()["detail"] == "Routine has no running run"
+    assert client.post(path + "/archive").status_code == 200
 
 
 def test_product_metadata_edits_keep_linked_routines(system):

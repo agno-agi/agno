@@ -336,16 +336,25 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
 
         # Cancelling enters the executor route under the internal service token, so re-check the caller's own permission.
         await _require_endpoint_permission(request, row["endpoint"], "POST")
-        responses = [
-            await _run_route(
+        responses = []
+        for run in runs:
+            response = await _run_route(
                 request,
                 row["endpoint"] + "/" + quote(run["run_id"], safe="") + "/cancel",
                 "POST",
                 owner=run.get("user_id"),
                 session_id=run.get("session_id"),
             )
-            for run in runs
-        ]
+            if response.status_code < 300:
+                # A row left by a process that stopped mid-run is never settled by its executor, so record the cancel.
+                await call(
+                    schedule_db.update_schedule_run,
+                    run["id"],
+                    status="cancelled",
+                    error="Run was cancelled",
+                    completed_at=int(time.time()),
+                )
+            responses.append(response)
         # A failed cancel is reported even when a later one succeeded.
         return next((response for response in responses if response.status_code >= 300), responses[-1])
 
