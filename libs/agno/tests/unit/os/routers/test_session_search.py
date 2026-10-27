@@ -128,6 +128,17 @@ def test_nested_filter_counts_before_pagination(db):
         ({"op": "GTE", "key": "created_at", "value": "1970-01-01T01:05:00+01:00"}, ["agent-2", "workflow-1"]),
         ({"op": "LT", "key": "updated_at", "value": 200}, ["agent-1"]),
         ({"op": "NEQ", "key": "session_name", "value": "Report"}, ["team-1", "agent-1"]),
+        ({"op": "NOT", "condition": eq("agent_id", "support")}, ["agent-2"]),
+        ({"op": "NOT", "condition": eq("session_name", "Report")}, ["team-1", "agent-1"]),
+        ({"op": "NOT", "condition": {"op": "NOT", "condition": eq("agent_id", "support")}}, ["agent-1"]),
+        (
+            {"op": "NOT", "condition": {"op": "OR", "conditions": [eq("agent_id", "support"), eq("user_id", "bob")]}},
+            ["agent-2"],
+        ),
+        (
+            {"op": "NOT", "condition": {"op": "AND", "conditions": [eq("agent_id", "support"), eq("user_id", "bob")]}},
+            ["agent-2", "team-1", "agent-1"],
+        ),
     ],
 )
 def test_filter_semantics(db, expression, expected):
@@ -160,6 +171,10 @@ def test_type_selector_and_user_isolation_combine_with_expression(db):
         {"op": "IN", "key": "user_id", "values": "alice"},
         {"op": "AND", "conditions": []},
         {"op": "OR", "conditions": [None]},
+        {"op": "NOT"},
+        {"op": "NOT", "condition": None},
+        {"op": "NOT", "condition": []},
+        {"op": "NOT", "condition": eq("runs", "secret")},
         {"op": "GT", "key": "user_id", "value": "alice"},
         {"op": "GTE", "key": "created_at", "value": "yesterday"},
     ],
@@ -169,10 +184,13 @@ def test_invalid_filters_rejected_even_with_empty_database(expression):
     assert response.status_code == 400
 
 
-def test_deep_filter_rejected():
+@pytest.mark.parametrize("op", ["AND", "NOT"])
+def test_deep_filter_rejected(op):
     expression = eq("user_id", "alice")
     for _ in range(12):
-        expression = {"op": "AND", "conditions": [expression]}
+        expression = (
+            {"op": "AND", "conditions": [expression]} if op == "AND" else {"op": "NOT", "condition": expression}
+        )
     assert build_client(InMemoryDb()).post("/sessions/search", json={"filter": expression}).status_code == 400
 
 

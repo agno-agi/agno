@@ -6,5 +6,6 @@
 - [x] Read scope, user isolation, and remote database forwarding.
 - [x] Sync and async Python client methods.
 - [x] Sessions editor shares the traces autocomplete and filter DSL.
+- [x] Shared date picker for session creation ranges and API-level NOT with SQL-compatible NULL semantics.
 - [x] Filter-aware caching, refresh, pagination reset, and recoverable empty/error results.
 - [x] Regression tests and self-contained cookbook.

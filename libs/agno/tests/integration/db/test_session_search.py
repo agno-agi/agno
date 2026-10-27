@@ -72,6 +72,14 @@ async def test_postgres_session_search(use_async):
         )
         assert count == 1
         assert rows[0]["session_id"] == "a"
+        # Team rows have no agent_id; negation must preserve SQL NULL semantics.
+        rows, count = await resolve(
+            db.search_sessions(
+                filter_expr={"op": "NOT", "condition": {"op": "EQ", "key": "agent_id", "value": "support"}}
+            )
+        )
+        assert count == 1
+        assert rows[0]["session_id"] == "b"
     finally:
         if use_async:
             async with db.db_engine.begin() as connection:

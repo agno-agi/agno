@@ -47,6 +47,8 @@ def normalize_session_filter(expression: Optional[Dict[str, Any]], _depth: int =
         if not isinstance(conditions, list) or not conditions or len(conditions) > 100:
             raise ValueError("AND/OR require between 1 and 100 conditions")
         return {"op": op, "conditions": [normalize_session_filter(c, _depth + 1) for c in conditions]}
+    if op == "NOT":
+        return {"op": op, "condition": normalize_session_filter(expression.get("condition"), _depth + 1)}
     key = expression.get("key")
     if not isinstance(key, str) or key not in SESSION_FILTER_FIELDS:
         raise ValueError(f"Unknown session filter field: {key}")
@@ -86,18 +88,26 @@ def session_filter_to_sqlalchemy(expression: Dict[str, Any], table: Any) -> Any:
 
 def matches_session_filter(session: Dict[str, Any], expression: Optional[Dict[str, Any]]) -> bool:
     """Evaluate a validated filter for adapters without native search support."""
+    return _evaluate_session_filter(session, expression) is True
+
+
+def _evaluate_session_filter(session: Dict[str, Any], expression: Optional[Dict[str, Any]]) -> Optional[bool]:
+    """Preserve SQL's unknown result for NULL comparisons, including under NOT."""
     if expression is None:
         return True
     op = expression["op"]
-    if op == "AND":
-        return all(matches_session_filter(session, c) for c in expression["conditions"])
-    if op == "OR":
-        return any(matches_session_filter(session, c) for c in expression["conditions"])
+    if op in ("AND", "OR"):
+        results = [_evaluate_session_filter(session, c) for c in expression["conditions"]]
+        if op == "AND":
+            return False if False in results else None if None in results else True
+        return True if True in results else None if None in results else False
+    if op == "NOT":
+        result = _evaluate_session_filter(session, expression["condition"])
+        return None if result is None else not result
     key = expression["key"]
     actual = (session.get("session_data") or {}).get("session_name") if key == "session_name" else session.get(key)
-    # Match SQL's treatment of NULL: missing fields do not satisfy comparisons.
     if actual is None:
-        return False
+        return None
     if op == "IN":
         return actual in expression["values"]
     value = expression["value"]

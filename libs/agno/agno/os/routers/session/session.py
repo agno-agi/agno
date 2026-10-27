@@ -224,7 +224,7 @@ def attach_routes(
         response_model_exclude_none=True,
         operation_id="search_sessions",
         summary="Search Sessions",
-        description="Search session fields with nested AND/OR expressions, sorting, and pagination.",
+        description="Search session fields with nested AND/OR/NOT expressions, sorting, and pagination.",
     )
     async def search_sessions(
         request: Request,
