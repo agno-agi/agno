@@ -299,3 +299,39 @@ def test_agentos_gives_a_nested_sandboxed_member_the_enclosing_teams_database(se
     AgentOS(id="os", teams=[outer], telemetry=False).get_app()
 
     assert engineer.db is db
+
+
+def test_a_sandboxed_members_session_links_back_to_its_team(setup):
+    db, member_of, _ = setup
+    engineer = member_of("engineer")
+    team = Team(
+        id="team",
+        name="Team",
+        members=[engineer],
+        model=_ScriptedModel([_delegate("engineer", "work", "c1"), ("content", "done")]),
+        db=db,
+    )
+    team.run("go", session_id="s1")
+
+    member_session = db.get_session(session_id="s1:engineer", session_type=SessionType.AGENT)
+    assert (member_session.metadata or {}).get("team_id") == "team"
+
+
+def test_agentos_gives_a_sandboxed_member_postgres_when_its_team_uses_another_database(setup):
+    from agno.db.sqlite import SqliteDb
+    from agno.os import AgentOS
+
+    db, member_of, tmp_path = setup
+    engineer = member_of("engineer")
+    engineer.db = None
+    team = Team(
+        id="team",
+        name="Team",
+        members=[engineer],
+        model=_ScriptedModel([]),
+        db=SqliteDb(db_file=str(tmp_path / "team.db")),
+    )
+
+    AgentOS(id="os", db=db, teams=[team], telemetry=False).get_app()
+
+    assert engineer.db is db

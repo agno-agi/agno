@@ -1199,8 +1199,11 @@ class AgentOS:
 
         They run their turns through the same coordinator as a served sandboxed agent, so they
         get the same startup checks; a member list built by a factory is not walked. The database
-        is the nearest one among the member's enclosing teams, None when none of them has one.
+        is the nearest Postgres one among the member's enclosing teams, since a sandbox coordinates on
+        Postgres, None when none of them has one.
         """
+        from agno.db.postgres import AsyncPostgresDb, PostgresDb
+
         found: List[Any] = []
         seen: set = set()
 
@@ -1208,7 +1211,8 @@ class AgentOS:
             if id(team) in seen or not isinstance(getattr(team, "members", None), list):
                 return
             seen.add(id(team))
-            team_db = getattr(team, "db", None) or inherited_db
+            own_db = getattr(team, "db", None)
+            team_db = own_db if isinstance(own_db, (PostgresDb, AsyncPostgresDb)) else inherited_db
             for member in team.members:
                 if isinstance(member, BaseExternalAgent) and member.sandbox is not None:
                     found.append((member, team_db))
@@ -1222,7 +1226,7 @@ class AgentOS:
     def _prepare_sandboxed_member(self, member: BaseExternalAgent, team_db: Any) -> None:
         """Give a sandboxed team member a database and fail at startup on what would fail its first turn.
 
-        A member without its own database uses its nearest enclosing team's, then the OS's."""
+        A member without its own database uses its nearest enclosing team's Postgres database, then the OS's."""
         from agno.sandbox import _harness
 
         if member.db is None:

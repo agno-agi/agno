@@ -311,6 +311,8 @@ def _execution(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -
     from agno.run.concurrency import get_worker_ownership
     from agno.sandbox.media import decode_media
 
+    # Metadata for the session the turn creates, set by the host for a team member; not a run option.
+    session_metadata = kwargs.pop("_session_metadata", None)
     options = submission(agent, input, kwargs)
     run_id = kwargs.get("run_id") or str(uuid4())
     owner = get_worker_ownership(run_id)
@@ -327,6 +329,7 @@ def _execution(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -
         execution_timeout=_sandbox(agent).execution_timeout,
         **decode_media(options.get("media", [])),
         **({"metadata": options["metadata"]} if "metadata" in options else {}),
+        **({"session_metadata": session_metadata} if session_metadata else {}),
     )
 
 

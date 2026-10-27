@@ -805,6 +805,8 @@ class BaseExternalAgent:
             # elsewhere; a value JSON cannot hold fails the member's run instead of the team's tool call.
             forwarded["metadata"] = json.loads(json.dumps(forwarded["metadata"], default=json_serializer))
         forwarded["session_id"] = self._state_session_id(team_session_id, team_id)
+        # The sandbox creates the member's session; this links it back to the team, as for other members.
+        forwarded["_session_metadata"] = {"team_id": team_id}
         forwarded["run_id"] = f"{team_run_id}.sandbox"
         return forwarded
 

@@ -103,6 +103,7 @@ class SandboxCoordinator:
         execution_timeout: float = 900,
         images: Optional[Sequence[Image]] = None,
         files: Optional[Sequence[File]] = None,
+        session_metadata: Optional[Dict[str, Any]] = None,
     ) -> RunOutput:
         result = None
         async for value in self.astream(
@@ -115,6 +116,7 @@ class SandboxCoordinator:
             agent_name=agent_name,
             config=config,
             **({"metadata": metadata} if metadata is not None else {}),
+            **({"session_metadata": session_metadata} if session_metadata is not None else {}),
             env=env,
             queue_attempt=queue_attempt,
             execution_timeout=execution_timeout,
@@ -359,8 +361,12 @@ class SandboxCoordinator:
         execution_timeout: float = 900,
         images: Optional[Sequence[Image]] = None,
         files: Optional[Sequence[File]] = None,
+        session_metadata: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[Any, None]:
         """Run one turn and yield its events as they arrive, then the committed ``RunOutput`` last.
+
+        ``session_metadata`` is stored on the session when this turn creates it, such as a team
+        member's link back to its team; an existing session keeps its metadata.
 
         The same turn as ``arun``: the run output is yielded only once the result and recovery
         checkpoint are stored, so a consumer that sees it can rely on it. Cancelling the consumer
@@ -425,6 +431,7 @@ class SandboxCoordinator:
                 queue_attempt=queue_attempt,
                 lease_seconds=self.lease_seconds,
                 prepared_run=prepared,
+                session_metadata=session_metadata,
             )
         )
         try:
