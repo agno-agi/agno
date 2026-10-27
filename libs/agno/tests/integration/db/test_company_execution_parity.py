@@ -931,8 +931,8 @@ async def test_cancel_projection_failure_is_recovered_by_queue(system, monkeypat
         raise RuntimeError("Task projection interrupted")
 
     monkeypatch.setattr(execution, "_project_run", interrupted)
-    with pytest.raises(RuntimeError, match="Task projection interrupted"):
-        await client.post(f"/company/runs/{run_id}/cancel")
+    # The CANCELLED run row is written, so the cancel succeeds and its claim settles the ticket.
+    assert (await client.post(f"/company/runs/{run_id}/cancel")).status_code == 200
     assert (await worker.store.get_job(run_id))["status"] == "queued"
     assert (await client.get(path)).json()["result"] is None
     monkeypatch.setattr(execution, "_project_run", project)

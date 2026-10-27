@@ -51,9 +51,9 @@ async def arehydrate_product(
             row = await _call(db, "get_product", product_id, include_deleted=True)
     if row is None:
         raise RuntimeError("Product rehydration failed")
-    from agno.company.playbook import _require_owner
+    from agno.company.playbook import _require_product_scope
 
-    _require_owner(row, scoped_user_id)
+    _require_product_scope(row)
     if row.get("deleted_at") is not None:
         return row
     # An existing owner remains authoritative; declarations never reassign ownership.

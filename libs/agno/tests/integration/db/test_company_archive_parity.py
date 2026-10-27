@@ -596,11 +596,12 @@ async def test_counts_page_query_bound_and_5000_task_performance(db):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("parent_type", ["product", "project"])
-async def test_separately_archived_active_task_still_blocks_parent_archive(db, parent_type):
+async def test_separately_archived_active_task_does_not_block_parent_archive(db, parent_type):
+    # Archived Tasks are hidden from lists and counts, so a blocker there would leave no way to clear it.
     m = manager(db)
     product = await call(m.create, name="SDK")
     project = await call(m.create_project, product_id=product["id"], name="Release")
-    task = await call(m.create_task, product_id=product["id"], title="Still active", project_id=project["id"])
+    task = await call(m.create_task, product_id=product["id"], title="Archived", project_id=project["id"])
     await call(
         m.transition_task,
         task_id=task["id"],
@@ -610,12 +611,29 @@ async def test_separately_archived_active_task_still_blocks_parent_archive(db, p
         executor_id="writer",
     )
     await call(m.delete_task, task["id"])
+    active = await call(m.create_task, product_id=product["id"], title="Still active", project_id=project["id"])
+    await call(
+        m.transition_task,
+        task_id=active["id"],
+        target="ready",
+        reason="Accept",
+        executor_type="agent",
+        executor_id="writer",
+    )
     method, parent = (m.delete, product) if parent_type == "product" else (m.delete_project, project)
+    # A visible active Task still blocks, and only it is reported.
     with pytest.raises(ValueError) as error:
         await call(method, parent["id"])
-    assert error.value.args[0]["tasks"] == [{"id": task["id"], "title": task["title"]}]
-    assert await call(m.get, product["id"])
-    assert await call(m.get_project, project["id"])
+    assert error.value.args[0]["tasks"] == [{"id": active["id"], "title": active["title"]}]
+    await call(m.transition_task, task_id=active["id"], target="cancelled", reason="Stop")
+    assert await call(method, parent["id"])
+    # The separate archive keeps its own provenance, so the parent's restore leaves it archived.
+    archived = await call(m.get_task, task["id"], include_deleted=True)
+    assert archived["status"] == "ready"
+    assert "archived_by" not in archived["transitions"][-1]
+    await call(m.restore if parent_type == "product" else m.restore_project, parent["id"])
+    assert await call(m.get_task, task["id"]) is None
+    assert await call(m.get_task, active["id"])
 
 
 @pytest.mark.asyncio

@@ -593,19 +593,18 @@ class CompanyManager:
         expected_version: int,
         user_id: Optional[str] = None,
     ):
-        """Write with a filesystem version check; a scoped caller must own the Product.
+        """Write with a filesystem version check. Version zero means create only.
 
-        Company-wide pages are unowned, like shared components, and therefore
-        editable only by unscoped callers. Version zero means create only.
+        ``user_id`` is accepted for compatibility; Company pages are shared, so it does not restrict the write.
         """
-        from agno.company.playbook import _page_path, _require_owner
+        from agno.company.playbook import _page_path, _require_product_scope
 
         if expected_version < 0:
             raise ValueError("expected_version must be nonnegative")
         product = self.get(product_id) if product_id is not None else {}
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, user_id)
+        _require_product_scope(product)
         provider = self.get_wiki(product_id)
         return provider.backend.filesystem.write(_page_path(path), content, expected_version=expected_version)
 
@@ -658,8 +657,8 @@ class CompanyManager:
         scoped_user_id: Optional[str] = None,
         source_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Configure a reader on an owned Product; secret values are never resolved."""
-        from agno.company.playbook import _require_owner
+        """Configure a reader on a Product; secret values are never resolved."""
+        from agno.company.playbook import _require_product_scope
         from agno.db.schemas.sources import validate_source_fields
 
         fields = dict(type=type, reference=reference, credential_ref=credential_ref, config=config)
@@ -667,7 +666,7 @@ class CompanyManager:
         product = self.get(product_id)
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, scoped_user_id)
+        _require_product_scope(product)
         return self.db.create_source(
             {
                 **fields,
@@ -694,7 +693,7 @@ class CompanyManager:
         scoped_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Add a website discovered by an identified agent or team without widening an existing Source."""
-        from agno.company.playbook import _require_owner
+        from agno.company.playbook import _require_product_scope
         from agno.db.schemas.sources import validate_source_fields
 
         _validate_agent_source(type, executor_type, executor_id, run_id)
@@ -702,7 +701,7 @@ class CompanyManager:
         product = self.get(product_id)
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, scoped_user_id)
+        _require_product_scope(product)
         return self.db.create_source(
             {
                 "id": str(uuid4()),
@@ -737,8 +736,8 @@ class CompanyManager:
         )
 
     def delete_source(self, source_id: str, user_id: Optional[str] = None) -> bool:
-        """Soft delete a Source after checking its Product ownership."""
-        from agno.company.playbook import _require_owner
+        """Soft delete a Source."""
+        from agno.company.playbook import _require_product_scope
 
         source = self.get_source(source_id)
         from agno.company.routines import _require_routine_product
@@ -750,12 +749,12 @@ class CompanyManager:
         product = self.get(source["product_id"])
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, user_id)
+        _require_product_scope(product)
         return self.db.delete_source(source_id)
 
     def restore_source(self, source_id: str, user_id: Optional[str] = None):
-        """Restore a Source after checking its Product ownership."""
-        from agno.company.playbook import _require_owner
+        """Restore a Source."""
+        from agno.company.playbook import _require_product_scope
 
         source = self.get_source(source_id, include_deleted=True)
         if source is None:
@@ -763,7 +762,7 @@ class CompanyManager:
         product = self.get(source["product_id"])
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, user_id)
+        _require_product_scope(product)
         return self.db.restore_source(source_id)
 
     def read_source(self, source_id: str, run_id: str, links: Optional[List[str]] = None):
@@ -869,7 +868,7 @@ class CompanyManager:
         self, *, product_id: str, run_id: str, interfaces: Any, narrative: str, user_id: Optional[str] = None
     ):
         """Write the observed report to the wiki and deliver using Product configuration."""
-        from agno.company.playbook import _require_owner
+        from agno.company.playbook import _require_product_scope
         from agno.company.summary import (
             _STATE_PATH,
             _delivery_state,
@@ -883,7 +882,7 @@ class CompanyManager:
         product = self.get(product_id)
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, user_id)
+        _require_product_scope(product)
         delivery = (product.get("metadata") or {}).get("summary") or {}
         if not delivery.get("interface") or not delivery.get("destination"):
             raise ValueError("Product summary requires an interface and destination")
@@ -1489,19 +1488,18 @@ class AsyncCompanyManager:
         expected_version: int,
         user_id: Optional[str] = None,
     ):
-        """Write with a filesystem version check; a scoped caller must own the Product.
+        """Write with a filesystem version check. Version zero means create only.
 
-        Company-wide pages are unowned, like shared components, and therefore
-        editable only by unscoped callers. Version zero means create only.
+        ``user_id`` is accepted for compatibility; Company pages are shared, so it does not restrict the write.
         """
-        from agno.company.playbook import _page_path, _require_owner
+        from agno.company.playbook import _page_path, _require_product_scope
 
         if expected_version < 0:
             raise ValueError("expected_version must be nonnegative")
         product = await self.get(product_id) if product_id is not None else {}
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, user_id)
+        _require_product_scope(product)
         provider = await self.get_wiki(product_id)
         return await provider.backend.filesystem.awrite(_page_path(path), content, expected_version=expected_version)
 
@@ -1554,8 +1552,8 @@ class AsyncCompanyManager:
         scoped_user_id: Optional[str] = None,
         source_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Configure a reader on an owned Product; secret values are never resolved."""
-        from agno.company.playbook import _require_owner
+        """Configure a reader on a Product; secret values are never resolved."""
+        from agno.company.playbook import _require_product_scope
         from agno.db.schemas.sources import validate_source_fields
 
         fields = dict(type=type, reference=reference, credential_ref=credential_ref, config=config)
@@ -1563,7 +1561,7 @@ class AsyncCompanyManager:
         product = await self.get(product_id)
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, scoped_user_id)
+        _require_product_scope(product)
         return await self.db.create_source(
             {
                 **fields,
@@ -1590,7 +1588,7 @@ class AsyncCompanyManager:
         scoped_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Add a website discovered by an identified agent or team without widening an existing Source."""
-        from agno.company.playbook import _require_owner
+        from agno.company.playbook import _require_product_scope
         from agno.db.schemas.sources import validate_source_fields
 
         _validate_agent_source(type, executor_type, executor_id, run_id)
@@ -1598,7 +1596,7 @@ class AsyncCompanyManager:
         product = await self.get(product_id)
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, scoped_user_id)
+        _require_product_scope(product)
         return await self.db.create_source(
             {
                 "id": str(uuid4()),
@@ -1633,8 +1631,8 @@ class AsyncCompanyManager:
         )
 
     async def delete_source(self, source_id: str, user_id: Optional[str] = None) -> bool:
-        """Soft delete a Source after checking its Product ownership."""
-        from agno.company.playbook import _require_owner
+        """Soft delete a Source."""
+        from agno.company.playbook import _require_product_scope
 
         source = await self.get_source(source_id)
         from agno.company.routines import _require_routine_product
@@ -1646,12 +1644,12 @@ class AsyncCompanyManager:
         product = await self.get(source["product_id"])
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, user_id)
+        _require_product_scope(product)
         return await self.db.delete_source(source_id)
 
     async def restore_source(self, source_id: str, user_id: Optional[str] = None):
-        """Restore a Source after checking its Product ownership."""
-        from agno.company.playbook import _require_owner
+        """Restore a Source."""
+        from agno.company.playbook import _require_product_scope
 
         source = await self.get_source(source_id, include_deleted=True)
         if source is None:
@@ -1659,7 +1657,7 @@ class AsyncCompanyManager:
         product = await self.get(source["product_id"])
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, user_id)
+        _require_product_scope(product)
         return await self.db.restore_source(source_id)
 
     async def read_source(self, source_id: str, run_id: str, links: Optional[List[str]] = None):
@@ -1765,7 +1763,7 @@ class AsyncCompanyManager:
         self, *, product_id: str, run_id: str, interfaces: Any, narrative: str, user_id: Optional[str] = None
     ):
         """Write the observed report to the wiki and deliver using Product configuration."""
-        from agno.company.playbook import _require_owner
+        from agno.company.playbook import _require_product_scope
         from agno.company.summary import (
             _STATE_PATH,
             _aload_summary_state,
@@ -1779,7 +1777,7 @@ class AsyncCompanyManager:
         product = await self.get(product_id)
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, user_id)
+        _require_product_scope(product)
         delivery = (product.get("metadata") or {}).get("summary") or {}
         if not delivery.get("interface") or not delivery.get("destination"):
             raise ValueError("Product summary requires an interface and destination")

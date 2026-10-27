@@ -141,6 +141,7 @@ class TestClaudeSerialization:
             id="coder",
             name="Coder",
             description="Writes code",
+            role="Implements the change a leader delegates",
             db=db,
             model="claude-opus-4-6",
             system_prompt={"type": "preset", "preset": "claude_code", "append": "Be brief."},
@@ -172,6 +173,7 @@ class TestClaudeSerialization:
 
         assert config["sdk"] == "claude-agent-sdk"
         assert config["cwd"] == "/tmp/work"
+        assert config["role"] == "Implements the change a leader delegates"
         assert config["output_schema"] == "Answer"
         assert config["events_to_skip"] == ["RunStarted"]
         assert config["db"]["id"] == "components-db"
