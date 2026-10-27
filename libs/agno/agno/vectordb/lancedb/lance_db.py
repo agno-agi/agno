@@ -594,6 +594,28 @@ class LanceDb(VectorDb):
         escaped = user_id.replace("'", "''")
         return f"{self.USER_ID_COL} = '{escaped}'"
 
+    # Multiplier used when the row count cannot be read (remote or legacy tables).
+    FILTER_CANDIDATE_FACTOR: int = 10
+
+    def _filtered_candidate_limit(self, limit: int) -> int:
+        """Rows to rank when a metadata filter is applied after retrieval.
+
+        Metadata lives inside the JSON ``payload`` column, so a metadata filter cannot be
+        pushed into a ``WHERE`` predicate the way the owner scope can (see
+        ``_user_scope_where_clause``). Ranking only ``limit`` rows first silently drops
+        matches that sit below the cut, so rank the whole table and trim back to
+        ``limit`` once the filter has been applied. When the row count cannot be read,
+        fall back to a bounded multiple of ``limit``.
+        """
+        if not isinstance(limit, int) or limit <= 0:
+            return limit
+        try:
+            row_count = int(self.table.count_rows())  # type: ignore[union-attr]
+        except Exception as exc:  # pragma: no cover - remote or legacy tables
+            log_debug(f"Could not read the row count for filter over-fetch: {exc}")
+            return limit * self.FILTER_CANDIDATE_FACTOR
+        return max(row_count, limit)
+
     def search(
         self,
         query: str,
@@ -627,12 +649,16 @@ class LanceDb(VectorDb):
             log_warning("Filter Expressions are not yet supported in LanceDB. No filters will be applied.")
             filters = None
 
+        # Metadata filters cannot be pushed down, so rank enough candidates that
+        # filtering afterwards cannot silently truncate the result set.
+        candidate_limit = limit if not filters else self._filtered_candidate_limit(limit)
+
         if self.search_type == SearchType.vector:
-            results = self.vector_search(query, limit, user_id=user_id)
+            results = self.vector_search(query, candidate_limit, user_id=user_id)
         elif self.search_type == SearchType.keyword:
-            results = self.keyword_search(query, limit, user_id=user_id)
+            results = self.keyword_search(query, candidate_limit, user_id=user_id)
         elif self.search_type == SearchType.hybrid:
-            results = self.hybrid_search(query, limit, user_id=user_id)
+            results = self.hybrid_search(query, candidate_limit, user_id=user_id)
         else:
             log_error(f"Invalid search type '{self.search_type}'.")
             return []
@@ -659,7 +685,7 @@ class LanceDb(VectorDb):
                 if match:
                     filtered_results.append(doc)
 
-            search_results = filtered_results
+            search_results = filtered_results[:limit]
 
         if self.reranker and search_results:
             search_results = self.reranker.rerank(query=query, documents=search_results)

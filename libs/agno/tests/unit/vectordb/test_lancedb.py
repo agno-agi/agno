@@ -1,6 +1,6 @@
 import os
 import shutil
-from typing import List
+from typing import Any, Dict, List, Tuple
 
 import pytest
 
@@ -567,3 +567,92 @@ def test_search_deduplicates_preserves_unique(lance_db):
     contents = [doc.content for doc in results]
     assert len(contents) == len(set(contents))
     assert len(contents) == 3
+
+
+class _RankedEmbedder:
+    """Maps content to caller-supplied vectors so result ranking is predictable."""
+
+    enable_batch = False
+
+    def __init__(self, vectors: Dict[str, List[float]], default: List[float]):
+        self.vectors = vectors
+        self.default = default
+        self.dimensions = len(default)
+
+    def get_embedding(self, text: str) -> List[float]:
+        return self.vectors.get(text, self.default)
+
+    def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
+        return self.get_embedding(text), {"total_tokens": 1}
+
+    async def async_get_embedding(self, text: str) -> List[float]:
+        return self.get_embedding(text)
+
+    async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
+        return self.get_embedding(text), {"total_tokens": 1}
+
+    def embed(self, document, *args, **kwargs):
+        document.embedding = self.get_embedding(document.content)
+        document.usage = {"total_tokens": 1}
+        return document
+
+    async def async_embed(self, document, *args, **kwargs):
+        return self.embed(document)
+
+
+@pytest.fixture
+def filtered_search_db(tmp_path):
+    """Two rows whose ranking is fixed: the Thai row is nearest to the query."""
+    query_vector = [1.0, 0.0, 0.0]
+    embedder = _RankedEmbedder(
+        {
+            "Thai coconut soup": [1.0, 0.0, 0.0],
+            "Italian risotto": [0.0, 1.0, 0.0],
+        },
+        query_vector,
+    )
+    db = LanceDb(uri=str(tmp_path / "filtered_lancedb"), table_name=TEST_TABLE, embedder=embedder)
+    db.create()
+    db.insert(
+        documents=[
+            Document(content="Thai coconut soup", meta_data={"cuisine": "Thai"}, name="thai"),
+            Document(content="Italian risotto", meta_data={"cuisine": "Italian"}, name="italian"),
+        ],
+        content_hash="filtered_search",
+    )
+    yield db
+    try:
+        db.drop()
+    except Exception:
+        pass
+
+
+def test_search_with_filters_returns_matches_ranked_below_the_limit(filtered_search_db):
+    """A metadata filter must not truncate: a match can rank below the top-k cut."""
+    results = filtered_search_db.search("Thai coconut soup", limit=1, filters={"cuisine": "Italian"})
+
+    assert [doc.content for doc in results] == ["Italian risotto"]
+
+
+def test_search_with_filters_keeps_the_limit(filtered_search_db):
+    """Over-fetching for a filter still returns at most ``limit`` documents."""
+    db = filtered_search_db
+    db.insert(
+        documents=[
+            Document(content="Italian pasta", meta_data={"cuisine": "Italian"}, name="pasta"),
+            Document(content="Italian pizza", meta_data={"cuisine": "Italian"}, name="pizza"),
+        ],
+        content_hash="filtered_search_more",
+    )
+
+    results = db.search("Thai coconut soup", limit=2, filters={"cuisine": "Italian"})
+
+    assert len(results) == 2
+    assert {doc.meta_data["cuisine"] for doc in results} == {"Italian"}
+
+
+def test_search_without_filters_still_honours_the_limit(filtered_search_db):
+    """Unfiltered searches keep the fast path: only ``limit`` rows are ranked."""
+    results = filtered_search_db.search("Thai coconut soup", limit=1)
+
+    assert [doc.content for doc in results] == ["Thai coconut soup"]
