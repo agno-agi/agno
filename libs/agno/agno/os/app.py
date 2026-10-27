@@ -1195,43 +1195,50 @@ class AgentOS:
 
                 await _harness.acheck_tables(entry, create=self.auto_provision_dbs)
 
+    @staticmethod
+    def _nearest_postgres(db: Any, inherited_db: Any) -> Any:
+        """``db`` when it is Postgres, which a sandbox coordinates on, otherwise the enclosing one."""
+        from agno.db.postgres import AsyncPostgresDb, PostgresDb
+
+        return db if isinstance(db, (PostgresDb, AsyncPostgresDb)) else inherited_db
+
+    def _collect_sandboxed_team_members(self, team: Any, inherited_db: Any, found: List[Any], seen: set) -> None:
+        """Add (member, database) for a team's sandboxed harness members, at any depth, to ``found``.
+
+        A member list built by a factory is not walked. The database is the nearest Postgres one among
+        the member's enclosing teams, then ``inherited_db``.
+        """
+        if id(team) in seen or not isinstance(getattr(team, "members", None), list):
+            return
+        seen.add(id(team))
+        team_db = self._nearest_postgres(getattr(team, "db", None), inherited_db)
+        for member in team.members:
+            if isinstance(member, BaseExternalAgent) and member.sandbox is not None:
+                found.append((member, team_db))
+            elif isinstance(member, Team):
+                self._collect_sandboxed_team_members(member, team_db, found, seen)
+
     def _sandboxed_team_members(self) -> List[Any]:
         """(member, database) for sandboxed harness agents that are members of a served team, at any depth.
 
-        They run their turns through the same coordinator as a served sandboxed agent, so they
-        get the same startup checks; a member list built by a factory is not walked. The database
-        is the nearest Postgres one among the member's enclosing teams, since a sandbox coordinates on
-        Postgres, None when none of them has one.
+        They run their turns through the same coordinator as a served sandboxed agent, so they get the
+        same startup checks. The database is the nearest Postgres one among the member's enclosing
+        teams, None when none of them has one.
         """
-        from agno.db.postgres import AsyncPostgresDb, PostgresDb
-
         found: List[Any] = []
         seen: set = set()
-
-        def visit(team: Any, inherited_db: Any) -> None:
-            if id(team) in seen or not isinstance(getattr(team, "members", None), list):
-                return
-            seen.add(id(team))
-            own_db = getattr(team, "db", None)
-            team_db = own_db if isinstance(own_db, (PostgresDb, AsyncPostgresDb)) else inherited_db
-            for member in team.members:
-                if isinstance(member, BaseExternalAgent) and member.sandbox is not None:
-                    found.append((member, team_db))
-                elif isinstance(member, Team):
-                    visit(member, team_db)
-
         for team in self._teams or []:
-            visit(team, None)
+            self._collect_sandboxed_team_members(team, None, found, seen)
         return found
 
     def _sandboxed_workflow_agents(self) -> List[Any]:
         """(agent, database) for sandboxed harness agents inside a served workflow, at any depth.
 
-        That covers members of a team used as a step, which run their turns through the same coordinator
-        as a served sandboxed agent; steps built by a callable are not walked. The database is the
-        nearest Postgres one among the agent's enclosing teams and workflows, None when none has one.
+        That covers harness agents used as steps and members of a team used as a step, which run their
+        turns through the same coordinator as a served sandboxed agent; steps built by a callable are not
+        walked. The database is the nearest Postgres one among the agent's enclosing teams and
+        workflows, None when none of them has one.
         """
-        from agno.db.postgres import AsyncPostgresDb, PostgresDb
         from agno.workflow.condition import Condition
         from agno.workflow.loop import Loop
         from agno.workflow.parallel import Parallel
@@ -1243,28 +1250,18 @@ class AgentOS:
         found: List[Any] = []
         seen: set = set()
 
-        def postgres_or(db: Any, inherited_db: Any) -> Any:
-            return db if isinstance(db, (PostgresDb, AsyncPostgresDb)) else inherited_db
-
-        def visit_team(team: Any, inherited_db: Any) -> None:
-            if id(team) in seen or not isinstance(getattr(team, "members", None), list):
-                return
-            seen.add(id(team))
-            team_db = postgres_or(getattr(team, "db", None), inherited_db)
-            for member in team.members:
-                if isinstance(member, BaseExternalAgent) and member.sandbox is not None:
-                    found.append((member, team_db))
-                elif isinstance(member, Team):
-                    visit_team(member, team_db)
-
         def visit(item: Any, inherited_db: Any) -> None:
             if isinstance(item, BaseExternalAgent):
                 if item.sandbox is not None:
                     found.append((item, inherited_db))
             elif isinstance(item, Team):
-                visit_team(item, inherited_db)
+                self._collect_sandboxed_team_members(item, inherited_db, found, seen)
             elif isinstance(item, Workflow):
                 visit_workflow(item, inherited_db)
+            elif isinstance(item, list):
+                # Router choices, for one, may hold a list of steps, which the router runs as Steps.
+                for child in item:
+                    visit(child, inherited_db)
             elif isinstance(item, (Step, Steps, Loop, Parallel, Condition, Router)):
                 for attr in ("agent", "team", "workflow"):
                     if getattr(item, attr, None) is not None:
@@ -1272,16 +1269,14 @@ class AgentOS:
                 for attr in ("steps", "else_steps", "choices"):
                     children = getattr(item, attr, None)
                     if isinstance(children, list):
-                        for child in children:
-                            visit(child, inherited_db)
+                        visit(children, inherited_db)
 
         def visit_workflow(workflow: Any, inherited_db: Any) -> None:
             if id(workflow) in seen or not isinstance(getattr(workflow, "steps", None), list):
                 return
             seen.add(id(workflow))
-            workflow_db = postgres_or(getattr(workflow, "db", None), inherited_db)
-            for step in workflow.steps:
-                visit(step, workflow_db)
+            workflow_db = self._nearest_postgres(getattr(workflow, "db", None), inherited_db)
+            visit(workflow.steps, workflow_db)
 
         for workflow in self._workflows or []:
             visit_workflow(workflow, None)
