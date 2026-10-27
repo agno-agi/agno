@@ -55,6 +55,7 @@ from agno.run.base import RunStatus
 from agno.session.agent import AgentSession
 from agno.utils.events import error_type_of
 from agno.utils.log import log_exception, log_warning
+from agno.utils.serialize import json_serializer
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
 
 if TYPE_CHECKING:
@@ -747,36 +748,161 @@ class BaseExternalAgent:
     # ---------------------------------------------------------------------------
 
     def _create_session(
-        self, session_id: str, user_id: Optional[str] = None, team_id: Optional[str] = None
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
     ) -> AgentSession:
-        """Create a new AgentSession. ``team_id`` is set when this agent runs as that team's member."""
+        """Create a new AgentSession. ``team_id`` or ``workflow_id`` is set when this agent runs as
+        that team's member or that workflow's step."""
         return AgentSession(
             session_id=session_id,
             agent_id=self.get_id(),
             team_id=team_id,
+            workflow_id=workflow_id,
             user_id=user_id,
             session_data={},
             agent_data={"agent_id": self.id, "agent_name": self.name, "sdk": self.sdk},
-            # A team member's own session says which team it belongs to; agent session rows do not
-            # store team_id, so the link is kept in the metadata.
-            metadata={"team_id": team_id} if team_id is not None else {},
+            # A member's or step's own session says which team or workflow it belongs to; agent
+            # session rows do not store those ids, so the link is kept in the metadata.
+            metadata=self._parent_metadata(team_id, workflow_id),
             runs=[],
             created_at=int(time()),
         )
 
-    def _state_session_id(self, session_id: str, team_id: Optional[str] = None) -> str:
+    @staticmethod
+    def _pop_run_parent(kwargs: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+        """The (team id, workflow id) a team or workflow passed for this call, removed from ``kwargs``.
+
+        A team passes ``_team_id`` for a member call and a workflow ``_workflow_id`` for a step; neither is
+        forwarded to the adapter."""
+        return kwargs.pop("_team_id", None), kwargs.pop("_workflow_id", None)
+
+    @staticmethod
+    def _parent_id(team_id: Optional[str], workflow_id: Optional[str]) -> Optional[str]:
+        """The id of the team or workflow this call runs for, or None for a standalone run."""
+        return team_id if team_id is not None else workflow_id
+
+    @staticmethod
+    def _parent_metadata(team_id: Optional[str], workflow_id: Optional[str]) -> Dict[str, str]:
+        """Session metadata that links this agent's own session back to its team or workflow."""
+        return {key: value for key, value in (("team_id", team_id), ("workflow_id", workflow_id)) if value is not None}
+
+    def _state_session_id(self, session_id: str, parent_id: Optional[str] = None) -> str:
         """The session this agent keeps its own state in for a run on ``session_id``.
 
-        A team runs every member under the team's session id, and that row is the team's. As a
-        member, this agent keeps its native conversation (the Claude session, the Codex thread)
-        in a session of its own, one per team session and member, so two harness members of one
-        team never share a conversation and the team's session row is never overwritten. The
-        member's runs are stored by the team, in the team session. A team passes ``team_id`` on each
-        member call, so the same agent instance still saves its standalone runs normally.
+        A team runs every member, and a workflow every step, under its own session id, and that
+        row is the team's or the workflow's. Run for one of them, this agent keeps its native
+        conversation (the Claude session, the Codex thread) in a session of its own, one per parent
+        session and agent, so two harness agents of one team or workflow never share a conversation
+        and the parent's session row is never overwritten. The parent stores the agent's runs in its
+        own session. ``parent_id`` is the team or workflow id passed on each call, so the same agent
+        instance still saves its standalone runs normally.
         """
-        if team_id is None:
+        if parent_id is None:
             return session_id
         return f"{session_id}:{self.get_id()}"
+
+    def _sandboxed_member_kwargs(
+        self,
+        kwargs: Dict[str, Any],
+        team_session_id: str,
+        member_run_id: str,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """A sandboxed team member's or workflow step's run options: the ones a sandbox takes, on the
+        agent's own session and run. Pass ``team_id`` for a member or ``workflow_id`` for a step.
+
+        The member's sandbox session, which holds its computer binding, checkpoints and native
+        conversation, is the same per-member session a member without a sandbox keeps its
+        conversation in, so the team's session is never bound to one member's computer. The
+        sandbox also records the turn as a run of that session, under its own id: a run never
+        changes sessions once stored, and the team stores the member's result in the team
+        session under the id it assigned, so the two records cannot share one row.
+        """
+        from agno.sandbox._harness import SANDBOX_RUN_OPTIONS
+
+        # A team or workflow hands its agents native run options; the sandbox refuses the ones it does not take.
+        forwarded = {key: value for key, value in kwargs.items() if key in SANDBOX_RUN_OPTIONS}
+        if forwarded.get("metadata") is not None:
+            # The sandbox takes metadata as JSON. Values such as datetimes become text, as Agno stores them
+            # elsewhere; a value JSON cannot hold fails the member's run instead of the team's tool call.
+            forwarded["metadata"] = json.loads(json.dumps(forwarded["metadata"], default=json_serializer))
+        forwarded["session_id"] = self._state_session_id(team_session_id, self._parent_id(team_id, workflow_id))
+        # The sandbox creates this session; this links it back to its team or workflow, as for other agents.
+        forwarded["_session_metadata"] = self._parent_metadata(team_id, workflow_id)
+        forwarded["run_id"] = f"{member_run_id}.sandbox"
+        return forwarded
+
+    def _as_team_member_output(self, item: Any, team_session_id: str, member_run_id: str, sandbox_run_id: str) -> Any:
+        """Report a sandboxed member's run and events under the team's session and the run id it assigned.
+
+        The run keeps a pointer to the sandbox's own run in metadata.sandbox.run_id.
+        """
+        # Runs and run events carry session_id and run_id; anything else in a stream is passed through untouched.
+        if isinstance(item, (str, bytes)):
+            return item
+        # The sandbox keeps its own objects after yielding them (it records its events for its own run),
+        # so the team gets a copy under the team's ids and the sandbox's objects keep the sandbox's.
+        item = copy(item)
+        if getattr(item, "session_id", None) is not None:
+            item.session_id = team_session_id
+        if getattr(item, "run_id", None) == sandbox_run_id:
+            item.run_id = member_run_id
+        if isinstance(item, RunOutput):
+            sandbox = dict((item.metadata or {}).get("sandbox") or {})
+            sandbox["run_id"] = sandbox_run_id
+            item.metadata = {**(item.metadata or {}), "sandbox": sandbox}
+        return item
+
+    @staticmethod
+    async def _araise_if_member_cancelled(member_run_id: str) -> None:
+        """Raise when the team cancelled this member's run before it was linked to the sandbox's run.
+
+        Cancelling the member run cascades only to runs already linked to it, so a cancel that arrived
+        before the link would otherwise never reach the sandbox."""
+        from agno.run.cancel import ais_cancelled
+
+        if await ais_cancelled(member_run_id):
+            raise RunCancelledException("Run cancelled")
+
+    def _sandboxed_member_failure(
+        self, error: Exception, team_session_id: str, member_run_id: str, input: Any, kwargs: Dict[str, Any]
+    ) -> RunOutput:
+        """The member's run, recorded as cancelled or failed, for a sandboxed turn that did not complete.
+
+        The team stores it like any member run, and the leader reads its content instead of an exception."""
+        cancelled = isinstance(error, RunCancelledException)
+        if not cancelled:
+            log_warning(f"Sandboxed agent '{self.get_id()}' failed as a team member or workflow step: {error}")
+        run = self._build_run_output(
+            member_run_id,
+            team_session_id,
+            kwargs.get("user_id"),
+            input,
+            "Run cancelled" if cancelled else str(error),
+            RunStatus.cancelled if cancelled else RunStatus.error,
+            media=kwargs.get("media"),
+        )
+        if not cancelled:
+            run.metadata = self._failure_metadata(error)
+        return run
+
+    def _terminal_event_for(self, run: RunOutput) -> RunOutputEvent:
+        """The closing stream event for a member run that was cancelled or failed."""
+        if run.status == RunStatus.cancelled:
+            return RunCancelledEvent(
+                run_id=run.run_id, session_id=run.session_id, agent_id=self.get_id(), reason="Run cancelled"
+            )
+        return RunErrorEvent(
+            run_id=run.run_id,
+            session_id=run.session_id,
+            agent_id=self.get_id(),
+            content=str(run.content),
+            error_type=(run.metadata or {}).get("error_type"),
+        )
 
     async def _apersist_member_state(self, session: AgentSession) -> None:
         """Save a team member's own session, which holds its native conversation ids, without runs."""
@@ -788,7 +914,11 @@ class BaseExternalAgent:
                 raise
 
     def read_or_create_session(
-        self, session_id: str, user_id: Optional[str] = None, team_id: Optional[str] = None
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
     ) -> AgentSession:
         """Read a session from the DB, or create a new one."""
         session = None
@@ -799,12 +929,16 @@ class BaseExternalAgent:
             session = AgentSession.from_dict(session)
 
         if session is None or not isinstance(session, AgentSession):
-            session = self._create_session(session_id, user_id, team_id)
+            session = self._create_session(session_id, user_id, team_id, workflow_id)
 
         return session
 
     async def aread_or_create_session(
-        self, session_id: str, user_id: Optional[str] = None, team_id: Optional[str] = None
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
     ) -> AgentSession:
         """Async read a session from the DB, or create a new one."""
         session = None
@@ -818,7 +952,7 @@ class BaseExternalAgent:
             session = AgentSession.from_dict(session)
 
         if session is None or not isinstance(session, AgentSession):
-            session = self._create_session(session_id, user_id, team_id)
+            session = self._create_session(session_id, user_id, team_id, workflow_id)
 
         return session
 
@@ -1833,10 +1967,28 @@ class BaseExternalAgent:
     # ---------------------------------------------------------------------------
 
     async def _arun_non_stream(self, input: Any, **kwargs: Any) -> RunOutput:
-        # Set by a team for a member call; never forwarded to the adapter.
-        team_id: Optional[str] = kwargs.pop("_team_id", None)
+        team_id, workflow_id = self._pop_run_parent(kwargs)
+        parent_id = self._parent_id(team_id, workflow_id)
         if self.sandbox is not None:
-            return await _sandbox_harness().arun(self, input, **kwargs)
+            if parent_id is None:
+                return await _sandbox_harness().arun(self, input, **kwargs)
+            from agno.run.cancel import acleanup_member_runs, aregister_member_run
+
+            team_session_id = kwargs.get("session_id") or str(uuid4())
+            member_run_id = kwargs.get("run_id") or str(uuid4())
+            text = self._input_text(input)
+            try:
+                forwarded = self._sandboxed_member_kwargs(kwargs, team_session_id, member_run_id, team_id, workflow_id)
+                # Cancelling the member run the team registered reaches the sandbox's run through this link.
+                await aregister_member_run(member_run_id, forwarded["run_id"])
+                try:
+                    await self._araise_if_member_cancelled(member_run_id)
+                    run = await _sandbox_harness().arun(self, text, **forwarded)
+                finally:
+                    await acleanup_member_runs(member_run_id)
+            except Exception as error:
+                return self._sandboxed_member_failure(error, team_session_id, member_run_id, text, kwargs)
+            return self._as_team_member_output(run, team_session_id, member_run_id, forwarded["run_id"])
         run_id = kwargs.pop("run_id", None) or str(uuid4())
         session_id = kwargs.get("session_id") or str(uuid4())
         kwargs["session_id"] = session_id
@@ -1848,8 +2000,10 @@ class BaseExternalAgent:
         record_input = input if continuation is None else continuation.record_input
         output_schema = self._resolve_output_schema(kwargs)
         run_state: Dict[str, Any] = {}
-        state_session_id = self._state_session_id(session_id, team_id)
-        session = await self.aread_or_create_session(state_session_id, user_id, team_id) if self.db else None
+        state_session_id = self._state_session_id(session_id, parent_id)
+        session = (
+            await self.aread_or_create_session(state_session_id, user_id, team_id, workflow_id) if self.db else None
+        )
         self._claim_session(session, state_session_id, run_id)
         try:
             history = (
@@ -1929,7 +2083,7 @@ class BaseExternalAgent:
             if attempts_made > 1:
                 run_output.metadata = {**(run_output.metadata or {}), "attempts": attempts_made}
             self._finish_run_output(run_output, run_state, continuation)
-            if session is not None and team_id is not None:
+            if session is not None and parent_id is not None:
                 await self._apersist_member_state(session)
             elif session is not None:
                 await self._apersist_run_in_session(session, run_output)
@@ -1938,15 +2092,46 @@ class BaseExternalAgent:
             self._release_session(state_session_id, run_id)
 
     async def _arun_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
-        # Set by a team for a member call; never forwarded to the adapter.
-        team_id: Optional[str] = kwargs.pop("_team_id", None)
+        team_id, workflow_id = self._pop_run_parent(kwargs)
+        parent_id = self._parent_id(team_id, workflow_id)
         if self.sandbox is not None:
-            events = _sandbox_harness().astream(self, input, **kwargs)
+            if parent_id is None:
+                events = _sandbox_harness().astream(self, input, **kwargs)
+                try:
+                    async for item in events:
+                        yield item
+                finally:
+                    await events.aclose()
+                return
+            from agno.run.cancel import acleanup_member_runs, aregister_member_run
+
+            team_session_id = kwargs.get("session_id") or str(uuid4())
+            member_run_id = kwargs.get("run_id") or str(uuid4())
+            text = self._input_text(input)
+            failure: Optional[Exception] = None
             try:
-                async for item in events:
-                    yield item
-            finally:
-                await events.aclose()
+                forwarded = self._sandboxed_member_kwargs(kwargs, team_session_id, member_run_id, team_id, workflow_id)
+                await aregister_member_run(member_run_id, forwarded["run_id"])
+            except Exception as error:
+                failure = error
+            if failure is None:
+                try:
+                    await self._araise_if_member_cancelled(member_run_id)
+                    events = _sandbox_harness().astream(self, text, **forwarded)
+                    try:
+                        async for item in events:
+                            yield self._as_team_member_output(item, team_session_id, member_run_id, forwarded["run_id"])
+                    finally:
+                        await events.aclose()
+                except Exception as error:
+                    failure = error
+                finally:
+                    await acleanup_member_runs(member_run_id)
+            if failure is not None:
+                failed = self._sandboxed_member_failure(failure, team_session_id, member_run_id, text, kwargs)
+                yield self._terminal_event_for(failed)
+                if kwargs.get("yield_run_output", False):
+                    yield failed
             return
         run_id = kwargs.pop("run_id", None) or str(uuid4())
         session_id = kwargs.get("session_id") or str(uuid4())
@@ -1958,8 +2143,10 @@ class BaseExternalAgent:
         input = self._input_text(input)
         output_schema = self._resolve_output_schema(kwargs)
         run_state: Dict[str, Any] = {}
-        state_session_id = self._state_session_id(session_id, team_id)
-        session = await self.aread_or_create_session(state_session_id, user_id, team_id) if self.db else None
+        state_session_id = self._state_session_id(session_id, parent_id)
+        session = (
+            await self.aread_or_create_session(state_session_id, user_id, team_id, workflow_id) if self.db else None
+        )
         self._claim_session(session, state_session_id, run_id)
         try:
             history = (
@@ -2080,7 +2267,7 @@ class BaseExternalAgent:
             keep(terminal)
             if stored_events is not None:
                 run.events = list(stored_events)
-            if session is not None and team_id is not None:
+            if session is not None and parent_id is not None:
                 await self._apersist_member_state(session)
             elif session is not None:
                 await self._apersist_run_in_session(session, run)
@@ -2088,7 +2275,7 @@ class BaseExternalAgent:
             if (
                 stored_events is not None
                 and session is not None
-                and team_id is None
+                and parent_id is None
                 and getattr(terminal, "event_index", None) is not None
             ):
                 # The consumer stamped the terminal event with its stream index while we were suspended

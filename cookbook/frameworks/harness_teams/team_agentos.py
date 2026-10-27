@@ -84,11 +84,16 @@ team = Team(
 # ---------------------------------------------------------------------------
 # Create AgentOS
 # ---------------------------------------------------------------------------
-agent_os = AgentOS(id="harness-teams", agents=[engineer, reviewer, writer], teams=[team], telemetry=False)
+agent_os = AgentOS(
+    id="harness-teams",
+    agents=[engineer, reviewer, writer],
+    teams=[team],
+    telemetry=False,
+)
 app = agent_os.get_app()
 
 # ---------------------------------------------------------------------------
-# Serve
+# Run AgentOS
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     agent_os.serve(app=app, reload=False)

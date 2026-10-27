@@ -521,10 +521,9 @@ def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: O
     elif isinstance(member, BaseExternalAgent):
         # A harness agent (Claude Code, Codex) runs its own model and tools. Nothing is set on it:
         # the same instance can also run on its own, so the team passes its id on each member call.
-        if member.sandbox is not None:
-            raise ValueError(
-                f"{type(member).__name__} '{member.get_id()}' has a sandbox; sandboxed agents cannot be team members yet"
-            )
+        # That makes the member keep its own state, and with a sandbox its own computer binding, in a
+        # session per team session and member.
+        pass
 
     elif isinstance(member, Team):
         member.parent_team_id = team.id

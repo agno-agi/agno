@@ -42,12 +42,32 @@ Re-run with the agents also served directly (`AgentOS(agents=[engineer, reviewer
 
 ---
 
-### Unit tests
+### sandboxed_member.py
+
+**Status:** PASS (claude-sonnet-4-6 member in `agno-sandbox:local`, gpt-5.6-luna leader, Postgres)
+
+**Description:** A team whose engineer is Claude Code in a `DockerSandbox`. Turn 1 asks for `fizzbuzz.py` for 1 to 15 to be written and run; turn 2, on the same session, asks the engineer to change it to go up to 20 and run it again.
+
+**Result:** Turn 1: Claude wrote and ran `fizzbuzz.py` in its container; last line `FizzBuzz`. Turn 2: the leader delegated again and Claude edited the existing `/workspace/fizzbuzz.py` (replacing `range(1, 16)`), ran it and reported `Buzz`. The file and the conversation carried over on the member's own computer.
+
+---
+
+### sandboxed_team_agentos.py
 
 **Status:** PASS
 
-**Description:** `libs/agno/tests/unit/team/test_external_agent_members.py`: a scripted leader delegating to Claude members on a fake SDK and to a Codex member on a fake SDK. Covers the member run landing in the team session with its parent run id, the team session row staying the team's, the member's own state session with its native id and no runs, resume on a later team run, two Claude members keeping separate conversations, a streamed team run carrying member events, Codex thread continuity, message input becoming text, a sandboxed member being refused, a standalone agent keeping its session and runs, and AgentOS listing a harness member on the team.
+**Description:** The sandboxed team served through AgentOS with `QueueConfig(durable=True, db=db)` on Postgres and no member database of its own. Submitted a background team run with `POST /teams/sandboxed-team/runs`, polled it, and read `GET /teams/sandboxed-team`.
 
-**Result:** 9 passed. The agents, team and sandbox unit suites (1971 tests) and the AgentOS team tests (60) pass with the change.
+**Result:** The queued run completed; its member response was `sandboxed-engineer` COMPLETED, having written and run `fizzbuzz.py` (last line `FizzBuzz`). The team response listed `sandboxed-engineer` with `sandboxed: true`. AgentOS gave the member the OS database at startup.
+
+---
+
+### Unit and integration tests
+
+**Status:** PASS
+
+**Description:** `libs/agno/tests/unit/team/test_external_agent_members.py` (14): a scripted leader delegating to Claude members on a fake SDK and to a Codex member on a fake SDK; covers member runs in the team session, the member's own state session, resume, two members, streaming, Codex threads, message input, AgentOS listing, native-only settings, the member-run storage paths, and the sandboxed member's forwarded options and reporting. `libs/agno/tests/integration/sandbox/test_team_members.py` (4), on Docker and Postgres with the fixture runtime: two team turns on one sandboxed member whose second checkpoint holds both turns, with the team's records in the team session and the sandbox's in the member session; two sandboxed members each on their own computer; a streamed team run carrying the member's events on the team session; cancelling the team run mid-turn ending the sandbox's own run cancelled and the next turn running. `test_sandbox_param.py`: AgentOS applies the sandbox startup checks to team members at any depth.
+
+**Result:** All pass. The agents, team and sandbox unit suites: 1976 passed. AgentOS team and sandbox unit tests: 239 passed. Sandbox integration (`test_team_members.py`, `test_agentos.py`, `test_coordinator.py`): 148 passed, 11 skipped (opt-in cases).
 
 ---
