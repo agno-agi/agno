@@ -8,6 +8,7 @@ import pytest_asyncio
 from agno.company.execution import _call, _project_run
 from agno.job_queue import QueueConfig
 from agno.sandbox import Repository
+from agno.sandbox.checkpoint import FileCheckpointStore
 from agno.sandbox.docker import DockerSandbox
 from agno.sandbox.fixture import FixtureAgent
 from tests.integration.db.test_company_execution_parity import accepted, system  # noqa: F401, F811
@@ -17,7 +18,7 @@ PIN = {"url": URL, "branch": "master", "commit": "a" * 40}
 
 
 @pytest_asyncio.fixture
-async def sandbox_system(system, monkeypatch):  # noqa: F811
+async def sandbox_system(system, monkeypatch, tmp_path):  # noqa: F811
     import agno.os.event_streams as streams
     import agno.run.cancel as cancel
 
@@ -30,7 +31,9 @@ async def sandbox_system(system, monkeypatch):  # noqa: F811
     agent = FixtureAgent(
         id="engineer",
         db=worker.config.db,
-        sandbox=DockerSandbox("unused", env={"AGNO_SANDBOX_TEST_RUNTIME": "1"}),
+        sandbox=DockerSandbox(
+            "unused", env={"AGNO_SANDBOX_TEST_RUNTIME": "1"}, checkpoints=FileCheckpointStore(tmp_path / "checkpoints")
+        ),
         repository=Repository(URL, "master"),
     )
     os.agents.append(agent)
@@ -112,7 +115,9 @@ async def test_live_job_blocks_after_task_mutation(sandbox_system, mutation):
     assert (await client.post(second_path)).status_code == 409
     assert (
         await client.post(path + "/transitions", json={"target": "backlog", "reason": "Edit work"})
-    ).status_code == 200
+    ).status_code == 409
+    # The route refuses leaving In progress mid-run; a direct manager or db caller can still move the Task.
+    await _call(db, "transition_task", first["id"], "backlog", "Edit work")
     if mutation in {"reassigned", "new_reservation"}:
         ready = await client.post(
             path + "/transitions",

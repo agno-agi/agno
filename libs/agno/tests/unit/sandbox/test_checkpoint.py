@@ -19,6 +19,7 @@ from agno.sandbox import SandboxError
 from agno.sandbox import checkpoint as checkpoint_module
 from agno.sandbox.checkpoint import (
     CheckpointArchive,
+    CheckpointContentError,
     CheckpointLimits,
     CheckpointObjectNotFound,
     CheckpointRef,
@@ -236,7 +237,7 @@ def test_restore_applies_the_recorded_timestamps(tmp_path, roots):
 
 
 def test_failed_capture_removes_partial_archive(tmp_path, roots):
-    (roots["workspace"] / "outside").symlink_to("/etc/passwd")
+    (roots["workspace"] / "outside").symlink_to("../../etc/passwd")
     with pytest.raises(SandboxError, match="symlink"):
         capture(tmp_path, roots)
     assert not (tmp_path / "checkpoint.tar").exists()
@@ -329,7 +330,7 @@ def malicious_archive(tmp_path, members, manifest=None):
         [("/workspace/absolute", tarfile.REGTYPE, "")],
         [("workspace/../escape", tarfile.REGTYPE, "")],
         [("workspace/escape", tarfile.SYMTYPE, "../../escape")],
-        [("workspace/escape", tarfile.SYMTYPE, "/etc/passwd")],
+        [("workspace/escape", tarfile.SYMTYPE, "/tmp"), ("workspace/escape/child", tarfile.REGTYPE, "")],
         [("workspace/escape", tarfile.SYMTYPE, "../native/transcript")],
         [("workspace/hardlink", tarfile.LNKTYPE, "manifest.json")],
         [("workspace/fifo", tarfile.FIFOTYPE, "")],
@@ -534,6 +535,94 @@ def test_dangling_links_survive_capture_and_restore(tmp_path, roots):
     CheckpointArchive().restore(source, destination)
     assert os.readlink(destination / "workspace/dangling") == "never-written.txt"
     assert not (destination / "workspace/dangling").exists()
+
+
+def virtualenv(workspace):
+    """The interpreter links ``python -m venv`` makes on Linux: absolute, with relative aliases."""
+    bin_dir = workspace / ".venv/bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "python3").symlink_to("/usr/local/bin/python3")
+    (bin_dir / "python").symlink_to("python3")
+    (workspace / ".venv/lib").mkdir()
+    (workspace / ".venv/lib64").symlink_to("lib")
+
+
+def test_virtualenv_interpreter_links_are_captured_verbatim(tmp_path, roots):
+    virtualenv(roots["workspace"])
+    source = capture(tmp_path, roots)
+    with tarfile.open(source) as archive:
+        links = {member.name: member.linkname for member in archive if member.issym()}
+    assert links["workspace/.venv/bin/python3"] == "/usr/local/bin/python3"
+    assert links["workspace/.venv/bin/python"] == "python3"
+    assert CheckpointArchive().validate(source)["run_id"] == "r"
+
+
+def test_validate_accepts_relative_links_that_lead_to_an_absolute_one(tmp_path):
+    source = malicious_archive(
+        tmp_path,
+        [
+            ("workspace/bin", tarfile.DIRTYPE, ""),
+            ("workspace/bin/python3", tarfile.SYMTYPE, "/usr/local/bin/python3"),
+            ("workspace/bin/python", tarfile.SYMTYPE, "python3"),
+            ("workspace/bin/python3.12", tarfile.SYMTYPE, "python"),
+        ],
+    )
+    assert CheckpointArchive().validate(source) == {}
+
+
+def test_restore_inside_the_computer_recreates_absolute_links(tmp_path, roots):
+    virtualenv(roots["workspace"])
+    destination = tmp_path / "restored"
+    CheckpointArchive().restore(capture(tmp_path, roots), destination, absolute_links=True)
+    assert os.readlink(destination / "workspace/.venv/bin/python3") == "/usr/local/bin/python3"
+    assert os.readlink(destination / "workspace/.venv/bin/python") == "python3"
+    assert os.readlink(destination / "workspace/.venv/lib64") == "lib"
+
+
+def test_host_restore_never_materializes_a_link_to_an_absolute_path(tmp_path, roots):
+    secret = tmp_path / "host-secret"
+    secret.write_text("host credential")
+    (roots["workspace"] / "report.txt").symlink_to(secret)
+    (roots["workspace"] / "alias.txt").symlink_to("report.txt")
+    virtualenv(roots["workspace"])
+    destination = tmp_path / "restored"
+    CheckpointArchive().restore(capture(tmp_path, roots), destination)
+    assert not os.path.lexists(destination / "workspace/report.txt")
+    assert not os.path.lexists(destination / "workspace/.venv/bin/python3")
+    # A relative alias of one stays a link inside the root that leads nowhere.
+    assert os.readlink(destination / "workspace/alias.txt") == "report.txt"
+    assert not (destination / "workspace/alias.txt").exists()
+    assert (destination / "workspace/tracked.py").read_text() == "print('hello')"
+
+
+def test_capture_never_follows_a_link_to_an_absolute_path(tmp_path, roots):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret").write_text("host credential")
+    (roots["workspace"] / "escape").symlink_to(outside)
+    source = capture(tmp_path, roots, compress=False)
+    with tarfile.open(source) as archive:
+        names = archive.getnames()
+    assert "workspace/escape" in names
+    assert not any(name.startswith("workspace/escape/") for name in names)
+    assert b"host credential" not in source.read_bytes()
+
+
+@pytest.mark.parametrize(
+    ("prepare", "limits"),
+    [
+        (lambda roots: os.mkfifo(roots["workspace"] / "pipe"), CheckpointLimits()),
+        (lambda roots: (roots["workspace"] / "up").symlink_to("../native/transcript.jsonl"), CheckpointLimits()),
+        (lambda roots: os.link(roots["native"] / "auth.json", roots["workspace"] / "copy"), CheckpointLimits()),
+        (lambda roots: None, CheckpointLimits(max_entries=3)),
+    ],
+    ids=["fifo", "escaping-link", "excluded-hardlink", "entry-limit"],
+)
+def test_files_that_cannot_be_checkpointed_raise_a_content_error(tmp_path, roots, prepare, limits):
+    prepare(roots)
+    with pytest.raises(CheckpointContentError):
+        capture(tmp_path, roots, limits=limits)
+    assert not (tmp_path / "checkpoint.tar").exists()
 
 
 def test_archive_cut_after_the_roots_is_rejected(tmp_path, roots):

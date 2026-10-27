@@ -58,6 +58,165 @@ def test_routine_scheduler_wrappers(system):
     assert len(client.get("/company/routines").json()["data"]) == 1
 
 
+def test_routine_archive_restore_and_delete(system):
+    client, _, db = system
+    product = client.post("/company/products", json={"name": "Docs"}).json()
+    body = dict(
+        product_id=product["id"], name="review", executor_type="agent", executor_id="reader", instructions="Review"
+    )
+    routine_id = client.post("/company/routines", json=body).json()["id"]
+    path = "/company/routines/" + routine_id
+    archived = client.post(path + "/archive")
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["deleted_at"] is not None and archived.json()["enabled"] is False
+    links = lambda: client.get("/company/products/" + product["id"]).json()["metadata"].get("routine_ids", [])  # noqa: E731
+    assert routine_id not in links()
+    assert client.get(path).status_code == 404
+    assert client.post(path + "/archive").status_code == 404
+    assert client.get("/company/routines").json()["meta"]["total_count"] == 0
+    assert client.get("/company/routines", params={"include_deleted": True}).json()["meta"]["total_count"] == 1
+    restored = client.post(path + "/restore")
+    assert restored.status_code == 200, restored.text
+    # An on-demand Routine comes back enabled; it has no schedule to pause.
+    assert restored.json()["deleted_at"] is None and restored.json()["enabled"] is True
+    assert routine_id in links()
+    assert client.post(path + "/restore").json()["detail"] == "Routine is not archived"
+    assert client.delete(path).status_code == 204
+    assert client.get(path, params={"include_deleted": True}).status_code == 404
+    assert routine_id not in client.get("/company/products/" + product["id"]).json()["metadata"].get("routine_ids", [])
+
+
+def test_routine_delete_requires_admin(tmp_path):
+    import jwt
+
+    from agno.os.config import AuthorizationConfig
+
+    secret = "company-routine-delete-secret"
+    db = SqliteDb(db_file=str(tmp_path / "routine-delete.db"))
+    os = AgentOS(
+        id="routine-delete",
+        db=db,
+        agents=[Agent(id="reader", db=db, telemetry=False)],
+        company=CompanyConfig(),
+        telemetry=False,
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[secret], algorithm="HS256"),
+    )
+
+    def headers(scopes):
+        return {
+            "Authorization": "Bearer "
+            + jwt.encode({"sub": "owner", "aud": "routine-delete", "scopes": scopes}, secret, algorithm="HS256")
+        }
+
+    admin = headers(["agent_os:admin"])
+    deleter = headers(["routines:delete", "schedules:delete"])
+    with TestClient(os.get_app()) as client:
+        product = client.post("/company/products", json={"name": "Docs"}, headers=admin).json()
+        body = dict(
+            product_id=product["id"], name="review", executor_type="agent", executor_id="reader", instructions="Review"
+        )
+        path = "/company/routines/" + client.post("/company/routines", json=body, headers=admin).json()["id"]
+        denied = client.delete(path, headers=deleter)
+        assert denied.status_code == 403, denied.text
+        assert client.post(path + "/archive", headers=deleter).status_code == 200
+        assert client.delete(path, headers=deleter).status_code == 403
+        assert client.delete(path, headers=admin).status_code == 204
+        assert client.get(path, params={"include_deleted": True}, headers=admin).status_code == 404
+
+
+def test_routine_cancel_stops_the_running_run(system):
+    from agno.run.cancel import is_cancelled
+
+    client, _, db = system
+    product = client.post("/company/products", json={"name": "Docs"}).json()
+    body = dict(
+        product_id=product["id"], name="review", executor_type="agent", executor_id="reader", instructions="Review"
+    )
+    routine_id = client.post("/company/routines", json=body).json()["id"]
+    path = "/company/routines/" + routine_id
+    assert client.post(path + "/cancel").status_code == 409
+    db.create_schedule_run(
+        {
+            "id": "schedule-run",
+            "schedule_id": routine_id,
+            "attempt": 1,
+            "triggered_at": 1,
+            "status": "running",
+            "run_id": "routine-run",
+            "session_id": "routine-session",
+            "created_at": 1,
+        }
+    )
+    response = client.post(path + "/cancel")
+    assert response.status_code == 200, response.text
+    assert is_cancelled("routine-run")
+    # No executor is left to settle this row, so the cancel records it.
+    assert db.get_schedule_run("schedule-run")["status"] == "cancelled"
+    response = client.post(path + "/cancel")
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Routine has no running run"
+    assert client.post(path + "/archive").status_code == 200
+
+
+def test_product_metadata_edits_keep_linked_routines(system):
+    client, _, db = system
+    product = client.post("/company/products", json={"name": "Docs", "metadata": {"team": "a"}}).json()
+    routine = client.post(
+        "/company/routines",
+        json=dict(
+            product_id=product["id"], name="intake", template="intake", executor_type="agent", executor_id="reader"
+        ),
+    ).json()
+    path = "/company/products/" + product["id"]
+
+    for metadata in ({"team": "b"}, {"team": "b", "routine_ids": []}, None):
+        response = client.patch(path, json={"metadata": metadata})
+        assert response.status_code == 200, response.text
+        assert response.json()["metadata"]["routine_ids"] == [routine["id"]]
+    assert db.get_product(product["id"])["metadata"]["routine_ids"] == [routine["id"]]
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_schedule_tools_refuse_company_routines(system, use_async):
+    import asyncio
+
+    from agno.registry import Registry
+    from agno.tools.scheduler import SchedulerTools
+    from agno.tools.studio import StudioTools
+
+    client, _, db = system
+    product = client.post("/company/products", json={"name": "Docs"}).json()
+    routine = client.post(
+        "/company/routines",
+        json=dict(
+            product_id=product["id"], name="intake", template="intake", executor_type="agent", executor_id="reader"
+        ),
+    ).json()
+    scheduler = SchedulerTools(db=db)
+    studio = StudioTools(registry=Registry(), db=db, schedules=True)
+
+    def call(tool, name, *args, **kwargs):
+        if use_async:
+            return asyncio.run(getattr(tool, "a" + name)(*args, **kwargs))
+        return getattr(tool, name)(*args, **kwargs)
+
+    for name in ("disable_schedule", "delete_schedule", "enable_schedule"):
+        assert json.loads(call(scheduler, name, routine["id"]))["error_type"] == "company_routine", name
+    result = json.loads(call(studio, "update_schedule", routine["id"], message="Ignore the Product"))
+    assert result["error"]["code"] == "company_routine"
+
+    stored = db.get_schedule(routine["id"])
+    assert stored["enabled"] is True and stored["next_run_at"] == routine["next_run_at"]
+    assert stored["payload"] == routine["payload"]
+    assert db.get_product(product["id"])["metadata"]["routine_ids"] == [routine["id"]]
+
+    plain = db.create_schedule(
+        Schedule(id="plain", name="plain", cron_expr="0 * * * *", endpoint="/agents/reader/runs").to_dict()
+    )
+    assert json.loads(call(scheduler, "disable_schedule", plain["id"]))["status"] == "disabled"
+
+
 def test_routine_routes_hide_automation_and_report_missing_product(system):
     from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID
 
@@ -81,6 +240,8 @@ def test_routine_routes_hide_automation_and_report_missing_product(system):
             client.post(path + "/trigger"),
             client.post(path + "/pause"),
             client.post(path + "/resume"),
+            client.post(path + "/cancel"),
+            client.post(path + "/archive"),
             client.get(path + "/runs"),
         ]
         expected = 404 if identifier == COMPANY_AUTOMATION_SCHEDULE_ID else 409
@@ -187,6 +348,7 @@ def test_routine_cannot_accept(system):
     product = manager.create(name="Docs")
     project = manager.create_project(product_id=product["id"], name="Documentation")
     project = manager.create_project(product_id=product["id"], name="Release")
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     task = manager.create_task(product_id=product["id"], title="Draft", project_id=project["id"])
     with authorization_scope(lambda: _RoutineAuthorization(None)):
         with pytest.raises(PermissionError, match="cannot accept"):
@@ -215,7 +377,7 @@ def test_yaml_and_code_rehydrate_without_reset(tmp_path):
 
 
 @pytest.mark.parametrize("isolation", [False, True])
-def test_sources_and_routines_scopes_and_ownership(tmp_path, isolation):
+def test_sources_and_routines_need_scopes_not_ownership(tmp_path, isolation):
     from datetime import datetime, timedelta, timezone
 
     import jwt
@@ -267,9 +429,8 @@ def test_sources_and_routines_scopes_and_ownership(tmp_path, isolation):
     with TestClient(os.get_app()) as client:
         product = client.post("/company/products", headers=headers("alice"), json={"name": "Docs"}).json()
         body = {"product_id": product["id"], "type": "markdown", "reference": "/docs"}
-        assert client.post("/company/sources", headers=headers("bob"), json=body).status_code == (
-            403 if isolation else 201
-        )
+        # Any member with the Source scopes may configure a reader on any Product.
+        assert client.post("/company/sources", headers=headers("bob"), json=body).status_code == 201
         assert client.post("/company/sources", headers=headers("alice"), json=body).status_code == 201
         assert client.get("/company/sources", headers=headers("bob", ["sources:read"])).json()["data"]
         routine = {
@@ -331,15 +492,10 @@ def test_sources_and_routines_scopes_and_ownership(tmp_path, isolation):
                 ).status_code
                 == 403
             )
-        if isolation:
-            assert client.patch(path, headers=headers("bob"), json={"instructions": "Change"}).status_code == 403
-            assert client.post(path + "/pause", headers=headers("bob")).status_code == 403
-            assert client.post(path + "/resume", headers=headers("bob")).status_code == 403
-            assert client.post(path + "/trigger", headers=headers("bob")).status_code == 403
         assert "private-claim-alice" in json.dumps(db.get_schedule(routine_id)["payload"])
-        actor = "alice" if isolation else "bob"
+        # Another member may pause and resume; timing changes keep the saved execution grant.
         for action, enabled in (("pause", False), ("resume", True)):
-            response = client.post(path + "/" + action, headers=headers(actor))
+            response = client.post(path + "/" + action, headers=headers("bob"))
             assert response.status_code == 200, response.text
             assert response.json()["enabled"] is enabled
             assert response.json()["last_run"]["status"] == "success"
@@ -348,6 +504,268 @@ def test_sources_and_routines_scopes_and_ownership(tmp_path, isolation):
             assert "private-claim-alice" not in response.text
         assert "private-claim-alice" in json.dumps(db.get_schedule(routine_id)["payload"])
         assert client.post("/company/setup", headers=headers("bob"), json={"name": "Other setup"}).status_code == 409
+    db.close()
+
+
+@pytest.mark.parametrize("isolation", [False, True])
+@pytest.mark.parametrize("managed_roles", [False, True])
+@pytest.mark.parametrize("owner", [None, "alice"])
+def test_members_trigger_routines_as_themselves(tmp_path, monkeypatch, isolation, managed_roles, owner):
+    import asyncio
+
+    import jwt
+
+    from agno.company import Routine
+    from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
+    from agno.os.authz import Authorization
+    from agno.os.authz.native_engine import NativePolicyEngine
+    from agno.os.config import AuthorizationConfig
+    from agno.run.authorization import AUTHORIZATION_KEY
+
+    secret = "company-routine-member-trigger-secret"
+    scopes = ["routines:write", "schedules:write", "agents:reader:run"]
+    db = SqliteDb(db_file=str(tmp_path / "member-trigger.db"))
+    authorization = Authorization(db=db, verification_keys=[secret], algorithm="HS256", audience="members")
+    if managed_roles:
+        authorization.define_role("runner", scopes).assign("bob", "runner")
+
+    def headers(granted):
+        if managed_roles:
+            NativePolicyEngine(db=db).set_role_scopes("runner", [(scope, "allow") for scope in granted])
+        return {
+            "Authorization": "Bearer "
+            + jwt.encode(
+                {"sub": "bob", "aud": "members", "scopes": ["agent_os:admin"] if managed_roles else granted},
+                secret,
+                algorithm="HS256",
+            )
+        }
+
+    os = AgentOS(
+        id="members",
+        db=db,
+        agents=[Agent(id="reader", telemetry=False)],
+        company=CompanyConfig(
+            products=[
+                Product(
+                    id="shared",
+                    name="Shared",
+                    user_id=owner,
+                    routines=[
+                        Routine(name="review", executor_type="agent", executor_id="reader", instructions="Review")
+                    ],
+                )
+            ]
+        ),
+        telemetry=False,
+        user_isolation=isolation,
+        authorization=authorization if managed_roles else True,
+        authorization_config=None
+        if managed_roles
+        else AuthorizationConfig(verification_keys=[secret], algorithm="HS256"),
+    )
+    executor = ScheduleExecutor(base_url="http://test", internal_service_token="internal")
+    background = AsyncMock(return_value={"status": "success", "status_code": 200})
+    monkeypatch.setattr(executor, "_background_run", background)
+    monkeypatch.setattr(executor, "_get_client", AsyncMock())
+    with TestClient(os.get_app()) as client:
+        client.app.state.scheduler_executor = executor
+        routine_id = db.get_product("shared")["metadata"]["routine_ids"][0]
+        saved = db.get_schedule(routine_id)
+        # A stored creator grant must never become a manual caller's authority.
+        payload = {
+            **saved["payload"],
+            AUTHORIZATION_KEY: {"context": {"principal_id": owner, "scopes": ["agent_os:admin"]}},
+        }
+        db.update_schedule(routine_id, payload=payload)
+        saved = db.get_schedule(routine_id)
+        path = "/company/routines/" + routine_id
+        for missing in scopes:
+            denied = client.post(path + "/trigger", headers=headers([scope for scope in scopes if scope != missing]))
+            assert denied.status_code == 403, denied.text
+        background.assert_not_awaited()
+        assert db.get_schedule_runs(routine_id)[1] == 0
+
+        auth = headers(scopes)
+        response = client.post(path + "/trigger", headers=auth)
+        assert response.status_code == 200, response.text
+        assert response.json()["user_id"] == "bob"
+        assert db.get_schedule_run(response.json()["id"])["user_id"] == "bob"
+        forwarded_headers, form = background.call_args.args[2:4]
+        assert forwarded_headers[SCHEDULE_OWNER_HEADER] == "bob"
+        assert form["user_id"] == "bob"
+        snapshot = json.loads(forwarded_headers[AUTHORIZATION_HEADER])
+        assert snapshot["context"]["principal_id"] == "bob"
+        assert snapshot["company_routine"] is True
+        assert snapshot["company_routine_unscoped"] is False
+        assert db.get_schedule(routine_id) == saved
+        assert db.get_product("shared")["user_id"] == owner
+
+        # Generic schedule routes cannot be used to bypass the Company wrapper.
+        assert client.post("/schedules/" + routine_id + "/trigger", headers=auth).status_code in (403, 404, 409)
+        # On-demand Routines refuse Pause and Resume while enabled; a disabled one recovers through Resume.
+        assert client.post(path + "/pause", headers=auth).status_code == 409
+        assert client.post(path + "/resume", headers=auth).status_code == 409
+        assert db.get_schedule(routine_id) == saved
+        db.update_schedule(routine_id, enabled=False)
+        for missing in ("routines:write", "schedules:write"):
+            denied = client.post(path + "/resume", headers=headers([scope for scope in scopes if scope != missing]))
+            assert denied.status_code == 403, denied.text
+            assert db.get_schedule(routine_id)["enabled"] is False
+        # Members recover Routines they did not create; the saved grant is kept.
+        auth = headers(scopes)  # managed roles keep the last scopes passed to headers()
+        recovered = client.post(path + "/resume", headers=auth)
+        assert recovered.status_code == 200, recovered.text
+        assert recovered.json()["enabled"] is True and recovered.json()["next_run_at"] is None
+        assert db.get_schedule(routine_id)["payload"] == saved["payload"]
+        db.update_schedule(routine_id, enabled=False)
+        assert client.post(path + "/trigger", headers=auth).status_code == 409
+        assert background.await_count == 1
+        # Timer execution still uses the saved owner and grant, not the last manual caller.
+        scheduled = asyncio.run(executor.execute(saved, db, release_schedule=False))
+        assert scheduled["user_id"] == owner
+        forwarded_headers = background.call_args.args[2]
+        assert forwarded_headers.get(SCHEDULE_OWNER_HEADER) == owner
+        snapshot = json.loads(forwarded_headers[AUTHORIZATION_HEADER])
+        assert snapshot["context"]["principal_id"] == owner
+
+        # Automatic acceptance runs on the saved grant, so only its grantor may start it, in both isolation modes.
+        metadata = {**saved["payload"]["metadata"], "auto_accept": {"executor_type": "agent", "executor_id": "reader"}}
+
+        def grant(user_id):
+            payload = {**saved["payload"], "metadata": metadata, "_agno_company_acceptance": {"user_id": user_id}}
+            db.update_schedule(routine_id, enabled=True, payload=payload)
+
+        grant(owner)
+        dispatched = background.await_count
+        response = client.post(path + "/trigger", headers=auth)
+        assert response.status_code == 403, response.text
+        assert background.await_count == dispatched
+        if owner and not managed_roles:
+            token = jwt.encode({"sub": owner, "aud": "members", "scopes": scopes}, secret, algorithm="HS256")
+            response = client.post(path + "/trigger", headers={"Authorization": "Bearer " + token})
+            assert response.status_code == 200, response.text
+            assert response.json()["user_id"] == owner
+        if not managed_roles:
+            # An admin whose scopes are authoritative keeps the existing bypass.
+            token = jwt.encode(
+                {"sub": "root", "aud": "members", "scopes": ["agent_os:admin"]}, secret, algorithm="HS256"
+            )
+            response = client.post(path + "/trigger", headers={"Authorization": "Bearer " + token})
+            assert response.status_code == 200, response.text
+        # A member who re-authorized acceptance holds the grant, whoever created the Routine.
+        grant("bob")
+        response = client.post(path + "/trigger", headers=auth)
+        assert response.status_code == 200, response.text
+        assert response.json()["user_id"] == "bob"
+    db.close()
+
+
+def test_manual_trigger_without_auth_keeps_seeded_owner(tmp_path, monkeypatch):
+    from agno.company import Routine
+    from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
+
+    db = SqliteDb(db_file=str(tmp_path / "no-auth-trigger.db"))
+    os = AgentOS(
+        db=db,
+        agents=[Agent(id="reader", telemetry=False)],
+        company=CompanyConfig(
+            products=[
+                Product(
+                    id="seeded",
+                    name="Seeded",
+                    user_id="alice",
+                    routines=[
+                        Routine(name="review", executor_type="agent", executor_id="reader", instructions="Review")
+                    ],
+                )
+            ]
+        ),
+        telemetry=False,
+    )
+    executor = ScheduleExecutor(base_url="http://test", internal_service_token="internal")
+    background = AsyncMock(return_value={"status": "success", "status_code": 200})
+    monkeypatch.setattr(executor, "_background_run", background)
+    monkeypatch.setattr(executor, "_get_client", AsyncMock())
+    with TestClient(os.get_app()) as client:
+        client.app.state.scheduler_executor = executor
+        routine_id = db.get_product("seeded")["metadata"]["routine_ids"][0]
+        response = client.post("/company/routines/" + routine_id + "/trigger")
+        assert response.status_code == 200, response.text
+        # No caller identity: the run stays attributed to the saved owner, as a scheduled run would be.
+        assert response.json()["user_id"] == "alice"
+        forwarded_headers, form = background.call_args.args[2:4]
+        assert forwarded_headers[SCHEDULE_OWNER_HEADER] == "alice"
+        assert form["user_id"] == "alice"
+    db.close()
+
+
+def test_members_manage_products_and_routines_they_did_not_create_under_isolation(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    import jwt
+
+    from agno.os.config import AuthorizationConfig
+
+    secret = "member-routines-isolation-secret"
+    scopes = [
+        "products:read",
+        "products:write",
+        "products:delete",
+        "routines:read",
+        "routines:write",
+        "schedules:write",
+    ]
+
+    def headers(user):
+        claims = {
+            "sub": user,
+            "aud": "member-routines",
+            "scopes": [*scopes, "agents:reader:run"],
+            "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+        }
+        return {"Authorization": "Bearer " + jwt.encode(claims, secret, algorithm="HS256")}
+
+    db = SqliteDb(db_file=str(tmp_path / "members.db"))
+    os = AgentOS(
+        id="member-routines",
+        db=db,
+        agents=[Agent(id="reader", telemetry=False)],
+        company=CompanyConfig(products=[Product(id="declared", name="Declared")]),
+        telemetry=False,
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[secret], algorithm="HS256", user_isolation=True),
+    )
+    body = dict(name="intake", template="intake", executor_type="agent", executor_id="reader", cron_expr="0 * * * *")
+    with TestClient(os.get_app()) as client:
+        owned = client.post("/company/products", headers=headers("alice"), json={"name": "Alice's"}).json()
+        for product_id in ("declared", owned["id"]):
+            created = client.post("/company/routines", headers=headers("bob"), json={**body, "product_id": product_id})
+            assert created.status_code == 201, created.text
+            routine = created.json()
+            assert routine["user_id"] == "bob"
+            assert routine["id"] in db.get_product(product_id)["metadata"]["routine_ids"]
+            path = "/company/routines/" + routine["id"]
+            assert (
+                client.patch(path, headers=headers("bob"), json={"instructions": "Report changes"}).status_code == 200
+            )
+            assert client.post(path + "/pause", headers=headers("bob")).json()["enabled"] is False
+            # Other members manage it too, and the creator stays recorded.
+            resumed = client.post(path + "/resume", headers=headers("alice"))
+            assert resumed.json()["enabled"] is True
+            assert resumed.json()["user_id"] == "bob"
+            edited = client.patch(path, headers=headers("alice"), json={"instructions": "Alice's review"})
+            assert edited.status_code == 200, edited.text
+            assert "Alice's review" in edited.json()["payload"]["message"]
+            assert edited.json()["user_id"] == "bob"
+        # Product writes need the scope, not ownership; the creator stays recorded.
+        for product_id in ("declared", owned["id"]):
+            renamed = client.patch("/company/products/" + product_id, headers=headers("bob"), json={"name": "x"})
+            assert renamed.status_code == 200, renamed.text
+        assert db.get_product(owned["id"])["user_id"] == "alice"
+        client.delete("/company/products/" + owned["id"], headers=headers("bob")).raise_for_status()
+        archived = client.post("/company/routines", headers=headers("bob"), json={**body, "product_id": owned["id"]})
+        assert archived.status_code == 404
     db.close()
 
 
@@ -408,6 +826,7 @@ async def test_source_tools_only_require_source_and_proposal_scopes(tmp_path, as
     manager = CompanyManager(db)
     product = manager.create(name="Docs")
     project = manager.create_project(product_id=product["id"], name="Documentation")
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     path = tmp_path / "page.md"
     path.write_text("Document the released API")
     source = manager.create_source(product_id=product["id"], type="markdown", reference=str(path))
@@ -429,20 +848,20 @@ async def test_source_tools_only_require_source_and_proposal_scopes(tmp_path, as
     with authorization_scope(lambda: _RoutineAuthorization(authority, "routine")):
         if async_tools:
             evidence = [
-                json.loads(await tools.aread_company_source(source["id"], path=path.name, _agno_run_context=context))
+                json.loads(await tools.aread_product_source(source["id"], path=path.name, _agno_run_context=context))
             ]
             args["evidence_hashes"] = {item["link"]: item["content_hash"] for item in evidence}
-            task = json.loads(await tools.aintake_company_source(**args))
+            task = json.loads(await tools.aintake_product_source(**args))
         else:
-            evidence = [json.loads(tools.read_company_source(source["id"], path=path.name, _agno_run_context=context))]
+            evidence = [json.loads(tools.read_product_source(source["id"], path=path.name, _agno_run_context=context))]
             args["evidence_hashes"] = {item["link"]: item["content_hash"] for item in evidence}
-            task = json.loads(tools.intake_company_source(**args))
+            task = json.loads(tools.intake_product_source(**args))
     assert evidence[0]["content_hash"] == task["evidence"][0]["content_hash"]
     assert task["status"] == "backlog"
     authority.context.scopes = ["tasks:write"]
     with authorization_scope(lambda: authority):
         with pytest.raises(PermissionError):
-            tools.read_company_source(source["id"], _agno_run_context=context)
+            tools.read_product_source(source["id"], _agno_run_context=context)
     db.close()
 
 
@@ -503,7 +922,7 @@ def test_custom_company_tools_resolve_os_interfaces_and_human_origin(tmp_path, m
         telemetry=False,
     )
     assert toolkit.interfaces is os.interfaces
-    assert "summarize_company_product" not in os.product_manager.tools[0].functions
+    assert "summarize_company_product" not in os.company_manager.tools[0].functions
     delivery = AsyncMock()
     monkeypatch.setattr("agno.company.summary.adeliver_summary", delivery)
     with TestClient(os.get_app()) as client:
@@ -512,6 +931,8 @@ def test_custom_company_tools_resolve_os_interfaces_and_human_origin(tmp_path, m
             json={"name": "Summary", "metadata": {"summary": {"interface": "slack", "destination": "configured"}}},
         ).json()
         project = client.post("/company/projects", json={"product_id": product["id"], "name": "Release"}).json()
+        approval = {"target": "active", "reason": "Approved"}
+        client.post("/company/projects/" + project["id"] + "/transitions", json=approval)
         task = client.post(
             "/company/tasks", json={"product_id": product["id"], "project_id": project["id"], "title": "Human work"}
         ).json()
@@ -586,10 +1007,11 @@ async def test_routine_cannot_use_plain_task_proposals(tmp_path, async_tools, ro
     manager = CompanyManager(db)
     product = manager.create(name="Docs")
     project = manager.create_project(product_id=product["id"], name="Documentation")
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     tools = CompanyTools(db)
     context = RunContext(run_id="run", session_id="session", authorization=_RoutineAuthorization(None, routine_id))
     for _ in range(3):
-        with pytest.raises(PermissionError, match="intake_company_source"):
+        with pytest.raises(PermissionError, match="intake_product_source"):
             if async_tools:
                 await tools.apropose_company_task(
                     product["id"], "Repeated", project_id=project["id"], _agno_run_context=context
@@ -813,12 +1235,9 @@ def test_pending_routine_creation_cannot_be_recovered_by_another_creator(tmp_pat
         assert pending["user_id"] == "alice"
         monkeypatch.setattr(db, "add_product_routine", original)
         bob = client.post("/company/routines", json=body, headers=headers("bob"))
-        if isolation:
-            assert bob.status_code == 403
-        else:
-            # Scheduler names are per creator: Bob can create his own, but cannot recover Alice's.
-            assert bob.status_code == 201, bob.text
-            assert bob.json()["id"] != pending["id"]
+        # Scheduler names are per creator: Bob can create his own, but cannot recover Alice's.
+        assert bob.status_code == 201, bob.text
+        assert bob.json()["id"] != pending["id"] and bob.json()["user_id"] == "bob"
         assert db.get_schedule(pending["id"])["enabled"] is False
         alice = client.post("/company/routines", json=body, headers=headers("alice"))
         assert alice.status_code == 201, alice.text
@@ -982,7 +1401,7 @@ async def test_source_tool_requires_write_scope_and_hides_injected_identity(tmp_
         _default_authorization_provider(), AuthorizationContext(principal_id="owner", scopes=["sources:read"])
     )
     context = RunContext(run_id="run", session_id="session", authorization=authority)
-    fn = toolkit.aadd_company_source if async_tools else toolkit.add_company_source
+    fn = toolkit.aadd_product_source if async_tools else toolkit.add_product_source
     arguments = dict(
         product_id=product["id"],
         reference="https://example.test/page",
@@ -997,7 +1416,7 @@ async def test_source_tool_requires_write_scope_and_hides_injected_identity(tmp_
     authority.context.scopes = ["sources:write"]
     result = json.loads(await fn(**arguments) if async_tools else fn(**arguments))
     assert result["config"]["metadata"] == {"agent_id": "finder", "run_id": "run"}
-    function = (toolkit.get_async_functions() if async_tools else toolkit.functions)["add_company_source"]
+    function = (toolkit.get_async_functions() if async_tools else toolkit.functions)["add_product_source"]
     function.process_entrypoint()
     assert not any(key.startswith("_agno") for key in function.parameters["properties"])
     assert "type" not in function.parameters["properties"]
@@ -1163,7 +1582,7 @@ async def test_team_source_uses_injected_team_identity(tmp_path, async_tools):
     db = SqliteDb(db_file=str(tmp_path / "team.db"))
     product = CompanyManager(db).create(name="SDK")
     toolkit = CompanyTools(db)
-    fn = toolkit.aadd_company_source if async_tools else toolkit.add_company_source
+    fn = toolkit.aadd_product_source if async_tools else toolkit.add_product_source
     kwargs = dict(
         product_id=product["id"],
         reference="https://example.com",

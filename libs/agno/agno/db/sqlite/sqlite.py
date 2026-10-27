@@ -1810,6 +1810,7 @@ class SqliteDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
         include_runs: bool = True,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
@@ -1840,6 +1841,9 @@ class SqliteDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        from agno.db.session_filters import normalize_session_filter, session_filter_to_sqlalchemy
+
+        filter_expr = normalize_session_filter(filter_expr)
         validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="sessions")
@@ -1849,6 +1853,9 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
+
+                if filter_expr is not None:
+                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table))
 
                 # Filtering
                 if user_id is not None:
@@ -7008,7 +7015,7 @@ class SqliteDb(BaseDb):
             raise
 
     def update_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+        self, schedule_id: str, user_id: Optional[str] = None, *, preserve_updated_at: bool = False, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.scheduler import validate_schedule_update
 
@@ -7021,7 +7028,8 @@ class SqliteDb(BaseDb):
                 # A system-set disabled_reason describes why the row was off;
                 # turning it on retires the explanation.
                 kwargs.setdefault("disabled_reason", None)
-            kwargs["updated_at"] = int(time.time())
+            if not preserve_updated_at:
+                kwargs["updated_at"] = int(time.time())
             with self.Session() as sess, sess.begin():
                 stmt = table.update().where(table.c.id == schedule_id)
                 if user_id is not None:
@@ -7102,6 +7110,8 @@ class SqliteDb(BaseDb):
         The table is passed in because the caller may hold an open transaction
         on this scoped session; _get_table would try to begin a second one.
         """
+        from sqlalchemy import literal
+
         from agno.db.schemas.scheduler import build_run_endpoint
 
         endpoint = build_run_endpoint(target_type, target_id)
@@ -7126,7 +7136,15 @@ class SqliteDb(BaseDb):
                 ),
                 table.c.enabled.is_(True),
             )
-            .values(enabled=False, disabled_reason=reason, updated_at=int(time.time()))
+            # An archive cascade is not a user edit, so a Company routine keeps its last-edit time.
+            .values(
+                enabled=False,
+                disabled_reason=reason,
+                updated_at=case(
+                    (table.c.managed_by == "company", table.c.updated_at),
+                    else_=literal(int(time.time()), table.c.updated_at.type),
+                ),
+            )
         )
         return int(result.rowcount or 0)
 
@@ -7225,12 +7243,15 @@ class SqliteDb(BaseDb):
         *,
         worker_id: Optional[str] = None,
         locked_at: Optional[int] = None,
+        preserve_updated_at: bool = False,
     ) -> bool:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return False
-            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+            if not preserve_updated_at:
+                updates["updated_at"] = int(time.time())
             # A cron may be cleared while this claim is running. Never re-arm
             # an on-demand schedule using the executor's older schedule snapshot.
             updates["next_run_at"] = case(
@@ -8267,6 +8288,7 @@ class SqliteDb(BaseDb):
 
     def update_product(self, product_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.products import product_metadata, validate_product_fields
+        from agno.db.sql.company import update_product_row
 
         validate_product_fields(fields)
         if "metadata" in fields:
@@ -8274,12 +8296,8 @@ class SqliteDb(BaseDb):
         table = self._get_table(table_type="products")
         if table is None:
             return None
-        stmt = table.update().where(table.c.id == product_id, table.c.deleted_at.is_(None))
-        if user_id is not None:
-            stmt = stmt.where(table.c.user_id == user_id)
         with self.Session() as sess, sess.begin():
-            result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table)).fetchone()
-            return dict(result._mapping) if result else None
+            return update_product_row(sess, table, product_id, user_id, fields)
 
     def get_product_counts(self, product_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         from agno.db.sql.company import product_counts
@@ -8649,7 +8667,9 @@ class SqliteDb(BaseDb):
             rows = sess.execute(stmt).fetchall()
             return [dict(row._mapping) for row in rows], total
 
-    def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+    def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.tasks import validate_task_fields
         from agno.db.sql.company import lock_child, require_project
 
@@ -8657,7 +8677,11 @@ class SqliteDb(BaseDb):
         table = self._get_table(table_type="tasks")
         if table is None:
             return None
-        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None), table.c.status == "backlog")
+        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None))
+        if set(fields) - {"title", "brief"}:
+            stmt = stmt.where(table.c.status == "backlog")
+        if expected_status is not None:
+            stmt = stmt.where(table.c.status == expected_status)
         if user_id is not None:
             stmt = stmt.where(table.c.user_id == user_id)
         products = self._get_table(table_type="products", create_table_if_not_found=True)
@@ -8838,7 +8862,7 @@ class SqliteDb(BaseDb):
     ) -> Optional[Dict[str, Any]]:
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.tasks import _acceptance_count, task_transition_fields
-        from agno.db.sql.company import lock_child
+        from agno.db.sql.company import lock_child, require_project
 
         table = self._get_table(table_type="tasks")
         if table is None:
@@ -8878,6 +8902,9 @@ class SqliteDb(BaseDb):
                 fields["transitions"][-1]["auto_accept"] = auto_accept
             else:
                 lock_child(sess, products, projects, table, task_id)
+            if existing["status"] in {"done", "cancelled"}:
+                # Reopened work must not land in a completed or cancelled Project.
+                require_project(sess, projects, existing["project_id"], existing["product_id"], target)
             update = table.update().where(
                 table.c.id == task_id,
                 table.c.deleted_at.is_(None),

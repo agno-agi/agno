@@ -8,17 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
-from agno.os.middleware.user_scope import get_scoped_user_id
+from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.company.schema import TaskCreate, TaskResponse, TaskStatus, TaskTransition, TaskUpdate
 from agno.os.routers.run_permissions import _require_endpoint_permission
 from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.os.settings import AgnoAPISettings
-
-
-def _require_write_ownership(existing: Dict[str, Any], user_id: Optional[str]) -> None:
-    """Check the scoped caller against the owner after a company-wide read."""
-    if user_id is not None and existing.get("user_id") != user_id:
-        raise HTTPException(status_code=403, detail="Cannot modify task owned by another user")
 
 
 def get_tasks_router(
@@ -69,11 +63,10 @@ def get_tasks_router(
             )
             raise HTTPException(status_code=409 if conflict else 422, detail=str(exc))
 
-    async def _writable(task_id: str, user_id: Optional[str], include_deleted: bool = False) -> Dict[str, Any]:
+    async def _existing(task_id: str, include_deleted: bool = False) -> Dict[str, Any]:
         existing = await _call("get_task", task_id, user_id=None, include_deleted=include_deleted)
         if existing is None:
             raise HTTPException(status_code=404, detail="Task not found")
-        _require_write_ownership(existing, user_id)
         return existing
 
     @router.get("/tasks", response_model=PaginatedResponse[TaskResponse])
@@ -107,13 +100,20 @@ def get_tasks_router(
             meta=PaginationInfo(page=page, limit=limit, total_count=total, total_pages=(total + limit - 1) // limit),
         )
 
+    async def _require_accept(request: Request, executor_type: Optional[str], executor_id: Optional[str]) -> None:
+        assert executor_type is not None  # Validated by TaskCreate and TaskTransition.
+        resource = {"agent": "agents", "team": "teams", "workflow": "workflows"}[executor_type]
+        await _require_endpoint_permission(request, f"/{resource}/{executor_id}/runs", "POST", action="accept")
+
     @router.post("/tasks", response_model=TaskResponse, status_code=201)
     async def create_task(body: TaskCreate, request: Request, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
-        user_id = get_scoped_user_id(request)
+        if body.status == "ready":
+            await _require_accept(request, body.executor_type, body.executor_id)
         return await _call(
             "create_task",
             **body.model_dump(),
-            user_id=user_id or getattr(request.state, "user_id", None),
+            user_id=resolve_run_user_id(request),
+            accepted_by=getattr(request.state, "user_id", None),
         )
 
     @router.get("/tasks/{task_id}", response_model=TaskResponse)
@@ -127,7 +127,7 @@ def get_tasks_router(
 
     @router.patch("/tasks/{task_id}", response_model=TaskResponse)
     async def update_task(task_id: str, body: TaskUpdate, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
-        existing = await _writable(task_id, None)
+        existing = await _existing(task_id)
         fields = body.model_dump(exclude_unset=True)
         if not fields:
             return existing
@@ -137,19 +137,17 @@ def get_tasks_router(
         return task
 
     @router.delete("/tasks/{task_id}", status_code=204)
-    async def delete_task(task_id: str, request: Request, _: bool = Depends(auth_dependency)) -> None:
-        user_id = get_scoped_user_id(request)
-        await _writable(task_id, user_id)
-        if not await _call("delete_task", task_id, user_id=user_id):
+    async def delete_task(task_id: str, _: bool = Depends(auth_dependency)) -> None:
+        await _existing(task_id)
+        if not await _call("delete_task", task_id, user_id=None):
             raise HTTPException(status_code=404, detail="Task not found")
 
     @router.post("/tasks/{task_id}/restore", response_model=TaskResponse)
-    async def restore_task(task_id: str, request: Request, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
-        user_id = get_scoped_user_id(request)
-        existing = await _writable(task_id, user_id, include_deleted=True)
+    async def restore_task(task_id: str, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
+        existing = await _existing(task_id, include_deleted=True)
         if existing.get("deleted_at") is None:
             raise HTTPException(status_code=409, detail="Task is not archived")
-        task = await _call("restore_task", task_id, user_id=user_id)
+        task = await _call("restore_task", task_id, user_id=None)
         if task is None:
             raise HTTPException(status_code=409, detail="Task is not archived")
         return task
@@ -158,16 +156,34 @@ def get_tasks_router(
     async def transition_task(
         task_id: str, body: TaskTransition, request: Request, _: bool = Depends(auth_dependency)
     ) -> Dict[str, Any]:
-        await _writable(task_id, None)
+        existing = await _existing(task_id)
         if body.target == "in_progress":
-            raise HTTPException(
-                status_code=409,
-                detail=f"Start a run with POST /company/tasks/{task_id}/runs to enter In progress",
-            )
+            detail = f"Start a run with POST /company/tasks/{task_id}/runs to enter In progress"
+            # Runs start only on accepted work, so other stages go through Ready first.
+            if existing["status"] not in {"ready", "in_progress", "in_review"}:
+                detail = f"Move the Task to Ready, then start a run with POST /company/tasks/{task_id}/runs to enter In progress"
+            raise HTTPException(status_code=409, detail=detail)
+        from agno.company.execution import _pending_task_attempt
+        from agno.job_queue.session import HOLDING_STATUSES
+
+        # A queued attempt is withdrawn by the move; an executing or paused one must be cancelled first.
+        queue = getattr(request.app.state, "queue_worker", None)
+        if _pending_task_attempt(existing) is not None and queue is not None:
+            try:
+                # A failed lookup must not read as "no ticket" and let the move leave an executing run.
+                try:
+                    job = await queue.store.get_job(existing["job_id"], strict=True)
+                except TypeError:
+                    job = await queue.store.get_job(existing["job_id"])
+            except Exception:
+                raise HTTPException(status_code=503, detail="Could not verify the Task run; retry the request")
+            if job is not None and job["status"] in HOLDING_STATUSES:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Cancel the run with POST /company/runs/{existing['job_id']}/cancel to leave In progress",
+                )
         if body.target == "ready":
-            assert body.executor_type is not None  # Validated by TaskTransition.
-            resource = {"agent": "agents", "team": "teams", "workflow": "workflows"}[body.executor_type]
-            await _require_endpoint_permission(request, f"/{resource}/{body.executor_id}/runs", "POST", action="accept")
+            await _require_accept(request, body.executor_type, body.executor_id)
         record = await _call(
             "transition_task",
             task_id=task_id,

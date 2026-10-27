@@ -1,7 +1,9 @@
-"""Ask Platform Manager about this source directory and Agno documentation.
+"""Ask OS Manager about this source directory and Agno documentation.
 
 Ask: "Read basic_manager.py and explain how this OS is configured."
 Then: "Check the Agno docs and explain how to add a knowledge base."
+Or: "How does learning work?" The manager can query docs directly for a short
+explanation; source inspection is for questions about this application's setup.
 
 Requires OPENAI_API_KEY for conversations. Agno docs access is enabled by default;
 if the docs server is unavailable, the manager continues with its other tools.

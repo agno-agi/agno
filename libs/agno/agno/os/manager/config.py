@@ -31,7 +31,7 @@ class OSManager:
         root: Directory or WorkspaceContextProvider for Platform Manager to read.
             Default file exclusions apply. Extra exclusions are allowed; custom
             exemptions and allow_paths are not. Omit to disable source access.
-        access_docs: Give Platform Manager access to the Agno documentation MCP
+        access_docs: Give OS Manager and Platform Manager access to the Agno documentation MCP
             server. Enabled by default. Connection failures are nonfatal; pass
             False to disable documentation access in offline deployments.
         offload_tool_results: Offload large tool results for the manager and its members.
@@ -40,6 +40,13 @@ class OSManager:
         instructions: Extra instructions for the manager.
         required_env: Environment variables to check during diagnostics.
         num_history_runs: Number of past runs to include in the manager's context.
+        tool_call_limit: Maximum ordinary tool executions per coordinator run,
+            including delegations. Defaults to 8; None disables the limit.
+        member_tool_call_limit: Maximum ordinary tool executions per specialist
+            invocation, including the Company Manager member when attached. Defaults to 24;
+            None disables the limit. Each delegation has its own budget, not a
+            shared run-wide budget. Offloaded-result read-back tools retain their
+            existing exemption from both limits.
     """
 
     name: str = MANAGER_TEAM_NAME
@@ -53,12 +60,19 @@ class OSManager:
     instructions: Optional[str] = None
     required_env: Tuple[str, ...] = ()
     num_history_runs: int = 7
+    tool_call_limit: Optional[int] = 8
+    member_tool_call_limit: Optional[int] = 24
 
     def __post_init__(self) -> None:
         if not self.name or not self.name.strip():
             raise ValueError("OSManager.name must not be empty")
         if self.num_history_runs < 0:
             raise ValueError("OSManager.num_history_runs must not be negative")
+
+        for name in ("tool_call_limit", "member_tool_call_limit"):
+            value = getattr(self, name)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+                raise ValueError(f"OSManager.{name} must be a non-negative integer or None")
 
     @property
     def id(self) -> str:

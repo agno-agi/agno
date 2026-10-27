@@ -67,7 +67,7 @@ async def test_founder_creates_product_source_and_routines_visible_over_http(db,
     assert product["user_id"] == "ana"
     routine = await invoke(
         tools,
-        "create_company_routine",
+        "create_product_routine",
         use_async,
         product_id=product["id"],
         name="custom",
@@ -97,12 +97,37 @@ async def test_founder_creates_product_source_and_routines_visible_over_http(db,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
-@pytest.mark.parametrize("tool", ["create_company_product", "create_company_routine"])
+@pytest.mark.parametrize("owner", [None, "owner"])
+async def test_isolated_member_adds_a_routine_to_a_product_they_do_not_own(db, use_async, owner):
+    from agno.company.execution import _call
+
+    product_id = "declared" if owner is None else "owned"
+    await _call(
+        db,
+        "create_product",
+        {"id": product_id, "name": "Docs", "user_id": owner, "created_at": 1, "updated_at": None, "deleted_at": None},
+    )
+    tools = CompanyTools(db, registry=Registry(agents=[Agent(id="reader")]), user_isolation=True)
+    routine = await invoke(
+        tools,
+        "create_product_routine",
+        use_async,
+        product_id=product_id,
+        **ROUTINE,
+        _agno_run_context=context([*WRITE_SCOPES, "agents:reader:run"]),
+    )
+    assert routine["user_id"] == "ana" and routine["enabled"]
+    assert (await _call(db, "get_product", product_id))["metadata"]["routine_ids"] == [routine["id"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("tool", ["create_company_product", "create_product_routine"])
 @pytest.mark.parametrize("wrapper", [None, _RoutineAuthorization, _ExecutorAuthorization])
 async def test_creation_refuses_missing_product_scope_and_automated_runs(db, use_async, tool, wrapper):
     tools = CompanyTools(db)
     kwargs = {"name": "Forbidden"}
-    if tool == "create_company_routine":
+    if tool == "create_product_routine":
         kwargs.update(product_id="missing", template="intake", executor_type="agent", executor_id="reader")
     ctx = context(scopes=[] if wrapper is None else ["agent_os:admin"], wrapper=wrapper)
     with pytest.raises(PermissionError, match="products:write" if wrapper is None else "automated"):
@@ -169,47 +194,12 @@ async def test_invalid_declarations_leave_no_product(db, use_async, invalid):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
-async def test_existing_product_ownership_matches_http(db, use_async):
-    from agno.company.execution import _call
-    from agno.company.manager import AsyncCompanyManager, CompanyManager
-
-    manager = AsyncCompanyManager(db) if isinstance(db, AsyncBaseDb) else CompanyManager(db)
-    product = await _call(manager, "create", name="Owned by someone else", user_id="bob")
-    tools = CompanyTools(db, user_isolation=True, registry=Registry(agents=[Agent(id="reader")]))
-    with pytest.raises(PermissionError):
-        await invoke(
-            tools,
-            "create_company_routine",
-            use_async,
-            product_id=product["id"],
-            **ROUTINE,
-            _agno_run_context=context([*WRITE_SCOPES, "agents:reader:run"]),
-        )
-    assert (await _call(db, "get_schedules"))[1] == 0
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("use_async", [False, True])
 async def test_routine_creation_checks_the_product_before_its_executor(db, use_async):
-    from agno.company.execution import _call
-    from agno.company.manager import AsyncCompanyManager, CompanyManager
-
-    manager = AsyncCompanyManager(db) if isinstance(db, AsyncBaseDb) else CompanyManager(db)
-    product = await _call(manager, "create", name="Owned by someone else", user_id="bob")
     tools = CompanyTools(db, user_isolation=True, registry=Registry(agents=[Agent(id="reader")]))
     unknown = {**ROUTINE, "executor_id": "missing"}
-    with pytest.raises(PermissionError, match="owned by another user"):
-        await invoke(
-            tools,
-            "create_company_routine",
-            use_async,
-            product_id=product["id"],
-            **unknown,
-            _agno_run_context=context([*WRITE_SCOPES, "agents:missing:run"]),
-        )
     with pytest.raises(LookupError, match="Product not found"):
         await invoke(
-            tools, "create_company_routine", use_async, product_id="missing", **unknown, _agno_run_context=context()
+            tools, "create_product_routine", use_async, product_id="missing", **unknown, _agno_run_context=context()
         )
 
 
@@ -245,13 +235,13 @@ async def test_failed_link_or_enable_leaves_no_schedule_and_the_name_stays_usabl
     monkeypatch.setattr(type(db), failing, _failing_link(db, calls))
     with pytest.raises(RuntimeError, match="linked" if failing == "add_product_routine" else "enabled"):
         await invoke(
-            tools, "create_company_routine", use_async, product_id=product["id"], **ROUTINE, _agno_run_context=context()
+            tools, "create_product_routine", use_async, product_id=product["id"], **ROUTINE, _agno_run_context=context()
         )
     assert calls and (await _call(db, "get_schedules"))[1] == 0
     assert (await _call(db, "get_product", product["id"]))["metadata"].get("routine_ids", []) == []
     monkeypatch.setattr(type(db), failing, original)
     routine = await invoke(
-        tools, "create_company_routine", use_async, product_id=product["id"], **ROUTINE, _agno_run_context=context()
+        tools, "create_product_routine", use_async, product_id=product["id"], **ROUTINE, _agno_run_context=context()
     )
     assert routine["enabled"] and routine["name"] == product["id"] + ".intake"
     assert (await _call(db, "get_product", product["id"]))["metadata"]["routine_ids"] == [routine["id"]]
@@ -319,7 +309,7 @@ class CreationModel(OfflineModel):
 
 
 @pytest.mark.asyncio
-async def test_product_manager_runtime_injects_caller_and_parses_declarations(db):
+async def test_company_manager_runtime_injects_caller_and_parses_declarations(db):
     from agno.run.authorization import authorization_scope
 
     os = AgentOS(
@@ -329,7 +319,7 @@ async def test_product_manager_runtime_injects_caller_and_parses_declarations(db
         telemetry=False,
     )
     with authorization_scope(lambda: context().authorization):
-        output = await os.product_manager.arun("Set up a Product for our docs site", user_id="ana")
+        output = await os.company_manager.arun("Set up a Product for our docs site", user_id="ana")
     assert output.tools and not output.tools[0].tool_call_error, output
     async with AsyncClient(transport=ASGITransport(app=os.get_app()), base_url="http://test") as client:
         products = (await client.get("/company/products")).json()["data"]

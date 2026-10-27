@@ -1003,7 +1003,8 @@ def _checkpoint_restore(arguments: str) -> None:
         source, staging = Path(directory) / "checkpoint", Path(directory) / "restored"
         with source.open("xb") as stream:
             shutil.copyfileobj(sys.stdin.buffer, stream)
-        state = archive.restore(source, staging)
+        # Inside the computer, so absolute links name the paths they were captured with.
+        state = archive.restore(source, staging, absolute_links=True)
         for name, target in roots.items():
             target.mkdir(mode=0o700, exist_ok=True)
             if target.is_symlink() or not target.is_dir() or any(target.iterdir()):

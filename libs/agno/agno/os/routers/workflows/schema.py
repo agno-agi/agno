@@ -134,8 +134,13 @@ class WorkflowResponse(BaseModel):
 
         for idx, step in enumerate(steps):
             if step.get("agent"):
+                from agno.agents.base import BaseExternalAgent
+
                 # Convert to dict and exclude fields that are None
-                agent_response = await AgentResponse.from_agent(step.get("agent"))  # type: ignore
+                if isinstance(step.get("agent"), BaseExternalAgent):
+                    agent_response = AgentResponse.from_harness_agent(step.get("agent"))
+                else:
+                    agent_response = await AgentResponse.from_agent(step.get("agent"))  # type: ignore
                 step["agent"] = agent_response.model_dump(exclude_none=True)
 
             if step.get("team"):

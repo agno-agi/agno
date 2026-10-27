@@ -26,7 +26,7 @@ from sqlalchemy import text
 
 def draft(step_input: StepInput) -> StepOutput:
     context = json.loads(step_input.input)
-    assert set(context) == {"brief", "wiki", "evidence"}
+    assert set(context) == {"brief", "wiki", "evidence", "execution_context"}
     return StepOutput(content="Draft ready for review: " + context["brief"])
 
 
@@ -90,7 +90,7 @@ if __name__ == "__main__":
                 assert accepted.status_code == 200, accepted.text
                 if automatic:
                     # Advance the existing schedule for a fast demonstration;
-                    # normal deployments leave its one-minute cron untouched.
+                    # normal deployments leave its configured cron untouched.
                     schedule = db.get_schedule_by_name("Company automation")
                     db.update_schedule(schedule["id"], next_run_at=0)
                 else:

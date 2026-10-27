@@ -40,6 +40,13 @@ def _identity(
     return values
 
 
+def _retention(retain_checkpoints: Optional[int]) -> Optional[int]:
+    """Validate how many checkpoints a session keeps; None keeps every one."""
+    if retain_checkpoints is not None and (type(retain_checkpoints) is not int or retain_checkpoints < 1):
+        raise ValueError("retain_checkpoints must be None or a positive integer")
+    return retain_checkpoints
+
+
 @dataclass(frozen=True)
 class SandboxHandle:
     provider_ref: str
@@ -86,8 +93,8 @@ class Sandbox(ABC):
     features are not implied.
 
     Passed as sandbox= on ClaudeAgent or CodexAgent, the whole harness runs in a
-    computer from this sandbox each turn; checkpoints, env and execution_timeout
-    configure those turns.
+    computer from this sandbox each turn; checkpoints, retain_checkpoints, env and
+    execution_timeout configure those turns.
     """
 
     # Where session checkpoints are stored; None uses a local directory that survives only on this host.
@@ -96,6 +103,8 @@ class Sandbox(ABC):
     env: Optional[Mapping[str, str]] = None
     # Seconds one harness turn may run inside the computer.
     execution_timeout: float = 900
+    # Checkpoints each session keeps, newest first; older ones are deleted from the store. None keeps all.
+    retain_checkpoints: Optional[int] = 3
 
     def checkpoint_transfer(self, store: "CheckpointStore") -> "CheckpointTransfer":
         """Return the transport that moves this sandbox's checkpoints to and from store."""

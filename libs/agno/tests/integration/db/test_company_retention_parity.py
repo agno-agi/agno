@@ -112,8 +112,6 @@ async def test_refresh_proposes_once_and_cannot_accept(archive):
     withdrawn = await call(manager, "refresh", product["id"])
     assert not withdrawn["completion_proposals"] and proposal["path"] in withdrawn["deleted_pages"]
     await call(manager, "transition_task", task_id=reopened["id"], target="cancelled", reason="Superseded")
-    with pytest.raises(PermissionError):
-        await call(manager, "refresh", product["id"], user_id="stranger")
     assert (await call(manager, "transition_project", project_id=project["id"], target="done", reason="Human review"))[
         "status"
     ] == "done"
@@ -305,6 +303,7 @@ async def test_deduplicated_insert_keeps_parent_archive_guards(archive):
     db, manager, call = archive
     product = await call(manager, "create", name="SDK")
     project = await call(manager, "create_project", product_id=product["id"], name="Work")
+    await call(manager, "transition_project", project_id=project["id"], target="active", reason="Begin")
     fields = dict(
         id="proposal",
         product_id=product["id"],
@@ -413,6 +412,7 @@ async def test_completion_proposal_does_not_reintroduce_archived_task_context(ar
         ),
     )
     current_project = await call(manager, "create_project", product_id=product["id"], name="Current work")
+    await call(manager, "transition_project", project_id=current_project["id"], target="active", reason="Begin")
     current = await call(
         manager,
         "create_task",
@@ -438,6 +438,7 @@ async def test_terminal_project_rejects_new_and_moved_open_work(archive):
     with pytest.raises(ValueError, match="open work"):
         await call(manager, "create_task", product_id=product["id"], title="Late proposal", project_id=project["id"])
     open_project = await call(manager, "create_project", product_id=product["id"], name="Next release")
+    await call(manager, "transition_project", project_id=open_project["id"], target="active", reason="Begin")
     task = await call(
         manager, "create_task", product_id=product["id"], title="Next release", project_id=open_project["id"]
     )

@@ -198,6 +198,24 @@ async def test_foreground_request_uses_durable_worker_and_committed_checkpoint(s
     assert all(value is not None and value.state == "paused" for value in computers), computers
 
 
+async def test_deleting_a_session_over_http_removes_its_computer_and_checkpoint(service):
+    from agno.sandbox.checkpoint import CheckpointObjectNotFound, CheckpointRef
+
+    client, agent, _, handles = service
+    response = await client.post(
+        "/agents/coder/runs", data={"message": "first", "session_id": "session", "stream": "false"}
+    )
+    assert response.status_code == 200, response.text
+    reference = CheckpointRef(**response.json()["metadata"]["sandbox"]["checkpoint"])
+    runner = _harness.coordinator(agent)
+    assert await runner.provider.aget(handles[0].provider_ref) is not None
+    deleted = await client.delete("/sessions/session")
+    assert deleted.status_code == 204, deleted.text
+    assert await runner.provider.aget(handles[0].provider_ref) is None
+    with pytest.raises(CheckpointObjectNotFound):
+        await runner.transfer.store.averify(reference)
+
+
 async def test_background_acceptance_poll_and_idempotency(service):
     client, agent, app, _ = service
     data = {"message": "background", "session_id": "session", "stream": "false", "background": "true"}

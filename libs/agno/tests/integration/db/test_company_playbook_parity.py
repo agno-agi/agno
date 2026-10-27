@@ -54,22 +54,14 @@ async def test_playbook_persistence_scope_and_decisions(db):
     assert isinstance(provider, WikiContextProvider)
     assert (await call(m.list_wiki, pid))[1] == 2
     original = await call(m.read_wiki, pid, "status.md")
-    with pytest.raises(PermissionError):
-        await call(
-            m.write_wiki,
-            product_id=pid,
-            path="status.md",
-            content="foreign",
-            expected_version=original.metadata.version,
-            user_id="bob",
-        )
+    # Wiki pages are shared, so a member who did not create the Product may write them.
     await call(
         m.write_wiki,
         product_id=pid,
         path="status.md",
         content="reviewed",
         expected_version=original.metadata.version,
-        user_id="alice",
+        user_id="bob",
     )
     with pytest.raises(VersionConflictError):
         await call(
@@ -223,7 +215,7 @@ async def test_company_recall_is_shared_and_agent_attribution_is_bound(db):
     import json
 
     from agno.company.decisions import CompanyDecisionLogStore
-    from agno.registry._reserved import PRODUCT_MANAGER_ID
+    from agno.registry._reserved import COMPANY_MANAGER_ID
     from agno.run import RunContext
     from agno.tools.company import CompanyTools
 
@@ -238,13 +230,13 @@ async def test_company_recall_is_shared_and_agent_attribution_is_bound(db):
     fn = next(tool for tool in learned_tools if tool.name == "log_company_decision")
     own = json.loads(await fn.entrypoint("Other agent decision", _agno_run_context=context))
     assert own["agent_id"] == "other-agent"
-    recalled = await store.arecall(agent_id=PRODUCT_MANAGER_ID, session_id="new-session")
+    recalled = await store.arecall(agent_id=COMPANY_MANAGER_ID, session_id="new-session")
     assert {entry.id for entry in recalled} == {human.id, direct["id"], own["id"]}
     assert len(await store.asearch(agent_id="other-agent")) == 1
-    assert await store.asearch(agent_id=PRODUCT_MANAGER_ID) == []
+    assert await store.asearch(agent_id=COMPANY_MANAGER_ID) == []
     if not isinstance(db, AsyncBaseDb):
         sync_tool = store.get_tools(agent_id="sync-agent")[0]
         entry = json.loads(sync_tool("Sync agent decision", _agno_run_context=context))
         assert entry["agent_id"] == "sync-agent"
-        assert len(store.recall(agent_id=PRODUCT_MANAGER_ID)) == 4
+        assert len(store.recall(agent_id=COMPANY_MANAGER_ID)) == 4
         assert len(store.search(agent_id="sync-agent")) == 1
