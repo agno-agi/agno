@@ -1131,8 +1131,13 @@ class SingleStoreDb(BaseDb):
                 stmt = select(table)
 
                 if filter_expr is not None:
-                    # Binary collation keeps string comparisons case-sensitive, matching other SQL backends.
-                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table, collation="utf8mb4_bin"))
+                    # SingleStore lacks JSON_UNQUOTE, COLLATE on columns, and LIKE ... ESCAPE; utf8mb4_bin is case-sensitive.
+                    name_column = func.JSON_EXTRACT_STRING(table.c.session_data, "session_name")
+                    stmt = stmt.where(
+                        session_filter_to_sqlalchemy(
+                            filter_expr, table, session_name_column=name_column, backslash_like=True
+                        )
+                    )
 
                 # Filtering
                 if user_id is not None:

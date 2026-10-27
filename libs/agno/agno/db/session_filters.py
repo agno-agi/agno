@@ -78,18 +78,48 @@ def normalize_session_filter(expression: Optional[Dict[str, Any]], _depth: int =
     return {"op": op, "key": key, **({"values": normalized} if op == "IN" else {"value": normalized[0]})}
 
 
-def session_filter_to_sqlalchemy(expression: Dict[str, Any], table: Any, collation: Optional[str] = None) -> Any:
+def session_filter_to_sqlalchemy(
+    expression: Dict[str, Any],
+    table: Any,
+    collation: Optional[str] = None,
+    session_name_column: Any = None,
+    backslash_like: bool = False,
+) -> Any:
     """Use native columns and the session-name JSON property for SQL filtering on a normalized filter.
 
     ``collation`` forces case-sensitive string comparison where the database default is case-insensitive.
+    ``session_name_column`` replaces the generic JSON accessor for dialects without MySQL/Postgres JSON functions.
+    ``backslash_like`` escapes LIKE wildcards with a backslash instead of an ESCAPE clause the dialect may reject.
     """
     columns = {key: table.c[key] for key in SESSION_FILTER_FIELDS if key != "session_name"}
-    columns["session_name"] = table.c.session_data["session_name"].as_string()
+    if session_name_column is None:
+        session_name_column = table.c.session_data["session_name"].as_string()
+    columns["session_name"] = session_name_column
     if collation is not None:
         for key, field in SESSION_FILTER_FIELDS.items():
             if field["type"] != "datetime":
                 columns[key] = columns[key].collate(collation)
-    return filter_expr_to_sqlalchemy(expression, SimpleNamespace(c=columns), set(SESSION_FILTER_FIELDS))
+    view = SimpleNamespace(c=columns)
+    if backslash_like:
+        return _backslash_like_filter(expression, view)
+    return filter_expr_to_sqlalchemy(expression, view, set(SESSION_FILTER_FIELDS))
+
+
+def _backslash_like_filter(expression: Dict[str, Any], view: Any) -> Any:
+    """Build the clause with CONTAINS/STARTSWITH as plain LIKE using the default backslash escape."""
+    from sqlalchemy import and_, func, not_, or_
+
+    op = expression["op"]
+    if op in ("AND", "OR"):
+        clauses = [_backslash_like_filter(c, view) for c in expression["conditions"]]
+        return and_(*clauses) if op == "AND" else or_(*clauses)
+    if op == "NOT":
+        return not_(_backslash_like_filter(expression["condition"], view))
+    if op in ("CONTAINS", "STARTSWITH"):
+        escaped = re.sub(r"([\\%_])", r"\\\1", str(expression["value"]).lower())
+        pattern = ("" if op == "STARTSWITH" else "%") + escaped + "%"
+        return func.lower(view.c[expression["key"]]).like(pattern)
+    return filter_expr_to_sqlalchemy(expression, view, set(SESSION_FILTER_FIELDS))
 
 
 def session_filter_to_mongo(expression: Dict[str, Any], negate: bool = False) -> Dict[str, Any]:

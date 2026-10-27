@@ -651,3 +651,40 @@ def test_dynamo_queries_sessions_concurrently():
     assert grouped == {sid: [{"run_id": f"{sid}-run"}] for sid in session_ids}
     assert client.query.call_count == 5
     assert peak[0] > 1
+
+
+def test_singlestore_filter_uses_supported_sql():
+    from sqlalchemy import JSON, BigInteger, Column, MetaData, String, Table, func, select
+    from sqlalchemy.dialects import mysql
+
+    from agno.db.session_filters import SESSION_FILTER_FIELDS, session_filter_to_sqlalchemy
+
+    table = Table(
+        "sessions",
+        MetaData(),
+        Column("session_data", JSON),
+        *[
+            Column(key, BigInteger if key.endswith("_at") else String(128))
+            for key in SESSION_FILTER_FIELDS
+            if key != "session_name"
+        ],
+    )
+    expression = {
+        "op": "AND",
+        "conditions": [
+            eq("user_id", "alice"),
+            {"op": "NOT", "condition": {"op": "CONTAINS", "key": "session_name", "value": "100%_\\"}},
+            {"op": "STARTSWITH", "key": "agent_id", "value": "sup"},
+        ],
+    }
+    name_column = func.JSON_EXTRACT_STRING(table.c.session_data, "session_name")
+    compiled = (
+        select(table)
+        .where(session_filter_to_sqlalchemy(expression, table, session_name_column=name_column, backslash_like=True))
+        .compile(dialect=mysql.dialect())
+    )
+    sql = str(compiled)
+    assert "JSON_EXTRACT_STRING" in sql
+    assert "JSON_UNQUOTE" not in sql and "ESCAPE" not in sql and "COLLATE" not in sql
+    assert "%100\\%\\_\\\\%" in compiled.params.values()
+    assert "sup%" in compiled.params.values()
