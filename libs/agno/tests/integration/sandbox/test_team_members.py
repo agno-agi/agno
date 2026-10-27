@@ -335,3 +335,27 @@ def test_agentos_gives_a_sandboxed_member_postgres_when_its_team_uses_another_da
     AgentOS(id="os", db=db, teams=[team], telemetry=False).get_app()
 
     assert engineer.db is db
+
+
+def test_agentos_prepares_a_sandboxed_member_of_a_team_used_as_a_workflow_step(setup):
+    from agno.os import AgentOS
+    from agno.workflow import Step, Workflow
+
+    db, member_of, _ = setup
+    engineer = member_of("engineer")
+    engineer.db = None
+    team = Team(
+        id="team",
+        name="Team",
+        members=[engineer],
+        model=_ScriptedModel([_delegate("engineer", "build it", "c1"), ("content", "done")]),
+    )
+    workflow = Workflow(id="wf", name="WF", steps=[Step(name="build", team=team)])
+
+    AgentOS(id="os", db=db, workflows=[workflow], telemetry=False).get_app()
+    assert engineer.db is db
+
+    # The member's first delegated turn runs on its computer instead of failing for want of Postgres.
+    output = workflow.run("go", session_id="w1")
+    [team_run] = output.step_executor_runs
+    assert [run.status for run in team_run.member_responses] == [RunStatus.completed]
