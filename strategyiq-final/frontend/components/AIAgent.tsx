@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { SEC_DISCLAIMER } from "@/lib/constants";
 import { getSession } from "@/lib/auth";
@@ -15,12 +16,14 @@ function formatApiError(detail: unknown): string {
 export function AIAgent() {
   const [input, setInput] = useState("");
   const [response, setResponse] = useState<string | null>(null);
+  const [upgradeRequired, setUpgradeRequired] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const send = async () => {
     if (!input.trim()) return;
     setLoading(true);
     setResponse(null);
+    setUpgradeRequired(false);
     try {
       const session = getSession();
       if (!session?.token) {
@@ -42,6 +45,9 @@ export function AIAgent() {
 
       const data = await res.json();
       if (!res.ok) {
+        if (res.status === 429 || data.upgrade_required) {
+          setUpgradeRequired(true);
+        }
         setResponse(formatApiError(data.detail || data.error || data.message));
         return;
       }
@@ -70,6 +76,11 @@ export function AIAgent() {
         {loading ? "Thinking..." : "Send"}
       </button>
       {response && <p className="text-sm whitespace-pre-wrap">{response}</p>}
+      {upgradeRequired && (
+        <Link href="/billing?tier=pro" className="text-sm text-terminal-accent hover:underline">
+          Upgrade to Pro for more queries
+        </Link>
+      )}
       <p className="text-xs text-terminal-muted">{SEC_DISCLAIMER}</p>
     </div>
   );

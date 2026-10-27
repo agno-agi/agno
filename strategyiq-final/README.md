@@ -91,6 +91,18 @@ GitHub Actions workflow at `.github/workflows/deploy.yml`:
 
 Required secrets: `VERCEL_TOKEN`, `ORG_ID`, `PROJECT_ID`, `AWS_ROLE_TO_ASSUME`, `SUBNET_IDS`, `SG_ID`
 
+## Billing (Stripe)
+
+| Route | Description |
+|-------|-------------|
+| `/billing` | Public pricing page; signed-in users start Stripe Checkout |
+| `/billing/success` | Stripe return URL — refreshes tier from `/billing/status` |
+| `/billing/cancel` | Stripe cancel URL |
+| `POST /api/billing/checkout` | Edge proxy → FastAPI `POST /billing/checkout` |
+| `POST /billing/webhook` | Stripe webhook auto-upgrades tier |
+
+Set backend `APP_URL` to the public frontend origin (used for success/cancel redirects).
+
 ## Edge API (Vercel)
 
 | Route | Runtime | Description |
@@ -99,11 +111,11 @@ Required secrets: `VERCEL_TOKEN`, `ORG_ID`, `PROJECT_ID`, `AWS_ROLE_TO_ASSUME`, 
 | `/api/billing/checkout` | Edge | Proxy to Stripe checkout |
 | `middleware.ts` | Edge | Protects `/dashboard`, `/api/chat`, `/api/billing` |
 
-Required Vercel env: `JWT_SECRET` (min 16 chars, must match backend), `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, `NEXT_PUBLIC_API_URL`, `FASTAPI_URL` (server-side FastAPI base URL), `CORS_ORIGINS` (backend, comma-separated)
+Required Vercel env: `JWT_SECRET` (min 16 chars, must match backend), `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, `NEXT_PUBLIC_API_URL`, `FASTAPI_URL` (server-side FastAPI base URL), `CORS_ORIGINS` (backend, comma-separated), `APP_URL` (backend Stripe redirects)
 
-Root `vercel.json` keeps Next Edge `/api/chat` and `/api/billing/*` on the frontend; FastAPI is routed at `/auth`, `/ai`, `/eqs`, `/port`, `/market`, `/billing`, `/health`.
+Root `vercel.json` keeps Next Edge `/api/chat` and `/api/billing/*` on the frontend, serves Next `/billing` UI pages, and routes FastAPI at `/auth`, `/ai`, `/eqs`, `/port`, `/market`, `/billing/*` (API), `/health`.
 
-Middleware protects `/` (terminal), `/dashboard`, `/api/chat`, and `/api/billing`. Login sets an HttpOnly `token` cookie via `POST /api/auth/session`.
+Middleware protects `/` (terminal), `/dashboard`, `/api/chat`, and `/api/billing`. Pricing (`/billing`) and Stripe return pages are public. Login sets an HttpOnly `token` cookie via `POST /api/auth/session`.
 
 ## Zip Distribution
 

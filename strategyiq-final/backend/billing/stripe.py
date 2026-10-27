@@ -51,13 +51,14 @@ def create_checkout(
         db.commit()
 
     metadata = {"user_id": str(user.id), "tier": request.tier.value}
+    success_url, cancel_url = settings.billing_redirect_urls()
     session = stripe.checkout.Session.create(
         customer=user.stripe_customer_id,
         payment_method_types=["card"],
         line_items=[{"price": price_id, "quantity": 1}],
         mode="subscription",
-        success_url="https://strategyiq.io/billing/success",
-        cancel_url="https://strategyiq.io/billing/cancel",
+        success_url=success_url,
+        cancel_url=cancel_url,
         metadata=metadata,
         # Copy tier onto the Subscription object so customer.subscription.updated
         # does not fall back to "pro" and downgrade Elite users.

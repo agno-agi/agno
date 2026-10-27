@@ -118,6 +118,38 @@ def test_checkout_copies_tier_to_subscription_metadata():
     source = inspect.getsource(stripe_module.create_checkout)
     assert "subscription_data" in source
     assert "metadata" in source
+    assert "billing_redirect_urls" in source
+
+
+def test_billing_redirect_urls_use_app_url():
+    from config import Settings
+
+    success, cancel = Settings(app_url="https://app.example.com/").billing_redirect_urls()
+    assert success == "https://app.example.com/billing/success"
+    assert cancel == "https://app.example.com/billing/cancel"
+
+
+def test_billing_ui_pages_exist():
+    from pathlib import Path
+
+    frontend = Path(__file__).resolve().parents[2] / "frontend" / "app" / "billing"
+    assert (frontend / "page.tsx").is_file()
+    assert (frontend / "success" / "page.tsx").is_file()
+    assert (frontend / "cancel" / "page.tsx").is_file()
+    billing_helper = (Path(__file__).resolve().parents[2] / "frontend" / "lib" / "billing.ts").read_text()
+    assert "startCheckout" in billing_helper
+    assert "/api/billing/checkout" in billing_helper
+
+
+def test_vercel_json_serves_billing_ui_before_fastapi():
+    import json
+    from pathlib import Path
+
+    routes = json.loads((Path(__file__).resolve().parents[2] / "vercel.json").read_text())["routes"]
+    ui_idx = next(i for i, r in enumerate(routes) if r.get("src") == "/billing/(success|cancel)")
+    api_idx = next(i for i, r in enumerate(routes) if r.get("src") == "/billing/(.*)")
+    assert ui_idx < api_idx
+    assert routes[ui_idx]["dest"].startswith("frontend/billing/")
 
 
 def test_ecs_healthcheck_does_not_require_curl():
@@ -139,6 +171,25 @@ def test_middleware_protects_terminal_home():
     middleware = (Path(__file__).resolve().parents[2] / "frontend" / "middleware.ts").read_text()
     assert 'pathname === "/"' in middleware or 'matcher: ["/"' in middleware
     assert "/login" in middleware
+    assert '"/billing"' in middleware or "'/billing'" in middleware
     assert "httpOnly" in (
         Path(__file__).resolve().parents[2] / "frontend" / "app" / "api" / "auth" / "session" / "route.ts"
     ).read_text()
+
+
+def test_chat_upgrade_points_to_billing_page():
+    from pathlib import Path
+
+    chat = (
+        Path(__file__).resolve().parents[2] / "frontend" / "app" / "api" / "chat" / "route.ts"
+    ).read_text()
+    assert 'checkout_url: "/billing?tier=pro"' in chat
+    assert "/api/billing/checkout?tier=pro" not in chat
+
+
+def test_signals_gated_for_beginner():
+    from pathlib import Path
+
+    signals = (Path(__file__).resolve().parents[2] / "frontend" / "components" / "Signals.tsx").read_text()
+    assert "tierRank" in signals
+    assert "/billing?tier=pro" in signals

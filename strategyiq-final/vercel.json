@@ -6,6 +6,8 @@
   ],
   "routes": [
     { "src": "/api/(chat|billing)(.*)", "dest": "/api/$1$2" },
+    { "src": "/billing/(success|cancel)", "dest": "frontend/billing/$1" },
+    { "src": "/billing", "dest": "frontend/billing" },
     { "src": "/auth/(.*)", "dest": "api/backend/index.py" },
     { "src": "/ai/(.*)", "dest": "api/backend/index.py" },
     { "src": "/eqs/(.*)", "dest": "api/backend/index.py" },

@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     stripe_webhook_secret: str = ""
     stripe_price_pro: str = ""
     stripe_price_elite: str = ""
+    # Public frontend origin used for Stripe success/cancel redirects.
+    app_url: str = "http://localhost:3000"
     database_url: str = "postgresql+psycopg2://strategy:pass@localhost:5432/strategyiq"
     redis_url: str = "redis://localhost:6379/0"
     jwt_secret: str = ""
@@ -42,6 +44,10 @@ class Settings(BaseSettings):
     screener_cache_ttl: int = 900
     # Comma-separated browser origins. Never use "*" with credentials.
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+
+    def billing_redirect_urls(self) -> tuple[str, str]:
+        base = (self.app_url or "http://localhost:3000").rstrip("/")
+        return f"{base}/billing/success", f"{base}/billing/cancel"
 
     class Config:
         env_file = ".env"

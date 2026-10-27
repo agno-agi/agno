@@ -13,9 +13,14 @@ export function AuthBar() {
 
   if (!tier) {
     return (
-      <Link href="/login" className="text-sm text-terminal-accent hover:underline">
-        Sign In
-      </Link>
+      <div className="flex items-center gap-3 text-sm">
+        <Link href="/billing" className="text-terminal-muted hover:text-terminal-text">
+          Pricing
+        </Link>
+        <Link href="/login" className="text-sm text-terminal-accent hover:underline">
+          Sign In
+        </Link>
+      </div>
     );
   }
 
@@ -25,6 +30,21 @@ export function AuthBar() {
       <span className="uppercase text-xs border border-terminal-accent text-terminal-accent px-2 py-0.5 rounded">
         {tier}
       </span>
+      {tier === "beginner" && (
+        <Link href="/billing?tier=pro" className="text-terminal-accent hover:underline text-xs">
+          Upgrade
+        </Link>
+      )}
+      {tier === "pro" && (
+        <Link href="/billing?tier=elite" className="text-terminal-accent hover:underline text-xs">
+          Go Elite
+        </Link>
+      )}
+      {(tier === "elite" || tier === "pro") && (
+        <Link href="/billing" className="text-terminal-muted hover:text-terminal-text text-xs">
+          Billing
+        </Link>
+      )}
       <button
         onClick={async () => {
           await clearSession();

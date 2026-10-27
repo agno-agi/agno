@@ -87,7 +87,7 @@ export async function POST(request: Request) {
             JSON.stringify({
               error: "Free tier limit 3/day",
               upgrade_required: true,
-              checkout_url: "/api/billing/checkout?tier=pro",
+              checkout_url: "/billing?tier=pro",
               tier,
               disclaimer: SEC_DISCLAIMER,
             }),
