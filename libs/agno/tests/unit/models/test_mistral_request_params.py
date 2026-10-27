@@ -1,11 +1,18 @@
-"""Unit tests for Mistral request params: the sampling parameters supported by the
-Mistral chat-completions API are forwarded via get_request_params, and zero values
-are not silently dropped."""
+"""Unit tests for Mistral request and client params: the sampling parameters supported by the
+Mistral chat-completions API are forwarded via get_request_params, zero values are not silently
+dropped, and client/request kwargs are ones the mistralai SDK accepts."""
+
+import inspect
+import warnings
 
 import pytest
 
 pytest.importorskip("mistralai")
 
+from mistralai.client import Mistral as MistralClient
+from mistralai.client.utils.retries import BackoffStrategy, RetryConfig
+
+from agno.knowledge.embedder.mistral import MistralEmbedder
 from agno.models.mistral.mistral import MistralChat
 
 
@@ -143,3 +150,91 @@ def test_mistral_all_sampling_params_zero():
     assert params["top_p"] == 0.0
     assert params["frequency_penalty"] == 0.0
     assert params["presence_penalty"] == 0.0
+
+
+# =============================================================================
+# client params: agno fields map onto the mistralai.client.Mistral constructor
+# =============================================================================
+
+
+def test_mistral_get_client_maps_endpoint_and_timeout():
+    model = MistralChat(api_key="test-key", endpoint="https://example.test", timeout=5)
+
+    client = model.get_client()
+
+    assert client.sdk_configuration.server_url == "https://example.test"
+    assert client.sdk_configuration.timeout_ms == 5000
+
+
+def test_mistral_max_retries_warns_and_client_builds():
+    with pytest.warns(DeprecationWarning, match="max_retries"):
+        model = MistralChat(api_key="test-key", max_retries=3)
+
+    assert isinstance(model.get_client(), MistralClient)
+
+
+def test_mistral_client_params_override_mapped_params():
+    retry_config = RetryConfig("backoff", BackoffStrategy(1, 50, 1.1, 100), False)
+    model = MistralChat(
+        api_key="test-key",
+        timeout=5,
+        client_params={"timeout_ms": 1234, "retry_config": retry_config},
+    )
+
+    client = model.get_client()
+
+    assert client.sdk_configuration.timeout_ms == 1234
+    assert client.sdk_configuration.retry_config is retry_config
+
+
+def test_mistral_default_construction_does_not_warn():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        MistralChat(api_key="test-key")
+        MistralEmbedder(api_key="test-key")
+
+
+# =============================================================================
+# safe_mode: legacy alias for safe_prompt, the only kwarg the SDK accepts
+# =============================================================================
+
+
+def test_mistral_safe_mode_aliases_safe_prompt():
+    with pytest.warns(DeprecationWarning, match="safe_mode"):
+        model = MistralChat(id="mistral-small-latest", safe_mode=True)
+
+    params = model.get_request_params()
+
+    assert "safe_mode" not in params
+    assert params["safe_prompt"] is True
+
+
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
+def test_mistral_request_params_accepted_by_sdk_chat_methods():
+    model = MistralChat(api_key="test-key", safe_mode=True, safe_prompt=True, temperature=0.1, stop=["STOP"])
+    client = model.get_client()
+    params = model.get_request_params()
+
+    for method in (client.chat.complete, client.chat.stream, client.chat.complete_async, client.chat.stream_async):
+        inspect.signature(method).bind(model=model.id, messages=[], **params)
+
+
+# =============================================================================
+# MistralEmbedder client params
+# =============================================================================
+
+
+def test_mistral_embedder_client_maps_endpoint_and_timeout():
+    embedder = MistralEmbedder(api_key="test-key", endpoint="https://example.test", timeout=5)
+
+    client = embedder.client
+
+    assert client.sdk_configuration.server_url == "https://example.test"
+    assert client.sdk_configuration.timeout_ms == 5000
+
+
+def test_mistral_embedder_max_retries_warns_and_client_builds():
+    with pytest.warns(DeprecationWarning, match="max_retries"):
+        embedder = MistralEmbedder(api_key="test-key", max_retries=3)
+
+    assert isinstance(embedder.client, MistralClient)

@@ -353,9 +353,9 @@ async def test_setup_captures_authority_and_retry_retains_it(tmp_path):
 def review_steps(product, project, source, path):
     return [
         ("list_company_tasks", {"product_id": product["id"]}),
-        ("read_company_source", {"source_id": source["id"], "path": path.name}),
+        ("read_product_source", {"source_id": source["id"], "path": path.name}),
         (
-            "intake_company_source",
+            "intake_product_source",
             lambda results: {
                 "source_id": source["id"],
                 "project_id": project["id"],
@@ -368,7 +368,7 @@ def review_steps(product, project, source, path):
         ),
         ("read_company_wiki", {"product_id": product["id"], "path": "status.md"}),
         (
-            "update_company_status",
+            "update_product_status",
             lambda results: {
                 "product_id": product["id"],
                 "content": "Reviewed Sources; API guide proposed for human review.",
@@ -386,6 +386,7 @@ async def test_scheduled_review_persists_evidence_and_caller_authority(tmp_path,
         manager = CompanyManager(s.db)
         product = manager.create(name="Docs", user_id="alice")
         project = manager.create_project(product_id=product["id"], name="Guides", user_id="alice")
+        manager.transition_project(project_id=project["id"], target="active", reason="Approved")
         path = tmp_path / "source.md"
         path.write_text("The released API needs a guide.")
         source = manager.create_source(product_id=product["id"], type="markdown", reference=str(path))
@@ -450,7 +451,7 @@ async def test_routine_status_write_never_gains_permission(tmp_path, mode, ident
         product = manager.create(name="Docs", user_id="alice")
         before = manager.read_wiki(product["id"], "status.md")
         s.os.company_manager.model = ScriptedModel(
-            [("update_company_status", {"product_id": product["id"], "content": "Unauthorized", "expected_version": 1})]
+            [("update_product_status", {"product_id": product["id"], "content": "Unauthorized", "expected_version": 1})]
         )
         row = await create_routine(s, product["id"])
         result = await s.executor.execute(s.db.get_schedule(row["id"]), s.db, release_schedule=False)
@@ -464,6 +465,7 @@ async def test_routine_mutation_fence_holds_even_for_admin(tmp_path, mode):
         manager = CompanyManager(s.db)
         product = manager.create(name="Docs", user_id="alice")
         project = manager.create_project(product_id=product["id"], name="Guides", user_id="alice")
+        project = manager.transition_project(project_id=project["id"], target="active", reason="Approved")
         task = manager.create_task(product_id=product["id"], project_id=project["id"], title="Guide", user_id="alice")
         observed = []
 
@@ -514,9 +516,9 @@ async def test_other_product_source_and_status_are_refused(tmp_path, owner):
         before = manager.read_wiki(other["id"], "status.md")
         s.os.company_manager.model = ScriptedModel(
             [
-                ("read_company_source", {"source_id": source["id"], "path": path.name}),
+                ("read_product_source", {"source_id": source["id"], "path": path.name}),
                 (
-                    "update_company_status",
+                    "update_product_status",
                     {"product_id": other["id"], "content": "Wrong Product", "expected_version": 1},
                 ),
             ]
@@ -674,7 +676,7 @@ async def test_status_conflict_is_failed_without_overwriting_human_edit(tmp_path
             product_id=product["id"], path="status.md", content="Human edit", expected_version=1, user_id="alice"
         )
         s.os.company_manager.model = ScriptedModel(
-            [("update_company_status", {"product_id": product["id"], "content": "Stale review", "expected_version": 1})]
+            [("update_product_status", {"product_id": product["id"], "content": "Stale review", "expected_version": 1})]
         )
         row = await create_routine(s, product["id"])
         result = await s.executor.execute(s.db.get_schedule(row["id"]), s.db, release_schedule=False)
@@ -693,10 +695,10 @@ async def test_recovered_status_conflict_succeeds(tmp_path, mode):
         )
         s.os.company_manager.model = ScriptedModel(
             [
-                ("update_company_status", {"product_id": product["id"], "content": "Stale", "expected_version": 1}),
+                ("update_product_status", {"product_id": product["id"], "content": "Stale", "expected_version": 1}),
                 ("read_company_wiki", {"product_id": product["id"], "path": "status.md"}),
                 (
-                    "update_company_status",
+                    "update_product_status",
                     lambda results: {
                         "product_id": product["id"],
                         "content": json.loads(results[-1].content)["content"] + "\nReview complete",
@@ -739,13 +741,13 @@ def test_nested_member_terminal_failure_is_not_success(status):
 @pytest.mark.parametrize("case", ["denied", "other_product", "earlier_success", "failed_retry", "invalid_result"])
 def test_status_success_does_not_hide_unrecovered_failure(case):
     failed = {
-        "tool_name": "update_company_status",
+        "tool_name": "update_product_status",
         "tool_args": {"product_id": "docs", "expected_version": 1},
         "tool_call_error": True,
         "result": "version conflict on status.md: expected 1, actual 2",
     }
     success = {
-        "tool_name": "update_company_status",
+        "tool_name": "update_product_status",
         "tool_args": {"product_id": "docs", "expected_version": 2},
         "tool_call_error": False,
         "result": json.dumps({"path": "status.md", "version": 3}),
@@ -792,11 +794,11 @@ def test_user_components_cannot_claim_manager_ids(component_id):
 
 
 @pytest.mark.parametrize("mode", ["standalone", "member"])
-@pytest.mark.parametrize("tool", ["create_company_product", "create_company_routine"])
+@pytest.mark.parametrize("tool", ["create_company_product", "create_product_routine"])
 async def test_human_chat_configures_owned_manager_routine(tmp_path, mode, tool):
     async with system(tmp_path, mode=mode) as s:
         kwargs = {"name": "Docs", "routines": [declaration().model_dump()]}
-        if tool == "create_company_routine":
+        if tool == "create_product_routine":
             product = CompanyManager(s.db).create(name="Docs", user_id="alice")
             kwargs = {"product_id": product["id"], **declaration().model_dump(exclude={"auto_accept"})}
         s.os.company_manager.model = ScriptedModel([(tool, kwargs)])

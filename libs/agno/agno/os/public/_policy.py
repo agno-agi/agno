@@ -5,6 +5,8 @@ from typing import Any
 
 from starlette.routing import Match
 
+from agno.os.config import MCP_SERVER_TOOLS_PATH
+
 RUN_ROUTE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs(?:/([^/]+)(/cancel)?)?$")
 
 
@@ -18,6 +20,11 @@ class PublicRoutePolicy:
         self.oauth_paths = agent_os.mcp_auth_exempt_paths() if surface.mcp else []
 
     def is_mcp(self, path: str) -> bool:
+        # Public MCP admits the protocol endpoint and its OAuth discovery routes, never the
+        # plain-HTTP tool runner: that is an operator surface, and a public deployment
+        # anonymously running its tools over it would bypass the transport entirely.
+        if path == MCP_SERVER_TOOLS_PATH or path.startswith(MCP_SERVER_TOOLS_PATH + "/"):
+            return False
         return path == "/mcp" or path.startswith("/mcp/") or path in self.oauth_paths
 
     def allows_authenticated_websocket(self, scope: Any) -> bool:

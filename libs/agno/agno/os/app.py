@@ -226,10 +226,14 @@ async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
     if internal_token is None:
         raise ValueError("internal_service_token must be set when scheduler is enabled")
 
-    from agno.company.routines import _ensure_automation_schedule
+    from agno.company.routines import _AUTOMATION_CRON, _ensure_automation_schedule
 
     # Reconcile before the poller can claim a stale Company schedule.
-    await _ensure_automation_schedule(agent_os.db, enabled=agent_os.company is not None)
+    await _ensure_automation_schedule(
+        agent_os.db,
+        enabled=agent_os.company is not None,
+        cron_expr=agent_os.company.cron_expr if agent_os.company is not None else _AUTOMATION_CRON,
+    )
     executor: ScheduleExecutor
     if agent_os.company is not None:
         from agno.company.routines import _CompanyScheduleExecutor
@@ -1184,11 +1188,113 @@ class AgentOS:
         Tables are created here only when the OS provisions databases; otherwise an existing
         table is validated and a missing one is left to the deployment, as the first run was.
         """
-        for entry in self.agents or []:
+        nested = [*self._sandboxed_team_members(), *self._sandboxed_workflow_agents()]
+        for entry in [*(self.agents or []), *(agent for agent, _ in nested)]:
             if isinstance(entry, BaseExternalAgent) and entry.sandbox is not None and entry.db is not None:
                 from agno.sandbox import _harness
 
                 await _harness.acheck_tables(entry, create=self.auto_provision_dbs)
+
+    @staticmethod
+    def _nearest_postgres(db: Any, inherited_db: Any) -> Any:
+        """``db`` when it is Postgres, which a sandbox coordinates on, otherwise the enclosing one."""
+        from agno.db.postgres import AsyncPostgresDb, PostgresDb
+
+        return db if isinstance(db, (PostgresDb, AsyncPostgresDb)) else inherited_db
+
+    def _collect_sandboxed_team_members(self, team: Any, inherited_db: Any, found: List[Any], seen: set) -> None:
+        """Add (member, database) for a team's sandboxed harness members, at any depth, to ``found``.
+
+        A member list built by a factory is not walked. The database is the nearest Postgres one among
+        the member's enclosing teams, then ``inherited_db``.
+        """
+        if id(team) in seen or not isinstance(getattr(team, "members", None), list):
+            return
+        seen.add(id(team))
+        team_db = self._nearest_postgres(getattr(team, "db", None), inherited_db)
+        for member in team.members:
+            if isinstance(member, BaseExternalAgent) and member.sandbox is not None:
+                found.append((member, team_db))
+            elif isinstance(member, Team):
+                self._collect_sandboxed_team_members(member, team_db, found, seen)
+
+    def _sandboxed_team_members(self) -> List[Any]:
+        """(member, database) for sandboxed harness agents that are members of a served team, at any depth.
+
+        They run their turns through the same coordinator as a served sandboxed agent, so they get the
+        same startup checks. The database is the nearest Postgres one among the member's enclosing
+        teams, None when none of them has one.
+        """
+        found: List[Any] = []
+        seen: set = set()
+        for team in self._teams or []:
+            self._collect_sandboxed_team_members(team, None, found, seen)
+        return found
+
+    def _sandboxed_workflow_agents(self) -> List[Any]:
+        """(agent, database) for sandboxed harness agents inside a served workflow, at any depth.
+
+        That covers harness agents used as steps and members of a team used as a step, which run their
+        turns through the same coordinator as a served sandboxed agent; steps built by a callable are not
+        walked. The database is the nearest Postgres one among the agent's enclosing teams and
+        workflows, None when none of them has one.
+        """
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.router import Router
+        from agno.workflow.step import Step
+        from agno.workflow.steps import Steps
+        from agno.workflow.workflow import Workflow
+
+        found: List[Any] = []
+        seen: set = set()
+
+        def visit(item: Any, inherited_db: Any) -> None:
+            if isinstance(item, BaseExternalAgent):
+                if item.sandbox is not None:
+                    found.append((item, inherited_db))
+            elif isinstance(item, Team):
+                self._collect_sandboxed_team_members(item, inherited_db, found, seen)
+            elif isinstance(item, Workflow):
+                visit_workflow(item, inherited_db)
+            elif isinstance(item, list):
+                # Router choices, for one, may hold a list of steps, which the router runs as Steps.
+                for child in item:
+                    visit(child, inherited_db)
+            elif isinstance(item, (Step, Steps, Loop, Parallel, Condition, Router)):
+                for attr in ("agent", "team", "workflow"):
+                    if getattr(item, attr, None) is not None:
+                        visit(getattr(item, attr), inherited_db)
+                for attr in ("steps", "else_steps", "choices"):
+                    children = getattr(item, attr, None)
+                    if isinstance(children, list):
+                        visit(children, inherited_db)
+
+        def visit_workflow(workflow: Any, inherited_db: Any) -> None:
+            if id(workflow) in seen or not isinstance(getattr(workflow, "steps", None), list):
+                return
+            seen.add(id(workflow))
+            workflow_db = self._nearest_postgres(getattr(workflow, "db", None), inherited_db)
+            visit(workflow.steps, workflow_db)
+
+        for workflow in self._workflows or []:
+            visit_workflow(workflow, None)
+        return found
+
+    def _prepare_sandboxed_agent(self, agent: BaseExternalAgent, fallback_db: Any) -> None:
+        """Give a sandboxed agent a database and fail at startup on what would fail its first turn.
+
+        Used for served agents, team members and agents inside workflows alike. An agent without its
+        own database gets ``fallback_db``, then the OS's."""
+        from agno.sandbox import _harness
+
+        if agent.db is None:
+            agent.db = fallback_db or self.db
+        # Fail at startup, not on the first run, when the sandbox has no Postgres to coordinate on.
+        _harness._check_db(agent)
+        if self.queue is not None and self.queue.durable:
+            _harness.check_queue_checkpoints(agent)
 
     def _initialize_agents(self) -> None:
         """Initialize and configure all agents for AgentOS usage."""
@@ -1199,12 +1305,7 @@ class AgentOS:
                     entry.db = self.db
                 entry.store_events = True
                 if entry.sandbox is not None:
-                    from agno.sandbox import _harness
-
-                    # Fail at startup, not on the first run, when the sandbox has no Postgres to coordinate on.
-                    _harness._check_db(entry)
-                    if self.queue is not None and self.queue.durable:
-                        _harness.check_queue_checkpoints(entry)
+                    self._prepare_sandboxed_agent(entry, self.db)
 
         # Manager specialists need normal initialization, but are not served agents.
         agents_to_initialize = [*self._agents, *(self._manager.agents if self._manager else [])]
@@ -1255,6 +1356,10 @@ class AgentOS:
         if not self._teams:
             return
 
+        # Sandboxed harness members coordinate their computers on Postgres, as served sandboxed agents do.
+        for member, team_db in self._sandboxed_team_members():
+            self._prepare_sandboxed_agent(member, team_db)
+
         for team in self._teams:
             # Set the default db to teams without their own
             if self.db is not None and team.db is None:
@@ -1289,6 +1394,12 @@ class AgentOS:
             if self.db is not None and workflow.db is None:
                 workflow.db = self.db
 
+        # Sandboxed agents inside workflows, such as members of a team used as a step, get the same
+        # startup checks as served sandboxed agents and team members.
+        for agent, owner_db in self._sandboxed_workflow_agents():
+            self._prepare_sandboxed_agent(agent, owner_db)
+
+        for workflow in self._workflows:
             # Track MCP tools recursively in workflow members
             collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
 
@@ -2077,10 +2188,11 @@ class AgentOS:
             # isolation are ADVISORY here, not enforced. Warn (don't raise) so an operator who expected
             # enforcement knows to add authorization.
             log_warning(
-                "AgentOS is configured with a user directory / per-user isolation but no authorization. "
-                "They work off the run's user_id for local/demo use (a roster fills in, a run scopes its "
-                "own data), but that id is self-asserted -- so the disabled kill-switch and isolation are "
-                "ADVISORY, not enforced. Add AgentOS(authorization=True) with a verification key to enforce."
+                "AgentOS has user_directory or user_isolation set without authorization. The user_id on each "
+                "request comes from the caller and is not verified, so a disabled user can send a different "
+                "user_id and any caller can read another user's data by sending theirs. This is fine for local "
+                "development. To enforce it, set AgentOS(authorization=True) and configure JWT_VERIFICATION_KEY "
+                "or JWT_JWKS_FILE."
             )
         if self.authorization:
             # Set authorization_enabled flag on settings so security key validation is skipped
@@ -2389,6 +2501,17 @@ class AgentOS:
             from agno.os.mcp_auth import mcp_auth_route_paths
 
             mcp_auth_paths = mcp_auth_route_paths(mcp_auth_provider)
+            # The tool runner is part of that surface, so it is exempted on the same
+            # terms: a client holding a provider-issued token would otherwise have it
+            # decoded as an agno JWT here and rejected before reaching the route. The
+            # route is not left open -- fastmcp verifies the token and the handler
+            # refuses anything without a verified principal. Only under mcp_auth: with
+            # no provider this middleware is the only credential check on that path.
+            # A switched-off runner is not exempted: the path then has no route behind it.
+            if self.mcp and (self.mcp_config is None or self.mcp_config.tool_run_endpoint):
+                from agno.os.config import MCP_SERVER_TOOLS_PATH
+
+                mcp_auth_paths.append(f"{MCP_SERVER_TOOLS_PATH}/*")
         # The Server Card is discovery before authentication: public by design, no secrets.
         server_card_paths: List[str] = []
         if self.mcp and (self.mcp_config is None or self.mcp_config.server_card):
