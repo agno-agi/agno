@@ -3,13 +3,13 @@ from typing import Any, Dict, List, Optional, Union
 from ag_ui.core.types import ToolMessage as AGUIToolMessage
 
 from agno.agent import Agent
+from agno.os.interfaces.agui.input import tool_result_text
 from agno.run.base import RunContext, RunStatus
 from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutput
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
 from agno.team.team import Team
-from agno.utils.log import log_warning
 from agno.utils.string import parse_response_dict_str
 
 
@@ -40,17 +40,6 @@ def _resolve_external_execution(requirement: RunRequirement, content: str, error
     requirement.set_external_execution_result(error or content)
 
 
-def _tool_message_text(tool_message: AGUIToolMessage) -> str:
-    # ag-ui-protocol 1.0 lets a tool result be a list of content parts; only its text can answer a pause.
-    content = tool_message.content
-    if isinstance(content, str):
-        return content
-    dropped = sorted({part.type for part in content if part.type != "text"})
-    if dropped:
-        log_warning(f"Tool result {tool_message.tool_call_id}: ignoring {', '.join(dropped)} parts, using its text")
-    return "\n".join(part.text for part in content if part.type == "text")
-
-
 def resolve_requirements_from_tool_messages(
     requirements: List[RunRequirement],
     tool_messages: List[AGUIToolMessage],
@@ -68,7 +57,7 @@ def resolve_requirements_from_tool_messages(
         tool_message = tool_message_by_call_id.get(tool_exec.tool_call_id)
         if tool_message is None:
             continue
-        content = _tool_message_text(tool_message)
+        content = tool_result_text(tool_message)
 
         # External execution: raw content, no JSON parsing
         if requirement.pause_type == "external_execution":
@@ -126,6 +115,35 @@ def _find_paused_run(
     return None
 
 
+async def afind_paused_run(
+    entity: Any,
+    session_id: str,
+    tool_messages: List[AGUIToolMessage],
+):
+    """The paused run these tool results answer, or None when there is none.
+
+    A trailing tool result is not by itself proof of a resume. Clients append
+    one for a tool call this backend never emitted and never offered: that is
+    how an interactive surface reports a click. What separates the two cases is
+    whether a paused run in this session is actually waiting on one of these
+    tool call ids, so that is the only thing consulted here.
+
+    Every "no" is a None rather than a raise, including the ones that say this
+    entity could never resume at all. A remote entity, an entity with no
+    database, and a session that no longer exists all mean the same thing to
+    the caller: there is no paused run here, so the results belong to a new
+    turn.
+    """
+    if not isinstance(entity, (Agent, Team)) or not entity.db:
+        return None
+
+    session = await entity.aget_session(session_id=session_id)
+    if not isinstance(session, (AgentSession, TeamSession)):
+        return None
+
+    return _find_paused_run(session, tool_messages, is_team=isinstance(entity, Team))
+
+
 async def find_resume_target_run_id(
     entity: Any,
     session_id: str,
@@ -134,16 +152,12 @@ async def find_resume_target_run_id(
     """The id of the paused run these tool results would resume, or None when there is none.
 
     Read-only lookup for the route's admission gates, which must decide BEFORE the response
-    stream opens (a refusal inside the stream is an event, not a 403). Deliberately tolerant:
-    a remote entity, a missing db, an unknown session or no matching paused run all answer
-    None, and :func:`resume_paused_run` then raises its own precise error inside the stream
-    exactly as before."""
-    if not isinstance(entity, (Agent, Team)) or not entity.db:
-        return None
-    session = await entity.aget_session(session_id=session_id)
-    if not isinstance(session, (AgentSession, TeamSession)):
-        return None
-    paused_run = _find_paused_run(session, tool_messages, is_team=isinstance(entity, Team))
+    stream opens (a refusal inside the stream is an event, not a 403). Shares
+    :func:`afind_paused_run` with the resume path, so the gate and the run it gates cannot
+    disagree about which run is being continued. Tolerant in the same way: a remote entity,
+    a missing db, an unknown session or no matching paused run all answer None, and the
+    route then runs the request as an ordinary turn."""
+    paused_run = await afind_paused_run(entity, session_id, tool_messages)
     return paused_run.run_id if paused_run else None
 
 
@@ -154,20 +168,10 @@ async def resume_paused_run(
     run_context: RunContext,
     run_kwargs: dict,
 ):
-    if not isinstance(entity, (Agent, Team)):
-        raise ValueError("Frontend tool resume requires a local Agent or Team")
-    if not entity.db:
-        raise ValueError("Frontend tool resume requires a database")
-
-    session = await entity.aget_session(session_id=session_id)
-    if not session:
-        raise ValueError(f"Session {session_id} not found")
-    if not isinstance(session, (AgentSession, TeamSession)):
-        raise ValueError(f"Session {session_id} is not a valid session type")
-
-    paused_run = _find_paused_run(session, tool_messages, is_team=isinstance(entity, Team))
-    if not paused_run:
-        raise ValueError(f"No paused run matching the provided tool results found in session {session_id}")
+    """Continue the paused run these tool results answer, or None if there is none."""
+    paused_run = await afind_paused_run(entity, session_id, tool_messages)
+    if paused_run is None:
+        return None
     if not paused_run.requirements:
         raise ValueError(f"Run {paused_run.run_id} has no requirements to resume")
 
