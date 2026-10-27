@@ -67,10 +67,6 @@ if __name__ == "__main__":
                     "/company/projects",
                     json={"product_id": product["id"], "name": "Release"},
                 ).json()
-                client.post(
-                    "/company/projects/" + project["id"] + "/transitions",
-                    json={"target": "active", "reason": "Scope approved"},
-                ).raise_for_status()
                 task = client.post(
                     "/company/tasks",
                     json={

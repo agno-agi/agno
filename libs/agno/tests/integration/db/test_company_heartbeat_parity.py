@@ -673,33 +673,6 @@ async def test_intake_preserves_proposed_executor_and_project(heartbeat, tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_intake_waits_for_project_approval_and_then_deduplicates(heartbeat, tmp_path):
-    _, _, call = heartbeat
-    path = tmp_path / "release.md"
-    path.write_text("Document the API")
-    product = await call("create", name="API")
-    project = await call("create_project", product_id=product["id"], name="Guide")
-    source = await call("create_source", product_id=product["id"], type="markdown", reference=str(path))
-    observed = (await call("read_source", source["id"], "observation"))[0]
-    proposal = dict(
-        title="Document API",
-        brief="Write guide",
-        proposal_key="guide",
-        evidence_links=[observed["link"]],
-        evidence_hashes={observed["link"]: observed["content_hash"]},
-    )
-    intake = dict(source_id=source["id"], proposal=proposal, project_id=project["id"])
-    for run_id in ("first", "second"):
-        with pytest.raises(ValueError, match="approve the Project first"):
-            await call("intake", run_id=run_id, **intake)
-        assert (await call("list_tasks", product_id=product["id"]))[1] == 0
-    await call("transition_project", project_id=project["id"], target="active", reason="Approved")
-    created = await call("intake", run_id="later", **intake)
-    assert (await call("intake", run_id="repeat", **intake))["id"] == created["id"]
-    assert (await call("list_tasks", product_id=product["id"]))[1] == 1
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("window", [0, 14])
 @pytest.mark.parametrize("legacy", [False, True])
 async def test_summary_retention_preserves_delivery_state(heartbeat, monkeypatch, window, legacy):

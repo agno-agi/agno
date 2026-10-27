@@ -167,27 +167,6 @@ async def test_empty_optionals_do_not_weaken_required_validation(tmp_path, use_a
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
-async def test_task_proposal_waits_for_project_approval(tmp_path, use_async):
-    tools = CompanyTools(SqliteDb(db_file=str(tmp_path / "approval.db")))
-    manager = CompanyManager(tools.db)
-    product = manager.create(name="SDK")
-    project = manager.create_project(product_id=product["id"], name="Release")
-    fn = tools.apropose_company_task if use_async else tools.propose_company_task
-
-    async def propose():
-        result = fn(product["id"], "Ship", project_id=project["id"])
-        return await result if inspect.isawaitable(result) else result
-
-    with pytest.raises(ValueError, match="approve the Project first"):
-        await propose()
-    assert manager.list_tasks()[1] == 0
-    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
-    assert json.loads(await propose())["project_id"] == project["id"]
-    tools.db.close()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("use_async", [False, True])
 @pytest.mark.parametrize("processed", [False, True])
 @pytest.mark.parametrize("name", ["list_product_sources", "read_product_source"])
 async def test_source_optionals_equal_omission(tmp_path, use_async, processed, name):

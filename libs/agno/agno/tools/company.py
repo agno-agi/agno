@@ -611,7 +611,7 @@ class CompanyTools(Toolkit):
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
             brief: Task brief; null leaves it unspecified.
-            project_id: Required approved Project ID within the Product. A proposed Project cannot hold new Tasks until a human approves it.
+            project_id: Required Project ID within the Product. Propose a Project first when none fits.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
@@ -903,7 +903,7 @@ class CompanyTools(Toolkit):
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
             brief: Task brief; null leaves it unspecified.
-            project_id: Required approved Project ID within the Product. A proposed Project cannot hold new Tasks until a human approves it.
+            project_id: Required Project ID within the Product. Propose a Project first when none fits.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
@@ -1224,7 +1224,7 @@ class CompanyTools(Toolkit):
         Args:
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
-            project_id: Required approved Project ID within the Product. A proposed Project cannot hold new Tasks until a human approves it.
+            project_id: Required Project ID within the Product. Propose a Project first when none fits.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
@@ -1426,7 +1426,7 @@ class CompanyTools(Toolkit):
         Args:
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
-            project_id: Required approved Project ID within the Product. A proposed Project cannot hold new Tasks until a human approves it.
+            project_id: Required Project ID within the Product. Propose a Project first when none fits.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)

@@ -98,10 +98,8 @@ manually.
 A Product contains Projects and Routines. Every new Task belongs to a Project
 in that Product: `project_id` is required by Task creation and proposal/Intake
 tools. HTTP rejects omission with 422; Python managers and tools raise
-`ValueError`. When no Project fits, propose one with `propose_company_project`.
-A human approves it (`active`) before any Task can be created in it; Company tools
-cannot approve a Project, so an unattended Routine waits and proposes work on a
-later invocation. A Backlog Task can move between Projects
+`ValueError`. When no Project fits, propose one with `propose_company_project`,
+then pass its ID to the Task proposal. A Backlog Task can move between Projects
 but cannot clear its Project. Existing nullable storage rows remain readable.
 
 Projects start `proposed` and move to `active`, then `done`. A Project can be

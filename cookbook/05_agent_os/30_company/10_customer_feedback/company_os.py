@@ -69,9 +69,7 @@ feedback = Product(
             instructions=(
                 "Read the Product's Sources and existing Projects and Tasks. "
                 "Identify recurring bugs, gaps, and feature requests. "
-                "Propose focused Projects with supporting evidence, and propose Tasks only "
-                "in Projects a human has approved. Report that approval is needed for a "
-                "Project that is still proposed, and create no Tasks in it. "
+                "Propose focused Projects and Tasks with supporting evidence. "
                 "For each actionable theme, propose an implementation-ready product "
                 "brief and regression test plan that Feedback Analyst can write. "
                 "Reuse existing work where appropriate. "

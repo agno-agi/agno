@@ -95,10 +95,6 @@ def run(executor: str) -> None:
             json={"product_id": product["id"], "name": "Repository inspection"},
         )
         project_response.raise_for_status()
-        client.post(
-            "/company/projects/" + project_response.json()["id"] + "/transitions",
-            json={"target": "active", "reason": "Scope approved"},
-        ).raise_for_status()
         task_response = client.post(
             "/company/tasks",
             json={

@@ -73,20 +73,6 @@ if __name__ == "__main__":
             project = manager.create_project(
                 product_id=product_id, name="Review the release"
             )
-            try:
-                manager.intake(
-                    source_id=source["id"],
-                    run_id="first-scan",
-                    proposal=proposal,
-                    project_id=project["id"],
-                )
-            except ValueError:
-                print("Intake waits for a human to approve the Project")
-            else:
-                raise AssertionError("Task created in a proposed Project")
-            manager.transition_project(
-                project_id=project["id"], target="active", reason="Human accepted scope"
-            )
             first = manager.intake(
                 source_id=source["id"],
                 run_id="first-scan",
@@ -108,6 +94,9 @@ if __name__ == "__main__":
             )
             assert first["id"] == again["id"]
             assert first["status"] == "backlog"
+            manager.transition_project(
+                project_id=project["id"], target="active", reason="Human accepted scope"
+            )
             manager.transition_task(
                 task_id=first["id"],
                 target="cancelled",
