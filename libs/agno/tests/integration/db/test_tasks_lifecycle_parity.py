@@ -281,6 +281,21 @@ async def test_title_and_brief_edit_at_every_stage_through_manager_and_storage(d
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stage", STAGES)
+async def test_expected_status_makes_the_content_write_conditional(db, stage):
+    m = manager(db)
+    task, _ = await task_at(m, stage)
+    stale = "ready" if stage == "backlog" else "backlog"
+    for write in (m.update_task, db.update_task):
+        assert await call(write, task["id"], expected_status=stale, title="Stale", brief="Stale") is None
+        assert await call(m.get_task, task["id"]) == task
+    assert await call(m.update_task, task["id"], expected_status=stage, title="Fresh") is not None
+    assert (await call(m.get_task, task["id"]))["title"] == "Fresh"
+    assert (await call(db.update_task, task["id"], expected_status=stage, brief="Direct"))["brief"] == "Direct"
+    assert (await call(m.update_task, task["id"], brief="Human"))["brief"] == "Human"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("stage", STAGES[1:])
 @pytest.mark.parametrize("structural", STRUCTURAL, ids=lambda f: next(iter(f)))
 async def test_structural_edit_outside_backlog_stays_refused_and_mixed_edit_is_atomic(db, stage, structural):

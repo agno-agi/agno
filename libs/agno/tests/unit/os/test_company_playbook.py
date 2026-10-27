@@ -1,5 +1,6 @@
 """Company playbook, bounded tools and framework Company Manager contracts."""
 
+import contextvars
 import inspect
 import json
 
@@ -194,6 +195,41 @@ async def test_automated_callers_edit_task_content_only_in_backlog(tmp_path, use
     edited = json.loads(await _edit_task(tools, use_async, context, task["id"]))
     assert (edited["title"], edited["brief"], edited["status"]) == ("Rewritten", "Rewritten brief", stage)
     assert edited["executor_id"] == task["executor_id"] and edited["accepted_at"] == task["accepted_at"]
+    db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("routine", [False, True], ids=["executor", "routine"])
+async def test_automated_edit_loses_to_acceptance_between_read_and_write(tmp_path, use_async, routine):
+    from agno.company.execution import _ExecutorAuthorization
+    from agno.company.routines import _RoutineAuthorization
+
+    db, manager, task = _task_at(tmp_path, "backlog")
+    authority = _RoutineAuthorization(None, "routine") if routine else _ExecutorAuthorization(None)
+    context = RunContext(run_id="r", session_id="s", authorization=authority)
+    real_update, accepted = db.update_task, {}
+
+    def accept_first(*args, **kwargs):
+        # A human acts in their own request, outside the automated run's authorization scope.
+        contextvars.Context().run(
+            manager.transition_task,
+            task_id=task["id"],
+            target="ready",
+            reason="Move",
+            executor_type="agent",
+            executor_id="writer",
+            accepted_by="alice",
+        )
+        accepted.update(manager.get_task(task["id"]))
+        return real_update(*args, **kwargs)
+
+    db.update_task = accept_first
+    with pytest.raises(PermissionError, match="Backlog"):
+        await _edit_task(CompanyTools(db), use_async, context, task["id"])
+    assert accepted["status"] == "ready" and accepted["accepted_at"] is not None
+    assert manager.get_task(task["id"]) == accepted
+    assert (accepted["title"], accepted["brief"]) == ("Draft", "Original")
     db.close()
 
 
