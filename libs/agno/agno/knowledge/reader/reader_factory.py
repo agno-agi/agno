@@ -8,9 +8,6 @@ from agno.knowledge.reader.utils.urls import is_sitemap_url
 class ReaderFactory:
     """Factory for creating and managing document readers with lazy loading."""
 
-    # Cache for instantiated readers
-    _reader_cache: Dict[str, Reader] = {}
-
     # Static metadata for readers - avoids instantiation just to get metadata
     READER_METADATA: Dict[str, Dict[str, str]] = {
         "pdf": {
@@ -503,8 +500,7 @@ class ReaderFactory:
 
     @classmethod
     def clear_cache(cls):
-        """Clear the reader cache."""
-        cls._reader_cache.clear()
+        """No-op kept for backward compatibility; readers are no longer cached."""
 
     @classmethod
     def register_reader(
