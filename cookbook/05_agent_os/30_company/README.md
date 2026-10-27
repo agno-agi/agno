@@ -836,14 +836,14 @@ and is never claimed by the poller. `PATCH /company/routines/{id}` with a cron
 makes it scheduled; `{"cron_expr": null}` removes the schedule and keeps history.
 Pause and resume also apply to on-demand Routines.
 
-`DELETE /company/routines/{id}` archives a Routine with the same convention as
-Products, Projects, Tasks and Sources: it is paused, records `deleted_at`, keeps
-its run history and Product link, and is hidden from reads, lists and attention
-counts unless `include_deleted=true`. `POST /company/routines/{id}/restore` brings
-it back paused under an active Product. `DELETE /company/routines/{id}?permanent=true`
-removes the Routine, its run history and its Product link. Both deletes return
-409 while a run is executing; cancel it first. Both need `routines:delete` and
-`schedules:delete`, and `permanent=true` also needs `agent_os:admin`. A Routine declared in code is created again on the next
+`POST /company/routines/{id}/archive` archives a Routine: it is paused, records
+`deleted_at`, keeps its run history and Product link, and is hidden from reads,
+lists and attention counts unless `include_deleted=true`. `POST /company/routines/{id}/restore`
+brings it back paused under an active Product. `DELETE /company/routines/{id}`
+removes the Routine, active or archived, with its run history and its Product
+link. Archive and delete return 409 while a run is executing; cancel it first.
+All three need `routines:delete` and `schedules:delete`, and delete also needs
+`agent_os:admin`. A Routine declared in code is created again on the next
 startup unless its declaration is removed.
 
 On-demand execution is a scheduler rule for all schedules. The generic schedule

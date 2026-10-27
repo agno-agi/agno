@@ -329,31 +329,35 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             session_id=run.get("session_id"),
         )
 
-    @router.delete("/routines/{routine_id}", status_code=204)
-    async def delete_routine(
-        routine_id: str, request: Request, permanent: bool = False, _: bool = Depends(auth)
-    ) -> None:
-        if permanent:
-            from agno.run.authorization import current_authorization
+    @router.post("/routines/{routine_id}/archive", response_model=RoutineResponse)
+    async def archive_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
+        row = await routine(routine_id, request)
+        await product(row["payload"]["metadata"]["product_id"], include_deleted=True)
+        run = (await call(schedule_db.get_latest_schedule_runs, [routine_id])).get(routine_id)
+        if run is not None and run["status"] == "running":
+            raise HTTPException(409, f"Cancel the run with POST /company/routines/{routine_id}/cancel first")
+        await call(handlers["disable_schedule"], routine_id, request)
+        metadata = {**row["payload"]["metadata"], "deleted_at": int(time.time())}
+        await call(schedule_db.update_schedule, routine_id, payload={**row["payload"], "metadata": metadata})
+        return await routine_response(await routine(routine_id, request, include_deleted=True))
 
-            # Erasing the schedule and its run history cannot be undone, so it takes admin, not routines:delete.
-            authority = current_authorization()
-            if authority is not None:
-                await call(authority.arequire, "agent_os", "admin")
-        row = await routine(routine_id, request, include_deleted=permanent)
+    @router.delete("/routines/{routine_id}", status_code=204)
+    async def delete_routine(routine_id: str, request: Request, _: bool = Depends(auth)) -> None:
+        from agno.run.authorization import current_authorization
+
+        # Erasing the schedule and its run history cannot be undone, so it also takes admin.
+        authority = current_authorization()
+        if authority is not None:
+            await call(authority.arequire, "agent_os", "admin")
+        row = await routine(routine_id, request, include_deleted=True)
         product_id = row["payload"]["metadata"]["product_id"]
         await product(product_id, include_deleted=True)
         run = (await call(schedule_db.get_latest_schedule_runs, [routine_id])).get(routine_id)
         if run is not None and run["status"] == "running":
             raise HTTPException(409, f"Cancel the run with POST /company/routines/{routine_id}/cancel first")
-        if permanent:
-            # Deleting the schedule also deletes its run history.
-            await call(handlers["delete_schedule"], routine_id, request)
-            await call(manager._unlink_routine, product_id, routine_id)
-            return
-        await call(handlers["disable_schedule"], routine_id, request)
-        metadata = {**row["payload"]["metadata"], "deleted_at": int(time.time())}
-        await call(schedule_db.update_schedule, routine_id, payload={**row["payload"], "metadata": metadata})
+        # Deleting the schedule also deletes its run history.
+        await call(handlers["delete_schedule"], routine_id, request)
+        await call(manager._unlink_routine, product_id, routine_id)
 
     @router.post("/routines/{routine_id}/restore", response_model=RoutineResponse)
     async def restore_routine(routine_id: str, request: Request, _: bool = Depends(auth)):

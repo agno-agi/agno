@@ -58,7 +58,7 @@ def test_routine_scheduler_wrappers(system):
     assert len(client.get("/company/routines").json()["data"]) == 1
 
 
-def test_routine_archive_restore_and_permanent_delete(system):
+def test_routine_archive_restore_and_delete(system):
     client, _, db = system
     product = client.post("/company/products", json={"name": "Docs"}).json()
     body = dict(
@@ -66,30 +66,31 @@ def test_routine_archive_restore_and_permanent_delete(system):
     )
     routine_id = client.post("/company/routines", json=body).json()["id"]
     path = "/company/routines/" + routine_id
-    assert client.delete(path).status_code == 204
+    archived = client.post(path + "/archive")
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["deleted_at"] is not None and archived.json()["enabled"] is False
     assert client.get(path).status_code == 404
-    archived = client.get(path, params={"include_deleted": True}).json()
-    assert archived["deleted_at"] is not None and archived["enabled"] is False
+    assert client.post(path + "/archive").status_code == 404
     assert client.get("/company/routines").json()["meta"]["total_count"] == 0
     assert client.get("/company/routines", params={"include_deleted": True}).json()["meta"]["total_count"] == 1
     restored = client.post(path + "/restore")
     assert restored.status_code == 200, restored.text
     assert restored.json()["deleted_at"] is None and restored.json()["enabled"] is False
     assert client.post(path + "/restore").json()["detail"] == "Routine is not archived"
-    assert client.delete(path, params={"permanent": True}).status_code == 204
+    assert client.delete(path).status_code == 204
     assert client.get(path, params={"include_deleted": True}).status_code == 404
     assert routine_id not in client.get("/company/products/" + product["id"]).json()["metadata"].get("routine_ids", [])
 
 
-def test_permanent_routine_delete_requires_admin(tmp_path):
+def test_routine_delete_requires_admin(tmp_path):
     import jwt
 
     from agno.os.config import AuthorizationConfig
 
-    secret = "company-permanent-routine-delete-secret"
-    db = SqliteDb(db_file=str(tmp_path / "permanent.db"))
+    secret = "company-routine-delete-secret"
+    db = SqliteDb(db_file=str(tmp_path / "routine-delete.db"))
     os = AgentOS(
-        id="permanent",
+        id="routine-delete",
         db=db,
         agents=[Agent(id="reader", db=db, telemetry=False)],
         company=CompanyConfig(),
@@ -101,7 +102,7 @@ def test_permanent_routine_delete_requires_admin(tmp_path):
     def headers(scopes):
         return {
             "Authorization": "Bearer "
-            + jwt.encode({"sub": "owner", "aud": "permanent", "scopes": scopes}, secret, algorithm="HS256")
+            + jwt.encode({"sub": "owner", "aud": "routine-delete", "scopes": scopes}, secret, algorithm="HS256")
         }
 
     admin = headers(["agent_os:admin"])
@@ -112,10 +113,11 @@ def test_permanent_routine_delete_requires_admin(tmp_path):
             product_id=product["id"], name="review", executor_type="agent", executor_id="reader", instructions="Review"
         )
         path = "/company/routines/" + client.post("/company/routines", json=body, headers=admin).json()["id"]
-        denied = client.delete(path, params={"permanent": True}, headers=deleter)
+        denied = client.delete(path, headers=deleter)
         assert denied.status_code == 403, denied.text
-        assert client.delete(path, headers=deleter).status_code == 204
-        assert client.delete(path, params={"permanent": True}, headers=admin).status_code == 204
+        assert client.post(path + "/archive", headers=deleter).status_code == 200
+        assert client.delete(path, headers=deleter).status_code == 403
+        assert client.delete(path, headers=admin).status_code == 204
         assert client.get(path, params={"include_deleted": True}, headers=admin).status_code == 404
 
 
@@ -233,6 +235,7 @@ def test_routine_routes_hide_automation_and_report_missing_product(system):
             client.post(path + "/pause"),
             client.post(path + "/resume"),
             client.post(path + "/cancel"),
+            client.post(path + "/archive"),
             client.get(path + "/runs"),
         ]
         expected = 404 if identifier == COMPANY_AUTOMATION_SCHEDULE_ID else 409

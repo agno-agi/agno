@@ -163,7 +163,7 @@ async def test_restored_on_demand_routine_recovers_through_resume_then_triggers(
     client, db, worker, _, _ = system
     routine = await create_routine(client)
     path = "/company/routines/" + routine["id"]
-    assert (await client.delete(path)).status_code == 204
+    assert (await client.post(path + "/archive")).status_code == 200
     for action in ("trigger", "pause", "resume"):
         assert (await client.post(path + "/" + action)).status_code == 404, action
     restored = await client.post(path + "/restore")
@@ -186,7 +186,7 @@ async def test_restored_on_demand_routine_recovers_through_resume_then_triggers(
 async def test_archived_routines_are_filtered_before_sorting_and_paging(system):
     client, db, _, _, _ = system
     product_id = await seed_routines(client, db, {"r-a": (100, 500), "r-b": (200, 300), "r-c": (300, 400)})
-    assert (await client.delete("/company/routines/r-b")).status_code == 204
+    assert (await client.post("/company/routines/r-b/archive")).status_code == 200
     params = {"product_id": product_id, "sort_by": "updated_at", "sort_order": "asc"}
     assert await listed_ids(client, **params) == (["r-c", "r-a"], 2)
     everything = await listed_ids(client, include_deleted=True, **params)
