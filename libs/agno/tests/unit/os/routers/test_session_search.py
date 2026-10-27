@@ -92,6 +92,7 @@ def test_schema_is_not_captured_as_session_id(db):
         "created_at",
         "updated_at",
     }
+    assert response.json()["logical_operators"] == ["AND", "OR", "NOT"]
 
 
 def test_nested_filter_counts_before_pagination(db):
@@ -302,6 +303,35 @@ def test_search_preserves_inferred_display_names(db):
     filtered = client.post("/sessions/search", json={"filter": eq("session_id", "unnamed")})
     assert filtered.status_code == 200, filtered.text
     assert filtered.json()["data"][0]["session_name"] == expected == "Help with billing"
+
+
+@pytest.mark.parametrize("db_class", [SqliteDb, AsyncSqliteDb])
+def test_search_does_not_reread_unnamed_sessions(tmp_path, db_class):
+    db = db_class(db_file=str(tmp_path / "test.db"))
+    for i in range(5):
+        session = AgentSession(session_id=f"unnamed-{i}", agent_id="support", user_id="alice", created_at=i)
+        if isinstance(db, AsyncBaseDb):
+            asyncio.run(db.upsert_session(session))
+        else:
+            db.upsert_session(session)
+    reads = []
+    original = db.get_session
+    if isinstance(db, AsyncBaseDb):
+
+        async def counting_get_session(*args, **kwargs):
+            reads.append(kwargs.get("session_id"))
+            return await original(*args, **kwargs)
+    else:
+
+        def counting_get_session(*args, **kwargs):
+            reads.append(kwargs.get("session_id"))
+            return original(*args, **kwargs)
+
+    db.get_session = counting_get_session
+    response = build_client(db).post("/sessions/search", json={"filter": eq("agent_id", "support")})
+    assert response.status_code == 200, response.text
+    assert len(response.json()["data"]) == 5
+    assert reads == []
 
 
 @pytest.mark.parametrize("use_async", [False, True])

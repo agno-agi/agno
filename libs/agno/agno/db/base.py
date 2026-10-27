@@ -662,6 +662,15 @@ class BaseDb(ABC):
             if not batch or batch_page * 200 >= count:
                 break
             batch_page += 1
+        if run_options:
+            # Runs were skipped while scanning; load them for unnamed sessions so display names can be inferred.
+            for index, session in enumerate(results):
+                if (session.get("session_data") or {}).get("session_name") is None:
+                    full_session = self.get_session(
+                        session_id=session["session_id"], user_id=user_id, deserialize=False
+                    )
+                    if isinstance(full_session, dict):
+                        results[index] = full_session
         return results, total
 
     @abstractmethod
@@ -3026,6 +3035,15 @@ class AsyncBaseDb(ABC):
             if not batch or batch_page * 200 >= count:
                 break
             batch_page += 1
+        if run_options:
+            # Runs were skipped while scanning; load them for unnamed sessions so display names can be inferred.
+            for index, session in enumerate(results):
+                if (session.get("session_data") or {}).get("session_name") is None:
+                    full_session = await self.get_session(
+                        session_id=session["session_id"], user_id=user_id, deserialize=False
+                    )
+                    if isinstance(full_session, dict):
+                        results[index] = full_session
         return results, total
 
     @abstractmethod

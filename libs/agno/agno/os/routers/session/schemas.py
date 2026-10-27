@@ -9,7 +9,8 @@ from agno.db.session_filters import SESSION_FILTER_FIELDS
 from agno.os.routers.traces.schemas import FilterFieldSchema, FilterSchemaResponse
 
 SESSION_FILTER_SCHEMA = FilterSchemaResponse(
-    fields=[FilterFieldSchema(key=key, **field) for key, field in SESSION_FILTER_FIELDS.items()]
+    fields=[FilterFieldSchema(key=key, **field) for key, field in SESSION_FILTER_FIELDS.items()],
+    logical_operators=["AND", "OR", "NOT"],
 )
 
 

@@ -1864,7 +1864,6 @@ class PostgresDb(BaseDb):
             sort_by=sort_by,
             sort_order=sort_order,
             deserialize=False,
-            include_runs=False,
         )
         return result  # type: ignore[return-value]
 

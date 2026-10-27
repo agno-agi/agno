@@ -262,21 +262,6 @@ def attach_routes(
             sessions, total = await db.search_sessions(**kwargs)
         else:
             sessions, total = await run_in_threadpool(db.search_sessions, **kwargs)
-        # Only hydrate unnamed sessions on this result page. Their display names
-        # come from run inputs, just as they do in the regular sessions list.
-        for index, session in enumerate(sessions):
-            if (session.get("session_data") or {}).get("session_name") is None and not session.get("runs"):
-                read_kwargs: Dict[str, Any] = {
-                    "session_id": session["session_id"],
-                    "user_id": effective_user_id,
-                    "deserialize": False,
-                }
-                if isinstance(db, AsyncBaseDb):
-                    full_session = await db.get_session(**read_kwargs)
-                else:
-                    full_session = await run_in_threadpool(db.get_session, **read_kwargs)
-                if isinstance(full_session, dict):
-                    sessions[index] = full_session
         return PaginatedResponse(
             data=[SessionSchema.from_dict(session) for session in sessions],
             meta=PaginationInfo(
