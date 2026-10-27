@@ -599,6 +599,71 @@ class BaseDb(ABC):
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
+    def search_sessions(
+        self,
+        filter_expr: Optional[Dict[str, Any]] = None,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Search session fields before pagination, retaining only the requested page.
+
+        Adapters may override this with native predicates. The portable fallback
+        scans batches, omitting run histories where supported; its cost scales with the
+        number of sessions visible to the caller.
+        """
+        from inspect import signature
+
+        from agno.db.session_filters import matches_session_filter, normalize_session_filter
+
+        if page < 1 or limit < 1:
+            raise ValueError("Page and limit must be positive")
+        expression = normalize_session_filter(filter_expr)
+        if sort_by not in ("created_at", "updated_at") or sort_order not in ("asc", "desc"):
+            raise ValueError("Invalid session sort")
+        if expression is None:
+            result = self.get_sessions(
+                session_type=session_type,
+                user_id=user_id,
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                deserialize=False,
+            )
+            return cast(Tuple[List[Dict[str, Any]], int], result)
+        results: List[Dict[str, Any]] = []
+        total = 0
+        batch_page = 1
+        run_options: Dict[str, Any] = (
+            {"include_runs": False} if "include_runs" in signature(self.get_sessions).parameters else {}
+        )
+        offset = (page - 1) * limit
+        while True:
+            result = self.get_sessions(
+                session_type=session_type,
+                user_id=user_id,
+                limit=200,
+                page=batch_page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                deserialize=False,
+                **run_options,
+            )
+            batch, count = cast(Tuple[List[Dict[str, Any]], int], result)
+            for session in batch:
+                if matches_session_filter(session, expression):
+                    if offset <= total < offset + limit:
+                        results.append(session)
+                    total += 1
+            if not batch or batch_page * 200 >= count:
+                break
+            batch_page += 1
+        return results, total
+
     @abstractmethod
     def rename_session(
         self,
@@ -2897,6 +2962,71 @@ class AsyncBaseDb(ABC):
         include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
+
+    async def search_sessions(
+        self,
+        filter_expr: Optional[Dict[str, Any]] = None,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Search session fields before pagination, retaining only the requested page.
+
+        Adapters may override this with native predicates. The portable fallback
+        scans batches, omitting run histories where supported; its cost scales with the
+        number of sessions visible to the caller.
+        """
+        from inspect import signature
+
+        from agno.db.session_filters import matches_session_filter, normalize_session_filter
+
+        if page < 1 or limit < 1:
+            raise ValueError("Page and limit must be positive")
+        expression = normalize_session_filter(filter_expr)
+        if sort_by not in ("created_at", "updated_at") or sort_order not in ("asc", "desc"):
+            raise ValueError("Invalid session sort")
+        if expression is None:
+            result = await self.get_sessions(
+                session_type=session_type,
+                user_id=user_id,
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                deserialize=False,
+            )
+            return cast(Tuple[List[Dict[str, Any]], int], result)
+        results: List[Dict[str, Any]] = []
+        total = 0
+        batch_page = 1
+        run_options: Dict[str, Any] = (
+            {"include_runs": False} if "include_runs" in signature(self.get_sessions).parameters else {}
+        )
+        offset = (page - 1) * limit
+        while True:
+            result = await self.get_sessions(
+                session_type=session_type,
+                user_id=user_id,
+                limit=200,
+                page=batch_page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                deserialize=False,
+                **run_options,
+            )
+            batch, count = cast(Tuple[List[Dict[str, Any]], int], result)
+            for session in batch:
+                if matches_session_filter(session, expression):
+                    if offset <= total < offset + limit:
+                        results.append(session)
+                    total += 1
+            if not batch or batch_page * 200 >= count:
+                break
+            batch_page += 1
+        return results, total
 
     @abstractmethod
     async def rename_session(

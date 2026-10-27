@@ -1539,6 +1539,34 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_debug(f"Exception reading from sessions table: {e}")
             raise e
 
+    async def search_sessions(
+        self,
+        filter_expr: Optional[Dict[str, Any]] = None,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Search sessions using SQL predicates before counting and pagination."""
+        if page < 1 or limit < 1:
+            raise ValueError("Page and limit must be positive")
+        if sort_by not in ("created_at", "updated_at") or sort_order not in ("asc", "desc"):
+            raise ValueError("Invalid session sort")
+        result = await self.get_sessions(
+            filter_expr=filter_expr,
+            session_type=session_type,
+            user_id=user_id,
+            limit=limit,
+            page=page,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            deserialize=False,
+            include_runs=False,
+        )
+        return result  # type: ignore[return-value]
+
     async def get_sessions(
         self,
         session_type: Optional[SessionType] = None,
@@ -1553,6 +1581,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
         include_runs: bool = True,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
@@ -1582,6 +1611,9 @@ class AsyncSqliteDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        from agno.db.session_filters import normalize_session_filter, session_filter_to_sqlalchemy
+
+        filter_expr = normalize_session_filter(filter_expr)
         validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="sessions")
@@ -1591,6 +1623,9 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
+
+                if filter_expr is not None:
+                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table))
 
                 # Filtering
                 if user_id is not None:
