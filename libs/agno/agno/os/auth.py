@@ -514,12 +514,22 @@ async def _authenticate_service_account(
     return True
 
 
+def is_jwt_env_configured() -> bool:
+    """Whether a JWT key source is configured through environment variables.
+
+    The single list of key-source env vars (``JWT_VERIFICATION_KEY``, ``JWT_JWKS_FILE`` and
+    ``JWT_JWKS_URL``), shared by every surface that asks "is JWT on?", so adding a source
+    cannot leave one of them behind.
+    """
+    return bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE") or getenv("JWT_JWKS_URL"))
+
+
 def _is_jwt_configured() -> bool:
     """Check if JWT authentication is configured via environment variables.
 
     This covers cases where JWT middleware is set up manually (not via authorization=True).
     """
-    return bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
+    return is_jwt_env_configured()
 
 
 def _has_jwt_middleware(app: Any) -> bool:

@@ -1,9 +1,12 @@
 """JWT Middleware for AgentOS - JWT Authentication with optional RBAC."""
 
+import asyncio
 import fnmatch
 import hmac
 import json
 import re
+import threading
+import time
 from dataclasses import replace
 from enum import Enum
 from os import getenv
@@ -19,6 +22,7 @@ from agno.os.auth import (
     INTERNAL_SERVICE_SCOPES,
     aprovision_user_with_default_role,
     build_insufficient_permissions_detail,
+    is_jwt_env_configured,
 )
 from agno.os.middleware.cors import OriginPolicy
 from agno.os.scopes import (
@@ -46,6 +50,15 @@ _AUTH_COMPLETE_ATTR = "_agno_auth_complete"
 # Set only after signature verification AND endpoint permission checks. Unlike the
 # completion marker, this is never set by unverified development mode or scheduler/PAT auth.
 _VERIFIED_API_JWT = object()
+
+# Keys fetched from a JWKS URL are trusted for this long before the next request refetches
+# them, so a key the issuer publishes or retires takes effect without a restart.
+JWKS_URL_CACHE_SECONDS = 300
+# Minimum gap between fetches, including the refetch for a token whose kid is not cached and
+# the retry after a failed fetch. Without it, a stream of tokens carrying random kids would turn
+# every request into an outbound fetch.
+JWKS_URL_MIN_REFETCH_SECONDS = 30
+JWKS_URL_TIMEOUT_SECONDS = 10
 
 
 # The built-in MCP OAuth server mints request identities as ``__oauth__:<client_id>``.
@@ -95,6 +108,20 @@ def resolve_expected_audience(
     if not verify_audience:
         return None
     return audience or os_id
+
+
+async def avalidate_with(
+    validator: Any, token: str, expected_audience: Optional[Union[str, Iterable[str]]] = None
+) -> Dict[str, Any]:
+    """Validate a token with any validator, off the event loop when it supports that.
+
+    ``JWTValidator.avalidate_token`` fetches a due JWKS URL in a worker thread. A custom
+    validator that only implements ``validate_token`` keeps working unchanged.
+    """
+    avalidate = getattr(validator, "avalidate_token", None)
+    if avalidate is not None:
+        return await avalidate(token, expected_audience)
+    return validator.validate_token(token, expected_audience)
 
 
 def _route_action(required_scopes: List[str]) -> Optional[str]:
@@ -154,6 +181,7 @@ class JWTValidator:
         self,
         verification_keys: Optional[List[str]] = None,
         jwks_file: Optional[str] = None,
+        jwks_url: Optional[str] = None,
         algorithm: str = "RS256",
         validate: bool = True,
         scopes_claim: str = "scopes",
@@ -172,6 +200,10 @@ class JWTValidator:
                               For asymmetric algorithms (RS256, ES256), these should be public keys.
                               For symmetric algorithms (HS256), these are shared secrets.
             jwks_file: Path to a static JWKS (JSON Web Key Set) file containing public keys.
+            jwks_url: URL of a JWKS endpoint, such as an identity provider's. Falls back to the
+                      JWT_JWKS_URL env var. Keys are fetched on the first token, not at startup,
+                      cached for JWKS_URL_CACHE_SECONDS, and refetched early when a token names a
+                      kid the cache does not hold, so the issuer can rotate keys without a restart.
             algorithm: JWT algorithm (default: RS256).
             validate: Whether to validate the JWT token (default: True).
             scopes_claim: JWT claim name for scopes (default: "scopes").
@@ -216,12 +248,22 @@ class JWTValidator:
             if jwks_file_env:
                 self._load_jwks_file(jwks_file_env)
 
+        # Remote JWKS, fetched lazily so an unreachable issuer does not stop the app from booting.
+        self.jwks_url: Optional[str] = jwks_url or getenv("JWT_JWKS_URL") or None
+        self._url_keys: "Dict[str, PyJWK]" = {}
+        self._url_fetched_at: Optional[float] = None
+        self._url_last_attempt: Optional[float] = None
+        self._url_lock = threading.Lock()
+        if self.jwks_url and not self.jwks_url.startswith("https://"):
+            log_warning(f"JWKS URL {self.jwks_url} is not HTTPS; use plain HTTP only for local development.")
+
         # Validate that at least one key source is provided if validate=True
-        if self.validate and not self.verification_keys and not self.jwks_keys:
+        if self.validate and not self.verification_keys and not self.jwks_keys and not self.jwks_url:
             raise ValueError(
-                "At least one JWT verification key or JWKS file is required when validate=True. "
+                "At least one JWT verification key, JWKS file, or JWKS URL is required when validate=True. "
                 "Set via verification_keys parameter, JWT_VERIFICATION_KEY environment variable, "
-                "jwks_file parameter or JWT_JWKS_FILE environment variable."
+                "jwks_file parameter, JWT_JWKS_FILE environment variable, "
+                "jwks_url parameter or JWT_JWKS_URL environment variable."
             )
 
     def _load_jwks_file(self, file_path: str) -> None:
@@ -248,30 +290,105 @@ class JWTValidator:
         Args:
             jwks_data: Parsed JWKS dictionary with "keys" array
         """
+        self.jwks_keys.update(self._jwks_keys_from_data(jwks_data))
+
+    @staticmethod
+    def _jwks_keys_from_data(jwks_data: Any) -> "Dict[str, PyJWK]":
+        """Parse a JWKS document into keys by kid. A key without a kid is stored as ``_default``."""
         from jwt import PyJWK
 
+        if not isinstance(jwks_data, dict):
+            raise ValueError("JWKS must be a JSON object containing a 'keys' array")
+
+        parsed: "Dict[str, PyJWK]" = {}
         keys = jwks_data.get("keys", [])
         if not keys:
             log_warning("JWKS contains no keys")
-            return
+            return parsed
 
         for key_data in keys:
             try:
                 kid = key_data.get("kid")
                 jwk = PyJWK.from_dict(key_data)
                 if kid:
-                    self.jwks_keys[kid] = jwk
+                    parsed[kid] = jwk
                 else:
                     # If no kid, use a default key (for single-key JWKS)
-                    self.jwks_keys["_default"] = jwk
+                    parsed["_default"] = jwk
             except Exception as e:
                 log_warning(f"Failed to parse JWKS key: {str(e)}")
+        return parsed
+
+    @staticmethod
+    def _token_kid(token: str) -> Optional[str]:
+        """The kid from the token header, or None when the header has none or cannot be read.
+
+        An unreadable header is left for the signature check to reject with its own error.
+        """
+        import jwt
+
+        try:
+            kid = jwt.get_unverified_header(token).get("kid")
+        except jwt.InvalidTokenError:
+            return None
+        return kid if isinstance(kid, str) else None
+
+    def _url_fetch_due(self, kid: Optional[str]) -> bool:
+        """Whether the JWKS URL should be fetched before validating a token with this kid.
+
+        A fetch is due when nothing has been fetched yet, when the cached keys are older than
+        JWKS_URL_CACHE_SECONDS, or when the token names a kid the cache does not hold. Every
+        case after the first attempt waits JWKS_URL_MIN_REFETCH_SECONDS since the previous one.
+        """
+        if not self.jwks_url:
+            return False
+        now = time.monotonic()
+        if self._url_last_attempt is not None and now - self._url_last_attempt < JWKS_URL_MIN_REFETCH_SECONDS:
+            return False
+        if self._url_fetched_at is None or now - self._url_fetched_at >= JWKS_URL_CACHE_SECONDS:
+            return True
+        return kid is not None and kid not in self._url_keys and kid not in self.jwks_keys
+
+    def _refresh_url_keys(self, kid: Optional[str]) -> None:
+        """Fetch the JWKS URL and replace the cached keys.
+
+        A failed fetch keeps the previous keys, so a short issuer outage does not reject tokens
+        signed by keys already known. Concurrent callers share one fetch.
+        """
+        import httpx
+
+        with self._url_lock:
+            # Another thread may have fetched while this one waited for the lock.
+            if not self._url_fetch_due(kid):
+                return
+            self._url_last_attempt = time.monotonic()
+            url = self.jwks_url or ""
+            try:
+                response = httpx.get(url, timeout=JWKS_URL_TIMEOUT_SECONDS)
+                response.raise_for_status()
+                self._url_keys = self._jwks_keys_from_data(response.json())
+                self._url_fetched_at = time.monotonic()
+                log_debug(f"Loaded {len(self._url_keys)} key(s) from JWKS URL: {url}")
+            except (httpx.HTTPError, ValueError) as e:
+                log_warning(f"Failed to fetch JWKS from {url}: {e}")
+
+    def _lookup_jwk(self, kid: Optional[str]) -> "Optional[PyJWK]":
+        """The key for a kid from the JWKS file or URL, falling back to a kid-less default key."""
+        if kid:
+            if kid in self.jwks_keys:
+                return self.jwks_keys[kid]
+            if kid in self._url_keys:
+                return self._url_keys[kid]
+        return self.jwks_keys.get("_default") or self._url_keys.get("_default")
 
     def validate_token(
         self, token: str, expected_audience: Optional[Union[str, Iterable[str]]] = None
     ) -> Dict[str, Any]:
         """
         Validate JWT token and extract claims.
+
+        When a JWKS URL is configured and a fetch is due, this fetches it synchronously.
+        Async callers should use ``avalidate_token``, which fetches off the event loop.
 
         Args:
             token: The JWT token to validate
@@ -285,6 +402,26 @@ class JWTValidator:
             jwt.ExpiredSignatureError: If token has expired
             jwt.InvalidTokenError: If token is invalid
         """
+        if self.validate and self.jwks_url:
+            kid = self._token_kid(token)
+            if self._url_fetch_due(kid):
+                self._refresh_url_keys(kid)
+        return self._validate_with_cached_keys(token, expected_audience)
+
+    async def avalidate_token(
+        self, token: str, expected_audience: Optional[Union[str, Iterable[str]]] = None
+    ) -> Dict[str, Any]:
+        """Async variant of ``validate_token``. A due JWKS URL fetch runs in a worker thread."""
+        if self.validate and self.jwks_url:
+            kid = self._token_kid(token)
+            if self._url_fetch_due(kid):
+                await asyncio.to_thread(self._refresh_url_keys, kid)
+        return self._validate_with_cached_keys(token, expected_audience)
+
+    def _validate_with_cached_keys(
+        self, token: str, expected_audience: Optional[Union[str, Iterable[str]]] = None
+    ) -> Dict[str, Any]:
+        """Validate a token against keys already loaded, without any network access."""
         import jwt
 
         decode_options: Dict[str, Any] = {}
@@ -310,22 +447,18 @@ class JWTValidator:
         last_exception: Optional[Exception] = None
         payload: Optional[Dict[str, Any]] = None
 
-        # Try JWKS keys first if configured
-        if self.jwks_keys:
+        # Try JWKS keys (from a file or a URL) first if configured
+        if self.jwks_keys or self.jwks_url:
             try:
                 # Get the kid from the token header to find the right key
                 unverified_header = jwt.get_unverified_header(token)
                 kid = unverified_header.get("kid")
 
-                jwk = None
-                if kid and kid in self.jwks_keys:
-                    jwk = self.jwks_keys[kid]
-                elif "_default" in self.jwks_keys:
-                    # Fall back to default key if no kid match
-                    jwk = self.jwks_keys["_default"]
-
+                jwk = self._lookup_jwk(kid if isinstance(kid, str) else None)
                 if jwk:
                     payload = jwt.decode(token, jwk.key, **decode_kwargs)
+                elif not self.verification_keys:
+                    raise jwt.InvalidTokenError("No JWKS key matches the token's kid")
             except jwt.ExpiredSignatureError:
                 raise
             except jwt.InvalidTokenError as e:
@@ -431,7 +564,12 @@ def jwt_kwargs_have_key_source(kwargs: Dict[str, Any]) -> bool:
     WebSocket config resolution) must use this predicate to tell a JWT-validating
     instance from the plain auth layer, so the two checks cannot drift.
     """
-    return bool(kwargs.get("verification_keys") or kwargs.get("jwks_file") or kwargs.get("validate") is False)
+    return bool(
+        kwargs.get("verification_keys")
+        or kwargs.get("jwks_file")
+        or kwargs.get("jwks_url")
+        or kwargs.get("validate") is False
+    )
 
 
 def build_jwt_middleware_kwargs(
@@ -441,11 +579,12 @@ def build_jwt_middleware_kwargs(
     service_account_verifier: Optional[Any] = None,
     excluded_route_paths: Optional[List[str]] = None,
     issuer: Optional[str] = None,
+    jwks_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """JWTMiddleware kwargs derived from an ``AuthorizationConfig``, in one place.
 
-    ``issuer`` is passed by the caller (it lives on the ``Authorization`` object, not on the
-    released config), so both surfaces pin the same one.
+    ``issuer`` and ``jwks_url`` are passed by the caller (they live on the ``Authorization``
+    object, not on the released config), so both surfaces pin the same ones.
 
     Both the REST app wiring (``agno.os.app``) and the mounted MCP app
     (``agno.os.mcp.get_mcp_server``) construct their middleware from this builder, so
@@ -475,6 +614,7 @@ def build_jwt_middleware_kwargs(
     kwargs: Dict[str, Any] = {
         "verification_keys": verification_keys,
         "jwks_file": jwks_file,
+        "jwks_url": jwks_url,
         "algorithm": algorithm,
         "authorization": authorization,
         "verify_audience": verify_audience,
@@ -583,6 +723,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         app,
         verification_keys: Optional[List[str]] = None,
         jwks_file: Optional[str] = None,
+        jwks_url: Optional[str] = None,
         algorithm: str = "RS256",
         validate: bool = True,
         authorization: Optional[bool] = None,
@@ -623,6 +764,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
                       Keys are looked up by the "kid" (key ID) claim in the JWT header.
                       If not provided, will check JWT_JWKS_FILE env var for a file path,
                       or JWT_JWKS env var for inline JWKS JSON content.
+            jwks_url: URL of a JWKS endpoint, such as an identity provider's. Keys are fetched on the
+                      first token, cached, and refetched when a token names an unknown kid. If not
+                      provided, will check the JWT_JWKS_URL env var.
             algorithm: JWT algorithm (default: RS256). Common options: RS256 (asymmetric), HS256 (symmetric).
             validate: Whether to validate the JWT signature (default: True). If False, tokens are decoded
                      without signature verification and no verification key is required. Useful when
@@ -679,16 +823,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # deployments construct it with no JWT source at all. The validator is only
         # built (and only required) when a JWT source is configured.
         self._jwt_configured = bool(
-            all_verification_keys
-            or jwks_file
-            or not validate
-            or getenv("JWT_VERIFICATION_KEY")
-            or getenv("JWT_JWKS_FILE")
+            all_verification_keys or jwks_file or jwks_url or not validate or is_jwt_env_configured()
         )
         self.validator: Optional[JWTValidator] = (
             JWTValidator(
                 verification_keys=all_verification_keys if all_verification_keys else None,
                 jwks_file=jwks_file,
+                jwks_url=jwks_url,
                 algorithm=algorithm,
                 validate=validate,
                 scopes_claim=scopes_claim,
@@ -741,8 +882,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # manual app.add_middleware(JWTMiddleware, ...) path.
         if not self._jwt_configured and not self.security_key and self.service_account_verifier is None:
             raise ValueError(
-                "AuthMiddleware requires at least one credential source: a JWT verification key or "
-                "JWKS file (verification_keys / jwks_file / JWT_VERIFICATION_KEY / JWT_JWKS_FILE), "
+                "AuthMiddleware requires at least one credential source: a JWT verification key, "
+                "JWKS file or JWKS URL (verification_keys / jwks_file / jwks_url / JWT_VERIFICATION_KEY / "
+                "JWT_JWKS_FILE / JWT_JWKS_URL), "
                 "validate=False, a security_key, or a service_account_verifier."
             )
 
@@ -755,8 +897,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # use a db without authorization=True.)
         if self.authorization and not self._jwt_configured:
             raise ValueError(
-                "authorization=True requires a JWT verification source (verification_keys, jwks_file, "
-                "JWT_VERIFICATION_KEY, or JWT_JWKS_FILE; or validate=False for unverified dev mode). "
+                "authorization=True requires a JWT verification source (verification_keys, jwks_file, jwks_url, "
+                "JWT_VERIFICATION_KEY, JWT_JWKS_FILE, or JWT_JWKS_URL; or validate=False for unverified dev mode). "
                 "Without one, JWT and anonymous requests are not authenticated and RBAC is not enforced."
             )
 
@@ -1628,7 +1770,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             expected_audience = resolve_expected_audience(
                 verify_audience=self.verify_audience, audience=self.audience, os_id=agent_os_id
             )
-            payload: Dict[str, Any] = self.validator.validate_token(token, expected_audience)  # type: ignore
+            payload: Dict[str, Any] = await avalidate_with(self.validator, token, expected_audience)
 
             # Extract standard claims and store in request.state
             user_id = payload.get(self.user_id_claim)

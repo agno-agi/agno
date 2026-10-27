@@ -139,10 +139,10 @@ class JWTBearerTokenVerifier(TokenVerifier):
         self._authorization = authorization
 
     async def verify_token(self, token: str) -> Optional[AccessToken]:
-        from agno.os.middleware.jwt import is_reserved_principal
+        from agno.os.middleware.jwt import avalidate_with, is_reserved_principal
 
         try:
-            payload = self._validator.validate_token(token, self._expected_audience)
+            payload = await avalidate_with(self._validator, token, self._expected_audience)
         except Exception:
             return None
         claims = self._validator.extract_claims(payload)
@@ -350,23 +350,24 @@ class _MarkerScrubbingProvider(AuthProvider):
 
 def _build_jwt_token_verifier(os: "AgentOS") -> Optional[JWTBearerTokenVerifier]:
     """A verifier for the deployment's existing JWT config, or None when none is configured."""
-    from os import getenv
-
+    from agno.os.auth import is_jwt_env_configured
     from agno.os.middleware.jwt import JWTValidator, build_jwt_middleware_kwargs, resolve_expected_audience
 
     kwargs = build_jwt_middleware_kwargs(
         getattr(os, "authorization_config", None),
         authorization=bool(getattr(os, "authorization", False)),
         issuer=getattr(os, "_authz_issuer", None),
+        jwks_url=getattr(os, "_authz_jwks_url", None),
     )
     jwt_configured = bool(
-        kwargs["verification_keys"] or kwargs["jwks_file"] or getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE")
+        kwargs["verification_keys"] or kwargs["jwks_file"] or kwargs["jwks_url"] or is_jwt_env_configured()
     )
     if not jwt_configured:
         return None
     validator = JWTValidator(
         verification_keys=kwargs["verification_keys"],
         jwks_file=kwargs["jwks_file"],
+        jwks_url=kwargs["jwks_url"],
         algorithm=kwargs["algorithm"],
         # Thread the issuer pin: without it a token from an untrusted issuer that REST
         # rejects would still verify on /mcp (the audience is threaded, but issuer was

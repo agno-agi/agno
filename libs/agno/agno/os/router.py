@@ -22,7 +22,13 @@ from agno.os.auth import (
     verify_websocket_service_account,
 )
 from agno.os.managers import websocket_manager
-from agno.os.middleware.jwt import _VERIFIED_API_JWT, JWTValidator, is_reserved_principal, resolve_expected_audience
+from agno.os.middleware.jwt import (
+    _VERIFIED_API_JWT,
+    JWTValidator,
+    avalidate_with,
+    is_reserved_principal,
+    resolve_expected_audience,
+)
 from agno.os.middleware.user_scope import (
     INSUFFICIENT_PERMISSIONS_WS_RECONNECT,
     WORKFLOW_ID_REQUIRED_RECONNECT,
@@ -612,7 +618,7 @@ def get_websocket_router(
                                 audience=ws_audience,
                                 os_id=getattr(websocket.app.state, "agent_os_id", None),
                             )
-                            payload = jwt_validator.validate_token(token, expected_audience)
+                            payload = await avalidate_with(jwt_validator, token, expected_audience)
                             claims = jwt_validator.extract_claims(payload)
 
                             # A JWT must not claim a reserved principal (a service account's
