@@ -168,6 +168,21 @@ from agno.workflow.utils import (
 # Set to prevent background tasks from being garbage-collected
 _workflow_background_tasks: set[asyncio.Task[None]] = set()
 
+
+def _link_steps_to_db(steps: Any, db: Any) -> None:
+    """Record the workflow's database on its steps, at any depth, so a step can read the workflow session.
+
+    A nested workflow links its own steps when it prepares them."""
+    for item in steps if isinstance(steps, list) else []:
+        if isinstance(item, Step):
+            item._workflow_db = db
+        elif isinstance(item, list):
+            _link_steps_to_db(item, db)
+        elif isinstance(item, (Steps, Loop, Parallel, Condition, Router)):
+            for attr in ("steps", "else_steps", "choices"):
+                _link_steps_to_db(getattr(item, attr, None), db)
+
+
 STEP_TYPE_MAPPING = {
     Step: StepType.STEP,
     Steps: StepType.STEPS,
@@ -11074,6 +11089,7 @@ class Workflow:
                     raise ValueError(f"Invalid step type: {type(step).__name__}")
 
             self.steps = prepared_steps  # type: ignore
+            _link_steps_to_db(self.steps, self.db)
             log_debug("Step preparation completed", log_level=2)
 
     def print_response(

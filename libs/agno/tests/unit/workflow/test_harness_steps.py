@@ -153,3 +153,48 @@ def test_a_sandboxed_steps_options_name_its_own_session_and_link_it_to_the_workf
         "session_id": "w1:claude-coder",
         "_session_metadata": {"workflow_id": "wf"},
     }
+
+
+def test_the_same_harness_agent_in_two_parallel_branches_is_refused_when_the_workflow_is_built(db, sdk):  # noqa: F811
+    import pytest
+
+    from agno.team import Team
+
+    coder = _member(db)
+    # One agent keeps one conversation per workflow session, which cannot take two turns at once.
+    with pytest.raises(ValueError, match="claude-coder"):
+        Parallel(Step(name="a", agent=coder), Step(name="b", agent=coder))
+    with pytest.raises(ValueError, match="claude-coder"):
+        Parallel(coder, Step(name="b", team=Team(id="t", members=[coder])))
+    # Different harness agents, and native agents, can run side by side.
+    Parallel(coder, _member(db, "claude-reviewer"))
+
+
+def test_the_same_harness_agent_in_sequential_steps_continues_one_conversation(db, sdk):  # noqa: F811
+    coder = _member(db)
+    output = _workflow(db, [Step(name="plan", agent=coder), Step(name="build", agent=coder)]).run("go", session_id="w1")
+
+    assert output.status == RunStatus.completed
+    assert [call["resume"] for call in sdk.calls] == [None, "sdk-1"]
+
+
+def test_a_harness_steps_chat_history_reads_the_workflow_db_when_the_agent_has_none(db, sdk):  # noqa: F811
+    from agno.agents.claude import ClaudeAgent
+
+    coder = ClaudeAgent(id="claude-coder", name="Coder")
+    step = Step(name="code", agent=coder)
+    _workflow(db, [step]).run("first", session_id="n1")
+
+    assert any(message.content == "answer from sdk-1" for message in step.get_chat_history(session_id="n1"))
+    history = asyncio.run(step.aget_chat_history(session_id="n1"))
+    assert any(message.content == "answer from sdk-1" for message in history)
+
+
+def test_a_harness_step_without_a_workflow_id_is_refused(db, sdk):  # noqa: F811
+    import pytest
+
+    from agno.run.workflow import WorkflowRunOutput
+    from agno.workflow.step import _harness_step_kwargs
+
+    with pytest.raises(ValueError, match="workflow id"):
+        _harness_step_kwargs(_member(db), WorkflowRunOutput(run_id="r1", workflow_id=None))

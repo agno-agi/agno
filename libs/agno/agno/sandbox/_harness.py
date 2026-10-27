@@ -245,6 +245,23 @@ def _config(agent: "BaseExternalAgent", output_schema: Any) -> Dict[str, Any]:
     return config
 
 
+# Run options a sandboxed turn takes. A sandbox refuses any other option; a team or workflow that
+# hands its agents native options (session state, dependencies, knowledge filters) forwards only these.
+SANDBOX_RUN_OPTIONS = frozenset(
+    {
+        "run_id",
+        "session_id",
+        "user_id",
+        "yield_run_output",
+        "stream_events",
+        "background_tasks",
+        "media",
+        "output_schema",
+        "metadata",
+    }
+)
+
+
 def submission(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
     """Validate one submission and return the run options it carries."""
     from agno.sandbox.protocol import validate_request
@@ -253,12 +270,12 @@ def submission(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -
     if not isinstance(input, str):
         raise ValueError("Sandboxed agent input must be text")
     extra = {key: value for key, value in kwargs.items() if value is not None}
+    unknown = set(extra) - SANDBOX_RUN_OPTIONS
+    if unknown:
+        raise ValueError("Unsupported sandbox run options: " + ", ".join(sorted(unknown)))
     for key in ("run_id", "session_id", "user_id", "yield_run_output", "stream_events", "background_tasks"):
         extra.pop(key, None)
     media = _media_wire(extra.pop("media", None))
-    unknown = set(extra) - {"output_schema", "metadata"}
-    if unknown:
-        raise ValueError("Unsupported sandbox run options: " + ", ".join(sorted(unknown)))
     schema = extra.get("output_schema", agent.output_schema)
     agent._check_output_schema(schema)
     if schema is not None and not isinstance(schema, dict):

@@ -105,8 +105,12 @@ def _harness_step_kwargs(executor: Any, workflow_run_response: Optional["Workflo
     from agno.agents.base import BaseExternalAgent
 
     if isinstance(executor, BaseExternalAgent) and workflow_run_response is not None:
-        if workflow_run_response.workflow_id is not None:
-            return {"_workflow_id": workflow_run_response.workflow_id}
+        if workflow_run_response.workflow_id is None:
+            # Without it the agent would save its own session on the workflow's session id.
+            raise ValueError(
+                f"Harness agent '{executor.get_id()}' cannot run as a step of a workflow without a workflow id"
+            )
+        return {"_workflow_id": workflow_run_response.workflow_id}
     return {}
 
 
@@ -307,6 +311,9 @@ class Step:
         self.team = team
         self.executor = executor
         self.workflow = workflow
+        # The database of the workflow that runs this step, set when the workflow prepares its steps.
+        # A harness step's runs are stored there, by the workflow.
+        self._workflow_db: Optional[Any] = None
 
         self._validate_executor_config()
 
@@ -2559,7 +2566,7 @@ class Step:
 
             if isinstance(self.agent, BaseExternalAgent):
                 # A harness step's runs are stored by the workflow, in the workflow session.
-                session = _read_workflow_session(self.agent.db, session_id)
+                session = _read_workflow_session(self._workflow_db or self.agent.db, session_id)
             else:
                 session = self.agent.get_session(session_id=session_id)
             if not session:
@@ -2605,7 +2612,7 @@ class Step:
 
             if isinstance(self.agent, BaseExternalAgent):
                 # A harness step's runs are stored by the workflow, in the workflow session.
-                session = await _aread_workflow_session(self.agent.db, session_id)
+                session = await _aread_workflow_session(self._workflow_db or self.agent.db, session_id)
             else:
                 session = await self.agent.aget_session(session_id=session_id)
             if not session:

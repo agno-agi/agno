@@ -120,3 +120,21 @@ def test_agentos_gives_sandboxed_agents_in_a_workflow_postgres_when_their_owners
     AgentOS(id="os", db=db, workflows=[workflow], telemetry=False).get_app()
 
     assert step_agent.db is db and team_member.db is db
+
+
+def test_agentos_prepares_sandboxed_agents_in_a_nested_router_choice(setup):  # noqa: F811
+    from agno.os import AgentOS
+    from agno.workflow import Router
+
+    db, agent_of, _ = setup
+    first, second = agent_of("engineer"), agent_of("reviewer")
+    first.db = second.db = None
+    workflow = Workflow(
+        id="wf",
+        name="WF",
+        steps=[Router(name="route", selector=lambda step_input: [], choices=[Step(name="a", agent=first), [second]])],
+    )
+
+    AgentOS(id="os", db=db, workflows=[workflow], telemetry=False).get_app()
+
+    assert first.db is db and second.db is db
