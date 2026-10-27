@@ -448,6 +448,18 @@ def test_agentos_lists_a_harness_member_on_the_team(db, sdk):
     assert listed.metadata == {"sdk": "claude-agent-sdk"}
 
 
+def test_a_harness_member_with_an_id_and_no_name_takes_delegated_tasks(db, sdk):
+    from agno.utils.team import get_member_id
+
+    member = ClaudeAgent(id="coder", db=db)
+    team = _team(db, [member], [_delegate("coder", "Write hello.py", "c1"), ("content", "done")])
+
+    output = team.run("Build", session_id="s1")
+
+    assert get_member_id(member) == "coder"
+    assert [(run.agent_id, run.status) for run in output.member_responses] == [("coder", RunStatus.completed)]
+
+
 def test_a_harness_agent_does_not_pretend_to_have_native_member_settings(db, sdk):
     """Knowledge and storage flags are native agent settings; a harness agent never gains them, even after a run."""
     member = _member(db)

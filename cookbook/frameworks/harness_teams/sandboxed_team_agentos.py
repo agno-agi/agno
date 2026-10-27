@@ -37,11 +37,7 @@ from agno.team import Team
 # ---------------------------------------------------------------------------
 # Configure the Example
 # ---------------------------------------------------------------------------
-db = PostgresDb(
-    db_url=os.getenv(
-        "AGNO_SANDBOX_DB_URL", "postgresql+psycopg://ai:ai@localhost:5532/ai"
-    )
-)
+db = PostgresDb(db_url=os.getenv("AGNO_SANDBOX_DB_URL", "postgresql+psycopg://ai:ai@localhost:5532/ai"))
 
 # ---------------------------------------------------------------------------
 # Create the Team
@@ -58,10 +54,9 @@ engineer = ClaudeAgent(
         # A host whose networks overlap the default range sets AGNO_SANDBOX_SUBNET to a free one.
         subnet=os.environ.get("AGNO_SANDBOX_SUBNET", "172.30.0.0/22"),
         memory_mb=1024,
-        # With a queue, any replica may run the next turn, so checkpoints live where every replica can read them.
-        checkpoints=FileCheckpointStore(
-            Path.home() / ".agno" / "sandbox" / "checkpoints"
-        ),
+        # This example runs on one host, so a local folder holds the checkpoints. With several replicas,
+        # any replica may run the next turn: use a store every replica can read, such as S3CheckpointStore.
+        checkpoints=FileCheckpointStore(Path.home() / ".agno" / "sandbox" / "checkpoints"),
     ),
 )
 team = Team(
@@ -69,9 +64,7 @@ team = Team(
     name="Sandboxed Team",
     model=OpenAIResponses(id="gpt-5.6-luna"),
     members=[engineer],
-    instructions=[
-        "Delegate all coding work to the Sandboxed Engineer and relay its result briefly."
-    ],
+    instructions=["Delegate all coding work to the Sandboxed Engineer and relay its result briefly."],
     add_history_to_context=True,
 )
 

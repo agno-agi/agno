@@ -1195,34 +1195,38 @@ class AgentOS:
                 await _harness.acheck_tables(entry, create=self.auto_provision_dbs)
 
     def _sandboxed_team_members(self) -> List[Any]:
-        """(member, owning team) for sandboxed harness agents that are members of a served team, at any depth.
+        """(member, database) for sandboxed harness agents that are members of a served team, at any depth.
 
         They run their turns through the same coordinator as a served sandboxed agent, so they
-        get the same startup checks; a member list built by a factory is not walked.
+        get the same startup checks; a member list built by a factory is not walked. The database
+        is the nearest one among the member's enclosing teams, None when none of them has one.
         """
         found: List[Any] = []
         seen: set = set()
 
-        def visit(team: Any) -> None:
+        def visit(team: Any, inherited_db: Any) -> None:
             if id(team) in seen or not isinstance(getattr(team, "members", None), list):
                 return
             seen.add(id(team))
+            team_db = getattr(team, "db", None) or inherited_db
             for member in team.members:
                 if isinstance(member, BaseExternalAgent) and member.sandbox is not None:
-                    found.append((member, team))
+                    found.append((member, team_db))
                 elif isinstance(member, Team):
-                    visit(member)
+                    visit(member, team_db)
 
         for team in self._teams or []:
-            visit(team)
+            visit(team, None)
         return found
 
-    def _prepare_sandboxed_member(self, member: BaseExternalAgent, team: Any) -> None:
-        """Give a sandboxed team member a database and fail at startup on what would fail its first turn."""
+    def _prepare_sandboxed_member(self, member: BaseExternalAgent, team_db: Any) -> None:
+        """Give a sandboxed team member a database and fail at startup on what would fail its first turn.
+
+        A member without its own database uses its nearest enclosing team's, then the OS's."""
         from agno.sandbox import _harness
 
         if member.db is None:
-            member.db = getattr(team, "db", None) or self.db
+            member.db = team_db or self.db
         _harness._check_db(member)
         if self.queue is not None and self.queue.durable:
             _harness.check_queue_checkpoints(member)
@@ -1293,8 +1297,8 @@ class AgentOS:
             return
 
         # Sandboxed harness members coordinate their computers on Postgres, as served sandboxed agents do.
-        for member, owning_team in self._sandboxed_team_members():
-            self._prepare_sandboxed_member(member, owning_team)
+        for member, team_db in self._sandboxed_team_members():
+            self._prepare_sandboxed_member(member, team_db)
 
         for team in self._teams:
             # Set the default db to teams without their own
