@@ -19,9 +19,11 @@ For HTTP access, configure `AgentOS(db=db, company=CompanyConfig())` using
 overrides the OS database. Omitting Company leaves its routes and scopes absent.
 
 The routes are `GET` and `POST /company/products`, `GET`, `PATCH` and
-`DELETE /company/products/{id}`, and `POST /company/products/{id}/restore`.
+`DELETE /company/products/{id}`, `POST /company/products/{id}/archive`, and
+`POST /company/products/{id}/restore`.
 Lists return `{data, meta}` with `limit` and `page`; reads accept
-`include_deleted=true`. Restore requires `products:delete`, like deletion.
+`include_deleted=true`. Archive and restore require `products:delete`. Permanent
+deletion requires both `products:delete` and `agent_os:admin`.
 Read and create/update require `products:read` and `products:write` respectively.
 
 `CompanyManager` takes a sync database; `AsyncCompanyManager` takes an async
@@ -279,6 +281,50 @@ clears it from failed attention while preserving the result as history. Starting
 a new attempt clears the previous result. `failed=false`
 includes all other Tasks, including those with no result. The Task table is
 created with its execution, evidence and result columns in the initial schema.
+
+## Archive and permanent deletion APIs
+
+Products, Projects and Tasks have separate operations:
+
+| Request | Result |
+| --- | --- |
+| `POST /company/{resource}/{id}/archive` | Reversible archive; returns the archived record (200). |
+| `POST /company/{resource}/{id}/restore` | Restores an archived record (200). |
+| `DELETE /company/{resource}/{id}` | Permanently removes the record (204); it cannot be restored. |
+
+Use `products`, `projects` or `tasks` for `{resource}`. **HTTP migration:** callers
+that previously used DELETE to archive must use POST `/archive`. Existing Python
+manager `delete`, `delete_project` and `delete_task` methods still archive;
+`purge`, `purge_project` and `purge_task` are explicit permanent operations.
+Archive and restore retain the resource's delete scope. Permanent deletion also
+requires `agent_os:admin` when authorization is enabled.
+
+Permanent deletion accepts active or archived records. Deleting a Project removes
+all its Tasks, including independently archived ones. Deleting a Product removes
+its Projects, Tasks (including legacy projectless Tasks) and Source rows. Other
+Products are unaffected. Registered Routines must first be permanently deleted
+through their own DELETE endpoint; an archived or disabled Routine still blocks.
+
+Queued, running or paused Task execution blocks permanent deletion with 409,
+including older attempts and stored runs whose queue ticket was removed. An
+unfinished Task reservation also blocks until resolved through existing execution
+controls. Unavailable execution verification returns 503. A Task changed during
+verification causes 409; retry after reviewing its current state. The operation
+does not cancel work. Refusal or a failed cascade leaves the Company rows unchanged.
+Direct SDK purge calls without runtime verification are limited to Tasks without
+execution history; the HTTP routes perform the runtime checks.
+
+Separate sessions, run and queue history, approvals, traces, knowledge, files and
+checkpoints remain under their existing retention. Product wiki and summary files
+are retained, and deleting Source rows does not delete remote documents. Generic
+continuation of a retained session is not disabled by deleting its Company record.
+A code-declared Product can be recreated at startup unless its declaration is
+removed; retained namespaced files may then be reused. Removing a Task's dedupe
+key also permits a later proposal to create a new Task.
+
+Missing or already deleted records return 404, as does restore after permanent
+deletion. Restoring an active record returns 409. Existing archive and restore
+cascade rules follow below.
 
 ## Cascading archive
 

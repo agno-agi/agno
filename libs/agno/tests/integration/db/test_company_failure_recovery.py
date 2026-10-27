@@ -476,3 +476,112 @@ async def test_pending_cancellation_is_conditional_and_preserves_run_fields(syst
     else:
         assert not changed
         assert after == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("cached", [False, True])
+async def test_strict_mongo_run_reads_distinguish_absence_from_failure(asynchronous, cached, monkeypatch):
+    from agno.run import RunStatus
+    from agno.run.agent import RunOutput
+
+    url = os.getenv("AGNO_TEST_MONGO_URL")
+    if not url:
+        pytest.skip("AGNO_TEST_MONGO_URL is required")
+    cls = AsyncMongoDb if asynchronous else MongoDb
+    db = cls(db_url=url, db_name="company_purge_" + uuid4().hex)
+    try:
+        if cached:
+            assert await _call(db, "get_runs", deserialize=False) == ([], 0)
+            dropped = db.db_client[db.db_name].drop_collection(db.runs_table_name)
+            if asynchronous:
+                await dropped
+        with pytest.raises(RuntimeError):
+            await _call(db, "get_runs", deserialize=False, raise_on_error=True)
+        collections = db.db_client[db.db_name].list_collection_names()
+        if asynchronous:
+            collections = await collections
+        assert db.runs_table_name not in collections
+        # Default Mongo reads retain their existing collection-creation behavior.
+        assert await _call(db, "get_runs", deserialize=False) == ([], 0)
+        run = RunOutput(run_id="stored", session_id="retained", status=RunStatus.completed)
+        await _call(db, "upsert_run", run, session_id="retained")
+        assert await _call(db, "get_runs", session_id="missing", deserialize=False, raise_on_error=True) == ([], 0)
+        rows, total = await _call(db, "get_runs", session_id="retained", deserialize=False, raise_on_error=True)
+        assert total == 1 and rows[0]["run_id"] == "stored"
+        collection = await _call(db, "_get_collection", table_type="runs")
+
+        def fail(*args, **kwargs):
+            raise RuntimeError("Run collection unavailable")
+
+        async def afail(*args, **kwargs):
+            return fail(*args, **kwargs)
+
+        monkeypatch.setattr(type(collection), "count_documents", afail if asynchronous else fail)
+        with pytest.raises(RuntimeError, match="Run collection unavailable"):
+            await _call(db, "get_runs", deserialize=False, raise_on_error=True)
+        # These readers already propagated query failures before strict mode.
+        with pytest.raises(RuntimeError, match="Run collection unavailable"):
+            await _call(db, "get_runs", deserialize=False)
+    finally:
+        if asynchronous:
+            await db.db_client.drop_database(db.db_name)
+        else:
+            db.db_client.drop_database(db.db_name)
+        await _call(db, "close")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_product_purge_uses_real_mongo_schedule_catalog(system, asynchronous, monkeypatch):
+    url = os.getenv("AGNO_TEST_MONGO_URL")
+    if not url:
+        pytest.skip("AGNO_TEST_MONGO_URL is required")
+    _, company_db, worker, _, components = system
+    cls = AsyncMongoDb if asynchronous else MongoDb
+    schedule_db = cls(db_url=url, db_name="company_purge_catalog_" + uuid4().hex)
+    os_app = AgentOS(
+        db=schedule_db,
+        agents=[components["writer"]],
+        company=CompanyConfig(db=company_db),
+        queue=worker.config,
+        telemetry=False,
+    )
+    app = os_app.get_app()
+    app.state.queue_worker = worker
+    worker.authorization_app = app
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            routine = await create_routine(client)
+            product_id = routine["payload"]["metadata"]["product_id"]
+            path = "/company/products/" + product_id
+            assert (await client.post("/company/routines/" + routine["id"] + "/archive")).status_code == 200
+            for resync in (False, True):
+                if resync:
+                    os_app.resync(app)
+                blocked = await client.delete(path)
+                assert blocked.status_code == 409, blocked.text
+                assert routine["id"] in blocked.text
+            before = await _call(company_db, "get_product", product_id)
+
+            def fail(*args, **kwargs):
+                raise RuntimeError("Schedule catalog unavailable")
+
+            async def afail(*args, **kwargs):
+                return fail(*args, **kwargs)
+
+            with monkeypatch.context() as unavailable:
+                unavailable.setattr(schedule_db, "get_schedules", afail if asynchronous else fail)
+                assert (await client.delete(path)).status_code == 503
+                assert await _call(company_db, "get_product", product_id) == before
+            # Archived Routines still block until physically removed.
+            removed = await client.delete("/company/routines/" + routine["id"])
+            assert removed.status_code == 204, removed.text
+            assert (await client.delete(path)).status_code == 204
+            assert await _call(company_db, "get_product", product_id, include_deleted=True) is None
+    finally:
+        if asynchronous:
+            await schedule_db.db_client.drop_database(schedule_db.db_name)
+        else:
+            schedule_db.db_client.drop_database(schedule_db.db_name)
+        await _call(schedule_db, "close")

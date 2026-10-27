@@ -76,7 +76,7 @@ def test_isolation_off_allows_scoped_readers_and_writers(make_client):
     path = "/company/products/" + a
     assert c.patch(path, json={"purpose": "Updated", "user_id": "bob"}, headers=headers("bob")).status_code == 200
     assert c.get(path, headers=read).json()["user_id"] == "alice"
-    assert c.delete(path, headers=headers("bob")).status_code == 204
+    assert c.post(path + "/archive", headers=headers("bob")).status_code == 200
     assert c.post(path + "/restore", headers=headers("bob")).status_code == 200
 
 
@@ -97,7 +97,7 @@ def test_isolation_on_shares_reads_and_writes(make_client):
     assert renamed.status_code == 200, renamed.text
     assert renamed.json()["name"] == "renamed"
     assert renamed.json()["user_id"] == "alice"
-    assert c.delete(path, headers=headers("bob")).status_code == 204
+    assert c.post(path + "/archive", headers=headers("bob")).status_code == 200
     assert c.get(path + "?include_deleted=true", headers=headers("bob")).status_code == 200
     assert c.get("/company/products?include_deleted=true", headers=headers("bob")).json()["meta"]["total_count"] == 4
     assert c.post(path + "/restore", headers=headers("bob")).status_code == 200
@@ -111,7 +111,7 @@ def test_admin_bypass_and_creator_attribution(make_client):
     path = "/company/products/" + a
     assert c.get(path, headers=admin).status_code == 200
     assert c.patch(path, json={"name": "renamed"}, headers=admin).status_code == 200
-    assert c.delete(path, headers=admin).status_code == 204
+    assert c.post(path + "/archive", headers=admin).status_code == 200
     assert c.post(path + "/restore", headers=admin).status_code == 200
     response = c.post("/company/products", json={"name": "Admin product", "user_id": "alice"}, headers=admin)
     assert response.status_code == 201
@@ -202,3 +202,29 @@ def test_product_scopes_catalog_is_opt_in(enabled, tmp_path):
     assert response.status_code == 200
     products = {item["raw"] for item in response.json() if item["namespace"] == "products"}
     assert products == (set(ALL_SCOPES) if enabled else set())
+
+
+@pytest.mark.parametrize("archived", [False, True])
+def test_permanent_delete_requires_admin(make_client, archived):
+    c = make_client(True)
+    record_id = create(c, "alice")
+    path = "/company/products/" + record_id
+    deleter = headers("bob", ["products:read", "products:delete"])
+    if archived:
+        response = c.post(path + "/archive", headers=deleter)
+        assert response.status_code == 200, response.text
+    before = c.get(path + "?include_deleted=true", headers=deleter).json()
+    assert c.delete(path, headers=deleter).status_code == 403
+    assert c.get(path + "?include_deleted=true", headers=deleter).json() == before
+    admin = headers("bob", ["products:delete", "agent_os:admin"])
+    assert c.delete(path, headers=admin).status_code == 204
+    assert c.get(path + "?include_deleted=true", headers=deleter).status_code == 404
+
+
+def test_explicit_archive_requires_delete_scope(make_client):
+    c = make_client(False)
+    record_id = create(c, "alice")
+    path = "/company/products/" + record_id
+    reader = headers("reader", ["products:read"])
+    assert c.post(path + "/archive", headers=reader).status_code == 403
+    assert c.get(path, headers=reader).json()["deleted_at"] is None

@@ -3,8 +3,10 @@
 import asyncio
 from typing import Any, Dict, Literal, Optional, Union
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
+from agno.company.execution import _call as _db_call
+from agno.company.execution import _TaskRunConflict, _verify_task_purge
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
@@ -16,7 +18,7 @@ from agno.os.settings import AgnoAPISettings
 
 
 def get_tasks_router(
-    db: Optional[Union[BaseDb, AsyncBaseDb]], settings: AgnoAPISettings, registry: Any = None
+    db: Optional[Union[BaseDb, AsyncBaseDb]], settings: AgnoAPISettings, registry: Any = None, *, os: Any = None
 ) -> APIRouter:
     """Build Task routes using native async storage or off-thread sync calls."""
     router = APIRouter(prefix="/company", tags=["Tasks"], dependencies=[Depends(get_scoped_user_id)])
@@ -31,7 +33,14 @@ def get_tasks_router(
 
     async def _call(
         method: Literal[
-            "create_task", "get_task", "list_tasks", "update_task", "delete_task", "restore_task", "transition_task"
+            "create_task",
+            "get_task",
+            "list_tasks",
+            "update_task",
+            "delete_task",
+            "restore_task",
+            "transition_task",
+            "purge_task",
         ],
         *args: Any,
         **kwargs: Any,
@@ -58,7 +67,7 @@ def get_tasks_router(
             raise HTTPException(status_code=404, detail=str(exc))
         except ValueError as exc:
             conflict = (
-                method in {"transition_task", "restore_task", "delete_task"}
+                method in {"transition_task", "restore_task", "delete_task", "purge_task"}
                 or str(exc) == "Accepted task scope requires a return to Backlog"
             )
             raise HTTPException(status_code=409 if conflict else 422, detail=str(exc))
@@ -136,11 +145,40 @@ def get_tasks_router(
             raise HTTPException(status_code=409, detail="Task changed while updating")
         return task
 
-    @router.delete("/tasks/{task_id}", status_code=204)
-    async def delete_task(task_id: str, _: bool = Depends(auth_dependency)) -> None:
+    @router.post("/tasks/{task_id}/archive", response_model=TaskResponse)
+    async def archive_task(task_id: str, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
         await _existing(task_id)
         if not await _call("delete_task", task_id, user_id=None):
             raise HTTPException(status_code=404, detail="Task not found")
+
+        return await _existing(task_id, include_deleted=True)
+
+    @router.delete("/tasks/{task_id}", status_code=204)
+    async def delete_task(task_id: str, request: Request, _: bool = Depends(auth_dependency)) -> Response:
+        from agno.run.authorization import current_authorization
+
+        authority = current_authorization()
+        if authority is not None:
+            try:
+                await authority.arequire("agent_os", "admin")
+            except PermissionError as exc:
+                raise HTTPException(403, str(exc)) from exc
+        await _existing(task_id, include_deleted=True)
+        try:
+            # The public response omits authorization history needed by the SQL comparison.
+            tasks = [await _db_call(db, "get_task", task_id, include_deleted=True)]
+            if tasks[0] is None:
+                raise HTTPException(404, "Task not found")
+            await _verify_task_purge(os, tasks, getattr(request.app.state, "queue_worker", None))
+        except _TaskRunConflict as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except Exception as exc:
+            if isinstance(exc, HTTPException):
+                raise
+            raise HTTPException(503, "Cannot verify the records for permanent deletion") from exc
+        if not await _call("purge_task", task_id, user_id=None, expected_tasks=tasks):
+            raise HTTPException(404, "Task not found")
+        return Response(status_code=204)
 
     @router.post("/tasks/{task_id}/restore", response_model=TaskResponse)
     async def restore_task(task_id: str, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:

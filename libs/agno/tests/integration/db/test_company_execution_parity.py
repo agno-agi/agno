@@ -912,7 +912,7 @@ async def test_worker_recovers_task_projection_after_committed_enqueue(system, m
             await client.post(path + "/transitions", json={"target": "backlog", "reason": "Withdraw"})
         ).status_code == 200
     elif recovery == "archive_restore":
-        assert (await client.delete(path)).status_code == 204
+        assert (await client.post(path + "/archive")).status_code == 200
         restored = await client.post(path + "/restore")
         assert restored.status_code == 200, restored.text
         assert restored.json()["transitions"] == value["transitions"]
@@ -1101,7 +1101,7 @@ async def test_task_archive_restore_preserves_queued_acceptance(system, monkeypa
     try:
         if running is not None:
             await asyncio.wait_for(entered.wait(), timeout=10)
-        assert (await client.delete(path)).status_code == 204
+        assert (await client.post(path + "/archive")).status_code == 200
         restored = await client.post(path + "/restore")
         assert restored.status_code == 200, restored.text
         for key in ["transitions", "session_id", "job_id", "evidence", "result", "accepted_at", "accepted_by"]:
@@ -3578,3 +3578,194 @@ async def test_terminal_reconciliation_preserves_task_and_session_guards(system,
     else:
         assert await _reconcile_task_run(db, db, reserved, run, None) is False
     assert await _call(db, "get_task", task["id"]) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resource", ["tasks", "projects", "products"])
+@pytest.mark.parametrize("ticket", [True, False])
+@pytest.mark.parametrize("status", ["PENDING", "RUNNING", "PAUSED"])
+async def test_permanent_delete_refuses_live_execution_after_task_move(system, resource, ticket, status):
+    from agno.company.execution import _call
+
+    client, db, worker, _, _ = system
+    task = await accepted(client)
+    started = await client.post(f"/company/tasks/{task['id']}/runs")
+    assert started.status_code == 202, started.text
+    run_id = started.json()["run_id"]
+    run = await _call(db, "get_run", run_id)
+    run.status = RunStatus(status)
+    await _call(db, "upsert_run", run, session_id=task["session_id"])
+    # The SDK can move a card without ending its older execution.
+    await _call(db, "transition_task", task["id"], "backlog", "Replan")
+    if not ticket:
+        table = worker.config.db._get_table("jobs")
+        with worker.config.db.Session() as session, session.begin():
+            session.execute(table.delete().where(table.c.id == run_id))
+    before = await _call(db, "get_task", task["id"], include_deleted=True)
+    record_id = task[{"tasks": "id", "projects": "project_id", "products": "product_id"}[resource]]
+    for _ in range(2):
+        response = await client.delete(f"/company/{resource}/{record_id}")
+        assert response.status_code == 409, response.text
+        assert await _call(db, "get_task", task["id"], include_deleted=True) == before
+        assert (await _call(db, "get_run", run_id, deserialize=False))["status"] == status
+
+
+@pytest.mark.asyncio
+async def test_permanent_delete_checks_older_run_and_retains_terminal_history(system):
+    from agno.company.execution import _call
+
+    client, db, worker, _, _ = system
+    task = await accepted(client)
+    path = f"/company/tasks/{task['id']}"
+    first = await client.post(path + "/runs")
+    assert first.status_code == 202, first.text
+    assert (await execute(worker))["status"] == "completed"
+    second = await client.post(path + "/runs", json={"attempt": 2})
+    assert second.status_code == 202, second.text
+    assert (await execute(worker))["status"] == "completed"
+    await _call(db, "transition_task", task["id"], "backlog", "Replan")
+    old = await _call(db, "get_run", first.json()["run_id"])
+    old.status = RunStatus.running
+    await _call(db, "upsert_run", old, session_id=task["session_id"])
+    before = await _call(db, "get_task", task["id"])
+    response = await client.delete(path)
+    assert response.status_code == 409, response.text
+    assert await _call(db, "get_task", task["id"]) == before
+    old.status = RunStatus.completed
+    await _call(db, "upsert_run", old, session_id=task["session_id"])
+    response = await client.delete(path)
+    assert response.status_code == 204, response.text
+    assert await _call(db, "get_task", task["id"], include_deleted=True) is None
+    assert (await _call(db, "get_runs", session_id=task["session_id"], deserialize=False))[1] == 2
+    assert await _call(db, "get_session", task["session_id"]) is not None
+    assert await worker.store.get_job(first.json()["run_id"]) is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["queue", "runs", "unsupported", "context"])
+async def test_permanent_delete_verification_failure_preserves_record(system, monkeypatch, failure):
+    from unittest.mock import AsyncMock
+
+    from agno.company.execution import _call
+
+    client, db, worker, _, _ = system
+    task = await accepted(client)
+    path = f"/company/tasks/{task['id']}"
+    assert (await client.post(path + "/runs")).status_code == 202
+    assert (await execute(worker))["status"] == "completed"
+    await _call(db, "transition_task", task["id"], "backlog", "Replan")
+    before = await _call(db, "get_task", task["id"])
+    if failure == "queue":
+        monkeypatch.setattr(worker.store, "list_jobs", AsyncMock(side_effect=RuntimeError("Unavailable")))
+    elif failure == "context":
+        monkeypatch.setattr(worker.authorization_app.state, "queue_worker", None)
+    else:
+
+        def read(*args, raise_on_error=False, **kwargs):
+            raise RuntimeError("Unavailable")
+
+        async def aread(*args, raise_on_error=False, **kwargs):
+            return read(*args, raise_on_error=raise_on_error, **kwargs)
+
+        def unsupported(*args, **kwargs):
+            return [], 0
+
+        async def aunsupported(*args, **kwargs):
+            return [], 0
+
+        fn = (
+            (aunsupported if isinstance(db, AsyncBaseDb) else unsupported)
+            if failure == "unsupported"
+            else (aread if isinstance(db, AsyncBaseDb) else read)
+        )
+        monkeypatch.setattr(db, "get_runs", fn)
+    response = await client.delete(path)
+    assert response.status_code == 503, response.text
+    assert await _call(db, "get_task", task["id"], include_deleted=True) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resource", ["tasks", "projects", "products"])
+async def test_permanent_delete_checks_live_tasks_below_archived_parents(system, resource):
+    from agno.company.execution import _call
+
+    client, db, worker, _, _ = system
+    task = await accepted(client)
+    started = await client.post(f"/company/tasks/{task['id']}/runs")
+    assert started.status_code == 202, started.text
+    await _call(db, "transition_task", task["id"], "backlog", "Replan")
+    if resource == "products":
+        # Put the live Task beyond the first 100 rows of the newest-first list.
+        for index in range(101):
+            await _call(
+                db,
+                "create_task",
+                {
+                    "id": "later-" + str(index),
+                    "product_id": task["product_id"],
+                    "project_id": task["project_id"],
+                    "title": "Unused",
+                    "status": "backlog",
+                    "created_at": task["created_at"] + 100,
+                    "transitions": [],
+                },
+            )
+    product_path = "/company/products/" + task["product_id"]
+    assert (await client.post(product_path + "/archive")).status_code == 200
+    assert (await _call(db, "get_tasks", product_id=task["product_id"], include_deleted=True))[1] == 0
+    before = await _call(db, "get_task", task["id"], include_deleted=True)
+    record_id = task[{"tasks": "id", "projects": "project_id", "products": "product_id"}[resource]]
+    response = await client.delete(f"/company/{resource}/{record_id}")
+    assert response.status_code == 409, response.text
+    assert await _call(db, "get_task", task["id"], include_deleted=True) == before
+    assert (await worker.store.get_job(started.json()["run_id"]))["status"] == "queued"
+    from agno.run import RunStatus
+
+    run = await _call(db, "get_run", started.json()["run_id"])
+    run.status = RunStatus.cancelled
+    await _call(db, "upsert_run", run, session_id=task["session_id"])
+    jobs = worker.config.db._get_table("jobs")
+    with worker.config.db.Session() as session, session.begin():
+        session.execute(jobs.delete().where(jobs.c.id == run.run_id))
+    # Success also proves the full descendant set was gathered before deletion.
+    assert (await client.delete(f"/company/{resource}/{record_id}")).status_code == 204
+    assert await _call(db, "get_task", task["id"], include_deleted=True) is None
+    assert await _call(db, "get_run", run.run_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_empty_record_delete_does_not_require_queue_health(system, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    client, _, worker, _, _ = system
+    product = (await client.post("/company/products", json={"name": "Empty"})).json()
+    project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Empty"})).json()
+    monkeypatch.setattr(worker.store, "list_jobs", AsyncMock(side_effect=RuntimeError("Unavailable")))
+    assert (await client.delete("/company/projects/" + project["id"])).status_code == 204
+    assert (await client.delete("/company/products/" + product["id"])).status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_permanent_delete_checks_session_only_queue_ticket(system):
+    from agno.company.execution import _call
+    from agno.run import RunStatus
+
+    client, db, worker, _, _ = system
+    task = await accepted(client)
+    path = "/company/tasks/" + task["id"]
+    started = await client.post(path + "/runs")
+    assert started.status_code == 202, started.text
+    run_id = started.json()["run_id"]
+    await _call(db, "transition_task", task["id"], "backlog", "Replan")
+    run = await _call(db, "get_run", run_id)
+    run.status = RunStatus.completed
+    await _call(db, "upsert_run", run, session_id=task["session_id"])
+    jobs = worker.config.db._get_table("jobs")
+    with worker.config.db.Session() as session, session.begin():
+        session.execute(jobs.update().where(jobs.c.id == run_id).values(payload={}))
+    assert (await client.delete(path)).status_code == 409
+    assert await _call(db, "get_task", task["id"]) is not None
+    with worker.config.db.Session() as session, session.begin():
+        session.execute(jobs.update().where(jobs.c.id == run_id).values(status="completed"))
+    assert (await client.delete(path)).status_code == 204
+    assert await worker.store.get_job(run_id) is not None

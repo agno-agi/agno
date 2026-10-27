@@ -732,12 +732,16 @@ class BaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        *,
+        raise_on_error: bool = False,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         """Get runs matching the given filters.
 
         Adapters that store runs in a dedicated table/collection override this.
         Adapters that have not been ported return an empty list (or empty tuple).
         """
+        if raise_on_error:
+            raise NotImplementedError("Strict run reads are not supported by this database")
         if deserialize:
             return []
         return [], 0
@@ -1949,6 +1953,17 @@ class BaseDb(ABC):
         """Archive a Product and its children atomically; raise ValueError with active Task ids and titles."""
         raise NotImplementedError("Company products not supported by the configured database")
 
+    def purge_product(
+        self,
+        product_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+        verified_routine_ids: Sequence[str] = (),
+    ) -> bool:
+        """Permanently remove a Product after verifying its Task snapshot."""
+        raise NotImplementedError("Company permanent deletion not supported by the configured database")
+
     def restore_product(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a Product and exactly the children archived by it within the owner scope."""
         raise NotImplementedError("Company products not supported by the configured database")
@@ -1994,6 +2009,16 @@ class BaseDb(ABC):
     ) -> bool:
         """Archive a Project and its Tasks atomically; refuse active Tasks. Cutoff requires old terminal work."""
         raise NotImplementedError("Company projects not supported by the configured database")
+
+    def purge_project(
+        self,
+        project_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Permanently remove a Project after verifying its Task snapshot."""
+        raise NotImplementedError("Company permanent deletion not supported by the configured database")
 
     def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a Project and exactly the Tasks archived by it within the owner scope."""
@@ -2043,6 +2068,8 @@ class BaseDb(ABC):
         session_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        *,
+        include_deleted_parents: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List Tasks and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company tasks not supported by the configured database")
@@ -2056,6 +2083,16 @@ class BaseDb(ABC):
     def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
         """Soft-delete an active Task within the owner scope."""
         raise NotImplementedError("Company tasks not supported by the configured database")
+
+    def purge_task(
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Permanently remove a Task after verifying its Task snapshot."""
+        raise NotImplementedError("Company permanent deletion not supported by the configured database")
 
     def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a deleted Task within the owner scope; otherwise return None."""
@@ -3081,8 +3118,12 @@ class AsyncBaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        *,
+        raise_on_error: bool = False,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         """Async list of runs. Adapters ported to v3 storage override this."""
+        if raise_on_error:
+            raise NotImplementedError("Strict run reads are not supported by this database")
         if deserialize:
             return []
         return [], 0
@@ -3991,6 +4032,17 @@ class AsyncBaseDb(ABC):
         """Archive a Product and its children atomically; raise ValueError with active Task ids and titles."""
         raise NotImplementedError("Company products not supported by the configured database")
 
+    async def purge_product(
+        self,
+        product_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+        verified_routine_ids: Sequence[str] = (),
+    ) -> bool:
+        """Permanently remove a Product after verifying its Task snapshot."""
+        raise NotImplementedError("Company permanent deletion not supported by the configured database")
+
     async def restore_product(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a Product and exactly the children archived by it within the owner scope."""
         raise NotImplementedError("Company products not supported by the configured database")
@@ -4036,6 +4088,16 @@ class AsyncBaseDb(ABC):
     ) -> bool:
         """Archive a Project and its Tasks atomically; refuse active Tasks. Cutoff requires old terminal work."""
         raise NotImplementedError("Company projects not supported by the configured database")
+
+    async def purge_project(
+        self,
+        project_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Permanently remove a Project after verifying its Task snapshot."""
+        raise NotImplementedError("Company permanent deletion not supported by the configured database")
 
     async def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a Project and exactly the Tasks archived by it within the owner scope."""
@@ -4085,6 +4147,8 @@ class AsyncBaseDb(ABC):
         session_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        *,
+        include_deleted_parents: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List Tasks and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company tasks not supported by the configured database")
@@ -4100,6 +4164,16 @@ class AsyncBaseDb(ABC):
     ) -> bool:
         """Soft-delete an active Task within the owner scope."""
         raise NotImplementedError("Company tasks not supported by the configured database")
+
+    async def purge_task(
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Permanently remove a Task after verifying its Task snapshot."""
+        raise NotImplementedError("Company permanent deletion not supported by the configured database")
 
     async def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a deleted Task within the owner scope; otherwise return None."""

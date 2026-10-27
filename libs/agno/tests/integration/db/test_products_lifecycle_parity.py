@@ -238,7 +238,7 @@ async def test_http_owner_isolation_and_override(db, tmp_path, isolation):
         response = await client.patch(path, json={"purpose": "Updated"}, headers=headers("bob"))
         assert response.status_code == 200, response.text
         assert response.json()["purpose"] == "Updated" and response.json()["user_id"] == "alice"
-        assert (await client.delete(path, headers=headers("alice"))).status_code == 204
+        assert (await client.post(path + "/archive", headers=headers("alice"))).status_code == 200
         assert (await client.get(path, headers=headers("alice"))).status_code == 404
         assert (await client.get(path + "?include_deleted=true", headers=headers("alice"))).status_code == 200
         assert (await client.post(path + "/restore", headers=headers("alice"))).status_code == 200

@@ -3,7 +3,7 @@
 import asyncio
 import json
 from contextvars import ContextVar
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb
@@ -125,6 +125,60 @@ def _task_run_database(os: Any, task: Dict[str, Any]) -> Any:
             return stores[0]
         raise _TaskRunUnavailable("Task session database is unavailable or ambiguous")
     return getattr(_executor(os.registry, task["executor_type"], task["executor_id"]), "db", None)
+
+
+async def _verify_task_purge(os: Any, tasks: List[Dict[str, Any]], queue: Any = None) -> None:
+    """Refuse removal while any affected Task session has live execution."""
+    from inspect import signature
+
+    if not tasks:
+        return
+    attempted = [
+        task
+        for task in tasks
+        if task.get("job_id")
+        or task.get("result") is not None
+        or task["status"] == "in_progress"
+        or any(entry.get("attempt") for entry in task.get("transitions", []))
+    ]
+    if attempted and (os is None or queue is None):
+        raise _TaskRunUnavailable("Cannot verify Task executions; the runtime is unavailable")
+    if queue is not None:
+        ids = {task["id"] for task in tasks}
+        sessions = {task["session_id"] for task in tasks if task.get("session_id")}
+        limit = 100
+        try:
+            while True:
+                jobs, total = await queue.store.list_jobs(
+                    status=["queued", "running", "paused"], limit=limit, raise_on_error=True
+                )
+                if total <= len(jobs):
+                    break
+                limit = max(limit * 2, total)
+        except Exception as exc:
+            raise _TaskRunUnavailable("Cannot verify Task executions; the queue is unavailable") from exc
+        if any(
+            (job.get("payload") or {}).get("company_task_id") in ids or job.get("session_id") in sessions
+            for job in jobs
+        ):
+            raise _TaskRunConflict("Cancel live Task executions before permanently deleting their records")
+    for task in attempted:
+        try:
+            if not task.get("session_id"):
+                raise _TaskRunUnavailable("Task session identity is unavailable")
+            run_db = _task_run_database(os, task)
+            if run_db is None or "raise_on_error" not in signature(run_db.get_runs).parameters:
+                raise _TaskRunUnavailable("Task run database does not support strict verification")
+            rows, _ = await _call(
+                run_db, "get_runs", session_id=task["session_id"], deserialize=False, raise_on_error=True
+            )
+        except Exception as exc:
+            raise _TaskRunUnavailable("Cannot verify Task executions; the run database is unavailable") from exc
+        for row in rows:
+            if row.get("status") in {"PENDING", "RUNNING", "PAUSED"}:
+                raise _TaskRunConflict("Cancel live Task executions before permanently deleting their records")
+            if row.get("status") not in {"COMPLETED", "ERROR", "CANCELLED"}:
+                raise _TaskRunUnavailable("Cannot verify Task executions; a stored run has unknown status")
 
 
 def _reservation_owner(task: Dict[str, Any], run: Dict[str, Any]) -> Optional[str]:

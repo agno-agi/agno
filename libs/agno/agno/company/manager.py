@@ -200,6 +200,19 @@ class CompanyManager:
         """Archive a Product and its children atomically; active Tasks raise ValueError."""
         return self.db.delete_product(product_id, user_id=user_id)
 
+    def purge(
+        self,
+        product_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+        verified_routine_ids: Sequence[str] = (),
+    ) -> bool:
+        """Permanently remove a Product after verifying its Task snapshot."""
+        return self.db.purge_product(
+            product_id, user_id=user_id, expected_tasks=expected_tasks, verified_routine_ids=verified_routine_ids
+        )
+
     def restore(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a Product and only children archived by it; return None if already active."""
         return self.db.restore_product(product_id, user_id=user_id)
@@ -300,6 +313,16 @@ class CompanyManager:
         if record is not None:
             _require_routine_product(record["product_id"])
         return self.db.delete_project(project_id, user_id=user_id, updated_before=updated_before)
+
+    def purge_project(
+        self,
+        project_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Permanently remove a Project after verifying its Task snapshot."""
+        return self.db.purge_project(project_id, user_id=user_id, expected_tasks=expected_tasks)
 
     def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a Project and only Tasks archived by it."""
@@ -473,6 +496,16 @@ class CompanyManager:
     def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
         """Soft-delete a visible task."""
         return self.db.delete_task(task_id, user_id=user_id, updated_before=updated_before)
+
+    def purge_task(
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Permanently remove a Task after verifying its Task snapshot."""
+        return self.db.purge_task(task_id, user_id=user_id, expected_tasks=expected_tasks)
 
     def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a deleted task."""
@@ -1105,6 +1138,19 @@ class AsyncCompanyManager:
         """Archive a Product and its children atomically; active Tasks raise ValueError."""
         return await self.db.delete_product(product_id, user_id=user_id)
 
+    async def purge(
+        self,
+        product_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+        verified_routine_ids: Sequence[str] = (),
+    ) -> bool:
+        """Permanently remove a Product after verifying its Task snapshot."""
+        return await self.db.purge_product(
+            product_id, user_id=user_id, expected_tasks=expected_tasks, verified_routine_ids=verified_routine_ids
+        )
+
     async def restore(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a Product and only children archived by it; return None if already active."""
         return await self.db.restore_product(product_id, user_id=user_id)
@@ -1205,6 +1251,16 @@ class AsyncCompanyManager:
         if record is not None:
             _require_routine_product(record["product_id"])
         return await self.db.delete_project(project_id, user_id=user_id, updated_before=updated_before)
+
+    async def purge_project(
+        self,
+        project_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Permanently remove a Project after verifying its Task snapshot."""
+        return await self.db.purge_project(project_id, user_id=user_id, expected_tasks=expected_tasks)
 
     async def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a Project and only Tasks archived by it."""
@@ -1380,6 +1436,16 @@ class AsyncCompanyManager:
     ) -> bool:
         """Soft-delete a visible task."""
         return await self.db.delete_task(task_id, user_id=user_id, updated_before=updated_before)
+
+    async def purge_task(
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Permanently remove a Task after verifying its Task snapshot."""
+        return await self.db.purge_task(task_id, user_id=user_id, expected_tasks=expected_tasks)
 
     async def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a deleted task."""

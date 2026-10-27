@@ -1253,6 +1253,8 @@ class PostgresDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        *,
+        raise_on_error: bool = False,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         """Get all runs matching the given filters.
 
@@ -1268,6 +1270,7 @@ class PostgresDb(BaseDb):
             sort_by (Optional[str]): The field to sort by. Defaults to run_index when filtering by session.
             sort_order (Optional[str]): The sort order.
             deserialize (Optional[bool]): Whether to deserialize the runs. Defaults to True.
+            raise_on_error (bool): Fail when run storage cannot be read instead of reporting absence.
 
         Returns:
             - When deserialize=True: List of run output objects
@@ -1277,6 +1280,8 @@ class PostgresDb(BaseDb):
         try:
             table = self._get_table(table_type="runs")
             if table is None:
+                if raise_on_error:
+                    raise RuntimeError("The runs table is unavailable")
                 return [] if deserialize else ([], 0)
 
             with self.Session() as sess:
@@ -9432,6 +9437,30 @@ class PostgresDb(BaseDb):
         with self.Session() as sess, sess.begin():
             return archive_product(sess, products, projects, tasks, product_id, user_id)
 
+    def purge_product(
+        self,
+        product_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+        verified_routine_ids: Sequence[str] = (),
+    ) -> bool:
+        """Permanently remove a Product after verifying its Task snapshot."""
+        from agno.db.sql.company import purge_product
+
+        products = self._get_table(table_type="products")
+        if products is None:
+            return False
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
+        sources = self._get_table(table_type="sources", create_table_if_not_found=True)
+        if any(table is None for table in (products, projects, tasks, sources)):
+            raise RuntimeError("Company deletion tables are unavailable")
+        with self.Session() as sess, sess.begin():
+            return purge_product(
+                sess, products, projects, tasks, sources, product_id, user_id, expected_tasks, verified_routine_ids
+            )
+
     def restore_product(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         from agno.db.sql.company import restore_product
 
@@ -9566,6 +9595,26 @@ class PostgresDb(BaseDb):
         tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
             return archive_project(sess, products, projects, tasks, project_id, user_id, updated_before)
+
+    def purge_project(
+        self,
+        project_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Permanently remove a Project after verifying its Task snapshot."""
+        from agno.db.sql.company import purge_project
+
+        projects = self._get_table(table_type="projects")
+        if projects is None:
+            return False
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
+        if any(table is None for table in (products, projects, tasks)):
+            raise RuntimeError("Company deletion tables are unavailable")
+        with self.Session() as sess, sess.begin():
+            return purge_project(sess, products, projects, tasks, project_id, user_id, expected_tasks)
 
     def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         from agno.db.sql.company import restore_project
@@ -9727,6 +9776,8 @@ class PostgresDb(BaseDb):
         session_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        *,
+        include_deleted_parents: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         from agno.db.schemas.products import company_sort
         from agno.db.sql.company import active_parents
@@ -9739,7 +9790,9 @@ class PostgresDb(BaseDb):
             return [], 0
         products = self._get_table(table_type="products", create_table_if_not_found=True)
         projects = self._get_table(table_type="projects", create_table_if_not_found=True)
-        stmt = active_parents(select(table), table, products, projects)
+        stmt = select(table)
+        if not include_deleted_parents:
+            stmt = active_parents(stmt, table, products, projects)
         if failed is not None:
             result_status = table.c.result["status"].as_string()
             stmt = stmt.where(
@@ -9822,6 +9875,26 @@ class PostgresDb(BaseDb):
             lock_child(sess, products, projects, table, task_id)
             result = sess.execute(stmt.values(deleted_at=now, updated_at=now).returning(table.c.id)).fetchone()
             return result is not None
+
+    def purge_task(
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Permanently remove a Task after verifying its Task snapshot."""
+        from agno.db.sql.company import purge_task
+
+        tasks = self._get_table(table_type="tasks")
+        if tasks is None:
+            return False
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        if any(table is None for table in (products, projects, tasks)):
+            raise RuntimeError("Company deletion tables are unavailable")
+        with self.Session() as sess, sess.begin():
+            return purge_task(sess, products, projects, tasks, task_id, user_id, expected_tasks)
 
     def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         from agno.db.sql.company import lock_child, task_restore_fields

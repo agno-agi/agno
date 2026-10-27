@@ -1,4 +1,4 @@
-"""Company archive transactions shared by the SQL adapters.
+"""Company archive and permanent-deletion transactions shared by the SQL adapters.
 
 The adapters resolve tables and own the transaction. Async adapters use
 AsyncSession.run_sync, so these same statements execute through their async driver.
@@ -7,7 +7,7 @@ status intact. Only the last archive event may authorize a cascading restore.
 """
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import func, literal, or_, select, union_all
 
@@ -29,13 +29,15 @@ def active_parents(stmt: Any, table: Any, products: Any, projects: Any = None) -
     return stmt
 
 
-def lock_product(sess: Any, products: Any, product_id: str) -> None:
+def lock_product(sess: Any, products: Any, product_id: str, *, include_deleted: bool = False) -> None:
     """Serialize hierarchy writes on the Product, including on SQLite.
 
     A no-op UPDATE obtains a write lock without changing the activity timestamp.
     Every child creation, move, transition and restore shares this lock with archive.
     """
-    stmt = products.update().where(products.c.id == product_id, products.c.deleted_at.is_(None))
+    stmt = products.update().where(products.c.id == product_id)
+    if not include_deleted:
+        stmt = stmt.where(products.c.deleted_at.is_(None))
     row = sess.execute(stmt.values(updated_at=products.c.updated_at).returning(products.c.id)).first()
     if row is None:
         raise ValueError("Product is missing or archived")
@@ -161,6 +163,110 @@ def _refuse_open_tasks(sess: Any, tasks: Any, condition: Any) -> None:
     )
     if rows:
         raise ValueError({"message": "Cannot archive with active Tasks", "tasks": [dict(row) for row in rows]})
+
+
+def _lock_purge_target(
+    sess: Any, products: Any, table: Any, record_id: str, user_id: Optional[str]
+) -> Optional[Dict[str, Any]]:
+    stmt = select(table).where(table.c.id == record_id)
+    if user_id is not None:
+        stmt = stmt.where(table.c.user_id == user_id)
+    row = sess.execute(stmt).mappings().first()
+    if row is None:
+        return None
+    lock_product(sess, products, row.get("product_id", row["id"]), include_deleted=True)
+    # A concurrent hierarchy mutation may have won the Product lock.
+    row = sess.execute(stmt).mappings().first()
+    return dict(row) if row is not None else None
+
+
+def _purge_tasks(sess: Any, tasks: Any, condition: Any, expected_tasks: Optional[List[Dict[str, Any]]]) -> None:
+    # Reservation does not take the Product lock; lock these rows before checking its history.
+    rows = [
+        dict(row)
+        for row in sess.execute(
+            tasks.update().where(condition).values(updated_at=tasks.c.updated_at).returning(tasks)
+        ).mappings()
+    ]
+    if expected_tasks is not None:
+        if {row["id"]: row for row in rows} != {row["id"]: row for row in expected_tasks}:
+            raise ValueError("Tasks changed during deletion verification; retry the request")
+    for row in rows:
+        if row["status"] == "in_progress" and row.get("result") is None:
+            raise ValueError("Cannot permanently delete with an unfinished Task attempt")
+        if expected_tasks is None and (
+            row.get("job_id")
+            or row.get("result") is not None
+            or any("attempt" in entry for entry in row.get("transitions") or [])
+        ):
+            raise ValueError("Task execution verification is required before permanent deletion")
+    sess.execute(tasks.delete().where(condition))
+
+
+def purge_product(
+    sess: Any,
+    products: Any,
+    projects: Any,
+    tasks: Any,
+    sources: Any,
+    product_id: str,
+    user_id: Optional[str],
+    expected_tasks: Optional[List[Dict[str, Any]]],
+    verified_routine_ids: Sequence[str],
+) -> bool:
+    product = _lock_purge_target(sess, products, products, product_id, user_id)
+    if product is None:
+        return False
+    if set((product.get("metadata") or {}).get("routine_ids") or []) != set(verified_routine_ids):
+        raise ValueError("Registered Routines must be deleted and their absence verified first")
+    _purge_tasks(sess, tasks, tasks.c.product_id == product_id, expected_tasks)
+    sess.execute(projects.delete().where(projects.c.product_id == product_id))
+    sess.execute(sources.delete().where(sources.c.product_id == product_id))
+    sess.execute(products.delete().where(products.c.id == product_id))
+    return True
+
+
+def purge_project(
+    sess: Any,
+    products: Any,
+    projects: Any,
+    tasks: Any,
+    project_id: str,
+    user_id: Optional[str],
+    expected_tasks: Optional[List[Dict[str, Any]]],
+) -> bool:
+    project = _lock_purge_target(sess, products, projects, project_id, user_id)
+    if project is None:
+        return False
+    _purge_tasks(sess, tasks, tasks.c.project_id == project_id, expected_tasks)
+    sess.execute(projects.delete().where(projects.c.id == project_id))
+    return True
+
+
+def purge_task(
+    sess: Any,
+    products: Any,
+    projects: Any,
+    tasks: Any,
+    task_id: str,
+    user_id: Optional[str],
+    expected_tasks: Optional[List[Dict[str, Any]]],
+) -> bool:
+    task = _lock_purge_target(sess, products, tasks, task_id, user_id)
+    if task is None:
+        return False
+    if (
+        task.get("project_id") is not None
+        and sess.execute(
+            select(projects.c.id).where(
+                projects.c.id == task["project_id"], projects.c.product_id == task["product_id"]
+            )
+        ).first()
+        is None
+    ):
+        raise ValueError("Task Project is missing")
+    _purge_tasks(sess, tasks, tasks.c.id == task_id, expected_tasks)
+    return True
 
 
 def archive_product(

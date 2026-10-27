@@ -841,7 +841,7 @@ def test_members_manage_products_and_routines_they_did_not_create_under_isolatio
             renamed = client.patch("/company/products/" + product_id, headers=headers("bob"), json={"name": "x"})
             assert renamed.status_code == 200, renamed.text
         assert db.get_product(owned["id"])["user_id"] == "alice"
-        client.delete("/company/products/" + owned["id"], headers=headers("bob")).raise_for_status()
+        client.post("/company/products/" + owned["id"] + "/archive", headers=headers("bob")).raise_for_status()
         archived = client.post("/company/routines", headers=headers("bob"), json={**body, "product_id": owned["id"]})
         assert archived.status_code == 404
     db.close()
@@ -1612,7 +1612,7 @@ def test_managed_schedule_mutations_use_company_routes(system):
     assert client.patch("/schedules/" + identifier, json={"payload": {"message": "Break metadata"}}).status_code == 409
     assert client.delete("/schedules/" + identifier).status_code == 409
     assert client.post("/schedules/" + identifier + "/enable").status_code == 409
-    assert client.delete("/company/products/" + product["id"]).status_code == 204
+    assert client.post("/company/products/" + product["id"] + "/archive").status_code == 200
     assert client.post("/company/routines/" + identifier + "/pause").status_code == 200
     assert client.post("/company/routines/" + identifier + "/resume").status_code == 404
 

@@ -86,7 +86,7 @@ def test_lifecycle(client):
     assert response.json()["transitions"][1]["attempt"] == 1
     assert transition(client, path, "done").status_code == 409
     assert client.post(path + "/restore").status_code == 409
-    assert client.delete(path).status_code == 204
+    assert client.post(path + "/archive").status_code == 200
     assert client.get(path).status_code == 404
     assert transition(client, path, "cancelled").status_code == 404
     assert client.get(path + "?include_deleted=true").json()["deleted_at"] is not None
@@ -299,3 +299,33 @@ def test_task_project_must_belong_to_same_product(client):
 def test_invalid_acceptance(client, body):
     path = "/company/tasks/" + create(client)["id"]
     assert client.post(path + "/transitions", json=body).status_code == 422
+
+
+@pytest.mark.parametrize("archived", [False, True])
+def test_permanent_delete_removes_record(client, archived):
+    record = create(client)
+    path = "/company/tasks/" + record["id"]
+    if archived:
+        assert client.post(path + "/archive").status_code == 200
+    response = client.delete(path)
+    assert response.status_code == 204, response.text
+    assert response.content == b""
+    assert client.get(path + "?include_deleted=true").status_code == 404
+    assert client.post(path + "/restore").status_code == 404
+    assert client.delete(path).status_code == 404
+
+
+def test_explicit_archive_contract(client):
+    from agno.os.scopes import get_default_scope_mappings
+
+    record = create(client)
+    path = "/company/tasks/" + record["id"]
+    response = client.post(path + "/archive")
+    assert response.status_code == 200, response.text
+    assert response.json()["deleted_at"] is not None
+    assert client.get(path).status_code == 404
+    assert client.get(path + "?include_deleted=true").json() == response.json()
+    assert client.post(path + "/archive").status_code == 404
+    assert client.post(path + "/restore").json()["deleted_at"] is None
+    assert client.post(path + "/restore").status_code == 409
+    assert get_default_scope_mappings(company=True)["POST /company/tasks/*/archive"] == ["tasks:delete"]

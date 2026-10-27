@@ -518,7 +518,7 @@ async def test_http_collaborative_work_and_shared_deletion(db, resource, isolati
         )
         assert cancelled.status_code == 200
         assert cancelled.json()["transitions"][-1]["user_id"] == "bob"
-        assert (await client.delete(path, headers=headers("alice"))).status_code == 204
+        assert (await client.post(path + "/archive", headers=headers("alice"))).status_code == 200
         assert (await client.get(path, headers=headers("bob"))).status_code == 404
         assert (await client.get(path, params={"include_deleted": True}, headers=headers("bob"))).status_code == 200
         # Archive and restore need only the delete scope; the creator stays recorded.

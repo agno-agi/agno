@@ -24,7 +24,10 @@ from agno.os.settings import AgnoAPISettings
 def client(request, tmp_path):
     cls = AsyncSqliteDb if request.param else SqliteDb
     db = cls(db_file=str(tmp_path / "products.db"))
-    app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
+    os_app = AgentOS(db=db, company=CompanyConfig(), telemetry=False)
+    app = os_app.get_app()
+    app.state.product_test_db = db
+    app.state.product_test_os = os_app
     with TestClient(app) as client:
         yield client
     if request.param:
@@ -48,10 +51,10 @@ def test_lifecycle(client):
     assert updated.json()["updated_at"] is not None
     assert client.patch(path, json={}).json() == updated.json()
     assert client.post(path + "/restore").status_code == 409
-    assert client.delete(path).status_code == 204
+    assert client.post(path + "/archive").status_code == 200
     assert client.get(path).status_code == 404
     assert client.patch(path, json={"name": "Hidden"}).status_code == 404
-    assert client.delete(path).status_code == 404
+    assert client.post(path + "/archive").status_code == 404
     deleted = client.get(path, params={"include_deleted": True}).json()
     assert isinstance(deleted["deleted_at"], int)
     assert client.get("/company/products").json()["meta"]["total_count"] == 0
@@ -124,7 +127,7 @@ def test_database_resolution_once_and_override(tmp_path):
             for path, methods in client.app.openapi()["paths"].items()
             if path.startswith("/company/products") and "/wiki" not in path
         }
-        assert sum(len(methods) for methods in paths.values()) == 6
+        assert sum(len(methods) for methods in paths.values()) == 7
         assert client.get("/company/products").status_code == 200
     default.close()
     override.close()
@@ -244,3 +247,86 @@ def test_sync_database_does_not_run_on_event_loop(tmp_path):
     db = ThreadCheckingDb(db_file=str(tmp_path / "thread.db"))
     app.include_router(get_products_router(db, AgnoAPISettings()))
     assert TestClient(app).get("/company/products").status_code == 200
+
+
+@pytest.mark.parametrize("archived", [False, True])
+def test_permanent_delete_removes_record(client, archived):
+    record = client.post("/company/products", json={"name": "Archive contract"}).json()
+    path = "/company/products/" + record["id"]
+    if archived:
+        assert client.post(path + "/archive").status_code == 200
+    response = client.delete(path)
+    assert response.status_code == 204, response.text
+    assert response.content == b""
+    assert client.get(path + "?include_deleted=true").status_code == 404
+    assert client.post(path + "/restore").status_code == 404
+    assert client.delete(path).status_code == 404
+
+
+def test_explicit_archive_contract(client):
+    from agno.os.scopes import get_default_scope_mappings
+
+    record = client.post("/company/products", json={"name": "Archive contract"}).json()
+    path = "/company/products/" + record["id"]
+    response = client.post(path + "/archive")
+    assert response.status_code == 200, response.text
+    assert response.json()["deleted_at"] is not None
+    assert client.get(path).status_code == 404
+    assert client.get(path + "?include_deleted=true").json() == response.json()
+    assert client.post(path + "/archive").status_code == 404
+    assert client.post(path + "/restore").json()["deleted_at"] is None
+    assert client.post(path + "/restore").status_code == 409
+    assert get_default_scope_mappings(company=True)["POST /company/products/*/archive"] == ["products:delete"]
+
+
+@pytest.mark.parametrize("archived", [False, True])
+@pytest.mark.parametrize("resync", [False, True])
+def test_permanent_delete_requires_routine_removal(client, archived, resync):
+    from agno.company.execution import _call
+    from agno.scheduler import ScheduleManager
+
+    db = client.app.state.product_test_db
+    product = client.post("/company/products", json={"name": "Routines"}).json()
+    path = "/company/products/" + product["id"]
+
+    async def seed():
+        schedule = await ScheduleManager(db).acreate(
+            name="Retained routine",
+            cron="0 * * * *",
+            endpoint="/agents/writer/runs",
+            provenance={"managed_by": "company", "target_type": "agent", "target_id": "writer"},
+        )
+        await _call(
+            db,
+            "update_schedule",
+            schedule.id,
+            enabled=False,
+            payload={"metadata": {"product_id": product["id"], "deleted_at": 1}},
+        )
+        await _call(db, "add_product_routine", product["id"], schedule.id)
+        return schedule.id
+
+    routine_id = asyncio.run(seed())
+    if resync:
+        client.app.state.product_test_os.resync(client.app)
+    if archived:
+        assert client.post(path + "/archive").status_code == 200
+    before = client.get(path + "?include_deleted=true").json()
+    response = client.delete(path)
+    assert response.status_code == 409, response.text
+    assert routine_id in response.text
+    assert client.get(path + "?include_deleted=true").json() == before
+    # A removed schedule may leave a stale Product link under an archived Product.
+    asyncio.run(_call(db, "delete_schedule", routine_id))
+    response = client.delete(path)
+    assert response.status_code == 204, response.text
+    assert client.get(path + "?include_deleted=true").status_code == 404
+
+
+def test_permanent_delete_product_with_null_routine_links(client):
+    created = client.post("/company/products", json={"name": "No routines", "metadata": {"routine_ids": None}})
+    assert created.status_code == 201, created.text
+    path = "/company/products/" + created.json()["id"]
+    deleted = client.delete(path)
+    assert deleted.status_code == 204, deleted.text
+    assert client.get(path + "?include_deleted=true").status_code == 404

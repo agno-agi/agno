@@ -150,7 +150,7 @@ async def test_disabled_on_demand_routine_stays_disabled_when_its_product_is_arc
     path = "/company/routines/" + routine["id"]
     await _call(db, "update_schedule", routine["id"], enabled=False)
     product_id = routine["payload"]["metadata"]["product_id"]
-    assert (await client.delete("/company/products/" + product_id)).status_code == 204
+    assert (await client.post("/company/products/" + product_id + "/archive")).status_code == 200
     disabled = await _call(db, "get_schedule", routine["id"])
     assert disabled["enabled"] is False
     refused = await client.post(path + "/resume")
@@ -508,7 +508,7 @@ async def test_automatic_disable_leaves_routine_updated_at(system, clock, cause,
         await _call(db, "update_schedule", routine["id"], cron_expr="not a cron")
     else:
         product_id = (await _call(db, "get_schedule", routine["id"]))["payload"]["metadata"]["product_id"]
-        assert (await client.delete("/company/products/" + product_id)).status_code == 204
+        assert (await client.post("/company/products/" + product_id + "/archive")).status_code == 200
     claimed = await claim_routine(db, routine["id"])
     edited = await stored_updated_at(db, routine["id"])
     clock[0] += 1000

@@ -1022,11 +1022,11 @@ class AgentOS:
             from agno.os.routers.company.runs import get_company_runs_router
             from agno.os.routers.company.tasks import get_tasks_router
 
-            updated_routers.append(get_products_router(db=self._company_db, settings=self.settings))
+            updated_routers.append(get_products_router(db=self._company_db, settings=self.settings, os=self))
             updated_routers.append(get_heartbeat_router(self))
-            updated_routers.append(get_projects_router(db=self._company_db, settings=self.settings))
+            updated_routers.append(get_projects_router(db=self._company_db, settings=self.settings, os=self))
             updated_routers.append(
-                get_tasks_router(db=self._company_db, settings=self.settings, registry=self.registry)
+                get_tasks_router(db=self._company_db, settings=self.settings, registry=self.registry, os=self)
             )
             updated_routers.append(get_playbook_router(db=self._company_db, settings=self.settings))
             updated_routers.append(get_company_runs_router(self))
@@ -2047,10 +2047,12 @@ class AgentOS:
             from agno.os.routers.company.runs import get_company_runs_router
             from agno.os.routers.company.tasks import get_tasks_router
 
-            routers.append(get_products_router(db=self._company_db, settings=self.settings))
+            routers.append(get_products_router(db=self._company_db, settings=self.settings, os=self))
             routers.append(get_heartbeat_router(self))
-            routers.append(get_projects_router(db=self._company_db, settings=self.settings))
-            routers.append(get_tasks_router(db=self._company_db, settings=self.settings, registry=self.registry))
+            routers.append(get_projects_router(db=self._company_db, settings=self.settings, os=self))
+            routers.append(
+                get_tasks_router(db=self._company_db, settings=self.settings, registry=self.registry, os=self)
+            )
             routers.append(get_playbook_router(db=self._company_db, settings=self.settings))
             routers.append(get_company_runs_router(self))
         # Routes that require a database
