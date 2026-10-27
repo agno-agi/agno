@@ -338,12 +338,17 @@ async def test_cancellation_and_revocation(system):
 
 
 @pytest.mark.asyncio
-async def test_executing_attempt_blocks_leaving_in_progress(system):
+@pytest.mark.parametrize("status", ["running", "paused"])
+async def test_executing_attempt_blocks_leaving_in_progress(system, status):
     client, db, worker, os, _ = system
     value = await accepted(client)
     path = f"/company/tasks/{value['id']}"
     run_id = (await client.post(path + "/runs")).json()["run_id"]
-    assert (await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds))["id"] == run_id
+    claimed = await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds)
+    assert claimed["id"] == run_id
+    if status == "paused":
+        # A run waiting on approval parks its ticket as paused, and no worker claims a paused ticket.
+        assert await worker.store.complete_job(run_id, worker.worker_id, claimed["attempt"], "paused")
     response = await client.post(path + "/transitions", json={"target": "backlog", "reason": "Withdraw"})
     assert response.status_code == 409
     assert response.json()["detail"] == f"Cancel the run with POST /company/runs/{run_id}/cancel to leave In progress"

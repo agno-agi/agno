@@ -163,12 +163,13 @@ def get_tasks_router(
                 detail=f"Start a run with POST /company/tasks/{task_id}/runs to enter In progress",
             )
         from agno.company.execution import _pending_task_attempt
+        from agno.job_queue.session import HOLDING_STATUSES
 
-        # A queued attempt is withdrawn by the move; an executing one must be cancelled first.
+        # A queued attempt is withdrawn by the move; an executing or paused one must be cancelled first.
         queue = getattr(request.app.state, "queue_worker", None)
         if _pending_task_attempt(existing) is not None and queue is not None:
             job = await queue.store.get_job(existing["job_id"])
-            if job is not None and job["status"] == "running":
+            if job is not None and job["status"] in HOLDING_STATUSES:
                 raise HTTPException(
                     status_code=409,
                     detail=f"Cancel the run with POST /company/runs/{existing['job_id']}/cancel to leave In progress",
