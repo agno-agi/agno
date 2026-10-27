@@ -43,10 +43,11 @@ def get_member_id(member: Union[Agent, "Team"]) -> Optional[str]:
     passes back when delegating tasks. Only a name, which may contain spaces or other
     characters unsafe for tool-call arguments, is converted.
     """
+    from agno.agents.base import BaseExternalAgent
     from agno.team.team import Team
 
-    # First priority: Use the ID if explicitly provided
-    if isinstance(member, (Agent, Team)) and member.id is not None:
+    # First priority: Use the ID if explicitly provided. A harness member (Claude Code, Codex) has one too.
+    if isinstance(member, (Agent, Team, BaseExternalAgent)) and member.id is not None:
         return member.id
     # Second priority: Use the name if available
     elif member.name is not None:
