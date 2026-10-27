@@ -1196,33 +1196,36 @@ class AgentOS:
                 await _harness.acheck_tables(entry, create=self.auto_provision_dbs)
 
     def _sandboxed_team_members(self) -> List[Any]:
-        """(member, owning team) for sandboxed harness agents that are members of a served team, at any depth.
+        """(member, database) for sandboxed harness agents that are members of a served team, at any depth.
 
         They run their turns through the same coordinator as a served sandboxed agent, so they
-        get the same startup checks; a member list built by a factory is not walked.
+        get the same startup checks; a member list built by a factory is not walked. The database
+        is the nearest one among the member's enclosing teams, None when none of them has one.
         """
         found: List[Any] = []
         seen: set = set()
 
-        def visit(team: Any) -> None:
+        def visit(team: Any, inherited_db: Any) -> None:
             if id(team) in seen or not isinstance(getattr(team, "members", None), list):
                 return
             seen.add(id(team))
+            team_db = getattr(team, "db", None) or inherited_db
             for member in team.members:
                 if isinstance(member, BaseExternalAgent) and member.sandbox is not None:
-                    found.append((member, team))
+                    found.append((member, team_db))
                 elif isinstance(member, Team):
-                    visit(member)
+                    visit(member, team_db)
 
         for team in self._teams or []:
-            visit(team)
+            visit(team, None)
         return found
 
     def _sandboxed_workflow_agents(self) -> List[Any]:
-        """(agent, owner) for sandboxed harness agents that run inside a served workflow, at any depth.
+        """(agent, database) for sandboxed harness agents that run inside a served workflow, at any depth.
 
-        The owner is the workflow for a step, or the team for a member of a team used as a step.
-        Steps built by a callable are not walked.
+        That covers steps and members of a team used as a step; steps built by a callable are not
+        walked. The database is the nearest one among the agent's enclosing teams and workflows, None
+        when none of them has one.
         """
         from agno.workflow.condition import Condition
         from agno.workflow.loop import Loop
@@ -1235,52 +1238,56 @@ class AgentOS:
         found: List[Any] = []
         seen: set = set()
 
-        def visit_team(team: Any) -> None:
+        def visit_team(team: Any, inherited_db: Any) -> None:
             if id(team) in seen or not isinstance(getattr(team, "members", None), list):
                 return
             seen.add(id(team))
+            team_db = getattr(team, "db", None) or inherited_db
             for member in team.members:
                 if isinstance(member, BaseExternalAgent) and member.sandbox is not None:
-                    found.append((member, team))
+                    found.append((member, team_db))
                 elif isinstance(member, Team):
-                    visit_team(member)
+                    visit_team(member, team_db)
 
-        def visit(item: Any, workflow: Any) -> None:
+        def visit(item: Any, inherited_db: Any) -> None:
             if isinstance(item, BaseExternalAgent):
                 if item.sandbox is not None:
-                    found.append((item, workflow))
+                    found.append((item, inherited_db))
             elif isinstance(item, Team):
-                visit_team(item)
+                visit_team(item, inherited_db)
             elif isinstance(item, Workflow):
-                visit_workflow(item)
+                visit_workflow(item, inherited_db)
             elif isinstance(item, (Step, Steps, Loop, Parallel, Condition, Router)):
                 for attr in ("agent", "team", "workflow"):
                     if getattr(item, attr, None) is not None:
-                        visit(getattr(item, attr), workflow)
+                        visit(getattr(item, attr), inherited_db)
                 for attr in ("steps", "else_steps", "choices"):
                     children = getattr(item, attr, None)
                     if isinstance(children, list):
                         for child in children:
-                            visit(child, workflow)
+                            visit(child, inherited_db)
 
-        def visit_workflow(workflow: Any) -> None:
+        def visit_workflow(workflow: Any, inherited_db: Any) -> None:
             if id(workflow) in seen or not isinstance(getattr(workflow, "steps", None), list):
                 return
             seen.add(id(workflow))
+            workflow_db = getattr(workflow, "db", None) or inherited_db
             for step in workflow.steps:
-                visit(step, workflow)
+                visit(step, workflow_db)
 
         for workflow in self._workflows or []:
-            visit_workflow(workflow)
+            visit_workflow(workflow, None)
         return found
 
-    def _prepare_sandboxed_member(self, member: BaseExternalAgent, owner: Any) -> None:
+    def _prepare_sandboxed_member(self, member: BaseExternalAgent, owner_db: Any) -> None:
         """Give a sandboxed team member or workflow step a database and fail at startup on what would
-        fail its first turn."""
+        fail its first turn.
+
+        One without its own database uses its nearest enclosing team's or workflow's, then the OS's."""
         from agno.sandbox import _harness
 
         if member.db is None:
-            member.db = getattr(owner, "db", None) or self.db
+            member.db = owner_db or self.db
         _harness._check_db(member)
         if self.queue is not None and self.queue.durable:
             _harness.check_queue_checkpoints(member)
@@ -1351,8 +1358,8 @@ class AgentOS:
             return
 
         # Sandboxed harness members coordinate their computers on Postgres, as served sandboxed agents do.
-        for member, owning_team in self._sandboxed_team_members():
-            self._prepare_sandboxed_member(member, owning_team)
+        for member, team_db in self._sandboxed_team_members():
+            self._prepare_sandboxed_member(member, team_db)
 
         for team in self._teams:
             # Set the default db to teams without their own
@@ -1389,8 +1396,8 @@ class AgentOS:
                 workflow.db = self.db
 
         # Sandboxed harness steps coordinate their computers on Postgres, as served sandboxed agents do.
-        for agent, owner in self._sandboxed_workflow_agents():
-            self._prepare_sandboxed_member(agent, owner)
+        for agent, owner_db in self._sandboxed_workflow_agents():
+            self._prepare_sandboxed_member(agent, owner_db)
 
         for workflow in self._workflows:
             # Track MCP tools recursively in workflow members

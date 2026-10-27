@@ -55,6 +55,7 @@ from agno.run.base import RunStatus
 from agno.session.agent import AgentSession
 from agno.utils.events import error_type_of
 from agno.utils.log import log_exception, log_warning
+from agno.utils.serialize import json_serializer
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
 
 if TYPE_CHECKING:
@@ -806,6 +807,10 @@ class BaseExternalAgent:
         session under the id it assigned, so the two records cannot share one row.
         """
         forwarded = {key: value for key, value in kwargs.items() if key in self._SANDBOX_MEMBER_RUN_OPTIONS}
+        if forwarded.get("metadata") is not None:
+            # The sandbox takes metadata as JSON. Values such as datetimes become text, as Agno stores them
+            # elsewhere; a value JSON cannot hold fails the member's run instead of the team's tool call.
+            forwarded["metadata"] = json.loads(json.dumps(forwarded["metadata"], default=json_serializer))
         forwarded["session_id"] = self._state_session_id(team_session_id, parent_id)
         forwarded["run_id"] = f"{team_run_id}.sandbox"
         return forwarded
@@ -818,6 +823,9 @@ class BaseExternalAgent:
         # Runs and run events carry session_id and run_id; anything else in a stream is passed through untouched.
         if isinstance(item, (str, bytes)):
             return item
+        # The sandbox keeps its own objects after yielding them (it records its events for its own run),
+        # so the team gets a copy under the team's ids and the sandbox's objects keep the sandbox's.
+        item = copy(item)
         if getattr(item, "session_id", None) is not None:
             item.session_id = team_session_id
         if getattr(item, "run_id", None) == sandbox_run_id:
@@ -827,6 +835,53 @@ class BaseExternalAgent:
             sandbox["run_id"] = sandbox_run_id
             item.metadata = {**(item.metadata or {}), "sandbox": sandbox}
         return item
+
+    @staticmethod
+    async def _araise_if_member_cancelled(team_run_id: str) -> None:
+        """Raise when the team cancelled this member's run before it was linked to the sandbox's run.
+
+        Cancelling the member run cascades only to runs already linked to it, so a cancel that arrived
+        before the link would otherwise never reach the sandbox."""
+        from agno.run.cancel import ais_cancelled
+
+        if await ais_cancelled(team_run_id):
+            raise RunCancelledException("Run cancelled")
+
+    def _sandboxed_member_failure(
+        self, error: Exception, team_session_id: str, team_run_id: str, input: Any, kwargs: Dict[str, Any]
+    ) -> RunOutput:
+        """The member's run, recorded as cancelled or failed, for a sandboxed turn that did not complete.
+
+        The team stores it like any member run, and the leader reads its content instead of an exception."""
+        cancelled = isinstance(error, RunCancelledException)
+        if not cancelled:
+            log_warning(f"Sandboxed agent '{self.get_id()}' failed as a team member or workflow step: {error}")
+        run = self._build_run_output(
+            team_run_id,
+            team_session_id,
+            kwargs.get("user_id"),
+            input,
+            "Run cancelled" if cancelled else str(error),
+            RunStatus.cancelled if cancelled else RunStatus.error,
+            media=kwargs.get("media"),
+        )
+        if not cancelled:
+            run.metadata = self._failure_metadata(error)
+        return run
+
+    def _terminal_event_for(self, run: RunOutput) -> RunOutputEvent:
+        """The closing stream event for a member run that was cancelled or failed."""
+        if run.status == RunStatus.cancelled:
+            return RunCancelledEvent(
+                run_id=run.run_id, session_id=run.session_id, agent_id=self.get_id(), reason="Run cancelled"
+            )
+        return RunErrorEvent(
+            run_id=run.run_id,
+            session_id=run.session_id,
+            agent_id=self.get_id(),
+            content=str(run.content),
+            error_type=(run.metadata or {}).get("error_type"),
+        )
 
     async def _apersist_member_state(self, session: AgentSession) -> None:
         """Save a team member's own session, which holds its native conversation ids, without runs."""
@@ -1902,13 +1957,18 @@ class BaseExternalAgent:
 
             team_session_id = kwargs.get("session_id") or str(uuid4())
             team_run_id = kwargs.get("run_id") or str(uuid4())
-            forwarded = self._sandboxed_member_kwargs(kwargs, team_session_id, team_run_id, parent_id)
-            # Cancelling the member run the team registered reaches the sandbox's run through this link.
-            await aregister_member_run(team_run_id, forwarded["run_id"])
+            text = self._input_text(input)
             try:
-                run = await _sandbox_harness().arun(self, self._input_text(input), **forwarded)
-            finally:
-                await acleanup_member_runs(team_run_id)
+                forwarded = self._sandboxed_member_kwargs(kwargs, team_session_id, team_run_id, parent_id)
+                # Cancelling the member run the team registered reaches the sandbox's run through this link.
+                await aregister_member_run(team_run_id, forwarded["run_id"])
+                try:
+                    await self._araise_if_member_cancelled(team_run_id)
+                    run = await _sandbox_harness().arun(self, text, **forwarded)
+                finally:
+                    await acleanup_member_runs(team_run_id)
+            except Exception as error:
+                return self._sandboxed_member_failure(error, team_session_id, team_run_id, text, kwargs)
             return self._as_team_member_output(run, team_session_id, team_run_id, forwarded["run_id"])
         run_id = kwargs.pop("run_id", None) or str(uuid4())
         session_id = kwargs.get("session_id") or str(uuid4())
@@ -2030,17 +2090,31 @@ class BaseExternalAgent:
 
             team_session_id = kwargs.get("session_id") or str(uuid4())
             team_run_id = kwargs.get("run_id") or str(uuid4())
-            forwarded = self._sandboxed_member_kwargs(kwargs, team_session_id, team_run_id, parent_id)
-            await aregister_member_run(team_run_id, forwarded["run_id"])
-            events = _sandbox_harness().astream(self, self._input_text(input), **forwarded)
+            text = self._input_text(input)
+            failure: Optional[Exception] = None
             try:
-                async for item in events:
-                    yield self._as_team_member_output(item, team_session_id, team_run_id, forwarded["run_id"])
-            finally:
+                forwarded = self._sandboxed_member_kwargs(kwargs, team_session_id, team_run_id, parent_id)
+                await aregister_member_run(team_run_id, forwarded["run_id"])
+            except Exception as error:
+                failure = error
+            if failure is None:
                 try:
-                    await events.aclose()
+                    await self._araise_if_member_cancelled(team_run_id)
+                    events = _sandbox_harness().astream(self, text, **forwarded)
+                    try:
+                        async for item in events:
+                            yield self._as_team_member_output(item, team_session_id, team_run_id, forwarded["run_id"])
+                    finally:
+                        await events.aclose()
+                except Exception as error:
+                    failure = error
                 finally:
                     await acleanup_member_runs(team_run_id)
+            if failure is not None:
+                failed = self._sandboxed_member_failure(failure, team_session_id, team_run_id, text, kwargs)
+                yield self._terminal_event_for(failed)
+                if kwargs.get("yield_run_output", False):
+                    yield failed
             return
         run_id = kwargs.pop("run_id", None) or str(uuid4())
         session_id = kwargs.get("session_id") or str(uuid4())

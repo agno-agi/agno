@@ -194,3 +194,108 @@ async def test_cancelling_the_team_run_cancels_the_sandboxed_member_and_frees_it
     team.model = _ScriptedModel([_delegate("engineer", "quick", "c2"), ("content", "done")])
     second = await team.arun("again", session_id="s1")
     assert second.member_responses and second.member_responses[-1].status == RunStatus.completed
+
+
+@pytest.mark.asyncio
+async def test_a_streamed_sandboxed_member_leaves_the_sandboxs_own_events_untouched(setup, monkeypatch):
+    """The team's stream reports the member's events under the team's ids, on copies: the sandbox
+    keeps its own event objects, which it records for its run after yielding them."""
+    from agno.run.agent import RunOutput
+    from agno.sandbox import _harness
+
+    db, member_of, _ = setup
+    engineer = member_of("engineer")
+    engineer.store_events = True
+    yielded = []
+    astream = _harness.astream
+
+    async def recording(*args, **kwargs):
+        async for item in astream(*args, **kwargs):
+            yielded.append(item)
+            yield item
+
+    monkeypatch.setattr(_harness, "astream", recording)
+    team = Team(
+        id="team",
+        name="Team",
+        members=[engineer],
+        model=_ScriptedModel([_delegate("engineer", "stream it", "c1"), ("content", "done")]),
+        db=db,
+    )
+    events = [event async for event in team.arun("go", session_id="s1", stream=True, stream_events=True)]
+
+    member_events = [event for event in events if getattr(event, "agent_id", None) == "engineer"]
+    assert member_events and all(event.session_id == "s1" for event in member_events)
+    sandbox_events = [item for item in yielded if not isinstance(item, (str, RunOutput))]
+    assert sandbox_events
+    assert {(event.run_id.endswith(".sandbox"), event.session_id) for event in sandbox_events} == {
+        (True, "s1:engineer")
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_a_cancel_that_lands_before_the_sandbox_link_still_stops_the_member(setup, stream):
+    """The team cancelled the member's run before the member linked it to its sandbox run."""
+    from agno.run.cancel import acancel_run
+
+    db, member_of, tmp_path = setup
+    engineer = member_of("engineer")
+    await acancel_run("member-run-1")
+
+    options = dict(session_id="s1", run_id="member-run-1", _team_id="team")
+    if stream:
+        items = [item async for item in engineer.arun("go", stream=True, yield_run_output=True, **options)]
+        output = items[-1]
+        assert getattr(items[-2], "event", None) == "RunCancelled"
+    else:
+        output = await engineer.arun("go", **options)
+
+    assert output.status == RunStatus.cancelled and output.run_id == "member-run-1"
+    member_session = db.get_session(session_id="s1:engineer", session_type=SessionType.AGENT)
+    assert member_session is None or not [run for run in member_session.runs if run.status == RunStatus.completed]
+
+
+def test_team_metadata_that_is_not_json_reaches_a_sandboxed_member_or_becomes_its_error(setup):
+    from datetime import datetime
+
+    db, member_of, _ = setup
+    engineer = member_of("engineer")
+    team = Team(
+        id="team",
+        name="Team",
+        members=[engineer],
+        model=_ScriptedModel(
+            [
+                _delegate("engineer", "first", "c1"),
+                ("content", "done"),
+                _delegate("engineer", "second", "c2"),
+                ("content", "done"),
+            ]
+        ),
+        db=db,
+    )
+
+    # A datetime is converted to text, as the rest of Agno stores it.
+    first = team.run("go", session_id="s1", metadata={"started": datetime(2026, 10, 27, 9, 0)})
+    assert [run.status for run in first.member_responses] == [RunStatus.completed]
+
+    # A value JSON cannot hold becomes the member's recorded error instead of an exception in the leader's tool.
+    second = team.run("again", session_id="s1", metadata={"ratio": float("nan")})
+    assert second.status == RunStatus.completed
+    [failed] = second.member_responses
+    assert failed.status == RunStatus.error and failed.content
+
+
+def test_agentos_gives_a_nested_sandboxed_member_the_enclosing_teams_database(setup):
+    from agno.os import AgentOS
+
+    db, member_of, _ = setup
+    engineer = member_of("engineer")
+    engineer.db = None
+    inner = Team(id="inner", name="Inner", members=[engineer], model=_ScriptedModel([]))
+    outer = Team(id="outer", name="Outer", members=[inner], model=_ScriptedModel([]), db=db)
+
+    AgentOS(id="os", teams=[outer], telemetry=False).get_app()
+
+    assert engineer.db is db
