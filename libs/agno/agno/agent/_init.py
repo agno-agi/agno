@@ -502,17 +502,23 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
 
 
 def add_tool(agent: Agent, tool: Union[Toolkit, Callable, Function, Dict]) -> None:
+    from agno.tools._dynamic import get_dynamic_tool_adder, tool_registration
     from agno.tools.component import raise_if_component_tool
     from agno.utils.callables import is_callable_factory
 
     raise_if_component_tool(tool, "Agent", "To let this agent delegate to another agent, use a Team.")
-    if is_callable_factory(agent.tools, excluded_types=(Toolkit, Function)):
-        raise RuntimeError(
-            "Cannot add_tool() when tools is a callable factory. Use set_tools() to replace the factory."
-        )
-    if not agent.tools:
-        agent.tools = []
-    agent.tools.append(tool)  # type: ignore[union-attr]
+    with tool_registration(agent):
+        if is_callable_factory(agent.tools, excluded_types=(Toolkit, Function)):
+            raise RuntimeError(
+                "Cannot add_tool() when tools is a callable factory. Use set_tools() to replace the factory."
+            )
+        # Validate the originating call and prepare its tools before changing configuration.
+        dynamic_adder = get_dynamic_tool_adder(agent)
+        if dynamic_adder is not None and not dynamic_adder(tool):
+            return
+        if not agent.tools:
+            agent.tools = []
+        agent.tools.append(tool)  # type: ignore[union-attr]
 
 
 def set_tools(agent: Agent, tools: Union[Sequence[Union[Toolkit, Callable, Function, Dict]], Callable]) -> None:

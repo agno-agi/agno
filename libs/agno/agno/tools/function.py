@@ -1310,6 +1310,8 @@ class Function(BaseModel):
     _team: Optional[Any] = None
     # The run context that the function is associated with
     _run_context: Optional[RunContext] = None
+    # Installed only on the prepared Function belonging to one execution.
+    _dynamic_tool_adder: Optional[Callable[[Any], bool]] = None
 
     # Parameters process_entrypoint kept out of the model-facing schema because the
     # framework supplies them, by name or by type annotation (e.g. `ctx: RunContext`).
@@ -2597,13 +2599,14 @@ class FunctionCall(BaseModel):
 
     def execute(self) -> FunctionExecutionResult:
         """Run the function with the caller authority appropriate to its owning component."""
-        from agno.run.authorization import _authorized_tool_result, _tool_authorization
+        from agno.run.authorization import _tool_authorization
+        from agno.tools._dynamic import bind_tool_result, tool_call_context
 
-        with _tool_authorization(self.function) as authority:
+        with tool_call_context(self.function), _tool_authorization(self.function) as authority:
             outcome = self._execute()
             if outcome.status == "success":
                 original_result = outcome.result
-                outcome.result = _authorized_tool_result(original_result, authority)
+                outcome.result = bind_tool_result(original_result, self.function, authority)
                 if self.result is original_result:
                     self.result = outcome.result
             return outcome
@@ -2875,13 +2878,14 @@ class FunctionCall(BaseModel):
 
     async def aexecute(self) -> FunctionExecutionResult:
         """Run the function asynchronously with its owning component's caller authority."""
-        from agno.run.authorization import _authorized_tool_result, _tool_authorization
+        from agno.run.authorization import _tool_authorization
+        from agno.tools._dynamic import bind_tool_result, tool_call_context
 
-        with _tool_authorization(self.function) as authority:
+        with tool_call_context(self.function), _tool_authorization(self.function) as authority:
             outcome = await self._aexecute()
             if outcome.status == "success":
                 original_result = outcome.result
-                outcome.result = _authorized_tool_result(original_result, authority)
+                outcome.result = bind_tool_result(original_result, self.function, authority)
                 if self.result is original_result:
                     self.result = outcome.result
             return outcome

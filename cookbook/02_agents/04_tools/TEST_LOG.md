@@ -58,3 +58,12 @@
 **Result:** Timed out after 120s.
 
 ---
+
+### 05_same_run_tool_loading.py
+
+**Status:** NOT RUN
+**Tier:** untagged
+**Description:** Demonstrates loading a tool on demand and calling it in the next model iteration of the same Agent run. Uses OpenAIResponses with `gpt-5.6-luna`.
+**Result:** Not invoked because this example calls a provider; provider-free regression tests cover the same-run behavior.
+
+---

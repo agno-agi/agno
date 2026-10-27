@@ -476,12 +476,15 @@ def parse_tools(
     model: Model,
     run_context: Optional[RunContext] = None,
     async_mode: bool = False,
+    existing_tools: Optional[List[Union[Function, dict]]] = None,
 ) -> List[Union[Function, dict]]:
-    _function_names: List[str] = []
+    _function_names = [tool.name for tool in existing_tools or [] if isinstance(tool, Function)]
     _functions: List[Union[Function, dict]] = []
     _toolkit_instruction_keys: Set[ToolkitKey] = set()
     _source_toolkit_last_index, _source_toolkit_members, _toolkit_keys = _group_source_toolkits(tools)
-    agent._tool_instructions = []
+    collect_instructions = existing_tools is None
+    if collect_instructions:
+        agent._tool_instructions = []
 
     def toolkit_key(toolkit: Toolkit) -> ToolkitKey:
         # The key folds the toolkit's whole function surface; memoized so one
@@ -492,6 +495,8 @@ def parse_tools(
         return key
 
     def add_toolkit_instructions(toolkit: Toolkit) -> None:
+        if not collect_instructions:
+            return
         key = toolkit_key(toolkit)
         if key in _toolkit_instruction_keys:
             return
@@ -560,7 +565,12 @@ def parse_tools(
                 log_debug(f"Added tool {name} from {tool.name}")
 
                 # Add per-function instructions
-                if _func.add_instructions and _func.instructions is not None:
+                if (
+                    collect_instructions
+                    and _func.add_instructions
+                    and _func.instructions is not None
+                    and agent._tool_instructions is not None
+                ):
                     agent._tool_instructions.append(_func.instructions)
 
             # Add instructions from the toolkit
@@ -594,7 +604,12 @@ def parse_tools(
             log_debug(f"Added tool {tool.name}")
 
             # Add instructions from the Function
-            if tool.add_instructions and tool.instructions is not None:
+            if (
+                collect_instructions
+                and tool.add_instructions
+                and tool.instructions is not None
+                and agent._tool_instructions is not None
+            ):
                 agent._tool_instructions.append(tool.instructions)
 
             # DB-loaded toolkit members are bare Functions. Their live owning
@@ -649,6 +664,19 @@ def parse_tools(
     return _functions
 
 
+def _dynamic_tool_names(tool: Union[Toolkit, Callable, Function, Dict], async_mode: bool) -> Set[str]:
+    """Read callable names without preparing tools or changing their bindings."""
+    if isinstance(tool, Toolkit):
+        functions = tool.get_async_functions() if async_mode else tool.get_functions()
+        return {function.name for function in functions.values()}
+    if isinstance(tool, Function):
+        return {tool.name}
+    if callable(tool):
+        name = getattr(tool, "__name__", None)
+        return {name} if name is not None else set()
+    return set()
+
+
 def determine_tools_for_model(
     agent: Agent,
     model: Model,
@@ -657,6 +685,7 @@ def determine_tools_for_model(
     run_context: RunContext,
     session: AgentSession,
     async_mode: bool = False,
+    existing_tools: Optional[List[Union[Function, dict]]] = None,
 ) -> List[Union[Function, dict]]:
     _functions: List[Union[Function, dict]] = []
 
@@ -664,7 +693,12 @@ def determine_tools_for_model(
     if processed_tools is not None and len(processed_tools) > 0:
         log_debug("Processing tools for model")
         _functions = parse_tools(
-            agent, tools=processed_tools, model=model, run_context=run_context, async_mode=async_mode
+            agent,
+            tools=processed_tools,
+            model=model,
+            run_context=run_context,
+            async_mode=async_mode,
+            existing_tools=existing_tools,
         )
 
     # Update the session state for the functions
@@ -690,7 +724,52 @@ def determine_tools_for_model(
                 func._audios = joint_audios
                 func._videos = joint_videos
 
-    return _functions
+    registry = _functions if existing_tools is None else existing_tools
+
+    def add_dynamic_tool(tool: Union[Toolkit, Callable, Function, Dict]) -> bool:
+        if not async_mode:
+            _raise_if_async_tools_in_list([tool])
+        names = _dynamic_tool_names(tool, async_mode)
+        active_names = {function.name for function in registry if isinstance(function, Function)}
+        configured_names: Set[str] = set()
+        configured_tools = agent.tools if isinstance(agent.tools, list) else []
+        for configured_tool in configured_tools:
+            configured_names.update(_dynamic_tool_names(configured_tool, async_mode))
+
+        # Continuation prepares configured tools again, first name wins. A tool
+        # from another active run must not silently replace this run's binding.
+        conflicting_names = names & (configured_names - active_names)
+        if conflicting_names:
+            raise ValueError(f"Tool names already configured by another run: {', '.join(sorted(conflicting_names))}")
+
+        native_names = names & (active_names - configured_names)
+        if native_names and names - active_names:
+            raise ValueError(f"Cannot shadow run-local tool names: {', '.join(sorted(native_names))}")
+        if names and names <= active_names:
+            # In particular, never persist an override of a framework/client
+            # tool that exists only in the prepared registry of this run.
+            return False
+
+        determine_tools_for_model(
+            agent=agent,
+            model=model,
+            processed_tools=[tool],
+            run_response=run_response,
+            run_context=run_context,
+            session=session,
+            async_mode=async_mode,
+            existing_tools=registry,
+        )
+        return True
+
+    for function in _functions:
+        if isinstance(function, Function):
+            function._dynamic_tool_adder = add_dynamic_tool
+
+    if existing_tools is not None:
+        registry.extend(_functions)
+
+    return registry
 
 
 # ---------------------------------------------------------------------------
