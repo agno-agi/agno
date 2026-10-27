@@ -367,16 +367,12 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         await call(handlers["disable_schedule"], routine_id, request)
         metadata = {**row["payload"]["metadata"], "deleted_at": int(time.time())}
         await call(schedule_db.update_schedule, routine_id, payload={**row["payload"], "metadata": metadata})
+        # An archived Routine leaves the Product's routine_ids, so Product Routine counts skip it.
+        await call(manager._unlink_routine, metadata["product_id"], routine_id)
         return await routine_response(await routine(routine_id, request, include_deleted=True))
 
     @router.delete("/routines/{routine_id}", status_code=204)
     async def delete_routine(routine_id: str, request: Request, _: bool = Depends(auth)) -> None:
-        from agno.run.authorization import current_authorization
-
-        # Erasing the schedule and its run history cannot be undone, so it also takes admin.
-        authority = current_authorization()
-        if authority is not None:
-            await call(authority.arequire, "agent_os", "admin")
         row = await routine(routine_id, request, include_deleted=True)
         product_id = row["payload"]["metadata"]["product_id"]
         await product(product_id, include_deleted=True)
@@ -393,8 +389,11 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         metadata = dict(row["payload"]["metadata"])
         if metadata.pop("deleted_at", None) is None:
             raise HTTPException(409, "Routine is not archived")
-        # A restored Routine stays paused until it is resumed.
         await call(schedule_db.update_schedule, routine_id, payload={**row["payload"], "metadata": metadata})
+        # An on-demand Routine has no schedule to pause, so restore resumes it; a scheduled one stays paused.
+        if is_on_demand(row["cron_expr"]):
+            return await resume_routine(routine_id, request)
+        await call(db.add_product_routine, metadata["product_id"], routine_id)
         return await routine_response(await routine(routine_id, request))
 
     @router.get("/routines/{routine_id}/runs")

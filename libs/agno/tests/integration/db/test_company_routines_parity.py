@@ -159,7 +159,7 @@ async def test_disabled_on_demand_routine_stays_disabled_when_its_product_is_arc
 
 
 @pytest.mark.asyncio
-async def test_restored_on_demand_routine_recovers_through_resume_then_triggers(system):
+async def test_restored_on_demand_routine_is_enabled_then_triggers(system):
     client, db, worker, _, _ = system
     routine = await create_routine(client)
     path = "/company/routines/" + routine["id"]
@@ -168,12 +168,10 @@ async def test_restored_on_demand_routine_recovers_through_resume_then_triggers(
         assert (await client.post(path + "/" + action)).status_code == 404, action
     restored = await client.post(path + "/restore")
     assert restored.status_code == 200, restored.text
-    assert restored.json()["enabled"] is False and restored.json()["deleted_at"] is None
-    assert (await client.post(path + "/trigger")).status_code == 409
+    assert restored.json()["enabled"] and restored.json()["deleted_at"] is None
+    assert restored.json()["next_run_at"] is None
     assert (await client.post(path + "/pause")).status_code == 409
-    resumed = await client.post(path + "/resume")
-    assert resumed.status_code == 200, resumed.text
-    assert resumed.json()["enabled"] and resumed.json()["next_run_at"] is None
+    assert (await client.post(path + "/resume")).status_code == 409
     assert (await _call(db, "get_schedule_runs", routine["id"]))[1] == 0
     worker.authorization_app.state.scheduler_executor = await routine_executor(system)
     started = await client.post(path + "/trigger")

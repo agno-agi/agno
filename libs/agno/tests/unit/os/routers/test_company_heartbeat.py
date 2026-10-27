@@ -69,13 +69,17 @@ def test_routine_archive_restore_and_delete(system):
     archived = client.post(path + "/archive")
     assert archived.status_code == 200, archived.text
     assert archived.json()["deleted_at"] is not None and archived.json()["enabled"] is False
+    links = lambda: client.get("/company/products/" + product["id"]).json()["metadata"].get("routine_ids", [])  # noqa: E731
+    assert routine_id not in links()
     assert client.get(path).status_code == 404
     assert client.post(path + "/archive").status_code == 404
     assert client.get("/company/routines").json()["meta"]["total_count"] == 0
     assert client.get("/company/routines", params={"include_deleted": True}).json()["meta"]["total_count"] == 1
     restored = client.post(path + "/restore")
     assert restored.status_code == 200, restored.text
-    assert restored.json()["deleted_at"] is None and restored.json()["enabled"] is False
+    # An on-demand Routine comes back enabled; it has no schedule to pause.
+    assert restored.json()["deleted_at"] is None and restored.json()["enabled"] is True
+    assert routine_id in links()
     assert client.post(path + "/restore").json()["detail"] == "Routine is not archived"
     assert client.delete(path).status_code == 204
     assert client.get(path, params={"include_deleted": True}).status_code == 404
