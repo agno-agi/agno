@@ -1854,6 +1854,7 @@ class PostgresDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
         include_runs: bool = True,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and component_id.
@@ -1884,6 +1885,9 @@ class PostgresDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        from agno.db.session_filters import normalize_session_filter, session_filter_to_sqlalchemy
+
+        filter_expr = normalize_session_filter(filter_expr)
         validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="sessions")
@@ -1893,6 +1897,9 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
+
+                if filter_expr is not None:
+                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table))
 
                 # Filtering
                 if user_id is not None:

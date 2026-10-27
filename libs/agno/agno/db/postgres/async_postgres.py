@@ -1623,6 +1623,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
         include_runs: bool = True,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
@@ -1652,6 +1653,9 @@ class AsyncPostgresDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        from agno.db.session_filters import normalize_session_filter, session_filter_to_sqlalchemy
+
+        filter_expr = normalize_session_filter(filter_expr)
         validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="sessions")
@@ -1661,6 +1665,9 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
+
+                if filter_expr is not None:
+                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table))
 
                 # Filtering
                 if user_id is not None:
