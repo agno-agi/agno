@@ -591,13 +591,18 @@ def test_redis_batches_run_reads_into_two_round_trips():
     assert len(executes) == 2
 
 
-def test_valkey_batches_run_reads_into_two_round_trips():
+def test_valkey_batches_run_reads_into_two_round_trips(monkeypatch):
     pytest.importorskip("glide_sync")
     import json
 
-    from glide_sync import GlideClient
+    from glide_sync import GlideClient, RangeByIndex, RequestError
 
+    import agno.db.valkey.valkey as valkey_module
     from agno.db.valkey import ValkeyDb
+
+    # Other Valkey tests swap in stub GLIDE types at module level; use the real ones here.
+    monkeypatch.setattr(valkey_module, "RangeByIndex", RangeByIndex)
+    monkeypatch.setattr(valkey_module, "RequestError", RequestError)
 
     client = MagicMock(spec=GlideClient)
     db = ValkeyDb(valkey_client=client)
