@@ -326,7 +326,7 @@ class CompanyManager:
         if target == "done":
             page = 1
             while True:
-                tasks, total = self.db.get_tasks(project_id=project_id, include_deleted=True, limit=100, page=page)
+                tasks, total = self.db.get_tasks(project_id=project_id, limit=100, page=page)
                 validate_project_completion(tasks)
                 if page * 100 >= total:
                     break
@@ -1217,9 +1217,7 @@ class AsyncCompanyManager:
         if target == "done":
             page = 1
             while True:
-                tasks, total = await self.db.get_tasks(
-                    project_id=project_id, include_deleted=True, limit=100, page=page
-                )
+                tasks, total = await self.db.get_tasks(project_id=project_id, limit=100, page=page)
                 validate_project_completion(tasks)
                 if page * 100 >= total:
                     break
