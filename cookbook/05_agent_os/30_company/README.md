@@ -674,8 +674,9 @@ one Task and only terminal Tasks. Each proposal is a versioned page under
 `project-completion/`; unchanged scans do not rewrite it. New open work withdraws
 the proposal. A human accepts it through the existing Project transition route.
 Refresh cannot transition a Project. Moving a Project to Done returns 409 with
-the open Task names and ids until every Task is Done or Cancelled, including
-Tasks that were manually archived while still open.
+the open Task names and ids until every visible Task is Done or Cancelled. Tasks
+archived while still open don't count, and restoring one into a Done or
+Cancelled Project is refused as open work.
 
 Products store `metadata.archive_window_days`, default 14. Refresh soft-archives
 Done and Cancelled Projects and Tasks whose last update is strictly older than
@@ -687,8 +688,8 @@ Refresh processes qualifying Projects before standalone Tasks, so a single
 maintenance pass preserves the Project's cascade as one restorable group.
 Restoring the Project restores only children taken by that cascade; Tasks
 independently archived before that pass stay archived. Retention skips terminal
-Projects that still contain Backlog work and refuses active Tasks. New open Tasks
-cannot be added or moved into Done or Cancelled Projects.
+Projects that still contain visible Backlog work and refuses active Tasks. New
+open Tasks cannot be added or moved into Done or Cancelled Projects.
 Restore retains the lifecycle and starts a fresh retention window. Archived
 records leave normal lists, grouped counts and execution. Read an individual
 record with `include_deleted=true` for inspection; lists still hide children
