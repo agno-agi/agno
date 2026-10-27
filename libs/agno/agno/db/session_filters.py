@@ -1,6 +1,7 @@
 """Validation and portable predicates for advanced session searches."""
 
 import math
+import re
 from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
@@ -12,7 +13,7 @@ SESSION_FILTER_FIELDS: Dict[str, Dict[str, Any]] = {
     key: {"label": label, "type": "string", "operators": STRING_OPERATORS}
     for key, label in [
         ("session_id", "Session ID"),
-        ("session_name", "Session Name"),
+        ("session_name", "Saved Session Name"),
         ("user_id", "User ID"),
         ("agent_id", "Agent ID"),
         ("team_id", "Team ID"),
@@ -77,13 +78,46 @@ def normalize_session_filter(expression: Optional[Dict[str, Any]], _depth: int =
     return {"op": op, "key": key, **({"values": normalized} if op == "IN" else {"value": normalized[0]})}
 
 
-def session_filter_to_sqlalchemy(expression: Dict[str, Any], table: Any) -> Any:
-    """Use native columns and the session-name JSON property for SQL filtering."""
-    normalized = normalize_session_filter(expression)
-    assert normalized is not None
+def session_filter_to_sqlalchemy(expression: Dict[str, Any], table: Any, collation: Optional[str] = None) -> Any:
+    """Use native columns and the session-name JSON property for SQL filtering on a normalized filter.
+
+    ``collation`` forces case-sensitive string comparison where the database default is case-insensitive.
+    """
     columns = {key: table.c[key] for key in SESSION_FILTER_FIELDS if key != "session_name"}
     columns["session_name"] = table.c.session_data["session_name"].as_string()
-    return filter_expr_to_sqlalchemy(normalized, SimpleNamespace(c=columns), set(SESSION_FILTER_FIELDS))
+    if collation is not None:
+        for key, field in SESSION_FILTER_FIELDS.items():
+            if field["type"] != "datetime":
+                columns[key] = columns[key].collate(collation)
+    return filter_expr_to_sqlalchemy(expression, SimpleNamespace(c=columns), set(SESSION_FILTER_FIELDS))
+
+
+def session_filter_to_mongo(expression: Dict[str, Any], negate: bool = False) -> Dict[str, Any]:
+    """Translate a normalized filter to a MongoDB query with SQL NULL semantics.
+
+    NOT is pushed down to the leaves, and every leaf requires a value of the field's type, so a
+    missing value never matches a comparison or its negation.
+    """
+    op = expression["op"]
+    if op in ("AND", "OR"):
+        parts = [session_filter_to_mongo(c, negate) for c in expression["conditions"]]
+        return {"$and" if (op == "AND") != negate else "$or": parts}
+    if op == "NOT":
+        return session_filter_to_mongo(expression["condition"], not negate)
+    key = expression["key"]
+    field = "session_data.session_name" if key == "session_name" else key
+    condition: Any
+    if op == "IN":
+        condition = {"$nin" if negate else "$in": expression["values"]}
+    elif op in ("CONTAINS", "STARTSWITH"):
+        regex = re.compile(("^" if op == "STARTSWITH" else "") + re.escape(expression["value"]), re.IGNORECASE)
+        condition = {"$not": regex} if negate else regex
+    else:
+        comparisons = {"EQ": "$eq", "NEQ": "$ne", "GT": "$gt", "GTE": "$gte", "LT": "$lt", "LTE": "$lte"}
+        opposites = {"EQ": "$ne", "NEQ": "$eq", "GT": "$lte", "GTE": "$lt", "LT": "$gte", "LTE": "$gt"}
+        condition = {(opposites if negate else comparisons)[op]: expression["value"]}
+    value_type = "number" if SESSION_FILTER_FIELDS[key]["type"] == "datetime" else "string"
+    return {"$and": [{field: {"$type": value_type}}, {field: condition}]}
 
 
 def matches_session_filter(session: Dict[str, Any], expression: Optional[Dict[str, Any]]) -> bool:
@@ -105,7 +139,10 @@ def _evaluate_session_filter(session: Dict[str, Any], expression: Optional[Dict[
         result = _evaluate_session_filter(session, expression["condition"])
         return None if result is None else not result
     key = expression["key"]
-    actual = (session.get("session_data") or {}).get("session_name") if key == "session_name" else session.get(key)
+    actual = session.get(key)
+    if key == "session_name" and actual is None:
+        # SurrealDB renames write a top-level session_name; other adapters keep it in session_data.
+        actual = (session.get("session_data") or {}).get("session_name")
     if actual is None:
         return None
     if op == "IN":

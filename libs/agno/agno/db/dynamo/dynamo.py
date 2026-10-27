@@ -756,6 +756,7 @@ class DynamoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         try:
             table_name = self._get_table("sessions")
@@ -890,8 +891,12 @@ class DynamoDb(BaseDb):
                 if session_data:
                     sessions_data.append(session_data)
 
+            if not include_runs:
+                # Search scans don't need run history; leave it unattached (storage untouched).
+                for s in sessions_data:
+                    s["runs"] = None
             # Attach runs from the runs table, merged with legacy blob
-            if sessions_data:
+            elif sessions_data:
                 try:
                     runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in sessions_data])
                     for s in sessions_data:

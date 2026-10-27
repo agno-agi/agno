@@ -722,6 +722,7 @@ class RedisDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
         create_index_if_not_found: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions matching the given filters.
 
@@ -782,6 +783,10 @@ class RedisDb(BaseDb):
 
             # Attach runs from the runs keys, merged with any legacy `runs` blob
             for s in sessions:
+                if not include_runs:
+                    # Search scans don't need run history; leave it unattached (storage untouched).
+                    s["runs"] = None
+                    continue
                 runs_data = self._get_session_runs_data(s["session_id"])
                 s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
 

@@ -751,6 +751,7 @@ class FirestoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions.
 
@@ -837,9 +838,13 @@ class FirestoreDb(BaseDb):
             else:
                 sessions_raw = all_sessions_raw
 
+            if not include_runs:
+                # Search scans don't need run history; leave it unattached (storage untouched).
+                for s in sessions_raw:
+                    s["runs"] = None
             # Attach runs from the runs collection, merged with any runs still
             # in the legacy `runs` field.
-            if runs_collection_ref is not None and sessions_raw:
+            elif runs_collection_ref is not None and sessions_raw:
                 runs_by_session = self._get_sessions_runs_docs(
                     runs_collection_ref, [s["session_id"] for s in sessions_raw]
                 )

@@ -18,6 +18,6 @@ class SessionSearchRequest(BaseModel):
     filter: Optional[Dict[str, Any]] = None
     session_type: Optional[SessionType] = None
     page: int = Field(default=1, ge=1)
-    limit: int = Field(default=20, ge=1, le=1000)
+    limit: int = Field(default=20, ge=1, le=100)
     sort_by: Literal["created_at", "updated_at"] = "created_at"
     sort_order: Literal["asc", "desc"] = "desc"

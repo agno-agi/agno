@@ -1609,33 +1609,6 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Exception reading from session table: {str(e)}")
             return None
 
-    async def search_sessions(
-        self,
-        filter_expr: Optional[Dict[str, Any]] = None,
-        session_type: Optional[SessionType] = None,
-        user_id: Optional[str] = None,
-        limit: int = 20,
-        page: int = 1,
-        sort_by: str = "created_at",
-        sort_order: str = "desc",
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        """Search sessions using SQL predicates before counting and pagination."""
-        if page < 1 or limit < 1:
-            raise ValueError("Page and limit must be positive")
-        if sort_by not in ("created_at", "updated_at") or sort_order not in ("asc", "desc"):
-            raise ValueError("Invalid session sort")
-        result = await self.get_sessions(
-            filter_expr=filter_expr,
-            session_type=session_type,
-            user_id=user_id,
-            limit=limit,
-            page=page,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            deserialize=False,
-        )
-        return result  # type: ignore[return-value]
-
     async def get_sessions(
         self,
         session_type: Optional[SessionType] = None,

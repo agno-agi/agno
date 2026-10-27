@@ -39,7 +39,7 @@ from agno.os.schema import (
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
 )
-from agno.os.services.sessions import SessionNotFoundError, get_sessions_page
+from agno.os.services.sessions import SessionNotFoundError, get_sessions_page, search_sessions_page
 from agno.os.services.sessions import get_session_runs as get_session_runs_from_service
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import AgnoHTTPException
@@ -232,15 +232,20 @@ def attach_routes(
         db_id: Optional[str] = Query(default=None),
         table: Optional[str] = Query(default=None),
     ) -> PaginatedResponse[SessionSchema]:
-        from starlette.concurrency import run_in_threadpool
+        from httpx import HTTPStatusError
 
         from agno.db.session_filters import normalize_session_filter
 
         try:
             expression = normalize_session_filter(body.filter)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table)
+            raise HTTPException(status_code=400, detail=f"Invalid session search: {exc}") from exc
+        try:
+            db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=f"{e}")
         kwargs: Dict[str, Any] = dict(
             filter_expr=expression,
             session_type=body.session_type,
@@ -252,16 +257,29 @@ def attach_routes(
         )
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
-            return await db.search_sessions(
-                **kwargs,
-                db_id=db_id,
-                table=table,
-                headers={"Authorization": f"Bearer {auth_token}"} if auth_token else None,
-            )
-        if isinstance(db, AsyncBaseDb):
-            sessions, total = await db.search_sessions(**kwargs)
-        else:
-            sessions, total = await run_in_threadpool(db.search_sessions, **kwargs)
+            try:
+                return await db.search_sessions(
+                    **kwargs,
+                    db_id=db_id,
+                    table=table,
+                    headers={"Authorization": f"Bearer {auth_token}"} if auth_token else None,
+                )
+            except HTTPStatusError as e:
+                # Older remote servers predate this endpoint.
+                if e.response.status_code in (404, 405):
+                    raise HTTPException(
+                        status_code=501, detail="The remote AgentOS does not support session search"
+                    ) from e
+                raise
+        try:
+            sessions, total = await search_sessions_page(db, **kwargs)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid session search: {e}")
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            logger.exception("Error searching sessions")
+            raise HTTPException(status_code=500, detail=f"Error searching sessions: {e}")
         return PaginatedResponse(
             data=[SessionSchema.from_dict(session) for session in sessions],
             meta=PaginationInfo(

@@ -1,6 +1,7 @@
 """Session search contracts across SQL, asynchronous SQL, and portable adapters."""
 
 import asyncio
+import functools
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -93,6 +94,8 @@ def test_schema_is_not_captured_as_session_id(db):
         "updated_at",
     }
     assert response.json()["logical_operators"] == ["AND", "OR", "NOT"]
+    labels = {field["key"]: field["label"] for field in response.json()["fields"]}
+    assert labels["session_name"] == "Saved Session Name"
 
 
 def test_nested_filter_counts_before_pagination(db):
@@ -241,7 +244,7 @@ def test_postgres_uses_json_name_and_epoch_dates():
     from sqlalchemy import BigInteger, Column, MetaData, Table, select
     from sqlalchemy.dialects import postgresql
 
-    from agno.db.session_filters import SESSION_FILTER_FIELDS, session_filter_to_sqlalchemy
+    from agno.db.session_filters import SESSION_FILTER_FIELDS, normalize_session_filter, session_filter_to_sqlalchemy
 
     table = Table(
         "sessions",
@@ -253,19 +256,48 @@ def test_postgres_uses_json_name_and_epoch_dates():
             if key != "session_name"
         ],
     )
-    clause = session_filter_to_sqlalchemy(
+    expression = normalize_session_filter(
         {
             "op": "AND",
             "conditions": [
                 eq("session_name", "Billing"),
                 {"op": "GTE", "key": "created_at", "value": "1970-01-01T00:05:00Z"},
             ],
-        },
-        table,
+        }
     )
+    clause = session_filter_to_sqlalchemy(expression, table)
     sql = select(table).where(clause).compile(dialect=postgresql.dialect())
     assert "->>" in str(sql)
     assert 300 in sql.params.values()
+
+
+def test_mysql_compares_strings_case_sensitively():
+    from sqlalchemy import JSON, BigInteger, Column, MetaData, String, Table, select
+    from sqlalchemy.dialects import mysql
+
+    from agno.db.session_filters import SESSION_FILTER_FIELDS, session_filter_to_sqlalchemy
+
+    table = Table(
+        "sessions",
+        MetaData(),
+        Column("session_data", JSON),
+        *[
+            Column(key, BigInteger if key.endswith("_at") else String(128))
+            for key in SESSION_FILTER_FIELDS
+            if key != "session_name"
+        ],
+    )
+    expression = {
+        "op": "AND",
+        "conditions": [eq("user_id", "Alice"), {"op": "GT", "key": "created_at", "value": 5}],
+    }
+    sql = str(
+        select(table)
+        .where(session_filter_to_sqlalchemy(expression, table, collation="utf8mb4_bin"))
+        .compile(dialect=mysql.dialect())
+    )
+    assert "user_id COLLATE utf8mb4_bin" in sql
+    assert "created_at COLLATE" not in sql
 
 
 def test_search_requires_read_scope():
@@ -348,3 +380,138 @@ def test_python_client_search_preserves_remote_scope(use_async):
     assert call.kwargs["data"]["filter"] == {"op": "AND", "conditions": [eq("user_id", "alice"), eq("user_id", "bob")]}
     assert call.kwargs["params"] == {"db_id": "db-1", "table": "custom"}
     assert response.meta.page == 2
+
+
+MONGO_EXPRESSIONS = [
+    eq("user_id", "alice"),
+    {"op": "NEQ", "key": "session_name", "value": "Report"},
+    {"op": "IN", "key": "session_type", "values": ["team", "workflow"]},
+    {"op": "CONTAINS", "key": "session_name", "value": "100%"},
+    {"op": "STARTSWITH", "key": "session_name", "value": "bill"},
+    {"op": "GTE", "key": "created_at", "value": 200},
+    {"op": "NOT", "condition": {"op": "CONTAINS", "key": "session_name", "value": "billing"}},
+    {"op": "NOT", "condition": {"op": "IN", "key": "agent_id", "values": ["support"]}},
+    {"op": "NOT", "condition": {"op": "LT", "key": "created_at", "value": 300}},
+    {
+        "op": "NOT",
+        "condition": {"op": "OR", "conditions": [eq("user_id", "bob"), eq("session_name", "Billing review")]},
+    },
+    {
+        "op": "AND",
+        "conditions": [
+            eq("user_id", "alice"),
+            {"op": "OR", "conditions": [eq("session_type", "team"), {"op": "LTE", "key": "created_at", "value": 100}]},
+        ],
+    },
+]
+
+
+@pytest.mark.parametrize("expression", MONGO_EXPRESSIONS)
+def test_mongo_translation_matches_portable_filter(expression):
+    mongomock = pytest.importorskip("mongomock")
+    from agno.db.session_filters import matches_session_filter, normalize_session_filter, session_filter_to_mongo
+
+    documents = [
+        {
+            "session_id": "agent-1",
+            "session_type": "agent",
+            "agent_id": "support",
+            "user_id": "alice",
+            "created_at": 100,
+            "session_data": {"session_name": "Billing 100%"},
+        },
+        {
+            "session_id": "team-1",
+            "session_type": "team",
+            "team_id": "support-team",
+            "user_id": "alice",
+            "created_at": 200,
+            "session_data": {"session_name": "Billing review"},
+        },
+        {
+            "session_id": "workflow-1",
+            "session_type": "workflow",
+            "workflow_id": "support-flow",
+            "user_id": "bob",
+            "created_at": 300,
+            "session_data": {"session_name": "Report"},
+        },
+        {
+            "session_id": "agent-2",
+            "session_type": "agent",
+            "agent_id": "sales",
+            "user_id": "alice",
+            "created_at": 400,
+            "session_data": None,
+        },
+    ]
+    collection = mongomock.MongoClient().db.sessions
+    collection.insert_many([dict(d) for d in documents])
+    normalized = normalize_session_filter(expression)
+    found = {d["session_id"] for d in collection.find(session_filter_to_mongo(normalized))}
+    expected = {d["session_id"] for d in documents if matches_session_filter(d, normalized)}
+    assert found == expected
+
+
+def test_fallback_reads_sessions_once():
+    db = InMemoryDb()
+    for i in range(205):
+        db.upsert_session(AgentSession(session_id=str(i), agent_id="a", user_id="alice", created_at=i))
+    calls = []
+    original = db.get_sessions
+
+    @functools.wraps(original)
+    def counting_get_sessions(*args, **kwargs):
+        calls.append(kwargs)
+        return original(*args, **kwargs)
+
+    db.get_sessions = counting_get_sessions
+    sessions, total = db.search_sessions(filter_expr=eq("agent_id", "a"), limit=3, page=2)
+    assert total == 205
+    assert [s["session_id"] for s in sessions] == ["201", "200", "199"]
+    assert len(calls) == 1
+    assert calls[0].get("limit") is None and calls[0]["include_runs"] is False
+
+
+def test_top_level_session_name_matches():
+    from agno.db.session_filters import matches_session_filter
+
+    renamed = {"session_id": "s", "session_name": "Renamed", "session_data": {}}
+    assert matches_session_filter(renamed, {"op": "CONTAINS", "key": "session_name", "value": "renamed"})
+
+
+def test_search_limit_is_capped():
+    response = build_client(InMemoryDb()).post("/sessions/search", json={"limit": 101})
+    assert response.status_code == 422
+
+
+def test_unknown_db_returns_404():
+    response = build_client(InMemoryDb()).post("/sessions/search?db_id=missing", json={})
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize("error, status", [(ValueError("bad sort"), 400), (RuntimeError("down"), 500)])
+def test_search_maps_database_errors(error, status):
+    db = InMemoryDb()
+    db.search_sessions = MagicMock(side_effect=error)
+    response = build_client(db).post("/sessions/search", json={})
+    assert response.status_code == status
+    assert str(error) in response.json()["detail"]
+
+
+@pytest.mark.parametrize("remote_status", [404, 405])
+def test_remote_without_search_returns_501(remote_status):
+    import httpx
+
+    from agno.remote.base import RemoteDb
+
+    remote = MagicMock(spec=RemoteDb)
+    remote.session_table_name = "sessions"
+    request = httpx.Request("POST", "http://remote/sessions/search")
+    remote.search_sessions = AsyncMock(
+        side_effect=httpx.HTTPStatusError(
+            "not found", request=request, response=httpx.Response(remote_status, request=request)
+        )
+    )
+    response = build_client(remote).post("/sessions/search", json={})
+    assert response.status_code == 501
