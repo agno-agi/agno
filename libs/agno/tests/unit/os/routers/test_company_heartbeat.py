@@ -339,6 +339,7 @@ def test_routine_cannot_accept(system):
     product = manager.create(name="Docs")
     project = manager.create_project(product_id=product["id"], name="Documentation")
     project = manager.create_project(product_id=product["id"], name="Release")
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     task = manager.create_task(product_id=product["id"], title="Draft", project_id=project["id"])
     with authorization_scope(lambda: _RoutineAuthorization(None)):
         with pytest.raises(PermissionError, match="cannot accept"):
@@ -593,9 +594,20 @@ def test_members_trigger_routines_as_themselves(tmp_path, monkeypatch, isolation
 
         # Generic schedule routes cannot be used to bypass the Company wrapper.
         assert client.post("/schedules/" + routine_id + "/trigger", headers=auth).status_code in (403, 404, 409)
-        # Members manage Routines they did not create; timing changes keep the saved grant.
-        assert client.post(path + "/pause", headers=auth).json()["enabled"] is False
-        assert client.post(path + "/resume", headers=auth).json()["enabled"] is True
+        # On-demand Routines refuse Pause and Resume while enabled; a disabled one recovers through Resume.
+        assert client.post(path + "/pause", headers=auth).status_code == 409
+        assert client.post(path + "/resume", headers=auth).status_code == 409
+        assert db.get_schedule(routine_id) == saved
+        db.update_schedule(routine_id, enabled=False)
+        for missing in ("routines:write", "schedules:write"):
+            denied = client.post(path + "/resume", headers=headers([scope for scope in scopes if scope != missing]))
+            assert denied.status_code == 403, denied.text
+            assert db.get_schedule(routine_id)["enabled"] is False
+        # Members recover Routines they did not create; the saved grant is kept.
+        auth = headers(scopes)  # managed roles keep the last scopes passed to headers()
+        recovered = client.post(path + "/resume", headers=auth)
+        assert recovered.status_code == 200, recovered.text
+        assert recovered.json()["enabled"] is True and recovered.json()["next_run_at"] is None
         assert db.get_schedule(routine_id)["payload"] == saved["payload"]
         db.update_schedule(routine_id, enabled=False)
         assert client.post(path + "/trigger", headers=auth).status_code == 409
@@ -715,7 +727,7 @@ def test_members_manage_products_and_routines_they_did_not_create_under_isolatio
         authorization=True,
         authorization_config=AuthorizationConfig(verification_keys=[secret], algorithm="HS256", user_isolation=True),
     )
-    body = dict(name="intake", template="intake", executor_type="agent", executor_id="reader")
+    body = dict(name="intake", template="intake", executor_type="agent", executor_id="reader", cron_expr="0 * * * *")
     with TestClient(os.get_app()) as client:
         owned = client.post("/company/products", headers=headers("alice"), json={"name": "Alice's"}).json()
         for product_id in ("declared", owned["id"]):
@@ -805,6 +817,7 @@ async def test_source_tools_only_require_source_and_proposal_scopes(tmp_path, as
     manager = CompanyManager(db)
     product = manager.create(name="Docs")
     project = manager.create_project(product_id=product["id"], name="Documentation")
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     path = tmp_path / "page.md"
     path.write_text("Document the released API")
     source = manager.create_source(product_id=product["id"], type="markdown", reference=str(path))
@@ -909,6 +922,8 @@ def test_custom_company_tools_resolve_os_interfaces_and_human_origin(tmp_path, m
             json={"name": "Summary", "metadata": {"summary": {"interface": "slack", "destination": "configured"}}},
         ).json()
         project = client.post("/company/projects", json={"product_id": product["id"], "name": "Release"}).json()
+        approval = {"target": "active", "reason": "Approved"}
+        client.post("/company/projects/" + project["id"] + "/transitions", json=approval)
         task = client.post(
             "/company/tasks", json={"product_id": product["id"], "project_id": project["id"], "title": "Human work"}
         ).json()
@@ -983,6 +998,7 @@ async def test_routine_cannot_use_plain_task_proposals(tmp_path, async_tools, ro
     manager = CompanyManager(db)
     product = manager.create(name="Docs")
     project = manager.create_project(product_id=product["id"], name="Documentation")
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     tools = CompanyTools(db)
     context = RunContext(run_id="run", session_id="session", authorization=_RoutineAuthorization(None, routine_id))
     for _ in range(3):

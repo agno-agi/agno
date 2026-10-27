@@ -14,11 +14,13 @@ from agno.company.declarations import AutoAccept, Product, Routine, Source
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.company.routines import _routine_executor_endpoint, _routine_message, _schedule_fields
 from agno.db.base import AsyncBaseDb
+from agno.db.utils import get_sort_value
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import caller_is_admin, get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.schedules.router import get_schedule_router
 from agno.os.routers.schedules.schema import ScheduleCreate, ScheduleResponse, ScheduleRunResponse, ScheduleUpdate
 from agno.os.schema import PaginatedResponse, PaginationInfo
+from agno.scheduler.cron import is_on_demand
 
 
 class SourceCreate(Source):
@@ -184,6 +186,8 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         limit: int = Query(20, ge=1, le=1000),
         page: int = Query(1, ge=1),
         include_deleted: bool = False,
+        sort_by: Literal["created_at", "updated_at"] = Query("created_at"),
+        sort_order: Literal["asc", "desc"] = Query("desc"),
         _: bool = Depends(auth),
     ):
         from agno.scheduler import ScheduleManager
@@ -198,6 +202,8 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             and (product_id is None or (row.payload or {}).get("metadata", {}).get("product_id") == product_id)
             and (include_deleted or (row.payload or {}).get("metadata", {}).get("deleted_at") is None)
         ]
+        # One reverse flag orders equal timestamps by id in the same direction as the timestamp.
+        selected.sort(key=lambda row: (get_sort_value(row, sort_by), row["id"]), reverse=sort_order == "desc")
         rows = await routine_responses(selected[(page - 1) * limit : page * limit])
         return page_response(rows, len(selected), limit, page)
 
@@ -282,6 +288,8 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     async def pause_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
         await product(row["payload"]["metadata"]["product_id"], include_deleted=True)
+        if is_on_demand(row["cron_expr"]):
+            raise HTTPException(409, "On-demand routines cannot be paused.")
         return await routine_response(await call(handlers["disable_schedule"], routine_id, request))
 
     @router.post("/routines/{routine_id}/resume", response_model=RoutineResponse)
@@ -289,6 +297,9 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         row = await routine(routine_id, request)
         product_id = row["payload"]["metadata"]["product_id"]
         await product(product_id)
+        # A disabled on-demand routine still resumes: that is its only checked way back to usable.
+        if is_on_demand(row["cron_expr"]) and row["enabled"]:
+            raise HTTPException(409, "On-demand routine is already enabled.")
         from agno.registry._reserved import RESERVED_MANAGER_IDS
 
         if row["target_id"] in RESERVED_MANAGER_IDS:

@@ -303,6 +303,7 @@ async def test_deduplicated_insert_keeps_parent_archive_guards(archive):
     db, manager, call = archive
     product = await call(manager, "create", name="SDK")
     project = await call(manager, "create_project", product_id=product["id"], name="Work")
+    await call(manager, "transition_project", project_id=project["id"], target="active", reason="Begin")
     fields = dict(
         id="proposal",
         product_id=product["id"],
@@ -411,6 +412,7 @@ async def test_completion_proposal_does_not_reintroduce_archived_task_context(ar
         ),
     )
     current_project = await call(manager, "create_project", product_id=product["id"], name="Current work")
+    await call(manager, "transition_project", project_id=current_project["id"], target="active", reason="Begin")
     current = await call(
         manager,
         "create_task",
@@ -436,6 +438,7 @@ async def test_terminal_project_rejects_new_and_moved_open_work(archive):
     with pytest.raises(ValueError, match="open work"):
         await call(manager, "create_task", product_id=product["id"], title="Late proposal", project_id=project["id"])
     open_project = await call(manager, "create_project", product_id=product["id"], name="Next release")
+    await call(manager, "transition_project", project_id=open_project["id"], target="active", reason="Begin")
     task = await call(
         manager, "create_task", product_id=product["id"], title="Next release", project_id=open_project["id"]
     )
@@ -570,3 +573,80 @@ async def test_completed_project_preserves_intake_dedupe(archive):
     assert (await call(db, "create_task", {**fields, "id": "repeat"}))["id"] == "proposal"
     with pytest.raises(ValueError, match="open work"):
         await call(db, "create_task", {**fields, "id": "new", "dedupe_key": "different"})
+
+
+def proposal_fields(product, project, **overrides):
+    return dict(
+        id="proposal",
+        title="Issue",
+        product_id=product["id"],
+        project_id=project["id"],
+        dedupe_key="issue",
+        status="backlog",
+        created_at=int(time.time()),
+        transitions=[],
+        **overrides,
+    )
+
+
+async def make_project_proposed_again(db, call, project_id):
+    """Rewrite stored state to a Project that was proposed when its Tasks were created."""
+    table = await call(db, "_get_table", table_type="projects")
+    statement = table.update().where(table.c.id == project_id).values(status="proposed")
+    if isinstance(db, AsyncBaseDb):
+        async with db.db_engine.begin() as connection:
+            await connection.execute(statement)
+    else:
+        with db.db_engine.begin() as connection:
+            connection.execute(statement)
+
+
+@pytest.mark.asyncio
+async def test_new_task_in_proposed_project_is_refused_without_mutation(archive):
+    db, manager, call = archive
+    product = await call(manager, "create", name="SDK")
+    project = await call(manager, "create_project", product_id=product["id"], name="Ship")
+    before = (await call(db, "get_product", product["id"]), await call(db, "get_project", project["id"]))
+    for fields in (proposal_fields(product, project), {**proposal_fields(product, project), "dedupe_key": None}):
+        with pytest.raises(ValueError, match="approve the Project first"):
+            await call(db, "create_task", fields)
+    with pytest.raises(ValueError, match="approve the Project first"):
+        await call(manager, "create_task", product_id=product["id"], title="Work", project_id=project["id"])
+    with pytest.raises(ValueError, match="approve the Project first"):
+        await call(
+            manager,
+            "create_task",
+            product_id=product["id"],
+            title="Work",
+            project_id=project["id"],
+            status="cancelled",
+        )
+    assert (await call(db, "get_tasks", project_id=project["id"], include_deleted=True))[1] == 0
+    assert (await call(db, "get_product", product["id"]), await call(db, "get_project", project["id"])) == before
+
+
+@pytest.mark.asyncio
+async def test_task_is_created_once_its_project_is_approved(archive):
+    db, manager, call = archive
+    product = await call(manager, "create", name="SDK")
+    project = await call(manager, "create_project", product_id=product["id"], name="Ship")
+    with pytest.raises(ValueError, match="approve the Project first"):
+        await call(db, "create_task", proposal_fields(product, project))
+    await call(manager, "transition_project", project_id=project["id"], target="active", reason="Approved")
+    assert (await call(db, "create_task", proposal_fields(product, project)))["id"] == "proposal"
+
+
+@pytest.mark.asyncio
+async def test_legacy_proposal_in_proposed_project_is_returned_but_new_key_is_refused(archive):
+    db, manager, call = archive
+    product = await call(manager, "create", name="SDK")
+    project = await call(manager, "create_project", product_id=product["id"], name="Ship")
+    await call(manager, "transition_project", project_id=project["id"], target="active", reason="Approved")
+    fields = proposal_fields(product, project)
+    await call(db, "create_task", fields)
+    await make_project_proposed_again(db, call, project["id"])
+    for _ in range(2):
+        assert (await call(db, "create_task", {**fields, "id": "repeat"}))["id"] == "proposal"
+    with pytest.raises(ValueError, match="approve the Project first"):
+        await call(db, "create_task", {**fields, "id": "new", "dedupe_key": "different"})
+    assert (await call(db, "get_tasks", project_id=project["id"], include_deleted=True))[1] == 1

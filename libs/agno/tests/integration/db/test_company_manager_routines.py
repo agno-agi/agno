@@ -9,7 +9,7 @@ from sqlalchemy import text
 
 from agno.company.execution import _call
 from agno.company.manager import AsyncCompanyManager, CompanyManager
-from agno.company.routines import _RoutineAuthorization
+from agno.company.routines import _manager_call, _RoutineAuthorization
 from agno.company.scheduler import CompanyScheduleExecutor
 from agno.db.base import AsyncBaseDb
 from agno.db.postgres import AsyncPostgresDb, PostgresDb
@@ -86,6 +86,7 @@ async def test_manager_review_through_durable_queue(tmp_path, backend, mode):
     try:
         product = await _call(manager, "create", name="Docs", user_id="alice")
         project = await _call(manager, "create_project", product_id=product["id"], name="Guides", user_id="alice")
+        await _manager_call(manager, "transition_project", project_id=project["id"], target="active", reason="Approved")
         path = tmp_path / "source.md"
         path.write_text("The released API needs a guide.")
         source = await _call(manager, "create_source", product_id=product["id"], type="markdown", reference=str(path))

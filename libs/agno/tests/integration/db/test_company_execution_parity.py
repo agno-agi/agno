@@ -103,6 +103,8 @@ async def accepted(client, kind="agent", id="writer"):
         await client.post("/company/products", json={"name": "SDK", "metadata": {"secret": "never-forward"}})
     ).json()
     project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Release"})).json()
+    approval = {"target": "active", "reason": "Approved"}
+    await client.post(f"/company/projects/{project['id']}/transitions", json=approval)
     task = (
         await client.post(
             "/company/tasks",
@@ -203,6 +205,59 @@ async def test_execution_duplicate_context_history_and_attention(system, kind, i
     assert running["transitions"][-1]["target"] == "in_progress"
     assert (await execute(worker))["status"] == "completed"
     assert (await client.get(path + "/runs", params={"limit": 1, "page": 2})).json()["meta"]["total_count"] == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("when", ["queued", "running"])
+async def test_brief_edit_keeps_captured_input_and_later_attempt_uses_it(system, monkeypatch, when):
+    client, db, worker, _, components = system
+    value = await accepted(client)
+    path = f"/company/tasks/{value['id']}"
+    first = await client.post(path + "/runs")
+    assert first.status_code == 202, first.text
+    job = await worker.store.get_job(first.json()["run_id"])
+    captured = job["payload"]["input"]
+    assert json.loads(captured)["brief"] == "Write a draft"
+    keys = set(json.loads(captured))
+    before = (await client.get(path)).json()
+    assert before["status"] == "in_progress"
+
+    async def edit():
+        current = (await client.get(path)).json()
+        response = await client.patch(path, json={"title": "Renamed", "brief": "Write a better draft"})
+        assert response.status_code == 200, response.text
+        edited = response.json()
+        assert (edited["title"], edited["brief"]) == ("Renamed", "Write a better draft")
+        changed = {"title", "brief", "updated_at"}
+        assert {k: v for k, v in edited.items() if k not in changed} == {
+            k: v for k, v in current.items() if k not in changed
+        }
+
+    if when == "queued":
+        await edit()
+    else:
+        original = components["writer"].arun
+
+        async def edit_then_run(*args, **kwargs):
+            await edit()
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(components["writer"], "arun", edit_then_run)
+    assert (await worker.store.get_job(first.json()["run_id"]))["payload"]["input"] == captured
+    assert (await execute(worker))["status"] == "completed"
+    assert (await worker.store.get_job(first.json()["run_id"]))["payload"]["input"] == captured
+    assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is None
+    saved = (await client.get(path)).json()
+    assert (saved["title"], saved["brief"]) == ("Renamed", "Write a better draft")
+    assert saved["status"] == "in_review" and "draft" in saved["result"]["content"]
+    assert len(saved["transitions"]) == len(before["transitions"]) + 1
+    second = await client.post(path + "/runs", json={"attempt": 2})
+    assert second.status_code == 202, second.text
+    assert second.json()["run_id"] != first.json()["run_id"] and second.json()["session_id"] == before["session_id"]
+    later = json.loads((await worker.store.get_job(second.json()["run_id"]))["payload"]["input"])
+    assert later["brief"] == "Write a better draft" and set(later) == keys
+    assert "Renamed" not in json.dumps(later)
+    assert (await execute(worker))["status"] == "completed"
 
 
 @pytest.mark.asyncio
@@ -470,6 +525,8 @@ async def test_routine_intake_through_scheduler_and_durable_queue(system, tmp_pa
     project = (
         await client.post("/company/projects", json={"product_id": product["id"], "name": "Documentation"})
     ).json()
+    approval = {"target": "active", "reason": "Approved"}
+    await client.post(f"/company/projects/{project['id']}/transitions", json=approval)
     source = (
         await client.post(
             "/company/sources", json={"product_id": product["id"], "type": "markdown", "reference": str(path)}
@@ -1553,6 +1610,8 @@ async def test_authenticated_intake_without_executor_is_picked_up_once(system, t
         selected["project_id"] = (
             await client.post("/company/projects", json={"product_id": product["id"], "name": "Guide"})
         ).json()["id"]
+        approval = {"target": "active", "reason": "Approved"}
+        await client.post(f"/company/projects/{selected['project_id']}/transitions", json=approval)
         selected["source_id"] = (
             await client.post(
                 "/company/sources", json={"product_id": product["id"], "type": "markdown", "reference": str(path)}
@@ -1846,6 +1905,7 @@ async def test_refresh_completion_requires_permission_and_never_completes_on_arc
         ),
     )
     independent = await _manager_call(manager, "create_project", product_id=task["product_id"], name="Human review")
+    await _manager_call(manager, "transition_project", project_id=independent["id"], target="active", reason="Go")
     backlog = await _manager_call(
         manager, "create_task", product_id=task["product_id"], title="Needs human review", project_id=independent["id"]
     )
@@ -1877,6 +1937,7 @@ async def test_project_completion_and_task_acceptance_share_atomic_budget(system
     policy = routine["payload"]["metadata"]["auto_accept"]
     policy.update(complete_projects=True, required_checks=["has_source_evidence", "executor_registered"])
     independent = await _manager_call(manager, "create_project", product_id=task["product_id"], name="Independent work")
+    await _manager_call(manager, "transition_project", project_id=independent["id"], target="active", reason="Go")
     policy["work_scope"]["project_ids"].append(independent["id"])
     assert (await client.patch("/company/routines/" + routine["id"], json={"auto_accept": policy})).status_code == 200
     other = await intake_proposal(
@@ -2065,6 +2126,8 @@ async def test_all_task_and_project_writes_stamp_updated_at(system, monkeypatch)
     product = (await client.post("/company/products", json={"name": "Timestamps"})).json()
     project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Project"})).json()
     project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Release"})).json()
+    approval = {"target": "active", "reason": "Approved"}
+    await client.post(f"/company/projects/{project['id']}/transitions", json=approval)
     task = (
         await client.post(
             "/company/tasks", json={"product_id": product["id"], "project_id": project["id"], "title": "Task"}
@@ -2082,7 +2145,6 @@ async def test_all_task_and_project_writes_stamp_updated_at(system, monkeypatch)
         return result
 
     await write("update_project", project["id"], name="Edited")
-    await write("transition_project", project["id"], "active", "Start")
     await write("update_task", task["id"], brief="Edited")
     ready = await write("transition_task", task["id"], "ready", "Accept", executor_type="agent", executor_id="writer")
     running = await write("start_task_run", task["id"], 1, ready["transitions"])
@@ -2182,6 +2244,8 @@ async def test_same_second_timestamp_keeps_status_guard(system, monkeypatch, aut
     client, db, worker, os, _ = system
     product = (await client.post("/company/products", json={"name": "Epoch seconds"})).json()
     project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Release"})).json()
+    approval = {"target": "active", "reason": "Approved"}
+    await client.post(f"/company/projects/{project['id']}/transitions", json=approval)
     task = (
         await client.post(
             "/company/tasks", json={"product_id": product["id"], "project_id": project["id"], "title": "First"}
@@ -2213,6 +2277,8 @@ async def test_automatic_task_timestamp_refuses_later_edit(system, monkeypatch, 
     product = (await client.post("/company/products", json={"name": "Scope guard"})).json()
     project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Other"})).json()
     initial = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Initial"})).json()
+    approval = {"target": "active", "reason": "Approved"}
+    await client.post(f"/company/projects/{initial['id']}/transitions", json=approval)
     task = (
         await client.post(
             "/company/tasks", json={"product_id": product["id"], "project_id": initial["id"], "title": "Original"}
@@ -2347,8 +2413,8 @@ async def test_search_routine_adds_website_and_deduplicates_three_runs(system, m
                 name, arguments = "list_company_projects", dict(product_id=product["id"])
             elif len(results) == 3 and not results[2]["data"]:
                 name, arguments = "propose_company_project", dict(product_id=product["id"], name="Migration guide")
-            elif len(results) == 3 or (len(results) == 4 and not results[2]["data"]):
-                project = results[2]["data"][0] if results[2]["data"] else results[3]
+            elif len(results) == 3:
+                project = results[2]["data"][0]
                 observed = results[1]
                 assert "migration guide" in observed["content"]
                 name, arguments = (
@@ -2391,21 +2457,33 @@ async def test_search_routine_adds_website_and_deduplicates_three_runs(system, m
     routine = created.json()
     executor = await routine_executor(system)
     runs = []
-    for _ in range(3):
+
+    async def invoke():
         result = await executor.execute(await _call(db, "get_schedule", routine["id"]), db, release_schedule=False)
         assert result["status"] == "success", result
         runs.append(result["run_id"])
+
+    # The first invocation proposes a Project and stops: its Tasks wait for approval.
+    await invoke()
+    assert (await _call(db, "get_tasks", product_id=product["id"]))[1] == 0
+    projects, project_count = await _call(db, "get_projects", product_id=product["id"])
+    assert project_count == 1 and projects[0]["status"] == "proposed"
+    approval = {"target": "active", "reason": "Approved"}
+    assert (await client.post(f"/company/projects/{projects[0]['id']}/transitions", json=approval)).status_code == 200
+    # A later invocation proposes the Task; a repeat returns the existing one.
+    await invoke()
+    await invoke()
     sources, count = await _call(db, "get_sources", product_id=product["id"])
     assert count == 1
     assert sources[0]["config"]["metadata"] == {executor_type + "_id": executor_id, "run_id": runs[0]}
     tasks, count = await _call(db, "get_tasks", product_id=product["id"])
     assert count == 1 and tasks[0]["status"] == "backlog"
-    assert tasks[0]["evidence"][0]["run_id"] == runs[0]
+    assert tasks[0]["evidence"][0]["run_id"] == runs[1]
     assert tasks[0]["evidence"][0]["link"] == url and tasks[0]["evidence"][0]["content_hash"]
     assert tasks[0]["routine_id"] == routine["id"]
     projects, project_count = await _call(db, "get_projects", product_id=product["id"])
     assert project_count == 1 and tasks[0]["project_id"] == projects[0]["id"]
-    assert projects[0]["status"] == "proposed"
+    assert projects[0]["status"] == "active"
     listed = (await client.get("/company/sources", params={"product_id": product["id"]})).json()["data"]
     assert listed[0]["config"]["metadata"][executor_type + "_id"] == executor_id
     # Discovered websites use the same bounded acceptance checks as human-added Sources.
@@ -3003,6 +3081,7 @@ async def test_automatic_acceptance_requires_wiki_read(system, tmp_path, isolati
                 AsyncCompanyManager(db, os.registry) if isinstance(db, AsyncBaseDb) else CompanyManager(db, os.registry)
             )
             project = await _manager_call(manager, "create_project", product_id=product["id"], name="Routine work")
+            await _manager_call(manager, "transition_project", project_id=project["id"], target="active", reason="Go")
             task = await _manager_call(
                 manager,
                 "create_task",

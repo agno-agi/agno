@@ -1,8 +1,9 @@
 # Customer feedback in the AgentOS UI
 
 Company Manager reviews local Markdown feedback with `gpt-6.1-sol`, proposes
-Projects and evidence-backed Backlog Tasks, and leaves acceptance to you.
-After approval, Feedback Analyst writes a product brief and regression test plan.
+Projects, and, once you approve a Project, evidence-backed Backlog Tasks in it.
+Task acceptance is a separate step that is also yours.
+After you accept a Task, Feedback Analyst writes a product brief and regression test plan.
 Its complete response is saved on the Task for review. This example produces
 planning documents; implementing a code fix requires an engineering executor
 and access to the application repository.
@@ -50,17 +51,23 @@ reads the same `feedback/` folder.
    Source, Projects and Routines.
 3. Run **review-feedback** from the Product's Routines. You can trigger it now;
    the daily schedule is 09:00 UTC while the server is running.
-4. Inspect the resulting Projects and Tasks. The sample evidence contains two
+4. Inspect the resulting Projects. On a fresh database the first run proposes
+   Projects and reports that approval is needed; it creates no Tasks, because
+   Tasks cannot be created in a proposed Project. Approve the Projects you want
+   (the API state is `active`). Approving a Project does not accept or execute
+   any work.
+5. Run **review-feedback** again once the first run has finished. It now creates
+   evidence-backed Tasks in the approved Projects. The sample evidence contains two
    actionable themes: cross-midnight CSV export failures and missing timezone
    labels. Positive onboarding feedback and an already resolved email issue
    should produce no work. Exact titles and Project grouping can vary.
-5. Wait for the Routine to finish, then run it again without changing the files.
-   Verify that it reuses the existing work. Tasks should remain in **Backlog** until you approve them.
-6. Open a Task and inspect its brief and evidence. Select **Feedback Analyst**
+6. Wait for the Routine to finish, then run it again without changing the files.
+   Verify that it reuses the existing work. Tasks should remain in **Backlog** until you accept them.
+7. Open a Task and inspect its brief and evidence. Select **Feedback Analyst**
    (`feedback-analyst`) as its executor and accept it, moving it to **To do** (the API state is `ready`).
    This example configures Company automation to check accepted work once per minute, so dispatch may
    take about a minute. The Task then moves through **In progress** to **Reviewing** (the API state is `in_review`).
-7. Read the saved result and run history. The deliverable should contain the
+8. Read the saved result and run history. The deliverable should contain the
    observed problem, supporting source links, proposed behavior, acceptance
    criteria, regression cases and open questions. Mark it **Done** only after
    you have reviewed it.

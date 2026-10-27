@@ -448,15 +448,17 @@ class CompanyManager:
             sort_order=sort_order,
         )
 
-    def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
-        """Update descriptive fields; accepted Task scope requires a return to Backlog."""
+    def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a Task; outside Backlog only title and brief change, the rest requires a return to Backlog."""
         from agno.db.schemas.tasks import validate_task_fields
 
         validate_task_fields(fields)
         existing = self.db.get_task(task_id, user_id=user_id)
         if existing is None:
             return None
-        if existing["status"] != "backlog":
+        if existing["status"] != "backlog" and set(fields) - {"title", "brief"}:
             raise ValueError("Accepted task scope requires a return to Backlog")
         if "project_id" in fields and not fields["project_id"]:
             raise ValueError("A Task requires a Project")
@@ -466,6 +468,8 @@ class CompanyManager:
                 raise LookupError("Project not found")
             if project["product_id"] != existing["product_id"]:
                 raise ValueError("Task and Project must belong to the same Product")
+        if expected_status is not None:
+            fields["expected_status"] = expected_status
         return self.db.update_task(task_id, user_id=user_id, **fields)
 
     def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
@@ -1353,15 +1357,17 @@ class AsyncCompanyManager:
             sort_order=sort_order,
         )
 
-    async def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
-        """Update descriptive fields; accepted Task scope requires a return to Backlog."""
+    async def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a Task; outside Backlog only title and brief change, the rest requires a return to Backlog."""
         from agno.db.schemas.tasks import validate_task_fields
 
         validate_task_fields(fields)
         existing = await self.db.get_task(task_id, user_id=user_id)
         if existing is None:
             return None
-        if existing["status"] != "backlog":
+        if existing["status"] != "backlog" and set(fields) - {"title", "brief"}:
             raise ValueError("Accepted task scope requires a return to Backlog")
         if "project_id" in fields and not fields["project_id"]:
             raise ValueError("A Task requires a Project")
@@ -1371,6 +1377,8 @@ class AsyncCompanyManager:
                 raise LookupError("Project not found")
             if project["product_id"] != existing["product_id"]:
                 raise ValueError("Task and Project must belong to the same Product")
+        if expected_status is not None:
+            fields["expected_status"] = expected_status
         return await self.db.update_task(task_id, user_id=user_id, **fields)
 
     async def delete_task(

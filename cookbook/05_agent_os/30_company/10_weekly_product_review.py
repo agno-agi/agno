@@ -30,7 +30,8 @@ Read the company and Product playbooks and current status. List existing Project
 and Tasks before proposing anything. Inspect configured Sources with
 read_product_source, first discovering paths and then reading useful evidence.
 Propose work only when it addresses a concrete gap that existing work does not
-cover. Reuse a suitable Project; propose one only when necessary.
+cover. Reuse a suitable approved Project; propose one only when necessary, and
+propose no Tasks for it until a human approves it on a later review.
 Use intake_product_source with the Project id, observed evidence links and
 content hashes, and a stable proposal_key for the underlying issue. Reuse the
 key on later reviews. Never use propose_company_task during a Routine.

@@ -1981,7 +1981,9 @@ class BaseDb(ABC):
         """List Tasks and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
-    def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+    def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
         """Update descriptive fields on an active Task within the owner scope."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
@@ -2087,9 +2089,14 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     def update_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+        self, schedule_id: str, user_id: Optional[str] = None, *, preserve_updated_at: bool = False, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
-        """Update a schedule by ID."""
+        """Update a schedule by ID.
+
+        ``preserve_updated_at`` leaves ``updated_at`` as stored; the executor sets it when it disables a
+        Company routine, so only a user edit moves that timestamp. An adapter that does not name the
+        parameter still disables the row, and the executor logs that the timestamp will advance.
+        """
         raise NotImplementedError
 
     def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
@@ -2107,6 +2114,7 @@ class BaseDb(ABC):
         Matches provenance-tagged rows and generic rows whose endpoint is the
         component's run endpoint, across owners (archiving the target is a
         system action). ``reason`` lands in disabled_reason; enable clears it.
+        Company-managed schedules keep their ``updated_at``: an archive is not a user edit.
 
         Returns:
             The number of schedules disabled.
@@ -2133,8 +2141,13 @@ class BaseDb(ABC):
         *,
         worker_id: Optional[str] = None,
         locked_at: Optional[int] = None,
+        preserve_updated_at: bool = False,
     ) -> bool:
-        """Release a schedule, optionally matching its worker and individual claim timestamp."""
+        """Release a schedule, optionally matching its worker and individual claim timestamp.
+
+        ``preserve_updated_at`` leaves ``updated_at`` as stored, so releasing a routine the user edited
+        mid-run does not read as a newer edit.
+        """
         raise NotImplementedError
 
     # --- Schedule Runs (Optional) ---
@@ -3959,7 +3972,9 @@ class AsyncBaseDb(ABC):
         """List Tasks and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
-    async def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+    async def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
         """Update descriptive fields on an active Task within the owner scope."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
@@ -4066,9 +4081,14 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     async def update_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+        self, schedule_id: str, user_id: Optional[str] = None, *, preserve_updated_at: bool = False, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
-        """Update a schedule by ID."""
+        """Update a schedule by ID.
+
+        ``preserve_updated_at`` leaves ``updated_at`` as stored; the executor sets it when it disables a
+        Company routine, so only a user edit moves that timestamp. An adapter that does not name the
+        parameter still disables the row, and the executor logs that the timestamp will advance.
+        """
         raise NotImplementedError
 
     async def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
@@ -4099,8 +4119,13 @@ class AsyncBaseDb(ABC):
         *,
         worker_id: Optional[str] = None,
         locked_at: Optional[int] = None,
+        preserve_updated_at: bool = False,
     ) -> bool:
-        """Release a schedule, optionally matching its worker and individual claim timestamp."""
+        """Release a schedule, optionally matching its worker and individual claim timestamp.
+
+        ``preserve_updated_at`` leaves ``updated_at`` as stored, so releasing a routine the user edited
+        mid-run does not read as a newer edit.
+        """
         raise NotImplementedError
 
     # --- Schedule Runs (Optional) ---
