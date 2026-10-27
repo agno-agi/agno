@@ -40,6 +40,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "google-interactions": ("agno.models.google", "GeminiInteractions", "GeminiInteractions", "google"),
     "groq": ("agno.models.groq", "Groq", "Groq", "groq"),
     "heabsy": ("agno.models.heabsy", "Heabsy", "Heabsy", "heabsy"),
+    "hostinger-router": ("agno.models.hostinger_router", "HostingerRouter", "HostingerRouter", "hostingerrouter"),
     "huggingface": ("agno.models.huggingface", "HuggingFace", "HuggingFace", "huggingface"),
     "ibm": ("agno.models.ibm", "WatsonX", "WatsonX", "ibm"),
     "inception": ("agno.models.inception", "Inception", "Inception", "inceptionlabs"),
