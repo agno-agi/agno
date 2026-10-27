@@ -435,6 +435,56 @@ async def test_a_shipped_reranker_with_the_older_signature_survives_arerank():
 
 
 @pytest.mark.asyncio
+async def test_a_reranker_that_overrides_arerank_with_the_older_signature_still_reranks(monkeypatch):
+    # A subclass that overrides arerank replaces the base one, so the base accepts_limit
+    # guard never runs. The caller has to check the method it is about to await, or the
+    # forwarded limit raises a TypeError that the failure branch turns into silence.
+    import agno.knowledge.knowledge as knowledge_module
+
+    errors: List[str] = []
+    monkeypatch.setattr(knowledge_module, "log_error", lambda message, *a, **k: errors.append(str(message)))
+
+    class LegacyAsyncReranker(Reranker):
+        candidate_multiplier: int = Field(default=5, ge=1)
+
+        def rerank(self, query: str, documents: List[Document]) -> List[Document]:
+            return list(reversed(documents))
+
+        async def arerank(self, query: str, documents: List[Document]) -> List[Document]:
+            return list(reversed(documents))
+
+    knowledge = Knowledge(vector_db=StubVectorDb(), reranker=LegacyAsyncReranker())
+
+    results = await knowledge.asearch("q", max_results=5)
+
+    # The same assertions the sync twin makes, so both paths stay pinned to one ordering.
+    assert len(results) == 5
+    assert results[0].id == "24"
+    assert not any("Error reranking documents" in message for message in errors)
+
+
+def test_accepts_async_limit_reports_the_arerank_signature():
+    class LegacyAsyncReranker(Reranker):
+        def rerank(self, query: str, documents: List[Document]) -> List[Document]:
+            return documents
+
+        async def arerank(self, query: str, documents: List[Document]) -> List[Document]:
+            return documents
+
+    class LimitAwareAsyncReranker(Reranker):
+        def rerank(self, query: str, documents: List[Document], limit: Optional[int] = None) -> List[Document]:
+            return documents
+
+        async def arerank(self, query: str, documents: List[Document], limit: Optional[int] = None) -> List[Document]:
+            return documents
+
+    assert LegacyAsyncReranker().accepts_async_limit() is False
+    assert LimitAwareAsyncReranker().accepts_async_limit() is True
+    # Inheriting the base arerank keeps the limit, whatever the subclass's rerank takes.
+    assert ReverseReranker().accepts_async_limit() is True
+
+
+@pytest.mark.asyncio
 async def test_suspension_does_not_leak_to_another_knowledge_sharing_the_store():
     # One vector db behind two Knowledge instances is a normal setup. Suspending the
     # store's reranker for one search must not hide it from the other. The barrier makes
