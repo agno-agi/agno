@@ -6810,7 +6810,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.projects import project_transition_fields
         from agno.db.schemas.tasks import _acceptance_count
-        from agno.db.sql.company import lock_child
+        from agno.db.sql.company import lock_child, open_project_tasks
 
         table = await self._get_table(table_type="projects")
         if table is None:
@@ -6852,10 +6852,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             existing = dict(row._mapping)
             open_tasks = []
             if tasks_table is not None:
-                open_query = select(tasks_table).where(
-                    tasks_table.c.project_id == project_id,
-                    tasks_table.c.status.not_in(["done", "cancelled"]),
-                )
+                open_query = open_project_tasks(tasks_table, project_id)
                 open_tasks = [dict(task._mapping) for task in (await sess.execute(open_query)).fetchall()]
             fields = project_transition_fields(existing, target, reason, accepted_by, tasks=open_tasks)
             if auto_accept is not None:
@@ -7068,7 +7065,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         products = await self._get_table(table_type="products", create_table_if_not_found=True)
         projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
         async with self.async_session_factory() as sess, sess.begin():
-            await sess.run_sync(lock_child, products, projects, table, task_id)
+            await sess.run_sync(lock_child, products, projects, table, task_id, restoring=True)
             existing = (await sess.execute(select(table).where(table.c.id == task_id))).mappings().first()
             if existing is None:
                 return None
