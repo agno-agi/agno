@@ -859,7 +859,8 @@ A concurrent GET exposes the live `last_run.run_id` and `session_id` while
 execution is running. `POST /company/routines/{id}/cancel` stops that run through
 the executor's cancel route, with the same Routine scopes as pause and resume plus
 the caller's run permission on the executor. It returns 409 when no run is running.
-The schedule run then records `failed` with the error `Run was cancelled`.
+The schedule run then records `cancelled` with the error `Run was cancelled`; a
+cancelled run is not retried and does not count as a failed Routine.
 
 `08_custom_routines.py` demonstrates on-demand declaration, single read, pause,
 resume, and adding/removing a cron without calling a model.

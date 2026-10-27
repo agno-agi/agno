@@ -257,7 +257,7 @@ class ScheduleExecutor:
                     else:
                         db.update_schedule_run(run_record_id, **updates)
 
-                    if last_status in ("success", "paused"):
+                    if last_status in ("success", "paused", "cancelled"):
                         break
 
                 except Exception as exc:
@@ -631,7 +631,8 @@ class ScheduleExecutor:
                     status = "paused"
                     error = None
                 elif run_status == "CANCELLED":
-                    status = "failed"
+                    # A cancelled run was stopped on purpose, so it is neither a failure nor retried.
+                    status = "cancelled"
                     error = data.get("error") or "Run was cancelled"
                 else:
                     status = "failed"
