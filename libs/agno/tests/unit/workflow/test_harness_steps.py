@@ -141,3 +141,15 @@ def test_a_harness_steps_chat_history_comes_from_the_workflow_session(db, sdk): 
 
     assert [message.content for message in history] == [message.content for message in async_history]
     assert any(message.content == "answer from sdk-1" for message in history)
+
+
+def test_a_sandboxed_steps_options_name_its_own_session_and_link_it_to_the_workflow(db, sdk):  # noqa: F811
+    coder = _member(db)
+    forwarded = coder._sandboxed_member_kwargs(
+        {"run_id": "r1", "session_id": "w1", "session_state": {}, "run_context": object()}, "w1", "r1", workflow_id="wf"
+    )
+    assert forwarded == {
+        "run_id": "r1.sandbox",
+        "session_id": "w1:claude-coder",
+        "_session_metadata": {"workflow_id": "wf"},
+    }

@@ -40,9 +40,10 @@ Each cookbook works on a temporary copy of the [sample project](../sample_projec
 - **Sessions.** A workflow runs every step under the workflow's session id, and that session row belongs to the workflow. A harness step keeps its native conversation (the Claude session id, the Codex thread id) in a session of its own named `<workflow session id>:<agent id>`, so two harness steps never share a conversation and the workflow's session is never overwritten. The workflow stores the step's run with its other step runs, as it does for an Agno agent.
 - **Continuity.** A later run of the same workflow session, or a later iteration of a `Loop`, resumes the step's own conversation, so it can refer to its earlier work.
 - **Standalone runs.** The workflow passes its id on each step call instead of storing it on the agent. The same agent instance can also run on its own, for example when AgentOS serves it directly, and those runs are saved in their own sessions.
-- **Sandboxed steps.** A step agent with `sandbox=` runs every turn in its own computer. Its computer binding, checkpoints and native conversation live in its own step session, and files it writes carry over to its next turn. AgentOS applies its startup checks (Postgres, a checkpoint store every replica can read under a durable queue) to sandboxed harness agents in served workflows, at any depth, including members of a team used as a step.
+- **Sandboxed steps.** A step agent with `sandbox=` runs every turn in its own computer. Its computer binding, checkpoints and native conversation live in its own step session, and files it writes carry over to its next turn. The step session's metadata links it back to the workflow (`workflow_id`), as it does for a step without a sandbox. AgentOS applies its startup checks (Postgres, a checkpoint store every replica can read under a durable queue) to sandboxed harness agents in served workflows, at any depth, including members of a team used as a step.
 - **Native-only settings.** Workflow settings that only apply to Agno agents, such as storage flags, have no effect on a harness step.
 
 ## Not yet supported
 
 - Workflows saved as Studio components cannot reference a harness agent as a step yet.
+- A harness step does not receive the workflow's run metadata; Agno agents read it from the run context, which harness agents ignore.

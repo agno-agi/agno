@@ -1200,8 +1200,11 @@ class AgentOS:
 
         They run their turns through the same coordinator as a served sandboxed agent, so they
         get the same startup checks; a member list built by a factory is not walked. The database
-        is the nearest one among the member's enclosing teams, None when none of them has one.
+        is the nearest Postgres one among the member's enclosing teams, since a sandbox coordinates on
+        Postgres, None when none of them has one.
         """
+        from agno.db.postgres import AsyncPostgresDb, PostgresDb
+
         found: List[Any] = []
         seen: set = set()
 
@@ -1209,7 +1212,8 @@ class AgentOS:
             if id(team) in seen or not isinstance(getattr(team, "members", None), list):
                 return
             seen.add(id(team))
-            team_db = getattr(team, "db", None) or inherited_db
+            own_db = getattr(team, "db", None)
+            team_db = own_db if isinstance(own_db, (PostgresDb, AsyncPostgresDb)) else inherited_db
             for member in team.members:
                 if isinstance(member, BaseExternalAgent) and member.sandbox is not None:
                     found.append((member, team_db))
@@ -1224,9 +1228,10 @@ class AgentOS:
         """(agent, database) for sandboxed harness agents that run inside a served workflow, at any depth.
 
         That covers steps and members of a team used as a step; steps built by a callable are not
-        walked. The database is the nearest one among the agent's enclosing teams and workflows, None
-        when none of them has one.
+        walked. The database is the nearest Postgres one among the agent's enclosing teams and
+        workflows, since a sandbox coordinates on Postgres, None when none of them has one.
         """
+        from agno.db.postgres import AsyncPostgresDb, PostgresDb
         from agno.workflow.condition import Condition
         from agno.workflow.loop import Loop
         from agno.workflow.parallel import Parallel
@@ -1242,7 +1247,8 @@ class AgentOS:
             if id(team) in seen or not isinstance(getattr(team, "members", None), list):
                 return
             seen.add(id(team))
-            team_db = getattr(team, "db", None) or inherited_db
+            own_db = getattr(team, "db", None)
+            team_db = own_db if isinstance(own_db, (PostgresDb, AsyncPostgresDb)) else inherited_db
             for member in team.members:
                 if isinstance(member, BaseExternalAgent) and member.sandbox is not None:
                     found.append((member, team_db))
@@ -1271,7 +1277,8 @@ class AgentOS:
             if id(workflow) in seen or not isinstance(getattr(workflow, "steps", None), list):
                 return
             seen.add(id(workflow))
-            workflow_db = getattr(workflow, "db", None) or inherited_db
+            own_db = getattr(workflow, "db", None)
+            workflow_db = own_db if isinstance(own_db, (PostgresDb, AsyncPostgresDb)) else inherited_db
             for step in workflow.steps:
                 visit(step, workflow_db)
 
@@ -1283,7 +1290,8 @@ class AgentOS:
         """Give a sandboxed team member or workflow step a database and fail at startup on what would
         fail its first turn.
 
-        One without its own database uses its nearest enclosing team's or workflow's, then the OS's."""
+        One without its own database uses its nearest enclosing team's or workflow's Postgres database,
+        then the OS's."""
         from agno.sandbox import _harness
 
         if member.db is None:

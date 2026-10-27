@@ -266,6 +266,7 @@ def test_a_sandboxed_member_forwards_only_sandbox_options_on_its_own_session(db,
         metadata={"k": "v"},
         stream_events=True,
         yield_run_output=True,
+        _session_metadata={"team_id": "team"},
     )
     run = member._as_team_member_output(
         RunOutput(run_id="r1.sandbox", session_id="s1:claude-coder", metadata={"sandbox": {"generation": 7}}),

@@ -3,6 +3,8 @@
 Set AGNO_TEST_SANDBOX_DB_URL and AGNO_TEST_RUNTIME_IMAGE to run these.
 """
 
+import pytest
+
 from agno.db.base import SessionType
 from agno.run.base import RunStatus
 from agno.workflow import Step, Workflow
@@ -56,5 +58,65 @@ def test_agentos_gives_a_sandboxed_agent_inside_a_workflow_the_nearest_database(
     )
 
     AgentOS(id="os", workflows=[workflow], telemetry=False).get_app()
+
+    assert step_agent.db is db and team_member.db is db
+
+
+def test_a_sandboxed_steps_session_links_back_to_its_workflow(setup):  # noqa: F811
+    db, agent_of, _ = setup
+    engineer = agent_of("engineer")
+    Workflow(id="wf", name="WF", steps=[Step(name="engineer", agent=engineer)], db=db).run("go", session_id="w1")
+
+    step_session = db.get_session(session_id="w1:engineer", session_type=SessionType.AGENT)
+    assert step_session.metadata == {"workflow_id": "wf"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_a_cancel_that_lands_before_the_sandbox_link_still_stops_the_step(setup, stream):  # noqa: F811
+    """The workflow cancelled the step's run before the step linked it to its sandbox run."""
+    from agno.run.cancel import acancel_run
+
+    db, agent_of, _ = setup
+    engineer = agent_of("engineer")
+    await acancel_run("step-run-1")
+
+    options = dict(session_id="w1", run_id="step-run-1", _workflow_id="wf")
+    if stream:
+        items = [item async for item in engineer.arun("go", stream=True, yield_run_output=True, **options)]
+        output = items[-1]
+        assert getattr(items[-2], "event", None) == "RunCancelled"
+    else:
+        output = await engineer.arun("go", **options)
+
+    assert output.status == RunStatus.cancelled and output.run_id == "step-run-1"
+    step_session = db.get_session(session_id="w1:engineer", session_type=SessionType.AGENT)
+    assert step_session is None or not [run for run in step_session.runs if run.status == RunStatus.completed]
+
+
+def test_agentos_gives_sandboxed_agents_in_a_workflow_postgres_when_their_owners_use_another_database(setup):  # noqa: F811
+    from agno.db.sqlite import SqliteDb
+    from agno.os import AgentOS
+    from agno.team.team import Team
+    from tests.unit.team.test_external_agent_members import _ScriptedModel
+
+    db, agent_of, tmp_path = setup
+    step_agent, team_member = agent_of("engineer"), agent_of("reviewer")
+    step_agent.db = team_member.db = None
+    inner = Team(
+        id="inner",
+        name="Inner",
+        members=[team_member],
+        model=_ScriptedModel([]),
+        db=SqliteDb(db_file=str(tmp_path / "team.db")),
+    )
+    workflow = Workflow(
+        id="wf",
+        name="WF",
+        steps=[Step(name="build", agent=step_agent), Step(name="review", team=inner)],
+        db=SqliteDb(db_file=str(tmp_path / "workflow.db")),
+    )
+
+    AgentOS(id="os", db=db, workflows=[workflow], telemetry=False).get_app()
 
     assert step_agent.db is db and team_member.db is db

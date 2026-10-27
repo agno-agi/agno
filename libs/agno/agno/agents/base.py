@@ -795,9 +795,15 @@ class BaseExternalAgent:
     )
 
     def _sandboxed_member_kwargs(
-        self, kwargs: Dict[str, Any], team_session_id: str, team_run_id: str, parent_id: str
+        self,
+        kwargs: Dict[str, Any],
+        team_session_id: str,
+        team_run_id: str,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """A sandboxed member's run options: the ones a sandbox takes, on the member's own session and run.
+        """A sandboxed team member's or workflow step's run options: the ones a sandbox takes, on the
+        agent's own session and run. Pass ``team_id`` for a member or ``workflow_id`` for a step.
 
         The member's sandbox session, which holds its computer binding, checkpoints and native
         conversation, is the same per-member session a member without a sandbox keeps its
@@ -806,12 +812,17 @@ class BaseExternalAgent:
         changes sessions once stored, and the team stores the member's result in the team
         session under the id it assigned, so the two records cannot share one row.
         """
+        parent_id = team_id if team_id is not None else workflow_id
         forwarded = {key: value for key, value in kwargs.items() if key in self._SANDBOX_MEMBER_RUN_OPTIONS}
         if forwarded.get("metadata") is not None:
             # The sandbox takes metadata as JSON. Values such as datetimes become text, as Agno stores them
             # elsewhere; a value JSON cannot hold fails the member's run instead of the team's tool call.
             forwarded["metadata"] = json.loads(json.dumps(forwarded["metadata"], default=json_serializer))
         forwarded["session_id"] = self._state_session_id(team_session_id, parent_id)
+        # The sandbox creates this session; this links it back to its team or workflow, as for other agents.
+        forwarded["_session_metadata"] = {
+            key: value for key, value in (("team_id", team_id), ("workflow_id", workflow_id)) if value is not None
+        }
         forwarded["run_id"] = f"{team_run_id}.sandbox"
         return forwarded
 
@@ -1959,7 +1970,7 @@ class BaseExternalAgent:
             team_run_id = kwargs.get("run_id") or str(uuid4())
             text = self._input_text(input)
             try:
-                forwarded = self._sandboxed_member_kwargs(kwargs, team_session_id, team_run_id, parent_id)
+                forwarded = self._sandboxed_member_kwargs(kwargs, team_session_id, team_run_id, team_id, workflow_id)
                 # Cancelling the member run the team registered reaches the sandbox's run through this link.
                 await aregister_member_run(team_run_id, forwarded["run_id"])
                 try:
@@ -2093,7 +2104,7 @@ class BaseExternalAgent:
             text = self._input_text(input)
             failure: Optional[Exception] = None
             try:
-                forwarded = self._sandboxed_member_kwargs(kwargs, team_session_id, team_run_id, parent_id)
+                forwarded = self._sandboxed_member_kwargs(kwargs, team_session_id, team_run_id, team_id, workflow_id)
                 await aregister_member_run(team_run_id, forwarded["run_id"])
             except Exception as error:
                 failure = error
