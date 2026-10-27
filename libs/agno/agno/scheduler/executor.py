@@ -46,7 +46,7 @@ def _preserve_updated_at(db: Any, method: str, schedule: Schedule) -> Dict[str, 
     """Keyword for a ``db.<method>`` write that keeps a Company routine's last-edit time.
 
     An adapter that does not name the parameter still gets the write: skipping a release or a disable
-    would leave a failing schedule stuck or armed. Its updated_at advances, and we say so.
+    would leave a failing schedule stuck or armed. Its updated_at advances, and a warning is logged.
     """
     if schedule.managed_by == "company":
         if "preserve_updated_at" in signature(getattr(db, method)).parameters:

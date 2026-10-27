@@ -468,9 +468,7 @@ class CompanyManager:
                 raise LookupError("Project not found")
             if project["product_id"] != existing["product_id"]:
                 raise ValueError("Task and Project must belong to the same Product")
-        if expected_status is not None:
-            fields["expected_status"] = expected_status
-        return self.db.update_task(task_id, user_id=user_id, **fields)
+        return self.db.update_task(task_id, user_id=user_id, expected_status=expected_status, **fields)
 
     def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
         """Soft-delete a visible task."""
@@ -1377,9 +1375,7 @@ class AsyncCompanyManager:
                 raise LookupError("Project not found")
             if project["product_id"] != existing["product_id"]:
                 raise ValueError("Task and Project must belong to the same Product")
-        if expected_status is not None:
-            fields["expected_status"] = expected_status
-        return await self.db.update_task(task_id, user_id=user_id, **fields)
+        return await self.db.update_task(task_id, user_id=user_id, expected_status=expected_status, **fields)
 
     async def delete_task(
         self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None

@@ -168,7 +168,14 @@ def get_tasks_router(
         # A queued attempt is withdrawn by the move; an executing or paused one must be cancelled first.
         queue = getattr(request.app.state, "queue_worker", None)
         if _pending_task_attempt(existing) is not None and queue is not None:
-            job = await queue.store.get_job(existing["job_id"])
+            try:
+                # A failed lookup must not read as "no ticket" and let the move leave an executing run.
+                try:
+                    job = await queue.store.get_job(existing["job_id"], strict=True)
+                except TypeError:
+                    job = await queue.store.get_job(existing["job_id"])
+            except Exception:
+                raise HTTPException(status_code=503, detail="Could not verify the Task run; retry the request")
             if job is not None and job["status"] in HOLDING_STATUSES:
                 raise HTTPException(
                     status_code=409,

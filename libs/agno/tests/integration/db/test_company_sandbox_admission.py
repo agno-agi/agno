@@ -115,7 +115,9 @@ async def test_live_job_blocks_after_task_mutation(sandbox_system, mutation):
     assert (await client.post(second_path)).status_code == 409
     assert (
         await client.post(path + "/transitions", json={"target": "backlog", "reason": "Edit work"})
-    ).status_code == 200
+    ).status_code == 409
+    # The route refuses leaving In progress mid-run; a direct manager or db caller can still move the Task.
+    await _call(db, "transition_task", first["id"], "backlog", "Edit work")
     if mutation in {"reassigned", "new_reservation"}:
         ready = await client.post(
             path + "/transitions",

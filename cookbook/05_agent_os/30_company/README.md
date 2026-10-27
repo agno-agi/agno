@@ -832,7 +832,8 @@ Omit `cron_expr` (or use null) to create an on-demand Routine in code, YAML,
 setup, or `POST /company/routines`. It stays enabled with `next_run_at: null`
 and is never claimed by the poller. `PATCH /company/routines/{id}` with a cron
 makes it scheduled; `{"cron_expr": null}` removes the schedule and keeps history.
-Pause and resume also apply to on-demand Routines.
+On-demand Routines cannot be paused, and resume returns 409 while one is enabled;
+a disabled on-demand Routine, such as a restored one, resumes.
 
 `POST /company/routines/{id}/archive` archives a Routine: it is paused, records
 `deleted_at`, keeps its run history and Product link, and is hidden from reads,

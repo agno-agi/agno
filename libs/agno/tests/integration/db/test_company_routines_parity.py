@@ -107,10 +107,10 @@ async def test_enabled_on_demand_routine_refuses_pause_and_resume(system, monkey
     for _ in range(2):
         paused = await client.post(path + "/pause")
         assert paused.status_code == 409, paused.text
-        assert paused.json()["detail"] == "On-demand routines cannot be paused."
+        assert paused.json()["detail"] == "On-demand Routines cannot be paused"
         resumed = await client.post(path + "/resume")
         assert resumed.status_code == 409, resumed.text
-        assert resumed.json()["detail"] == "On-demand routine is already enabled."
+        assert resumed.json()["detail"] == "On-demand Routine is already enabled"
     assert links == []
     assert await stored_state(db, routine) == before
 
@@ -127,7 +127,7 @@ async def test_disabled_on_demand_routine_recovers_through_resume_without_runnin
     for _ in range(2):
         paused = await client.post(path + "/pause")
         assert paused.status_code == 409, paused.text
-        assert paused.json()["detail"] == "On-demand routines cannot be paused."
+        assert paused.json()["detail"] == "On-demand Routines cannot be paused"
     assert await stored_state(db, routine) == disabled
     links = spy_product_links(db, monkeypatch)
     resumed = await client.post(path + "/resume")
@@ -139,7 +139,7 @@ async def test_disabled_on_demand_routine_recovers_through_resume_without_runnin
     recovered = await stored_state(db, routine)
     monkeypatch.setattr(time, "time", lambda: recovered[0]["updated_at"] + 100)
     again = await client.post(path + "/resume")
-    assert again.status_code == 409 and again.json()["detail"] == "On-demand routine is already enabled."
+    assert again.status_code == 409 and again.json()["detail"] == "On-demand Routine is already enabled"
     assert len(links) == 1 and await stored_state(db, routine) == recovered
 
 
