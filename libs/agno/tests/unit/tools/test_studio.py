@@ -3675,10 +3675,12 @@ class _StubAgent:
     id = "stub"
     name = "Stub"
 
-    def run(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
+    def run(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None, caller_run_id=None):
         return _StubRunOutput()
 
-    async def arun(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
+    async def arun(
+        self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None, caller_run_id=None
+    ):
         return _StubRunOutput()
 
     def deep_copy(self):
@@ -4610,12 +4612,14 @@ class _GuardStubTeam:
         self.seen = None
         self.seen_metadata = None
 
-    def run(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
+    def run(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None, caller_run_id=None):
         self.seen = {"message": message}
         self.seen_metadata = metadata
         return type("Out", (), {"run_id": "r", "session_id": "s", "status": "COMPLETED", "content": "done"})()
 
-    async def arun(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
+    async def arun(
+        self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None, caller_run_id=None
+    ):
         return self.run(message, stream=stream, user_id=user_id, session_id=session_id, metadata=metadata)
 
     def deep_copy(self):

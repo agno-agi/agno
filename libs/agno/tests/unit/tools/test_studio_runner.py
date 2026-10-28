@@ -127,18 +127,23 @@ class _StubAgent:
         self.seen: Optional[Dict[str, Any]] = None
         self.seen_metadata: Optional[Dict[str, Any]] = None
         self.seen_run_id: Optional[str] = None
+        self.seen_caller_run_id: Optional[str] = None
         self.copied = False
 
-    def run(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
+    def run(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None, caller_run_id=None):
         self.seen = {"message": message, "stream": stream, "user_id": user_id, "session_id": session_id}
         self.seen_metadata = metadata
         self.seen_run_id = run_id
+        self.seen_caller_run_id = caller_run_id
         return self._output
 
-    async def arun(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
+    async def arun(
+        self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None, caller_run_id=None
+    ):
         self.seen = {"message": message, "stream": stream, "user_id": user_id, "session_id": session_id}
         self.seen_metadata = metadata
         self.seen_run_id = run_id
+        self.seen_caller_run_id = caller_run_id
         return self._output
 
     def deep_copy(self):
@@ -158,18 +163,23 @@ class _StubTeam:
         self.seen: Optional[Dict[str, Any]] = None
         self.seen_metadata: Optional[Dict[str, Any]] = None
         self.seen_run_id: Optional[str] = None
+        self.seen_caller_run_id: Optional[str] = None
         self.copied = False
 
-    def run(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
+    def run(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None, caller_run_id=None):
         self.seen = {"message": message, "stream": stream, "user_id": user_id, "session_id": session_id}
         self.seen_metadata = metadata
         self.seen_run_id = run_id
+        self.seen_caller_run_id = caller_run_id
         return _StubRunOutput()
 
-    async def arun(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
+    async def arun(
+        self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None, caller_run_id=None
+    ):
         self.seen = {"message": message, "stream": stream, "user_id": user_id, "session_id": session_id}
         self.seen_metadata = metadata
         self.seen_run_id = run_id
+        self.seen_caller_run_id = caller_run_id
         return _StubRunOutput()
 
     def deep_copy(self):
@@ -189,18 +199,25 @@ class _StubWorkflow:
         self.seen: Optional[Dict[str, Any]] = None
         self.seen_metadata: Optional[Dict[str, Any]] = None
         self.seen_run_id: Optional[str] = None
+        self.seen_caller_run_id: Optional[str] = None
         self.copied = False
 
-    def run(self, input=None, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
+    def run(
+        self, input=None, stream=None, user_id=None, session_id=None, metadata=None, run_id=None, caller_run_id=None
+    ):
         self.seen = {"input": input, "stream": stream, "user_id": user_id, "session_id": session_id}
         self.seen_metadata = metadata
         self.seen_run_id = run_id
+        self.seen_caller_run_id = caller_run_id
         return _StubRunOutput()
 
-    async def arun(self, input=None, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
+    async def arun(
+        self, input=None, stream=None, user_id=None, session_id=None, metadata=None, run_id=None, caller_run_id=None
+    ):
         self.seen = {"input": input, "stream": stream, "user_id": user_id, "session_id": session_id}
         self.seen_metadata = metadata
         self.seen_run_id = run_id
+        self.seen_caller_run_id = caller_run_id
         return _StubRunOutput()
 
     def deep_copy(self):
@@ -4471,3 +4488,28 @@ class TestEndToEndSelfDispatchOnce:
         assert model.recorder["finals"] == ["saw-refusal", "saw-success"]
         assert output.content == "saw-success"
         assert model.recorder["provider_calls"] == 4
+
+
+# ----------------------------------------------------------------------
+# Caller lineage: dispatched runs record the run that dispatched them
+# ----------------------------------------------------------------------
+
+
+class TestDispatchCallerLineage:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_dispatch_passes_the_caller_run_id(self, db, kind, use_async):
+        stub, runner = _guarded_stub(kind, db)
+        out = await _dispatch(runner, kind, use_async, context=_context())
+        assert "error" not in out
+        assert stub.seen_caller_run_id == "caller-run"
+        # The dispatched run keeps its own pre-minted id.
+        assert stub.seen_run_id != "caller-run"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_contextless_dispatch_passes_no_caller(self, db, kind, use_async):
+        stub, runner = _guarded_stub(kind, db)
+        out = await _dispatch(runner, kind, use_async, context=None)
+        assert "error" not in out
+        assert stub.seen_caller_run_id is None

@@ -751,6 +751,9 @@ class TeamRunOutput:
     team_name: Optional[str] = None
     session_id: Optional[str] = None
     parent_run_id: Optional[str] = None
+    # Run that started this one from outside it (e.g. a dispatching agent). Unlike
+    # parent_run_id, it does not mark the run as nested, so history reads keep it.
+    caller_run_id: Optional[str] = None
     user_id: Optional[str] = None
 
     # Input media and messages from user

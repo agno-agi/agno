@@ -2727,6 +2727,7 @@ class StudioRunnerTools(Toolkit):
                 user_id=self._caller_user_id(_agno_run_context, agent),
                 session_id=self._sub_session_id(_agno_run_context, "agent", component_id),
                 run_id=sub_run_id,
+                caller_run_id=getattr(_agno_run_context, "run_id", None),
                 metadata=dispatch_metadata,
             )
             return self._run_payload("agent_id", component_id, response)
@@ -2793,6 +2794,7 @@ class StudioRunnerTools(Toolkit):
                 user_id=self._caller_user_id(_agno_run_context, team),
                 session_id=self._sub_session_id(_agno_run_context, "team", component_id),
                 run_id=sub_run_id,
+                caller_run_id=getattr(_agno_run_context, "run_id", None),
                 metadata=dispatch_metadata,
             )
             return self._run_payload("team_id", component_id, response)
@@ -2859,6 +2861,7 @@ class StudioRunnerTools(Toolkit):
                 user_id=self._caller_user_id(_agno_run_context, wf),
                 session_id=self._sub_session_id(_agno_run_context, "workflow", component_id),
                 run_id=sub_run_id,
+                caller_run_id=getattr(_agno_run_context, "run_id", None),
                 metadata=dispatch_metadata,
             )
             return self._run_payload("workflow_id", component_id, response)
@@ -2928,6 +2931,7 @@ class StudioRunnerTools(Toolkit):
                 user_id=self._caller_user_id(_agno_run_context, agent),
                 session_id=self._sub_session_id(_agno_run_context, "agent", component_id),
                 run_id=sub_run_id,
+                caller_run_id=getattr(_agno_run_context, "run_id", None),
                 metadata=dispatch_metadata,
             )
             return self._run_payload("agent_id", component_id, response)
@@ -2994,6 +2998,7 @@ class StudioRunnerTools(Toolkit):
                 user_id=self._caller_user_id(_agno_run_context, team),
                 session_id=self._sub_session_id(_agno_run_context, "team", component_id),
                 run_id=sub_run_id,
+                caller_run_id=getattr(_agno_run_context, "run_id", None),
                 metadata=dispatch_metadata,
             )
             return self._run_payload("team_id", component_id, response)
@@ -3062,6 +3067,7 @@ class StudioRunnerTools(Toolkit):
                 user_id=self._caller_user_id(_agno_run_context, wf),
                 session_id=self._sub_session_id(_agno_run_context, "workflow", component_id),
                 run_id=sub_run_id,
+                caller_run_id=getattr(_agno_run_context, "run_id", None),
                 metadata=dispatch_metadata,
             )
             return self._run_payload("workflow_id", component_id, response)
