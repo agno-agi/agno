@@ -206,3 +206,13 @@ TypeScript compilation, and the Vite production build passed.
 - Repository-wide Ruff, agnoctl mypy, and cookbook pattern checks passed. The
   core Agno mypy step reported 27 existing errors in six files outside this
   integration's diff.
+
+### reasoning_agent.py
+
+**Status:** PASS
+
+**Description:** Moved the reasoning model off `o3-mini`, which OpenAI shut down on 2026-10-23 (404), to its listed replacement `gpt-5.6-sol`. Served with `agent_os.serve` and called over HTTP on `POST /reasoning/agui`.
+
+**Result:** HTTP 200 with `REASONING_START`, 21 `REASONING_MESSAGE_CONTENT` events, `REASONING_END` and the text answer.
+
+---
