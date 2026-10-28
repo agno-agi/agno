@@ -44,6 +44,10 @@ agent_os = AgentOS(
                     "Show a line chart of agent runs for the last 7 days.",
                     "Compare input and output token usage by day.",
                     "Create a pie chart of model runs by provider.",
+                    (
+                        "Chart this monthly revenue with the total as the headline value: "
+                        "Jan 18K, Feb 21K, Mar 19K, Apr 24K, May 27K, Jun 30K."
+                    ),
                 ],
             },
         ),
