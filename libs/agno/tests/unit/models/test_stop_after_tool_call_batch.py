@@ -74,9 +74,12 @@ def test_sync_batch_first_tool_stops_subsequent_tool_not_invoked():
     assert tool1_mock.call_count == 1
     assert tool2_mock.call_count == 0
 
-    assert len(results) == 1
+    assert len(results) == 2
     assert results[0].tool_name == "tool1"
     assert results[0].stop_after_tool_call is True
+    assert results[1].tool_name == "tool2"
+    assert results[1].tool_call_id == "call_tool2"
+    assert "skipped" in str(results[1].content)
 
 
 def test_sync_batch_neither_tool_stops_both_executed():
@@ -122,9 +125,12 @@ async def test_async_batch_first_tool_stops_subsequent_tool_not_invoked():
     assert tool1_mock.call_count == 1
     assert tool2_mock.call_count == 0
 
-    assert len(results) == 1
+    assert len(results) == 2
     assert results[0].tool_name == "tool1"
     assert results[0].stop_after_tool_call is True
+    assert results[1].tool_name == "tool2"
+    assert results[1].tool_call_id == "call_tool2"
+    assert "skipped" in str(results[1].content)
 
 
 @pytest.mark.asyncio
@@ -190,6 +196,11 @@ def test_model_response_batch_with_stop_after_tool_call():
     assert tool2_mock.call_count == 0
     # The second tool was never invoked, and no subsequent model turn occurred
     assert len(model.invoke_responses) == 0
+    tool_results = [m for m in messages if m.role == "tool"]
+    assert len(tool_results) == 2
+    assert tool_results[0].tool_call_id == "call_1"
+    assert tool_results[1].tool_call_id == "call_2"
+    assert "skipped" in str(tool_results[1].content)
 
 
 @pytest.mark.asyncio
@@ -228,3 +239,52 @@ async def test_model_aresponse_batch_with_stop_after_tool_call():
     assert tool1_mock.call_count == 1
     assert tool2_mock.call_count == 0
     assert len(model.ainvoke_responses) == 0
+    tool_results = [m for m in messages if m.role == "tool"]
+    assert len(tool_results) == 2
+    assert tool_results[0].tool_call_id == "call_1"
+    assert tool_results[1].tool_call_id == "call_2"
+    assert "skipped" in str(tool_results[1].content)
+
+
+def test_sync_batch_middle_tool_stops_subsequent_tools_not_invoked():
+    """When tool 2 of 3 has stop_after_tool_call=True, tool 1 and 2 run, tool 3 is skipped with stub."""
+    t1 = MagicMock(return_value="r1")
+    t2 = MagicMock(return_value="r2")
+    t3 = MagicMock(return_value="r3")
+    fc1 = _make_function_call("tool1", stop_after_tool_call=False, mock_fn=t1)
+    fc2 = _make_function_call("tool2", stop_after_tool_call=True, mock_fn=t2)
+    fc3 = _make_function_call("tool3", stop_after_tool_call=False, mock_fn=t3)
+    model = _StubModel()
+    results: List[Message] = []
+    list(model.run_function_calls([fc1, fc2, fc3], function_call_results=results))
+    assert t1.call_count == 1
+    assert t2.call_count == 1
+    assert t3.call_count == 0
+    assert len(results) == 3
+    assert results[0].tool_name == "tool1"
+    assert results[1].tool_name == "tool2"
+    assert results[2].tool_name == "tool3"
+    assert "skipped" in str(results[2].content)
+
+
+@pytest.mark.asyncio
+async def test_async_batch_middle_tool_stops_subsequent_tools_not_invoked():
+    """When tool 2 of 3 has stop_after_tool_call=True, tool 1 and 2 run, tool 3 is skipped with stub on async path."""
+    t1 = MagicMock(return_value="r1")
+    t2 = MagicMock(return_value="r2")
+    t3 = MagicMock(return_value="r3")
+    fc1 = _make_function_call("tool1", stop_after_tool_call=False, mock_fn=t1)
+    fc2 = _make_function_call("tool2", stop_after_tool_call=True, mock_fn=t2)
+    fc3 = _make_function_call("tool3", stop_after_tool_call=False, mock_fn=t3)
+    model = _StubModel()
+    results: List[Message] = []
+    async for _ in model.arun_function_calls([fc1, fc2, fc3], function_call_results=results):
+        pass
+    assert t1.call_count == 1
+    assert t2.call_count == 1
+    assert t3.call_count == 0
+    assert len(results) == 3
+    assert results[0].tool_name == "tool1"
+    assert results[1].tool_name == "tool2"
+    assert results[2].tool_name == "tool3"
+    assert "skipped" in str(results[2].content)
