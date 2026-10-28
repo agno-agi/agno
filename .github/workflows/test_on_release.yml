@@ -8,7 +8,6 @@ on:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
       - "ci/split-company-db-tests"
-      - "feat/a2a-v1"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
