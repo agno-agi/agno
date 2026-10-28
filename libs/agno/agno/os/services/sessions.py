@@ -219,8 +219,8 @@ async def _get_indexed_session_runs(
     user_id: Optional[str],
     created_after: Optional[int],
     created_before: Optional[int],
-) -> List[_IndexedRun]:
-    """The session's listed runs as ``(run_index, run_dict, schema_class)``, in chronological order.
+) -> Tuple[List[_IndexedRun], SessionType]:
+    """Return indexed runs in chronological order and the resolved session type.
 
     ``run_index`` is the run's position in the session's full history, assigned
     before any filter so it stays stable across filters and across the list,
@@ -242,7 +242,7 @@ async def _get_indexed_session_runs(
         schema_class = _run_schema_class(run, resolved_type)
         if schema_class is not None:
             indexed.append((run_index, run, schema_class))
-    return indexed
+    return indexed, resolved_type
 
 
 def _render_run(indexed_run: _IndexedRun) -> AnyRunSchema:
@@ -265,7 +265,7 @@ async def get_session_runs(
 
     Raises :class:`SessionNotFoundError` when the session does not exist.
     """
-    indexed = await _get_indexed_session_runs(
+    indexed, _ = await _get_indexed_session_runs(
         db,
         session_id=session_id,
         session_type=session_type,
@@ -293,7 +293,10 @@ async def get_session_runs_window(
     With ``after_run_index`` the page is the oldest ``limit`` runs after it;
     otherwise it is the newest ``limit`` runs, before ``before_run_index`` when
     given. Returns ``(runs, total_count, has_more)``, where ``has_more`` reports
-    runs beyond the page in the paging direction.
+    runs beyond the page in the paging direction. For Team sessions, limits,
+    timestamp filters, counts and cursors apply to parent runs. Their descendants
+    are included without consuming the limit. Use the first/last parent's index
+    for the next cursor, not the first/last member's index.
 
     Raises :class:`SessionNotFoundError` when the session does not exist and
     :class:`InvalidRunCursorError` when both cursors are given.
@@ -301,26 +304,56 @@ async def get_session_runs_window(
     if before_run_index is not None and after_run_index is not None:
         raise InvalidRunCursorError("Pass at most one of before_run_index and after_run_index")
 
-    indexed = await _get_indexed_session_runs(
+    indexed, resolved_type = await _get_indexed_session_runs(
         db,
         session_id=session_id,
         session_type=session_type,
         user_id=user_id,
-        created_after=created_after,
-        created_before=created_before,
+        created_after=None,
+        created_before=None,
     )
 
+    # Select parents before applying limits. Keep the full history for member expansion,
+    # including descendants whose timestamps lie outside the parent's date bounds.
+    pageable: List[_IndexedRun] = []
+    for indexed_run in indexed:
+        _, run, _ = indexed_run
+        if resolved_type == SessionType.TEAM and run.get("parent_run_id") is not None:
+            continue
+        created_at = run.get("created_at")
+        if created_after is not None and created_at is not None and created_at < created_after:
+            continue
+        if created_before is not None and created_at is not None and created_at > created_before:
+            continue
+        pageable.append(indexed_run)
+
     if after_run_index is not None:
-        candidates = [indexed_run for indexed_run in indexed if indexed_run[0] > after_run_index]
+        candidates = [indexed_run for indexed_run in pageable if indexed_run[0] > after_run_index]
         window = candidates[:limit]
     else:
         if before_run_index is not None:
-            candidates = [indexed_run for indexed_run in indexed if indexed_run[0] < before_run_index]
+            candidates = [indexed_run for indexed_run in pageable if indexed_run[0] < before_run_index]
         else:
-            candidates = indexed
+            candidates = pageable
         window = candidates[-limit:]
 
-    return [_render_run(indexed_run) for indexed_run in window], len(indexed), len(candidates) > limit
+    if resolved_type == SessionType.TEAM:
+        # Members can precede their parents in storage, and teams can contain teams.
+        children: Dict[str, List[str]] = {}
+        for _, run, _ in indexed:
+            parent_id = run.get("parent_run_id")
+            if parent_id is not None:
+                children.setdefault(parent_id, []).append(run["run_id"])
+        selected_ids = {run["run_id"] for _, run, _ in window}
+        pending = list(selected_ids)
+        while pending:
+            for child_id in children.get(pending.pop(), []):
+                if child_id not in selected_ids:
+                    selected_ids.add(child_id)
+                    pending.append(child_id)
+        window = [indexed_run for indexed_run in indexed if indexed_run[1]["run_id"] in selected_ids]
+
+    return [_render_run(indexed_run) for indexed_run in window], len(pageable), len(candidates) > limit
 
 
 async def get_session_run_previews(
@@ -336,7 +369,7 @@ async def get_session_run_previews(
 
     Raises :class:`SessionNotFoundError` when the session does not exist.
     """
-    indexed = await _get_indexed_session_runs(
+    indexed, _ = await _get_indexed_session_runs(
         db,
         session_id=session_id,
         session_type=session_type,

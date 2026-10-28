@@ -1063,3 +1063,44 @@ def test_get_session_name_workflow_no_input(workflow_session_no_input):
     """Test that get_session_name returns 'New {name} Session' when workflow has no input."""
     session_dict = {**workflow_session_no_input.to_dict(), "session_type": "workflow"}
     assert get_session_name(session_dict) == "New BlogGenerator Session"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async_db", [False, True])
+async def test_team_parent_pagination_with_normalized_runs(shared_db, async_shared_db, use_async_db):
+    """Both SQLite adapters serve complete team runs through the actual HTTP route."""
+    from httpx import ASGITransport, AsyncClient
+
+    from agno.team.team import Team
+
+    db = async_shared_db if use_async_db else shared_db
+    session = TeamSession(session_id="parent-pages", team_id="team", created_at=100)
+    if use_async_db:
+        await db.upsert_session(session)
+    else:
+        db.upsert_session(session)
+    for i in range(3):
+        runs = [
+            RunOutput(run_id=f"member-{i}-0", agent_id="member", parent_run_id=f"parent-{i}", created_at=100 + 3 * i),
+            RunOutput(run_id=f"member-{i}-1", agent_id="member", parent_run_id=f"parent-{i}", created_at=101 + 3 * i),
+            TeamRunOutput(run_id=f"parent-{i}", team_id="team", created_at=102 + 3 * i),
+        ]
+        for j, run in enumerate(runs):
+            if use_async_db:
+                await db.upsert_run(run, session_id=session.session_id, run_index=3 * i + j)
+            else:
+                db.upsert_run(run, session_id=session.session_id, run_index=3 * i + j)
+
+    app = AgentOS(teams=[Team(id="team", members=[], db=db)]).get_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/sessions/parent-pages/runs?limit=2")
+        assert response.status_code == 200
+        body = response.json()
+        assert [r["run_index"] for r in body["data"]] == list(range(3, 9))
+        assert body["meta"] == {"limit": 2, "total_count": 3, "has_more": True}
+        response = await client.get("/sessions/parent-pages/runs?limit=2&before_run_index=5")
+        older = response.json()
+        assert [r["run_index"] for r in older["data"]] == [0, 1, 2]
+        assert older["meta"] == {"limit": 2, "total_count": 3, "has_more": False}
+        response = await client.get("/sessions/parent-pages/runs")
+        assert len(response.json()) == 9

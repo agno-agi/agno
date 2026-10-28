@@ -585,6 +585,8 @@ def attach_routes(
             "By default all runs are returned as a list. Pass 'limit' to receive a cursor-paginated "
             "response instead: the newest 'limit' runs, or those before 'before_run_index' or after "
             "'after_run_index'. Runs are always in chronological order and carry their 'run_index'. "
+            "For team pages, limits, timestamp filters and counts apply to parent runs; their members "
+            "are included without consuming the limit. Page using the first or last parent's run_index. "
             "Response schema varies based on session type."
         ),
         response_model_exclude_none=True,
@@ -719,17 +721,20 @@ def attach_routes(
         ),
         limit: Optional[int] = Query(
             default=None,
-            description="Maximum number of runs to return. Providing this returns a cursor-paginated response.",
+            description=(
+                "Maximum number of runs (parents for team sessions). Team members are included in addition. "
+                "Providing this returns a cursor-paginated response."
+            ),
             ge=1,
         ),
         before_run_index: Optional[int] = Query(
             default=None,
-            description="Return the newest runs with a run_index below this value. Requires 'limit'.",
+            description="Return the newest runs (parents for teams) below this run_index. Requires 'limit'.",
             ge=0,
         ),
         after_run_index: Optional[int] = Query(
             default=None,
-            description="Return the oldest runs with a run_index above this value. Requires 'limit'.",
+            description="Return the oldest runs (parents for teams) above this run_index. Requires 'limit'.",
             ge=0,
         ),
         db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),

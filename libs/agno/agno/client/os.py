@@ -1870,7 +1870,10 @@ class AgentOSClient:
         Pagination is opt-in: without ``limit`` the server returns every run as a list. With
         ``limit`` it returns a :class:`CursorPaginatedResponse` holding the newest ``limit`` runs,
         or those before ``before_run_index`` / after ``after_run_index``. Runs are always in
-        chronological order and carry their ``run_index``.
+        chronological order and carry their ``run_index``. For Team sessions, the limit,
+        timestamp filters and metadata count parent runs. Members are included in addition,
+        even outside timestamp bounds. Use the first parent's index for ``before_run_index``
+        or the last parent's index for ``after_run_index``; do not use a member's index.
 
         Args:
             session_id: ID of the session
@@ -1881,7 +1884,7 @@ class AgentOSClient:
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
-            limit: Maximum number of runs to return (enables pagination)
+            limit: Maximum number of runs (parents for Team sessions); enables pagination
             before_run_index: Return the newest runs with a lower run_index (requires limit)
             after_run_index: Return the oldest runs with a higher run_index (requires limit)
 

@@ -855,13 +855,19 @@ class PaginatedResponse(BaseModel, Generic[T]):
 
 
 class CursorPaginationInfo(BaseModel):
-    limit: int = Field(..., description="Maximum number of items in this page", ge=1)
-    total_count: int = Field(..., description="Total count of items matching the filters", ge=0)
-    has_more: bool = Field(..., description="Whether more items exist beyond this page in the paging direction")
+    """Pagination counts parent runs for Team sessions; included members do not consume the limit."""
+
+    limit: int = Field(..., description="Maximum number of items (parent runs for team pages)", ge=1)
+    total_count: int = Field(
+        ..., description="Total count of items matching the filters (parent runs for team pages)", ge=0
+    )
+    has_more: bool = Field(
+        ..., description="Whether more items (parent runs for team pages) exist in the paging direction"
+    )
 
 
 class CursorPaginatedResponse(BaseModel, Generic[T]):
-    """Wrapper for cursor-paginated responses; callers page with a boundary taken from ``data``."""
+    """Cursor-paginated data; for Team runs, take cursor boundaries from the parents in ``data``."""
 
     data: List[T] = Field(..., description="List of items for the current page")
     meta: CursorPaginationInfo = Field(..., description="Pagination metadata")

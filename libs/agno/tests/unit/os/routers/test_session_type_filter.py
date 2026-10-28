@@ -646,6 +646,96 @@ class TestSessionRunsPagination:
         assert resp.status_code == 404
 
 
+class TestTeamSessionRunsPagination:
+    """A page contains complete parent runs; members do not consume its limit."""
+
+    @pytest.fixture
+    def client(self):
+        db = InMemoryDb()
+        runs = []
+        for i in range(25):
+            for j in range(2):
+                runs.append(
+                    {
+                        "run_id": f"member-{i}-{j}",
+                        "agent_id": "member",
+                        "parent_run_id": f"parent-{i}",
+                        "created_at": 100 + 3 * i + j,
+                    }
+                )
+            runs.append(
+                {
+                    "run_id": f"parent-{i}",
+                    "team_id": "team",
+                    "parent_run_id": None,
+                    "status": ["COMPLETED", "PAUSED", "CANCELLED", "ERROR"][i % 4],
+                    "created_at": 102 + 3 * i,
+                }
+            )
+        _seed_session(db, {"session_id": "team-paged", "session_type": "team", "team_id": "team", "runs": runs})
+        return _build_client(db)
+
+    @pytest.mark.parametrize("session_type", [None, "team"])
+    def test_twenty_parents_include_all_members_and_page_back(self, client, session_type):
+        params = {"limit": 20}
+        if session_type:
+            params["type"] = session_type
+        first = client.get("/sessions/team-paged/runs", params=params)
+        assert first.status_code == 200
+        body = first.json()
+        assert [r["run_index"] for r in body["data"]] == list(range(15, 75))
+        parents = [r for r in body["data"] if not r.get("parent_run_id")]
+        assert [r["run_id"] for r in parents] == [f"parent-{i}" for i in range(5, 25)]
+        assert body["meta"] == {"limit": 20, "total_count": 25, "has_more": True}
+
+        params["before_run_index"] = parents[0]["run_index"]
+        older = client.get("/sessions/team-paged/runs", params=params).json()
+        assert [r["run_index"] for r in older["data"]] == list(range(15))
+        assert older["meta"] == {"limit": 20, "total_count": 25, "has_more": False}
+        params["before_run_index"] = 2
+        empty = client.get("/sessions/team-paged/runs", params=params).json()
+        assert empty["data"] == []
+        assert empty["meta"]["has_more"] is False
+
+    def test_forward_pages_keep_complete_groups(self, client):
+        first = client.get("/sessions/team-paged/runs?limit=20&after_run_index=2").json()
+        assert [r["run_index"] for r in first["data"]] == list(range(3, 63))
+        assert first["meta"] == {"limit": 20, "total_count": 25, "has_more": True}
+        second = client.get("/sessions/team-paged/runs?limit=20&after_run_index=62").json()
+        assert [r["run_index"] for r in second["data"]] == list(range(63, 75))
+        assert second["meta"]["has_more"] is False
+
+    def test_unpaginated_previews_and_single_run_keep_full_history_indexes(self, client):
+        runs = client.get("/sessions/team-paged/runs").json()
+        previews = client.get("/sessions/team-paged/runs/previews").json()
+        assert [r["run_index"] for r in runs] == list(range(75))
+        assert [r["run_index"] for r in previews] == list(range(75))
+        assert client.get("/sessions/team-paged/runs/member-5-0").json()["run_index"] == 15
+
+    @pytest.mark.parametrize("timestamps", [False, True])
+    def test_nested_interleaved_members_follow_selected_parent(self, timestamps):
+        db = InMemoryDb()
+        runs = [
+            {"run_id": "leaf", "agent_id": "member", "parent_run_id": "nested", "created_at": 0},
+            {"run_id": "old-member", "agent_id": "member", "parent_run_id": "old", "created_at": 1},
+            {"run_id": "nested", "team_id": "subteam", "parent_run_id": "selected", "created_at": 2},
+            {"run_id": "old", "team_id": "team", "created_at": 3},
+            {"run_id": "selected", "team_id": "team", "created_at": 4},
+            {"run_id": "late-member", "agent_id": "member", "parent_run_id": "selected", "created_at": 5},
+        ]
+        _seed_session(db, {"session_id": "nested", "session_type": "team", "team_id": "team", "runs": runs})
+        client = _build_client(db)
+        params = {"limit": 1}
+        if timestamps:
+            params.update(created_after=4, created_before=4)
+        body = client.get("/sessions/nested/runs", params=params).json()
+        assert [r["run_id"] for r in body["data"]] == ["leaf", "nested", "selected", "late-member"]
+        assert [r["run_index"] for r in body["data"]] == [0, 2, 4, 5]
+        assert body["meta"] == {"limit": 1, "total_count": 1 if timestamps else 2, "has_more": not timestamps}
+        older = client.get("/sessions/nested/runs?limit=1&before_run_index=4").json()
+        assert [r["run_id"] for r in older["data"]] == ["old-member", "old"]
+
+
 class TestSessionRunPreviews:
     """GET /sessions/{id}/runs/previews lists every run without loading full runs."""
 
