@@ -326,7 +326,7 @@ class CompanyManager:
         if target == "done":
             page = 1
             while True:
-                tasks, total = self.db.get_tasks(project_id=project_id, include_deleted=True, limit=100, page=page)
+                tasks, total = self.db.get_tasks(project_id=project_id, limit=100, page=page)
                 validate_project_completion(tasks)
                 if page * 100 >= total:
                     break
@@ -355,6 +355,8 @@ class CompanyManager:
         routine_id: Optional[str] = None,
         executor_type: Optional[str] = None,
         executor_id: Optional[str] = None,
+        status: str = "backlog",
+        accepted_by: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create task work; scoped_user_id filters parents while user_id records the creator."""
         from agno.company.routines import _RoutineAuthorization
@@ -385,23 +387,29 @@ class CompanyManager:
                 raise LookupError("Project not found")
             if project["product_id"] != product_id:
                 raise ValueError("Task and Project must belong to the same Product")
-        return self.db.create_task(
-            {
-                **fields,
-                "product_id": product_id,
-                "id": str(uuid4()),
-                "status": "backlog",
-                "origin": origin,
-                "routine_id": routine_id,
-                **_proposal_origin(),
-                "session_id": str(uuid4()),
-                "user_id": user_id,
-                "transitions": [],
-                "created_at": int(time.time()),
-                "updated_at": None,
-                "deleted_at": None,
-            }
-        )
+        task = {
+            **fields,
+            "product_id": product_id,
+            "id": str(uuid4()),
+            "status": "backlog",
+            "origin": origin,
+            "routine_id": routine_id,
+            **_proposal_origin(),
+            "session_id": str(uuid4()),
+            "user_id": user_id,
+            "transitions": [],
+            "created_at": int(time.time()),
+            "updated_at": None,
+            "deleted_at": None,
+        }
+        if status != "backlog":
+            from agno.db.schemas.tasks import task_transition_fields
+
+            accepting = {"executor_type": executor_type, "executor_id": executor_id} if status == "ready" else {}
+            if accepting:
+                self._accept_task(task, executor_type, executor_id)
+            task.update(task_transition_fields(task, status, "Created in " + status, accepted_by, **accepting))
+        return self.db.create_task(task)
 
     def get_task(
         self, task_id: str, user_id: Optional[str] = None, include_deleted: bool = False
@@ -440,15 +448,17 @@ class CompanyManager:
             sort_order=sort_order,
         )
 
-    def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
-        """Update descriptive fields; accepted Task scope requires a return to Backlog."""
+    def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a Task; outside Backlog only title and brief change, the rest requires a return to Backlog."""
         from agno.db.schemas.tasks import validate_task_fields
 
         validate_task_fields(fields)
         existing = self.db.get_task(task_id, user_id=user_id)
         if existing is None:
             return None
-        if existing["status"] != "backlog":
+        if existing["status"] != "backlog" and set(fields) - {"title", "brief"}:
             raise ValueError("Accepted task scope requires a return to Backlog")
         if "project_id" in fields and not fields["project_id"]:
             raise ValueError("A Task requires a Project")
@@ -458,7 +468,7 @@ class CompanyManager:
                 raise LookupError("Project not found")
             if project["product_id"] != existing["product_id"]:
                 raise ValueError("Task and Project must belong to the same Product")
-        return self.db.update_task(task_id, user_id=user_id, **fields)
+        return self.db.update_task(task_id, user_id=user_id, expected_status=expected_status, **fields)
 
     def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
         """Soft-delete a visible task."""
@@ -467,6 +477,25 @@ class CompanyManager:
     def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a deleted task."""
         return self.db.restore_task(task_id, user_id=user_id)
+
+    def _accept_task(self, task: Dict[str, Any], executor_type: Optional[str], executor_id: Optional[str]) -> None:
+        """Check that the executor can accept this Task before it enters Ready."""
+        from agno.company.execution import _executor
+
+        component = _executor(self.registry, executor_type, executor_id, accepting=True)
+        from agno.company.sandbox import _accept_checkout, _accept_sandbox, _is_sandboxed
+
+        if _is_sandboxed(component):
+            sources = []
+            page = 1
+            while True:
+                rows, total = self.db.get_sources(product_id=task["product_id"], limit=100, page=page)
+                sources.extend(rows)
+                if page * 100 >= total:
+                    break
+                page += 1
+            _accept_sandbox(component, sources)
+        _accept_checkout(component, task)
 
     def transition_task(
         self,
@@ -488,25 +517,10 @@ class CompanyManager:
         if isinstance(current_authorization(), _RoutineAuthorization) and target in {"ready", "done"}:
             raise PermissionError("Routines can propose work but cannot accept or complete it")
         if target == "ready":
-            from agno.company.execution import _executor
-
-            component = _executor(self.registry, executor_type, executor_id, accepting=True)
-            from agno.company.sandbox import _accept_checkout, _accept_sandbox, _is_sandboxed
-
             existing = self.db.get_task(task_id, user_id=user_id)
             if existing is None:
                 return None
-            if _is_sandboxed(component):
-                sources = []
-                page = 1
-                while True:
-                    rows, total = self.db.get_sources(product_id=existing["product_id"], limit=100, page=page)
-                    sources.extend(rows)
-                    if page * 100 >= total:
-                        break
-                    page += 1
-                _accept_sandbox(component, sources)
-            _accept_checkout(component, existing)
+            self._accept_task(existing, executor_type, executor_id)
         return self.db.transition_task(
             task_id,
             target,
@@ -1217,9 +1231,7 @@ class AsyncCompanyManager:
         if target == "done":
             page = 1
             while True:
-                tasks, total = await self.db.get_tasks(
-                    project_id=project_id, include_deleted=True, limit=100, page=page
-                )
+                tasks, total = await self.db.get_tasks(project_id=project_id, limit=100, page=page)
                 validate_project_completion(tasks)
                 if page * 100 >= total:
                     break
@@ -1248,6 +1260,8 @@ class AsyncCompanyManager:
         routine_id: Optional[str] = None,
         executor_type: Optional[str] = None,
         executor_id: Optional[str] = None,
+        status: str = "backlog",
+        accepted_by: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create task work; scoped_user_id filters parents while user_id records the creator."""
         from agno.company.routines import _RoutineAuthorization
@@ -1278,23 +1292,29 @@ class AsyncCompanyManager:
                 raise LookupError("Project not found")
             if project["product_id"] != product_id:
                 raise ValueError("Task and Project must belong to the same Product")
-        return await self.db.create_task(
-            {
-                **fields,
-                "product_id": product_id,
-                "id": str(uuid4()),
-                "status": "backlog",
-                "origin": origin,
-                "routine_id": routine_id,
-                **_proposal_origin(),
-                "session_id": str(uuid4()),
-                "user_id": user_id,
-                "transitions": [],
-                "created_at": int(time.time()),
-                "updated_at": None,
-                "deleted_at": None,
-            }
-        )
+        task = {
+            **fields,
+            "product_id": product_id,
+            "id": str(uuid4()),
+            "status": "backlog",
+            "origin": origin,
+            "routine_id": routine_id,
+            **_proposal_origin(),
+            "session_id": str(uuid4()),
+            "user_id": user_id,
+            "transitions": [],
+            "created_at": int(time.time()),
+            "updated_at": None,
+            "deleted_at": None,
+        }
+        if status != "backlog":
+            from agno.db.schemas.tasks import task_transition_fields
+
+            accepting = {"executor_type": executor_type, "executor_id": executor_id} if status == "ready" else {}
+            if accepting:
+                await self._accept_task(task, executor_type, executor_id)
+            task.update(task_transition_fields(task, status, "Created in " + status, accepted_by, **accepting))
+        return await self.db.create_task(task)
 
     async def get_task(
         self, task_id: str, user_id: Optional[str] = None, include_deleted: bool = False
@@ -1333,15 +1353,17 @@ class AsyncCompanyManager:
             sort_order=sort_order,
         )
 
-    async def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
-        """Update descriptive fields; accepted Task scope requires a return to Backlog."""
+    async def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a Task; outside Backlog only title and brief change, the rest requires a return to Backlog."""
         from agno.db.schemas.tasks import validate_task_fields
 
         validate_task_fields(fields)
         existing = await self.db.get_task(task_id, user_id=user_id)
         if existing is None:
             return None
-        if existing["status"] != "backlog":
+        if existing["status"] != "backlog" and set(fields) - {"title", "brief"}:
             raise ValueError("Accepted task scope requires a return to Backlog")
         if "project_id" in fields and not fields["project_id"]:
             raise ValueError("A Task requires a Project")
@@ -1351,7 +1373,7 @@ class AsyncCompanyManager:
                 raise LookupError("Project not found")
             if project["product_id"] != existing["product_id"]:
                 raise ValueError("Task and Project must belong to the same Product")
-        return await self.db.update_task(task_id, user_id=user_id, **fields)
+        return await self.db.update_task(task_id, user_id=user_id, expected_status=expected_status, **fields)
 
     async def delete_task(
         self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
@@ -1362,6 +1384,27 @@ class AsyncCompanyManager:
     async def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a deleted task."""
         return await self.db.restore_task(task_id, user_id=user_id)
+
+    async def _accept_task(
+        self, task: Dict[str, Any], executor_type: Optional[str], executor_id: Optional[str]
+    ) -> None:
+        """Check that the executor can accept this Task before it enters Ready."""
+        from agno.company.execution import _executor
+
+        component = _executor(self.registry, executor_type, executor_id, accepting=True)
+        from agno.company.sandbox import _accept_checkout, _accept_sandbox, _is_sandboxed
+
+        if _is_sandboxed(component):
+            sources = []
+            page = 1
+            while True:
+                rows, total = await self.db.get_sources(product_id=task["product_id"], limit=100, page=page)
+                sources.extend(rows)
+                if page * 100 >= total:
+                    break
+                page += 1
+            _accept_sandbox(component, sources)
+        _accept_checkout(component, task)
 
     async def transition_task(
         self,
@@ -1383,25 +1426,10 @@ class AsyncCompanyManager:
         if isinstance(current_authorization(), _RoutineAuthorization) and target in {"ready", "done"}:
             raise PermissionError("Routines can propose work but cannot accept or complete it")
         if target == "ready":
-            from agno.company.execution import _executor
-
-            component = _executor(self.registry, executor_type, executor_id, accepting=True)
-            from agno.company.sandbox import _accept_checkout, _accept_sandbox, _is_sandboxed
-
             existing = await self.db.get_task(task_id, user_id=user_id)
             if existing is None:
                 return None
-            if _is_sandboxed(component):
-                sources = []
-                page = 1
-                while True:
-                    rows, total = await self.db.get_sources(product_id=existing["product_id"], limit=100, page=page)
-                    sources.extend(rows)
-                    if page * 100 >= total:
-                        break
-                    page += 1
-                _accept_sandbox(component, sources)
-            _accept_checkout(component, existing)
+            await self._accept_task(existing, executor_type, executor_id)
         return await self.db.transition_task(
             task_id,
             target,

@@ -131,6 +131,13 @@ def test_company_checks_in_scheduler_and_db_only_check_provenance():
     allowed = {
         ("scheduler/executor.py", "_call_endpoint"),
         ("db/schemas/scheduler.py", "_schedule_endpoint_targets"),
+        # Keeping a Company routine's last-edit time: the executor's bookkeeping writes and the archive cascade.
+        # No Mongo entries: its $cond spelling is not the text this guard matches.
+        ("scheduler/executor.py", "_preserve_updated_at"),
+        ("db/sqlite/sqlite.py", "_disable_schedules_for_target_in_session"),
+        ("db/sqlite/async_sqlite.py", "disable_schedules_for_target"),
+        ("db/postgres/postgres.py", "_disable_schedules_for_target_in_session"),
+        ("db/postgres/async_postgres.py", "disable_schedules_for_target"),
     }
     found = set()
     for directory in (root / "scheduler", root / "db"):
