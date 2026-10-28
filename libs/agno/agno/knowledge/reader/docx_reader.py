@@ -43,8 +43,8 @@ class DocxReader(Reader):
         # legacy OLE2 .doc fails to open, so advertising it offers a format that never reads.
         return [ContentType.DOCX]
 
-    def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
-        """Read a docx file and return a list of documents"""
+    def _read_documents(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
+        """Parse a docx file without applying a chunking strategy."""
         try:
             if isinstance(file, Path):
                 if not file.exists():
@@ -66,21 +66,31 @@ class DocxReader(Reader):
                     content=doc_content,
                 )
             ]
-            if self.chunk:
-                chunked_documents = []
-                for document in documents:
-                    chunked_documents.extend(self.chunk_document(document))
-                return chunked_documents
             return documents
 
         except Exception as e:
             log_error(f"Error reading file: {str(e)}")
             return []
 
-    async def async_read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
-        """Asynchronously read a docx file and return a list of documents"""
+    def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
+        """Read a docx file and apply synchronous chunking when enabled."""
         try:
-            return await asyncio.to_thread(self.read, file, name)
+            documents = self._read_documents(file, name)
+            if not self.chunk:
+                return documents
+            chunked_documents = []
+            for document in documents:
+                chunked_documents.extend(self.chunk_document(document))
+            return chunked_documents
+        except Exception as e:
+            log_error(f"Error reading file: {str(e)}")
+            return []
+
+    async def async_read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
+        """Parse a docx file off the loop and await its configured chunking strategy."""
+        try:
+            documents = await asyncio.to_thread(self._read_documents, file, name)
+            return await self.chunk_documents_async(documents) if self.chunk else documents
         except Exception as e:
             log_error(f"Error reading file asynchronously: {str(e)}")
             return []
