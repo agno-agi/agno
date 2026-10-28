@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -12,6 +12,45 @@ class TraceSearchGroupBy(str, Enum):
 
     RUN = "run"  # Returns individual traces (TraceDetail)
     SESSION = "session"  # Returns aggregated session stats (TraceSessionStats)
+
+
+# Set by Agno's tracing on the outermost Agno span of each run
+RUN_ROOT_ATTRIBUTE = "agno.run.root"
+
+
+def find_run_span(spans: List[Any]) -> Optional[Any]:
+    """Return the span a trace's run identity comes from, or None for a trace with no run.
+
+    That is the Agno run root when one is marked, which is not the trace root when
+    the run is nested inside an HTTP request span. Traces stored before runs were
+    marked fall back to their root span when it is an Agno span.
+    """
+    run_span = next((s for s in spans if s.attributes.get(RUN_ROOT_ATTRIBUTE)), None)
+    if run_span is not None:
+        return run_span
+    root_span = next((s for s in spans if not s.parent_span_id), None)
+    if root_span is not None and root_span.attributes.get("openinference.span.kind"):
+        return root_span
+    return None
+
+
+def http_request_metadata(span: Any) -> Dict[str, Any]:
+    """Method, route, path and status code recorded on an HTTP request span."""
+    metadata: Dict[str, Any] = {}
+    for key, attribute in (
+        ("method", "http.request.method"),
+        ("route", "http.route"),
+        ("path", "url.path"),
+        ("status_code", "http.response.status_code"),
+    ):
+        if (value := span.attributes.get(attribute)) is not None:
+            metadata[key] = value
+    return metadata
+
+
+def find_request_span(spans: List[Any]) -> Optional[Any]:
+    """Return the HTTP request span at the root of a trace, if there is one."""
+    return next((s for s in spans if not s.parent_span_id and _derive_span_type(s) == "HTTP"), None)
 
 
 def _derive_span_type(span: Any) -> str:
@@ -27,8 +66,18 @@ def _derive_span_type(span: Any) -> str:
     - TEAM: AGENT spans with agno.team.id
     - AGENT: AGENT spans without agno.team.id
     - LLM, TOOL, etc.: unchanged
+
+    Spans from outside Agno, kept with trace_requests=True:
+    - HTTP: the server span of an HTTP request
+    - HTTP_INTERNAL: FastAPI's spans inside a request (dependencies, endpoint, serialization)
     """
     span_kind = span.attributes.get("openinference.span.kind", "UNKNOWN")
+
+    if span_kind == "UNKNOWN":
+        if getattr(span, "span_kind", None) == "SERVER":
+            return "HTTP"
+        if span.name.startswith("fastapi."):
+            return "HTTP_INTERNAL"
 
     # Check for workflow (CHAIN kind or has workflow.id)
     if span_kind == "CHAIN":
@@ -115,6 +164,9 @@ class TraceNode(BaseModel):
             if step_types := span.attributes.get("agno.workflow.step_types"):
                 metadata["step_types"] = step_types
 
+        elif span_type == "HTTP":
+            metadata.update(http_request_metadata(span))
+
         # Add session/user context if present
         if session_id := span.attributes.get("session.id"):
             metadata["session_id"] = session_id
@@ -159,9 +211,14 @@ class TraceSummary(BaseModel):
     team_id: Optional[str] = Field(None, description="Associated team ID")
     workflow_id: Optional[str] = Field(None, description="Associated workflow ID")
     created_at: datetime = Field(..., description="Time when trace was created (Pydantic auto-serializes to ISO 8601)")
+    request: Optional[Dict[str, Any]] = Field(
+        None, description="HTTP request at the root of the trace: method, route, path, status_code"
+    )
 
     @classmethod
-    def from_trace(cls, trace: Any, input: Optional[str] = None) -> "TraceSummary":
+    def from_trace(
+        cls, trace: Any, input: Optional[str] = None, request: Optional[Dict[str, Any]] = None
+    ) -> "TraceSummary":
         # Use datetime objects directly (Pydantic will auto-serialize to ISO 8601)
         return cls(
             trace_id=trace.trace_id,
@@ -180,6 +237,7 @@ class TraceSummary(BaseModel):
             team_id=trace.team_id,
             workflow_id=trace.workflow_id,
             created_at=trace.created_at,
+            request=request or None,
         )
 
 
@@ -217,13 +275,16 @@ class TraceDetail(BaseModel):
     team_id: Optional[str] = Field(None, description="Associated team ID")
     workflow_id: Optional[str] = Field(None, description="Associated workflow ID")
     created_at: datetime = Field(..., description="Time when trace was created (Pydantic auto-serializes to ISO 8601)")
+    run_span_id: Optional[str] = Field(
+        None, description="Span ID of the run in the tree; differs from the root when the run is inside a request"
+    )
     tree: List[TraceNode] = Field(..., description="Hierarchical tree of spans (root nodes)")
 
     @classmethod
     def from_trace_and_spans(cls, trace: Any, spans: List[Any]) -> "TraceDetail":
         """Create TraceDetail from a Trace and its Spans, building the tree structure"""
-        # Find root span to extract input/output/error
-        root_span = next((s for s in spans if not s.parent_span_id), None)
+        # Find the run span to extract input/output/error
+        root_span = find_run_span(spans)
         trace_input = None
         trace_output = None
         trace_error = None
@@ -272,6 +333,7 @@ class TraceDetail(BaseModel):
             trace_start_time=trace.start_time,
             trace_end_time=trace.end_time,
             trace_duration_ms=trace.duration_ms,
+            run_span_id=root_span.span_id if root_span else None,
         )
 
         # Use datetime objects directly (Pydantic will auto-serialize to ISO 8601)
@@ -294,6 +356,7 @@ class TraceDetail(BaseModel):
             team_id=trace.team_id,
             workflow_id=trace.workflow_id,
             created_at=trace.created_at,
+            run_span_id=root_span.span_id if root_span else None,
             tree=span_tree,
         )
 
@@ -305,8 +368,12 @@ class TraceDetail(BaseModel):
         trace_start_time: Optional[datetime] = None,
         trace_end_time: Optional[datetime] = None,
         trace_duration_ms: Optional[int] = None,
+        run_span_id: Optional[str] = None,
     ) -> List[TraceNode]:
         """Build hierarchical tree from flat list of spans
+
+        The run span gets the trace-level metadata (token totals, workflow details) and
+        no input/output, which TraceDetail carries. Root spans get trace-level timing.
 
         Args:
             spans: List of span objects
@@ -315,6 +382,7 @@ class TraceDetail(BaseModel):
             trace_start_time: Corrected start time from trace aggregation
             trace_end_time: Corrected end time from trace aggregation
             trace_duration_ms: Corrected duration from trace aggregation
+            run_span_id: Span ID of the run, or None for a trace with no run
         """
         if not spans:
             return []
@@ -327,10 +395,10 @@ class TraceDetail(BaseModel):
                 spans_map[parent_id] = []
             spans_map[parent_id].append(span)
 
-        # Extract step_types list from workflow root span for index-based matching
+        # Extract step_types list from workflow run span for index-based matching
         step_types_list: List[str] = []
         root_spans = spans_map.get(None, [])
-        for root_span in root_spans:
+        for root_span in (s for s in spans if s.span_id == run_span_id):
             span_kind = root_span.attributes.get("openinference.span.kind", "")
             if span_kind == "CHAIN":
                 step_types = root_span.attributes.get("agno.workflow.step_types", [])
@@ -343,6 +411,7 @@ class TraceDetail(BaseModel):
         def build_node(span: Any, is_root: bool = False, step_index: Optional[int] = None) -> TraceNode:
             span_id = span.span_id
             children_spans = spans_map.get(span_id, [])
+            is_run = run_span_id is not None and span_id == run_span_id
 
             # Sort children spans by start time
             if children_spans:
@@ -351,15 +420,15 @@ class TraceDetail(BaseModel):
             # Recursively build spans
             # For root span's direct children (workflow steps), pass the index
             children_nodes: Optional[List[TraceNode]] = None
-            if is_root and step_types_list:
+            if is_run and step_types_list:
                 children_nodes = []
                 for idx, child in enumerate(children_spans):
                     children_nodes.append(build_node(child, step_index=idx))
             elif children_spans:
                 children_nodes = [build_node(child) for child in children_spans]
 
-            # For root span, create custom metadata with token totals
-            if is_root:
+            # For the run span, create custom metadata with token totals
+            if is_run:
                 # Build simplified metadata for root with token totals
                 root_metadata: Dict[str, Any] = {}
                 if total_input_tokens > 0:
@@ -368,9 +437,9 @@ class TraceDetail(BaseModel):
                     root_metadata["total_output_tokens"] = total_output_tokens
 
                 # Use trace-level timing if available
-                start_time = trace_start_time if trace_start_time else span.start_time
-                end_time = trace_end_time if trace_end_time else span.end_time
-                duration_ms = trace_duration_ms if trace_duration_ms is not None else span.duration_ms
+                start_time = trace_start_time if is_root and trace_start_time else span.start_time
+                end_time = trace_end_time if is_root and trace_end_time else span.end_time
+                duration_ms = trace_duration_ms if is_root and trace_duration_ms is not None else span.duration_ms
 
                 # Derive the correct span type (AGENT, TEAM, WORKFLOW, etc.)
                 span_type = _derive_span_type(span)
@@ -409,9 +478,18 @@ class TraceDetail(BaseModel):
                 # Create node from span
                 node = TraceNode.from_span(span, spans=children_nodes)
 
-                # For workflow step spans (direct children of root), assign step_type by index
+                # For workflow step spans (direct children of the run), assign step_type by index
                 if step_index is not None and step_types_list and step_index < len(step_types_list):
                     node.step_type = step_types_list[step_index]
+
+                # A root that is not the run (e.g. an HTTP request) still spans the whole trace
+                if is_root:
+                    if trace_start_time:
+                        node.start_time = trace_start_time
+                    if trace_end_time:
+                        node.end_time = trace_end_time
+                    if trace_duration_ms is not None:
+                        node.duration = format_duration_ms(trace_duration_ms)
 
                 return node
 
@@ -461,6 +539,25 @@ class TraceSearchRequest(BaseModel):
     )
     page: int = Field(default=1, ge=1, description="Page number (1-indexed)")
     limit: int = Field(default=20, ge=1, le=100, description="Number of traces per page (max 100)")
+    kind: Optional[Literal["run", "request"]] = Field(
+        default=None,
+        description="With group_by=run: 'run' keeps traces of an agent, team or workflow run; 'request' keeps traces of requests that started no run.",
+    )
+
+
+class TraceEndpointStats(BaseModel):
+    """Aggregated statistics for traces of requests that started no run, grouped by name"""
+
+    name: str = Field(..., description="Trace name, e.g. 'GET /sessions'")
+    total_traces: int = Field(..., description="Number of traces with this name")
+    avg_duration_ms: Optional[float] = Field(None, description="Average trace duration in milliseconds")
+    p95_duration_ms: Optional[float] = Field(
+        None, description="95th percentile duration, where the database supports it"
+    )
+    max_duration_ms: Optional[float] = Field(None, description="Longest trace duration in milliseconds")
+    error_traces: int = Field(0, description="Number of traces with status ERROR")
+    first_trace_at: datetime = Field(..., description="Time of the first trace")
+    last_trace_at: datetime = Field(..., description="Time of the latest trace")
 
 
 class FilterFieldSchema(BaseModel):

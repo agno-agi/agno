@@ -116,6 +116,19 @@ if TYPE_CHECKING:
 # FastAPI 0.142.0 added the telemetry argument; earlier versions reject it
 _FASTAPI_SUPPORTS_TELEMETRY = "telemetry" in inspect.signature(FastAPI.__init__).parameters
 
+# Paths never traced with trace_requests=True. The trace routes are excluded so reading
+# traces doesn't create more of them.
+_UNTRACED_PATHS = ("/health", "/traces", "/trace_session_stats")
+
+
+def _is_untraced_request(scope: Dict[str, Any]) -> bool:
+    # A WebSocket span lasts as long as the connection, which isn't request latency.
+    # CORS preflights carry no application work.
+    if scope.get("type") == "websocket" or scope.get("method") == "OPTIONS":
+        return True
+    path = scope.get("path", "")
+    return any(path == prefix or path.startswith(prefix + "/") for prefix in _UNTRACED_PATHS)
+
 
 def _agno_tracing_is_active() -> bool:
     try:
@@ -353,6 +366,7 @@ class AgentOS:
         base_app: Optional[FastAPI] = None,
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         tracing: bool = False,
+        trace_requests: bool = False,
         auto_provision_dbs: bool = True,
         run_hooks_in_background: bool = False,
         queue: Optional[QueueConfig] = None,
@@ -435,6 +449,11 @@ class AgentOS:
             media_storage: Backend the media routes read stored media from. Defaults to the first
                 one configured on an agent, team or workflow.
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
+            trace_requests: If True (with tracing=True), also trace the HTTP requests the OS serves.
+                Runs are stored nested inside the request that started them, and requests that
+                start no run are stored as traces of their own. /health, /traces, CORS
+                preflights and WebSocket connections are not traced. Requires FastAPI 0.142.0
+                or later.
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
             queue: Configuration for the AgentOS job queue (QueueConfig). Background runs
                 execute through it today; it is not a message-broker integration.
@@ -516,6 +535,11 @@ class AgentOS:
 
         self.telemetry = telemetry
         self.tracing = tracing
+        self.trace_requests = trace_requests
+        if trace_requests and not tracing:
+            log_warning("trace_requests=True has no effect without tracing=True")
+        elif trace_requests and not _FASTAPI_SUPPORTS_TELEMETRY:
+            log_warning("trace_requests=True requires FastAPI 0.142.0 or later; only runs will be traced")
 
         self._public_explicit_id = id
         self.public = public
@@ -1186,11 +1210,14 @@ class AgentOS:
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         app_kwargs: Dict[str, Any] = {}
         # FastAPI 0.142.0+ traces every request once a global tracer provider exists, which
-        # tracing=True installs. Opt out so only Agno runs produce spans, unless the
-        # provider is the application's own: then Agno stores nothing and its request
+        # tracing=True installs. Keep that only when request tracing is asked for, or when
+        # the provider is the application's own: then Agno stores nothing and its request
         # spans belong to the application's backend.
-        if self.tracing and _FASTAPI_SUPPORTS_TELEMETRY and _agno_tracing_is_active():
-            app_kwargs["telemetry"] = {"tracing": False}
+        if self.tracing and _FASTAPI_SUPPORTS_TELEMETRY:
+            if self.trace_requests:
+                app_kwargs["telemetry"] = {"exclude": _is_untraced_request}
+            elif _agno_tracing_is_active():
+                app_kwargs["telemetry"] = {"tracing": False}
         return FastAPI(
             title=self.name or "Agno AgentOS",
             version=self.version or "1.0.0",
@@ -1845,7 +1872,7 @@ class AgentOS:
         """
         # Use AgentOS db if explicitly provided
         if self.db is not None:
-            setup_tracing_for_os(db=self.db)
+            setup_tracing_for_os(db=self.db, include_application_spans=self.trace_requests)
             return
 
         # Fall back to finding the first available database
@@ -1875,7 +1902,7 @@ class AgentOS:
             )
             return
 
-        setup_tracing_for_os(db=db)
+        setup_tracing_for_os(db=db, include_application_spans=self.trace_requests)
 
     def get_app(self) -> FastAPI:
         if self.public is not None:

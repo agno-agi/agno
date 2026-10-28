@@ -43,6 +43,7 @@ def setup_tracing(
     max_queue_size: int = 2048,
     max_export_batch_size: int = 512,
     schedule_delay_millis: int = 5000,
+    include_application_spans: bool = False,
 ) -> None:
     """
     Set up OpenTelemetry tracing with database export for Agno agents.
@@ -64,6 +65,9 @@ def setup_tracing(
         max_queue_size: Maximum queue size for batch processor
         max_export_batch_size: Maximum batch size for export
         schedule_delay_millis: Delay in milliseconds between batch exports
+        include_application_spans: If True, also store spans from other libraries, such as
+                            HTTP request spans, with Agno runs nested inside them.
+                            If False, only Agno runs and the spans inside them are stored.
 
     Raises:
         ImportError: If OpenTelemetry packages are not installed
@@ -121,8 +125,10 @@ def setup_tracing(
             processor = SimpleSpanProcessor(exporter)
             log_debug("Tracing configured with SimpleSpanProcessor")
 
-        # Store only Agno runs, even when other libraries emit spans into this provider
-        tracer_provider.add_span_processor(AgnoSpanFilterProcessor(processor))
+        # Decide which spans other libraries emit into this provider are stored
+        tracer_provider.add_span_processor(
+            AgnoSpanFilterProcessor(processor, keep_outside_spans=include_application_spans)
+        )
 
         # Set the global tracer provider
         trace_api.set_tracer_provider(tracer_provider)

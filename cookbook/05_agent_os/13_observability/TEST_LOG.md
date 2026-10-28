@@ -86,6 +86,25 @@ one agent run, one agent session, one user, and 42 total tokens.
 
 ---
 
+### trace_requests.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Served a `gpt-5.6-luna` agent with `tracing=True` and
+`trace_requests=True`, started one run over `POST /agents/{agent_id}/runs`,
+called `GET /sessions`, then read `GET /traces?kind=run`,
+`GET /traces?kind=request`, `GET /traces/endpoints` and the run's trace tree.
+
+**Result:** With FastAPI 0.143.0 (`.venv`), the run trace kept its agent name
+and was rooted at `POST /agents/{agent_id}/runs [HTTP]` with the agent run
+nested under `fastapi.endpoint`; `GET /sessions` was stored as a request trace
+and counted under endpoints. With FastAPI 0.139.0 (`.venvs/demo`), AgentOS
+logged that request tracing needs FastAPI 0.142.0 and traced the run only.
+
+---
+
 ## Validation
 
 - All five runnable examples completed with live observed results.

@@ -9,6 +9,9 @@ from typing import Any, Dict, List, Optional
 from opentelemetry.sdk.trace import ReadableSpan  # type: ignore
 from opentelemetry.trace import SpanKind, StatusCode  # type: ignore
 
+# Set on the outermost Agno span of each run, which a trace takes its identity from
+AGNO_RUN_ROOT_ATTRIBUTE = "agno.run.root"
+
 
 @dataclass
 class Trace:
@@ -234,7 +237,11 @@ def create_trace_from_spans(spans: List[Span]) -> Optional[Trace]:
     # parent span ends), we must NOT pull context fields from a non-root span:
     # those would carry the child run's session_id / agent_id / etc., which
     # would clobber the parent trace's identity at the upsert layer.
-    root_span = next((s for s in spans if not s.parent_span_id), None)
+    # Prefer the Agno run root: when application spans are kept, the true root is
+    # e.g. an HTTP request span that carries none of the run's context.
+    root_span = next((s for s in spans if s.attributes.get(AGNO_RUN_ROOT_ATTRIBUTE)), None) or next(
+        (s for s in spans if not s.parent_span_id), None
+    )
 
     # Calculate aggregated metrics
     trace_id = spans[0].trace_id

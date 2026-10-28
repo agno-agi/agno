@@ -36,10 +36,12 @@ def test_setup_retains_llm_attributes_and_respects_explicit_limits(
     try:
         instrumentor.instrument.assert_called_once_with(tracer_provider=provider)
         attributes = {f"llm.input_messages.{i}.message.content": f"Message {i}" for i in range(300)}
-        with provider.get_tracer(AGNO_INSTRUMENTATION_SCOPE).start_as_current_span("model", attributes=attributes):
-            pass
+        tracer = provider.get_tracer(AGNO_INSTRUMENTATION_SCOPE)
+        with tracer.start_as_current_span("Agent.run"):
+            with tracer.start_as_current_span("model", attributes=attributes):
+                pass
         assert provider.force_flush()
-        (span,) = exporter.get_finished_spans()
+        (span,) = [span for span in exporter.get_finished_spans() if span.name == "model"]
         assert len(span.attributes) == expected_count
         assert span.dropped_attributes == 300 - expected_count
         if expected_count == 300:

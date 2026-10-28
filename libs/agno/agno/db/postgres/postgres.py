@@ -3872,7 +3872,13 @@ class PostgresDb(BaseDb):
                             ),
                         )
                         * 1000,
-                        "status": insert_stmt.excluded.status,
+                        # Status follows the same priority as name, so a run's status isn't
+                        # overwritten by a lower-priority span written after it, e.g. the HTTP
+                        # request span around a streamed run that failed after a 200 response.
+                        "status": case(
+                            (new_level >= existing_level, insert_stmt.excluded.status),
+                            else_=table.c.status,
+                        ),
                         # Update name only if new trace is from a higher-level component
                         # Priority: workflow (3) > team (2) > agent (1) > child spans (0)
                         "name": case(
@@ -3964,6 +3970,7 @@ class PostgresDb(BaseDb):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
+        kind: Optional[Literal["run", "request"]] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters with pagination.
 
@@ -3980,6 +3987,8 @@ class PostgresDb(BaseDb):
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
             filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
+            kind: "run" keeps traces of an agent, team or workflow run; "request" keeps
+                traces with none of those, such as HTTP requests that started no run.
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
@@ -4014,6 +4023,25 @@ class PostgresDb(BaseDb):
                     base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
                 if status:
                     base_stmt = base_stmt.where(table.c.status == status)
+                if kind is not None:
+                    from sqlalchemy import and_, or_
+
+                    if kind == "run":
+                        base_stmt = base_stmt.where(
+                            or_(
+                                table.c.agent_id.isnot(None),
+                                table.c.team_id.isnot(None),
+                                table.c.workflow_id.isnot(None),
+                            )
+                        )
+                    else:
+                        base_stmt = base_stmt.where(
+                            and_(
+                                table.c.agent_id.is_(None),
+                                table.c.team_id.is_(None),
+                                table.c.workflow_id.is_(None),
+                            )
+                        )
                 if start_time:
                     # Convert datetime to ISO string for comparison
                     base_stmt = base_stmt.where(table.c.start_time >= start_time.isoformat())
