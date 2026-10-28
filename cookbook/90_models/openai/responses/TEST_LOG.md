@@ -55,3 +55,13 @@ encrypted reasoning plus tool-call replay.
 **Result:** The semaglutide report streams with web-sourced figures. Real OpenAI calls, no mocks.
 
 ---
+
+### reasoning_o3_mini.py
+
+**Status:** PASS
+
+**Description:** Moved the reasoning model off `o3-mini`, which OpenAI shut down on 2026-10-23 (404), to its listed replacement `gpt-5.6-sol`.
+
+**Result:** The agent calls `get_current_stock_price` and prints the NVDA report.
+
+---

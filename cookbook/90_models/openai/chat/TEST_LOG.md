@@ -19,3 +19,23 @@
 **Result:** The flex tier request is accepted and the two-sentence story prints.
 
 ---
+
+### citations.py
+
+**Status:** PASS
+
+**Description:** `gpt-4o-search-preview` was shut down on 2026-07-23. Moved to `gpt-5-search-api`, the search model Chat Completions still serves.
+
+**Result:** Content rendered with a populated Citations panel (21 sources).
+
+---
+
+### reasoning_o3_mini.py
+
+**Status:** PASS
+
+**Description:** Moved off `o3-mini` to `OpenAIResponses(id="gpt-5.6-sol", reasoning_effort="high")`. Chat Completions rejects function tools with reasoning for every `gpt-5.6` model, so the example keeps `YFinanceTools` on `OpenAIResponses`.
+
+**Result:** The agent calls `get_current_stock_price` and prints the NVDA report.
+
+---

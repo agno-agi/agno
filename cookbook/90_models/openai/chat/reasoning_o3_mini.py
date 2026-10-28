@@ -6,7 +6,7 @@ Cookbook example for `openai/chat/reasoning_o3_mini.py`.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.yfinance import YFinanceTools
 
 # ---------------------------------------------------------------------------
@@ -14,7 +14,7 @@ from agno.tools.yfinance import YFinanceTools
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=OpenAIChat(id="o3-mini", reasoning_effort="high"),
+    model=OpenAIResponses(id="gpt-5.6-sol", reasoning_effort="high"),
     tools=[YFinanceTools()],
     markdown=True,
 )

@@ -54,3 +54,13 @@ the agent produced a grounded one-sentence answer about the repository.
 **Result:** An async run with a function tool and `ReasoningTools` completes on `OpenAIResponses(id="gpt-5.6-terra")` and errors on `OpenAIChat`.
 
 ---
+
+### graphiti.py
+
+**Status:** PASS
+
+**Description:** Moved off `o3-mini` to `OpenAIResponses(id="gpt-5.6-sol")`. Ran against the Graphiti MCP server (`zepai/knowledge-graph-mcp`) on SSE at `localhost:8000/sse`.
+
+**Result:** The agent calls `add_memory`, `get_episodes`, `search_nodes` and `search_memory_facts` and answers.
+
+---
