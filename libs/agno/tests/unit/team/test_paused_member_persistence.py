@@ -2036,6 +2036,7 @@ def _build_sibling_dup_leaf_teams(
     delegate_to_both: bool,
     omit_right: bool = False,
     duplicate_right: bool = False,
+    leader_target: str = "right-team",
 ) -> Team:
     def make_subteam(side: str, send_tool, to: str, team_id: Optional[str] = None) -> Team:
         agent_script = (
@@ -2077,7 +2078,12 @@ def _build_sibling_dup_leaf_teams(
             ],
         )
     else:
-        leader_turn = ("tool", "delegate_task_to_member", {"member_id": "right-team", "task": "send right"}, "tc-outer")
+        leader_turn = (
+            "tool",
+            "delegate_task_to_member",
+            {"member_id": leader_target, "task": "send right"},
+            "tc-outer",
+        )
     members = [make_subteam("left", left_send_email, "left@example.com")]
     if not omit_right:
         members.append(make_subteam("right", right_send_email, "right@example.com"))
@@ -2333,6 +2339,191 @@ def test_ambiguous_owner_id_refuses(tmp_path):
         SqliteDb(db_file=db_file), resuming=True, delegate_to_both=False, duplicate_right=True
     )
     with pytest.raises(RunNotContinuableError):
+        outer2.continue_run(
+            run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+        )
+    assert _LEFT_EXECUTED == [] and _RIGHT_EXECUTED == []
+    stored = [r for r in _reload_runs(db_file, session_id) if getattr(r, "run_id", None) == run1.run_id]
+    assert stored and stored[0].status == RunStatus.paused
+
+
+# ---------------------------------------------------------------------------
+# delegate_task_to_member resolves ids through sub-teams, so a leader can run
+# a member nested below one of its sub-teams itself. The paused run is then
+# the leader's own child and is continued on the nested owner directly.
+# ---------------------------------------------------------------------------
+
+
+def _build_recursive_delegation_team(db: SqliteDb, resuming: bool, target: str) -> Team:
+    """Org Team -> Division Team -> Comms Team -> Emailer, where the org
+    leader delegates straight to ``target`` and Division Team never runs."""
+    inner = Team(
+        name="Comms Team",
+        id="comms-team",
+        model=_ScriptedModel(
+            "m-inner",
+            [("content", "Inner done.")]
+            if resuming
+            else [
+                ("tool", "delegate_task_to_member", {"member_id": "emailer", "task": "send it"}, "tc-inner-deleg"),
+                ("content", "Inner done."),
+            ],
+        ),
+        members=[_emailer_agent(db, resuming)],
+        db=db,
+        telemetry=False,
+    )
+    mid = Team(
+        name="Division Team",
+        id="div-team",
+        model=_ScriptedModel("m-mid", [("content", "Division never runs.")]),
+        members=[inner],
+        db=db,
+        telemetry=False,
+    )
+    return Team(
+        name="Org Team",
+        id="org-team",
+        model=_ScriptedModel(
+            "m-outer",
+            [("content", "All done.")]
+            if resuming
+            else [
+                ("tool", "delegate_task_to_member", {"member_id": target, "task": "send it"}, "tc-outer-deleg"),
+                ("content", "All done."),
+            ],
+        ),
+        members=[mid],
+        db=db,
+        telemetry=False,
+    )
+
+
+@pytest.mark.parametrize("target", ["emailer", "comms-team"])
+def test_recursively_delegated_pause_resumes_fresh_process(tmp_path, target):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "recursive.db")
+    session_id = "s-recursive"
+
+    outer1 = _build_recursive_delegation_team(SqliteDb(db_file=db_file), resuming=False, target=target)
+    run1 = outer1.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+    assert _EXECUTED == []
+
+    outer2 = _build_recursive_delegation_team(SqliteDb(db_file=db_file), resuming=True, target=target)
+    run2 = outer2.continue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.completed
+    assert run2.content == "All done."
+    assert _EXECUTED == ["a@example.com"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["emailer", "comms-team"])
+async def test_recursively_delegated_pause_resumes_fresh_process_async(tmp_path, target):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "recursive_async.db")
+    session_id = "s-recursive-async"
+
+    outer1 = _build_recursive_delegation_team(SqliteDb(db_file=db_file), resuming=False, target=target)
+    run1 = await outer1.arun("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+
+    outer2 = _build_recursive_delegation_team(SqliteDb(db_file=db_file), resuming=True, target=target)
+    run2 = await outer2.acontinue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.completed
+    assert run2.content == "All done."
+    assert _EXECUTED == ["a@example.com"]
+
+
+def test_recursively_delegated_pause_resumes_streaming(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "recursive_stream.db")
+    session_id = "s-recursive-stream"
+
+    outer1 = _build_recursive_delegation_team(SqliteDb(db_file=db_file), resuming=False, target="emailer")
+    run1 = outer1.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+
+    outer2 = _build_recursive_delegation_team(SqliteDb(db_file=db_file), resuming=True, target="emailer")
+    final = None
+    for event in outer2.continue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(run1.requirements),
+        stream=True,
+        yield_run_output=True,
+    ):
+        if isinstance(event, TeamRunOutput):
+            final = event
+    assert final is not None
+    assert final.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+
+@pytest.mark.asyncio
+async def test_recursively_delegated_pause_resumes_streaming_async(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "recursive_stream_async.db")
+    session_id = "s-recursive-stream-async"
+
+    outer1 = _build_recursive_delegation_team(SqliteDb(db_file=db_file), resuming=False, target="emailer")
+    run1 = await outer1.arun("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+
+    outer2 = _build_recursive_delegation_team(SqliteDb(db_file=db_file), resuming=True, target="emailer")
+    final = None
+    async for event in outer2.acontinue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(run1.requirements),
+        stream=True,
+        yield_run_output=True,
+    ):
+        if isinstance(event, TeamRunOutput):
+            final = event
+    assert final is not None
+    assert final.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+
+def test_recursively_delegated_pause_resumes_same_process(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "recursive_same.db")
+    session_id = "s-recursive-same"
+
+    outer = _build_recursive_delegation_team(SqliteDb(db_file=db_file), resuming=False, target="emailer")
+    run1 = outer.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+
+    for req in run1.requirements or []:
+        req.confirm()
+    run2 = outer.continue_run(run1)
+    assert run2.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+
+def test_recursively_delegated_pause_with_ambiguous_nested_owner_refuses(tmp_path):
+    # Both sibling sub-teams hold a "dup" member with its own tool, so the
+    # owner of the paused run cannot be told apart by id alone.
+    _LEFT_EXECUTED.clear()
+    _RIGHT_EXECUTED.clear()
+    db_file = str(tmp_path / "recursive_ambiguous.db")
+    session_id = "s-recursive-ambiguous"
+
+    outer1 = _build_sibling_dup_leaf_teams(
+        SqliteDb(db_file=db_file), resuming=False, delegate_to_both=False, leader_target="dup"
+    )
+    run1 = outer1.run("Email right", session_id=session_id)
+    assert run1.is_paused
+
+    outer2 = _build_sibling_dup_leaf_teams(
+        SqliteDb(db_file=db_file), resuming=True, delegate_to_both=False, leader_target="dup"
+    )
+    with pytest.raises(RunNotContinuableError, match="matches 2 members"):
         outer2.continue_run(
             run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
         )
