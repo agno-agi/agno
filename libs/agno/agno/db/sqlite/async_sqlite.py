@@ -1553,6 +1553,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
         include_runs: bool = True,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
@@ -1582,6 +1583,9 @@ class AsyncSqliteDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        from agno.db.session_filters import normalize_session_filter, session_filter_to_sqlalchemy
+
+        filter_expr = normalize_session_filter(filter_expr)
         validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="sessions")
@@ -1591,6 +1595,9 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
+
+                if filter_expr is not None:
+                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table))
 
                 # Filtering
                 if user_id is not None:
@@ -4612,7 +4619,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             raise
 
     async def update_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+        self, schedule_id: str, user_id: Optional[str] = None, *, preserve_updated_at: bool = False, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.scheduler import validate_schedule_update
 
@@ -4625,7 +4632,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             table = await self._get_table(table_type="schedules")
             if table is None:
                 return None
-            kwargs["updated_at"] = int(time.time())
+            if not preserve_updated_at:
+                kwargs["updated_at"] = int(time.time())
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     stmt = table.update().where(table.c.id == schedule_id)
@@ -4678,6 +4686,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         rows and generic rows whose endpoint is the component's run endpoint,
         across owners, and records the system reason in disabled_reason.
         """
+        from sqlalchemy import literal
+
         from agno.db.schemas.scheduler import build_run_endpoint
 
         try:
@@ -4700,7 +4710,15 @@ class AsyncSqliteDb(AsyncBaseDb):
                             ),
                             table.c.enabled.is_(True),
                         )
-                        .values(enabled=False, disabled_reason=reason, updated_at=int(time.time()))
+                        # An archive cascade is not a user edit, so a Company routine keeps its last-edit time.
+                        .values(
+                            enabled=False,
+                            disabled_reason=reason,
+                            updated_at=case(
+                                (table.c.managed_by == "company", table.c.updated_at),
+                                else_=literal(int(time.time()), table.c.updated_at.type),
+                            ),
+                        )
                     )
             return int(getattr(result, "rowcount", 0) or 0)
         except Exception as e:
@@ -4801,12 +4819,15 @@ class AsyncSqliteDb(AsyncBaseDb):
         *,
         worker_id: Optional[str] = None,
         locked_at: Optional[int] = None,
+        preserve_updated_at: bool = False,
     ) -> bool:
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
                 return False
-            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+            if not preserve_updated_at:
+                updates["updated_at"] = int(time.time())
             # A cron may be cleared while this claim is running. Never re-arm
             # an on-demand schedule using the executor's older schedule snapshot.
             updates["next_run_at"] = case(
@@ -5978,7 +5999,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.projects import project_transition_fields
         from agno.db.schemas.tasks import _acceptance_count
-        from agno.db.sql.company import lock_child
+        from agno.db.sql.company import lock_child, open_project_tasks
 
         table = await self._get_table(table_type="projects")
         if table is None:
@@ -6020,10 +6041,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             existing = dict(row._mapping)
             open_tasks = []
             if tasks_table is not None:
-                open_query = select(tasks_table).where(
-                    tasks_table.c.project_id == project_id,
-                    tasks_table.c.status.not_in(["done", "cancelled"]),
-                )
+                open_query = open_project_tasks(tasks_table, project_id)
                 open_tasks = [dict(task._mapping) for task in (await sess.execute(open_query)).fetchall()]
             fields = project_transition_fields(existing, target, reason, accepted_by, tasks=open_tasks)
             if auto_accept is not None:
@@ -6171,7 +6189,9 @@ class AsyncSqliteDb(AsyncBaseDb):
             rows = (await sess.execute(stmt)).fetchall()
             return [dict(row._mapping) for row in rows], total
 
-    async def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+    async def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.tasks import validate_task_fields
         from agno.db.sql.company import lock_child, require_project
 
@@ -6179,7 +6199,11 @@ class AsyncSqliteDb(AsyncBaseDb):
         table = await self._get_table(table_type="tasks")
         if table is None:
             return None
-        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None), table.c.status == "backlog")
+        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None))
+        if set(fields) - {"title", "brief"}:
+            stmt = stmt.where(table.c.status == "backlog")
+        if expected_status is not None:
+            stmt = stmt.where(table.c.status == expected_status)
         if user_id is not None:
             stmt = stmt.where(table.c.user_id == user_id)
         products = await self._get_table(table_type="products", create_table_if_not_found=True)
@@ -6230,7 +6254,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         products = await self._get_table(table_type="products", create_table_if_not_found=True)
         projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
         async with self.async_session_factory() as sess, sess.begin():
-            await sess.run_sync(lock_child, products, projects, table, task_id)
+            await sess.run_sync(lock_child, products, projects, table, task_id, restoring=True)
             existing = (await sess.execute(select(table).where(table.c.id == task_id))).mappings().first()
             if existing is None:
                 return None
@@ -6368,7 +6392,7 @@ class AsyncSqliteDb(AsyncBaseDb):
     ) -> Optional[Dict[str, Any]]:
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.tasks import _acceptance_count, task_transition_fields
-        from agno.db.sql.company import lock_child
+        from agno.db.sql.company import lock_child, require_project
 
         table = await self._get_table(table_type="tasks")
         if table is None:
@@ -6410,6 +6434,9 @@ class AsyncSqliteDb(AsyncBaseDb):
                 fields["transitions"][-1]["auto_accept"] = auto_accept
             else:
                 await sess.run_sync(lock_child, products, projects, table, task_id)
+            if existing["status"] in {"done", "cancelled"}:
+                # Reopened work must not land in a completed or cancelled Project.
+                await sess.run_sync(require_project, projects, existing["project_id"], existing["product_id"], target)
             update = table.update().where(
                 table.c.id == task_id,
                 table.c.deleted_at.is_(None),

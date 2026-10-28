@@ -140,6 +140,35 @@ async def get_sessions_page(
     return sessions, total_count  # type: ignore[return-value]
 
 
+async def search_sessions_page(
+    db: Union[BaseDb, AsyncBaseDb],
+    *,
+    filter_expr: Optional[Dict[str, Any]] = None,
+    session_type: Optional[SessionType] = None,
+    user_id: Optional[str] = None,
+    limit: int = 20,
+    page: int = 1,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+) -> Tuple[List[Dict[str, Any]], int]:
+    """One page of sessions matching an advanced filter, as raw dicts plus the total count.
+
+    Raises ``ValueError`` for an invalid filter, page, or sort so each surface can report it as a client error.
+    """
+    kwargs: Dict[str, Any] = dict(
+        filter_expr=filter_expr,
+        session_type=session_type,
+        user_id=user_id,
+        limit=limit,
+        page=page,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    if isinstance(db, AsyncBaseDb):
+        return await db.search_sessions(**kwargs)
+    return await run_in_threadpool(lambda: db.search_sessions(**kwargs))
+
+
 async def _get_session_dict(
     db: Union[BaseDb, AsyncBaseDb],
     *,

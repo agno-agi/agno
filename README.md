@@ -9,25 +9,41 @@
 </div>
 
 <p align="center">
-  The self-improving platform for agents<br/>
+  The self-improving agent platform<br/>
 </p>
 
 ## Introduction
 
-Agno is a self-improving platform for agents. Build agents. Run them as durable services. Improve them with use.
+Agno is a self-improving agent platform. Build agents for your product, your team, or your customers. Run them as durable services. Improve them with use.
 
-- **Build** agents with the Agno, Claude Code, or Codex SDKs. Use any model, connect them to your tools and build agents for your product, your team, or your customers. Build agents using code, a no-code UI or by chatting with the OS Manager in your platform. Organize agents into teams or multi-step workflows.
-- **Run** your agents as durable services. Get an API and MCP server out of the box. Build products on top of the API or connect your agents to AI applications using MCP. Run your platform in your own cloud, keep all your data in your own database, and manage everything using the [AgentOS UI](https://os.agno.com). Review conversations, inspect traces, manage knowledge, and track your agent activity in one place.
-- **Improve** your agents and the platform they run on. Give coding agents access to source code, conversations, traces, and evaluations so they can investigate failures, simulate user scenarios, and test changes to instructions, tools, knowledge, and code. Start by running the `/eval-and-improve` skill in Claude Code or Codex. Retain useful changes and regression tests, and choose which changes to adopt. When you're ready, configure scheduled improvement runs in a sandbox that return pull requests for review.
+- **Build** agents with the Agno, Claude Agent, or Codex SDKs. Combine agents into teams and workflows.
+- **Run** agents as durable services with built-in API and MCP. AgentOS handles authentication, role-based access, resume/replay, human approvals, scheduling, and durable execution.
+- **Improve** your agents using traces, evaluations, and past conversations. Automate self-improvement by scheduling coding agents to investigate failures, simulate scenarios, and test incremental improvements.
+
+Agno provides the orchestration and service layer around your agents, making them available as a REST API and MCP server. Build your agents once, make them available in:
+
+1. **Your product:** using the REST API.
+2. **Claude and ChatGPT:** using the MCP server.
+3. **Chat apps like Slack:** using Agno Interfaces.
+
+Run your platform in your own cloud and keep your data in your control. Review conversations, inspect traces, manage knowledge, and track your agent activity using the [AgentOS UI](https://os.agno.com).
+
+## Your agent platform
+
+Build with any SDK. Run with AgentOS. Manage with the Control Plane.
+
+| Layer | What it provides |
+|---|---|
+| **SDK** | Build agents with the Agno, Claude Agent, or Codex SDKs. |
+| **AgentOS** | Run your agents as secure, durable services with an API and MCP server. |
+| **Control Plane** | Monitor runs, inspect sessions, and manage your platform using the [AgentOS UI](https://os.agno.com). |
 
 ## Get started
 
-We recommend using our pre-built templates to bootstrap your agent platform.
-
-Give this prompt to your coding agent:
+Agno is built for coding agents. Start with a pre-built template and give this prompt to your coding agent:
 
 ```text
-Help me set up my agent platform.
+Help me set up my agent platform and build my first agent.
 
 Clone https://github.com/agno-agi/agentos-railway into a folder called agent-platform, cd into it, and follow .agents/skills/setup-platform/SKILL.md.
 ```
@@ -41,13 +57,15 @@ The setup skill runs your platform locally and helps you build your first agent.
 - Skills for building, evaluating, and improving agents.
 - A Company workspace for organizing ongoing work, with a daily maintenance routine that reviews your codebase and Agno releases and proposes platform improvements.
 
-Connect your platform to [os.agno.com](https://os.agno.com) to start using it.
+Connect your platform to [os.agno.com](https://os.agno.com) to start using it. Build agents with code, use the no-code UI, or chat with the OS Manager.
 
-## Deploy to your cloud
+Start improving your agents and platform with the `/improve` skill. Keep useful changes and regression tests so each round builds on the last. When you're ready, configure scheduled improvement runs in a sandbox that return pull requests for review.
+
+## Templates for every cloud
 
 Choose a template for your cloud: [Docker](https://github.com/agno-agi/agentos-docker) · [Railway](https://github.com/agno-agi/agentos-railway) · [AWS](https://github.com/agno-agi/agentos-aws) · [GCP](https://github.com/agno-agi/agentos-gcp) · [Azure](https://github.com/agno-agi/agentos-azure) · [Fly.io](https://github.com/agno-agi/agentos-fly) · [Render](https://github.com/agno-agi/agentos-render) · [Modal](https://github.com/agno-agi/agentos-modal) · [Helm](https://github.com/agno-agi/agentos-helm)
 
-### What's included
+## What's included
 
 | Capability | What you can do |
 |---|---|
@@ -62,12 +80,15 @@ Choose a template for your cloud: [Docker](https://github.com/agno-agi/agentos-d
 | **Coding agents and sandboxes** | Put Claude and Codex to work implementing and testing changes. |
 | **Company** | Organize Products, Projects, Tasks, and recurring improvement routines. |
 
-## Learn more
+## Tutorials
 
-- [Build your first agent](https://docs.agno.com/first-agent)
+First, [add Agno to your coding agent](https://docs.agno.com/coding-agents) so it can read the tutorials as you build. Then, learn how to:
+
 - [Build your agent platform](https://docs.agno.com/agent-platform/overview)
+- [Serve agents as an API](https://docs.agno.com/tutorials/agents-as-api)
+- [Serve agents over MCP](https://docs.agno.com/tutorials/agents-as-mcp)
+- [Run Claude and Codex as services](https://docs.agno.com/tutorials/harnesses-as-a-service)
 - [Read the documentation](https://docs.agno.com)
-- [Connect the documentation to your coding agent](https://docs.agno.com/coding-agents)
 
 ## Community
 
