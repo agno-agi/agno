@@ -1165,7 +1165,7 @@ class StepRequirement:
         if self.edited_output is not None:
             if isinstance(self.edited_output, BaseModel):
                 result["edited_output"] = self.edited_output.model_dump(exclude_none=True, mode="json")
-            elif isinstance(self.edited_output, (dict, list)):
+            elif isinstance(self.edited_output, (dict, list, str, int, float, bool)):
                 result["edited_output"] = self.edited_output
             else:
                 result["edited_output"] = str(self.edited_output)
