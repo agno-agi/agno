@@ -76,14 +76,16 @@ import asyncio
 import inspect
 import json
 import threading
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Set, Union, cast
 
 from agno.exceptions import SchemaMismatchError
 from agno.run import RunContext
+from agno.run.authorization import arequire_permission, require_permission, requires_permission
 from agno.tools.function import Function
 from agno.tools.studio_runner import AmbiguousComponentNameError, StudioRunnerError, StudioRunnerTools, _slugify
 from agno.tools.studio_schema import WorkflowStepSpec, error_result, ok_result
 from agno.tools.toolkit import Toolkit
+from agno.utils.live_sequence import LiveSequence
 from agno.utils.log import log_debug, log_warning, logger
 from agno.utils.string import generate_component_id_from_name, validate_component_id
 
@@ -202,28 +204,6 @@ class _ToolsNotFoundError(ValueError):
     from tool_not_allowed, which is a palette refusal for a name that exists)."""
 
 
-class _LiveComponentView(Sequence[Any]):
-    """A sequence view over a component resolver, read at access time.
-
-    SchedulerTools' code-defined probe reads its include_* sequences on every
-    call; handing it these views keeps the probe aligned with the run tools'
-    resolution (explicit lists, else the registry) even when the registry is
-    populated after the toolkit is built.
-    """
-
-    def __init__(self, resolve: Callable[[], List[Any]]):
-        self._resolve = resolve
-
-    def __getitem__(self, index):  # type: ignore[no-untyped-def]
-        return self._resolve()[index]
-
-    def __iter__(self):
-        return iter(self._resolve())
-
-    def __len__(self) -> int:
-        return len(self._resolve())
-
-
 class StudioTools(Toolkit):
     """Toolkit that lets an agent compose agents, teams, and workflows.
 
@@ -330,7 +310,7 @@ class StudioTools(Toolkit):
         ):
             for component in source or []:
                 component_id = getattr(component, "id", None)
-                if not component_id:
+                if not component_id or registry.is_component_excluded(component):
                     continue
                 existing = next((entry for entry in bucket if getattr(entry, "id", None) == component_id), None)
                 if existing is None:
@@ -400,9 +380,9 @@ class StudioTools(Toolkit):
                 # probe must see the same set the run tools resolve from
                 # (explicit lists, else the registry) - or enable_schedule
                 # refuses a target create_schedule just allowed.
-                include_agents=_LiveComponentView(self._runner_tools._iter_agents),
-                include_teams=_LiveComponentView(self._runner_tools._iter_teams),
-                include_workflows=_LiveComponentView(self._runner_tools._iter_workflows),
+                include_agents=LiveSequence(self._runner_tools._iter_agents),
+                include_teams=LiveSequence(self._runner_tools._iter_teams),
+                include_workflows=LiveSequence(self._runner_tools._iter_workflows),
             )
 
         tools: List[Callable] = [
@@ -911,7 +891,8 @@ class StudioTools(Toolkit):
     # ------------------------------------------------------------------
 
     def _iter_agents(self) -> List["Agent"]:
-        return self._runner_tools._iter_agents()
+        # Non-dispatch lookups exclude external adapters from the build palette.
+        return cast(List["Agent"], self._runner_tools._iter_agents())
 
     def _iter_teams(self) -> List["Team"]:
         return self._runner_tools._iter_teams()
@@ -920,7 +901,7 @@ class StudioTools(Toolkit):
         return self._runner_tools._iter_workflows()
 
     def _find_agent(self, agent_id: str, actor: Optional[str] = None) -> Optional["Agent"]:
-        return self._runner_tools._find_agent(agent_id, actor=actor)
+        return cast(Optional["Agent"], self._runner_tools._find_agent(agent_id, actor=actor))
 
     def _find_team(self, team_id: str, actor: Optional[str] = None) -> Optional["Team"]:
         return self._runner_tools._find_team(team_id, actor=actor)
@@ -1374,6 +1355,9 @@ class StudioTools(Toolkit):
         return privileged
 
     def _check_member_policy(self, member_ids: List[str]) -> Optional[str]:
+        excluded = sorted(set(member_ids) & self.registry.excluded_component_ids)
+        if excluded:
+            return self._excluded_component_error(excluded)
         privileged = self._privileged_component_ids(only_ids=set(member_ids))
         blocked = sorted(m for m in member_ids if m in privileged and m not in self._allowed_tools)
         if blocked:
@@ -1421,6 +1405,25 @@ class StudioTools(Toolkit):
                 return True
         return False
 
+    @staticmethod
+    def _excluded_component_error(blocked: List[str]) -> str:
+        return error_result(
+            "tool_not_allowed",
+            f"Refusing to compose {blocked}: framework-owned manager components are not buildable.",
+            blocked=blocked,
+        )
+
+    def _contains_excluded_component(self, component: Any, seen: Optional[Set[int]] = None) -> bool:
+        seen = seen if seen is not None else set()
+        if id(component) in seen:
+            return False
+        seen.add(id(component))
+        if self.registry.is_component_excluded(component):
+            return True
+        return any(
+            self._contains_excluded_component(member, seen) for member in self._iterable_attr(component, "members")
+        )
+
     def _refuse_privileged_resolved(self, components: List[Any]) -> Optional[str]:
         """Post-resolution self-composition guard.
 
@@ -1428,6 +1431,13 @@ class StudioTools(Toolkit):
         teams that merely contain the builder, and stored components whose
         rehydrated tools carry the control plane are all covered - the raw
         identifier check alone sees none of those."""
+        excluded = sorted(
+            str(getattr(component, "id", None) or getattr(component, "name", ""))
+            for component in components
+            if self._contains_excluded_component(component)
+        )
+        if excluded:
+            return self._excluded_component_error(excluded)
         blocked = sorted(
             {
                 str(getattr(component, "id", None) or getattr(component, "name", ""))
@@ -1758,6 +1768,7 @@ class StudioTools(Toolkit):
     # Discovery
     # ------------------------------------------------------------------
 
+    @requires_permission("registry", "read")
     def list_models(self) -> str:
         """List the models available for building components.
 
@@ -1770,6 +1781,7 @@ class StudioTools(Toolkit):
         ]
         return ok_result("listed", models=models, count=len(models))
 
+    @requires_permission("registry", "read")
     def list_tools(self) -> str:
         """List the tools available for building components.
 
@@ -1824,6 +1836,7 @@ class StudioTools(Toolkit):
             )
         return ok_result("listed", tools=rows, count=len(rows))
 
+    @requires_permission("registry", "read")
     def list_functions(self) -> str:
         """List the registered functions usable as workflow steps.
 
@@ -1841,6 +1854,7 @@ class StudioTools(Toolkit):
             rows.append({"name": name, "description": inspect.getdoc(func), "signature": signature})
         return ok_result("listed", functions=rows, count=len(rows))
 
+    @requires_permission("registry", "read")
     def list_knowledge(self) -> str:
         """List the knowledge bases attachable to a component via knowledge_name.
 
@@ -1850,6 +1864,7 @@ class StudioTools(Toolkit):
         names = sorted(self.registry.get_knowledge_names())
         return ok_result("listed", knowledge=names, count=len(names))
 
+    @requires_permission("registry", "read")
     def list_schemas(self) -> str:
         """List the output schemas attachable to a component via output_schema_name.
 
@@ -1859,6 +1874,7 @@ class StudioTools(Toolkit):
         names = sorted(getattr(s, "__name__", str(s)) for s in self.registry.schemas)
         return ok_result("listed", schemas=names, count=len(names))
 
+    @requires_permission("registry", "read")
     def list_learning(self) -> str:
         """List the learning machines attachable to a component via learning_name.
 
@@ -1880,6 +1896,7 @@ class StudioTools(Toolkit):
     # Component reads
     # ------------------------------------------------------------------
 
+    @requires_permission("components", "read")
     def list_components(
         self, component_type: Optional[str] = None, _agno_run_context: Optional[RunContext] = None
     ) -> str:
@@ -1966,6 +1983,7 @@ class StudioTools(Toolkit):
                 )
         return ok_result("listed", components=rows, count=len(rows), db_total=db_total)
 
+    @requires_permission("components", "read")
     def get_component(
         self,
         component_id: str,
@@ -2072,6 +2090,7 @@ class StudioTools(Toolkit):
             **view,
         )
 
+    @requires_permission("components", "read")
     def list_versions(self, component_id: str, _agno_run_context: Optional[RunContext] = None) -> str:
         """List a component's version history, newest first.
 
@@ -2301,6 +2320,7 @@ class StudioTools(Toolkit):
     # Create
     # ------------------------------------------------------------------
 
+    @requires_permission("components", "write")
     def create_agent(
         self,
         name: str,
@@ -2421,6 +2441,7 @@ class StudioTools(Toolkit):
         except Exception as e:
             return self._error_from_exception(e, "Failed to create agent")
 
+    @requires_permission("components", "write")
     def create_team(
         self,
         name: str,
@@ -2567,6 +2588,7 @@ class StudioTools(Toolkit):
         except Exception as e:
             return self._error_from_exception(e, "Failed to create team")
 
+    @requires_permission("components", "write")
     def create_workflow(
         self,
         name: str,
@@ -2918,6 +2940,7 @@ class StudioTools(Toolkit):
         except Exception as e:
             return self._error_from_exception(e, f"Failed to edit {component_type}")
 
+    @requires_permission("components", "write")
     def edit_agent(
         self,
         agent_id: str,
@@ -3022,6 +3045,7 @@ class StudioTools(Toolkit):
             "agent", agent_id, expected_version, publish, _agno_run_context, mutate, warnings=warnings
         )
 
+    @requires_permission("components", "write")
     def edit_team(
         self,
         team_id: str,
@@ -3146,6 +3170,7 @@ class StudioTools(Toolkit):
             "team", team_id, expected_version, publish, _agno_run_context, mutate, warnings=warnings
         )
 
+    @requires_permission("components", "write")
     def edit_workflow(
         self,
         workflow_id: str,
@@ -3227,6 +3252,7 @@ class StudioTools(Toolkit):
     # Lifecycle
     # ------------------------------------------------------------------
 
+    @requires_permission("components", "write")
     def publish_component(
         self,
         component_id: str,
@@ -3358,6 +3384,7 @@ class StudioTools(Toolkit):
         except Exception as e:
             return self._error_from_exception(e, "Failed to publish component")
 
+    @requires_permission("components", "write")
     def set_current_version(
         self,
         component_id: str,
@@ -3451,6 +3478,7 @@ class StudioTools(Toolkit):
             f"Cannot {verb} {component_id}: {detail}. Archive or edit the dependents first.",
         )
 
+    @requires_permission("components", "delete")
     def delete_version(self, component_id: str, version: int, _agno_run_context: Optional[RunContext] = None) -> str:
         """Delete a draft version. Published versions are immutable history and
         the version number is never reused.
@@ -3491,6 +3519,7 @@ class StudioTools(Toolkit):
                 return self._redact_dependents(component_id, _actor_id(_agno_run_context), "delete a version of")
             return self._error_from_exception(e, "Failed to delete version")
 
+    @requires_permission("components", "delete")
     def archive_component(
         self,
         component_id: str,
@@ -3599,6 +3628,7 @@ class StudioTools(Toolkit):
                 return self._redact_dependents(component_id, actor, "archive")
             return self._error_from_exception(e, "Failed to archive component")
 
+    @requires_permission("components", "delete")
     def restore_component(self, component_id: str, _agno_run_context: Optional[RunContext] = None) -> str:
         """Restore an archived component: it resolves and runs again at the
         version that was live when it was archived. Schedules that were
@@ -3636,6 +3666,7 @@ class StudioTools(Toolkit):
     # Validate (dry run)
     # ------------------------------------------------------------------
 
+    @requires_permission("components", "read")
     def validate_component(
         self, component_id: str, version: Optional[int] = None, _agno_run_context: Optional[RunContext] = None
     ) -> str:
@@ -3779,6 +3810,7 @@ class StudioTools(Toolkit):
         row, resolved_id, err = self._component_row(identifier, _actor_id(run_context))
         if err is not None:
             return err
+        require_permission(f"{component_type}s", "run", resolved_id, run_context)
         actor = _actor_id(run_context)
         if not self._pin_allowed(resolved_id, version, row, actor):
             return error_result("component_not_found", f"Component not found: {identifier}")
@@ -3857,6 +3889,7 @@ class StudioTools(Toolkit):
         row, resolved_id, err = await asyncio.to_thread(self._component_row, identifier, _actor_id(run_context))
         if err is not None:
             return err
+        await arequire_permission(f"{component_type}s", "run", resolved_id, run_context)
         actor = _actor_id(run_context)
         if not await asyncio.to_thread(self._pin_allowed, resolved_id, version, row, actor):
             return error_result("component_not_found", f"Component not found: {identifier}")
@@ -3900,6 +3933,7 @@ class StudioTools(Toolkit):
         except Exception as e:
             return self._error_from_exception(e, f"Failed to run {component_type}")
 
+    @requires_permission()
     def run_agent(
         self,
         agent_id: str,
@@ -3926,6 +3960,7 @@ class StudioTools(Toolkit):
             "agent", agent_id, message, version, _agno_run_context, caller_agent=_agno_agent, caller_team=_agno_team
         )
 
+    @requires_permission()
     def run_team(
         self,
         team_id: str,
@@ -3951,6 +3986,7 @@ class StudioTools(Toolkit):
             "team", team_id, message, version, _agno_run_context, caller_agent=_agno_agent, caller_team=_agno_team
         )
 
+    @requires_permission()
     def run_workflow(
         self,
         workflow_id: str,
@@ -3986,36 +4022,44 @@ class StudioTools(Toolkit):
     # Async variants (same names on the model surface)
     # ------------------------------------------------------------------
 
+    @requires_permission("registry", "read")
     async def alist_models(self) -> str:
         """Async variant of list_models."""
         return await self._run_sync_tool(self.list_models)
 
+    @requires_permission("registry", "read")
     async def alist_tools(self) -> str:
         """Async variant of list_tools."""
         return await self._run_sync_tool(self.list_tools)
 
+    @requires_permission("registry", "read")
     async def alist_functions(self) -> str:
         """Async variant of list_functions."""
         return await self._run_sync_tool(self.list_functions)
 
+    @requires_permission("registry", "read")
     async def alist_knowledge(self) -> str:
         """Async variant of list_knowledge."""
         return await self._run_sync_tool(self.list_knowledge)
 
+    @requires_permission("registry", "read")
     async def alist_schemas(self) -> str:
         """Async variant of list_schemas."""
         return await self._run_sync_tool(self.list_schemas)
 
+    @requires_permission("registry", "read")
     async def alist_learning(self) -> str:
         """Async variant of list_learning."""
         return await self._run_sync_tool(self.list_learning)
 
+    @requires_permission("components", "read")
     async def alist_components(
         self, component_type: Optional[str] = None, _agno_run_context: Optional[RunContext] = None
     ) -> str:
         """Async variant of list_components."""
         return await self._run_sync_tool(self.list_components, component_type, _agno_run_context=_agno_run_context)
 
+    @requires_permission("components", "read")
     async def aget_component(
         self, component_id: str, version: Optional[int] = None, _agno_run_context: Optional[RunContext] = None
     ) -> str:
@@ -4024,10 +4068,12 @@ class StudioTools(Toolkit):
             self.get_component, component_id, version=version, _agno_run_context=_agno_run_context
         )
 
+    @requires_permission("components", "read")
     async def alist_versions(self, component_id: str, _agno_run_context: Optional[RunContext] = None) -> str:
         """Async variant of list_versions."""
         return await self._run_sync_tool(self.list_versions, component_id, _agno_run_context=_agno_run_context)
 
+    @requires_permission("components", "write")
     async def acreate_agent(
         self,
         name: str,
@@ -4080,6 +4126,7 @@ class StudioTools(Toolkit):
             _agno_run_context=_agno_run_context,
         )
 
+    @requires_permission("components", "write")
     async def acreate_team(
         self,
         name: str,
@@ -4128,6 +4175,7 @@ class StudioTools(Toolkit):
             _agno_run_context=_agno_run_context,
         )
 
+    @requires_permission("components", "write")
     async def acreate_workflow(
         self,
         name: str,
@@ -4150,6 +4198,7 @@ class StudioTools(Toolkit):
             _agno_run_context=_agno_run_context,
         )
 
+    @requires_permission("components", "write")
     async def aedit_agent(
         self,
         agent_id: str,
@@ -4204,6 +4253,7 @@ class StudioTools(Toolkit):
             _agno_run_context=_agno_run_context,
         )
 
+    @requires_permission("components", "write")
     async def aedit_team(
         self,
         team_id: str,
@@ -4254,6 +4304,7 @@ class StudioTools(Toolkit):
             _agno_run_context=_agno_run_context,
         )
 
+    @requires_permission("components", "write")
     async def aedit_workflow(
         self,
         workflow_id: str,
@@ -4278,6 +4329,7 @@ class StudioTools(Toolkit):
             _agno_run_context=_agno_run_context,
         )
 
+    @requires_permission("components", "write")
     async def apublish_component(
         self,
         component_id: str,
@@ -4294,6 +4346,7 @@ class StudioTools(Toolkit):
             _agno_run_context=_agno_run_context,
         )
 
+    @requires_permission("components", "write")
     async def aset_current_version(
         self,
         component_id: str,
@@ -4310,6 +4363,7 @@ class StudioTools(Toolkit):
             _agno_run_context=_agno_run_context,
         )
 
+    @requires_permission("components", "delete")
     async def adelete_version(
         self, component_id: str, version: int, _agno_run_context: Optional[RunContext] = None
     ) -> str:
@@ -4318,6 +4372,7 @@ class StudioTools(Toolkit):
             self.delete_version, component_id, version, _agno_run_context=_agno_run_context
         )
 
+    @requires_permission("components", "delete")
     async def aarchive_component(
         self,
         component_id: str,
@@ -4332,10 +4387,12 @@ class StudioTools(Toolkit):
             _agno_run_context=_agno_run_context,
         )
 
+    @requires_permission("components", "delete")
     async def arestore_component(self, component_id: str, _agno_run_context: Optional[RunContext] = None) -> str:
         """Async variant of restore_component."""
         return await self._run_sync_tool(self.restore_component, component_id, _agno_run_context=_agno_run_context)
 
+    @requires_permission("components", "read")
     async def avalidate_component(
         self, component_id: str, version: Optional[int] = None, _agno_run_context: Optional[RunContext] = None
     ) -> str:
@@ -4344,6 +4401,7 @@ class StudioTools(Toolkit):
             self.validate_component, component_id, version=version, _agno_run_context=_agno_run_context
         )
 
+    @requires_permission()
     async def arun_agent(
         self,
         agent_id: str,
@@ -4358,6 +4416,7 @@ class StudioTools(Toolkit):
             "agent", agent_id, message, version, _agno_run_context, caller_agent=_agno_agent, caller_team=_agno_team
         )
 
+    @requires_permission()
     async def arun_team(
         self,
         team_id: str,
@@ -4372,6 +4431,7 @@ class StudioTools(Toolkit):
             "team", team_id, message, version, _agno_run_context, caller_agent=_agno_agent, caller_team=_agno_team
         )
 
+    @requires_permission()
     async def arun_workflow(
         self,
         workflow_id: str,
@@ -4392,6 +4452,7 @@ class StudioTools(Toolkit):
             caller_team=_agno_team,
         )
 
+    @requires_permission("schedules", "write")
     def create_schedule(
         self,
         name: str,
@@ -4414,7 +4475,7 @@ class StudioTools(Toolkit):
 
         Args:
             name (str): Unique schedule name (e.g. "daily-news-digest").
-            cron (str): 5-field cron expression (e.g. "0 9 * * *" for daily at 9am).
+            cron (str): 5-field cron expression (e.g. "0 9 * * *" for daily at 9am), or empty for on demand.
             target_type (str): One of 'agent', 'team', or 'workflow'.
             target_id (str): Id (or name) of an existing component.
             message (str): The prompt sent to the component on every scheduled run.
@@ -4441,6 +4502,7 @@ class StudioTools(Toolkit):
                     "component on every scheduled run.",
                 )
             assert component_id is not None
+            require_permission(f"{target_type}s", "run", component_id, _agno_run_context)
             # A schedule fires the live published version; a draft-only target
             # would 404 on every tick. The shared predicate decides that, the
             # same one the REST schedule routes and SchedulerTools apply: a
@@ -4554,6 +4616,7 @@ class StudioTools(Toolkit):
         except Exception as e:
             return self._error_from_exception(e, "Failed to create schedule")
 
+    @requires_permission("schedules", "write")
     def update_schedule(
         self,
         schedule_id: str,
@@ -4569,7 +4632,7 @@ class StudioTools(Toolkit):
 
         Args:
             schedule_id (str): Exact schedule id from list_schedules.
-            cron (Optional[str]): New 5-field cron expression. Omit to keep.
+            cron (Optional[str]): New 5-field cron expression, or empty for on demand. Omit to keep.
             message (Optional[str]): New prompt for every run. Omit to keep.
             timezone (Optional[str]): New IANA timezone. Omit to keep.
             description (Optional[str]): New description. Omit to keep.
@@ -4577,6 +4640,8 @@ class StudioTools(Toolkit):
         Returns:
             str: StudioResult JSON; data carries the updated schedule fields.
         """
+        from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID
+
         try:
             if cron is None and message is None and timezone is None and description is None:
                 return error_result("invalid_request", "Pass at least one field to change.")
@@ -4585,6 +4650,11 @@ class StudioTools(Toolkit):
             existing = manager.get(schedule_id, user_id=actor)
             if existing is None:
                 return error_result("schedule_not_found", f"Schedule not found: {schedule_id}")
+            if existing.managed_by == "company" and existing.id != COMPANY_AUTOMATION_SCHEDULE_ID:
+                return error_result(
+                    "company_routine",
+                    f"Schedule {schedule_id} is a Company Routine. Change it through Company Routines.",
+                )
             updates: Dict[str, Any] = {}
             if cron is not None:
                 updates["cron_expr"] = cron
@@ -4599,7 +4669,7 @@ class StudioTools(Toolkit):
             # valid change needs the recompute too, or the old cadence fires once
             # more before the new one takes effect.
             if cron is not None or timezone is not None:
-                from agno.scheduler.cron import compute_next_run, validate_cron_expr, validate_timezone
+                from agno.scheduler.cron import next_run_for, validate_cron_expr, validate_timezone
 
                 new_cron = cron if cron is not None else existing.cron_expr
                 new_tz = timezone if timezone is not None else (existing.timezone or "UTC")
@@ -4613,7 +4683,7 @@ class StudioTools(Toolkit):
                         "invalid_request",
                         f"Invalid timezone: {new_tz}. Use an IANA name, e.g. 'America/New_York'.",
                     )
-                updates["next_run_at"] = compute_next_run(new_cron, new_tz)
+                updates["next_run_at"] = next_run_for(new_cron, new_tz)
             if message is not None:
                 if not message.strip():
                     return error_result("invalid_request", "message must be a non-empty string.")
@@ -4658,6 +4728,7 @@ class StudioTools(Toolkit):
         except Exception as e:
             return self._error_from_exception(e, "Failed to update schedule")
 
+    @requires_permission("schedules", "write")
     async def acreate_schedule(
         self,
         name: str,
@@ -4686,6 +4757,7 @@ class StudioTools(Toolkit):
     # Internal helpers
     # ------------------------------------------------------------------
 
+    @requires_permission("schedules", "write")
     async def aupdate_schedule(
         self,
         schedule_id: str,
@@ -4766,6 +4838,8 @@ class StudioTools(Toolkit):
         return component_id, None
 
     def _component_id_exists(self, component_id: str, db: "BaseDb") -> bool:
+        if component_id in self.registry.excluded_component_ids:
+            return True
         for component in [*self._iter_agents(), *self._iter_teams(), *self._iter_workflows()]:
             component_name = getattr(component, "name", None)
             if (
@@ -4981,7 +5055,7 @@ class StudioTools(Toolkit):
         members: List[TeamMember] = []
         missing: List[str] = []
         for mid in member_ids:
-            agent_match = runner._find_agent_by_exact_id(mid, actor=actor)
+            agent_match = cast(Optional["Agent"], runner._find_agent_by_exact_id(mid, actor=actor))
             team_match = runner._find_team_by_exact_id(mid, actor=actor)
             if agent_match is None and team_match is None and target_db is not None and target_db is not self.db:
                 # Exact ids in the selected target db outrank every name tier.
@@ -5001,7 +5075,7 @@ class StudioTools(Toolkit):
                 runner._db_component_exists("agent", mid, actor=actor)
                 or runner._db_component_exists("team", mid, actor=actor)
             ):
-                agent_named = runner._find_agent_by_name(mid, actor=actor)
+                agent_named = cast(Optional["Agent"], runner._find_agent_by_name(mid, actor=actor))
                 team_named = runner._find_team_by_name(mid, actor=actor)
                 if agent_named is not None and team_named is not None:
                     raise ValueError(

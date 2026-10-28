@@ -22,7 +22,7 @@ agent = CodexAgent(
     db=SqliteDb(db_file="tmp/codex-background.db"),
     model="gpt-5.6-luna",
     approval_mode="deny_all",
-    sandbox="read-only",
+    sandbox_mode="read-only",
 )
 agent_os = AgentOS(agents=[agent])
 app = agent_os.get_app()

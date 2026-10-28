@@ -47,14 +47,12 @@ async def main():
         (workspace / "sales.csv").write_text(SALES_CSV)
         agent = ClaudeAgent(
             id="continue-demo",
-            model="claude-sonnet-4-6",
+            model="claude-sonnet-5-5",
             db=SqliteDb(db_file=str(workspace / "runs.db")),
             cwd=workdir,
             system_prompt=f"Your working directory is {workdir}. Use Bash for every step.",
             allowed_tools=["Bash"],
             permission_mode="bypassPermissions",
-            max_turns=8,
-            max_budget_usd=0.5,
         )
 
         # 1. A three-step tool run. One Bash call per step gives three checkpoints.

@@ -24,12 +24,11 @@ import asyncio
 import tempfile
 from pathlib import Path
 
-from claude_agent_sdk import HookMatcher
-
 from agno.agents.claude import ClaudeAgent
 from agno.agents.claude.session_store import AgnoSessionStore
 from agno.db.sqlite import SqliteDb
 from agno.run.base import RunStatus
+from claude_agent_sdk import ClaudeAgentOptions, HookMatcher
 
 SESSION_ID = "compaction-demo"
 FACT = "The release codename is tangerine-walrus-88."
@@ -81,15 +80,13 @@ async def main():
             workdir.mkdir()
             return ClaudeAgent(
                 id="compaction-demo",
-                model="claude-sonnet-4-6",
+                model="claude-sonnet-5-5",
                 db=SqliteDb(db_file=db_file),
                 cwd=str(workdir),
                 allowed_tools=[],
-                max_turns=2,
-                max_budget_usd=0.5,
-                options_kwargs={
-                    "hooks": {"PreCompact": [HookMatcher(hooks=[on_pre_compact])]}
-                },
+                options=ClaudeAgentOptions(
+                    hooks={"PreCompact": [HookMatcher(hooks=[on_pre_compact])]}
+                ),
             )
 
         replica_a = make_agent("replica-a")

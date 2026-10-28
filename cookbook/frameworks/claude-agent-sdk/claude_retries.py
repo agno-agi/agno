@@ -28,7 +28,6 @@ import tempfile
 from pathlib import Path
 
 import claude_agent_sdk as sdk
-
 from agno.agents.claude import ClaudeAgent
 from agno.db.sqlite import SqliteDb
 from agno.run.base import RunStatus
@@ -61,7 +60,7 @@ def main():
         db = SqliteDb(db_file=str(Path(workdir) / "runs.db"))
         agent = ClaudeAgent(
             id="retries-demo",
-            model="claude-sonnet-4-6",
+            model="claude-sonnet-5-5",
             db=db,
             cwd=workdir,
             allowed_tools=["Bash"],
@@ -110,7 +109,7 @@ def main():
         simulate_outages(0)
         limited = ClaudeAgent(
             id="limited-demo",
-            model="claude-sonnet-4-6",
+            model="claude-sonnet-5-5",
             db=db,
             cwd=workdir,
             allowed_tools=["Bash"],
@@ -134,7 +133,7 @@ def main():
         simulate_outages(1)
         plain = ClaudeAgent(
             id="plain-demo",
-            model="claude-sonnet-4-6",
+            model="claude-sonnet-5-5",
             db=db,
             cwd=workdir,
             allowed_tools=[],

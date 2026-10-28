@@ -5,6 +5,7 @@ claude_agent_sdk module. They do not launch Claude Code.
 """
 
 import asyncio
+import base64
 import os
 import tempfile
 from dataclasses import dataclass, field
@@ -12,11 +13,18 @@ from types import ModuleType
 from typing import Any, Dict, List, Optional
 
 import pytest
+from pydantic import BaseModel
 
 from agno.agents.claude import ClaudeAgent
 from agno.agents.claude import agent as claude_module
 from agno.db.sqlite import SqliteDb
-from agno.run.agent import RunCompletedEvent, RunContentEvent, RunErrorEvent
+from agno.run.agent import (
+    RunCompletedEvent,
+    RunContentEvent,
+    RunErrorEvent,
+    ToolCallCompletedEvent,
+    ToolCallStartedEvent,
+)
 from agno.run.base import RunStatus
 
 # ---------------------------------------------------------------------------
@@ -66,6 +74,7 @@ class ResultMessage:
     model_usage: Optional[Dict[str, Any]] = None
     num_turns: Optional[int] = None
     duration_api_ms: Optional[int] = None
+    structured_output: Any = None
 
 
 class StreamEvent:
@@ -97,6 +106,7 @@ class FakeState:
         self.known_sessions: set = set()
         self.session_counter = 0
         self.calls: List[Dict[str, Any]] = []
+        self.options: List[Dict[str, Any]] = []
         self.reply = "ok"
         # Extra ResultMessage fields (usage, cost, model_usage) for metrics tests
         self.result_fields: Dict[str, Any] = {}
@@ -108,6 +118,7 @@ def fake_sdk(monkeypatch) -> FakeState:
 
     async def query(prompt: str, options: ClaudeAgentOptions):
         state.calls.append({"prompt": prompt, "resume": options.resume})
+        state.options.append(getattr(options, "extra", vars(options)))
         if options.resume is not None and options.resume not in state.known_sessions:
             # Mirrors the CLI: "No conversation found" on stderr, exit 1, no messages yielded
             raise ProcessError("Command failed with exit code 1")
@@ -131,7 +142,14 @@ def fake_sdk(monkeypatch) -> FakeState:
             pass
 
         async def query(self, prompt):
-            self.prompt = prompt
+            # A prompt with attachments is one streamed user message; keep its text and blocks apart.
+            if isinstance(prompt, str):
+                self.prompt = prompt
+                self.blocks = []
+            else:
+                [message] = [m async for m in prompt]
+                text, *self.blocks = message["message"]["content"]
+                self.prompt = text["text"]
 
         def receive_response(self):
             return module.query(prompt=self.prompt, options=self.options)
@@ -482,16 +500,70 @@ def test_user_session_store_and_file_checkpointing_disable_injection(fake_sdk, t
     monkeypatch.setattr(claude_module, "log_warning", warnings.append)
     db = SqliteDb(db_file=str(tmp_path / "db"))
     own_store = object()
-    custom = ClaudeAgent(id="a", db=db, options_kwargs={"session_store": own_store})
+    with pytest.warns(DeprecationWarning, match="options_kwargs"):
+        custom = ClaudeAgent(id="a", db=db, options_kwargs={"session_store": own_store})
     assert custom._build_options(agno_session_id="agno-session").extra["session_store"] is own_store
 
-    checkpointing = ClaudeAgent(id="a", db=db, options_kwargs={"enable_file_checkpointing": True})
+    with pytest.warns(DeprecationWarning, match="options_kwargs"):
+        checkpointing = ClaudeAgent(id="a", db=db, options_kwargs={"enable_file_checkpointing": True})
     opts = checkpointing._build_options(agno_session_id="agno-session")
     assert "session_store" not in opts.extra
     assert opts.extra["enable_file_checkpointing"] is True
     checkpointing._build_options(agno_session_id="agno-session")
     assert len(warnings) == 1
     assert "enable_file_checkpointing" in warnings[0]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("use_async", [False, True])
+def test_typed_options_flow_through_run_and_preserve_resume(fake_sdk, monkeypatch, stream, use_async):
+    @dataclass
+    class NativeOptions:
+        model: Optional[str] = None
+        tools: Optional[List[str]] = None
+        resume: Optional[str] = None
+        include_partial_messages: bool = False
+        extra_args: Dict[str, Any] = field(default_factory=dict)
+
+    sdk = claude_module._sdk()
+    monkeypatch.setattr(sdk, "ClaudeAgentOptions", NativeOptions)
+    captured = []
+    original_query = sdk.query
+
+    async def query(prompt, options):
+        captured.append(options)
+        async for message in original_query(prompt, options):
+            yield message
+
+    monkeypatch.setattr(sdk, "query", query)
+    source = NativeOptions(model="base-model", tools=["Bash"], extra_args={"custom-flag": "value"})
+    agent = ClaudeAgent(id="typed", options=source, model="named-model", tools=[])
+
+    async def async_run(prompt):
+        if stream:
+            return [event async for event in agent.arun(prompt, session_id="session", stream=True)][-1]
+        return await agent.arun(prompt, session_id="session")
+
+    def run(prompt):
+        if use_async:
+            return asyncio.run(async_run(prompt))
+        if stream:
+            return list(agent.run(prompt, session_id="session", stream=True))[-1]
+        return agent.run(prompt, session_id="session")
+
+    first = run("first")
+    second = run("second")
+    if stream:
+        assert isinstance(first, RunCompletedEvent) and isinstance(second, RunCompletedEvent)
+    else:
+        assert first.status == second.status == RunStatus.completed
+    assert captured[0].resume is None
+    assert captured[1].resume == "sdk-1"
+    assert all(item.model == "named-model" and item.tools == [] for item in captured)
+    assert all(item.include_partial_messages == stream for item in captured)
+    assert all(item.extra_args == {"replay-user-messages": None, "custom-flag": "value"} for item in captured)
+    assert source.extra_args == {"custom-flag": "value"}
+    assert source.model == "base-model" and source.tools == ["Bash"] and source.resume is None
 
 
 @pytest.mark.parametrize("stream", [True, False])
@@ -516,13 +588,19 @@ def test_retry_resumes_the_sdk_session_of_the_failed_attempt(fake_sdk, tmp_db, m
     assert calls == [{"prompt": "go", "resume": None}, {"prompt": "go", "resume": "sdk-1"}]
 
 
-def test_non_stream_retry_keeps_the_failed_attempts_tool_calls(fake_sdk, tmp_db, monkeypatch):
+@pytest.mark.parametrize("with_media", [False, True])
+def test_non_stream_retry_keeps_the_failed_attempts_tool_calls(fake_sdk, tmp_db, monkeypatch, tmp_path, with_media):
     """A tool that ran in the failed attempt stays in the run; the retry resumes the session and finishes."""
-    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, retries=1, delay_between_retries=0)
+    from agno.media import File
+
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path), retries=1, delay_between_retries=0)
     calls: List[Any] = []
 
     async def tool_then_outage(prompt, options):
         calls.append(options.resume)
+        if with_media:
+            [attachment] = list(tmp_path.glob(".agno/uploads/*/retry.txt"))
+            assert attachment.read_bytes() == b"retry payload"
         sdk_session_id = options.resume or "sdk-1"
         yield SystemMessage("init", {"session_id": sdk_session_id})
         if len(calls) == 1:
@@ -538,13 +616,19 @@ def test_non_stream_retry_keeps_the_failed_attempts_tool_calls(fake_sdk, tmp_db,
         yield ResultMessage(sdk_session_id, "recovered")
 
     monkeypatch.setattr(claude_module._sdk(), "query", tool_then_outage)
-    out = agent.run("go", session_id="s1")
+    out = agent.run(
+        "go", session_id="s1", files=[File(content=b"retry payload", filename="retry.txt")] if with_media else None
+    )
+    assert not list(tmp_path.glob(".agno/uploads/*/retry.txt"))
     assert out.status == RunStatus.completed and out.content == "recovered"
     assert calls == [None, "sdk-1"]
     [tool] = out.tools or []
     assert (tool.tool_call_id, tool.tool_name, tool.result) == ("call-1", "Bash", "alpha")
     stored = agent.get_run_output(out.run_id, "s1")
     assert any(m.role == "tool" and m.content == "alpha" for m in stored.messages or [])
+
+    if with_media:
+        assert stored.input.files[0].content == b"retry payload"
 
 
 def _sdk_result_error(**fields: Any) -> ResultError:
@@ -1343,6 +1427,426 @@ def test_runs_without_usage_still_report_duration(fake_sdk, tmp_db):
     assert run.metrics is not None and run.metrics.total_tokens == 0 and run.metrics.duration is not None
 
 
+# Media: attachments staged in the workspace
+# ---------------------------------------------------------------------------
+
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + bytes(32)
+
+
+def _attachment_paths(prompt: str) -> List[str]:
+    return [line[2:].split(" (")[0] for line in prompt.splitlines() if line.startswith("- ")]
+
+
+def _stored_run(run_id: str, with_file: bool = True, forked_from: Optional[str] = None):
+    from agno.media import File
+    from agno.models.message import Message
+    from agno.run.agent import RunInput, RunOutput
+
+    files = [File(content=b"x", filename="a.txt", mime_type="text/plain")] if with_file else None
+    return RunOutput(
+        run_id=run_id,
+        input=RunInput(input_content="x", files=files),
+        messages=[Message(role="user", content="x")],
+        forked_from_run_id=forked_from,
+    )
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("structured", [False, True])
+def test_images_and_files_are_staged_and_named_in_the_prompt(
+    fake_sdk, tmp_db, tmp_path, monkeypatch, stream, structured
+):
+    import os
+
+    from agno.media import File, Image
+
+    seen: Dict[str, Any] = {}
+
+    clients: List[Any] = []
+
+    async def query(prompt, options):
+        paths = _attachment_paths(prompt)
+        seen.update(prompt=prompt, paths=paths, exists=[os.path.exists(p) for p in paths])
+        yield SystemMessage("init", {"session_id": "sdk-1"})
+        yield ResultMessage(
+            "sdk-1", "seen", **({"structured_output": {"city": "Paris", "country": "France"}} if structured else {})
+        )
+
+    monkeypatch.setattr(claude_module._sdk(), "query", query)
+    client_class = claude_module._sdk().ClaudeSDKClient
+    monkeypatch.setattr(
+        claude_module._sdk(), "ClaudeSDKClient", lambda options: clients.append(client_class(options)) or clients[-1]
+    )
+    agent = ClaudeAgent(
+        name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path), output_schema=Capital if structured else None
+    )
+    media = dict(
+        images=[Image(content=PNG_BYTES, format="png")],
+        files=[File(content=b"hello", filename="notes.txt", mime_type="text/plain")],
+    )
+    if stream:
+        # Through the public call, where media is validated and converted before the stream starts.
+        events = list(agent.run("What is attached?", stream=True, session_id="s", **media))
+        assert isinstance(events[-1], RunCompletedEvent)
+        run_id = events[-1].run_id
+    else:
+        out = agent.run("What is attached?", session_id="s", **media)
+        assert out.status == RunStatus.completed
+        run_id = out.run_id
+
+    assert seen["prompt"].startswith("What is attached?") and "Attached files" in seen["prompt"]
+    assert len(seen["paths"]) == 2 and seen["exists"] == [True, True]
+    uploads = tmp_path / ".agno" / "uploads"
+    assert all(p.startswith(str(uploads / run_id)) for p in seen["paths"])
+    assert seen["paths"][0].endswith("image-1.png") and seen["paths"][1].endswith("notes.txt")
+    assert "image/png" in seen["prompt"] and "text/plain" in seen["prompt"]
+    # The image also rides inside the message, so Claude Code need not read it back through a tool.
+    [block] = clients[-1].blocks
+    assert block["type"] == "image" and block["source"]["media_type"] == "image/png"
+    assert base64.b64decode(block["source"]["data"]) == PNG_BYTES
+    assert "image-1.png" in seen["prompt"].split("included in this message")[0]
+    assert not (uploads / run_id).exists(), "attachments are removed after the run"
+    stored = agent.get_run_output(run_id, "s")
+    assert stored.input.files[0].filename == "notes.txt" and len(stored.input.images) == 1
+
+    if structured:
+        assert stored.content == {"city": "Paris", "country": "France"}
+        assert stored.content_type == "Capital"
+
+
+def test_keep_uploads_leaves_attachments_in_the_workspace(fake_sdk, tmp_db, tmp_path):
+    from agno.media import File
+
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path), keep_uploads=True)
+    out = agent.run("read it", session_id="s", files=[File(content=b"x", filename="a.txt", mime_type="text/plain")])
+    kept = list((tmp_path / ".agno" / "uploads" / out.run_id).iterdir())
+    assert [p.name for p in kept] == ["a.txt"]
+
+
+def test_audio_and_video_are_still_rejected(fake_sdk, tmp_db, tmp_path):
+    from agno.exceptions import UnsupportedMediaError
+    from agno.media import Audio
+
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path))
+    with pytest.raises(UnsupportedMediaError, match="audio"):
+        agent.run("listen", audio=[Audio(content=b"RIFF", format="wav")])
+    assert not [c for c in fake_sdk.calls]
+
+
+def test_earlier_attachments_are_restaged_for_later_turns(fake_sdk, tmp_db, tmp_path, monkeypatch):
+    """A later turn, possibly on another replica, finds the files an earlier run was given,
+    at the paths the transcript already names, and they are removed again afterwards."""
+    import os
+
+    from agno.media import File
+
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path))
+    first = agent.run(
+        "read it", session_id="s", files=[File(content=b"v1", filename="spec.txt", mime_type="text/plain")]
+    )
+    expected = tmp_path / ".agno" / "uploads" / first.run_id / "spec.txt"
+    assert not expected.exists()
+
+    seen: Dict[str, Any] = {}
+
+    async def query(prompt, options):
+        seen.update(
+            prompt=prompt, exists=os.path.exists(expected), content=expected.read_bytes() if expected.exists() else None
+        )
+        yield SystemMessage("init", {"session_id": options.resume or "sdk-1"})
+        yield ResultMessage(options.resume or "sdk-1", "again")
+
+    monkeypatch.setattr(claude_module._sdk(), "query", query)
+    # A fresh agent object with a different working directory stands in for another replica.
+    other = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path))
+    out = other.run("read it again", session_id="s")
+    assert out.status == RunStatus.completed
+    assert seen["exists"] and seen["content"] == b"v1"
+    assert "Attached files" not in seen["prompt"], "earlier attachments are not announced again"
+    assert "now at" not in seen["prompt"], "same workspace: the known path still resolves"
+    assert not expected.exists(), "re-staged files are removed after the turn"
+
+    # A different replica restores into its own workspace and announces the relocated path.
+    elsewhere = tmp_path / "replica-b"
+    elsewhere.mkdir()
+
+    async def query_elsewhere(prompt, options):
+        relocated = elsewhere / ".agno" / "uploads" / first.run_id / "spec.txt"
+        seen.update(prompt=prompt, exists=relocated.exists(), old_exists=expected.exists())
+        yield SystemMessage("init", {"session_id": options.resume or "sdk-1"})
+        yield ResultMessage(options.resume or "sdk-1", "again")
+
+    monkeypatch.setattr(claude_module._sdk(), "query", query_elsewhere)
+    replica_b = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(elsewhere))
+    assert replica_b.run("read it once more", session_id="s").status == RunStatus.completed
+    assert seen["exists"] and not seen["old_exists"] and "have moved" in seen["prompt"]
+    assert not expected.exists() and not (elsewhere / ".agno").exists()
+
+
+def test_prior_attachments_fall_back_to_the_workspace_when_the_recorded_root_is_unwritable(tmp_path):
+    """An unwritable historical path is never attempted; the harness receives the current path."""
+    from types import SimpleNamespace
+
+    from agno.agents._media import stage_prior_media
+    from agno.media import File
+
+    blocked = tmp_path / "blocked"
+    blocked.write_text("a regular file, so nothing can be created below it")
+    recorded_root = blocked / ".agno" / "uploads"
+    from agno.models.message import Message
+    from agno.run.agent import RunInput, RunOutput
+
+    attachment = File(content=b"v1", filename="spec.txt", mime_type="text/plain")
+    run = RunOutput(
+        run_id="run-1",
+        input=RunInput(input_content="x", files=[attachment]),
+        messages=[Message(role="user", content="x")],
+    )
+    session = SimpleNamespace(session_data={"uploads_root": str(recorded_root)}, runs=[run])
+    workspace = tmp_path / "replica-b"
+
+    folders, note = stage_prior_media(workspace, session)
+
+    new_path = workspace / ".agno" / "uploads" / "run-1" / "spec.txt"
+    assert new_path.read_bytes() == b"v1"
+    assert folders == [new_path.parent]
+    assert "have moved" in note and f"- {new_path} (was {recorded_root / 'run-1' / 'spec.txt'})" in note
+
+
+def test_only_recent_runs_attachments_are_restaged(tmp_path):
+    """Restoring is bounded: attachments of runs older than the limit stay in the session only."""
+    from types import SimpleNamespace
+
+    from agno.agents._media import stage_prior_media
+
+    runs = [_stored_run(f"run-{i}") for i in range(5)]
+    session = SimpleNamespace(session_data={}, runs=runs + [_stored_run("current", with_file=False)])
+
+    folders, _ = stage_prior_media(tmp_path, session, exclude_run_id="current", limit=2)
+
+    uploads = tmp_path / ".agno" / "uploads"
+    assert sorted(f.name for f in folders) == ["run-3", "run-4"]
+    assert sorted(p.name for p in uploads.iterdir()) == ["run-3", "run-4"]
+
+
+def test_kept_attachments_are_not_duplicated_on_later_turns(fake_sdk, tmp_db, tmp_path):
+    """With keep_uploads, a later turn reuses the files already on disk instead of writing
+    renamed copies next to them, and same-named files in one run keep their original names."""
+    from agno.media import File
+
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path), keep_uploads=True)
+    first = agent.run(
+        "read them",
+        session_id="s",
+        files=[
+            File(content=b"one", filename="notes.txt", mime_type="text/plain"),
+            File(content=b"two", filename="notes.txt", mime_type="text/plain"),
+        ],
+    )
+    folder = tmp_path / ".agno" / "uploads" / first.run_id
+    assert sorted(p.name for p in folder.iterdir()) == ["notes-2.txt", "notes.txt"]
+
+    # The harness edited a kept file between turns; the edit must survive later restores.
+    (folder / "notes.txt").write_bytes(b"edited by the harness")
+    agent.run("again", session_id="s")
+    agent.run("and again", session_id="s")
+
+    assert sorted(p.name for p in folder.iterdir()) == ["notes-2.txt", "notes.txt"]
+    assert (folder / "notes.txt").read_bytes() == b"edited by the harness"
+    assert (folder / "notes-2.txt").read_bytes() == b"two"
+
+
+def test_restore_window_ends_at_the_continued_run(tmp_path):
+    """A continued run's transcript ends at its source, so the window ends there, source included,
+    even when the source is the run being continued in place."""
+    from types import SimpleNamespace
+
+    from agno.agents._media import stage_prior_media
+
+    session = SimpleNamespace(session_data={}, runs=[_stored_run(f"run-{i}") for i in range(5)])
+
+    forked, _ = stage_prior_media(tmp_path / "fork", session, exclude_run_id="new-run", limit=2, until_run_id="run-1")
+    assert sorted(f.name for f in forked) == ["run-0", "run-1"]
+
+    in_place, _ = stage_prior_media(tmp_path / "same", session, exclude_run_id="run-1", limit=2, until_run_id="run-1")
+    assert sorted(f.name for f in in_place) == ["run-0", "run-1"]
+
+
+def test_continuing_an_old_run_restores_its_attachments(scripted, tmp_db, tmp_path, monkeypatch):
+    """Forking a run older than the restore limit still brings back the files its transcript names."""
+    from agno.media import File
+
+    turns, calls, _ = scripted
+    for _ in range(3):
+        turns.append(_tool_turn("go"))
+    turns.append(
+        [
+            SystemMessage("init", {"session_id": "fork-1"}),
+            _msg(AssistantMessage([TextBlock("branched")]), "v-final"),
+            ResultMessage("fork-1", "branched"),
+        ]
+    )
+    restored: List[List[str]] = []
+    real_stage_prior_media = claude_module.stage_prior_media
+
+    def recording(*args, **kwargs):
+        folders, note = real_stage_prior_media(*args, **kwargs, limit=1)
+        restored.append(sorted(f.name for f in folders))
+        return folders, note
+
+    monkeypatch.setattr(claude_module, "stage_prior_media", recording)
+    agent = ClaudeAgent(db=tmp_db, cwd=str(tmp_path))
+    source = agent.run("go", session_id="s", files=[File(content=b"v1", filename="spec.txt", mime_type="text/plain")])
+    agent.run("go", session_id="s")
+    agent.run("go", session_id="s")
+
+    agent.continue_run(run_id=source.run_id, session_id="s", continue_from=3, fork=True, input="next")
+
+    assert restored[-1] == [source.run_id]
+
+
+@pytest.mark.parametrize("until_run_id", [None, "fork"])
+def test_restore_follows_fork_ancestry_to_the_run_that_received_the_file(tmp_path, until_run_id):
+    """A fork carries its source's input; the transcript names the source's folder, and the
+    runs between the source and the fork are not on the branch."""
+    from types import SimpleNamespace
+
+    from agno.agents._media import stage_prior_media
+
+    runs = [_stored_run("source")]
+    runs += [_stored_run(f"between-{i}") for i in range(3)]
+    runs += [_stored_run("fork", forked_from="source"), _stored_run("nested", forked_from="fork")]
+    session = SimpleNamespace(session_data={}, runs=runs)
+
+    folders, _ = stage_prior_media(tmp_path, session, exclude_run_id="current", limit=1, until_run_id=until_run_id)
+
+    uploads = tmp_path / ".agno" / "uploads"
+    assert [f.name for f in folders] == ["source"]
+    assert sorted(p.name for p in uploads.iterdir()) == ["source"]
+
+
+# ---------------------------------------------------------------------------
+# Structured output
+# ---------------------------------------------------------------------------
+
+
+class Capital(BaseModel):
+    city: str
+    country: str
+
+
+@pytest.mark.parametrize("stream", [True, False])
+def test_output_schema_parses_the_structured_output_not_the_reply(fake_sdk, tmp_db, stream):
+    # Claude delivers the object through a tool and then replies in prose.
+    fake_sdk.reply = "The capital of France is **Paris**."
+    fake_sdk.result_fields = {"structured_output": {"city": "Paris", "country": "France"}}
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, output_schema=Capital)
+
+    if stream:
+        events = _collect(agent, "Capital of France?", session_id="s")
+        assert not [e for e in events if type(e).__name__ == "ExternalRunStructuredOutputEvent"]
+        completed = events[-1]
+        assert isinstance(completed, RunCompletedEvent)
+        assert completed.content == Capital(city="Paris", country="France")
+        assert completed.content_type == "Capital"
+    else:
+        run = agent.run("Capital of France?", session_id="s")
+        assert run.content == Capital(city="Paris", country="France")
+        assert run.content_type == "Capital"
+
+    output_format = fake_sdk.options[-1]["output_format"]
+    assert output_format["type"] == "json_schema"
+    assert output_format["schema"]["required"] == ["city", "country"]
+    stored = agent.get_session("s").runs[-1]
+    assert stored.content == {"city": "Paris", "country": "France"}
+    assert stored.messages[-1].content == "The capital of France is **Paris**."
+
+
+def test_output_schema_per_run_overrides_the_agent_and_accepts_json_schema(fake_sdk):
+    schema = {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}
+    fake_sdk.result_fields = {"structured_output": {"city": "Paris"}}
+    agent = ClaudeAgent(name="Claude", id="claude", output_schema=Capital)
+
+    run = agent.run("Capital of France?", output_schema=schema)
+
+    assert run.content == {"city": "Paris"} and run.content_type == "dict"
+    assert fake_sdk.options[-1]["output_format"] == {"type": "json_schema", "schema": schema}
+
+
+def test_without_output_schema_no_output_format_is_sent(fake_sdk):
+    agent = ClaudeAgent(name="Claude", id="claude")
+    run = agent.run("hi")
+    assert run.content == "ok" and run.content_type == "str"
+    assert "output_format" not in fake_sdk.options[-1]
+
+
+@pytest.mark.parametrize("stream", [True, False])
+def test_structured_output_tool_call_is_not_recorded_as_a_tool(fake_sdk, tmp_db, monkeypatch, stream):
+    """Claude Code delivers the object through a StructuredOutput tool call; the object comes from the
+    result message, so the call is not a tool call the agent made."""
+    read = ToolUseBlock()
+    read.id, read.name, read.input = "call-read", "Read", {"path": "notes.md"}
+    read_result = ToolResultBlock()
+    read_result.tool_use_id, read_result.content = "call-read", "Paris is the capital"
+    deliver = ToolUseBlock()
+    deliver.id, deliver.name, deliver.input = "call-so", "StructuredOutput", {"city": "Paris", "country": "France"}
+    ack = ToolResultBlock()
+    ack.tool_use_id, ack.content = "call-so", "Structured output provided successfully"
+    results = UserMessage()
+    results.content = [read_result, ack]
+
+    async def query(prompt, options):
+        yield SystemMessage(subtype="init", data={"session_id": "sdk-1"})
+        yield AssistantMessage([read, deliver])
+        yield results
+        yield AssistantMessage([TextBlock(text="The capital of France is Paris.")])
+        yield ResultMessage(
+            "sdk-1", "The capital of France is Paris.", structured_output={"city": "Paris", "country": "France"}
+        )
+
+    monkeypatch.setattr(claude_module._sdk(), "query", query)
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, output_schema=Capital)
+    if stream:
+        events = _collect(agent, "Capital of France?", session_id="s")
+        started = [e.tool.tool_name for e in events if isinstance(e, ToolCallStartedEvent)]
+        completed = [e.tool.tool_name for e in events if isinstance(e, ToolCallCompletedEvent)]
+        assert started == ["Read"] and completed == ["Read"]
+        run = agent.get_session("s").runs[-1]
+    else:
+        run = agent.run("Capital of France?", session_id="s")
+    assert run.content == Capital(city="Paris", country="France") or run.content == {
+        "city": "Paris",
+        "country": "France",
+    }
+    assert [t.tool_name for t in run.tools or []] == ["Read"]
+    assert [m.content for m in run.messages or [] if m.role == "tool"] == ["Paris is the capital"]
+
+
+def test_non_object_output_schema_is_rejected_before_the_run(fake_sdk):
+    """Claude Code's structured output tool takes an object; the API answers 400 for an array root."""
+    from typing import List
+
+    from pydantic import RootModel
+
+    class Names(RootModel[List[str]]):
+        pass
+
+    with pytest.raises(ValueError, match="must describe a JSON object"):
+        ClaudeAgent(name="Claude", id="claude", output_schema=Names)
+    agent = ClaudeAgent(name="Claude", id="claude")
+    with pytest.raises(ValueError, match="must describe a JSON object"):
+        agent.run("List colours", output_schema={"type": "array", "items": {"type": "string"}})
+    assert fake_sdk.calls == []
+
+
+def test_answer_that_does_not_match_the_schema_stays_text(fake_sdk):
+    fake_sdk.reply = "I could not find it."
+    agent = ClaudeAgent(name="Claude", id="claude", output_schema=Capital)
+    run = agent.run("Capital of Atlantis?")
+    assert run.status == RunStatus.completed
+    assert run.content == "I could not find it." and run.content_type == "str"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["sync", "async", "sync-stream", "async-stream"])
 async def test_subagent_tool_lineage_survives_events_and_storage(scripted, tmp_db, mode):
@@ -1387,3 +1891,71 @@ async def test_subagent_tool_lineage_survives_events_and_storage(scripted, tmp_d
         restored = ToolExecution.from_dict(tools["call-1"].to_dict())
         assert restored.parent_tool_call_id == "parent-call"
     assert ToolExecution.from_dict({"tool_call_id": "old-record"}).parent_tool_call_id is None
+
+
+# ---------------------------------------------------------------------------
+# Model identity on the run row (the metrics page counts runs per model from it)
+# ---------------------------------------------------------------------------
+
+
+def test_runs_record_the_model_and_provider(fake_sdk, tmp_db):
+    run = ClaudeAgent(name="Claude", id="claude", db=tmp_db, model="claude-sonnet-4-6").run("hi", session_id="s")
+    assert (run.model, run.model_provider) == ("claude-sonnet-4-6", "Anthropic")
+    stored = tmp_db.get_run(run.run_id)
+    assert (stored.model, stored.model_provider) == ("claude-sonnet-4-6", "Anthropic")
+
+
+def test_unset_model_falls_back_to_the_default_model(fake_sdk, tmp_db):
+    """Like a native model's default id: the default is what the SDK is asked to run and what
+    the run records. A model set in options wins over the default."""
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db)
+    assert agent.model == "claude-sonnet-4-6"
+    run = agent.run("hi", session_id="s")
+    assert (run.model, run.model_provider) == ("claude-sonnet-4-6", "Anthropic")
+    assert fake_sdk.options[-1]["model"] == "claude-sonnet-4-6"
+    with pytest.warns(DeprecationWarning):
+        agent = ClaudeAgent(name="Claude", id="claude", options_kwargs={"model": "options-model"})
+    assert agent.model is None
+    run = agent.run("hi")
+    assert (run.model, run.model_provider) == ("options-model", "Anthropic")
+    assert fake_sdk.options[-1]["model"] == "options-model"
+
+
+def test_metrics_page_counts_runs_per_model(fake_sdk, tmp_db):
+    from fastapi.testclient import TestClient
+
+    from agno.os import AgentOS
+
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, model="claude-sonnet-4-6")
+    client = TestClient(AgentOS(agents=[agent], db=tmp_db, telemetry=False).get_app())
+    for _ in range(2):
+        assert (
+            client.post("/agents/claude/runs", data={"message": "hi", "session_id": "s", "stream": "false"}).status_code
+            == 200
+        )
+    body = client.get("/metrics").json()
+    days = body["metrics"] if isinstance(body, dict) else body
+    today = days[-1]
+    assert today["agent_runs_count"] == 2
+    assert today["model_metrics"] == [{"model_id": "claude-sonnet-4-6", "model_provider": "Anthropic", "count": 2}]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_strict_native_resume_never_reconstructs_history(fake_sdk, tmp_db, monkeypatch, stream):
+    agent = ClaudeAgent(id="claude", db=tmp_db, require_native_resume=True)
+    agent.run("first", session_id="s1")
+    resumes = []
+
+    async def missing(prompt, options):
+        resumes.append(options.resume)
+        raise ResultError("No conversation found with session ID: sdk-1")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(claude_module._sdk(), "query", missing)
+    if stream:
+        events = list(agent.run("second", session_id="s1", stream=True, yield_run_output=True))
+        assert events[-1].status == RunStatus.error
+    else:
+        assert agent.run("second", session_id="s1").status == RunStatus.error
+    assert resumes == ["sdk-1"]
+    assert agent.read_or_create_session("s1").session_data["claude_sdk_session_id"] == "sdk-1"

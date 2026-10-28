@@ -53,7 +53,7 @@ async def main():
         agent = CodexAgent(
             id="codex-compaction",
             model="gpt-5.6-luna",
-            sandbox="full-access",
+            sandbox_mode="full-access",
             approval_mode="deny_all",
             instructions="Answer in as few words as possible.",
             db=SqliteDb(db_file=f"{workdir}/runs.db"),
