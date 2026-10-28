@@ -57,9 +57,26 @@ def test_setup_preserves_existing_otel_provider(monkeypatch):
     monkeypatch.setattr(tracing.trace_api, "get_tracer_provider", lambda: provider)
     monkeypatch.setattr(tracing.trace_api, "set_tracer_provider", set_provider)
     monkeypatch.setattr(tracing, "AgnoInstrumentor", instrumentor)
+    monkeypatch.setattr(tracing, "_agno_tracer_provider", None)
     try:
         tracing.setup_tracing(db=MagicMock())
         set_provider.assert_not_called()
         instrumentor.assert_not_called()
+        assert tracing.is_agno_tracing_active() is False
     finally:
         provider.shutdown()
+
+
+def test_agno_tracing_is_active_once_its_provider_is_global(monkeypatch):
+    global_provider = {}
+    monkeypatch.setattr(tracing.trace_api, "get_tracer_provider", lambda: global_provider.get("provider"))
+    monkeypatch.setattr(tracing.trace_api, "set_tracer_provider", lambda p: global_provider.update(provider=p))
+    monkeypatch.setattr(tracing, "AgnoInstrumentor", MagicMock())
+    monkeypatch.setattr(tracing, "_agno_tracer_provider", None)
+
+    assert tracing.is_agno_tracing_active() is False
+    tracing.setup_tracing(db=MagicMock())
+    try:
+        assert tracing.is_agno_tracing_active() is True
+    finally:
+        global_provider["provider"].shutdown()

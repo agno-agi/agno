@@ -18,12 +18,13 @@ RUN_ATTRIBUTES = {
 }
 
 
-def _request(provider, route, run=None):
+def _request(provider, route, run=None, context=None):
     """Emit spans shaped like FastAPI's request tracing, optionally running an Agno run inside the endpoint."""
     http_tracer = provider.get_tracer("fastapi")
     agno_tracer = provider.get_tracer(AGNO_INSTRUMENTATION_SCOPE)
     with http_tracer.start_as_current_span(
         route,
+        context=context,
         kind=SpanKind.SERVER,
         attributes={"http.request.method": route.split()[0], "http.route": route.split()[1]},
     ):
@@ -31,7 +32,8 @@ def _request(provider, route, run=None):
             pass
         with http_tracer.start_as_current_span("fastapi.endpoint"):
             if run is not None:
-                with agno_tracer.start_as_current_span(run["name"], attributes=RUN_ATTRIBUTES) as run_span:
+                attributes = {**RUN_ATTRIBUTES, **run.get("attributes", {})}
+                with agno_tracer.start_as_current_span(run["name"], attributes=attributes) as run_span:
                     with agno_tracer.start_as_current_span(
                         "OpenAIResponses.ainvoke", attributes={"openinference.span.kind": "LLM"}
                     ):
@@ -83,7 +85,7 @@ def test_keep_mode_forwards_request_root_before_its_earlier_children():
     ]
 
 
-def _store(tmp_path, *requests):
+def _store(tmp_path, *requests, context=None):
     db = SqliteDb(db_file=str(tmp_path / "traces.db"))
     provider = TracerProvider()
     provider.add_span_processor(
@@ -91,7 +93,7 @@ def _store(tmp_path, *requests):
     )
     try:
         for route, run in requests:
-            _request(provider, route, run=run)
+            _request(provider, route, run=run, context=context)
     finally:
         provider.shutdown()
     return db
@@ -171,3 +173,36 @@ def test_trace_list_filters_by_several_names_and_returns_request_details(tmp_pat
     assert sorted(row["name"] for row in rows) == ["GET /sessions", "GET /teams"]
     assert {row["request"]["method"] for row in rows} == {"GET"}
     assert {row["request"]["route"] for row in rows} == {"/sessions", "/teams"}
+
+
+def test_requests_sharing_a_client_traceparent_are_stored_apart(tmp_path):
+    from opentelemetry import trace as trace_api
+    from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
+
+    client_trace_id = 0x4BF92F3577B34DA6A3CE929D0E0E4736
+    traceparent = trace_api.set_span_in_context(
+        NonRecordingSpan(
+            SpanContext(trace_id=client_trace_id, span_id=0x00F067AA0BA902B7, is_remote=True, trace_flags=TraceFlags(1))
+        )
+    )
+
+    db = _store(
+        tmp_path,
+        *[
+            (
+                "POST /agents/{agent_id}/runs",
+                {"name": "Weather_Agent.arun", "attributes": {"agno.run.id": f"run-{user}", "user.id": user}},
+            )
+            for user in ("alice", "bob")
+        ],
+        context=traceparent,
+    )
+
+    traces, _ = db.get_traces()
+    assert sorted(trace.user_id for trace in traces) == ["alice", "bob"]
+    assert len({trace.trace_id for trace in traces}) == 2
+    assert format(client_trace_id, "032x") not in {trace.trace_id for trace in traces}
+    for trace in traces:
+        detail = TraceDetail.from_trace_and_spans(trace, db.get_spans(trace_id=trace.trace_id))
+        (root,) = detail.tree
+        assert root.type == "HTTP"

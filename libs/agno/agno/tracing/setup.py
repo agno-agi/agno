@@ -3,7 +3,7 @@ Setup helper functions for configuring Agno tracing.
 """
 
 from os import getenv
-from typing import Union
+from typing import Any, Optional, Union
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.remote.base import RemoteDb
@@ -21,6 +21,20 @@ try:
     OPENTELEMETRY_AVAILABLE = True
 except ImportError:
     OPENTELEMETRY_AVAILABLE = False
+
+# The tracer provider setup_tracing installed, if any
+_agno_tracer_provider: Optional[Any] = None
+
+
+def is_agno_tracing_active() -> bool:
+    """Whether the global tracer provider is the one setup_tracing installed.
+
+    False when tracing was never set up, or when setup_tracing found a provider the
+    application had already configured and left it in place.
+    """
+    if not OPENTELEMETRY_AVAILABLE or _agno_tracer_provider is None:
+        return False
+    return trace_api.get_tracer_provider() is _agno_tracer_provider
 
 
 def setup_tracing(
@@ -118,6 +132,8 @@ def setup_tracing(
 
         # Set the global tracer provider
         trace_api.set_tracer_provider(tracer_provider)
+        global _agno_tracer_provider
+        _agno_tracer_provider = tracer_provider
 
         # Instrument Agno with OpenInference
         AgnoInstrumentor().instrument(tracer_provider=tracer_provider)

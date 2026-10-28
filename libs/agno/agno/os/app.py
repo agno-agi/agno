@@ -130,6 +130,14 @@ def _is_untraced_request(scope: Dict[str, Any]) -> bool:
     return any(path == prefix or path.startswith(prefix + "/") for prefix in _UNTRACED_PATHS)
 
 
+def _agno_tracing_is_active() -> bool:
+    try:
+        from agno.tracing.setup import is_agno_tracing_active
+    except ImportError:
+        return False
+    return is_agno_tracing_active()
+
+
 @asynccontextmanager
 async def mcp_lifespan(_, mcp_tools):
     """Manage MCP connection lifecycle inside a FastAPI app"""
@@ -1202,11 +1210,13 @@ class AgentOS:
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         app_kwargs: Dict[str, Any] = {}
         # FastAPI 0.142.0+ traces every request once a global tracer provider exists, which
-        # tracing=True installs. Keep that only when request tracing is asked for.
+        # tracing=True installs. Keep that only when request tracing is asked for, or when
+        # the provider is the application's own: then Agno stores nothing and its request
+        # spans belong to the application's backend.
         if self.tracing and _FASTAPI_SUPPORTS_TELEMETRY:
             if self.trace_requests:
                 app_kwargs["telemetry"] = {"exclude": _is_untraced_request}
-            else:
+            elif _agno_tracing_is_active():
                 app_kwargs["telemetry"] = {"tracing": False}
         return FastAPI(
             title=self.name or "Agno AgentOS",
