@@ -2432,7 +2432,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 for runs_stmt in runs_stmts:
                     runs_result = await sess.execute(runs_stmt)
                     for session_id, model, model_provider in runs_result.fetchall():
-                        runs_by_session.setdefault(session_id, []).append(
+                        runs_by_session.setdefault(cast(str, session_id), []).append(
                             {"model": model, "model_provider": model_provider}
                         )
 
