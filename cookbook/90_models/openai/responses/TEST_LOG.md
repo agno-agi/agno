@@ -25,3 +25,33 @@ encrypted reasoning plus tool-call replay.
 **Result:** The API accepted `xhigh`, the run streamed a thinking summary for 4.0s and answered the riddle correctly.
 
 ---
+
+### agent_flex_tier.py
+
+**Status:** PASS
+
+**Description:** Moved off `o4-mini`, which OpenAI shut down on 2026-10-23 (404), to `gpt-5.6-terra`. Runs `OpenAIResponses(id="gpt-5.6-terra", service_tier="flex")` against the live API.
+
+**Result:** The flex tier request is accepted and the two-sentence story prints.
+
+---
+
+### zdr_reasoning_agent.py
+
+**Status:** PASS
+
+**Description:** Moved off `o4-mini` to `gpt-5.6-terra`. Runs three turns with `store=False`, `reasoning_summary="auto"` and history from `InMemoryDb`.
+
+**Result:** All three turns answer and the follow-ups resolve "that country" from history.
+
+---
+
+### deep_research_agent.py
+
+**Status:** PASS
+
+**Description:** `o4-mini-deep-research` was shut down on 2026-07-23; OpenAI lists `gpt-5.6-sol` as the replacement. The deep-research id was what added `web_search_preview`, so the example now passes that tool itself.
+
+**Result:** The semaglutide report streams with web-sourced figures. Real OpenAI calls, no mocks.
+
+---

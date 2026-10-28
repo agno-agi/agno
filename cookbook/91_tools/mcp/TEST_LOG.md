@@ -44,3 +44,13 @@ the agent produced a grounded one-sentence answer about the repository.
 **Result:** Add individual run results after executing examples.
 
 ---
+
+### mem0.py, supabase.py
+
+**Status:** PASS (model only)
+
+**Description:** Moved off `o4-mini`, which OpenAI shut down on 2026-10-23, to `OpenAIResponses(id="gpt-5.6-terra")`. `OpenAIChat` rejects function tools for this model (`use /v1/responses or set reasoning_effort to 'none'`), so both examples switch to `OpenAIResponses`.
+
+**Result:** An async run with a function tool and `ReasoningTools` completes on `OpenAIResponses(id="gpt-5.6-terra")` and errors on `OpenAIChat`. The MCP servers themselves were not run: no local Mem0 MCP server and no `SUPABASE_ACCESS_TOKEN`.
+
+---

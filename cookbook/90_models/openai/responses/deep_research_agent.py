@@ -15,7 +15,8 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=OpenAIResponses(id="o4-mini-deep-research", max_tool_calls=1),
+    model=OpenAIResponses(id="gpt-5.6-sol", max_tool_calls=1),
+    tools=[{"type": "web_search_preview"}],
     instructions=dedent("""
         You are an expert research analyst with access to advanced research tools.
 
