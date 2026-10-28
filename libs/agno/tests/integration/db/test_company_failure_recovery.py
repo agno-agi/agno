@@ -556,6 +556,8 @@ async def test_product_purge_uses_real_mongo_schedule_catalog(system, asynchrono
             product_id = routine["payload"]["metadata"]["product_id"]
             path = "/company/products/" + product_id
             assert (await client.post("/company/routines/" + routine["id"] + "/archive")).status_code == 200
+            product = await _call(company_db, "get_product", product_id)
+            assert not (product.get("metadata") or {}).get("routine_ids")
             for resync in (False, True):
                 if resync:
                     os_app.resync(app)

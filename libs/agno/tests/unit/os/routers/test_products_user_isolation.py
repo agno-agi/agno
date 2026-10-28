@@ -206,19 +206,19 @@ def test_product_scopes_catalog_is_opt_in(enabled, tmp_path):
 
 @pytest.mark.parametrize("archived", [False, True])
 def test_permanent_delete_requires_admin(make_client, archived):
-    c = make_client(True)
-    record_id = create(c, "alice")
-    path = "/company/products/" + record_id
-    deleter = headers("bob", ["products:read", "products:delete"])
-    if archived:
-        response = c.post(path + "/archive", headers=deleter)
-        assert response.status_code == 200, response.text
-    before = c.get(path + "?include_deleted=true", headers=deleter).json()
-    assert c.delete(path, headers=deleter).status_code == 403
-    assert c.get(path + "?include_deleted=true", headers=deleter).json() == before
-    admin = headers("bob", ["products:delete", "agent_os:admin"])
-    assert c.delete(path, headers=admin).status_code == 204
-    assert c.get(path + "?include_deleted=true", headers=deleter).status_code == 404
+    with make_client(True) as c:
+        record_id = create(c, "alice")
+        path = "/company/products/" + record_id
+        deleter = headers("bob", ["products:read", "products:delete"])
+        if archived:
+            response = c.post(path + "/archive", headers=deleter)
+            assert response.status_code == 200, response.text
+        before = c.get(path + "?include_deleted=true", headers=deleter).json()
+        assert c.delete(path, headers=deleter).status_code == 403
+        assert c.get(path + "?include_deleted=true", headers=deleter).json() == before
+        admin = headers("bob", ["products:delete", "agent_os:admin"])
+        assert c.delete(path, headers=admin).status_code == 204
+        assert c.get(path + "?include_deleted=true", headers=deleter).status_code == 404
 
 
 def test_explicit_archive_requires_delete_scope(make_client):

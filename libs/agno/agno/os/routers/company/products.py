@@ -156,7 +156,8 @@ def get_products_router(
                 raise
             raise HTTPException(503, "Cannot verify the records for permanent deletion") from exc
         routine_ids = (existing.get("metadata") or {}).get("routine_ids") or []
-        if routine_ids:
+        # Archived Routines lose their Product link but remain in the schedule catalog.
+        if routine_ids or (os is not None and os.db is not None):
             from agno.scheduler import ScheduleManager
 
             if os is None or os.db is None:
