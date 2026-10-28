@@ -3611,6 +3611,95 @@ async def test_permanent_delete_refuses_live_execution_after_task_move(system, r
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("resource", ["tasks", "projects", "products"])
+@pytest.mark.parametrize("queue_available", [True, False])
+@pytest.mark.parametrize("run_state", ["unstarted", "completed", "paused"])
+async def test_permanent_delete_checks_generic_run_without_company_attempt(
+    system, monkeypatch, resource, queue_available, run_state
+):
+    from agno.company.execution import _call
+    from agno.tools import tool
+
+    class ConfirmationModel(OfflineModel):
+        def invoke(self, *args, **kwargs):
+            return ModelResponse(
+                role="assistant",
+                tool_calls=[
+                    {"id": "approval", "type": "function", "function": {"name": "approve_action", "arguments": "{}"}}
+                ],
+                response_usage=MessageMetrics(),
+            )
+
+    @tool(requires_confirmation=True)
+    def approve_action() -> str:
+        """Require approval before performing the action."""
+        raise AssertionError("An unapproved tool must not execute")
+
+    client, db, worker, os, components = system
+    # ASGITransport does not run AgentOS's database-initialization lifespan.
+    await _call(db, "_create_all_tables")
+    if run_state == "paused":
+        components["writer"].model = ConfirmationModel()
+        components["writer"].tools = [approve_action]
+    if not queue_available:
+        monkeypatch.setattr(worker.authorization_app.state, "queue_worker", None)
+    task = await accepted(client)
+    run = None
+    if run_state != "unstarted":
+        response = await client.post(
+            "/agents/writer/runs",
+            data={"message": "Draft", "session_id": task["session_id"], "stream": "false", "background": "false"},
+        )
+        assert response.status_code == 200, response.text
+        run = response.json()
+        assert run["status"] == run_state.upper()
+        assert (await _call(db, "get_run", run["run_id"], deserialize=False))["status"] == run["status"]
+    before = await _call(db, "get_task", task["id"])
+    assert before["status"] == "ready" and before["job_id"] is None and before["result"] is None
+    assert not any(entry.get("attempt") for entry in before["transitions"])
+    assert (await worker.store.list_jobs())[1] == 0
+    record_id = task[{"tasks": "id", "projects": "project_id", "products": "product_id"}[resource]]
+    path = f"/company/{resource}/{record_id}"
+    if run_state == "paused":
+        for _ in range(2):
+            refused = await client.delete(path)
+            assert refused.status_code == 409, refused.text
+            assert await _call(db, "get_task", task["id"], include_deleted=True) == before
+    else:
+        removed = await client.delete(path)
+        assert removed.status_code == 204, removed.text
+        assert await _call(db, "get_task", task["id"], include_deleted=True) is None
+    if run is not None:
+        assert (await _call(db, "get_run", run["run_id"], deserialize=False))["status"] == run["status"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["runs", "executor", "storage"])
+async def test_unattempted_task_delete_refuses_unverifiable_executor_session(system, monkeypatch, failure):
+    from agno.company.execution import _call
+
+    client, db, _, os, components = system
+    task = await accepted(client)
+    before = await _call(db, "get_task", task["id"])
+    if failure == "executor":
+        os.registry.agents.remove(components["writer"])
+    elif failure == "storage":
+        monkeypatch.setattr(components["writer"], "db", None)
+    else:
+
+        def unavailable(*args, raise_on_error=False, **kwargs):
+            raise RuntimeError("Run storage unavailable")
+
+        async def aunavailable(*args, raise_on_error=False, **kwargs):
+            return unavailable(*args, **kwargs)
+
+        monkeypatch.setattr(db, "get_runs", aunavailable if isinstance(db, AsyncBaseDb) else unavailable)
+    response = await client.delete("/company/tasks/" + task["id"])
+    assert response.status_code == 503, response.text
+    assert await _call(db, "get_task", task["id"], include_deleted=True) == before
+
+
+@pytest.mark.asyncio
 async def test_permanent_delete_checks_older_run_and_retains_terminal_history(system):
     from agno.company.execution import _call
 
@@ -3690,6 +3779,7 @@ async def test_permanent_delete_checks_live_tasks_below_archived_parents(system,
     from agno.company.execution import _call
 
     client, db, worker, _, _ = system
+    await _call(db, "_create_all_tables")
     task = await accepted(client)
     started = await client.post(f"/company/tasks/{task['id']}/runs")
     assert started.status_code == 202, started.text
@@ -3737,7 +3827,10 @@ async def test_permanent_delete_checks_live_tasks_below_archived_parents(system,
 async def test_empty_record_delete_does_not_require_queue_health(system, monkeypatch):
     from unittest.mock import AsyncMock
 
-    client, _, worker, _, _ = system
+    from agno.company.execution import _call
+
+    client, db, worker, _, _ = system
+    await _call(db, "_create_all_tables")
     product = (await client.post("/company/products", json={"name": "Empty"})).json()
     project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Empty"})).json()
     monkeypatch.setattr(worker.store, "list_jobs", AsyncMock(side_effect=RuntimeError("Unavailable")))

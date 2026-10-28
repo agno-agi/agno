@@ -133,14 +133,14 @@ async def _verify_task_purge(os: Any, tasks: List[Dict[str, Any]], queue: Any = 
 
     if not tasks:
         return
-    attempted = [
-        task
+    attempted = {
+        task["id"]
         for task in tasks
         if task.get("job_id")
         or task.get("result") is not None
         or task["status"] == "in_progress"
         or any(entry.get("attempt") for entry in task.get("transitions", []))
-    ]
+    }
     if attempted and (os is None or queue is None):
         raise _TaskRunUnavailable("Cannot verify Task executions; the runtime is unavailable")
     if queue is not None:
@@ -162,7 +162,10 @@ async def _verify_task_purge(os: Any, tasks: List[Dict[str, Any]], queue: Any = 
             for job in jobs
         ):
             raise _TaskRunConflict("Cancel live Task executions before permanently deleting their records")
-    for task in attempted:
+    for task in tasks:
+        # Generic foreground runs use Task sessions without recording Company attempts.
+        if task["id"] not in attempted and not (task.get("executor_type") and task.get("executor_id")):
+            continue
         try:
             if not task.get("session_id"):
                 raise _TaskRunUnavailable("Task session identity is unavailable")
