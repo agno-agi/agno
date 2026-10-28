@@ -250,6 +250,16 @@ async def map_stream_events_to_run_events(
             # content has no text chunks, and is given as its JSON string.
             if event.content or event.data is not None:
                 final_content = event.content or json.dumps(event.data)
+            # A single message is the whole response: there is no final event to follow
+            if event.is_final:
+                yield RunCompletedEvent(
+                    content=final_content,
+                    metadata=event.metadata,
+                    run_id=run_id,
+                    session_id=session_id,
+                    agent_id=agent_id,
+                )
+                break
 
         elif event.is_content and event.content:
             accumulated_content += event.content
@@ -428,6 +438,16 @@ async def map_stream_events_to_team_run_events(
             # content has no text chunks, and is given as its JSON string.
             if event.content or event.data is not None:
                 final_content = event.content or json.dumps(event.data)
+            # A single message is the whole response: there is no final event to follow
+            if event.is_final:
+                yield TeamRunCompletedEvent(
+                    content=final_content,
+                    metadata=event.metadata,
+                    run_id=run_id,
+                    session_id=session_id,
+                    team_id=team_id,
+                )
+                break
 
         elif event.is_content and event.content:
             accumulated_content += event.content
@@ -589,6 +609,16 @@ async def map_stream_events_to_workflow_run_events(
             # content has no text chunks, and is given as its JSON string.
             if event.content or event.data is not None:
                 final_content = event.content or json.dumps(event.data)
+            # A single message is the whole response: there is no final event to follow
+            if event.is_final:
+                yield WorkflowCompletedEvent(
+                    content=final_content,
+                    metadata=event.metadata,
+                    run_id=run_id,
+                    session_id=session_id,
+                    workflow_id=workflow_id,
+                )
+                break
 
         elif event.is_content and event.content:
             accumulated_content += event.content
