@@ -2655,8 +2655,10 @@ class Model(ABC):
 
         from agno.offload.types import NEVER_OFFLOADED_TOOLS
 
+        stopped_due_to_stop_after_tool_call = False
+        stopped_at_index = -1
         function_calls_to_run = []
-        for fc in function_calls:
+        for i, fc in enumerate(function_calls):
             # The read-back tools exist only because offloading replaced a result
             # the model was told to go and read. Counting them against the limit
             # can refuse the very read the run needs to answer.
@@ -2674,6 +2676,8 @@ class Model(ABC):
                     continue
             function_calls_to_run.append(fc)
             if fc.function.stop_after_tool_call:
+                stopped_due_to_stop_after_tool_call = True
+                stopped_at_index = i
                 break
 
         # Yield tool_call_started events for all function calls or pause them
@@ -3135,13 +3139,19 @@ class Model(ABC):
 
             # Check if we should stop after this tool call
             if function_call_result.stop_after_tool_call or any(m.stop_after_tool_call for m in additional_input):
+                stopped_due_to_stop_after_tool_call = True
+                for idx, fc in enumerate(function_calls):
+                    if fc.call_id == function_call_result.tool_call_id:
+                        stopped_at_index = idx
+                        break
                 break
 
         # Append stub results for any function calls in the batch that were not executed
-        answered_ids = {m.tool_call_id for m in function_call_results if m.tool_call_id}
-        for remaining_fc in function_calls:
-            if remaining_fc.call_id not in answered_ids:
-                function_call_results.append(self.create_tool_call_skipped_result(remaining_fc))
+        if stopped_due_to_stop_after_tool_call and stopped_at_index >= 0:
+            answered_ids = {m.tool_call_id for m in function_call_results if m.tool_call_id}
+            for remaining_fc in function_calls[stopped_at_index + 1 :]:
+                if remaining_fc.call_id not in answered_ids:
+                    function_call_results.append(self.create_tool_call_skipped_result(remaining_fc))
 
         # Add any additional messages at the end
         if additional_input:

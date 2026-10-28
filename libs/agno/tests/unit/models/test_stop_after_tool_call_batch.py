@@ -10,7 +10,7 @@ import pytest
 
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.response import ModelResponse
+from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.tools.function import Function, FunctionCall
 
 
@@ -288,3 +288,21 @@ async def test_async_batch_middle_tool_stops_subsequent_tools_not_invoked():
     assert results[1].tool_name == "tool2"
     assert results[2].tool_name == "tool3"
     assert "skipped" in str(results[2].content)
+
+
+@pytest.mark.asyncio
+async def test_async_batch_paused_tool_without_stop_is_not_stubbed():
+    """A tool requiring external execution without stop_after_tool_call must not receive a skipped stub result."""
+    func = Function.from_callable(lambda: "external", name="ext_tool")
+    func.external_execution = True
+    func.process_entrypoint()
+    fc = FunctionCall(function=func, arguments={}, call_id="call_ext")
+
+    model = _StubModel()
+    results: List[Message] = []
+    events = [event async for event in model.arun_function_calls([fc], function_call_results=results)]
+    assert len(results) == 0
+    assert any(
+        isinstance(e, ModelResponse) and getattr(e, "event", None) == ModelResponseEvent.tool_call_paused.value
+        for e in events
+    )
