@@ -394,11 +394,11 @@ class InMemoryDb(BaseDb):
                 self._run_object_cache.pop(session_id, None)
                 # First insert: serialize whatever runs the incoming session
                 # carries, once (bulk import and restore callers never call
-                # upsert_run). to_dict output is freshly built, so it needs
-                # no defensive copy.
+                # upsert_run). Serialized runs may still share nested values
+                # with the caller, so detach them before storing.
                 incoming_runs = session.runs
                 runs_for_store = (
-                    [run.to_dict() if hasattr(run, "to_dict") else deepcopy(run) for run in incoming_runs]
+                    [deepcopy(run.to_dict() if hasattr(run, "to_dict") else run) for run in incoming_runs]
                     if incoming_runs
                     else None
                 )

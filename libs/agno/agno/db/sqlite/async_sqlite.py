@@ -64,7 +64,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, ForeignKey, MetaData, String, Table, case, func, select, text
+    from sqlalchemy import Column, ForeignKey, MetaData, Table, case, func, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
     from sqlalchemy.schema import Index, UniqueConstraint
@@ -2266,8 +2266,11 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if team_id is not None:
                     stmt = stmt.where(table.c.team_id == team_id)
                 if topics is not None:
+                    topic_values = func.json_each(table.c.topics).table_valued("value")
                     for topic in topics:
-                        stmt = stmt.where(func.cast(table.c.topics, String).like(f'%"{topic}"%'))
+                        stmt = stmt.where(
+                            select(1).select_from(topic_values).where(topic_values.c.value == topic).exists()
+                        )
                 if search_content is not None:
                     stmt = stmt.where(table.c.memory.ilike(f"%{search_content}%"))
 
@@ -2390,7 +2393,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = await self._get_table(table_type="memories")
+            table = await self._get_table(table_type="memories", create_table_if_not_found=True)
             if table is None:
                 return None
 
@@ -2467,7 +2470,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             return []
 
         try:
-            table = await self._get_table(table_type="memories")
+            table = await self._get_table(table_type="memories", create_table_if_not_found=True)
             if table is None:
                 log_info("Memories table not available, falling back to individual upserts")
                 return [

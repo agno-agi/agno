@@ -88,7 +88,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, MetaData, String, Table, Text, and_, case, func, or_, select, text
+    from sqlalchemy import Column, MetaData, Table, Text, and_, case, func, or_, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.exc import IntegrityError
@@ -2523,8 +2523,11 @@ class SqliteDb(BaseDb):
                 if team_id is not None:
                     stmt = stmt.where(table.c.team_id == team_id)
                 if topics is not None:
+                    topic_values = func.json_each(table.c.topics).table_valued("value")
                     for topic in topics:
-                        stmt = stmt.where(func.cast(table.c.topics, String).like(f'%"{topic}"%'))
+                        stmt = stmt.where(
+                            select(1).select_from(topic_values).where(topic_values.c.value == topic).exists()
+                        )
                 if search_content is not None:
                     stmt = stmt.where(table.c.memory.ilike(f"%{search_content}%"))
 
