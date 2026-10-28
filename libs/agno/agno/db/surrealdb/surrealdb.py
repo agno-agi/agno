@@ -295,6 +295,10 @@ class SurrealDb(BaseDb):
         rows = [desurrealize_run_row(r) for r in rows_raw]
         return [r["run_data"] for r in rows if "run_data" in r]
 
+    def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """Run dicts for several sessions in one read, used by the search fallback."""
+        return self._get_sessions_runs_data(session_ids)
+
     def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         if not session_ids:
             return {}
@@ -640,6 +644,7 @@ class SurrealDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         r"""
         Get all sessions in the given table. Can filter by user_id and entity_id.
@@ -744,8 +749,9 @@ class SurrealDb(BaseDb):
         sessions_raw = self._query(query, where_vars, dict)
         converted_sessions_raw = [desurrealize_session(session) for session in sessions_raw]
 
+        # Search scans skip the runs table; the record's legacy runs field is kept for merging later.
         # Attach runs from the runs table, merged with legacy blob
-        if converted_sessions_raw:
+        if include_runs and converted_sessions_raw:
             try:
                 runs_by_session = self._get_sessions_runs_data(
                     [s["session_id"] for s in converted_sessions_raw if s.get("session_id")]

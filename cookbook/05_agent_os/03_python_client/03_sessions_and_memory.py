@@ -69,13 +69,13 @@ async def manage_session_and_memory() -> None:
         print(f"Runs in session: {len(runs)}")
 
         # Previews are a lightweight listing of every run, for navigating long sessions.
-        previews = await client.get_session_run_previews(
+        previews = await client.aget_session_run_previews(
             session_id=session_id,
             session_type=SessionType.AGENT,
             user_id=USER_ID,
         )
         for preview in previews:
-            print(f"Run {preview.run_index}: {preview.input_preview}")
+            print(f"Run {preview.run_index}: {preview.run_input}")
 
         # With limit, runs come back a page at a time, newest first; pass
         # before_run_index to load older ones.

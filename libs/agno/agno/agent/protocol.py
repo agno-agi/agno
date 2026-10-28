@@ -1,4 +1,13 @@
-from typing import Any, AsyncIterator, Optional, Protocol, Sequence, Union, runtime_checkable
+from typing import (
+    Any,
+    AsyncIterator,
+    Coroutine,
+    Optional,
+    Protocol,
+    Sequence,
+    Union,
+    runtime_checkable,
+)
 
 from agno.media import Audio, File, Image, Video
 from agno.run.agent import RunOutput, RunOutputEvent
@@ -13,12 +22,12 @@ class AgentProtocol(Protocol):
     """
 
     @property
-    def id(self) -> str: ...
+    def id(self) -> Optional[str]: ...
 
     @property
     def name(self) -> Optional[str]: ...
 
-    # def (not async def) because arun returns either a coroutine or an async iterator.
+    # A non-streaming call returns a coroutine; a streaming call is directly iterable.
     def arun(
         self,
         input: Any,
@@ -31,5 +40,8 @@ class AgentProtocol(Protocol):
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream_events: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        background: bool = False,
+        yield_run_output: bool = False,
         **kwargs: Any,
-    ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]: ...
+    ) -> Union[Coroutine[Any, Any, RunOutput], AsyncIterator[Union[RunOutputEvent, RunOutput, str]]]: ...

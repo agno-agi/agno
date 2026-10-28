@@ -539,3 +539,14 @@ same venv and session. `langgraph_instantiation.py` also emits one deprecation w
 **Result:** All ten are 0 bytes and each exits 0 when executed. Nothing to test.
 
 ---
+## accuracy/ — retired judge model (2026-10-28)
+
+### accuracy_basic.py, accuracy_with_given_answer.py, accuracy_with_tools.py, accuracy_9_11_bigger_or_9_99.py, accuracy_team.py, evaluator_agent.py, db_logging.py, accuracy_eval_metrics.py
+
+**Status:** PASS
+
+**Description:** Re-ran every accuracy example after moving the judge off `o4-mini`, which OpenAI shut down on 2026-10-23, and switching the examples to `OpenAIResponses`. On `main` the judge call returned 404 `model_not_found`, so the evals recorded no results; the agents under test also failed because `OpenAIChat` rejects function tools for these models (`use /v1/responses or set reasoning_effort to 'none'`).
+
+**Result:** All eight exit 0. The seven scoring examples report an average score of 10.00; `accuracy_eval_metrics.py` prints its metrics block. Real OpenAI calls, no mocks.
+
+---

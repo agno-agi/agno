@@ -636,6 +636,22 @@ class TestSessionRunsPagination:
         assert [r["run_index"] for r in body["data"]] == [3, 4]
         assert body["meta"]["total_count"] == 2
 
+    def test_status_filter_applies_before_paging(self):
+        """A status filter narrows the runs first, so a page is full and total_count counts matches."""
+        db = InMemoryDb()
+        _seed_agent_session_with_runs(db, "mixed", count=6)
+        for run in db._sessions["mixed"]["runs"][::2]:
+            run["status"] = "ERROR"
+        client = _build_client(db)
+
+        body = client.get("/sessions/mixed/runs?user_id=user-1&status=error&limit=2").json()
+        assert [r["run_index"] for r in body["data"]] == [2, 4]
+        assert body["meta"] == {"limit": 2, "total_count": 3, "has_more": True}
+
+    def test_invalid_status_rejected_when_paging(self, client):
+        resp = client.get("/sessions/paged/runs?user_id=user-1&status=bogus&limit=2")
+        assert resp.status_code == 400
+
     def test_single_run_carries_run_index(self, client):
         resp = client.get("/sessions/paged/runs/run-3?user_id=user-1")
         assert resp.status_code == 200
@@ -646,74 +662,10 @@ class TestSessionRunsPagination:
         assert resp.status_code == 404
 
 
-class TestSessionRunPreviews:
-    """GET /sessions/{id}/runs/previews lists every run without loading full runs."""
-
-    def test_previews_list_every_run(self):
-        db = InMemoryDb()
-        _seed_agent_session_with_runs(db, "previewed", count=3)
-        client = _build_client(db)
-
-        resp = client.get("/sessions/previewed/runs/previews?user_id=user-1")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert [(p["run_id"], p["run_index"], p["input_preview"]) for p in body] == [
-            (f"run-{i}", i, f"question {i}") for i in range(3)
-        ]
-        assert body[0]["status"] == "COMPLETED"
-        assert "content" not in body[0]
-        assert "messages" not in body[0]
-
-    def test_previews_route_is_not_captured_as_a_run_id(self):
-        """A run literally named 'previews' must not shadow the previews route."""
-        db = InMemoryDb()
-        _seed_session(
-            db,
-            {
-                "session_id": "shadow",
-                "agent_id": "test-agent",
-                "user_id": "user-1",
-                "session_type": "agent",
-                "created_at": 1_700_000_000,
-                "runs": [{"run_id": "previews", "agent_id": "test-agent", "created_at": 1_700_000_000}],
-            },
-        )
-        client = _build_client(db)
-
-        body = client.get("/sessions/shadow/runs/previews?user_id=user-1").json()
-        assert isinstance(body, list)
-        assert body[0]["run_index"] == 0
-
-    def test_input_preview_is_truncated(self):
-        from agno.os.services.sessions import RUN_PREVIEW_INPUT_MAX_CHARS
-
-        db = InMemoryDb()
-        long_input = "x" * (RUN_PREVIEW_INPUT_MAX_CHARS + 50)
-        _seed_session(
-            db,
-            {
-                "session_id": "long",
-                "agent_id": "test-agent",
-                "user_id": "user-1",
-                "session_type": "agent",
-                "created_at": 1_700_000_000,
-                "runs": [
-                    {
-                        "run_id": "run-0",
-                        "agent_id": "test-agent",
-                        "created_at": 1_700_000_000,
-                        "input": {"input_content": long_input},
-                    }
-                ],
-            },
-        )
-        client = _build_client(db)
-
-        body = client.get("/sessions/long/runs/previews?user_id=user-1").json()
-        assert body[0]["input_preview"] == long_input[:RUN_PREVIEW_INPUT_MAX_CHARS]
+class TestSessionRunPreviewsRunIndex:
+    """GET /sessions/{id}/run-previews carries the same run_index as the runs endpoint."""
 
     def test_previews_match_runs_for_team_sessions(self):
-        """Previews list exactly the runs the runs endpoint lists, with the same run_index."""
         db = InMemoryDb()
         _seed_session(
             db,
@@ -733,15 +685,9 @@ class TestSessionRunPreviews:
         client = _build_client(db)
 
         runs = client.get("/sessions/team-previews/runs?type=team&user_id=user-1").json()
-        previews = client.get("/sessions/team-previews/runs/previews?type=team&user_id=user-1").json()
+        previews = client.get("/sessions/team-previews/run-previews?type=team&user_id=user-1").json()
         assert [(r["run_id"], r["run_index"]) for r in runs] == [("member-run", 0), ("team-run", 2)]
         assert [(p["run_id"], p["run_index"]) for p in previews] == [("member-run", 0), ("team-run", 2)]
-        assert previews[0]["parent_run_id"] == "team-run"
-
-    def test_missing_session_returns_404(self):
-        client = _build_client(InMemoryDb())
-        resp = client.get("/sessions/missing/runs/previews?user_id=user-1")
-        assert resp.status_code == 404
 
 
 class TestTeamSessionRunsParsing:

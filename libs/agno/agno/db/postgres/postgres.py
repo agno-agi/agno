@@ -7,8 +7,8 @@ if TYPE_CHECKING:
     from agno.run.status_persist import RunPersistOutcome
     from agno.tracing.schemas import Span, Trace
 
-from agno.db import mcp_oauth_store
 from agno.db.base import (
+    _UNSET_UPDATED_AT,
     DELETED_CONFIG_STAGE,
     PIN_LINK_KINDS,
     BaseDb,
@@ -26,7 +26,7 @@ from agno.db.base import (
 )
 from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.engine import _engine_options
-from agno.db.postgres.schemas import get_table_schema_definition
+from agno.db.postgres.schemas import default_sandbox_table_name, get_table_schema_definition
 from agno.db.postgres.utils import (
     apply_sorting,
     bulk_upsert_metrics,
@@ -34,8 +34,18 @@ from agno.db.postgres.utils import (
     create_schema,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    is_foreign_key_violation,
     is_table_available,
     is_valid_table,
+)
+from agno.db.schemas.authz import (
+    AUTHZ_AUDIT,
+    AUTHZ_DECISIONS,
+    AUTHZ_GROUPING,
+    AUTHZ_POLICY,
+    AUTHZ_ROLES,
+    AUTHZ_TABLE_NAME_ATTRS,
+    AUTHZ_USERS,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -52,6 +62,8 @@ from agno.db.schemas.service_accounts import (
     resolve_service_account_sort_column,
     validate_service_account_update,
 )
+from agno.db.sql import authz as authz_sql
+from agno.db.sql import mcp_oauth as mcp_oauth_sql
 from agno.db.utils import (
     HISTORY_SKIP_STATUSES,
     SessionRunObjectCache,
@@ -121,6 +133,8 @@ def _db_epoch() -> Any:
 
 
 class PostgresDb(BaseDb):
+    serializes_sessions: bool = True
+
     def __init__(
         self,
         db_url: Optional[str] = None,
@@ -140,6 +154,10 @@ class PostgresDb(BaseDb):
         component_links_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
+        products_table: Optional[str] = None,
+        sources_table: Optional[str] = None,
+        projects_table: Optional[str] = None,
+        tasks_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         job_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
@@ -152,6 +170,7 @@ class PostgresDb(BaseDb):
         mcp_oauth_keys_table: Optional[str] = None,
         id: Optional[str] = None,
         create_schema: bool = True,
+        sandbox_table: Optional[str] = None,
     ):
         """
         Interface for interacting with a PostgreSQL database.
@@ -179,6 +198,9 @@ class PostgresDb(BaseDb):
             component_links_table (Optional[str]): Name of the table to store component references.
             learnings_table (Optional[str]): Name of the table to store learnings.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
+            products_table (Optional[str]): Name of the table to store Company Products.
+            projects_table (Optional[str]): Name of the table to store Company Projects.
+            tasks_table (Optional[str]): Name of the table to store Company Tasks.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
             job_table (Optional[str]): Name of the table to store durable background run jobs.
             mcp_oauth_clients_table (Optional[str]): Name of the table to store MCP OAuth client registrations.
@@ -189,6 +211,8 @@ class PostgresDb(BaseDb):
             id (Optional[str]): ID of the database.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
+            sandbox_table (Optional[str]): Name of the table to store sandbox session leases and recovery state.
+                Defaults to "<session_table>_sandbox_bindings"; it serves exactly one session table.
 
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
@@ -228,6 +252,10 @@ class PostgresDb(BaseDb):
             component_links_table=component_links_table,
             learnings_table=learnings_table,
             schedules_table=schedules_table,
+            products_table=products_table,
+            sources_table=sources_table,
+            projects_table=projects_table,
+            tasks_table=tasks_table,
             schedule_runs_table=schedule_runs_table,
             job_table=job_table,
             approvals_table=approvals_table,
@@ -243,6 +271,8 @@ class PostgresDb(BaseDb):
         self.db_schema: str = db_schema if db_schema is not None else "ai"
         self.metadata: MetaData = MetaData(schema=self.db_schema)
         self.create_schema: bool = create_schema
+        # The bindings table has a foreign key to one session table, so each gets its own.
+        self.sandbox_table_name: str = sandbox_table or default_sandbox_table_name(self.session_table_name)
 
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine, expire_on_commit=False))
@@ -262,6 +292,7 @@ class PostgresDb(BaseDb):
             {
                 "db_url": self.db_url,
                 "db_schema": self.db_schema,
+                "sandbox_table": self.sandbox_table_name,
                 "type": "postgres",
             }
         )
@@ -286,7 +317,12 @@ class PostgresDb(BaseDb):
             component_links_table=data.get("component_links_table"),
             learnings_table=data.get("learnings_table"),
             schedules_table=data.get("schedules_table"),
+            products_table=data.get("products_table"),
+            sources_table=data.get("sources_table"),
+            projects_table=data.get("projects_table"),
+            tasks_table=data.get("tasks_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
+            sandbox_table=data.get("sandbox_table"),
             approvals_table=data.get("approvals_table"),
             service_accounts_table=data.get("service_accounts_table"),
             id=data.get("id"),
@@ -361,6 +397,7 @@ class PostgresDb(BaseDb):
                 db_schema=self.db_schema,
                 schedules_table_name=self.schedules_table_name,
                 session_table_name=self.session_table_name,
+                runs_table_name=self.runs_table_name,
             ).copy()
 
             # Register FK parent tables on the metadata first, so SQLAlchemy
@@ -592,6 +629,13 @@ class PostgresDb(BaseDb):
         return table_map.get(logical_name, logical_name)
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
+        if table_type == "transcripts":
+            return self._get_or_create_table(
+                table_name=self.transcripts_table_name,
+                table_type="transcripts",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
         if table_type == "sessions":
             self.session_table = self._get_or_create_table(
                 table_name=self.session_table_name,
@@ -699,6 +743,34 @@ class PostgresDb(BaseDb):
             )
             return self.learnings_table
 
+        if table_type == "sources":
+            return self._get_or_create_table(
+                table_name=self.sources_table_name,
+                table_type="sources",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
+        if table_type == "products":
+            return self._get_or_create_table(
+                table_name=self.products_table_name,
+                table_type="products",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
+        if table_type == "projects":
+            return self._get_or_create_table(
+                table_name=self.projects_table_name,
+                table_type="projects",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
+        if table_type == "tasks":
+            return self._get_or_create_table(
+                table_name=self.tasks_table_name,
+                table_type="tasks",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
         if table_type == "schedules":
             self.schedules_table = self._get_or_create_table(
                 table_name=self.schedules_table_name,
@@ -722,6 +794,14 @@ class PostgresDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.job_table
+
+        if table_type == "sandbox_bindings":
+            self.sandbox_table = self._get_or_create_table(
+                table_name=self.sandbox_table_name,
+                table_type="sandbox_bindings",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.sandbox_table
 
         if table_type == "tool_results":
             self.tool_results_table = self._get_or_create_table(
@@ -755,9 +835,24 @@ class PostgresDb(BaseDb):
             )
             return self.service_accounts_table
 
+        if table_type == "compactions":
+            self.compactions_table = self._get_or_create_table(
+                table_name=self.compactions_table_name,
+                table_type="compactions",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.compactions_table
+
         if table_type in MCP_OAUTH_TABLE_NAME_ATTRS:
             return self._get_or_create_table(
                 table_name=getattr(self, MCP_OAUTH_TABLE_NAME_ATTRS[table_type]),
+                table_type=table_type,
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
+        if table_type in AUTHZ_TABLE_NAME_ATTRS:
+            return self._get_or_create_table(
+                table_name=getattr(self, AUTHZ_TABLE_NAME_ATTRS[table_type]),
                 table_type=table_type,
                 create_table_if_not_found=create_table_if_not_found,
             )
@@ -1005,6 +1100,28 @@ class PostgresDb(BaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             raise e
 
+    def cancel_pending_run(
+        self,
+        run_id: str,
+        *,
+        session_id: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        expected_status: str = "PENDING",
+    ) -> bool:
+        """Cancel an observed Pending or Running run; concurrent status changes win."""
+        from agno.db.sql.runs import cancel_pending_run_statement
+
+        table = self._get_table(table_type="runs")
+        if table is None:
+            return False
+        statement = cancel_pending_run_statement(
+            table, "postgresql", run_id, session_id, reason, user_id, expected_status
+        )
+        with self.Session() as sess, sess.begin():
+            result = sess.execute(statement)
+            return result.scalar_one_or_none() is not None
+
     def upsert_run(
         self,
         run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
@@ -1228,6 +1345,11 @@ class PostgresDb(BaseDb):
             return deleted
 
         except Exception as e:
+            if is_foreign_key_violation(e):
+                # The sandbox bindings table references the run a turn holds; the run stays
+                # until that turn ends, or until its session is deleted.
+                log_warning(f"Run {run_id} was not deleted: an active sandbox turn still holds it")
+                return False
             log_error(f"Error deleting run: {str(e)}")
             raise e
 
@@ -1249,10 +1371,33 @@ class PostgresDb(BaseDb):
             log_debug(f"Successfully deleted {result.rowcount} runs")
 
         except Exception as e:
+            if is_foreign_key_violation(e):
+                # One statement, so none of the runs were deleted.
+                log_warning("Runs were not deleted: an active sandbox turn still holds one of them")
+                return
             log_error(f"Error deleting runs: {str(e)}")
             raise e
 
     # -- Session methods --
+    def reassign_session_owner(self, session_id: str, *, previous_user_id: str, user_id: Optional[str]) -> bool:
+        """Transfer only an idle session with the observed owner, without rewriting history."""
+        table = self._get_table(table_type="sessions")
+        runs = self._get_table(table_type="runs")
+        if table is None or runs is None:
+            return False
+        active = select(runs.c.run_id).where(
+            runs.c.session_id == session_id, runs.c.status.in_(["PENDING", "RUNNING", "PAUSED"])
+        )
+        statement = (
+            table.update()
+            .where(table.c.session_id == session_id, table.c.user_id == previous_user_id, ~active.exists())
+            .values(user_id=user_id)
+            .returning(table.c.session_id)
+        )
+        with self.Session() as sess, sess.begin():
+            result = sess.execute(statement)
+            return result.scalar_one_or_none() is not None
+
     def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """
         Delete a session from the database.
@@ -1272,8 +1417,11 @@ class PostgresDb(BaseDb):
             if table is None:
                 return False
             runs_table = self._get_table(table_type="runs")
+            transcripts_table = self._get_table(table_type="transcripts")
+            compactions_table = self._get_table(table_type="compactions")
 
             with self.Session() as sess, sess.begin():
+                sandbox_leftovers = self._collect_sandbox_leftovers(sess, [session_id])
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
                 if user_id is not None:
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
@@ -1286,11 +1434,20 @@ class PostgresDb(BaseDb):
                 # Also delete the runs belonging to the session
                 if runs_table is not None:
                     sess.execute(runs_table.delete().where(runs_table.c.session_id == session_id))
+                # And external-agent transcripts, which also hold the conversation verbatim.
+                if transcripts_table is not None:
+                    sess.execute(transcripts_table.delete().where(transcripts_table.c.agno_session_id == session_id))
+                # And its compaction records. They hold the folded transcript verbatim, and are
+                # found by session id - left behind, a session recreated under the same id would
+                # inherit the old fold and offer the agent a search over the deleted conversation.
+                if compactions_table is not None:
+                    sess.execute(compactions_table.delete().where(compactions_table.c.session_id == session_id))
 
                 log_debug(f"Successfully deleted session with session_id: {session_id} in table {table.name}")
 
             # Cascade offloaded tool results after the session delete commits.
             self._cascade_tool_results([session_id])
+            self._release_sandbox_leftovers(sandbox_leftovers)
             # A deleted session's deserialized history must not stay resident.
             self._run_object_cache.drop_session(session_id)
             return True
@@ -1315,6 +1472,8 @@ class PostgresDb(BaseDb):
             if table is None:
                 return
             runs_table = self._get_table(table_type="runs")
+            transcripts_table = self._get_table(table_type="transcripts")
+            compactions_table = self._get_table(table_type="compactions")
 
             with self.Session() as sess, sess.begin():
                 # The ids a user_id-scoped delete is allowed to touch. The
@@ -1330,6 +1489,7 @@ class PostgresDb(BaseDb):
                 # to protect, so it also cleans up after a session whose row
                 # is already gone.
                 cascade_ids = session_ids if user_id is None else deletable_ids
+                sandbox_leftovers = self._collect_sandbox_leftovers(sess, deletable_ids)
 
                 delete_stmt = table.delete().where(table.c.session_id.in_(deletable_ids))
                 result = sess.execute(delete_stmt)
@@ -1340,17 +1500,55 @@ class PostgresDb(BaseDb):
                     if user_id is not None:
                         runs_delete_stmt = runs_delete_stmt.where(runs_table.c.user_id == user_id)
                     sess.execute(runs_delete_stmt)
+                # And external-agent transcripts, which also hold the conversation verbatim.
+                if transcripts_table is not None:
+                    sess.execute(transcripts_table.delete().where(transcripts_table.c.agno_session_id.in_(cascade_ids)))
+
+                # And their compaction records. They hold the folded transcript verbatim, and are
+                # found by session id - left behind, a session recreated under the same id would
+                # inherit the old fold and offer the agent a search over the deleted conversation.
+                # Scoped like the tool-result cascade: only sessions this delete was allowed to remove.
+                if compactions_table is not None:
+                    sess.execute(compactions_table.delete().where(compactions_table.c.session_id.in_(cascade_ids)))
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")
 
             # Cascade offloaded tool results after the session delete commits.
             self._cascade_tool_results(cascade_ids)
+            self._release_sandbox_leftovers(sandbox_leftovers)
             for deleted_id in cascade_ids:
                 self._run_object_cache.drop_session(deleted_id)
 
         except Exception as e:
             log_error(f"Error deleting sessions: {str(e)}")
             raise e
+
+    def _collect_sandbox_leftovers(self, sess: Any, session_ids: List[str]) -> List[Any]:
+        """Read what deleting these sessions would orphan in a sandbox, before the cascade drops their bindings.
+
+        A savepoint keeps a failed read from rolling back the delete itself.
+        """
+        collected = []
+        for coordinator in list(getattr(self, "sandbox_coordinators", None) or []):
+            try:
+                with sess.begin_nested():
+                    collected.append(
+                        (coordinator, coordinator.collect_deleted_sessions(sess.connection(), session_ids))
+                    )
+            except Exception as e:
+                log_warning(f"Could not read sandbox resources of deleted sessions: {e}")
+        return collected
+
+    @staticmethod
+    def _release_sandbox_leftovers(collected: List[Any]) -> None:
+        """Remove deleted sessions' sandbox computers and checkpoints, after the delete commits."""
+        for coordinator, leftovers in collected:
+            if not leftovers:
+                continue
+            try:
+                coordinator.release_deleted_sessions(leftovers)
+            except Exception as e:
+                log_warning(f"Could not remove sandbox resources of deleted sessions: {e}")
 
     def _cascade_tool_results(self, session_ids: List[str]) -> None:
         """Cascade result offloading on session delete: read the index rows,
@@ -1478,6 +1676,73 @@ class PostgresDb(BaseDb):
         with self.Session() as sess:
             return [dict(row._mapping) for row in sess.execute(stmt).fetchall()]
 
+    # --- Compactions ---
+
+    def upsert_compaction(self, row: Dict[str, Any]) -> None:
+        """Insert one compaction record.
+
+        Records are immutable facts about a single fold, so a conflicting id means
+        the same record is being written twice; the insert is a no-op rather than
+        an update.
+        """
+        table = self._get_table(table_type="compactions", create_table_if_not_found=True)
+        if table is None:
+            raise ValueError(f"Could not create table: {self.compactions_table_name}")
+        from sqlalchemy.dialects.postgresql import insert as _insert
+
+        stmt = _insert(table).values(**row).on_conflict_do_nothing(index_elements=["compaction_id"])
+        with self.Session() as sess, sess.begin():
+            sess.execute(stmt)
+
+    def get_compaction(self, compaction_id: str) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="compactions")
+        if table is None:
+            return None
+        with self.Session() as sess:
+            row = sess.execute(select(table).where(table.c.compaction_id == compaction_id)).fetchone()
+            return dict(row._mapping) if row is not None else None
+
+    def get_compactions_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        table = self._get_table(table_type="compactions")
+        if table is None:
+            return []
+        stmt = select(table).where(table.c.session_id == session_id).order_by(table.c.created_at.desc())
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        with self.Session() as sess:
+            return [dict(r._mapping) for r in sess.execute(stmt).fetchall()]
+
+    def delete_compactions_for_session(self, session_id: str) -> int:
+        table = self._get_table(table_type="compactions")
+        if table is None:
+            return 0
+        with self.Session() as sess, sess.begin():
+            result = sess.execute(table.delete().where(table.c.session_id == session_id))
+            return result.rowcount or 0
+
+    def search_compactions(
+        self, session_id: str, query: Union[str, Sequence[str]], limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Records whose archived transcript contains ``query`` - or any of several terms - newest first.
+
+        A substring match, scoped to one session so a search can never reach another conversation's
+        history. Several terms are one query, so every fold matching any of them is a candidate.
+        """
+        table = self._get_table(table_type="compactions")
+        terms = [query] if isinstance(query, str) else list(query)
+        terms = [term for term in terms if term]
+        if table is None or not terms:
+            return []
+        stmt = (
+            select(table)
+            .where(table.c.session_id == session_id)
+            .where(or_(*(table.c.archived_messages.ilike(f"%{term}%") for term in terms)))
+            .order_by(table.c.created_at.desc())
+            .limit(limit)
+        )
+        with self.Session() as sess:
+            return [dict(r._mapping) for r in sess.execute(stmt).fetchall()]
+
     def get_session(
         self,
         session_id: str,
@@ -1589,6 +1854,7 @@ class PostgresDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
         include_runs: bool = True,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and component_id.
@@ -1619,6 +1885,9 @@ class PostgresDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        from agno.db.session_filters import normalize_session_filter, session_filter_to_sqlalchemy
+
+        filter_expr = normalize_session_filter(filter_expr)
         validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="sessions")
@@ -1628,6 +1897,9 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
+
+                if filter_expr is not None:
+                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table))
 
                 # Filtering
                 if user_id is not None:
@@ -2633,47 +2905,70 @@ class PostgresDb(BaseDb):
                 return []
             runs_table = self._get_table(table_type="runs")
 
-            columns = [
+            filters = []
+            if start_timestamp is not None:
+                filters.append(table.c.created_at >= start_timestamp)
+            if end_timestamp is not None:
+                filters.append(table.c.created_at <= end_timestamp)
+
+            stmt = select(
                 table.c.session_id,
                 table.c.user_id,
                 table.c.session_data,
                 table.c.created_at,
                 table.c.session_type,
-            ]
-            # Include the legacy runs column if it still exists, to count not yet migrated runs
-            if "runs" in table.c:
-                columns.append(table.c.runs)
-
-            stmt = select(*columns)
-
-            if start_timestamp is not None:
-                stmt = stmt.where(table.c.created_at >= start_timestamp)
-            if end_timestamp is not None:
-                stmt = stmt.where(table.c.created_at <= end_timestamp)
+            ).where(*filters)
 
             with self.Session() as sess:
                 result = sess.execute(stmt).fetchall()
                 sessions = [dict(record._mapping) for record in result]
+                if not sessions:
+                    return sessions
 
-                # Attach lightweight run info (model and provider) from the runs table
-                if runs_table is not None and sessions:
-                    session_ids = [s["session_id"] for s in sessions]
-                    runs_stmt = select(
-                        runs_table.c.session_id,
-                        runs_table.c.run_data["model"].astext.label("model"),
-                        runs_table.c.run_data["model_provider"].astext.label("model_provider"),
-                    ).where(runs_table.c.session_id.in_(session_ids))
+                # Only each run's model and provider are read, never whole runs
+                runs_stmts = []
+                if runs_table is not None:
+                    # Subquery, not a list of ids: one bind parameter per session overflows the driver's limit
+                    runs_stmts.append(
+                        select(
+                            runs_table.c.session_id,
+                            runs_table.c.run_data["model"].astext.label("model"),
+                            # A missing provider counts as "", not "None"
+                            func.coalesce(runs_table.c.run_data["model_provider"].astext, "").label("model_provider"),
+                        ).where(runs_table.c.session_id.in_(select(table.c.session_id).where(*filters)))
+                    )
+                # Runs not yet migrated out of the legacy column, extracted in the database instead of loading the column
+                if "runs" in table.c:
+                    legacy_runs = sa_cast(table.c.runs, postgresql.JSONB)
+                    legacy_run = func.jsonb_array_elements(
+                        case(
+                            (func.jsonb_typeof(legacy_runs) == "array", legacy_runs),
+                            else_=func.jsonb_build_array(),
+                        ),
+                        type_=postgresql.JSONB,
+                    ).column_valued("legacy_run", joins_implicitly=True)
+                    legacy_runs_stmt = select(
+                        table.c.session_id,
+                        legacy_run["model"].astext.label("model"),
+                        func.coalesce(legacy_run["model_provider"].astext, "").label("model_provider"),
+                    ).where(*filters)
+                    if runs_table is not None:
+                        legacy_runs_stmt = legacy_runs_stmt.where(
+                            ~select(runs_table.c.session_id)
+                            .where(runs_table.c.session_id == table.c.session_id)
+                            .exists()
+                        )
+                    runs_stmts.append(legacy_runs_stmt)
 
-                    runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+                runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+                for runs_stmt in runs_stmts:
                     for session_id, model, model_provider in sess.execute(runs_stmt).fetchall():
                         runs_by_session.setdefault(session_id, []).append(
                             {"model": model, "model_provider": model_provider}
                         )
 
-                    for s in sessions:
-                        runs_data = runs_by_session.get(s["session_id"], [])
-                        if runs_data or not s.get("runs"):
-                            s["runs"] = runs_data
+                for s in sessions:
+                    s["runs"] = runs_by_session.get(s["session_id"], [])
 
                 return sessions
 
@@ -2711,9 +3006,12 @@ class PostgresDb(BaseDb):
                 return starting_date
 
         # 2. No metrics records. Return the date of the first recorded session.
-        first_session, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
-
-        first_session_date = first_session[0]["created_at"] if first_session else None  # type: ignore[index]
+        # Queried directly rather than through get_sessions, which also counts and loads runs
+        sessions_table = self._get_table(table_type="sessions")
+        if sessions_table is None:
+            return None
+        with self.Session() as sess:
+            first_session_date = sess.execute(select(func.min(sessions_table.c.created_at))).scalar()
 
         # 3. No metrics records and no sessions records. Return None.
         if first_session_date is None:
@@ -6949,7 +7247,7 @@ class PostgresDb(BaseDb):
             raise
 
     def update_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+        self, schedule_id: str, user_id: Optional[str] = None, *, preserve_updated_at: bool = False, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.scheduler import validate_schedule_update
 
@@ -6962,7 +7260,8 @@ class PostgresDb(BaseDb):
                 # A system-set disabled_reason describes why the row was off;
                 # turning it on retires the explanation.
                 kwargs.setdefault("disabled_reason", None)
-            kwargs["updated_at"] = int(time.time())
+            if not preserve_updated_at:
+                kwargs["updated_at"] = int(time.time())
             with self.Session() as sess, sess.begin():
                 stmt = table.update().where(table.c.id == schedule_id)
                 if user_id is not None:
@@ -7043,6 +7342,8 @@ class PostgresDb(BaseDb):
         The table is passed in because the caller may hold an open transaction
         on this scoped session; _get_table would try to begin a second one.
         """
+        from sqlalchemy import literal
+
         from agno.db.schemas.scheduler import build_run_endpoint
 
         endpoint = build_run_endpoint(target_type, target_id)
@@ -7067,7 +7368,15 @@ class PostgresDb(BaseDb):
                 ),
                 table.c.enabled.is_(True),
             )
-            .values(enabled=False, disabled_reason=reason, updated_at=int(time.time()))
+            # An archive cascade is not a user edit, so a Company routine keeps its last-edit time.
+            .values(
+                enabled=False,
+                disabled_reason=reason,
+                updated_at=case(
+                    (table.c.managed_by == "company", table.c.updated_at),
+                    else_=literal(int(time.time()), table.c.updated_at.type),
+                ),
+            )
         )
         return int(result.rowcount or 0)
 
@@ -7142,20 +7451,53 @@ class PostgresDb(BaseDb):
             log_debug(f"Error claiming schedule: {e}")
             return None
 
-    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+    def release_schedule(
+        self,
+        schedule_id: str,
+        next_run_at: Optional[int] = None,
+        *,
+        worker_id: Optional[str] = None,
+        locked_at: Optional[int] = None,
+        preserve_updated_at: bool = False,
+    ) -> bool:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return False
-            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
-            if next_run_at is not None:
-                updates["next_run_at"] = next_run_at
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+            if not preserve_updated_at:
+                updates["updated_at"] = int(time.time())
+            # A cron may be cleared while this claim is running. Never re-arm
+            # an on-demand schedule using the executor's older schedule snapshot.
+            updates["next_run_at"] = case(
+                (table.c.cron_expr == "", None),
+                else_=next_run_at if next_run_at is not None else table.c.next_run_at,
+            )
+            statement = table.update().where(table.c.id == schedule_id)
+            if worker_id is not None:
+                statement = statement.where(table.c.locked_by == worker_id)
+            if locked_at is not None:
+                statement = statement.where(table.c.locked_at == locked_at)
             with self.Session() as sess, sess.begin():
-                result = sess.execute(table.update().where(table.c.id == schedule_id).values(**updates))
+                result = sess.execute(statement.values(**updates))
                 return result.rowcount > 0
         except Exception as e:
             log_debug(f"Error releasing schedule: {e}")
             return False
+
+    def delete_schedule_runs(self, schedule_id: str, *, before: int) -> int:
+        """Expire only completed history for the selected schedule."""
+        table = self._get_table(table_type="schedule_runs")
+        if table is None:
+            return 0
+        statement = (
+            table.delete()
+            .where(table.c.schedule_id == schedule_id, table.c.completed_at < before)
+            .returning(table.c.id)
+        )
+        with self.Session() as sess, sess.begin():
+            result = sess.execute(statement)
+            return len(result.scalars().all())
 
     def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -7195,6 +7537,31 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_debug(f"Error getting schedule run: {e}")
             return None
+
+    def get_latest_schedule_runs(self, schedule_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Fetch one most recent run per schedule, without per-schedule queries."""
+        if not schedule_ids:
+            return {}
+        table = self._get_table(table_type="schedule_runs")
+        if table is None:
+            return {}
+        ranked = (
+            select(
+                table,
+                func.row_number()
+                .over(
+                    partition_by=table.c.schedule_id,
+                    order_by=(table.c.triggered_at.desc(), table.c.created_at.desc(), table.c.id.desc()),
+                )
+                .label("position"),
+            )
+            .where(table.c.schedule_id.in_(schedule_ids))
+            .subquery()
+        )
+        stmt = select(*(ranked.c[column.name] for column in table.columns)).where(ranked.c.position == 1)
+        with self.Session() as sess:
+            result = sess.execute(stmt)
+            return {row._mapping["schedule_id"]: dict(row._mapping) for row in result.fetchall()}
 
     def get_schedule_runs(
         self,
@@ -7242,6 +7609,7 @@ class PostgresDb(BaseDb):
         expected_attempt: Optional[int] = None,
         user_id: Optional[str] = None,
         content_if_absent: Optional[str] = None,
+        session_data: Optional[Dict[str, Any]] = None,
     ) -> "RunPersistOutcome":
         """Sync twin of AsyncPostgresDb.update_run_in_session - ported to the
         denormalized runs table (v3.0); see that docstring."""
@@ -7256,6 +7624,11 @@ class PostgresDb(BaseDb):
             runs_table = self._get_table(table_type="runs")
             if runs_table is None:
                 return RunPersistOutcome.MISSING
+            sessions_table = None
+            if session_data is not None:
+                sessions_table = self._get_table(table_type="sessions")
+                if sessions_table is None:
+                    raise RuntimeError("Cannot persist run metadata without its session table")
             with self.Session() as sess, sess.begin():
                 row = sess.execute(
                     select(runs_table.c.run_data, runs_table.c.status)
@@ -7286,6 +7659,16 @@ class PostgresDb(BaseDb):
                 if fields.get("status") is not None:
                     values["status"] = fields["status"]
                 sess.execute(update(runs_table).where(runs_table.c.run_id == run_id).values(**values))
+                if sessions_table is not None:
+                    session_write = sess.execute(
+                        update(sessions_table)
+                        .where(sessions_table.c.session_id == session_id)
+                        .where((sessions_table.c.user_id == user_id) | sessions_table.c.user_id.is_(None))
+                        .values(session_data=sanitize_postgres_strings(session_data), updated_at=int(time.time()))
+                        .returning(sessions_table.c.session_id)
+                    )
+                    if session_write.scalar_one_or_none() is None:
+                        raise RuntimeError("Cannot persist run metadata without its owned session")
                 return RunPersistOutcome.UPDATED
         except Exception as e:
             log_warning(f"Error updating run in runs table: {e}")
@@ -7423,6 +7806,14 @@ class PostgresDb(BaseDb):
         if table is None:
             raise RuntimeError("Job queue table is unavailable after provisioning")
 
+    def _q_next_session_seq(self, sess: Any, table: Any, job: Dict[str, Any]) -> int:
+        """Lock the ticket's session and sequence it after every live ticket there."""
+        from agno.job_queue.session import next_session_seq_query, session_claim_lock_key
+
+        lock_key = session_claim_lock_key(table.fullname, job)
+        sess.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
+        return (sess.execute(next_session_seq_query(table, job))).scalar_one()
+
     def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
         """Insert an accepted run job.
 
@@ -7434,6 +7825,8 @@ class PostgresDb(BaseDb):
         """
         from sqlalchemy.exc import IntegrityError
 
+        from agno.job_queue.session import with_session_seq
+
         table = self._get_table(table_type="jobs", create_table_if_not_found=True)
         if table is None:
             raise RuntimeError("Failed to get or create job queue table")
@@ -7442,8 +7835,11 @@ class PostgresDb(BaseDb):
         # empty-header submit into an IntegrityError -> 500
         if not job.get("idempotency_key"):
             job = {**job, "idempotency_key": None}
+        serialized = (job.get("payload") or {}).get("serialize_session") is True
         try:
             with self.Session() as sess, sess.begin():
+                if serialized:
+                    sess.connection(execution_options={"isolation_level": "READ COMMITTED"})
                 # Idempotency FIRST: resubmitting an already-accepted job
                 # must return the existing run even when the queue is full
                 if job.get("idempotency_key"):
@@ -7460,6 +7856,10 @@ class PostgresDb(BaseDb):
                     queued = sess.execute(count_stmt).scalar() or 0
                     if queued >= max_depth:
                         return {"accepted": False, "reason": "queue_full", "job": None}
+                if serialized:
+                    # Under the session lock a new ticket sorts after every live ticket of its
+                    # session, so execution follows store acceptance, not wall-clock seconds.
+                    job = with_session_seq(job, self._q_next_session_seq(sess, table, job))
                 sess.execute(table.insert().values(**job))
             return {"accepted": True, "reason": None, "job": job}
         except IntegrityError:
@@ -7492,6 +7892,8 @@ class PostgresDb(BaseDb):
         jobs only on matching workers; deployment_id=None degenerates to
         claiming only unstamped jobs.
         """
+        from agno.job_queue.session import session_claim_condition, session_claim_lock_key
+
         try:
             table = self._get_table(table_type="jobs")
             if table is None:
@@ -7499,10 +7901,13 @@ class PostgresDb(BaseDb):
             now = _db_epoch()
             stale = now - lock_grace_seconds
             with self.Session() as sess, sess.begin():
-                subq = (
-                    select(table.c.id)
+                # The session predicate and lock recheck rely on per-statement snapshots.
+                sess.connection(execution_options={"isolation_level": "READ COMMITTED"})
+                candidate_query = (
+                    select(table)
                     .where(
                         table.c.available_at <= now,
+                        session_claim_condition(table),
                         or_(table.c.deployment_id.is_(None), table.c.deployment_id == deployment_id),
                         or_(
                             table.c.status == "queued",
@@ -7513,14 +7918,31 @@ class PostgresDb(BaseDb):
                             ),
                         ),
                     )
-                    .order_by(table.c.created_at.asc())
+                    .order_by(table.c.created_at.asc(), table.c.id.asc())
                     .limit(1)
                     .with_for_update(skip_locked=True)
-                    .scalar_subquery()
                 )
+                candidate_row = (sess.execute(candidate_query)).mappings().first()
+                if candidate_row is None:
+                    return None
+                candidate = candidate_row["id"]
+                if (candidate_row["payload"] or {}).get("serialize_session") is True:
+                    # A concurrent claim of another ticket in this session may have committed
+                    # after the candidate scan; recheck under the session lock.
+                    lock_key = session_claim_lock_key(table.fullname, dict(candidate_row))
+                    locked = (
+                        sess.execute(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": lock_key})
+                    ).scalar_one()
+                    if not locked:
+                        return None
+                    eligible = (
+                        sess.execute(select(table.c.id).where(table.c.id == candidate, session_claim_condition(table)))
+                    ).first()
+                    if eligible is None:
+                        return None
                 stmt = (
                     update(table)
-                    .where(table.c.id == subq)
+                    .where(table.c.id == candidate)
                     .values(
                         status="running",
                         locked_by=worker_id,
@@ -7813,6 +8235,20 @@ class PostgresDb(BaseDb):
             log_warning(f"Job queue store: get_job failed for job {job_id}: {e}")
             return None
 
+    def session_blocker(self, job_id: str) -> Optional[str]:
+        """The id of the ticket a queued serialized job waits behind, or None."""
+        from agno.job_queue.session import is_serialized, live_session_jobs_query, session_blocker
+
+        job = self.get_job(job_id)
+        if job is None or job["status"] != "queued" or not is_serialized(job):
+            return None
+        table = self._get_table(table_type="jobs")
+        if table is None:
+            return None
+        with self.Session() as sess:
+            rows = sess.execute(live_session_jobs_query(table, job)).mappings().all()
+        return session_blocker(job, [dict(row) for row in rows])
+
     def count_queued_jobs(self) -> int:
         try:
             table = self._get_table(table_type="jobs")
@@ -7832,7 +8268,12 @@ class PostgresDb(BaseDb):
         page: int = 1,
         sort_by: Optional[str] = "created_at",
         sort_order: Optional[str] = "desc",
+        *,
+        session_id: Optional[Union[str, List[str]]] = None,
+        user_id: Optional[str] = None,
+        raise_on_error: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
+        """List jobs, propagating read errors when raise_on_error is True."""
         try:
             table = self._get_table(table_type="jobs")
             if table is None:
@@ -7841,6 +8282,11 @@ class PostgresDb(BaseDb):
             if status is not None:
                 statuses = [status] if isinstance(status, str) else list(status)
                 stmt = stmt.where(table.c.status.in_(statuses))
+            if session_id is not None:
+                session_ids = [session_id] if isinstance(session_id, str) else list(session_id)
+                stmt = stmt.where(table.c.session_id.in_(session_ids))
+            if user_id is not None:
+                stmt = stmt.where(table.c.user_id == user_id)
             count_stmt = select(func.count()).select_from(stmt.alias())
             stmt = apply_sorting(stmt, table, sort_by, sort_order)
             # Deterministic tiebreaker: timestamps are epoch seconds, so ties
@@ -7852,32 +8298,52 @@ class PostgresDb(BaseDb):
                 result = sess.execute(stmt)
                 return [dict(row._mapping) for row in result.fetchall()], total_count
         except Exception as e:
-            log_warning(f"Job queue store: list_jobs failed (status={status!r}): {e}")
+            log_warning(
+                f"Job queue store: list_jobs failed (status={status!r}, session_id={session_id!r}, "
+                f"user_id={user_id!r}): {e}"
+            )
+            if raise_on_error:
+                raise
             return [], 0
 
     def requeue_job(self, job_id: str) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
         exactly one more execution by raising max_attempts to attempt + 1."""
+        from agno.job_queue.session import is_serialized, with_session_seq
+
         try:
             table = self._get_table(table_type="jobs")
             if table is None:
                 return False
             now = _db_epoch()
             with self.Session() as sess, sess.begin():
-                result = sess.execute(
-                    update(table)
-                    .where(table.c.id == job_id, table.c.status.in_(["failed", "cancelled"]))
-                    .values(
-                        status="queued",
-                        max_attempts=table.c.attempt + 1,
-                        available_at=now,
-                        locked_by=None,
-                        locked_at=None,
-                        completed_at=None,
-                        updated_at=now,
+                sess.connection(execution_options={"isolation_level": "READ COMMITTED"})
+                row = (
+                    sess.execute(
+                        select(table)
+                        .where(table.c.id == job_id, table.c.status.in_(["failed", "cancelled"]))
+                        .with_for_update()
                     )
+                    .mappings()
+                    .first()
                 )
-                return (result.rowcount or 0) > 0
+                if row is None:
+                    return False
+                values: Dict[str, Any] = dict(
+                    status="queued",
+                    max_attempts=row["attempt"] + 1,
+                    available_at=now,
+                    locked_by=None,
+                    locked_at=None,
+                    completed_at=None,
+                    updated_at=now,
+                )
+                job = dict(row)
+                if is_serialized(job):
+                    # A requeued ticket rejoins its session behind every live turn.
+                    values["payload"] = with_session_seq(job, self._q_next_session_seq(sess, table, job))["payload"]
+                sess.execute(update(table).where(table.c.id == job_id).values(**values))
+                return True
         except Exception as e:
             log_error(f"Job queue store: requeue failed for job {job_id}: {e}")
             return False
@@ -8071,8 +8537,11 @@ class PostgresDb(BaseDb):
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results], total
         except Exception as e:
-            log_debug(f"Error listing approvals: {e}")
-            return [], 0
+            # Raise rather than return an empty page: the continue-run approval gate reads
+            # "no pending approval" as permission to continue, so a failed read must not
+            # look like one.
+            log_error(f"Error listing approvals: {e}")
+            raise e
 
     def update_approval(
         self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
@@ -8147,19 +8616,19 @@ class PostgresDb(BaseDb):
             return 0
 
     # --- Built-in MCP OAuth server store ---
-    # Thin delegations to agno.db.mcp_oauth_store (shared with SqliteDb); each fetches the
+    # Thin delegations to agno.db.sql.mcp_oauth (shared with SqliteDb); each fetches the
     # table via the normal schema-aware _get_table path, so the store is created on first
     # use like every other agno table.
 
     def get_mcp_oauth_client(self, client_id: str) -> Optional[str]:
         table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
-        return mcp_oauth_store.get_client(self.db_engine, table, client_id)
+        return mcp_oauth_sql.get_client(self.db_engine, table, client_id)
 
     def create_mcp_oauth_client(
         self, *, client_id: str, client_metadata: str, now: int, unconsumed_ttl: int, max_clients: int
     ) -> bool:
         table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
-        return mcp_oauth_store.create_client(
+        return mcp_oauth_sql.create_client(
             self.db_engine,
             table,
             client_id=client_id,
@@ -8171,13 +8640,13 @@ class PostgresDb(BaseDb):
 
     def mark_mcp_oauth_client_consumed(self, client_id: str, now: int) -> None:
         table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
-        mcp_oauth_store.mark_client_consumed(self.db_engine, table, client_id, now)
+        mcp_oauth_sql.mark_client_consumed(self.db_engine, table, client_id, now)
 
     def store_mcp_oauth_transaction(
         self, *, txn_id: str, client_id: str, params: str, expires_at: int, now: int, max_pending: int
     ) -> None:
         table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
-        mcp_oauth_store.store_transaction(
+        mcp_oauth_sql.store_transaction(
             self.db_engine,
             table,
             txn_id=txn_id,
@@ -8190,31 +8659,31 @@ class PostgresDb(BaseDb):
 
     def get_mcp_oauth_transaction(self, txn_id: str) -> Optional[tuple]:
         table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
-        return mcp_oauth_store.get_transaction(self.db_engine, table, txn_id)
+        return mcp_oauth_sql.get_transaction(self.db_engine, table, txn_id)
 
     def consume_mcp_oauth_transaction(self, txn_id: str, now: int) -> Optional[tuple]:
         table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
-        return mcp_oauth_store.consume_transaction(self.db_engine, table, txn_id, now)
+        return mcp_oauth_sql.consume_transaction(self.db_engine, table, txn_id, now)
 
     def store_mcp_oauth_code(self, *, code_hash: str, payload: str, expires_at: int, now: int) -> None:
         table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
-        mcp_oauth_store.store_code(
+        mcp_oauth_sql.store_code(
             self.db_engine, table, code_hash=code_hash, payload=payload, expires_at=expires_at, now=now
         )
 
     def get_mcp_oauth_code(self, code_hash: str) -> Optional[tuple]:
         table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
-        return mcp_oauth_store.get_code(self.db_engine, table, code_hash)
+        return mcp_oauth_sql.get_code(self.db_engine, table, code_hash)
 
     def delete_mcp_oauth_code(self, code_hash: str) -> bool:
         table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
-        return mcp_oauth_store.delete_code(self.db_engine, table, code_hash)
+        return mcp_oauth_sql.delete_code(self.db_engine, table, code_hash)
 
     def store_mcp_oauth_refresh(
         self, *, token_hash: str, client_id: str, scopes: str, expires_at: int, now: int, family_id: str
     ) -> None:
         table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
-        mcp_oauth_store.store_refresh(
+        mcp_oauth_sql.store_refresh(
             self.db_engine,
             table,
             token_hash=token_hash,
@@ -8227,23 +8696,23 @@ class PostgresDb(BaseDb):
 
     def get_mcp_oauth_refresh(self, token_hash: str) -> Optional[tuple]:
         table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
-        return mcp_oauth_store.get_refresh(self.db_engine, table, token_hash)
+        return mcp_oauth_sql.get_refresh(self.db_engine, table, token_hash)
 
     def delete_mcp_oauth_refresh(self, token_hash: str) -> bool:
         table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
-        return mcp_oauth_store.delete_refresh(self.db_engine, table, token_hash)
+        return mcp_oauth_sql.delete_refresh(self.db_engine, table, token_hash)
 
     def delete_mcp_oauth_refresh_family(self, family_id: str) -> int:
         table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
-        return mcp_oauth_store.delete_refresh_family(self.db_engine, table, family_id)
+        return mcp_oauth_sql.delete_refresh_family(self.db_engine, table, family_id)
 
     def get_mcp_oauth_keys(self) -> List[tuple]:
         table = self._get_table(table_type=MCP_OAUTH_KEYS, create_table_if_not_found=True)
-        return mcp_oauth_store.get_keys(self.db_engine, table)
+        return mcp_oauth_sql.get_keys(self.db_engine, table)
 
     def insert_mcp_oauth_key(self, *, kid: str, secret: str, created_at: int) -> bool:
         table = self._get_table(table_type=MCP_OAUTH_KEYS, create_table_if_not_found=True)
-        return mcp_oauth_store.insert_key(self.db_engine, table, kid=kid, secret=secret, created_at=created_at)
+        return mcp_oauth_sql.insert_key(self.db_engine, table, kid=kid, secret=secret, created_at=created_at)
 
     # --- Auth Tokens ---
 
@@ -8452,3 +8921,1067 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_debug(f"Error deleting service account: {e}")
             return False
+
+    # --- Authorization ---
+    # Thin delegations to agno.db.sql.authz (shared with the other SQLAlchemy backend);
+    # each fetches its table via the normal schema-aware _get_table path, so authorization
+    # tables are created on first use like every other agno table -- honouring this
+    # backend's configured schema and any table-name override.
+
+    def get_authz_policies(self, roles: List[str]) -> List[Tuple[str, str, str, str]]:
+        table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        return authz_sql.get_policies(self.db_engine, table, roles)
+
+    def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
+        table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        return authz_sql.get_role_policies(self.db_engine, table, role)
+
+    def set_authz_role_policies(self, role: str, rows: List[Tuple[str, str, str]]) -> None:
+        table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        authz_sql.set_role_policies(self.db_engine, table, role, rows)
+
+    def upsert_authz_policy(self, *, role: str, resource: str, action: str, effect: str) -> None:
+        table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        authz_sql.upsert_policy(self.db_engine, table, role=role, resource=resource, action=action, effect=effect)
+
+    def delete_authz_policy(self, *, role: str, resource: Optional[str] = None, action: Optional[str] = None) -> None:
+        table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        authz_sql.delete_policy(self.db_engine, table, role=role, resource=resource, action=action)
+
+    def get_authz_direct_roles(self, subject: str) -> List[str]:
+        table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return authz_sql.get_direct_roles(self.db_engine, table, subject)
+
+    def get_authz_direct_roles_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return authz_sql.get_direct_roles_many(self.db_engine, table, subjects)
+
+    def list_authz_role_subjects(self, role: str) -> List[str]:
+        table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return authz_sql.get_role_subjects(self.db_engine, table, role)
+
+    def authz_name_is_role(self, name: str) -> bool:
+        policy = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        grouping = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return authz_sql.name_is_role(self.db_engine, policy, grouping, name)
+
+    def assign_authz_role(self, subject: str, role: str) -> None:
+        table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        authz_sql.assign_role(self.db_engine, table, subject, role)
+
+    def unassign_authz_role(self, subject: str, role: str) -> None:
+        table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        authz_sql.unassign_role(self.db_engine, table, subject, role)
+
+    def replace_authz_subject_roles(self, subject: str, role: str) -> None:
+        table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        authz_sql.replace_subject_roles(self.db_engine, table, subject, role)
+
+    def list_authz_roles(self) -> List[str]:
+        policy = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        grouping = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return authz_sql.list_roles(self.db_engine, policy, grouping)
+
+    def delete_authz_role(self, role: str) -> None:
+        policy = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        grouping = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        meta = self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        authz_sql.delete_role(self.db_engine, policy, grouping, meta, role)
+
+    def get_authz_role_meta(self, slug: str) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        return authz_sql.get_role_meta(self.db_engine, table, slug)
+
+    def list_authz_role_meta(self) -> List[Dict[str, Any]]:
+        table = self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        return authz_sql.list_role_meta(self.db_engine, table)
+
+    def upsert_authz_role_meta(self, slug: str, values: Dict[str, Any]) -> None:
+        table = self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        authz_sql.upsert_role_meta(self.db_engine, table, slug, values)
+
+    def delete_authz_role_meta(self, slug: str) -> None:
+        table = self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        authz_sql.delete_role_meta(self.db_engine, table, slug)
+
+    def get_authz_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return authz_sql.get_user(self.db_engine, table, user_id)
+
+    def list_authz_users(
+        self,
+        limit: int = 1000,
+        offset: int = 0,
+        include_disabled: bool = True,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+    ) -> List[Dict[str, Any]]:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return authz_sql.list_users(self.db_engine, table, limit, offset, include_disabled, search, sort_by, order)
+
+    def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return authz_sql.count_users(self.db_engine, table, include_disabled, search)
+
+    def count_authz_users_by_status(self) -> Dict[str, int]:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return authz_sql.count_users_by_status(self.db_engine, table)
+
+    def list_authz_user_ids(self, include_disabled: bool = True) -> List[str]:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return authz_sql.list_user_ids(self.db_engine, table, include_disabled)
+
+    def count_authz_users_by_day(
+        self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+    ) -> List[Dict[str, int]]:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return authz_sql.count_users_by_day(self.db_engine, table, starting_at, ending_before)
+
+    def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        authz_sql.upsert_user(self.db_engine, table, user_id, values)
+
+    def set_authz_user_disabled(self, user_id: str, disabled: bool) -> None:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        authz_sql.set_user_disabled(self.db_engine, table, user_id, disabled)
+
+    def delete_authz_user(self, user_id: str) -> None:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        authz_sql.delete_user(self.db_engine, table, user_id)
+
+    def is_authz_user_disabled(self, user_id: str) -> bool:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return authz_sql.is_user_disabled(self.db_engine, table, user_id)
+
+    def record_authz_audit_event(self, values: Dict[str, Any]) -> None:
+        table = self._get_table(table_type=AUTHZ_AUDIT, create_table_if_not_found=True)
+        authz_sql.record_event(self.db_engine, table, values)
+
+    def record_authz_decision(self, values: Dict[str, Any]) -> None:
+        table = self._get_table(table_type=AUTHZ_DECISIONS, create_table_if_not_found=True)
+        authz_sql.record_event(self.db_engine, table, values)
+
+    def read_authz_audit_events(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+        decisions: bool = False,
+    ) -> List[Dict[str, Any]]:
+        table_type = AUTHZ_DECISIONS if decisions else AUTHZ_AUDIT
+        columns = ["actor", "action", "target"]
+        table = self._get_table(table_type=table_type, create_table_if_not_found=True)
+        return authz_sql.read_events(
+            self.db_engine, table, limit, offset, search, sort_by, order, search_columns=columns
+        )
+
+    def count_authz_audit_events(self, search: Optional[str] = None, decisions: bool = False) -> int:
+        table_type = AUTHZ_DECISIONS if decisions else AUTHZ_AUDIT
+        columns = ["actor", "action", "target"]
+        table = self._get_table(table_type=table_type, create_table_if_not_found=True)
+        return authz_sql.count_events(self.db_engine, table, search, search_columns=columns)
+
+    # --- External agent transcripts ---
+
+    def append_transcript_entries(
+        self,
+        framework: str,
+        project_key: str,
+        session_id: str,
+        entries: List[Dict[str, Any]],
+        agno_session_id: str,
+        subpath: Optional[str] = None,
+    ) -> None:
+        if not entries:
+            return
+        from sqlalchemy.dialects.postgresql import insert as transcript_insert
+
+        from agno.db.transcripts import transcript_lock_id, transcript_rows
+
+        table = self._get_table("transcripts", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Could not create transcript table")
+        stmt = transcript_insert(table).on_conflict_do_nothing(
+            index_elements=["framework", "project_key", "session_id", "subpath", "entry_uuid"]
+        )
+        with self.Session() as sess, sess.begin():
+            sess.execute(
+                select(func.pg_advisory_xact_lock(transcript_lock_id(framework, project_key, session_id, subpath)))
+            )
+            previous = sess.execute(
+                select(func.max(table.c.position)).where(
+                    table.c.framework == framework,
+                    table.c.project_key == project_key,
+                    table.c.session_id == session_id,
+                    table.c.subpath == (subpath or ""),
+                )
+            )
+            rows = transcript_rows(
+                framework, project_key, session_id, subpath, agno_session_id, entries, previous.scalar() or 0
+            )
+            sess.execute(stmt, rows)
+
+    def get_transcript_entries(
+        self, framework: str, project_key: str, session_id: str, subpath: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        import json
+
+        table = self._get_table("transcripts")
+        if table is None:
+            return []
+        stmt = (
+            select(table.c.entry)
+            .where(
+                table.c.framework == framework,
+                table.c.project_key == project_key,
+                table.c.session_id == session_id,
+                table.c.subpath == (subpath or ""),
+            )
+            .order_by(table.c.position)
+        )
+        with self.Session() as sess:
+            result = sess.execute(stmt)
+            return [json.loads(row[0]) for row in result.fetchall()]
+
+    def list_transcript_sessions(self, framework: str, project_key: str) -> List[Dict[str, Any]]:
+        table = self._get_table("transcripts")
+        if table is None:
+            return []
+        stmt = (
+            select(table.c.session_id, func.max(table.c.created_at).label("mtime"))
+            .where(table.c.framework == framework, table.c.project_key == project_key, table.c.subpath == "")
+            .group_by(table.c.session_id)
+        )
+        with self.Session() as sess:
+            result = sess.execute(stmt)
+            return [dict(row._mapping) for row in result.fetchall()]
+
+    def list_transcript_subpaths(self, framework: str, project_key: str, session_id: str) -> List[str]:
+        table = self._get_table("transcripts")
+        if table is None:
+            return []
+        stmt = (
+            select(table.c.subpath)
+            .where(
+                table.c.framework == framework,
+                table.c.project_key == project_key,
+                table.c.session_id == session_id,
+                table.c.subpath != "",
+            )
+            .distinct()
+            .order_by(table.c.subpath)
+        )
+        with self.Session() as sess:
+            result = sess.execute(stmt)
+            return [row[0] for row in result.fetchall()]
+
+    def delete_transcript(
+        self, framework: str, project_key: str, session_id: str, subpath: Optional[str] = None
+    ) -> None:
+        table = self._get_table("transcripts")
+        if table is None:
+            return
+        stmt = table.delete().where(
+            table.c.framework == framework, table.c.project_key == project_key, table.c.session_id == session_id
+        )
+        if subpath is not None:
+            stmt = stmt.where(table.c.subpath == subpath)
+        with self.Session() as sess, sess.begin():
+            sess.execute(stmt)
+
+    # --- Sources ---
+
+    def create_source(self, source_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
+        from agno.db.sql.company import create_company_source
+
+        table = self._get_table(table_type="sources", create_table_if_not_found=True)
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        if table is None or products is None:
+            raise RuntimeError("Failed to get or create Company tables")
+        with self.Session() as sess, sess.begin():
+            return create_company_source(sess, products, table, source_data, reuse)
+
+    def get_source(
+        self, source_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="sources")
+        if table is None:
+            return None
+        stmt = select(table).where(table.c.id == source_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        with self.Session() as sess:
+            result = sess.execute(stmt).fetchone()
+            return dict(result._mapping) if result else None
+
+    def get_sources(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        product_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        table = self._get_table(table_type="sources")
+        if table is None:
+            return [], 0
+        from agno.db.sql.company import active_parents
+
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        stmt = active_parents(select(table), table, products)
+        if product_id is not None:
+            stmt = stmt.where(table.c.product_id == product_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        with self.Session() as sess:
+            total = sess.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
+            stmt = stmt.order_by(table.c.created_at.desc(), table.c.id.desc()).limit(limit).offset((page - 1) * limit)
+            rows = sess.execute(stmt).fetchall()
+            return [dict(row._mapping) for row in rows], total
+
+    def update_source(self, source_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.sources import validate_source_fields
+
+        table = self._get_table(table_type="sources")
+        if table is None:
+            return None
+        stmt = table.update().where(table.c.id == source_id, table.c.deleted_at.is_(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        with self.Session() as sess, sess.begin():
+            condition = stmt.whereclause
+            assert condition is not None
+            existing = (sess.execute(select(table).where(condition).with_for_update())).mappings().first()
+            if existing is None:
+                return None
+            candidate = {**{key: existing[key] for key in ("type", "reference", "credential_ref", "config")}, **fields}
+            if "config" not in fields and isinstance(candidate.get("config"), dict):
+                candidate["config"] = {key: value for key, value in candidate["config"].items() if key != "metadata"}
+            # Unchanged legacy references need not satisfy a newly introduced URL rule.
+            if "reference" not in fields and candidate["type"] == existing["type"]:
+                candidate.pop("reference", None)
+            validate_source_fields(candidate)
+            result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table)).fetchone()
+            return dict(result._mapping) if result else None
+
+    def delete_source(self, source_id: str, user_id: Optional[str] = None) -> bool:
+        table = self._get_table(table_type="sources")
+        if table is None:
+            return False
+        stmt = table.update().where(table.c.id == source_id, table.c.deleted_at.is_(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        now = int(time.time())
+        with self.Session() as sess, sess.begin():
+            result = sess.execute(stmt.values(deleted_at=now, updated_at=now).returning(table.c.id)).fetchone()
+            return result is not None
+
+    def restore_source(self, source_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="sources")
+        if table is None:
+            return None
+        stmt = table.update().where(table.c.id == source_id, table.c.deleted_at.is_not(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        with self.Session() as sess, sess.begin():
+            result = sess.execute(stmt.values(deleted_at=None, updated_at=int(time.time())).returning(table)).fetchone()
+            return dict(result._mapping) if result else None
+
+    # --- Products ---
+
+    def create_product(self, product_data: Dict[str, Any]) -> Dict[str, Any]:
+        from agno.db.schemas.products import product_metadata
+
+        product_data = {**product_data, "metadata": product_metadata(product_data.get("metadata"))}
+        table = self._get_table(table_type="products", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Failed to get or create products table")
+        with self.Session() as sess, sess.begin():
+            result = sess.execute(table.insert().values(**product_data).returning(table)).one()
+            return dict(result._mapping)
+
+    def get_product(
+        self, product_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="products")
+        if table is None:
+            return None
+        stmt = select(table).where(table.c.id == product_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        with self.Session() as sess:
+            result = sess.execute(stmt).fetchone()
+            return dict(result._mapping) if result else None
+
+    def get_products(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        from agno.db.schemas.products import company_sort
+
+        sort_by, sort_order = company_sort(sort_by, sort_order)
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        table = self._get_table(table_type="products")
+        if table is None:
+            return [], 0
+        stmt = select(table)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        with self.Session() as sess:
+            total = sess.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
+            column = (
+                func.coalesce(table.c.updated_at, table.c.created_at) if sort_by == "updated_at" else table.c.created_at
+            )
+            order = column.asc() if sort_order == "asc" else column.desc()
+            tie = table.c.id.asc() if sort_order == "asc" else table.c.id.desc()
+            stmt = stmt.order_by(order, tie).limit(limit).offset((page - 1) * limit)
+            rows = sess.execute(stmt).fetchall()
+            return [dict(row._mapping) for row in rows], total
+
+    def update_product(self, product_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.products import product_metadata, validate_product_fields
+        from agno.db.sql.company import update_product_row
+
+        validate_product_fields(fields)
+        if "metadata" in fields:
+            fields["metadata"] = product_metadata(fields["metadata"])
+        table = self._get_table(table_type="products")
+        if table is None:
+            return None
+        with self.Session() as sess, sess.begin():
+            return update_product_row(sess, table, product_id, user_id, fields)
+
+    def get_product_counts(self, product_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        from agno.db.sql.company import product_counts
+
+        if not product_ids:
+            return {}
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
+        with self.Session() as sess:
+            return product_counts(sess, products, projects, tasks, product_ids)
+
+    def delete_product(self, product_id: str, user_id: Optional[str] = None) -> bool:
+        from agno.db.sql.company import archive_product
+
+        table = self._get_table(table_type="products")
+        if table is None:
+            return False
+        products = table
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            return archive_product(sess, products, projects, tasks, product_id, user_id)
+
+    def restore_product(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        from agno.db.sql.company import restore_product
+
+        table = self._get_table(table_type="products")
+        if table is None:
+            return None
+        products = table
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            return restore_product(sess, products, projects, tasks, product_id, user_id)
+
+    # --- Projects ---
+
+    def create_project(self, project_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
+        from agno.db.sql.company import lock_product
+
+        table = self._get_table(table_type="projects", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Failed to get or create projects table")
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            lock_product(sess, products, project_data["product_id"])
+            if reuse:
+                existing = sess.execute(select(table).where(table.c.id == project_data["id"])).first()
+                if existing is not None:
+                    if existing._mapping["product_id"] != project_data["product_id"]:
+                        raise ValueError("Project identity belongs to another Product")
+                    return dict(existing._mapping)
+            result = sess.execute(table.insert().values(**project_data).returning(table)).one()
+            return dict(result._mapping)
+
+    def get_project(
+        self, project_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="projects")
+        if table is None:
+            return None
+        stmt = select(table).where(table.c.id == project_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        with self.Session() as sess:
+            result = sess.execute(stmt).fetchone()
+            return dict(result._mapping) if result else None
+
+    def get_projects(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        product_id: Optional[str] = None,
+        status: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        from agno.db.schemas.products import company_sort
+        from agno.db.sql.company import active_parents
+
+        sort_by, sort_order = company_sort(sort_by, sort_order)
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        table = self._get_table(table_type="projects")
+        if table is None:
+            return [], 0
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        stmt = active_parents(select(table), table, products)
+        if product_id is not None:
+            stmt = stmt.where(table.c.product_id == product_id)
+        if status is not None:
+            stmt = stmt.where(table.c.status == status)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        with self.Session() as sess:
+            total = sess.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
+            column = (
+                func.coalesce(table.c.updated_at, table.c.created_at) if sort_by == "updated_at" else table.c.created_at
+            )
+            order = column.asc() if sort_order == "asc" else column.desc()
+            tie = table.c.id.asc() if sort_order == "asc" else table.c.id.desc()
+            stmt = stmt.order_by(order, tie).limit(limit).offset((page - 1) * limit)
+            rows = sess.execute(stmt).fetchall()
+            return [dict(row._mapping) for row in rows], total
+
+    def update_project(
+        self, project_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.projects import validate_project_fields
+        from agno.db.sql.company import lock_child
+
+        validate_project_fields(fields)
+        table = self._get_table(table_type="projects")
+        if table is None:
+            return None
+        stmt = table.update().where(table.c.id == project_id, table.c.deleted_at.is_(None))
+        if expected_status is not None:
+            stmt = stmt.where(table.c.status == expected_status)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            lock_child(sess, products, projects, table, project_id)
+            result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table)).fetchone()
+            return dict(result._mapping) if result else None
+
+    def get_project_counts(self, project_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        from agno.db.sql.company import project_counts
+
+        if not project_ids:
+            return {}
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
+        with self.Session() as sess:
+            return project_counts(sess, products, projects, tasks, project_ids)
+
+    def delete_project(
+        self, project_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
+    ) -> bool:
+        from agno.db.sql.company import archive_project
+
+        table = self._get_table(table_type="projects")
+        if table is None:
+            return False
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = table
+        tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            return archive_project(sess, products, projects, tasks, project_id, user_id, updated_before)
+
+    def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        from agno.db.sql.company import restore_project
+
+        table = self._get_table(table_type="projects")
+        if table is None:
+            return None
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = table
+        tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            return restore_project(sess, products, projects, tasks, project_id, user_id)
+
+    def transition_project(
+        self,
+        project_id: str,
+        target: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        accepted_by: Optional[str] = None,
+        expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
+        auto_accept: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Apply a lifecycle transition only if the observed state still matches."""
+        from agno.db.schemas.projects import project_transition_fields
+        from agno.db.schemas.tasks import _acceptance_count
+        from agno.db.sql.company import lock_child, open_project_tasks
+
+        table = self._get_table(table_type="projects")
+        if table is None:
+            return None
+        tasks_table = self._get_table(table_type="tasks") if target == "done" else None
+        tasks = tasks_table if auto_accept else None
+        stmt = select(table).where(table.c.id == project_id, table.c.deleted_at.is_(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            lock_child(sess, products, projects, table, project_id)
+            if auto_accept is not None:
+                if target != "done" or expected_updated_at is _UNSET_UPDATED_AT or products is None or tasks is None:
+                    raise ValueError("Automatic completion requires expected_updated_at and a Project with Tasks")
+                task_histories = (
+                    (sess.execute(select(tasks.c.transitions).where(tasks.c.routine_id == auto_accept["routine_id"])))
+                    .scalars()
+                    .all()
+                )
+                project_histories = (
+                    (sess.execute(select(table.c.transitions).where(table.c.id != project_id))).scalars().all()
+                )
+                if (
+                    _acceptance_count(
+                        list(task_histories) + list(project_histories), auto_accept["routine_id"], auto_accept["policy"]
+                    )
+                    >= auto_accept["max_acceptances"]
+                ):
+                    raise ValueError("Routine acceptance limit reached")
+            row = sess.execute(stmt).fetchone()
+            if row is None:
+                return None
+            existing = dict(row._mapping)
+            open_tasks = []
+            if tasks_table is not None:
+                open_query = open_project_tasks(tasks_table, project_id)
+                open_tasks = [dict(task._mapping) for task in sess.execute(open_query).fetchall()]
+            fields = project_transition_fields(existing, target, reason, accepted_by, tasks=open_tasks)
+            if auto_accept is not None:
+                fields["transitions"][-1]["auto_accept"] = auto_accept
+            update = table.update().where(
+                table.c.id == project_id,
+                table.c.deleted_at.is_(None),
+                table.c.status == existing["status"],
+                table.c.transitions == existing["transitions"],
+            )
+            if tasks_table is not None:
+                update = update.where(~open_query.exists())
+            if expected_updated_at is not _UNSET_UPDATED_AT:
+                update = update.where(table.c.updated_at == expected_updated_at)
+            if user_id is not None:
+                update = update.where(table.c.user_id == user_id)
+            result = sess.execute(update.values(**fields).returning(table)).fetchone()
+            return dict(result._mapping) if result else None
+
+    def add_product_routine(self, product_id: str, schedule_id: str) -> Dict[str, Any]:
+        """Append a schedule id under the existing hierarchy write lock."""
+        from agno.db.sql.company import link_product_routine
+
+        table = self._get_table(table_type="products", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Products table unavailable")
+        with self.Session() as sess, sess.begin():
+            return link_product_routine(sess, table, product_id, schedule_id)
+
+    # --- Tasks ---
+
+    def create_task(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
+        from agno.db.sql.company import existing_task_proposal, lock_product, require_project
+
+        table = self._get_table(table_type="tasks", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Failed to get or create tasks table")
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            lock_product(sess, products, task_data["product_id"])
+            require_project(sess, projects, task_data.get("project_id"), task_data["product_id"])
+            proposal = existing_task_proposal(sess, table, task_data)
+            if proposal is not None:
+                return proposal
+            require_project(
+                sess, projects, task_data.get("project_id"), task_data["product_id"], task_data.get("status", "backlog")
+            )
+            if task_data.get("dedupe_key") is not None:
+                from sqlalchemy.dialects.postgresql import insert
+
+                stmt = (
+                    insert(table)
+                    .values(**task_data)
+                    .on_conflict_do_nothing(index_elements=[table.c.product_id, table.c.dedupe_key])
+                    .returning(table)
+                )
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    existing = select(table).where(
+                        table.c.product_id == task_data["product_id"],
+                        table.c.dedupe_key == task_data["dedupe_key"],
+                    )
+                    result = sess.execute(existing).one()
+                return dict(result._mapping)
+            result = sess.execute(table.insert().values(**task_data).returning(table)).one()
+            return dict(result._mapping)
+
+    def get_task(
+        self, task_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        stmt = select(table).where(table.c.id == task_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        with self.Session() as sess:
+            result = sess.execute(stmt).fetchone()
+            return dict(result._mapping) if result else None
+
+    def get_tasks(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        product_id: Optional[str] = None,
+        status: Optional[str] = None,
+        project_id: Optional[str] = None,
+        failed: Optional[bool] = None,
+        session_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        from agno.db.schemas.products import company_sort
+        from agno.db.sql.company import active_parents
+
+        sort_by, sort_order = company_sort(sort_by, sort_order)
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return [], 0
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        stmt = active_parents(select(table), table, products, projects)
+        if failed is not None:
+            result_status = table.c.result["status"].as_string()
+            stmt = stmt.where(
+                and_(table.c.status == "in_progress", result_status.in_(["ERROR", "CANCELLED"]))
+                if failed
+                else or_(
+                    table.c.status != "in_progress",
+                    result_status.is_(None),
+                    result_status.not_in(["ERROR", "CANCELLED"]),
+                )
+            )
+        if session_id is not None:
+            stmt = stmt.where(table.c.session_id == session_id)
+        if product_id is not None:
+            stmt = stmt.where(table.c.product_id == product_id)
+        if status is not None:
+            stmt = stmt.where(table.c.status == status)
+        if project_id is not None:
+            stmt = stmt.where(table.c.project_id == project_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        with self.Session() as sess:
+            total = sess.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
+            column = (
+                func.coalesce(table.c.updated_at, table.c.created_at) if sort_by == "updated_at" else table.c.created_at
+            )
+            order = column.asc() if sort_order == "asc" else column.desc()
+            tie = table.c.id.asc() if sort_order == "asc" else table.c.id.desc()
+            stmt = stmt.order_by(order, tie).limit(limit).offset((page - 1) * limit)
+            rows = sess.execute(stmt).fetchall()
+            return [dict(row._mapping) for row in rows], total
+
+    def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.tasks import validate_task_fields
+        from agno.db.sql.company import lock_child, require_project
+
+        validate_task_fields(fields)
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None))
+        if set(fields) - {"title", "brief"}:
+            stmt = stmt.where(table.c.status == "backlog")
+        if expected_status is not None:
+            stmt = stmt.where(table.c.status == expected_status)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            lock_child(sess, products, projects, table, task_id)
+            product_id = sess.execute(select(table.c.product_id).where(table.c.id == task_id)).scalar()
+            if product_id is not None and fields.get("project_id") is not None:
+                require_project(sess, projects, fields["project_id"], product_id, "backlog")
+            result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table)).fetchone()
+            return dict(result._mapping) if result else None
+
+    def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
+        from agno.db.sql.company import lock_child
+
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return False
+        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if updated_before is not None:
+            stmt = stmt.where(
+                table.c.status.in_(["done", "cancelled"]),
+                func.coalesce(table.c.updated_at, table.c.created_at) < updated_before,
+            )
+        now = int(time.time())
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            lock_child(sess, products, projects, table, task_id)
+            result = sess.execute(stmt.values(deleted_at=now, updated_at=now).returning(table.c.id)).fetchone()
+            return result is not None
+
+    def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        from agno.db.sql.company import lock_child, task_restore_fields
+
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_not(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            lock_child(sess, products, projects, table, task_id, restoring=True)
+            existing = sess.execute(select(table).where(table.c.id == task_id)).mappings().first()
+            if existing is None:
+                return None
+            result = sess.execute(stmt.values(**task_restore_fields(dict(existing))).returning(table)).fetchone()
+            return dict(result._mapping) if result else None
+
+    def start_task_run(
+        self,
+        task_id: str,
+        attempt: int,
+        expected_transitions: List[Dict[str, Any]],
+        user_id: Optional[str] = None,
+        run_db_id: Optional[str] = None,
+        session_user_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.tasks import task_run_fields
+
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        with self.Session() as sess, sess.begin():
+            row = (sess.execute(select(table).where(table.c.id == task_id, table.c.deleted_at.is_(None)))).fetchone()
+            if row is None:
+                return None
+            existing = dict(row._mapping)
+            if existing["transitions"] != expected_transitions:
+                return None
+            fields = task_run_fields(existing, attempt, user_id, run_db_id, session_user_id)
+            stmt = (
+                table.update()
+                .where(
+                    table.c.id == task_id,
+                    table.c.deleted_at.is_(None),
+                    table.c.transitions == expected_transitions,
+                    table.c.status == existing["status"],
+                )
+                .values(**fields)
+                .returning(table)
+            )
+            row = (sess.execute(stmt)).fetchone()
+            return dict(row._mapping) if row else None
+
+    def complete_task_run(
+        self,
+        task_id: str,
+        job_id: str,
+        result: Dict[str, Any],
+        expected_transitions: Optional[List[Dict[str, Any]]] = None,
+        checkout: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        from sqlalchemy import JSON, or_
+
+        from agno.db.schemas.tasks import task_transition_fields
+
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        with self.Session() as sess, sess.begin():
+            row = (
+                sess.execute(
+                    select(table).where(
+                        table.c.id == task_id,
+                        table.c.job_id == job_id,
+                        table.c.deleted_at.is_(None),
+                        table.c.status == "in_progress",
+                        or_(table.c.result.is_(None), table.c.result == JSON.NULL),
+                    )
+                )
+            ).fetchone()
+            if row is None:
+                return None
+            existing = dict(row._mapping)
+            if expected_transitions is not None and existing["transitions"] != expected_transitions:
+                return None
+            fields: Dict[str, Any] = (
+                task_transition_fields(existing, "in_review", "Execution completed; human review required")
+                if result.get("status") == "COMPLETED"
+                else {"updated_at": int(time.time())}
+            )
+            if checkout is not None:
+                fields["metadata"] = {**(existing.get("metadata") or {}), "checkout": checkout}
+            stmt = (
+                table.update()
+                .where(
+                    table.c.id == task_id,
+                    table.c.job_id == job_id,
+                    table.c.deleted_at.is_(None),
+                    table.c.status == "in_progress",
+                    or_(table.c.result.is_(None), table.c.result == JSON.NULL),
+                    table.c.transitions == existing["transitions"],
+                )
+                .values(**fields, result=result)
+                .returning(table)
+            )
+            row = (sess.execute(stmt)).fetchone()
+            return dict(row._mapping) if row else None
+
+    def count_company_acceptances(
+        self, routine_id: str, policy: str, exclude_task_id: str, user_id: Optional[str] = None
+    ) -> int:
+        """Count accepted Tasks and completed Projects, including archived records."""
+        from agno.db.schemas.tasks import _acceptance_count
+
+        table = self._get_table(table_type="tasks")
+        projects = self._get_table(table_type="projects")
+        if table is None:
+            return 0
+        stmt = select(table.c.transitions).where(table.c.routine_id == routine_id, table.c.id != exclude_task_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        with self.Session() as sess:
+            histories = (sess.execute(stmt)).scalars().all()
+            if projects is not None:
+                project_stmt = select(projects.c.transitions)
+                if user_id is not None:
+                    project_stmt = project_stmt.where(projects.c.user_id == user_id)
+                histories = list(histories) + list((sess.execute(project_stmt)).scalars().all())
+        return _acceptance_count(histories, routine_id, policy)
+
+    def transition_task(
+        self,
+        task_id: str,
+        target: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        accepted_by: Optional[str] = None,
+        executor_type: Optional[str] = None,
+        executor_id: Optional[str] = None,
+        expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
+        auto_accept: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Apply a lifecycle transition only if the observed state still matches."""
+        from agno.db.schemas.tasks import _acceptance_count, task_transition_fields
+        from agno.db.sql.company import lock_child, require_project
+
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        stmt = select(table).where(table.c.id == task_id, table.c.deleted_at.is_(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            if auto_accept is not None:
+                lock_child(sess, products, projects, table, task_id)
+                if expected_updated_at is _UNSET_UPDATED_AT or products is None:
+                    raise ValueError("Automatic acceptance requires expected_updated_at and a Product")
+                prior = (
+                    sess.execute(
+                        select(table.c.transitions).where(
+                            table.c.routine_id == auto_accept["routine_id"], table.c.id != task_id
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                if projects is not None:
+                    prior = list(prior) + list((sess.execute(select(projects.c.transitions))).scalars().all())
+                if (
+                    _acceptance_count(prior, auto_accept["routine_id"], auto_accept["policy"])
+                    >= auto_accept["max_acceptances"]
+                ):
+                    raise ValueError("Routine acceptance limit reached")
+            row = sess.execute(stmt).fetchone()
+            if row is None:
+                return None
+            existing = dict(row._mapping)
+            fields = task_transition_fields(existing, target, reason, accepted_by, executor_type, executor_id)
+            if auto_accept is not None:
+                fields["transitions"][-1]["auto_accept"] = auto_accept
+            else:
+                lock_child(sess, products, projects, table, task_id)
+            if existing["status"] in {"done", "cancelled"}:
+                # Reopened work must not land in a completed or cancelled Project.
+                require_project(sess, projects, existing["project_id"], existing["product_id"], target)
+            update = table.update().where(
+                table.c.id == task_id,
+                table.c.deleted_at.is_(None),
+                table.c.status == existing["status"],
+                table.c.transitions == existing["transitions"],
+            )
+            if expected_updated_at is not _UNSET_UPDATED_AT:
+                update = update.where(table.c.updated_at == expected_updated_at)
+            if user_id is not None:
+                update = update.where(table.c.user_id == user_id)
+            result = sess.execute(update.values(**fields).returning(table)).fetchone()
+            return dict(result._mapping) if result else None
