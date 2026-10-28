@@ -1,0 +1,89 @@
+{
+  "name": "Math Tutor - 10-case smoke suite",
+  "default_timeout": 90,
+  "cases": [
+    {
+      "name": "addition_uses_add",
+      "agent_id": "math-tutor",
+      "input": "Use only the add tool to calculate 17 + 25. Return the result.",
+      "expected_tool_calls": ["add"],
+      "allow_additional_tool_calls": false,
+      "tags": ["smoke", "arithmetic", "reliability"]
+    },
+    {
+      "name": "subtraction_correct_answer",
+      "agent_id": "math-tutor",
+      "input": "Use the subtract tool to calculate 100 - 37. State the answer clearly.",
+      "criteria": "The answer correctly states that 100 minus 37 is 63.",
+      "expected_tool_calls": ["subtract"],
+      "tags": ["smoke", "arithmetic", "combined"]
+    },
+    {
+      "name": "multiplication_numeric_judge",
+      "agent_id": "math-tutor",
+      "input": "Use the multiply tool to calculate 12 times 8. Give the result and a short explanation.",
+      "criteria": "The answer gives the correct result of 96 and a clear, concise explanation of the multiplication.",
+      "judge_mode": "numeric",
+      "judge_threshold": 8,
+      "expected_tool_calls": ["multiply"],
+      "tags": ["smoke", "arithmetic", "combined", "numeric"]
+    },
+    {
+      "name": "division_uses_divide",
+      "agent_id": "math-tutor",
+      "input": "Use only the divide tool to calculate 144 divided by 12. Return the result.",
+      "expected_tool_calls": ["divide"],
+      "allow_additional_tool_calls": false,
+      "tags": ["smoke", "arithmetic", "reliability"]
+    },
+    {
+      "name": "exponentiation_correct_answer",
+      "agent_id": "math-tutor",
+      "input": "Use the exponentiate tool to calculate 2 raised to the power of 10. State the result.",
+      "criteria": "The answer correctly states that 2 to the power of 10 equals 1024.",
+      "expected_tool_calls": ["exponentiate"],
+      "tags": ["smoke", "arithmetic", "combined"]
+    },
+    {
+      "name": "factorial_correct_answer",
+      "agent_id": "math-tutor",
+      "input": "Use the factorial tool to calculate 6 factorial. State the result.",
+      "criteria": "The answer correctly states that 6 factorial equals 720.",
+      "expected_tool_calls": ["factorial"],
+      "tags": ["smoke", "arithmetic", "combined"]
+    },
+    {
+      "name": "prime_number_check",
+      "agent_id": "math-tutor",
+      "input": "Use the is_prime tool to check whether 29 is prime. State the conclusion.",
+      "criteria": "The answer correctly identifies 29 as a prime number.",
+      "expected_tool_calls": ["is_prime"],
+      "tags": ["smoke", "number-theory", "combined"]
+    },
+    {
+      "name": "square_root_uses_tool",
+      "agent_id": "math-tutor",
+      "input": "Use only the square_root tool to calculate the square root of 81. Return the result.",
+      "expected_tool_calls": ["square_root"],
+      "allow_additional_tool_calls": false,
+      "tags": ["smoke", "arithmetic", "reliability"]
+    },
+    {
+      "name": "division_by_zero_handled",
+      "agent_id": "math-tutor",
+      "input": "Call the divide tool with a=10 and b=0, then explain its result. Do not invent a numeric quotient.",
+      "criteria": "The answer explains that division by zero is undefined and does not claim a finite numeric quotient or infinity as the result.",
+      "expected_tool_calls": ["divide"],
+      "tags": ["smoke", "edge-case", "combined"]
+    },
+    {
+      "name": "explains_prime_numbers",
+      "agent_id": "math-tutor",
+      "input": "In two short sentences, explain what a prime number is and why 1 is not prime. No calculations are needed.",
+      "criteria": "Clearly explains that a prime is an integer greater than 1 with exactly two distinct positive divisors, 1 and itself, and that 1 is not prime because it has only one positive divisor.",
+      "judge_mode": "numeric",
+      "judge_threshold": 8,
+      "tags": ["smoke", "explanation", "judge", "numeric"]
+    }
+  ]
+}

@@ -1,12 +1,14 @@
 import logging
 from copy import deepcopy
 from typing import List, Optional, Union, cast
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.db.schemas.evals import EvalFilterType, EvalType
+from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
+from agno.eval.suite import Case, JudgeMode, arun_cases
 from agno.exceptions import AgnoError
 from agno.models.utils import get_model
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
@@ -15,6 +17,7 @@ from agno.os.routers.evals.schemas import (
     DeleteEvalRunsRequest,
     EvalRunInput,
     EvalSchema,
+    EvalSuiteRunInput,
     UpdateEvalRunRequest,
 )
 from agno.os.routers.evals.utils import (
@@ -60,7 +63,7 @@ async def _require_eval_target_run_access(request: Request, *, resource_type: st
     await arecord_decision(
         request,
         allowed=False,
-        target=f"{request.method} /eval-runs {resource_type}/{resource_id}",
+        target=f"{request.method} {request.url.path} {resource_type}/{resource_id}",
         principal=getattr(request.state, "user_id", None),
         required_scopes=[f"{resource_type}:{resource_id}:run"],
         scopes=list(getattr(request.state, "scopes", None) or []),
@@ -589,13 +592,133 @@ def attach_routes(
 
         return eval_run
 
+    @router.post(
+        "/eval-suites", response_model=EvalSchema, operation_id="run_eval_suite", summary="Run Evaluation Suite"
+    )
+    async def run_eval_suite(
+        request: Request,
+        body: EvalSuiteRunInput,
+        db_id: Optional[str] = Query(default=None),
+        table: Optional[str] = Query(default=None),
+    ) -> EvalSchema:
+        db = await get_db(dbs, db_id, table)
+        if isinstance(db, RemoteDb):
+            raise HTTPException(status_code=400, detail="Run suites directly on the connected AgentOS database")
+        owner = get_scoped_user_id(request) or getattr(request.state, "user_id", None)
+        selected = [
+            case
+            for case in body.cases
+            if (body.tag is None or body.tag in case.tags) and (body.case_name is None or body.case_name == case.name)
+        ]
+        # Check every selected target before resolving or executing any component.
+        for case in selected:
+            await _require_eval_target_run_access(
+                request,
+                resource_type="agents" if case.agent_id else "teams",
+                resource_id=case.agent_id or cast(str, case.team_id),
+            )
+        # Reuse one isolated copy per target across the suite.
+        targets: dict[tuple[str, str], Union[Agent, Team]] = {}
+        cases = []
+        for case in selected:
+            family = "agent" if case.agent_id else "team"
+            target_id = case.agent_id or cast(str, case.team_id)
+            key = (family, target_id)
+            if key not in targets:
+                target = (
+                    get_agent_by_id(target_id, agents, create_fresh=True)
+                    if case.agent_id
+                    else get_team_by_id(target_id, teams, create_fresh=True)
+                )
+                if target is None:
+                    raise HTTPException(status_code=404, detail=f"{family.title()} '{target_id}' not found")
+                if not isinstance(target, (Agent, Team)) or isinstance(target, (RemoteAgent, RemoteTeam)):
+                    raise HTTPException(status_code=400, detail="Suites require local Agno agents or teams")
+                targets[key] = target
+            target = targets[key]
+            cases.append(
+                Case(
+                    name=case.name,
+                    input=case.input,
+                    agent=cast(Agent, target) if case.agent_id else None,
+                    team=cast(Team, target) if case.team_id else None,
+                    tags=tuple(case.tags),
+                    timeout_seconds=case.timeout_seconds,
+                    criteria=case.criteria,
+                    judge_mode=JudgeMode(case.judge_mode),
+                    judge_threshold=case.judge_threshold,
+                    expected_tool_calls=tuple(case.expected_tool_calls)
+                    if case.expected_tool_calls is not None
+                    else None,
+                    allow_additional_tool_calls=case.allow_additional_tool_calls,
+                    user_id=owner,
+                )
+            )
+        # Persist the aggregate only: child eval rows would lose their suite/owner relationship.
+        result = await arun_cases(cases, default_timeout=body.default_timeout)
+        record = EvalRunRecord(
+            run_id=str(uuid4()),
+            name=body.name,
+            eval_type=EvalType.SUITE,
+            eval_data=result.to_dict(),
+            eval_input=body.model_dump(mode="json"),
+        )
+        if isinstance(db, AsyncBaseDb):
+            saved = await db.create_eval_run(record)
+        else:
+            saved = db.create_eval_run(record)
+        if saved is None:
+            raise HTTPException(status_code=500, detail="Could not save evaluation suite results")
+        if owner is not None:
+            if isinstance(db, AsyncBaseDb):
+                await db.update_eval_run_user_id(eval_run_id=record.run_id, user_id=owner)
+            else:
+                db.update_eval_run_user_id(eval_run_id=record.run_id, user_id=owner)
+        return await get_eval_run(request, record.run_id, db_id, table)
+
+    @router.get("/eval-suites", response_model=PaginatedResponse[EvalSchema], operation_id="get_eval_suites")
+    async def get_eval_suites(
+        request: Request,
+        db_id: Optional[str] = Query(default=None),
+        table: Optional[str] = Query(default=None),
+        limit: int = Query(default=20, ge=1, le=100),
+        page: int = Query(default=1, ge=1),
+    ) -> PaginatedResponse[EvalSchema]:
+        return await get_eval_runs(
+            request,
+            agent_id=None,
+            team_id=None,
+            workflow_id=None,
+            model_id=None,
+            filter_type=None,
+            eval_types=[EvalType.SUITE],
+            limit=limit,
+            page=page,
+            sort_by="created_at",
+            sort_order=SortOrder.DESC,
+            db_id=db_id,
+            table=table,
+        )
+
+    @router.get("/eval-suites/{suite_id}", response_model=EvalSchema, operation_id="get_eval_suite")
+    async def get_eval_suite(
+        request: Request,
+        suite_id: str,
+        db_id: Optional[str] = Query(default=None),
+        table: Optional[str] = Query(default=None),
+    ) -> EvalSchema:
+        result = await get_eval_run(request, suite_id, db_id, table)
+        if result.eval_type != EvalType.SUITE:
+            raise HTTPException(status_code=404, detail="Evaluation suite not found")
+        return result
+
     return router
 
 
 def parse_eval_types_filter(
     eval_types: Optional[str] = Query(
         default=None,
-        description="Comma-separated eval types (accuracy,agent_as_judge,performance,reliability)",
+        description="Comma-separated eval types (accuracy,agent_as_judge,performance,reliability,suite)",
         examples=["accuracy,agent_as_judge,performance,reliability"],
     ),
 ) -> Optional[List[EvalType]]:
