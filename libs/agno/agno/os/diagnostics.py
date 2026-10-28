@@ -109,10 +109,10 @@ async def arun_diagnostics(
             # Driver and provider exceptions can echo credentials; keep the type only.
             checks.append(CheckResult(name=name, status="FAIL", detail=f"Check failed ({type(exc).__name__})"))
     if agent_os.company is not None:
-        reason = agent_os.product_manager_unavailable_reason
+        reason = agent_os.company_manager_unavailable_reason
         checks.append(
             CheckResult(
-                "company", "WARN" if reason else "PASS", reason or "Product Manager configured; model not called"
+                "company", "WARN" if reason else "PASS", reason or "Company Manager configured; model not called"
             )
         )
     source_env: set[str] = set()

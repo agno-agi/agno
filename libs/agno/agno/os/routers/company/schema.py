@@ -130,6 +130,8 @@ class TaskCreate(BaseModel):
     brief: Optional[str] = None
     project_id: str = Field(..., min_length=1)
     evidence: Optional[List[Dict[str, Any]]] = None
+    # In progress and later stages need a run, so they are reached through POST /company/tasks/{id}/runs.
+    status: Literal["backlog", "ready", "cancelled"] = "backlog"
 
     @field_validator("title")
     @classmethod
@@ -137,6 +139,12 @@ class TaskCreate(BaseModel):
         if value is None or not value.strip():
             raise ValueError("title must be a non-empty string")
         return value
+
+    @model_validator(mode="after")
+    def validate_executor(self) -> "TaskCreate":
+        if self.status == "ready" and (self.executor_type is None or self.executor_id is None):
+            raise ValueError("Ready requires an executor type and id")
+        return self
 
 
 class TaskUpdate(BaseModel):

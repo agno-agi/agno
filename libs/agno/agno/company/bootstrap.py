@@ -13,13 +13,21 @@ from agno.scheduler import ScheduleManager
 
 
 async def arehydrate_product(
-    db: Any, product: Product, registry: Any = None, schedule_db: Any = None, scoped_user_id: Optional[str] = None
+    db: Any,
+    product: Product,
+    registry: Any = None,
+    schedule_db: Any = None,
+    scoped_user_id: Optional[str] = None,
+    *,
+    agent_os: Any = None,
 ):
     """Insert declared records once, repair interrupted linking, and retain later edits."""
     import time
 
     product_id = product.id or str(uuid5(NAMESPACE_URL, "agno:company:product:" + product.name))
-    routine_fields = [_declared_schedule_fields(product_id, routine, registry) for routine in product.routines]
+    routine_fields = [
+        _declared_schedule_fields(product_id, routine, registry, agent_os=agent_os) for routine in product.routines
+    ]
     row = await _call(db, "get_product", product_id, include_deleted=True)
     if row is None:
         try:
@@ -43,9 +51,9 @@ async def arehydrate_product(
             row = await _call(db, "get_product", product_id, include_deleted=True)
     if row is None:
         raise RuntimeError("Product rehydration failed")
-    from agno.company.playbook import _require_owner
+    from agno.company.playbook import _require_product_scope
 
-    _require_owner(row, scoped_user_id)
+    _require_product_scope(row)
     if row.get("deleted_at") is not None:
         return row
     # An existing owner remains authoritative; declarations never reassign ownership.
@@ -118,16 +126,26 @@ async def arehydrate_product(
             or (schedule.payload or {}).get("metadata", {}).get("product_id") != product_id
         ):
             raise ValueError("Routine name is already used by another schedule")
-        row = await _call(db, "add_product_routine", product_id, schedule.id)
+        # An archived Routine stays out of the Product's routine_ids until it is restored.
+        if (schedule.payload or {}).get("metadata", {}).get("deleted_at") is None:
+            row = await _call(db, "add_product_routine", product_id, schedule.id)
     return row
 
 
 def rehydrate_product(
-    db: Any, product: Product, registry: Any = None, schedule_db: Any = None, scoped_user_id: Optional[str] = None
+    db: Any,
+    product: Product,
+    registry: Any = None,
+    schedule_db: Any = None,
+    scoped_user_id: Optional[str] = None,
+    *,
+    agent_os: Any = None,
 ):
     """Synchronous startup counterpart; use arehydrate_product inside an event loop."""
     return asyncio.run(
-        arehydrate_product(db, product, registry, schedule_db=schedule_db, scoped_user_id=scoped_user_id)
+        arehydrate_product(
+            db, product, registry, schedule_db=schedule_db, scoped_user_id=scoped_user_id, agent_os=agent_os
+        )
     )
 
 
@@ -135,5 +153,7 @@ def rehydrate_product(
 async def _company_lifespan(app: Any, agent_os: Any):
     for declaration in agent_os.company.products:
         product = declaration if isinstance(declaration, Product) else Product.model_validate(declaration)
-        await arehydrate_product(agent_os._company_db, product, agent_os.registry, schedule_db=agent_os.db)
+        await arehydrate_product(
+            agent_os._company_db, product, agent_os.registry, schedule_db=agent_os.db, agent_os=agent_os
+        )
     yield

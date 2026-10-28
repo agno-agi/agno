@@ -89,6 +89,39 @@ and reading her own sessions. It does not grant publishing, scheduling, source
 reads, or platform-wide operational reports. Even a signed JWT claiming admin
 cannot override that role. Production tokens should come from your identity provider.
 
+## Run Claude and Codex engineers
+
+Register external agents in `AgentOS(agents=[...])` to let OS Manager discover
+and run them by name or ID. For example:
+
+```python
+from pathlib import Path
+
+from agno.agents.claude import ClaudeAgent
+from agno.agents.codex import CodexAgent
+from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIResponses
+from agno.os import AgentOS, OSManager
+
+db = SqliteDb(db_file="tmp/engineers.db")
+claude = ClaudeAgent(id="claude-engineer", name="Claude Engineer", cwd=str(Path.cwd()), db=db)
+codex = CodexAgent(id="codex-engineer", name="Codex Engineer", cwd=str(Path.cwd()), db=db)
+agent_os = AgentOS(
+    db=db,
+    agents=[claude, codex],
+    manager=OSManager(model=OpenAIResponses(id="gpt-5.6-luna")),
+)
+agent_os.manager.print_response("List the available agents.")
+agent_os.manager.print_response("Ask Codex Engineer to explain this repository without changing files.")
+```
+
+Install and authenticate the corresponding harness SDKs before running an
+engineer. These calls spend model usage and execute in the configured workspace.
+The manager's sync and async run tools preserve the caller's identity and keep a
+separate continuing session for each engineer and user. Existing run permissions
+still apply. External agents are dispatch targets, not Studio edit targets or
+persisted team/workflow members.
+
 ## Manager settings
 
 | Setting | Default | Effect |
@@ -101,7 +134,7 @@ cannot override that role. Production tokens should come from your identity prov
 | `instructions` | `None` | Appends instructions to the lead team's existing prompt. |
 | `required_env` | Empty | Names whose presence diagnostics checks; values are never returned. |
 | `tool_call_limit` | `8` | Ordinary tool executions per coordinator run, including delegations. `None` disables the limit; `0` refuses all ordinary tools. |
-| `member_tool_call_limit` | `24` | Ordinary tool executions per specialist invocation, including Product Manager when Company is enabled. `None` disables the limit. |
+| `member_tool_call_limit` | `24` | Ordinary tool executions per specialist invocation, including the Company Manager member when Company is enabled. `None` disables the limit. |
 | `num_history_runs` | `7` | Lead-team history depth. Members retain five runs. |
 | `offload_tool_results` | `True` | Stores large tool results on supported databases; accepts `False` or a `ResultStore`. |
 
@@ -113,7 +146,7 @@ The manager is instructed to keep explanations scoped to the question and to
 request concise specialist answers when delegation is necessary. Documentation
 access on the lead lets it answer framework questions without a specialist run.
 Short grounding and stopping rules also reach the builder, operator and attached
-Product Manager. Guidance for explaining framework concepts from the docs goes only
+Company Manager member. Guidance for explaining framework concepts from the docs goes only
 to the lead and Platform Manager, the roles with documentation access. Source
 investigation guidance stays with Platform Manager.
 
@@ -126,7 +159,7 @@ latency, or application components dispatched through runner tools.
 
 Increase the limits for larger builds or plans. Set either limit to `None` to
 restore unlimited ordinary tool executions for that level. Ordinary application
-agents and standalone Product Manager retain their existing limits. Custom
+agents and the served Company Manager, which runs direct chat and Routines, retain their existing limits. Custom
 `instructions` remain specific to the lead team. Model choices still determine
 actual routing and answer quality; prompt guidance is not an execution guarantee.
 

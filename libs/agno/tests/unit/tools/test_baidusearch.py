@@ -71,6 +71,29 @@ def test_baidu_search_output_format():
     assert json.loads(result) == [{"title": "T", "url": "U", "abstract": "A", "rank": "1"}]
 
 
+@pytest.mark.parametrize(
+    "title, abstract",
+    [
+        ("百度一下，你就知道", "全球领先的中文搜索引擎"),
+        ("臺北101 - 維基百科", "臺北101是位於臺灣臺北市信義區的摩天大樓"),
+        ("Agno 中文文档", "Build agents with Agno 快速入门"),
+    ],
+    ids=["simplified", "traditional", "mixed"],
+)
+def test_baidu_search_keeps_non_ascii_text_unescaped(title, abstract):
+    """Test that Chinese text in results is returned unescaped and the output remains valid JSON."""
+    tools = BaiduSearchTools()
+
+    with patch("agno.tools.baidusearch.search") as mock_search:
+        mock_search.return_value = [{"title": title, "url": "https://www.baidu.com", "abstract": abstract}]
+        result = tools.baidu_search(title)
+
+    assert title in result
+    assert abstract in result
+    assert "\\u" not in result
+    assert json.loads(result) == [{"title": title, "url": "https://www.baidu.com", "abstract": abstract, "rank": "1"}]
+
+
 def test_baidu_search_fixed_language_wins():
     """Test that fixed_language set on the toolkit overrides the per-call language."""
     tools = BaiduSearchTools(fixed_language="english")

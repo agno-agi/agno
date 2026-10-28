@@ -63,6 +63,7 @@ async def test_evidence_repeat_failure_completion_and_product_scope(heartbeat, t
     path.write_text("# Release\nA new feature.\n")
     product = await call("create", name="Docs")
     product_project = await call("create_project", product_id=product["id"], name="Work")
+    await call("transition_project", project_id=product_project["id"], target="active", reason="Approved")
     source = await call(
         "create_source", product_id=product["id"], type="markdown", reference=str(path), credential_ref="DOCS_TOKEN"
     )
@@ -110,6 +111,7 @@ async def test_evidence_repeat_failure_completion_and_product_scope(heartbeat, t
     )["id"] == first["id"]
     other = await call("create", name="Other")
     other_project = await call("create_project", product_id=other["id"], name="Work")
+    await call("transition_project", project_id=other_project["id"], target="active", reason="Approved")
     second_source = await call("create_source", product_id=other["id"], type="markdown", reference=str(path))
     assert (
         await call(
@@ -164,7 +166,7 @@ async def test_source_paging_soft_delete_and_restart(heartbeat, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_setup_rechecks_owner_after_concurrent_product_insert(heartbeat, tmp_path, monkeypatch):
+async def test_setup_race_loser_joins_the_winners_product(heartbeat, tmp_path, monkeypatch):
     db, _, call = heartbeat
     original = db.create_product
     winner = Product(id="company-setup", name="First owner", user_id="alice")
@@ -187,9 +189,10 @@ async def test_setup_rechecks_owner_after_concurrent_product_insert(heartbeat, t
         user_id="bob",
         sources=[Source(type="markdown", reference=str(tmp_path / "private.md"))],
     )
-    with pytest.raises(PermissionError):
-        await arehydrate_product(db, loser, scoped_user_id="bob")
-    assert (await call("list_sources"))[1] == 0
+    # Setup is not owner-scoped: the loser adds its declarations and the winner stays the owner.
+    await arehydrate_product(db, loser)
+    assert (await call("list_sources"))[1] == 1
+    assert (await call("get", "company-setup"))["user_id"] == "alice"
 
 
 def test_website_uses_existing_reader_and_hashes_extracted_content(monkeypatch):
@@ -282,6 +285,7 @@ async def test_concurrent_evidence_and_routine_linking(heartbeat, tmp_path):
     db, manager, call = heartbeat
     product = await call("create", name="Concurrent", metadata={"human": "keep"})
     product_project = await call("create_project", product_id=product["id"], name="Work")
+    await call("transition_project", project_id=product_project["id"], target="active", reason="Approved")
     path = tmp_path / "race.md"
     path.write_text("Same evidence")
     source = await call("create_source", product_id=product["id"], type="markdown", reference=str(path))
@@ -324,6 +328,7 @@ async def test_git_provider_exclusions_and_failed_batch(heartbeat, tmp_path):
     (root / ".env").write_text("SECRET=never-in-evidence")
     product = await call("create", name="Repository")
     product_project = await call("create_project", product_id=product["id"], name="Work")
+    await call("transition_project", project_id=product_project["id"], target="active", reason="Approved")
     source = await call("create_source", product_id=product["id"], type="git", reference=str(root))
     evidence = await call("read_source", source["id"], "read")
     assert len(evidence) == 1 and "never-in-evidence" not in str(evidence)
@@ -370,6 +375,7 @@ async def test_intake_requires_a_decision_and_only_stores_selected_evidence(hear
         (root / (str(index) + ".md")).write_text("External business data " + str(index))
     product = await call("create", name="Selective intake")
     product_project = await call("create_project", product_id=product["id"], name="Work")
+    await call("transition_project", project_id=product_project["id"], target="active", reason="Approved")
     source = await call("create_source", product_id=product["id"], type="git", reference=str(root))
     evidence = await call("read_source", source["id"], "scan")
     assert len(evidence) == 5 and (await call("list_tasks", product_id=product["id"]))[1] == 0
@@ -410,6 +416,7 @@ async def test_summary_preserves_narrative_changes_and_failure_detail(heartbeat,
         "create", name="Reports", metadata={"summary": {"interface": "slack", "destination": "reports"}}
     )
     product_project = await call("create_project", product_id=product["id"], name="Work")
+    await call("transition_project", project_id=product_project["id"], target="active", reason="Approved")
     task = await call("create_task", product_id=product["id"], title="Release docs", project_id=product_project["id"])
     assert task["origin"] == "human"
     await call(
@@ -470,6 +477,7 @@ async def test_intake_rejects_stale_and_incomplete_observed_hashes(heartbeat, tm
     path.write_text("Authentication example is broken")
     product = await call("create", name="Observed evidence")
     product_project = await call("create_project", product_id=product["id"], name="Work")
+    await call("transition_project", project_id=product_project["id"], target="active", reason="Approved")
     source = await call("create_source", product_id=product["id"], type="markdown", reference=str(path))
     observed = (await call("read_source", source["id"], "observation"))[0]
     proposal = dict(
@@ -527,6 +535,7 @@ async def test_summary_delivery_failure_keeps_last_delivered_baseline(heartbeat,
         "create", name="Reliable changes", metadata={"summary": {"interface": "slack", "destination": "docs"}}
     )
     product_project = await call("create_project", product_id=product["id"], name="Work")
+    await call("transition_project", project_id=product_project["id"], target="active", reason="Approved")
     await call("create_task", product_id=product["id"], title="Task A", project_id=product_project["id"])
     if prior_delivery:
         await call("summarize", product_id=product["id"], run_id="first", interfaces=[], narrative="First report")
@@ -560,6 +569,7 @@ async def test_source_discovery_fragments_and_selected_intake(heartbeat, tmp_pat
     (root / "broken.png").write_bytes(b"\xff\xfe")
     product = await call("create", name="Large checkout")
     product_project = await call("create_project", product_id=product["id"], name="Work")
+    await call("transition_project", project_id=product_project["id"], target="active", reason="Approved")
     source = await call("create_source", product_id=product["id"], type="git", reference=str(root))
     original = WorkspaceTools._read_file
     reads = []
@@ -618,8 +628,9 @@ async def test_routine_service_cannot_create_a_plain_task(heartbeat):
     _, _, call = heartbeat
     product = await call("create", name="Bounded proposals")
     product_project = await call("create_project", product_id=product["id"], name="Work")
+    await call("transition_project", project_id=product_project["id"], target="active", reason="Approved")
     with authorization_scope(lambda: _RoutineAuthorization(None, "routine")):
-        with pytest.raises(PermissionError, match="intake_company_source"):
+        with pytest.raises(PermissionError, match="intake_product_source"):
             await call("create_task", product_id=product["id"], title="Plain task", project_id=product_project["id"])
     assert (await call("list_tasks", product_id=product["id"]))[1] == 0
 
@@ -631,6 +642,7 @@ async def test_intake_preserves_proposed_executor_and_project(heartbeat, tmp_pat
     path.write_text("Document the API")
     product = await call("create", name="API")
     project = await call("create_project", product_id=product["id"], name="Guide")
+    await call("transition_project", project_id=project["id"], target="active", reason="Approved")
     source = await call("create_source", product_id=product["id"], type="markdown", reference=str(path))
     observed = (await call("read_source", source["id"], "observation"))[0]
     proposal = dict(
@@ -677,6 +689,7 @@ async def test_summary_retention_preserves_delivery_state(heartbeat, monkeypatch
         metadata={"archive_window_days": window, "summary": {"interface": "slack", "destination": "reports"}},
     )
     product_project = await call("create_project", product_id=product["id"], name="Work")
+    await call("transition_project", project_id=product_project["id"], target="active", reason="Approved")
     await call("create_task", product_id=product["id"], title="Task A", project_id=product_project["id"])
     await call("summarize", product_id=product["id"], run_id="first", interfaces=[], narrative="Initial report")
     # Multiple receipts must all survive migration and adjacent-marker parsing.
@@ -784,8 +797,8 @@ async def test_agent_website_source_reuse_provenance_conflicts_and_archive(heart
         args["_agno_" + executor_type] = agent
         args.update(overrides)
         if isinstance(db, AsyncBaseDb):
-            return json.loads(await toolkit.aadd_company_source(**args))
-        return json.loads(await asyncio.to_thread(toolkit.add_company_source, **args))
+            return json.loads(await toolkit.aadd_product_source(**args))
+        return json.loads(await asyncio.to_thread(toolkit.add_product_source, **args))
 
     first, second = await asyncio.gather(add(), add())
     assert first["id"] == second["id"]
@@ -804,9 +817,9 @@ async def test_agent_website_source_reuse_provenance_conflicts_and_archive(heart
             executor_type=executor_type,
             run_id="discovery-run",
         )
+    # Another member's agent may add to the Product too; the same website reuses the Source.
     context.user_id = "other"
-    with pytest.raises(PermissionError):
-        await add()
+    assert (await add())["id"] == first["id"]
     context.user_id = "owner"
     with pytest.raises(ValueError, match="identity"):
         await add(**{"_agno_" + executor_type: None})
@@ -836,6 +849,7 @@ async def test_summary_omits_acknowledged_failures(heartbeat, monkeypatch, ackno
         "create", name="Reports", metadata={"summary": {"interface": "slack", "destination": "reports"}}
     )
     product_project = await call("create_project", product_id=product["id"], name="Work")
+    await call("transition_project", project_id=product_project["id"], target="active", reason="Approved")
     task = await call("create_task", product_id=product["id"], title="Recovered work", project_id=product_project["id"])
     await call(
         "transition_task",
@@ -890,6 +904,7 @@ async def test_concurrent_summary_does_not_redeliver_the_same_delta(heartbeat, m
         "create", name="Reports", metadata={"summary": {"interface": "slack", "destination": "reports"}}
     )
     product_project = await call("create_project", product_id=product["id"], name="Work")
+    await call("transition_project", project_id=product_project["id"], target="active", reason="Approved")
     await call("create_task", product_id=product["id"], title="One change", project_id=product_project["id"])
     first = asyncio.create_task(
         call("summarize", product_id=product["id"], run_id="first", interfaces=[], narrative="Changed")

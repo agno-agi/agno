@@ -398,6 +398,7 @@ class _SandboxStore:
         queue_attempt: Optional[int] = None,
         lease_seconds: float = 60,
         prepared_run: Optional[Dict[str, Any]] = None,
+        session_metadata: Optional[Dict[str, Any]] = None,
     ) -> SandboxState:
         """Own the session for ``run_id``; always continue with the returned state's lease.
 
@@ -433,7 +434,7 @@ class _SandboxStore:
             nonlocal opened_turn, reused_lease
             if prepared is not None:
                 # A new session needs its row before it can be held; inserting it locks no existing row.
-                self._insert_session(connection, prepared)
+                self._insert_session(connection, prepared, session_metadata)
             self._hold_session(connection, session_id)
             if prepared is not None:
                 # Session, then run, then binding: the prepared run is written and locked before the binding.
@@ -1023,7 +1024,10 @@ class _SandboxStore:
             ).scalar_one()
             connection.execute(update(self.runs).where(self.runs.c.run_id == value["run_id"]).values(run_index=index))
 
-    def _insert_session(self, connection: Connection, value: Dict[str, Any]) -> None:
+    def _insert_session(
+        self, connection: Connection, value: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Create the session row if it is missing; an existing row, and its metadata, is left as it is."""
         connection.execute(
             insert(self.sessions)
             .values(
@@ -1033,6 +1037,7 @@ class _SandboxStore:
                 session_type="agent",
                 created_at=int(time.time()),
                 session_data={},
+                **({"metadata": self._json(metadata)} if metadata else {}),
             )
             .on_conflict_do_nothing()
         )

@@ -30,7 +30,7 @@ reasoning_agent = Agent(
     name="AG-UI Reasoning Agent",
     model=OpenAIResponses(id="gpt-5.6"),
     db=db,
-    reasoning_model=OpenAIResponses(id="o3-mini"),
+    reasoning_model=OpenAIResponses(id="gpt-5.6-sol"),
     instructions="Solve the problem carefully, then give a concise final answer.",
 )
 

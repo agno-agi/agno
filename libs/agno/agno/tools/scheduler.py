@@ -157,7 +157,11 @@ def _archived_component_refusal(
     different answer for another owner's archived component than for an id that
     does not exist, which discloses that the component exists.
     """
-    if db is None:
+    from agno.registry._reserved import RESERVED_MANAGER_IDS
+
+    # Reserved managers resolve only from AgentOS, never from archived catalog
+    # rows left by an older deployment. Their availability is checked by the owner.
+    if db is None or target_id in RESERVED_MANAGER_IDS:
         return None
     get_component = getattr(db, "get_component", None)
     if get_component is None:
@@ -184,7 +188,11 @@ async def _aarchived_component_refusal(
     db: Any, target_type: str, target_id: str, user_id: Optional[str] = None
 ) -> Optional[Tuple[str, str]]:
     """Async variant of ``_archived_component_refusal``; same predicate."""
-    if db is None:
+    from agno.registry._reserved import RESERVED_MANAGER_IDS
+
+    # Reserved managers resolve only from AgentOS, never from archived catalog
+    # rows left by an older deployment. Their availability is checked by the owner.
+    if db is None or target_id in RESERVED_MANAGER_IDS:
         return None
     get_component = getattr(db, "get_component", None)
     if get_component is None:

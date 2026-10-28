@@ -1,6 +1,8 @@
 import asyncio
 import json
+import os
 import warnings
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from importlib import import_module
@@ -190,7 +192,8 @@ class CodexAgent(BaseExternalAgent):
         thread_options: Typed native thread settings. Named non-None settings take precedence.
         turn_options: Typed native turn settings. Named non-None settings take precedence.
         codex_bin: Path to a specific Codex executable. Defaults to the bundled one.
-        env: Environment variables for the Codex process.
+        env: Environment variables for the Codex process. OPENAI_API_KEY automatically
+            authenticates API-key sessions; existing non-API-key logins are preserved.
         thread_kwargs: Deprecated alias for thread_options.
         turn_kwargs: Deprecated alias for turn_options.
         retries: Number of times to retry a failed run. Cancelled runs, budget and usage limits and errors
@@ -447,11 +450,27 @@ class CodexAgent(BaseExternalAgent):
             config.env = dict(config.env)
         return config
 
-    def _new_client(self) -> Any:
+    @asynccontextmanager
+    async def _new_client(self) -> AsyncIterator[Any]:
         """Create an AsyncCodex client. One app-server process per run keeps the
         client bound to the current event loop."""
         sdk = _sdk()
-        return sdk.AsyncCodex(self._codex_config(sdk))
+        config = self._codex_config(sdk)
+        api_key = (config.env or {}).get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
+        async with sdk.AsyncCodex(config) as codex:
+            if api_key:
+                # The app-server inherits the environment but requires an explicit login.
+                # Keep a user's ChatGPT or other non-API-key account, as sandbox runs do.
+                try:
+                    account = _item_root((await codex.account()).account)
+                    if account is None or account.type == "apiKey":
+                        await codex.login_api_key(api_key)
+                except Exception as error:
+                    message = str(error).replace(api_key, "[redacted]")[:500]
+                    # To preserve the original exception's traceback, build a new one from it.
+                    cause = RuntimeError(f"{type(error).__name__}: {message}").with_traceback(error.__traceback__)
+                    raise RuntimeError("Codex API-key authentication failed: " + message) from cause
+            yield codex
 
     @staticmethod
     def _to_sandbox(sdk: Any, value: str) -> Any:

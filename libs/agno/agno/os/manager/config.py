@@ -43,7 +43,7 @@ class OSManager:
         tool_call_limit: Maximum ordinary tool executions per coordinator run,
             including delegations. Defaults to 8; None disables the limit.
         member_tool_call_limit: Maximum ordinary tool executions per specialist
-            invocation, including Product Manager when attached. Defaults to 24;
+            invocation, including the Company Manager member when attached. Defaults to 24;
             None disables the limit. Each delegation has its own budget, not a
             shared run-wide budget. Offloaded-result read-back tools retain their
             existing exemption from both limits.
