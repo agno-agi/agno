@@ -76,7 +76,7 @@ import asyncio
 import inspect
 import json
 import threading
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Set, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Set, Union, cast
 
 from agno.exceptions import SchemaMismatchError
 from agno.run import RunContext
@@ -891,7 +891,8 @@ class StudioTools(Toolkit):
     # ------------------------------------------------------------------
 
     def _iter_agents(self) -> List["Agent"]:
-        return self._runner_tools._iter_agents()
+        # Non-dispatch lookups exclude external adapters from the build palette.
+        return cast(List["Agent"], self._runner_tools._iter_agents())
 
     def _iter_teams(self) -> List["Team"]:
         return self._runner_tools._iter_teams()
@@ -900,7 +901,7 @@ class StudioTools(Toolkit):
         return self._runner_tools._iter_workflows()
 
     def _find_agent(self, agent_id: str, actor: Optional[str] = None) -> Optional["Agent"]:
-        return self._runner_tools._find_agent(agent_id, actor=actor)
+        return cast(Optional["Agent"], self._runner_tools._find_agent(agent_id, actor=actor))
 
     def _find_team(self, team_id: str, actor: Optional[str] = None) -> Optional["Team"]:
         return self._runner_tools._find_team(team_id, actor=actor)
@@ -4474,7 +4475,7 @@ class StudioTools(Toolkit):
 
         Args:
             name (str): Unique schedule name (e.g. "daily-news-digest").
-            cron (str): 5-field cron expression (e.g. "0 9 * * *" for daily at 9am).
+            cron (str): 5-field cron expression (e.g. "0 9 * * *" for daily at 9am), or empty for on demand.
             target_type (str): One of 'agent', 'team', or 'workflow'.
             target_id (str): Id (or name) of an existing component.
             message (str): The prompt sent to the component on every scheduled run.
@@ -4631,7 +4632,7 @@ class StudioTools(Toolkit):
 
         Args:
             schedule_id (str): Exact schedule id from list_schedules.
-            cron (Optional[str]): New 5-field cron expression. Omit to keep.
+            cron (Optional[str]): New 5-field cron expression, or empty for on demand. Omit to keep.
             message (Optional[str]): New prompt for every run. Omit to keep.
             timezone (Optional[str]): New IANA timezone. Omit to keep.
             description (Optional[str]): New description. Omit to keep.
@@ -4639,6 +4640,8 @@ class StudioTools(Toolkit):
         Returns:
             str: StudioResult JSON; data carries the updated schedule fields.
         """
+        from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID
+
         try:
             if cron is None and message is None and timezone is None and description is None:
                 return error_result("invalid_request", "Pass at least one field to change.")
@@ -4647,6 +4650,11 @@ class StudioTools(Toolkit):
             existing = manager.get(schedule_id, user_id=actor)
             if existing is None:
                 return error_result("schedule_not_found", f"Schedule not found: {schedule_id}")
+            if existing.managed_by == "company" and existing.id != COMPANY_AUTOMATION_SCHEDULE_ID:
+                return error_result(
+                    "company_routine",
+                    f"Schedule {schedule_id} is a Company Routine. Change it through Company Routines.",
+                )
             updates: Dict[str, Any] = {}
             if cron is not None:
                 updates["cron_expr"] = cron
@@ -4661,7 +4669,7 @@ class StudioTools(Toolkit):
             # valid change needs the recompute too, or the old cadence fires once
             # more before the new one takes effect.
             if cron is not None or timezone is not None:
-                from agno.scheduler.cron import compute_next_run, validate_cron_expr, validate_timezone
+                from agno.scheduler.cron import next_run_for, validate_cron_expr, validate_timezone
 
                 new_cron = cron if cron is not None else existing.cron_expr
                 new_tz = timezone if timezone is not None else (existing.timezone or "UTC")
@@ -4675,7 +4683,7 @@ class StudioTools(Toolkit):
                         "invalid_request",
                         f"Invalid timezone: {new_tz}. Use an IANA name, e.g. 'America/New_York'.",
                     )
-                updates["next_run_at"] = compute_next_run(new_cron, new_tz)
+                updates["next_run_at"] = next_run_for(new_cron, new_tz)
             if message is not None:
                 if not message.strip():
                     return error_result("invalid_request", "message must be a non-empty string.")
@@ -5047,7 +5055,7 @@ class StudioTools(Toolkit):
         members: List[TeamMember] = []
         missing: List[str] = []
         for mid in member_ids:
-            agent_match = runner._find_agent_by_exact_id(mid, actor=actor)
+            agent_match = cast(Optional["Agent"], runner._find_agent_by_exact_id(mid, actor=actor))
             team_match = runner._find_team_by_exact_id(mid, actor=actor)
             if agent_match is None and team_match is None and target_db is not None and target_db is not self.db:
                 # Exact ids in the selected target db outrank every name tier.
@@ -5067,7 +5075,7 @@ class StudioTools(Toolkit):
                 runner._db_component_exists("agent", mid, actor=actor)
                 or runner._db_component_exists("team", mid, actor=actor)
             ):
-                agent_named = runner._find_agent_by_name(mid, actor=actor)
+                agent_named = cast(Optional["Agent"], runner._find_agent_by_name(mid, actor=actor))
                 team_named = runner._find_team_by_name(mid, actor=actor)
                 if agent_named is not None and team_named is not None:
                     raise ValueError(

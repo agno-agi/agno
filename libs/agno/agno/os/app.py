@@ -27,6 +27,8 @@ from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.os.config import (
     AgentOSConfig,
     AuthorizationConfig,
+    CompanyDomainConfig,
+    CompanySectionConfig,
     CORSConfig,
     DatabaseConfig,
     EvalsConfig,
@@ -200,6 +202,7 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
     if agent_os.auto_provision_dbs:
         agent_os._initialize_sync_databases()
         await agent_os._initialize_async_databases()
+    await agent_os._acheck_sandbox_tables()
 
     yield
 
@@ -223,10 +226,28 @@ async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
     if internal_token is None:
         raise ValueError("internal_service_token must be set when scheduler is enabled")
 
-    executor = ScheduleExecutor(
-        base_url=base_url,
-        internal_service_token=internal_token,
+    from agno.company.routines import _AUTOMATION_CRON, _ensure_automation_schedule
+
+    # Reconcile before the poller can claim a stale Company schedule.
+    await _ensure_automation_schedule(
+        agent_os.db,
+        enabled=agent_os.company is not None,
+        cron_expr=agent_os.company.cron_expr if agent_os.company is not None else _AUTOMATION_CRON,
     )
+    executor: ScheduleExecutor
+    if agent_os.company is not None:
+        from agno.company.routines import _CompanyScheduleExecutor
+
+        executor = _CompanyScheduleExecutor(
+            agent_os,
+            app,
+            company_db=agent_os._company_db,
+            schedule_db=agent_os.db,
+            base_url=base_url,
+            internal_service_token=internal_token,
+        )
+    else:
+        executor = ScheduleExecutor(base_url=base_url, internal_service_token=internal_token)
     poller = SchedulePoller(
         db=agent_os.db,
         executor=executor,
@@ -460,6 +481,23 @@ class AgentOS:
         self.version = version
         self.description = description
         self.db = db
+        if (
+            company is not None
+            and company.products
+            and self.config is not None
+            and self.config.company is not None
+            and self.config.company.products
+        ):
+            raise ValueError("Declare Company Products in code or config.yaml, not both")
+        if self.config is not None and self.config.company is not None and (company is None or not company.products):
+            from agno.company.config import CompanyConfig
+
+            if company is None:
+                company = CompanyConfig(products=self.config.company.products)
+            else:
+                from dataclasses import replace
+
+                company = replace(company, products=self.config.company.products)
         self.company = company
         self._company_db = (company.db if company.db is not None else db) if company is not None else None
         self.checkpoint = checkpoint
@@ -599,7 +637,7 @@ class AgentOS:
         self._scheduler_enabled = scheduler
         self._scheduler_poll_interval = scheduler_poll_interval
         self._scheduler_base_url = scheduler_base_url
-        if self._scheduler_enabled and not internal_service_token:
+        if (self._scheduler_enabled or company is not None) and not internal_service_token:
             import secrets
 
             internal_service_token = secrets.token_urlsafe(32)
@@ -625,20 +663,23 @@ class AgentOS:
         from agno.os.manager import OSManager
         from agno.os.manager.manager import _build_manager
 
-        self._product_manager: Optional[Agent] = None
-        self.product_manager_unavailable_reason: Optional[str] = None
+        self._company_manager: Optional[Agent] = None
+        self.company_manager_unavailable_reason: Optional[str] = None
         if self.company is not None:
-            from agno.company.product_manager import _build_product_manager
+            from agno.company.company_manager import _build_company_manager
+            from agno.company.execution import _mount_executors
+
+            _mount_executors(self)
 
             company_model = self.company.model
             if company_model is None and self.registry is not None and self.registry.models:
                 company_model = self.registry.models[0]
-            self._product_manager = _build_product_manager(self, company_model)
-            if self._product_manager is None:
-                self.product_manager_unavailable_reason = (
-                    "Product Manager unavailable: configure CompanyConfig(model=...) or Registry(models=[...])"
+            self._company_manager = _build_company_manager(self, company_model)
+            if self._company_manager is None:
+                self.company_manager_unavailable_reason = (
+                    "Company Manager unavailable: configure CompanyConfig(model=...) or Registry(models=[...])"
                     if company_model is None
-                    else "Product Manager unavailable: Company requires a database"
+                    else "Company Manager unavailable: Company requires a database"
                 )
 
         self._manager: Optional["_Manager"] = None
@@ -651,22 +692,34 @@ class AgentOS:
             self._manager = _build_manager(self, manager_config)
             self.agents = list(self.agents or [])
             self.teams = [*(self.teams or []), self._manager.team]
-            self._apply_manager_manifest()
 
-        if self._product_manager is not None:
+        if self._company_manager is not None:
             if self.registry is None:
                 self.registry = Registry()
-            self.registry.exclude_components([self._product_manager])
+            self.registry.exclude_components([self._company_manager])
             if self._manager is not None:
-                self._manager.product_manager = self._product_manager
+                from agno.company.company_manager import _build_company_manager
+                from agno.os.manager.prompts import FOCUSED_EXECUTION_INSTRUCTIONS
+
+                # A separate member keeps the manager's execution policy off the served
+                # Company Manager, which direct chat and Routines run.
+                member = _build_company_manager(self, self._company_manager.model)
+                assert member is not None
+                member.tool_call_limit = self._manager.config.member_tool_call_limit
+                assert isinstance(member.instructions, str)
+                member.instructions = [member.instructions, FOCUSED_EXECUTION_INSTRUCTIONS]
+                self.registry.exclude_components([member])
+                self._manager.company_manager = member
                 assert isinstance(self._manager.team.members, list)
-                self._manager.team.members.append(self._product_manager)
+                self._manager.team.members.append(member)
                 assert isinstance(self._manager.team.instructions, list)
                 self._manager.team.instructions.append(
-                    "Delegate Company planning, playbook updates and decisions to Product Manager."
+                    "Delegate Company Products, Projects, Tasks, Sources, Routines, playbook pages and decisions to "
+                    "Company Manager, including setup requests and questions about their status. Routines are "
+                    "Company schedules: ask Company Manager, not Platform Builder, to create them."
                 )
-            else:
-                self.agents = [*(self.agents or []), self._product_manager]
+            self.agents = [*(self.agents or []), self._company_manager]
+        self._apply_manager_manifest()
 
         self._initialize_agents()
         self._initialize_teams()
@@ -684,6 +737,7 @@ class AgentOS:
         self._populate_registry_knowledge()
 
         # Collect models, tools, dbs and vector dbs from the agent/team/workflow tree
+        self._bind_company_tools()
         self._populate_registry_components()
 
         # Track MCP tools declared on the registry so they connect in the same
@@ -703,9 +757,23 @@ class AgentOS:
         return self._manager.team if self._manager is not None else None
 
     @property
+    def company_manager(self) -> Optional[Agent]:
+        """The built-in Company Manager, or None with an unavailable reason."""
+        return self._company_manager
+
+    @property
     def product_manager(self) -> Optional[Agent]:
-        """The built-in Product Manager, or None with an unavailable reason."""
-        return self._product_manager
+        """Deprecated alias of ``company_manager``."""
+        log_warning("AgentOS.product_manager is deprecated; use AgentOS.company_manager.")
+        return self._company_manager
+
+    @property
+    def product_manager_unavailable_reason(self) -> Optional[str]:
+        """Deprecated alias of ``company_manager_unavailable_reason``."""
+        log_warning(
+            "AgentOS.product_manager_unavailable_reason is deprecated; use AgentOS.company_manager_unavailable_reason."
+        )
+        return self.company_manager_unavailable_reason
 
     def _owned_by_manager(self, component: Any) -> bool:
         """True for the manager's team and members, which never enter the registry."""
@@ -716,14 +784,20 @@ class AgentOS:
     def _apply_manager_manifest(self) -> None:
         """Set default UI descriptions and prompts without replacing application settings."""
         from agno.os.config import AgentOSConfig
-        from agno.registry._reserved import RESERVED_MEMBER_IDS
+        from agno.registry._reserved import COMPANY_MANAGER_ID, RESERVED_MEMBER_IDS
 
-        if self._manager is None:
+        defaults = self._manager.manifest() if self._manager is not None else {}
+        # Company Manager is served with or without OS Manager, so it always gets its own chat card.
+        if self._company_manager is not None:
+            from agno.company.company_manager import _company_manager_manifest
+
+            defaults[COMPANY_MANAGER_ID] = _company_manager_manifest()
+        if not defaults:
             return
         if self.config is None:
             self.config = AgentOSConfig()
         manifest = {key: value for key, value in (self.config.manifest or {}).items() if key not in RESERVED_MEMBER_IDS}
-        for component_id, entry in self._manager.manifest().items():
+        for component_id, entry in defaults.items():
             manifest.setdefault(component_id, entry)
         self.config.manifest = manifest
 
@@ -842,6 +916,7 @@ class AgentOS:
         self._populate_registry_knowledge()
 
         # Collect models, tools, dbs and vector dbs from the agent/team/workflow tree
+        self._bind_company_tools()
         self._populate_registry_components()
 
         # Track MCP tools declared on the registry
@@ -928,15 +1003,21 @@ class AgentOS:
             get_filesystem_router(self, settings=self.settings),
         ]
         if self.company is not None:
+            from agno.os.routers.company.heartbeat import get_heartbeat_router
             from agno.os.routers.company.playbook import get_playbook_router
             from agno.os.routers.company.products import get_products_router
             from agno.os.routers.company.projects import get_projects_router
+            from agno.os.routers.company.runs import get_company_runs_router
             from agno.os.routers.company.tasks import get_tasks_router
 
             updated_routers.append(get_products_router(db=self._company_db, settings=self.settings))
+            updated_routers.append(get_heartbeat_router(self))
             updated_routers.append(get_projects_router(db=self._company_db, settings=self.settings))
-            updated_routers.append(get_tasks_router(db=self._company_db, settings=self.settings))
+            updated_routers.append(
+                get_tasks_router(db=self._company_db, settings=self.settings, registry=self.registry)
+            )
             updated_routers.append(get_playbook_router(db=self._company_db, settings=self.settings))
+            updated_routers.append(get_company_runs_router(self))
         # Routes that require a database
         if self.db is not None:
             if isinstance(self.db, BaseDb):
@@ -950,6 +1031,7 @@ class AgentOS:
                     include_agents=self.agents,
                     include_teams=self.teams,
                     include_workflows=self.workflows,
+                    agent_os=self,
                 )
             )
             updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
@@ -1052,7 +1134,7 @@ class AgentOS:
             [*(self.agents or []), *(self.teams or []), *(self.workflows or [])],
             owned=[
                 *(self._manager.components if self._manager is not None else []),
-                *([self._product_manager] if self._product_manager is not None else []),
+                *([self._company_manager] if self._company_manager is not None else []),
             ],
         )
         duplicate_ids: List[str] = []
@@ -1100,6 +1182,120 @@ class AgentOS:
             lifespan=lifespan,
         )
 
+    async def _acheck_sandbox_tables(self) -> None:
+        """Fail startup, with the remedy, when a sandboxed agent's bindings table is from another build.
+
+        Tables are created here only when the OS provisions databases; otherwise an existing
+        table is validated and a missing one is left to the deployment, as the first run was.
+        """
+        nested = [*self._sandboxed_team_members(), *self._sandboxed_workflow_agents()]
+        for entry in [*(self.agents or []), *(agent for agent, _ in nested)]:
+            if isinstance(entry, BaseExternalAgent) and entry.sandbox is not None and entry.db is not None:
+                from agno.sandbox import _harness
+
+                await _harness.acheck_tables(entry, create=self.auto_provision_dbs)
+
+    @staticmethod
+    def _nearest_postgres(db: Any, inherited_db: Any) -> Any:
+        """``db`` when it is Postgres, which a sandbox coordinates on, otherwise the enclosing one."""
+        from agno.db.postgres import AsyncPostgresDb, PostgresDb
+
+        return db if isinstance(db, (PostgresDb, AsyncPostgresDb)) else inherited_db
+
+    def _collect_sandboxed_team_members(self, team: Any, inherited_db: Any, found: List[Any], seen: set) -> None:
+        """Add (member, database) for a team's sandboxed harness members, at any depth, to ``found``.
+
+        A member list built by a factory is not walked. The database is the nearest Postgres one among
+        the member's enclosing teams, then ``inherited_db``.
+        """
+        if id(team) in seen or not isinstance(getattr(team, "members", None), list):
+            return
+        seen.add(id(team))
+        team_db = self._nearest_postgres(getattr(team, "db", None), inherited_db)
+        for member in team.members:
+            if isinstance(member, BaseExternalAgent) and member.sandbox is not None:
+                found.append((member, team_db))
+            elif isinstance(member, Team):
+                self._collect_sandboxed_team_members(member, team_db, found, seen)
+
+    def _sandboxed_team_members(self) -> List[Any]:
+        """(member, database) for sandboxed harness agents that are members of a served team, at any depth.
+
+        They run their turns through the same coordinator as a served sandboxed agent, so they get the
+        same startup checks. The database is the nearest Postgres one among the member's enclosing
+        teams, None when none of them has one.
+        """
+        found: List[Any] = []
+        seen: set = set()
+        for team in self._teams or []:
+            self._collect_sandboxed_team_members(team, None, found, seen)
+        return found
+
+    def _sandboxed_workflow_agents(self) -> List[Any]:
+        """(agent, database) for sandboxed harness agents inside a served workflow, at any depth.
+
+        That covers harness agents used as steps and members of a team used as a step, which run their
+        turns through the same coordinator as a served sandboxed agent; steps built by a callable are not
+        walked. The database is the nearest Postgres one among the agent's enclosing teams and
+        workflows, None when none of them has one.
+        """
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.router import Router
+        from agno.workflow.step import Step
+        from agno.workflow.steps import Steps
+        from agno.workflow.workflow import Workflow
+
+        found: List[Any] = []
+        seen: set = set()
+
+        def visit(item: Any, inherited_db: Any) -> None:
+            if isinstance(item, BaseExternalAgent):
+                if item.sandbox is not None:
+                    found.append((item, inherited_db))
+            elif isinstance(item, Team):
+                self._collect_sandboxed_team_members(item, inherited_db, found, seen)
+            elif isinstance(item, Workflow):
+                visit_workflow(item, inherited_db)
+            elif isinstance(item, list):
+                # Router choices, for one, may hold a list of steps, which the router runs as Steps.
+                for child in item:
+                    visit(child, inherited_db)
+            elif isinstance(item, (Step, Steps, Loop, Parallel, Condition, Router)):
+                for attr in ("agent", "team", "workflow"):
+                    if getattr(item, attr, None) is not None:
+                        visit(getattr(item, attr), inherited_db)
+                for attr in ("steps", "else_steps", "choices"):
+                    children = getattr(item, attr, None)
+                    if isinstance(children, list):
+                        visit(children, inherited_db)
+
+        def visit_workflow(workflow: Any, inherited_db: Any) -> None:
+            if id(workflow) in seen or not isinstance(getattr(workflow, "steps", None), list):
+                return
+            seen.add(id(workflow))
+            workflow_db = self._nearest_postgres(getattr(workflow, "db", None), inherited_db)
+            visit(workflow.steps, workflow_db)
+
+        for workflow in self._workflows or []:
+            visit_workflow(workflow, None)
+        return found
+
+    def _prepare_sandboxed_agent(self, agent: BaseExternalAgent, fallback_db: Any) -> None:
+        """Give a sandboxed agent a database and fail at startup on what would fail its first turn.
+
+        Used for served agents, team members and agents inside workflows alike. An agent without its
+        own database gets ``fallback_db``, then the OS's."""
+        from agno.sandbox import _harness
+
+        if agent.db is None:
+            agent.db = fallback_db or self.db
+        # Fail at startup, not on the first run, when the sandbox has no Postgres to coordinate on.
+        _harness._check_db(agent)
+        if self.queue is not None and self.queue.durable:
+            _harness.check_queue_checkpoints(agent)
+
     def _initialize_agents(self) -> None:
         """Initialize and configure all agents for AgentOS usage."""
         # Inject db into external framework agents (not covered by self._agents)
@@ -1108,6 +1304,8 @@ class AgentOS:
                 if self.db is not None and entry.db is None:
                     entry.db = self.db
                 entry.store_events = True
+                if entry.sandbox is not None:
+                    self._prepare_sandboxed_agent(entry, self.db)
 
         # Manager specialists need normal initialization, but are not served agents.
         agents_to_initialize = [*self._agents, *(self._manager.agents if self._manager else [])]
@@ -1158,6 +1356,10 @@ class AgentOS:
         if not self._teams:
             return
 
+        # Sandboxed harness members coordinate their computers on Postgres, as served sandboxed agents do.
+        for member, team_db in self._sandboxed_team_members():
+            self._prepare_sandboxed_agent(member, team_db)
+
         for team in self._teams:
             # Set the default db to teams without their own
             if self.db is not None and team.db is None:
@@ -1192,6 +1394,12 @@ class AgentOS:
             if self.db is not None and workflow.db is None:
                 workflow.db = self.db
 
+        # Sandboxed agents inside workflows, such as members of a team used as a step, get the same
+        # startup checks as served sandboxed agents and team members.
+        for agent, owner_db in self._sandboxed_workflow_agents():
+            self._prepare_sandboxed_agent(agent, owner_db)
+
+        for workflow in self._workflows:
             # Track MCP tools recursively in workflow members
             collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
 
@@ -1277,9 +1485,10 @@ class AgentOS:
             if existing_index is not None and existing_index > 0:
                 self.registry.dbs.insert(0, self.registry.dbs.pop(existing_index))
 
-        if self._agents:
+        registered_agents = [agent for agent in self.agents or [] if isinstance(agent, (Agent, BaseExternalAgent))]
+        if registered_agents:
             existing_agents = {aid: a for a in self.registry.agents if (aid := getattr(a, "id", None)) is not None}
-            for agent in self._agents:
+            for agent in registered_agents:
                 agent_id = getattr(agent, "id", None)
                 if agent_id is None or self._owned_by_manager(agent):
                     continue
@@ -1420,6 +1629,51 @@ class AgentOS:
 
         for workflow in self._workflows:
             yield from visit_steps(getattr(workflow, "steps", None))
+
+    def _bind_company_tools(self) -> None:
+        """Give Company toolkits this OS's configured transports and blocking result checks."""
+        if self.company is None:
+            return
+        from weakref import ref
+
+        from agno.company.routines import _RoutineResultGuardrail
+        from agno.tools.company import CompanyTools
+
+        company = self.company
+
+        def bind(entries: Any) -> bool:
+            found = False
+            for entry in entries or []:
+                toolkit = getattr(entry, "source_toolkit", None) or entry
+                if isinstance(toolkit, CompanyTools):
+                    found = True
+                    if not toolkit._interfaces_explicit:
+                        toolkit.interfaces = self.interfaces
+                    if toolkit.registry is None:
+                        toolkit.registry = self.registry
+                    toolkit._schedule_db = self.db
+                    # Keep owner lookup live without copying the OS into per-run toolkits.
+                    toolkit._agent_os_ref = ref(self)
+                    toolkit._automation_history_retention_days = company.automation_history_retention_days
+                    toolkit.user_isolation = toolkit.user_isolation or bool(
+                        self.user_isolation
+                        or (
+                            self.authorization
+                            and self.authorization_config is not None
+                            and self.authorization_config.user_isolation
+                        )
+                    )
+            return found
+
+        # Toolkits published only through MCPConfig(tools=...) are served without a component.
+        bind(getattr(self.mcp_config, "tools", None))
+        for component in self._iter_component_carriers():
+            found = bind(getattr(component, "tools", None))
+            if found and hasattr(component, "post_hooks"):
+                hooks = list(component.post_hooks or [])
+                if not any(isinstance(getattr(hook, "__self__", hook), _RoutineResultGuardrail) for hook in hooks):
+                    hooks.append(_RoutineResultGuardrail())
+                    component.post_hooks = hooks
 
     def _warn_on_foreign_studio_registries(self) -> None:
         """Warn when a served component carries a Studio toolkit bound to a
@@ -1660,6 +1914,11 @@ class AgentOS:
             # The async database lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))
 
+            if self.company is not None and self.company.products:
+                from agno.company.bootstrap import _company_lifespan
+
+                lifespans.append(partial(_company_lifespan, agent_os=self))
+
             # The scheduler lifespan (after db so tables exist)
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
@@ -1709,6 +1968,11 @@ class AgentOS:
             # Async database initialization lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))  # type: ignore
 
+            if self.company is not None and self.company.products:
+                from agno.company.bootstrap import _company_lifespan
+
+                lifespans.append(partial(_company_lifespan, agent_os=self))
+
             # The scheduler lifespan (after db so tables exist)
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
@@ -1736,6 +2000,7 @@ class AgentOS:
         self._populate_registry_knowledge()
 
         # Collect models, tools, dbs and vector dbs from the agent/team/workflow tree
+        self._bind_company_tools()
         self._populate_registry_components()
 
         routers = [
@@ -1755,15 +2020,19 @@ class AgentOS:
             get_filesystem_router(self, settings=self.settings),
         ]
         if self.company is not None:
+            from agno.os.routers.company.heartbeat import get_heartbeat_router
             from agno.os.routers.company.playbook import get_playbook_router
             from agno.os.routers.company.products import get_products_router
             from agno.os.routers.company.projects import get_projects_router
+            from agno.os.routers.company.runs import get_company_runs_router
             from agno.os.routers.company.tasks import get_tasks_router
 
             routers.append(get_products_router(db=self._company_db, settings=self.settings))
+            routers.append(get_heartbeat_router(self))
             routers.append(get_projects_router(db=self._company_db, settings=self.settings))
-            routers.append(get_tasks_router(db=self._company_db, settings=self.settings))
+            routers.append(get_tasks_router(db=self._company_db, settings=self.settings, registry=self.registry))
             routers.append(get_playbook_router(db=self._company_db, settings=self.settings))
+            routers.append(get_company_runs_router(self))
         # Routes that require a database
         if self.db is not None:
             if isinstance(self.db, BaseDb):
@@ -1777,6 +2046,7 @@ class AgentOS:
                     include_agents=self.agents,
                     include_teams=self.teams,
                     include_workflows=self.workflows,
+                    agent_os=self,
                 )
             )
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))
@@ -1918,10 +2188,11 @@ class AgentOS:
             # isolation are ADVISORY here, not enforced. Warn (don't raise) so an operator who expected
             # enforcement knows to add authorization.
             log_warning(
-                "AgentOS is configured with a user directory / per-user isolation but no authorization. "
-                "They work off the run's user_id for local/demo use (a roster fills in, a run scopes its "
-                "own data), but that id is self-asserted -- so the disabled kill-switch and isolation are "
-                "ADVISORY, not enforced. Add AgentOS(authorization=True) with a verification key to enforce."
+                "AgentOS has user_directory or user_isolation set without authorization. The user_id on each "
+                "request comes from the caller and is not verified, so a disabled user can send a different "
+                "user_id and any caller can read another user's data by sending theirs. This is fine for local "
+                "development. To enforce it, set AgentOS(authorization=True) and configure JWT_VERIFICATION_KEY "
+                "or JWT_JWKS_FILE."
             )
         if self.authorization:
             # Set authorization_enabled flag on settings so security key validation is skipped
@@ -2230,6 +2501,17 @@ class AgentOS:
             from agno.os.mcp_auth import mcp_auth_route_paths
 
             mcp_auth_paths = mcp_auth_route_paths(mcp_auth_provider)
+            # The tool runner is part of that surface, so it is exempted on the same
+            # terms: a client holding a provider-issued token would otherwise have it
+            # decoded as an agno JWT here and rejected before reaching the route. The
+            # route is not left open -- fastmcp verifies the token and the handler
+            # refuses anything without a verified principal. Only under mcp_auth: with
+            # no provider this middleware is the only credential check on that path.
+            # A switched-off runner is not exempted: the path then has no route behind it.
+            if self.mcp and (self.mcp_config is None or self.mcp_config.tool_run_endpoint):
+                from agno.os.config import MCP_SERVER_TOOLS_PATH
+
+                mcp_auth_paths.append(f"{MCP_SERVER_TOOLS_PATH}/*")
         # The Server Card is discovery before authentication: public by design, no secrets.
         server_card_paths: List[str] = []
         if self.mcp and (self.mcp_config is None or self.mcp_config.server_card):
@@ -2836,6 +3118,28 @@ class AgentOS:
                 )
 
         return memory_config
+
+    def _get_company_config(self) -> Optional[CompanySectionConfig]:
+        if self.company is None or self._company_db is None:
+            return None
+        company_config = (
+            CompanySectionConfig(
+                display_name=self.config.company.display_name,
+                dbs=[entry.model_copy(deep=True) for entry in self.config.company.dbs],
+            )
+            if self.config and self.config.company
+            else CompanySectionConfig()
+        )
+        db = self._company_db
+        configured = next((item for item in company_config.dbs if item.db_id == db.id), None)
+        company_config.dbs = [
+            DatabaseConfig(
+                db_id=db.id,
+                domain_config=configured.domain_config if configured else CompanyDomainConfig(display_name=db.id),
+                tables=[db.products_table_name, db.projects_table_name, db.tasks_table_name, db.sources_table_name],
+            )
+        ]
+        return company_config
 
     def _get_learning_config(self) -> LearningConfig:
         learning_config = self.config.learning if self.config and self.config.learning else LearningConfig()

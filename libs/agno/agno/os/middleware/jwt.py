@@ -1559,6 +1559,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
             request.state.user_id = INTERNAL_SCHEDULER_USER_ID
             request.state.session_id = None
             internal_scopes = list(INTERNAL_SERVICE_SCOPES)
+            if method == "POST" and path.startswith("/company/tasks/"):
+                from agno.company.execution import _automatic_task
+
+                task = _automatic_task.get()
+                # Only the in-process Company tick can enter this path. The
+                # saved accepting identity is checked below as for every schedule.
+                # A network caller cannot supply this request-local observation.
+                if task is not None and path == f"/company/tasks/{task['id']}/runs":
+                    internal_scopes.extend(["tasks:write", "wiki:read"])
             request.state.scopes = internal_scopes
             # Trusted internal caller: mark AFTER the constant-time hmac match above so the
             # provider-backed per-resource gate (check_resource_access) short-circuits — the
@@ -1851,8 +1860,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if not owner.strip() or owner == INTERNAL_SCHEDULER_USER_ID:
             return None  # refused downstream as an unusable identity (get_scoped_user_id)
 
+        from agno.company.execution import _task_transport
+
+        company_transport = _task_transport.get() == (method, path, owner)
+
         user_store = getattr(getattr(request.app, "state", None), "user_store", None)
-        if user_store is not None:
+        # An authorized collaborator can still stop an offboarded owner's work.
+        # New work must obey the directory off switch and its failure policy.
+        if user_store is not None and not (company_transport and path.endswith("/cancel")):
             try:
                 disabled = bool(await user_store.ais_disabled(owner))
             except Exception as e:
@@ -1877,6 +1892,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     reason="schedule_owner_disabled",
                 )
                 return self._create_error_response(403, "Schedule owner is disabled", origin, cors_allowed_origins)
+
+        # Company authorizes the actor, not the session owner's executor grants.
+        # This exact in-process handoff cannot be supplied by a network header.
+        if company_transport:
+            return None
 
         if not self.authorization:
             return None

@@ -16,7 +16,7 @@ from agno.fs import FileSystem
 from agno.fs.errors import VersionConflictError
 
 
-async def call(fn, *args, **kwargs):
+async def call(fn, /, *args, **kwargs):
     result = fn(*args, **kwargs)
     return await result if inspect.isawaitable(result) else result
 
@@ -46,7 +46,7 @@ async def db(request, tmp_path):
 async def test_playbook_persistence_scope_and_decisions(db):
     cls = AsyncCompanyManager if isinstance(db, AsyncBaseDb) else CompanyManager
     m = cls(db)
-    product = await call(m.create, "SDK", purpose="Build well", user_id="alice")
+    product = await call(m.create, name="SDK", purpose="Build well", user_id="alice")
     pid = product["id"]
     provider = await call(m.get_wiki, pid)
     from agno.context.wiki.provider import WikiContextProvider
@@ -54,16 +54,29 @@ async def test_playbook_persistence_scope_and_decisions(db):
     assert isinstance(provider, WikiContextProvider)
     assert (await call(m.list_wiki, pid))[1] == 2
     original = await call(m.read_wiki, pid, "status.md")
-    with pytest.raises(PermissionError):
-        await call(m.write_wiki, pid, "status.md", "foreign", original.metadata.version, user_id="bob")
-    await call(m.write_wiki, pid, "status.md", "reviewed", original.metadata.version, user_id="alice")
+    # Wiki pages are shared, so a member who did not create the Product may write them.
+    await call(
+        m.write_wiki,
+        product_id=pid,
+        path="status.md",
+        content="reviewed",
+        expected_version=original.metadata.version,
+        user_id="bob",
+    )
     with pytest.raises(VersionConflictError):
-        await call(m.write_wiki, pid, "status.md", "stale", original.metadata.version, user_id="alice")
+        await call(
+            m.write_wiki,
+            product_id=pid,
+            path="status.md",
+            content="stale",
+            expected_version=original.metadata.version,
+            user_id="alice",
+        )
     fresh = cls(db)
     assert (await call(fresh.read_wiki, pid, "status.md")).content == "reviewed"
     entry = await call(
         m.log_decision,
-        "Ship",
+        decision="Ship",
         reasoning="tests passed",
         context="review",
         outcome="approved",
@@ -112,9 +125,9 @@ async def test_two_writers_cannot_overwrite_one_version(db):
 @pytest.mark.asyncio
 async def test_proposal_edit_rechecks_status_in_storage(db):
     m = AsyncCompanyManager(db) if isinstance(db, AsyncBaseDb) else CompanyManager(db)
-    product = await call(m.create, "SDK", user_id="alice")
-    project = await call(m.create_project, product["id"], "Release", user_id="alice")
-    await call(m.transition_project, project["id"], "active", "accepted", user_id="alice")
+    product = await call(m.create, name="SDK", user_id="alice")
+    project = await call(m.create_project, product_id=product["id"], name="Release", user_id="alice")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="accepted", user_id="alice")
     assert (
         await call(m.update_project, project["id"], name="stale proposal", user_id="alice", expected_status="proposed")
         is None
@@ -147,7 +160,7 @@ async def test_decision_write_does_not_claim_success_on_silent_storage_failure(d
 
     monkeypatch.setattr(db, "upsert_learning", fail)
     with pytest.raises(RuntimeError, match="not persisted"):
-        await call(m.log_decision, "must not claim success")
+        await call(m.log_decision, decision="must not claim success")
 
 
 @pytest.mark.asyncio
@@ -202,12 +215,12 @@ async def test_company_recall_is_shared_and_agent_attribution_is_bound(db):
     import json
 
     from agno.company.decisions import CompanyDecisionLogStore
-    from agno.registry._reserved import PRODUCT_MANAGER_ID
+    from agno.registry._reserved import COMPANY_MANAGER_ID
     from agno.run import RunContext
     from agno.tools.company import CompanyTools
 
     m = AsyncCompanyManager(db) if isinstance(db, AsyncBaseDb) else CompanyManager(db)
-    human = await call(m.log_decision, "Human review decision", user_id="alice")
+    human = await call(m.log_decision, decision="Human review decision", user_id="alice")
     tools = CompanyTools(db)
     context = RunContext(run_id="r", session_id="s", user_id="bob")
     direct = json.loads(await tools.alog_company_decision("Caller decision", _agno_run_context=context))
@@ -217,13 +230,13 @@ async def test_company_recall_is_shared_and_agent_attribution_is_bound(db):
     fn = next(tool for tool in learned_tools if tool.name == "log_company_decision")
     own = json.loads(await fn.entrypoint("Other agent decision", _agno_run_context=context))
     assert own["agent_id"] == "other-agent"
-    recalled = await store.arecall(agent_id=PRODUCT_MANAGER_ID, session_id="new-session")
+    recalled = await store.arecall(agent_id=COMPANY_MANAGER_ID, session_id="new-session")
     assert {entry.id for entry in recalled} == {human.id, direct["id"], own["id"]}
     assert len(await store.asearch(agent_id="other-agent")) == 1
-    assert await store.asearch(agent_id=PRODUCT_MANAGER_ID) == []
+    assert await store.asearch(agent_id=COMPANY_MANAGER_ID) == []
     if not isinstance(db, AsyncBaseDb):
         sync_tool = store.get_tools(agent_id="sync-agent")[0]
         entry = json.loads(sync_tool("Sync agent decision", _agno_run_context=context))
         assert entry["agent_id"] == "sync-agent"
-        assert len(store.recall(agent_id=PRODUCT_MANAGER_ID)) == 4
+        assert len(store.recall(agent_id=COMPANY_MANAGER_ID)) == 4
         assert len(store.search(agent_id="sync-agent")) == 1

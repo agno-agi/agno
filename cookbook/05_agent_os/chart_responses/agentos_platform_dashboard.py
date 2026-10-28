@@ -23,8 +23,6 @@ Try: ask the Platform Dashboard "Chart token usage by day and the model mix."
 import time
 from pathlib import Path
 
-from sqlalchemy import text
-
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
@@ -33,6 +31,7 @@ from agno.os.config import AgentOSConfig, ChatConfig
 from agno.tools.agentos import AgentOSTools
 from agno.tools.calculator import CalculatorTools
 from agno.tools.chart import ChartTools
+from sqlalchemy import text
 
 DB_DIR = Path(__file__).parent / "tmp"
 DB_DIR.mkdir(exist_ok=True)

@@ -11,7 +11,7 @@ def test_reopen_schema_and_serialization(tmp_path):
     path = str(tmp_path / "company.db")
     db = SqliteDb(db_file=path, products_table="custom_products")
     manager = CompanyManager(db)
-    product = manager.create("SDK", user_id="alice", metadata={"nested": {"x": [1, 2]}})
+    product = manager.create(name="SDK", user_id="alice", metadata={"nested": {"x": [1, 2]}})
     assert manager.delete(product["id"])
     serialized = db.to_dict()
     assert serialized["products_table"] == "custom_products"
@@ -20,7 +20,10 @@ def test_reopen_schema_and_serialization(tmp_path):
     reopened = SqliteDb.from_dict(serialized)
     manager = CompanyManager(reopened)
     assert manager.get(product["id"]) is None
-    assert manager.get(product["id"], include_deleted=True)["metadata"] == {"nested": {"x": [1, 2]}}
+    assert manager.get(product["id"], include_deleted=True)["metadata"] == {
+        "archive_window_days": 14,
+        "nested": {"x": [1, 2]},
+    }
     assert manager.restore(product["id"])["user_id"] == "alice"
     columns = {c["name"]: c for c in inspect(reopened.db_engine).get_columns("custom_products")}
     assert set(columns) == {"id", "name", "purpose", "user_id", "metadata", "created_at", "updated_at", "deleted_at"}

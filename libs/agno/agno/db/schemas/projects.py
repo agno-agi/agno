@@ -1,7 +1,7 @@
 """Validation and explicit lifecycle rules for Company projects."""
 
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 PROJECT_TRANSITIONS = {
     "proposed": {"cancelled", "active"},
@@ -31,12 +31,15 @@ def project_transition_fields(
     target: str,
     reason: str,
     accepted_by: Optional[str] = None,
+    tasks: Sequence[Dict[str, Any]] = (),
 ) -> Dict[str, Any]:
     """Build lifecycle fields after validating a transition; callers persist atomically."""
     if not isinstance(reason, str) or not reason.strip():
         raise ValueError("A transition requires a non-empty reason")
     if target not in PROJECT_TRANSITIONS.get(existing["status"], set()):
         raise ValueError(f"Invalid project transition from {existing['status']} to {target}")
+    if target == "done":
+        validate_project_completion(tasks)
     now = int(time.time())
     fields: Dict[str, Any] = {"status": target, "updated_at": now}
     fields["transitions"] = [
@@ -44,3 +47,11 @@ def project_transition_fields(
         {"from": existing["status"], "target": target, "reason": reason, "user_id": accepted_by, "created_at": now},
     ]
     return fields
+
+
+def validate_project_completion(tasks: Sequence[Dict[str, Any]]) -> None:
+    """A Project cannot finish while any of its Tasks is non-terminal."""
+    open_tasks = [task for task in tasks if task["status"] not in {"done", "cancelled"}]
+    if open_tasks:
+        names = ", ".join(str(task["title"]) + " (" + str(task["id"]) + ")" for task in open_tasks)
+        raise ValueError("Project has open Tasks: " + names)

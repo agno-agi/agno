@@ -651,8 +651,9 @@ def _derive_entrypoint_schema(
         if requires_user_input and user_input_fields:
             excluded_params.extend(user_input_fields)
 
-        # Get filtered list of parameter types
-        param_type_hints = {name: type_hints.get(name) for name in sig.parameters if name not in excluded_params}
+        # Preserve Annotated metadata for schemas after filtering injected types.
+        schema_type_hints = get_type_hints(entrypoint, include_extras=True)
+        param_type_hints = {name: schema_type_hints.get(name) for name in sig.parameters if name not in excluded_params}
 
         # Parse docstring for parameters
         param_descriptions: Dict[str, Any] = {}
@@ -1016,9 +1017,16 @@ class UserInputField:
     value: Optional[Any] = None
 
     def to_dict(self) -> Dict[str, Any]:
+        if isinstance(self.field_type, type):
+            # Plain classes expose __name__ (e.g. "int").
+            serialized_field_type = self.field_type.__name__
+        else:
+            # PEP 604 unions (e.g. `int | None`) and typing special forms have no
+            # __name__; fall back to str() so serialization never crashes.
+            serialized_field_type = str(self.field_type)
         return {
             "name": self.name,
-            "field_type": str(self.field_type.__name__),
+            "field_type": serialized_field_type,
             "description": self.description,
             "value": self.value,
         }
@@ -1516,9 +1524,10 @@ class Function(BaseModel):
                 del type_hints["files"]
             # log_info(f"Type hints for {function_name}: {type_hints}")
 
-            # Filter out return type and only process parameters
+            # Preserve Annotated metadata for schemas after filtering injected types.
+            schema_type_hints = get_type_hints(c, include_extras=True)
             param_type_hints = {
-                name: type_hints.get(name)
+                name: schema_type_hints.get(name)
                 for name in sig.parameters
                 if name not in ("return", "self")
                 and name not in FRAMEWORK_INJECTED_PARAMS

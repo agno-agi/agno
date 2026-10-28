@@ -15,6 +15,11 @@ from agno.db.postgres import AsyncPostgresDb, PostgresDb
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.db.utils import db_from_dict
 
+EMPTY_COUNTS = {
+    "projects": 0,
+    "tasks": dict.fromkeys(["backlog", "ready", "in_progress", "in_review", "done", "cancelled"], 0),
+}
+
 
 @pytest_asyncio.fixture(params=["sqlite", "async_sqlite", "postgres", "async_postgres"])
 async def db(request, tmp_path):
@@ -42,7 +47,7 @@ async def db(request, tmp_path):
         await call(database.close)
 
 
-async def call(fn, *args, **kwargs):
+async def call(fn, /, *args, **kwargs):
     result = fn(*args, **kwargs)
     return await result if inspect.isawaitable(result) else result
 
@@ -55,17 +60,18 @@ def manager(db):
 async def test_lifecycle_and_owner_guards(db):
     m = manager(db)
     assert await call(m.list) == ([], 0)
-    a = await call(m.create, "SDK", purpose="Build", metadata={"nested": [1, {"yes": True}]}, user_id="alice")
-    b = await call(m.create, "SDK", user_id="bob")
+    a = await call(m.create, name="SDK", purpose="Build", metadata={"nested": [1, {"yes": True}]}, user_id="alice")
+    b = await call(m.create, name="SDK", user_id="bob")
     assert set(a) == {"id", "name", "purpose", "metadata", "user_id", "created_at", "updated_at", "deleted_at"}
     assert a["user_id"] == "alice" and a["updated_at"] is None
-    assert await call(m.get, a["id"], user_id="alice") == a
+    assert await call(m.get, a["id"], user_id="alice") == {**a, "counts": EMPTY_COUNTS}
     assert await call(m.get, a["id"], user_id="bob") is None
     assert await call(m.update, a["id"], user_id="bob", name="stolen") is None
     assert await call(m.delete, a["id"], user_id="bob") is False
-    assert await call(m.get, a["id"]) == a
+    assert await call(m.get, a["id"]) == {**a, "counts": EMPTY_COUNTS}
     changed = await call(m.update, a["id"], user_id="alice", purpose=None, metadata=None, name="Framework")
-    assert changed["purpose"] is None and changed["metadata"] is None
+    # Clearing metadata resets the archive policy to its default.
+    assert changed["purpose"] is None and changed["metadata"] == {"archive_window_days": 14}
     assert changed["created_at"] == a["created_at"] and changed["updated_at"] >= a["created_at"]
     assert await call(m.restore, a["id"]) is None
     assert await call(m.delete, a["id"], user_id="alice") is True
@@ -124,13 +130,13 @@ async def test_validation_and_immutable_fields(db):
     m = manager(db)
     for name in [None, "", "   "]:
         with pytest.raises(ValueError):
-            await call(m.create, name)
+            await call(m.create, name=name)
     for kwargs in [{"limit": 0}, {"page": 0}]:
         with pytest.raises(ValueError):
             await call(m.list, **kwargs)
         with pytest.raises(ValueError):
             await call(db.get_products, **kwargs)
-    a = await call(m.create, "SDK", user_id="alice")
+    a = await call(m.create, name="SDK", user_id="alice")
     for fields in [
         {"id": "other"},
         {"created_at": 0},
@@ -144,12 +150,12 @@ async def test_validation_and_immutable_fields(db):
             await call(m.update, a["id"], **fields)
         with pytest.raises(ValueError):
             await call(db.update_product, a["id"], **fields)
-    assert await call(m.get, a["id"]) == a
+    assert await call(m.get, a["id"]) == {**a, "counts": EMPTY_COUNTS}
 
 
 @pytest.mark.asyncio
 async def test_custom_table_and_shared_schema_version(db):
-    product = await call(manager(db).create, "SDK")
+    product = await call(manager(db).create, name="SDK")
     assert await call(db.table_exists, db.products_table_name)
     assert not await call(db.table_exists, "agno_company_products")
     assert await call(db.get_latest_schema_version, db.products_table_name)
@@ -159,7 +165,7 @@ async def test_custom_table_and_shared_schema_version(db):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("loader", ["adapter", "resolver", "agent"])
 async def test_configuration_roundtrip(db, loader):
-    product = await call(manager(db).create, "Roundtrip", user_id="alice")
+    product = await call(manager(db).create, name="Roundtrip", user_id="alice")
     data = db.to_dict()
     assert data["products_table"] == db.products_table_name
     if loader == "adapter":
@@ -225,13 +231,13 @@ async def test_http_owner_isolation_and_override(db, tmp_path, isolation):
         assert await call(db.get_product, product["id"]) is not None
         assert not default.table_exists(default.products_table_name)
         path = "/company/products/" + product["id"]
-        # Reads are company-wide regardless of isolation; writes are owner-scoped under isolation.
+        # Products are shared regardless of isolation: scopes govern writes and the creator stays recorded.
         response = await client.get("/company/products?limit=1", headers=headers("bob"))
         assert response.json()["meta"]["total_count"] == 1
         assert (await client.get(path, headers=headers("bob"))).status_code == 200
-        assert (await client.patch(path, json={"purpose": "Updated"}, headers=headers("bob"))).status_code == (
-            403 if isolation else 200
-        )
+        response = await client.patch(path, json={"purpose": "Updated"}, headers=headers("bob"))
+        assert response.status_code == 200, response.text
+        assert response.json()["purpose"] == "Updated" and response.json()["user_id"] == "alice"
         assert (await client.delete(path, headers=headers("alice"))).status_code == 204
         assert (await client.get(path, headers=headers("alice"))).status_code == 404
         assert (await client.get(path + "?include_deleted=true", headers=headers("alice"))).status_code == 200

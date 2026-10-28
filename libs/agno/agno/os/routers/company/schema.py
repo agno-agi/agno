@@ -31,7 +31,25 @@ class ProductUpdate(BaseModel):
         return value
 
 
+class TaskCounts(BaseModel):
+    backlog: int = 0
+    ready: int = 0
+    in_progress: int = 0
+    in_review: int = 0
+    done: int = 0
+    cancelled: int = 0
+
+
+class ProjectCounts(BaseModel):
+    tasks: TaskCounts = Field(default_factory=TaskCounts)
+
+
+class ProductCounts(ProjectCounts):
+    projects: int = Field(0, description="Non-archived Projects in proposed or active status")
+
+
 class ProductResponse(BaseModel):
+    counts: ProductCounts = Field(default_factory=ProductCounts)
     id: str
     name: str
     purpose: Optional[str] = None
@@ -76,6 +94,7 @@ class ProjectUpdate(BaseModel):
 
 
 class ProjectResponse(BaseModel):
+    counts: ProjectCounts = Field(default_factory=ProjectCounts)
     product_id: str = Field(..., min_length=1)
     name: str = Field(..., min_length=1)
     outcome: Optional[str] = None
@@ -103,11 +122,16 @@ class ProjectTransition(BaseModel):
 
 
 class TaskCreate(BaseModel):
+    executor_type: Optional[Literal["agent", "team", "workflow"]] = None
+    executor_id: Optional[str] = Field(None, min_length=1)
     model_config = ConfigDict(extra="forbid")
     product_id: str = Field(..., min_length=1)
     title: str = Field(..., min_length=1)
     brief: Optional[str] = None
-    project_id: Optional[str] = None
+    project_id: str = Field(..., min_length=1)
+    evidence: Optional[List[Dict[str, Any]]] = None
+    # In progress and later stages need a run, so they are reached through POST /company/tasks/{id}/runs.
+    status: Literal["backlog", "ready", "cancelled"] = "backlog"
 
     @field_validator("title")
     @classmethod
@@ -116,12 +140,21 @@ class TaskCreate(BaseModel):
             raise ValueError("title must be a non-empty string")
         return value
 
+    @model_validator(mode="after")
+    def validate_executor(self) -> "TaskCreate":
+        if self.status == "ready" and (self.executor_type is None or self.executor_id is None):
+            raise ValueError("Ready requires an executor type and id")
+        return self
+
 
 class TaskUpdate(BaseModel):
+    executor_type: Optional[Literal["agent", "team", "workflow"]] = None
+    executor_id: Optional[str] = Field(None, min_length=1)
     model_config = ConfigDict(extra="forbid")
     title: Optional[str] = None
     brief: Optional[str] = None
     project_id: Optional[str] = None
+    evidence: Optional[List[Dict[str, Any]]] = None
 
     @field_validator("title")
     @classmethod
@@ -132,10 +165,21 @@ class TaskUpdate(BaseModel):
 
 
 class TaskResponse(BaseModel):
+    @field_validator("transitions", mode="before")
+    @classmethod
+    def public_transitions(cls, value):
+        from agno.db.schemas.tasks import public_task
+
+        return public_task({"transitions": value})["transitions"]
+
     product_id: str = Field(..., min_length=1)
     title: str = Field(..., min_length=1)
     brief: Optional[str] = None
     project_id: Optional[str] = None
+    evidence: Optional[List[Dict[str, Any]]] = None
+    origin: Optional[str] = None
+    routine_id: Optional[str] = None
+    dedupe_key: Optional[str] = None
     id: str
     status: TaskStatus
     user_id: Optional[str] = None
@@ -147,6 +191,12 @@ class TaskResponse(BaseModel):
     executor_id: Optional[str] = None
     accepted_by: Optional[str] = None
     accepted_at: Optional[int] = None
+
+    session_id: Optional[str] = None
+    job_id: Optional[str] = None
+    sandboxed: bool = False
+    metadata: Optional[Dict[str, Any]] = None
+    result: Optional[Dict[str, Any]] = None
 
 
 class TaskTransition(BaseModel):
@@ -161,7 +211,7 @@ class TaskTransition(BaseModel):
             raise ValueError("A transition requires a non-empty reason")
         return value
 
-    executor_type: Optional[Literal["agent", "team", "workflow", "engineering"]] = None
+    executor_type: Optional[Literal["agent", "team", "workflow"]] = None
     executor_id: Optional[str] = Field(None, min_length=1)
 
     @model_validator(mode="after")
@@ -218,3 +268,8 @@ class DecisionResponse(BaseModel):
     team_id: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+
+
+class TaskRunCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    attempt: int = Field(1, ge=1, strict=True)

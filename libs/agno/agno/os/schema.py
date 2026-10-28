@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar, Union
@@ -12,6 +13,7 @@ from agno.db.base import SessionType
 from agno.db.utils import detect_session_type
 from agno.os.config import (
     ChatConfig,
+    CompanySectionConfig,
     EvalsConfig,
     KnowledgeConfig,
     LearningConfig,
@@ -258,11 +260,10 @@ def _extract_filesystem(filesystem: Any, agent: Any, user_id: Optional[str] = No
 
 def _builtin_component_metadata(component: Any) -> Optional[Dict[str, Any]]:
     """Expose framework identity without publishing arbitrary metadata in summaries."""
-    from agno.registry._reserved import RESERVED_MANAGER_IDS
+    from agno.registry._reserved import is_framework_owned
 
-    component_id = getattr(component, "id", None)
-    if component_id in RESERVED_MANAGER_IDS and getattr(component, "_registry_excluded", False):
-        return {"_agno": {"internal": True, "id": component_id}}
+    if is_framework_owned(component):
+        return {"_agno": {"internal": True, "id": component.id}}
     return None
 
 
@@ -273,9 +274,12 @@ class AgentSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
     model: Optional[Model] = Field(None, description="Model used by the agent")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    sandboxed: bool = False
 
     @classmethod
     def from_agent(cls, agent: Union[Agent, AgentProtocol, RemoteAgent, AgentFactory]) -> "AgentSummaryResponse":
+        from agno.agents.base import BaseExternalAgent
+
         agent_db = getattr(agent, "db", None)
         # Built-in adapters expose sdk. The framework fallback is only for third-party adapters that
         # satisfy AgentProtocol structurally and predate the rename; drop it with the framework alias.
@@ -298,6 +302,7 @@ class AgentSummaryResponse(BaseModel):
             db_id=agent_db.id if agent_db else None,
             model=_extract_model(agent),
             metadata=metadata,
+            sandboxed=isinstance(agent, BaseExternalAgent) and agent.sandbox is not None,
         )
 
 
@@ -310,6 +315,7 @@ class TeamSummaryResponse(BaseModel):
     model: Optional[Model] = Field(None, description="Model used by the team leader")
 
     metadata: Optional[Dict[str, Any]] = Field(None, description="Framework component metadata")
+    sandboxed: bool = False
 
     @classmethod
     def from_team(cls, team: Union[Team, RemoteTeam, TeamFactory]) -> "TeamSummaryResponse":
@@ -344,6 +350,7 @@ class WorkflowSummaryResponse(BaseModel):
     is_component: bool = Field(False, description="Whether this workflow was created via Builder")
     current_version: Optional[int] = Field(None, description="Current published version number")
     stage: Optional[str] = Field(None, description="Stage of the loaded config (draft/published)")
+    sandboxed: bool = False
 
     @classmethod
     def from_workflow(
@@ -394,6 +401,15 @@ class McpInfo(BaseModel):
     path: Optional[str] = Field(None, description="Path where the MCP server is mounted, null when disabled")
     oauth: Optional[McpOAuthInfo] = Field(
         None, description="OAuth discovery details when the MCP endpoint is OAuth-protected, null otherwise"
+    )
+    tool_run_endpoint: bool = Field(
+        False,
+        description=(
+            "Whether this deployment serves the plain-HTTP tool runner at "
+            "`{path}/server/tools/{tool_name}/run`. False both when the MCP server is off and "
+            "when it is on with `MCPConfig(tool_run_endpoint=False)`, so a client can tell upfront "
+            "whether running a tool is possible instead of discovering it on the call."
+        ),
     )
 
 
@@ -479,6 +495,7 @@ class ConfigResponse(BaseModel):
     metrics: Optional[MetricsConfig] = Field(None, description="Metrics configuration")
     memory: Optional[MemoryConfig] = Field(None, description="Memory configuration")
     learning: Optional[LearningConfig] = Field(None, description="Learning configuration")
+    company: Optional[CompanySectionConfig] = Field(None, description="Company configuration")
     filesystem: Optional[FileSystemConfig] = Field(None, description="Filesystem configuration")
     knowledge: Optional[KnowledgeConfig] = Field(None, description="Knowledge configuration")
     evals: Optional[EvalsConfig] = Field(None, description="Evaluations configuration")
@@ -491,6 +508,13 @@ class ConfigResponse(BaseModel):
     teams: List[TeamSummaryResponse] = Field(..., description="List of registered teams")
     workflows: List[WorkflowSummaryResponse] = Field(..., description="List of registered workflows")
     interfaces: List[InterfaceResponse] = Field(..., description="List of available interfaces")
+
+    @model_serializer(mode="wrap")
+    def _serialize_config(self, handler: SerializerFunctionWrapHandler) -> Dict[str, Any]:
+        data = handler(self)
+        # Clients use an explicit null to hide Company when it is not configured.
+        data.setdefault("company", None)
+        return data
 
 
 class ModelResponse(BaseModel):
@@ -824,10 +848,57 @@ class RunSchema(BaseModel):
         )
 
 
+_RUN_PREVIEW_CHARS = 280
+
+
+class SessionRunPreviewSchema(BaseModel):
+    """Lightweight session-run listing entry: the shape a queue tray or
+    session sidebar polls for. Deliberately excludes messages, events, media,
+    metrics and step results - the full shapes stay on the default listing
+    and the single-run endpoint. Previews are truncated to 280 characters."""
+
+    run_id: str = Field(..., description="Unique identifier for the run")
+    parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
+    agent_id: Optional[str] = Field(None, description="Agent ID, when this is an agent run")
+    team_id: Optional[str] = Field(None, description="Team ID, when this is a team run")
+    workflow_id: Optional[str] = Field(None, description="Workflow ID, when this is a workflow run")
+    user_id: Optional[str] = Field(None, description="User ID associated with the run")
+    status: Optional[str] = Field(
+        None, description="Run status (PENDING, RUNNING, PAUSED, COMPLETED, CANCELLED, ERROR, REGENERATED)"
+    )
+    run_input: Optional[str] = Field(None, description="Input preview, truncated")
+    content_preview: Optional[str] = Field(None, description="Output content preview, truncated")
+    created_at: Optional[datetime] = Field(None, description="Run creation timestamp")
+
+    @classmethod
+    def _preview(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        # Structured output (output_schema) previews as JSON, matching the full listing's content.
+        text = value if isinstance(value, str) else json.dumps(value, default=str)
+        return text[:_RUN_PREVIEW_CHARS]
+
+    @classmethod
+    def from_run(cls, run: Any) -> "SessionRunPreviewSchema":
+        return cls(
+            run_id=run.run_id,
+            parent_run_id=getattr(run, "parent_run_id", None),
+            agent_id=getattr(run, "agent_id", None),
+            team_id=getattr(run, "team_id", None),
+            workflow_id=getattr(run, "workflow_id", None),
+            user_id=getattr(run, "user_id", None),
+            status=getattr(run, "status", None),
+            run_input=cls._preview(getattr(run, "run_input", None)),
+            content_preview=cls._preview(getattr(run, "content", None)),
+            created_at=getattr(run, "created_at", None),
+        )
+
+
 class TeamRunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the team run")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     team_id: Optional[str] = Field(None, description="Team ID that executed this run")
+    user_id: Optional[str] = Field(None, description="User ID associated with the run")
     status: Optional[str] = Field(None, description="Run status (PENDING, RUNNING, COMPLETED, ERROR, etc.)")
     cancellation_stage: Optional[str] = Field(None, description=CANCELLATION_STAGE_DESCRIPTION)
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the team run")
@@ -880,6 +951,7 @@ class TeamRunSchema(BaseModel):
             run_id=run_dict.get("run_id", ""),
             parent_run_id=run_dict.get("parent_run_id", ""),
             team_id=run_dict.get("team_id", ""),
+            user_id=run_dict.get("user_id"),
             status=run_dict.get("status"),
             cancellation_stage=run_dict.get("cancellation_stage"),
             run_input=run_input,
@@ -1267,3 +1339,4 @@ class RegistryContentResponse(BaseModel):
     id: Optional[str] = None
     description: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    sandboxed: bool = False

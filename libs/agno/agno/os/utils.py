@@ -317,6 +317,15 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
     return kwargs
 
 
+async def is_form_field_omitted(request: Request, name: str) -> bool:
+    """Whether the client left the form field ``name`` out of the request.
+
+    FastAPI 0.147+ reads an omitted boolean form field as False whatever its default, so a route
+    whose boolean default is not False checks the raw form before trusting the parsed value.
+    """
+    return name not in await request.form()
+
+
 def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent]) -> str:
     """Parse JSON data into SSE-compliant format.
 
@@ -1569,10 +1578,6 @@ def get_agent_by_id(
         ComponentRehydrationError: If strict and a db-backed agent's references
             cannot be resolved
     """
-    # Reserved manager IDs cannot identify standalone public agents, including
-    # agents restored from an old catalog row.
-    if agent_id in RESERVED_MANAGER_IDS:
-        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(agent_id)))
     if agent_id is None:
         return None
 
@@ -1595,6 +1600,11 @@ def get_agent_by_id(
                     return agent.resolve(ctx, expected_type=Agent)
                 # RemoteAgent or other
                 return agent
+
+    # AgentOS may serve framework-owned agents, but reserved IDs must never
+    # fall back to user-created or legacy catalog components.
+    if agent_id in RESERVED_MANAGER_IDS:
+        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(agent_id)))
 
     # Try to get the agent from the database
     if db and isinstance(db, BaseDb):
@@ -1634,8 +1644,6 @@ async def get_agent_by_id_async(
     published_only: bool = True,
 ) -> Optional[Union[Agent, RemoteAgent, AgentProtocol]]:
     """Async variant of get_agent_by_id that supports async factories."""
-    if agent_id in RESERVED_MANAGER_IDS:
-        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(agent_id)))
     if agent_id is None:
         return None
 
@@ -1658,6 +1666,11 @@ async def get_agent_by_id_async(
                     return result
                 # RemoteAgent or other
                 return agent
+
+    # AgentOS may serve framework-owned agents, but reserved IDs must never
+    # fall back to user-created or legacy catalog components.
+    if agent_id in RESERVED_MANAGER_IDS:
+        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(agent_id)))
 
     if db and isinstance(db, BaseDb):
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
@@ -2376,8 +2389,10 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
     if isinstance(step, Step):
         # Check step's agent
         if step.agent:
-            if step.agent.tools and isinstance(step.agent.tools, list):
-                for tool in step.agent.tools:
+            # A harness agent (Claude Code, Codex) has no Agno tools.
+            step_tools = getattr(step.agent, "tools", None)
+            if step_tools and isinstance(step_tools, list):
+                for tool in step_tools:
                     # Alternate method of using isinstance(tool, MCPTools) to avoid imports
                     if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                         if tool not in mcp_tools:

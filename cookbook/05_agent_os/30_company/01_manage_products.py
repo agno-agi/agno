@@ -18,8 +18,10 @@ if __name__ == "__main__":
     with TemporaryDirectory() as directory:
         db = SqliteDb(db_file=directory + "/company.db")
         manager = CompanyManager(db)
-        sdk = manager.create("SDK", purpose="Build the framework", user_id="alice")
-        manager.create("Documentation", purpose="Teach the framework", user_id="bob")
+        sdk = manager.create(name="SDK", purpose="Build the framework", user_id="alice")
+        manager.create(
+            name="Documentation", purpose="Teach the framework", user_id="bob"
+        )
 
         products, total = manager.list()
         assert total == 2

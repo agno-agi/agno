@@ -32,6 +32,7 @@ from agno.vectordb.base import VectorDb
 
 if TYPE_CHECKING:
     from agno.agent import Agent
+    from agno.agents.base import BaseExternalAgent
     from agno.team import Team
     from agno.workflow import Workflow
 
@@ -129,7 +130,7 @@ class Registry:
     memory_managers: List[Any] = field(default_factory=list)
     session_summary_managers: List[Any] = field(default_factory=list)
     # Code-defined agents, teams, and workflows (for rehydration)
-    agents: List[Agent] = field(default_factory=list)
+    agents: List[Union[Agent, BaseExternalAgent]] = field(default_factory=list)
     teams: List[Team] = field(default_factory=list)
     workflows: List[Workflow] = field(default_factory=list)
     # The db behind the component catalog, named by the AgentOS holding this
@@ -829,7 +830,7 @@ class Registry:
             return next((k for k in self.knowledge if getattr(k, "name", None) == name), None)
         return None
 
-    def get_agent(self, agent_id: str) -> Optional[Agent]:
+    def get_agent(self, agent_id: str) -> Optional[Union[Agent, BaseExternalAgent]]:
         """Get an agent by id from the registry."""
         if self.agents:
             return next((a for a in self.agents if getattr(a, "id", None) == agent_id), None)

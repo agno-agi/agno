@@ -92,6 +92,7 @@ class FakeState:
         self.unresumable: set = set()
         self.thread_counter = 0
         self.calls: List[Dict[str, Any]] = []
+        self.account: Any = None
 
 
 class FakeHandle:
@@ -151,6 +152,13 @@ class FakeAsyncCodex:
     async def __aexit__(self, *exc: Any) -> None:
         self.state.calls.append({"op": "client_exit"})
 
+    async def account(self) -> Any:
+        self.state.calls.append({"op": "account"})
+        return SimpleNamespace(account=self.state.account)
+
+    async def login_api_key(self, api_key: str) -> None:
+        self.state.calls.append({"op": "login", "api_key": api_key})
+
     async def thread_start(self, **kwargs: Any) -> FakeThread:
         self.state.thread_counter += 1
         thread_id = f"thread-{self.state.thread_counter}"
@@ -166,6 +174,7 @@ class FakeAsyncCodex:
 
 @pytest.fixture
 def fake_sdk(monkeypatch) -> FakeState:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     state = FakeState()
     FakeAsyncCodex.state = state
     module = ModuleType("openai_codex")
@@ -241,7 +250,7 @@ def test_thread_kwargs_map_to_sdk_options(fake_sdk):
         model="gpt-5.6-luna",
         instructions="Be terse.",
         base_instructions="You are Codex.",
-        sandbox="workspace-write",
+        sandbox_mode="workspace-write",
         approval_mode="deny_all",
         cwd="/repo",
         ephemeral=True,
@@ -300,6 +309,78 @@ def test_codex_config_passes_bin_and_env(fake_sdk):
     config = agent._codex_config(codex_module._sdk())
     assert config.codex_bin == "/usr/local/bin/codex"
     assert config.env == {"CODEX_API_KEY": "sk-test"}
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("account_type", [None, "apiKey", "chatgpt", "amazonBedrock"])
+def test_runs_authenticate_before_starting_threads(fake_sdk, monkeypatch, stream, account_type):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    fake_sdk.account = _item(type=account_type) if account_type else None
+    fake_sdk.notifications = [_completed(_item(type="agentMessage", id="m1", text="ok")), _turn_completed()]
+    agent = CodexAgent(name="Codex")
+    if stream:
+        list(agent.run("hello", stream=True))
+    else:
+        assert agent.run("hello").content == "ok"
+    ops = [c["op"] for c in fake_sdk.calls]
+    if account_type in (None, "apiKey"):
+        assert ops.index("login") < ops.index("thread_start")
+        assert next(c for c in fake_sdk.calls if c["op"] == "login")["api_key"] == "test-key"
+    else:
+        assert "login" not in ops
+
+
+@pytest.mark.parametrize(
+    "process_key,client_env,agent_env,expected",
+    [
+        (None, None, None, None),
+        ("process", None, None, "process"),
+        ("process", {"OPENAI_API_KEY": "client"}, None, "client"),
+        ("process", {"OPENAI_API_KEY": "client"}, {"OPENAI_API_KEY": "agent"}, "agent"),
+        ("process", {"OPENAI_API_KEY": "client"}, {}, "process"),
+        ("process", None, {"OPENAI_API_KEY": ""}, None),
+    ],
+)
+def test_authentication_uses_effective_process_environment(
+    fake_sdk, monkeypatch, process_key, client_env, agent_env, expected
+):
+    if process_key:
+        monkeypatch.setenv("OPENAI_API_KEY", process_key)
+    options = CodexConfig(env=client_env)
+    agent = CodexAgent(client_options=options, env=agent_env)
+
+    async def connect():
+        async with agent._new_client():
+            pass
+
+    asyncio.run(connect())
+    logins = [c["api_key"] for c in fake_sdk.calls if c["op"] == "login"]
+    assert logins == ([expected] if expected else [])
+    assert options.env == client_env
+    if expected is None:
+        assert not any(c["op"] == "account" for c in fake_sdk.calls)
+
+
+def test_authentication_failure_redacts_key_and_closes_client(fake_sdk, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "private-test-key")
+
+    async def fail_login(self, api_key):
+        raise RuntimeError(f"Cannot authenticate {api_key}")
+
+    monkeypatch.setattr(FakeAsyncCodex, "login_api_key", fail_login)
+    agent = CodexAgent()
+    with pytest.raises(RuntimeError, match="Cannot authenticate \\[redacted\\]") as error:
+        asyncio.run(agent._arun_adapter_sdk("hello"))
+    assert "private-test-key" not in str(error.value)
+    # The cause names the original failure and where it happened, without the key anywhere in the chain.
+    import traceback
+
+    cause = error.value.__cause__
+    assert str(cause) == "RuntimeError: Cannot authenticate [redacted]"
+    assert any(frame.name == "fail_login" for frame in traceback.extract_tb(cause.__traceback__))
+    assert "private-test-key" not in "".join(traceback.format_exception(error.value))
+    assert fake_sdk.calls[-1]["op"] == "client_exit"
+    assert not any(c["op"] == "thread_start" for c in fake_sdk.calls)
 
 
 # ---------------------------------------------------------------------------
@@ -526,7 +607,7 @@ def test_non_stream_returns_final_response(fake_sdk):
         _agent_message("m1", "pong", phase="final_answer"),
         _turn_completed(),
     ]
-    agent = CodexAgent(name="Codex", id="codex", sandbox="read-only")
+    agent = CodexAgent(name="Codex", id="codex", sandbox_mode="read-only")
 
     out = asyncio.run(agent._arun_non_stream("ping", session_id="s1"))
 
@@ -917,7 +998,7 @@ def test_named_settings_win_in_both_option_layers(fake_sdk):
     agent = CodexAgent(
         model="named",
         instructions="",
-        sandbox="read-only",
+        sandbox_mode="read-only",
         approval_mode="deny_all",
         cwd="/named",
         service_tier="default",
@@ -1159,6 +1240,16 @@ def test_compact_without_a_thread_is_a_no_op(fake_client, tmp_db):
     assert not [c for c in fake_client.state.calls if c["op"] == "thread_compact"]
 
 
+def test_compact_authenticates_before_resuming(fake_client, tmp_db, monkeypatch):
+    agent = _started_session(fake_client.state, tmp_db)
+    fake_client.state.calls.clear()
+    monkeypatch.setenv("OPENAI_API_KEY", "compaction-key")
+    fake_client.events = _idle_after_active()
+    assert agent.compact("s1") is True
+    ops = [c["op"] for c in fake_client.state.calls]
+    assert ops.index("login") < ops.index("thread_resume") < ops.index("thread_compact")
+
+
 def test_compact_resumes_the_session_thread_and_waits_for_idle(fake_client, tmp_db):
     agent = _started_session(fake_client.state, tmp_db, model="gpt-5.6-luna", cwd="/work")
     fake_client.events = [
@@ -1188,7 +1279,7 @@ def test_compact_resumes_with_the_same_translated_options_as_a_run(fake_client, 
     agent = _started_session(
         fake_client.state,
         tmp_db,
-        sandbox="full-access",
+        sandbox_mode="full-access",
         instructions="Always answer in French.",
         approval_mode="deny_all",
         ephemeral=False,
@@ -1708,3 +1799,23 @@ def test_metrics_page_counts_codex_runs_per_model(fake_sdk, tmp_db):
     body = client.get("/metrics").json()
     days = body["metrics"] if isinstance(body, dict) else body
     assert days[-1]["model_metrics"] == [{"model_id": "gpt-5.6-luna", "model_provider": "OpenAI", "count": 2}]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_strict_native_resume_does_not_start_another_thread(fake_sdk, tmp_db, stream):
+    fake_sdk.notifications = [_delta("m1", "ok"), _turn_completed()]
+    agent = CodexAgent(id="codex", db=tmp_db, require_native_resume=True)
+    agent.run("first", session_id="s1")
+    fake_sdk.unresumable.add("thread-1")
+    if stream:
+        events = list(agent.run("second", session_id="s1", stream=True, yield_run_output=True))
+        assert events[-1].status == RunStatus.error
+    else:
+        assert agent.run("second", session_id="s1").status == RunStatus.error
+    assert sum(c["op"] == "thread_start" for c in fake_sdk.calls) == 1
+    assert agent.read_or_create_session("s1").session_data["codex_thread_id"] == "thread-1"
+
+
+def test_strict_native_resume_rejects_ephemeral_threads():
+    with pytest.raises(ValueError, match="ephemeral"):
+        CodexAgent(require_native_resume=True, ephemeral=True)

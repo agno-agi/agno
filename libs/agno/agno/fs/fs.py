@@ -637,10 +637,13 @@ class FileSystem:
             namespace, normalize_path(src), normalize_path(dst), overwrite=overwrite, **self._pk(self.backend.move)
         )
 
-    def delete(self, path: str) -> bool:
+    def delete(self, path: str, *, expected_version: Optional[int] = None) -> bool:
         """Delete a file. Returns ``True`` if it existed."""
         namespace = self._require_resolved()
-        return self.backend.delete(namespace, normalize_path(path), **self._pk(self.backend.delete))
+        kwargs = self._pk(self.backend.delete)
+        if expected_version is not None:
+            kwargs["expected_version"] = expected_version
+        return self.backend.delete(namespace, normalize_path(path), **kwargs)
 
     def list(self, directory: str = "") -> List[FileMeta]:
         """List files under ``directory`` (``""`` or ``"."`` = namespace root), sorted by path segments."""
@@ -840,10 +843,13 @@ class FileSystem:
             namespace, normalize_path(src), normalize_path(dst), overwrite=overwrite, **self._pk(self.backend.move)
         )
 
-    async def adelete(self, path: str) -> bool:
+    async def adelete(self, path: str, *, expected_version: Optional[int] = None) -> bool:
         """Delete a file. Returns ``True`` if it existed."""
         namespace = self._require_resolved()
-        return await self.backend.adelete(namespace, normalize_path(path), **self._pk(self.backend.delete))
+        kwargs = self._pk(self.backend.delete)
+        if expected_version is not None:
+            kwargs["expected_version"] = expected_version
+        return await self.backend.adelete(namespace, normalize_path(path), **kwargs)
 
     async def alist(self, directory: str = "") -> List[FileMeta]:
         """List files under ``directory`` (``""`` or ``"."`` = namespace root), sorted by path segments."""

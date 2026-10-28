@@ -38,6 +38,7 @@ from agno.os.auth import (
 from agno.os.checkpoints import build_run_checkpoint_snapshot, list_run_checkpoints
 from agno.os.event_streams import get_event_stream
 from agno.os.job_queue import (
+    _new_queued_run_id,
     aattach_waiting_on,
     acontinue_via_queue,
     aenqueue_ticket,
@@ -85,6 +86,7 @@ from agno.os.utils import (
     format_sse_event,
     get_request_kwargs,
     get_team_by_id,
+    is_form_field_omitted,
     parse_files_metadata,
     process_audio,
     process_document,
@@ -639,6 +641,10 @@ def get_team_router(
         ),
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
+        if await is_form_field_omitted(request, "stream"):
+            stream = True
+        if await is_form_field_omitted(request, "monitor"):
+            monitor = True
 
         files_metadata_list = parse_files_metadata(files_metadata)
 
@@ -831,7 +837,7 @@ def get_team_router(
                     # 202/stream-accept must honor input_schema like the inline path (400)
                     validate_seam_input(team, message)
                     assert queue_worker is not None  # narrowed by stream_queueable
-                    queued_run_id = str(uuid4())
+                    queued_run_id = _new_queued_run_id()
                     queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                     queued_stream_payload["scope"] = resolve_queue_scope(
                         team_id,
@@ -950,7 +956,7 @@ def get_team_router(
             ):
                 # 202 must honor input_schema exactly like the inline path (400)
                 validate_seam_input(team, message)
-                queued_run_id = str(uuid4())
+                queued_run_id = _new_queued_run_id()
                 queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                 queued_payload["scope"] = resolve_queue_scope(
                     team_id,
@@ -1412,6 +1418,10 @@ def get_team_router(
         background: bool = Form(False),
     ):
         kwargs = await get_request_kwargs(request, continue_team_run)
+        if await is_form_field_omitted(request, "stream"):
+            stream = True
+        if await is_form_field_omitted(request, "replace_original"):
+            replace_original = None
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id

@@ -254,6 +254,19 @@ LEARNINGS_TABLE_SCHEMA = {
 }
 
 
+SOURCES_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True},
+    "product_id": {"type": String, "nullable": False, "index": True},
+    "reference": {"type": Text, "nullable": False},
+    "type": {"type": String, "nullable": False},
+    "credential_ref": {"type": String, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "config": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+}
+
 PRODUCTS_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True},
     "name": {"type": String, "nullable": False, "index": True},
@@ -267,20 +280,31 @@ PRODUCTS_TABLE_SCHEMA = {
 
 TASKS_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True},
+    "product_id": {"type": String, "nullable": False, "index": True},
+    "project_id": {"type": String, "nullable": True, "index": True},
     "title": {"type": String, "nullable": False, "index": True},
     "brief": {"type": Text, "nullable": True},
-    "user_id": {"type": String, "nullable": True, "index": True},
-    "transitions": {"type": JSON, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": False, "index": True},
-    "updated_at": {"type": BigInteger, "nullable": True},
-    "deleted_at": {"type": BigInteger, "nullable": True},
-    "product_id": {"type": String, "nullable": False, "index": True},
     "status": {"type": String, "nullable": False, "index": True},
-    "project_id": {"type": String, "nullable": True, "index": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
     "executor_type": {"type": String, "nullable": True},
     "executor_id": {"type": String, "nullable": True},
     "accepted_by": {"type": String, "nullable": True},
     "accepted_at": {"type": BigInteger, "nullable": True},
+    "session_id": {"type": String, "nullable": True, "index": True},
+    "job_id": {"type": String, "nullable": True, "index": True},
+    "evidence": {"type": JSON, "nullable": True},
+    "result": {"type": JSON, "nullable": True},
+    "origin": {"type": String, "nullable": True},
+    "routine_id": {"type": String, "nullable": True},
+    "dedupe_key": {"type": String, "nullable": True},
+    "transitions": {"type": JSON, "nullable": True},
+    "metadata": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+    "_unique_constraints": [
+        {"name": "uq_company_task_evidence", "columns": ["product_id", "dedupe_key"]},
+    ],
 }
 
 PROJECTS_TABLE_SCHEMA = {
@@ -548,6 +572,7 @@ def get_table_schema_definition(
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
         "products": PRODUCTS_TABLE_SCHEMA,
+        "sources": SOURCES_TABLE_SCHEMA,
         "projects": PROJECTS_TABLE_SCHEMA,
         "tasks": TASKS_TABLE_SCHEMA,
         "tool_results": TOOL_RESULTS_TABLE_SCHEMA,

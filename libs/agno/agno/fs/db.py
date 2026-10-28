@@ -460,11 +460,14 @@ class DbFileSystem(BaseFS):
             FileMeta(path=r[0], size_bytes=r[1], version=r[2], updated_at=r[3], user_id=user_id or None) for r in rows
         ]
 
-    def delete(self, namespace: str, path: str, *, user_id: str = "") -> bool:
+    def delete(self, namespace: str, path: str, *, user_id: str = "", expected_version: Optional[int] = None) -> bool:
         self._ensure_table()
         t = self.table
         with self._connection() as conn:
-            result = conn.execute(delete(t).where(and_(self._key(namespace, user_id), t.c.path == path)))
+            condition = and_(self._key(namespace, user_id), t.c.path == path)
+            if expected_version is not None:
+                condition = and_(condition, t.c.version == expected_version)
+            result = conn.execute(delete(t).where(condition))
         return result.rowcount > 0
 
     # ------------------------------------------------------------------
@@ -797,9 +800,11 @@ class AsyncDbFileSystem(DbFileSystem):
         """Async variant of list."""
         return await self._run("list", namespace, directory, user_id=user_id)
 
-    async def adelete(self, namespace: str, path: str, *, user_id: str = "") -> bool:
+    async def adelete(
+        self, namespace: str, path: str, *, user_id: str = "", expected_version: Optional[int] = None
+    ) -> bool:
         """Async variant of delete."""
-        return await self._run("delete", namespace, path, user_id=user_id)
+        return await self._run("delete", namespace, path, user_id=user_id, expected_version=expected_version)
 
     async def aread_with_meta(self, namespace: str, path: str, *, user_id: str = "") -> Optional[FileData]:
         """Async variant of read_with_meta."""

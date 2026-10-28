@@ -7,12 +7,14 @@ prompt. Images and documents are supported; audio and video have no consumer in 
 
 import re
 import shutil
+from base64 import b64encode
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from agno.exceptions import MediaStagingError, UnsupportedMediaError
+from agno.utils.media import get_image_type
 
 UPLOADS_DIR = ".agno/uploads"
 SUPPORTED_MEDIA = ("images", "files")
@@ -40,6 +42,7 @@ class StagedMedia:
     mime_type: Optional[str] = None
     size: int = 0
     url: Optional[str] = None
+    inline: bool = False  # sent to the model inside the prompt rather than opened from disk
 
 
 def accept_media(media: Dict[str, Any], supported: Sequence[str] = SUPPORTED_MEDIA) -> Dict[str, Any]:
@@ -81,7 +84,12 @@ def _rollback_files(paths: Sequence[Path]) -> None:
 
 def _safe_name(name: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._") or "file"
-    return cleaned[:120]
+    if len(cleaned) <= 120:
+        return cleaned
+    suffix = Path(cleaned).suffix
+    if len(suffix) > 16:
+        suffix = ""
+    return cleaned[: 120 - len(suffix)] + suffix
 
 
 def _mime_for(item: Any) -> Optional[str]:
@@ -98,7 +106,19 @@ def _mime_for(item: Any) -> Optional[str]:
     return None
 
 
+def _mime_from_bytes(data: bytes) -> Optional[str]:
+    """The mime type the bytes announce, used only when the caller named no type or format.
+    Images go through the library's shared signature check; a PDF is the one document type
+    a model takes inline."""
+    if data.startswith(b"%PDF-"):
+        return "application/pdf"
+    detected = get_image_type(data)
+    return f"image/{detected}" if detected else None
+
+
 def _name_for(item: Any, kind: str, index: int) -> str:
+    # Names depend only on what the caller set: earlier runs are re-staged under the same names
+    # their transcripts already mention, so nothing learned from the bytes may change them.
     explicit = getattr(item, "filename", None) or getattr(item, "name", None)
     if explicit:
         return _safe_name(str(explicit))
@@ -165,6 +185,7 @@ def stage_media(
                 if data is None and isinstance(getattr(item, "content", None), bytes):
                     data = item.content
                 url = getattr(item, "url", None)
+                detected = _mime_from_bytes(data) if data and not _mime_for(item) else None
                 if data is None:
                     if url:
                         staged.append(StagedMedia(kind, name, None, _mime_for(item), 0, str(url)))
@@ -190,7 +211,7 @@ def stage_media(
                     counter += 1
                     target = root / f"{target.stem}-{counter}{target.suffix}"
                 claimed.add(target.name)
-                staged.append(StagedMedia(kind, target.name, str(target), _mime_for(item), len(data)))
+                staged.append(StagedMedia(kind, target.name, str(target), _mime_for(item) or detected, len(data)))
     except BaseException:
         _rollback_files(created)
         if not root_existed:
@@ -226,16 +247,61 @@ def cleanup_run_media(workspace: Optional[Any], run_id: str, staged: Sequence[St
     cleanup_staged_media(staged)
 
 
+# Formats a model reads directly when they arrive inside the message. Everything else stays a file
+# the harness opens with its tools.
+INLINE_IMAGE_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp")
+INLINE_DOCUMENT_TYPES = ("application/pdf",)
+# Above this an attachment stays on disk only: the model API refuses larger inline images, and a
+# harness tool reads a large PDF page by page better than one message can carry it.
+INLINE_MAX_BYTES = 4 * 1024 * 1024
+
+
+def inline_blocks(staged: Sequence[StagedMedia], limit: int = INLINE_MAX_BYTES) -> List[Dict[str, Any]]:
+    """Content blocks for the staged images and PDFs a model can take inside the prompt.
+
+    Each attachment that becomes a block is marked inline. The file stays on disk as well, so a
+    program the harness writes can still open it. A model that sees an image in its message has
+    no reason to read the file back through a tool, which is what put the file's bytes into the
+    run's tool results and events.
+    """
+    blocks: List[Dict[str, Any]] = []
+    for item in staged:
+        if not item.path or item.size > limit:
+            continue
+        try:
+            data = Path(item.path).read_bytes()
+        except OSError:
+            continue
+        # The bytes decide, not the declared type: the API rejects a block whose data is not what
+        # its media type says, and a mislabelled file is better left on disk for the file tools.
+        mime = _mime_from_bytes(data)
+        if mime in INLINE_IMAGE_TYPES:
+            block_type = "image"
+        elif mime in INLINE_DOCUMENT_TYPES:
+            block_type = "document"
+        else:
+            continue
+        blocks.append(
+            {"type": block_type, "source": {"type": "base64", "media_type": mime, "data": b64encode(data).decode()}}
+        )
+        item.inline = True
+    return blocks
+
+
 def media_prompt_block(staged: Sequence[StagedMedia]) -> str:
     """The lines appended to the prompt so the harness knows what was attached and where."""
-    if not staged: 
+    if not staged:
         return ""
-    lines = ["", "Attached files. Read them before answering; images and PDFs can be opened with the file tools:"]
+    lines = ["", "Attached files:"]
     for item in staged:
         label = item.mime_type or item.kind
         if item.path:
             size = f", {item.size // 1024} KB" if item.size >= 1024 else f", {item.size} bytes"
-            lines.append(f"- {item.path} ({label}{size})")
+            if item.inline:
+                note = "; already included in this message, do not read it, the file is on disk for programs"
+            else:
+                note = "; read it with the file tools before answering"
+            lines.append(f"- {item.path} ({label}{size}{note})")
         else:
             lines.append(f"- {item.url} ({label}, remote URL, not downloaded)")
     return "\n".join(lines)

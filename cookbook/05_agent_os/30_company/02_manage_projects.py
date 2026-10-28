@@ -17,16 +17,26 @@ if __name__ == "__main__":
     with TemporaryDirectory() as directory:
         db = SqliteDb(db_file=directory + "/company.db")
         manager = CompanyManager(db)
-        product = manager.create("SDK", user_id="alice")
-        first = manager.create_project(product["id"], "Ship release", user_id="alice")
-        manager.create_project(product["id"], "Plan next release", user_id="bob")
+        product = manager.create(name="SDK", user_id="alice")
+        first = manager.create_project(
+            product_id=product["id"], name="Ship release", user_id="alice"
+        )
+        manager.create_project(
+            product_id=product["id"], name="Plan next release", user_id="bob"
+        )
         assert manager.list_projects()[1] == 2
         assert manager.list_projects(user_id="alice")[1] == 1
         manager.transition_project(
-            first["id"], "active", "Scope agreed", accepted_by="alice"
+            project_id=first["id"],
+            target="active",
+            reason="Scope agreed",
+            accepted_by="alice",
         )
         done = manager.transition_project(
-            first["id"], "done", "Outcome achieved", accepted_by="alice"
+            project_id=first["id"],
+            target="done",
+            reason="Outcome achieved",
+            accepted_by="alice",
         )
         assert done["status"] == "done"
         assert manager.list_projects(status="done")[1] == 1

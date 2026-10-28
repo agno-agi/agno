@@ -399,9 +399,42 @@ class RedisDb(BaseDb):
                 ordered.append(run_data)
         return ordered
 
+    def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """Run dicts for several sessions in one read, used by the search fallback."""
+        return self._get_sessions_runs_data(session_ids)
+
     def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
-        """Get raw run_data dicts for several sessions, grouped by session_id."""
-        return {sid: self._get_session_runs_data(sid) for sid in session_ids}
+        """Get raw run_data dicts for several sessions, grouped by session_id, in two pipelined round trips."""
+        if not session_ids:
+            return {}
+        try:
+            pipeline = self.redis_client.pipeline(transaction=False)
+            for sid in session_ids:
+                pipeline.zrange(self._runs_by_session_index_key(sid), 0, -1)
+            run_ids_by_session = {
+                sid: [rid.decode() if isinstance(rid, bytes) else str(rid) for rid in run_ids or []]
+                for sid, run_ids in zip(session_ids, pipeline.execute())
+            }
+            all_run_ids = [rid for run_ids in run_ids_by_session.values() for rid in run_ids]
+            rows_by_id: Dict[str, Dict[str, Any]] = {}
+            if all_run_ids:
+                pipeline = self.redis_client.pipeline(transaction=False)
+                for rid in all_run_ids:
+                    pipeline.get(generate_redis_key(prefix=self.db_prefix, table_type="runs", key_id=rid))
+                for rid, data in zip(all_run_ids, pipeline.execute()):
+                    if data is not None:
+                        rows_by_id[rid] = deserialize_data(data)  # type: ignore[arg-type]
+        except Exception as e:
+            log_error(f"Error batch-reading runs from Redis, reading per session: {str(e)}")
+            return {sid: self._get_session_runs_data(sid) for sid in session_ids}
+        return {
+            sid: [
+                rows_by_id[rid]["run_data"]
+                for rid in run_ids
+                if rid in rows_by_id and rows_by_id[rid].get("run_data") is not None
+            ]
+            for sid, run_ids in run_ids_by_session.items()
+        }
 
     def _delete_session_runs(self, session_id: str) -> int:
         """Delete every run row associated with a session (and the session's run index)."""
@@ -722,6 +755,7 @@ class RedisDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
         create_index_if_not_found: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions matching the given filters.
 
@@ -782,6 +816,9 @@ class RedisDb(BaseDb):
 
             # Attach runs from the runs keys, merged with any legacy `runs` blob
             for s in sessions:
+                if not include_runs:
+                    # Search scans skip the runs keys; the record's legacy runs field is kept for merging later.
+                    continue
                 runs_data = self._get_session_runs_data(s["session_id"])
                 s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
 
@@ -3091,20 +3128,33 @@ class RedisDb(BaseDb):
         page: int = 1,
         sort_by: Optional[str] = "created_at",
         sort_order: Optional[str] = "desc",
+        *,
+        session_id: Optional[Union[str, List[str]]] = None,
+        user_id: Optional[str] = None,
+        raise_on_error: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Paginated job listing: (page of jobs, total matching count).
 
-        status accepts one value or a list (match any). Loads the full index
+        raise_on_error=True requires read errors to propagate. This store
+        already propagates errors in both modes.
+
+        status and session_id accept one value or a list (match any). Loads the full index
         and filters/sorts in Python, like the other Redis list APIs -
         total_count and arbitrary sort fields need the whole set anyway, and
         the index stays small by construction (bounded by max_queue_depth
         plus the retention sweep)."""
         statuses = [status] if isinstance(status, str) else status
+        session_ids = [session_id] if isinstance(session_id, str) else session_id
         jobs: List[Dict[str, Any]] = []
         raw_ids = self.redis_client.zrevrange(self._q_key("all"), 0, -1)
         for raw_id in raw_ids:
             job = self._q_load_job(_q_to_str(raw_id))
-            if job is not None and (statuses is None or job["status"] in statuses):
+            if (
+                job is not None
+                and (statuses is None or job["status"] in statuses)
+                and (session_ids is None or job.get("session_id") in session_ids)
+                and (user_id is None or job.get("user_id") == user_id)
+            ):
                 jobs.append(job)
         total_count = len(jobs)
         jobs = apply_sorting(records=jobs, sort_by=sort_by, sort_order=sort_order)

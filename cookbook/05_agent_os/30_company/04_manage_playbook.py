@@ -2,7 +2,7 @@
 
 Prerequisites: Install agno, sqlalchemy and aiosqlite.
 Run: .venv/bin/python cookbook/05_agent_os/30_company/04_manage_playbook.py
-Try: Write with an old version or another owner; the edit must be refused.
+Try: Write with an old version; the edit must be refused.
 """
 
 import asyncio
@@ -17,18 +17,18 @@ async def async_example(path: str) -> None:
     db = AsyncSqliteDb(db_file=path)
     manager = AsyncCompanyManager(db)
     product = await manager.create(
-        "Documentation", purpose="Help developers", user_id="alice"
+        name="Documentation", purpose="Help developers", user_id="alice"
     )
     page = await manager.read_wiki(product["id"], "status.md")
     await manager.write_wiki(
-        product["id"],
-        "status.md",
-        "# Status\n\nDraft ready for review.\n",
+        product_id=product["id"],
+        path="status.md",
+        content="# Status\n\nDraft ready for review.\n",
         expected_version=page.metadata.version,
         user_id="alice",
     )
     await manager.log_decision(
-        "Review the draft", reasoning="Examples changed", user_id="alice"
+        decision="Review the draft", reasoning="Examples changed", user_id="alice"
     )
     assert (await manager.list_decisions())[1] == 1
     await db.close()
@@ -39,22 +39,22 @@ if __name__ == "__main__":
         db = SqliteDb(db_file=directory + "/company.db")
         manager = CompanyManager(db)
         product = manager.create(
-            "SDK", purpose="Build reliable agents", user_id="alice"
+            name="SDK", purpose="Build reliable agents", user_id="alice"
         )
         page = manager.read_wiki(product["id"], "status.md")
         manager.write_wiki(
-            product["id"],
-            "status.md",
-            "# Status\n\nRelease proposed.\n",
+            product_id=product["id"],
+            path="status.md",
+            content="# Status\n\nRelease proposed.\n",
             expected_version=page.metadata.version,
             user_id="alice",
         )
         try:
             manager.write_wiki(
-                product["id"],
-                "status.md",
-                "Stale overwrite",
-                page.metadata.version,
+                product_id=product["id"],
+                path="status.md",
+                content="Stale overwrite",
+                expected_version=page.metadata.version,
                 user_id="alice",
             )
         except VersionConflictError:
@@ -62,7 +62,7 @@ if __name__ == "__main__":
         else:
             raise AssertionError("A stale edit overwrote the page")
         manager.log_decision(
-            "Review before release",
+            decision="Review before release",
             reasoning="Human approval is required",
             user_id="alice",
         )

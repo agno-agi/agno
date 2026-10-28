@@ -5,6 +5,7 @@ claude_agent_sdk module. They do not launch Claude Code.
 """
 
 import asyncio
+import base64
 import os
 import tempfile
 from dataclasses import dataclass, field
@@ -141,7 +142,14 @@ def fake_sdk(monkeypatch) -> FakeState:
             pass
 
         async def query(self, prompt):
-            self.prompt = prompt
+            # A prompt with attachments is one streamed user message; keep its text and blocks apart.
+            if isinstance(prompt, str):
+                self.prompt = prompt
+                self.blocks = []
+            else:
+                [message] = [m async for m in prompt]
+                text, *self.blocks = message["message"]["content"]
+                self.prompt = text["text"]
 
         def receive_response(self):
             return module.query(prompt=self.prompt, options=self.options)
@@ -1454,6 +1462,8 @@ def test_images_and_files_are_staged_and_named_in_the_prompt(
 
     seen: Dict[str, Any] = {}
 
+    clients: List[Any] = []
+
     async def query(prompt, options):
         paths = _attachment_paths(prompt)
         seen.update(prompt=prompt, paths=paths, exists=[os.path.exists(p) for p in paths])
@@ -1463,6 +1473,10 @@ def test_images_and_files_are_staged_and_named_in_the_prompt(
         )
 
     monkeypatch.setattr(claude_module._sdk(), "query", query)
+    client_class = claude_module._sdk().ClaudeSDKClient
+    monkeypatch.setattr(
+        claude_module._sdk(), "ClaudeSDKClient", lambda options: clients.append(client_class(options)) or clients[-1]
+    )
     agent = ClaudeAgent(
         name="Claude", id="claude", db=tmp_db, cwd=str(tmp_path), output_schema=Capital if structured else None
     )
@@ -1486,6 +1500,11 @@ def test_images_and_files_are_staged_and_named_in_the_prompt(
     assert all(p.startswith(str(uploads / run_id)) for p in seen["paths"])
     assert seen["paths"][0].endswith("image-1.png") and seen["paths"][1].endswith("notes.txt")
     assert "image/png" in seen["prompt"] and "text/plain" in seen["prompt"]
+    # The image also rides inside the message, so Claude Code need not read it back through a tool.
+    [block] = clients[-1].blocks
+    assert block["type"] == "image" and block["source"]["media_type"] == "image/png"
+    assert base64.b64decode(block["source"]["data"]) == PNG_BYTES
+    assert "image-1.png" in seen["prompt"].split("included in this message")[0]
     assert not (uploads / run_id).exists(), "attachments are removed after the run"
     stored = agent.get_run_output(run_id, "s")
     assert stored.input.files[0].filename == "notes.txt" and len(stored.input.images) == 1
@@ -1919,3 +1938,24 @@ def test_metrics_page_counts_runs_per_model(fake_sdk, tmp_db):
     today = days[-1]
     assert today["agent_runs_count"] == 2
     assert today["model_metrics"] == [{"model_id": "claude-sonnet-4-6", "model_provider": "Anthropic", "count": 2}]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_strict_native_resume_never_reconstructs_history(fake_sdk, tmp_db, monkeypatch, stream):
+    agent = ClaudeAgent(id="claude", db=tmp_db, require_native_resume=True)
+    agent.run("first", session_id="s1")
+    resumes = []
+
+    async def missing(prompt, options):
+        resumes.append(options.resume)
+        raise ResultError("No conversation found with session ID: sdk-1")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(claude_module._sdk(), "query", missing)
+    if stream:
+        events = list(agent.run("second", session_id="s1", stream=True, yield_run_output=True))
+        assert events[-1].status == RunStatus.error
+    else:
+        assert agent.run("second", session_id="s1").status == RunStatus.error
+    assert resumes == ["sdk-1"]
+    assert agent.read_or_create_session("s1").session_data["claude_sdk_session_id"] == "sdk-1"

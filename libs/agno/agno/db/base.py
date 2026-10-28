@@ -3,7 +3,7 @@ import threading
 from abc import ABC, abstractmethod
 from datetime import date, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -18,6 +18,9 @@ from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
 from agno.session import Session
 from agno.utils.log import log_debug
+
+# Distinguish an omitted comparison from an observed SQL NULL timestamp.
+_UNSET_UPDATED_AT = cast(Optional[int], object())
 
 
 class SessionType(str, Enum):
@@ -267,6 +270,7 @@ class TableResolutionCache:
 
 _FK_EDGES = {
     "runs": [("sessions", "session_table_name")],
+    "sandbox_bindings": [("sessions", "session_table_name"), ("runs", "runs_table_name")],
     "spans": [("traces", "trace_table_name")],
     "schedule_runs": [("schedules", "schedules_table_name")],
     "component_configs": [("components", "components_table_name")],
@@ -315,6 +319,7 @@ class BaseDb(ABC):
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         products_table: Optional[str] = None,
+        sources_table: Optional[str] = None,
         projects_table: Optional[str] = None,
         tasks_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
@@ -356,6 +361,7 @@ class BaseDb(ABC):
         self.learnings_table_name = learnings_table or "agno_learnings"
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.products_table_name = products_table or "agno_company_products"
+        self.sources_table_name = sources_table or "agno_company_sources"
         self.projects_table_name = projects_table or "agno_company_projects"
         self.tasks_table_name = tasks_table or "agno_company_tasks"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
@@ -454,6 +460,7 @@ class BaseDb(ABC):
             "learnings_table": self.learnings_table_name,
             "schedules_table": self.schedules_table_name,
             "products_table": self.products_table_name,
+            "sources_table": self.sources_table_name,
             "projects_table": self.projects_table_name,
             "tasks_table": self.tasks_table_name,
             "schedule_runs_table": self.schedule_runs_table_name,
@@ -488,6 +495,7 @@ class BaseDb(ABC):
             learnings_table=data.get("learnings_table"),
             schedules_table=data.get("schedules_table"),
             products_table=data.get("products_table"),
+            sources_table=data.get("sources_table"),
             projects_table=data.get("projects_table"),
             tasks_table=data.get("tasks_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
@@ -547,6 +555,10 @@ class BaseDb(ABC):
     # the session's runs explicitly before/after removing the session doc.
     # Best-effort — a crash between the two writes can leave orphan runs;
     # partial-migration cleanup and admin tooling should tolerate this.
+    def reassign_session_owner(self, session_id: str, *, previous_user_id: str, user_id: Optional[str]) -> bool:
+        """Transfer an idle session only when its stored owner still matches."""
+        raise NotImplementedError
+
     @abstractmethod
     def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         raise NotImplementedError
@@ -587,6 +599,72 @@ class BaseDb(ABC):
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
+    def search_sessions(
+        self,
+        filter_expr: Optional[Dict[str, Any]] = None,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Search session fields before pagination, retaining only the requested page.
+
+        Adapters whose ``get_sessions`` accepts ``filter_expr`` filter natively. Others use a
+        portable fallback that reads every visible session once, without run histories where
+        supported, so its cost scales with the number of sessions visible to the caller.
+        """
+        from inspect import signature
+
+        from agno.db.session_filters import matches_session_filter, normalize_session_filter
+
+        if page < 1 or limit < 1:
+            raise ValueError("Page and limit must be positive")
+        if sort_by not in ("created_at", "updated_at") or sort_order not in ("asc", "desc"):
+            raise ValueError("Invalid session sort")
+        expression = normalize_session_filter(filter_expr)
+        parameters = signature(self.get_sessions).parameters
+        query: Dict[str, Any] = dict(
+            session_type=session_type, user_id=user_id, sort_by=sort_by, sort_order=sort_order, deserialize=False
+        )
+        if expression is None or "filter_expr" in parameters:
+            native: Dict[str, Any] = {"filter_expr": expression} if expression is not None else {}
+            result = self.get_sessions(**query, **native, limit=limit, page=page)
+            return cast(Tuple[List[Dict[str, Any]], int], result)
+        # One unpaginated read gives a consistent snapshot and avoids rescanning adapters that page in memory.
+        skip_runs = "include_runs" in parameters
+        run_options: Dict[str, Any] = {"include_runs": False} if skip_runs else {}
+        result = self.get_sessions(**query, **run_options)
+        sessions, _ = cast(Tuple[List[Dict[str, Any]], int], result)
+        matches = [session for session in sessions if matches_session_filter(session, expression)]
+        results = matches[(page - 1) * limit : page * limit]
+        if skip_runs:
+            # Runs were skipped while scanning; load them for unnamed sessions so display names can be inferred.
+            from agno.db.utils import merge_runs_table_with_legacy_blob
+
+            unnamed = [
+                index
+                for index, session in enumerate(results)
+                if session.get("session_name") is None
+                and (session.get("session_data") or {}).get("session_name") is None
+            ]
+            runs_by_session = self._get_sessions_runs([results[i]["session_id"] for i in unnamed]) if unnamed else {}
+            for index in unnamed:
+                session = results[index]
+                if runs_by_session is not None:
+                    table_runs = runs_by_session.get(session["session_id"], [])
+                    session["runs"] = merge_runs_table_with_legacy_blob(table_runs, session.get("runs"))
+                    continue
+                full_session = self.get_session(session_id=session["session_id"], user_id=user_id, deserialize=False)
+                if isinstance(full_session, dict):
+                    results[index] = full_session
+        return results, len(matches)
+
+    def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """Run dicts for several sessions in one read, or None when the adapter can only load them per session."""
+        return None
+
     @abstractmethod
     def rename_session(
         self,
@@ -624,6 +702,22 @@ class BaseDb(ABC):
         Adapters that have not been ported to v3 storage return ``None``.
         """
         return None
+
+    def cancel_pending_run(
+        self,
+        run_id: str,
+        *,
+        session_id: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        expected_status: str = "PENDING",
+    ) -> bool:
+        """Atomically cancel an observed Pending or Running run, preserving other statuses and data.
+
+        Return whether the row changed. Unsupported adapters must fail rather
+        than fall back to a read followed by an unconditional write.
+        """
+        raise NotImplementedError
 
     def get_runs(
         self,
@@ -1780,6 +1874,45 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    # --- Sources (Optional) ---
+
+    def add_product_routine(self, product_id: str, schedule_id: str) -> Dict[str, Any]:
+        """Atomically append a Routine id without overwriting Product metadata."""
+        raise NotImplementedError("Company products not supported by the configured database")
+
+    def create_source(self, source_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
+        """Create a Source; reuse atomically returns an identical reference or refuses conflicting settings."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    def get_source(
+        self, source_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Read a Source. None user_id is unscoped; a string filters by owner."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    def get_sources(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        product_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List Sources and their total, filtering by owner before pagination."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    def update_source(self, source_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+        """Update descriptive fields on an active Source within the owner scope."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    def delete_source(self, source_id: str, user_id: Optional[str] = None) -> bool:
+        """Soft-delete an active Source within the owner scope."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    def restore_source(self, source_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a deleted Source within the owner scope; otherwise return None."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
     # --- Products (Optional) ---
 
     def create_product(self, product_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1793,7 +1926,13 @@ class BaseDb(ABC):
         raise NotImplementedError("Company products not supported by the configured database")
 
     def get_products(
-        self, user_id: Optional[str] = None, limit: int = 20, page: int = 1, include_deleted: bool = False
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List Products and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company products not supported by the configured database")
@@ -1802,17 +1941,21 @@ class BaseDb(ABC):
         """Update descriptive fields on an active Product within the owner scope."""
         raise NotImplementedError("Company products not supported by the configured database")
 
+    def get_product_counts(self, product_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Count visible children for a page in one grouped query, including zero statuses."""
+        raise NotImplementedError("Company product counts not supported by the configured database")
+
     def delete_product(self, product_id: str, user_id: Optional[str] = None) -> bool:
-        """Soft-delete an active Product within the owner scope."""
+        """Archive a Product and its children atomically; raise ValueError with active Task ids and titles."""
         raise NotImplementedError("Company products not supported by the configured database")
 
     def restore_product(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Restore a deleted Product within the owner scope; otherwise return None."""
+        """Restore a Product and exactly the children archived by it within the owner scope."""
         raise NotImplementedError("Company products not supported by the configured database")
 
     # --- Projects (Optional) ---
 
-    def create_project(self, project_data: Dict[str, Any]) -> Dict[str, Any]:
+    def create_project(self, project_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
         """Create a Project; project_data carries its owner and timestamps."""
         raise NotImplementedError("Company projects not supported by the configured database")
 
@@ -1830,6 +1973,8 @@ class BaseDb(ABC):
         include_deleted: bool = False,
         product_id: Optional[str] = None,
         status: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List Projects and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company projects not supported by the configured database")
@@ -1840,12 +1985,18 @@ class BaseDb(ABC):
         """Update descriptive fields on an active Project within the owner scope."""
         raise NotImplementedError("Company projects not supported by the configured database")
 
-    def delete_project(self, project_id: str, user_id: Optional[str] = None) -> bool:
-        """Soft-delete an active Project within the owner scope."""
+    def get_project_counts(self, project_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Count visible children for a page in one grouped query, including zero statuses."""
+        raise NotImplementedError("Company project counts not supported by the configured database")
+
+    def delete_project(
+        self, project_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
+    ) -> bool:
+        """Archive a Project and its Tasks atomically; refuse active Tasks. Cutoff requires old terminal work."""
         raise NotImplementedError("Company projects not supported by the configured database")
 
     def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Restore a deleted Project within the owner scope; otherwise return None."""
+        """Restore a Project and exactly the Tasks archived by it within the owner scope."""
         raise NotImplementedError("Company projects not supported by the configured database")
 
     def transition_project(
@@ -1855,8 +2006,16 @@ class BaseDb(ABC):
         reason: str,
         user_id: Optional[str] = None,
         accepted_by: Optional[str] = None,
+        expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
+        auto_accept: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Transition a visible Project and record the caller and reason."""
+        """Transition a visible Project and record the caller and reason.
+
+        Automatic completion requires expected_updated_at. Explicit None matches
+        SQL NULL; omission leaves manual transitions without a timestamp guard.
+        Timestamps are epoch seconds; the current non-terminal-Task gate still
+        applies even when two writes share a timestamp.
+        """
         raise NotImplementedError("Company projects not supported by the configured database")
 
     # --- Tasks (Optional) ---
@@ -1880,21 +2039,56 @@ class BaseDb(ABC):
         product_id: Optional[str] = None,
         status: Optional[str] = None,
         project_id: Optional[str] = None,
+        failed: Optional[bool] = None,
+        session_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List Tasks and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
-    def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+    def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
         """Update descriptive fields on an active Task within the owner scope."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
-    def delete_task(self, task_id: str, user_id: Optional[str] = None) -> bool:
+    def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
         """Soft-delete an active Task within the owner scope."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a deleted Task within the owner scope; otherwise return None."""
         raise NotImplementedError("Company tasks not supported by the configured database")
+
+    def start_task_run(
+        self,
+        task_id: str,
+        attempt: int,
+        expected_transitions: List[Dict[str, Any]],
+        user_id: Optional[str] = None,
+        run_db_id: Optional[str] = None,
+        session_user_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Reserve a Task attempt conditionally; user_id records the starting caller."""
+        raise NotImplementedError("Company execution not supported by this database")
+
+    def complete_task_run(
+        self,
+        task_id: str,
+        job_id: str,
+        result: Dict[str, Any],
+        expected_transitions: Optional[List[Dict[str, Any]]] = None,
+        checkout: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Save a completed run's result and move its still-current Task to review."""
+        raise NotImplementedError("Company execution not supported by this database")
+
+    def count_company_acceptances(
+        self, routine_id: str, policy: str, exclude_task_id: str, user_id: Optional[str] = None
+    ) -> int:
+        """Count accepted Tasks and completed Projects, including archived records."""
+        raise NotImplementedError("Company automatic acceptance not supported by this database")
 
     def transition_task(
         self,
@@ -1905,8 +2099,15 @@ class BaseDb(ABC):
         accepted_by: Optional[str] = None,
         executor_type: Optional[str] = None,
         executor_id: Optional[str] = None,
+        expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
+        auto_accept: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Transition a visible task with a reason, recording acceptance for Tasks."""
+        """Transition a visible Task and record the caller and reason.
+
+        Automatic acceptance requires expected_updated_at. Explicit None matches
+        SQL NULL; omission leaves manual transitions without a timestamp guard.
+        Timestamps are epoch seconds, so same-second writes are indistinguishable.
+        """
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     # --- Schedules (Optional) ---
@@ -1954,9 +2155,14 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     def update_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+        self, schedule_id: str, user_id: Optional[str] = None, *, preserve_updated_at: bool = False, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
-        """Update a schedule by ID."""
+        """Update a schedule by ID.
+
+        ``preserve_updated_at`` leaves ``updated_at`` as stored; the executor sets it when it disables a
+        Company routine, so only a user edit moves that timestamp. An adapter that does not name the
+        parameter still disables the row, and the executor logs that the timestamp will advance.
+        """
         raise NotImplementedError
 
     def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
@@ -1974,6 +2180,7 @@ class BaseDb(ABC):
         Matches provenance-tagged rows and generic rows whose endpoint is the
         component's run endpoint, across owners (archiving the target is a
         system action). ``reason`` lands in disabled_reason; enable clears it.
+        Company-managed schedules keep their ``updated_at``: an archive is not a user edit.
 
         Returns:
             The number of schedules disabled.
@@ -1993,11 +2200,27 @@ class BaseDb(ABC):
         """Atomically claim a due schedule for execution."""
         raise NotImplementedError
 
-    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
-        """Release a claimed schedule and optionally update next_run_at."""
+    def release_schedule(
+        self,
+        schedule_id: str,
+        next_run_at: Optional[int] = None,
+        *,
+        worker_id: Optional[str] = None,
+        locked_at: Optional[int] = None,
+        preserve_updated_at: bool = False,
+    ) -> bool:
+        """Release a schedule, optionally matching its worker and individual claim timestamp.
+
+        ``preserve_updated_at`` leaves ``updated_at`` as stored, so releasing a routine the user edited
+        mid-run does not read as a newer edit.
+        """
         raise NotImplementedError
 
     # --- Schedule Runs (Optional) ---
+
+    def delete_schedule_runs(self, schedule_id: str, *, before: int) -> int:
+        """Delete completed history older than the cutoff for one schedule."""
+        raise NotImplementedError
 
     def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a schedule run record. ``run_data["user_id"]`` is denormalised from the parent schedule."""
@@ -2009,6 +2232,10 @@ class BaseDb(ABC):
 
     def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule run by ID."""
+        raise NotImplementedError
+
+    def get_latest_schedule_runs(self, schedule_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Return the latest run for each requested schedule in one query."""
         raise NotImplementedError
 
     def get_schedule_runs(
@@ -2509,6 +2736,7 @@ class AsyncBaseDb(ABC):
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         products_table: Optional[str] = None,
+        sources_table: Optional[str] = None,
         projects_table: Optional[str] = None,
         tasks_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
@@ -2543,6 +2771,7 @@ class AsyncBaseDb(ABC):
         self.learnings_table_name = learnings_table or "agno_learnings"
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.products_table_name = products_table or "agno_company_products"
+        self.sources_table_name = sources_table or "agno_company_sources"
         self.projects_table_name = projects_table or "agno_company_projects"
         self.tasks_table_name = tasks_table or "agno_company_tasks"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
@@ -2591,6 +2820,7 @@ class AsyncBaseDb(ABC):
             "learnings_table": self.learnings_table_name,
             "schedules_table": self.schedules_table_name,
             "products_table": self.products_table_name,
+            "sources_table": self.sources_table_name,
             "projects_table": self.projects_table_name,
             "tasks_table": self.tasks_table_name,
             "schedule_runs_table": self.schedule_runs_table_name,
@@ -2618,6 +2848,7 @@ class AsyncBaseDb(ABC):
             learnings_table=data.get("learnings_table"),
             schedules_table=data.get("schedules_table"),
             products_table=data.get("products_table"),
+            sources_table=data.get("sources_table"),
             projects_table=data.get("projects_table"),
             tasks_table=data.get("tasks_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
@@ -2704,6 +2935,10 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     # --- Sessions ---
+    async def reassign_session_owner(self, session_id: str, *, previous_user_id: str, user_id: Optional[str]) -> bool:
+        """Transfer an idle session only when its stored owner still matches."""
+        raise NotImplementedError
+
     @abstractmethod
     async def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         raise NotImplementedError
@@ -2742,6 +2977,57 @@ class AsyncBaseDb(ABC):
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
+    async def search_sessions(
+        self,
+        filter_expr: Optional[Dict[str, Any]] = None,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Search session fields before pagination, retaining only the requested page.
+
+        Adapters whose ``get_sessions`` accepts ``filter_expr`` filter natively. Others use a
+        portable fallback that reads every visible session once, without run histories where
+        supported, so its cost scales with the number of sessions visible to the caller.
+        """
+        from inspect import signature
+
+        from agno.db.session_filters import matches_session_filter, normalize_session_filter
+
+        if page < 1 or limit < 1:
+            raise ValueError("Page and limit must be positive")
+        if sort_by not in ("created_at", "updated_at") or sort_order not in ("asc", "desc"):
+            raise ValueError("Invalid session sort")
+        expression = normalize_session_filter(filter_expr)
+        parameters = signature(self.get_sessions).parameters
+        query: Dict[str, Any] = dict(
+            session_type=session_type, user_id=user_id, sort_by=sort_by, sort_order=sort_order, deserialize=False
+        )
+        if expression is None or "filter_expr" in parameters:
+            native: Dict[str, Any] = {"filter_expr": expression} if expression is not None else {}
+            result = await self.get_sessions(**query, **native, limit=limit, page=page)
+            return cast(Tuple[List[Dict[str, Any]], int], result)
+        # One unpaginated read gives a consistent snapshot and avoids rescanning adapters that page in memory.
+        skip_runs = "include_runs" in parameters
+        run_options: Dict[str, Any] = {"include_runs": False} if skip_runs else {}
+        result = await self.get_sessions(**query, **run_options)
+        sessions, _ = cast(Tuple[List[Dict[str, Any]], int], result)
+        matches = [session for session in sessions if matches_session_filter(session, expression)]
+        results = matches[(page - 1) * limit : page * limit]
+        if skip_runs:
+            # Runs were skipped while scanning; load them for unnamed sessions so display names can be inferred.
+            for index, session in enumerate(results):
+                if (session.get("session_data") or {}).get("session_name") is None:
+                    full_session = await self.get_session(
+                        session_id=session["session_id"], user_id=user_id, deserialize=False
+                    )
+                    if isinstance(full_session, dict):
+                        results[index] = full_session
+        return results, len(matches)
+
     @abstractmethod
     async def rename_session(
         self,
@@ -2765,6 +3051,22 @@ class AsyncBaseDb(ABC):
     ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
         """Async read of a single run. Adapters ported to v3 storage override this."""
         return None
+
+    async def cancel_pending_run(
+        self,
+        run_id: str,
+        *,
+        session_id: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        expected_status: str = "PENDING",
+    ) -> bool:
+        """Atomically cancel an observed Pending or Running run, preserving other statuses and data.
+
+        Return whether the row changed. Unsupported adapters must fail rather
+        than fall back to a read followed by an unconditional write.
+        """
+        raise NotImplementedError
 
     async def get_runs(
         self,
@@ -3610,6 +3912,47 @@ class AsyncBaseDb(ABC):
         """
         raise NotImplementedError
 
+    # --- Sources (Optional) ---
+
+    async def add_product_routine(self, product_id: str, schedule_id: str) -> Dict[str, Any]:
+        """Atomically append a Routine id without overwriting Product metadata."""
+        raise NotImplementedError("Company products not supported by the configured database")
+
+    async def create_source(self, source_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
+        """Create a Source; reuse atomically returns an identical reference or refuses conflicting settings."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    async def get_source(
+        self, source_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Read a Source. None user_id is unscoped; a string filters by owner."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    async def get_sources(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        product_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List Sources and their total, filtering by owner before pagination."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    async def update_source(
+        self, source_id: str, user_id: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update descriptive fields on an active Source within the owner scope."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    async def delete_source(self, source_id: str, user_id: Optional[str] = None) -> bool:
+        """Soft-delete an active Source within the owner scope."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
+    async def restore_source(self, source_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a deleted Source within the owner scope; otherwise return None."""
+        raise NotImplementedError("Company sources not supported by the configured database")
+
     # --- Products (Optional) ---
 
     async def create_product(self, product_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -3623,7 +3966,13 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError("Company products not supported by the configured database")
 
     async def get_products(
-        self, user_id: Optional[str] = None, limit: int = 20, page: int = 1, include_deleted: bool = False
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List Products and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company products not supported by the configured database")
@@ -3634,17 +3983,21 @@ class AsyncBaseDb(ABC):
         """Update descriptive fields on an active Product within the owner scope."""
         raise NotImplementedError("Company products not supported by the configured database")
 
+    async def get_product_counts(self, product_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Count visible children for a page in one grouped query, including zero statuses."""
+        raise NotImplementedError("Company product counts not supported by the configured database")
+
     async def delete_product(self, product_id: str, user_id: Optional[str] = None) -> bool:
-        """Soft-delete an active Product within the owner scope."""
+        """Archive a Product and its children atomically; raise ValueError with active Task ids and titles."""
         raise NotImplementedError("Company products not supported by the configured database")
 
     async def restore_product(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Restore a deleted Product within the owner scope; otherwise return None."""
+        """Restore a Product and exactly the children archived by it within the owner scope."""
         raise NotImplementedError("Company products not supported by the configured database")
 
     # --- Projects (Optional) ---
 
-    async def create_project(self, project_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def create_project(self, project_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
         """Create a Project; project_data carries its owner and timestamps."""
         raise NotImplementedError("Company projects not supported by the configured database")
 
@@ -3662,6 +4015,8 @@ class AsyncBaseDb(ABC):
         include_deleted: bool = False,
         product_id: Optional[str] = None,
         status: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List Projects and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company projects not supported by the configured database")
@@ -3672,12 +4027,18 @@ class AsyncBaseDb(ABC):
         """Update descriptive fields on an active Project within the owner scope."""
         raise NotImplementedError("Company projects not supported by the configured database")
 
-    async def delete_project(self, project_id: str, user_id: Optional[str] = None) -> bool:
-        """Soft-delete an active Project within the owner scope."""
+    async def get_project_counts(self, project_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Count visible children for a page in one grouped query, including zero statuses."""
+        raise NotImplementedError("Company project counts not supported by the configured database")
+
+    async def delete_project(
+        self, project_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
+    ) -> bool:
+        """Archive a Project and its Tasks atomically; refuse active Tasks. Cutoff requires old terminal work."""
         raise NotImplementedError("Company projects not supported by the configured database")
 
     async def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Restore a deleted Project within the owner scope; otherwise return None."""
+        """Restore a Project and exactly the Tasks archived by it within the owner scope."""
         raise NotImplementedError("Company projects not supported by the configured database")
 
     async def transition_project(
@@ -3687,8 +4048,16 @@ class AsyncBaseDb(ABC):
         reason: str,
         user_id: Optional[str] = None,
         accepted_by: Optional[str] = None,
+        expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
+        auto_accept: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Transition a visible Project and record the caller and reason."""
+        """Transition a visible Project and record the caller and reason.
+
+        Automatic completion requires expected_updated_at. Explicit None matches
+        SQL NULL; omission leaves manual transitions without a timestamp guard.
+        Timestamps are epoch seconds; the current non-terminal-Task gate still
+        applies even when two writes share a timestamp.
+        """
         raise NotImplementedError("Company projects not supported by the configured database")
 
     # --- Tasks (Optional) ---
@@ -3712,21 +4081,58 @@ class AsyncBaseDb(ABC):
         product_id: Optional[str] = None,
         status: Optional[str] = None,
         project_id: Optional[str] = None,
+        failed: Optional[bool] = None,
+        session_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List Tasks and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
-    async def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+    async def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
         """Update descriptive fields on an active Task within the owner scope."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
-    async def delete_task(self, task_id: str, user_id: Optional[str] = None) -> bool:
+    async def delete_task(
+        self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
+    ) -> bool:
         """Soft-delete an active Task within the owner scope."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     async def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a deleted Task within the owner scope; otherwise return None."""
         raise NotImplementedError("Company tasks not supported by the configured database")
+
+    async def start_task_run(
+        self,
+        task_id: str,
+        attempt: int,
+        expected_transitions: List[Dict[str, Any]],
+        user_id: Optional[str] = None,
+        run_db_id: Optional[str] = None,
+        session_user_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Reserve a Task attempt conditionally; user_id records the starting caller."""
+        raise NotImplementedError("Company execution not supported by this database")
+
+    async def complete_task_run(
+        self,
+        task_id: str,
+        job_id: str,
+        result: Dict[str, Any],
+        expected_transitions: Optional[List[Dict[str, Any]]] = None,
+        checkout: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Save a completed run's result and move its still-current Task to review."""
+        raise NotImplementedError("Company execution not supported by this database")
+
+    async def count_company_acceptances(
+        self, routine_id: str, policy: str, exclude_task_id: str, user_id: Optional[str] = None
+    ) -> int:
+        """Count accepted Tasks and completed Projects, including archived records."""
+        raise NotImplementedError("Company automatic acceptance not supported by this database")
 
     async def transition_task(
         self,
@@ -3737,8 +4143,15 @@ class AsyncBaseDb(ABC):
         accepted_by: Optional[str] = None,
         executor_type: Optional[str] = None,
         executor_id: Optional[str] = None,
+        expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
+        auto_accept: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Transition a visible task with a reason, recording acceptance for Tasks."""
+        """Transition a visible Task and record the caller and reason.
+
+        Automatic acceptance requires expected_updated_at. Explicit None matches
+        SQL NULL; omission leaves manual transitions without a timestamp guard.
+        Timestamps are epoch seconds, so same-second writes are indistinguishable.
+        """
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     # --- Schedules (Optional) ---
@@ -3785,9 +4198,14 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     async def update_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+        self, schedule_id: str, user_id: Optional[str] = None, *, preserve_updated_at: bool = False, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
-        """Update a schedule by ID."""
+        """Update a schedule by ID.
+
+        ``preserve_updated_at`` leaves ``updated_at`` as stored; the executor sets it when it disables a
+        Company routine, so only a user edit moves that timestamp. An adapter that does not name the
+        parameter still disables the row, and the executor logs that the timestamp will advance.
+        """
         raise NotImplementedError
 
     async def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
@@ -3811,11 +4229,27 @@ class AsyncBaseDb(ABC):
         """Atomically claim a due schedule for execution."""
         raise NotImplementedError
 
-    async def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
-        """Release a claimed schedule and optionally update next_run_at."""
+    async def release_schedule(
+        self,
+        schedule_id: str,
+        next_run_at: Optional[int] = None,
+        *,
+        worker_id: Optional[str] = None,
+        locked_at: Optional[int] = None,
+        preserve_updated_at: bool = False,
+    ) -> bool:
+        """Release a schedule, optionally matching its worker and individual claim timestamp.
+
+        ``preserve_updated_at`` leaves ``updated_at`` as stored, so releasing a routine the user edited
+        mid-run does not read as a newer edit.
+        """
         raise NotImplementedError
 
     # --- Schedule Runs (Optional) ---
+
+    async def delete_schedule_runs(self, schedule_id: str, *, before: int) -> int:
+        """Delete completed history older than the cutoff for one schedule."""
+        raise NotImplementedError
 
     async def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a schedule run record."""
@@ -3827,6 +4261,10 @@ class AsyncBaseDb(ABC):
 
     async def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule run by ID."""
+        raise NotImplementedError
+
+    async def get_latest_schedule_runs(self, schedule_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Return the latest run for each requested schedule in one query."""
         raise NotImplementedError
 
     async def get_schedule_runs(

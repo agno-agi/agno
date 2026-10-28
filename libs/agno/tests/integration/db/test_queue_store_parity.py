@@ -421,6 +421,28 @@ class TestStrictLookupParity:
         assert await store.get_job("nope", strict=True) is None
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind",
+    [
+        *STORE_PARAMS,
+        pytest.param(
+            "pg_sync", marks=pytest.mark.skipif(not _PG_AVAILABLE, reason="Postgres not available on localhost:5532")
+        ),
+    ],
+)
+@pytest.mark.parametrize("raise_on_error", [False, True])
+async def test_list_jobs_error_flag_preserves_results(kind, raise_on_error):
+    async with _open_store(kind) as store:
+        assert await store.list_jobs(raise_on_error=raise_on_error) == ([], 0)
+        await store.enqueue_job(make_job("listed", user_id="owner"))
+        jobs, total = await store.list_jobs(
+            status=["queued", "running"], user_id="owner", raise_on_error=raise_on_error
+        )
+        assert total == 1 and [job["id"] for job in jobs] == ["listed"]
+        assert await store.list_jobs(status="failed", raise_on_error=raise_on_error) == ([], 0)
+
+
 class TestSweepSettleParity:
     """settle_swept_job: the sweeper's ownership-keyed reconcile write.
     Same CAS shape (running + sweep-lock holder only), but the

@@ -18,12 +18,28 @@ def restore_authorization(app: Any, snapshot: Optional[Dict[str, Any]]) -> Optio
     provider = (
         _default_authorization_provider() if snapshot.get("service_account") else resolve_authorization_provider(app)
     )
-    return RunAuthorization(
+    authority = RunAuthorization(
         provider,
         AuthorizationContext(**snapshot["context"]),
         bool(snapshot.get("service_account")),
         enforce_tools=snapshot.get("enforce_tools", True),
     )
+
+    if snapshot.get("company_routine"):
+        from agno.company.routines import _RoutineAuthorization
+
+        routine_authority = _RoutineAuthorization(
+            None if snapshot.get("company_routine_unscoped") else authority,
+            routine_id=snapshot.get("company_routine_id"),
+            product_id=snapshot.get("company_product_id"),
+        )
+        routine_authority.context = authority.context
+        return routine_authority
+    if snapshot.get("company_executor"):
+        from agno.company.execution import _ExecutorAuthorization
+
+        return _ExecutorAuthorization(authority)
+    return authority
 
 
 def request_authorization(request: Any) -> Optional[RunAuthorization]:

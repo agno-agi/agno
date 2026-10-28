@@ -44,7 +44,7 @@ async def db(request, tmp_path):
         await call(database.close)
 
 
-async def call(fn, *args, **kwargs):
+async def call(fn, /, *args, **kwargs):
     result = fn(*args, **kwargs)
     return await result if inspect.isawaitable(result) else result
 
@@ -57,30 +57,32 @@ def manager(db):
 async def test_lifecycle_and_owner_guards(db):
     m = manager(db)
     assert await call(m.list_projects) == ([], 0)
-    parent = await call(m.create, "SDK", user_id="alice")
-    record = await call(m.create_project, parent["id"], "Ship", user_id="alice", scoped_user_id="alice")
+    parent = await call(m.create, name="SDK", user_id="alice")
+    record = await call(m.create_project, product_id=parent["id"], name="Ship", user_id="alice", scoped_user_id="alice")
     rid = record["id"]
     assert record["status"] == "proposed"
     assert await call(m.get_project, rid, user_id="bob") is None
     assert await call(m.update_project, rid, user_id="bob", outcome="No") is None
     assert await call(m.delete_project, rid, user_id="bob") is False
-    assert await call(m.transition_project, rid, "cancelled", "Stop", user_id="bob") is None
+    assert await call(m.transition_project, project_id=rid, target="cancelled", reason="Stop", user_id="bob") is None
     changed = await call(m.update_project, rid, outcome="Changed")
     assert changed["outcome"] == "Changed"
     assert changed["updated_at"] >= record["created_at"]
     with pytest.raises(ValueError):
-        await call(m.transition_project, rid, "done", "Skip")
+        await call(m.transition_project, project_id=rid, target="done", reason="Skip")
     with pytest.raises(ValueError):
-        await call(m.transition_project, rid, "cancelled", " ")
+        await call(m.transition_project, project_id=rid, target="cancelled", reason=" ")
     states = ["active", "done"]
     for state in states:
         kwargs = {"executor_type": "agent", "executor_id": "writer"} if state == "ready" else {}
-        result = await call(m.transition_project, rid, state, "Reviewed", accepted_by="reviewer", **kwargs)
+        result = await call(
+            m.transition_project, project_id=rid, target=state, reason="Reviewed", accepted_by="reviewer", **kwargs
+        )
         assert result["status"] == state
     assert [entry["target"] for entry in result["transitions"]] == states
     assert all(entry["user_id"] == "reviewer" for entry in result["transitions"])
     with pytest.raises(ValueError):
-        await call(m.transition_project, rid, "cancelled", "Terminal")
+        await call(m.transition_project, project_id=rid, target="cancelled", reason="Terminal")
     assert await call(m.restore_project, rid) is None
     assert await call(m.delete_project, rid)
     assert await call(m.get_project, rid) is None
@@ -91,13 +93,13 @@ async def test_lifecycle_and_owner_guards(db):
     assert await call(m.restore_project, rid, user_id="bob") is None
     assert (await call(m.restore_project, rid))["status"] == "done"
     assert await call(m.get_project, "missing") is None
-    assert await call(m.transition_project, "missing", "cancelled", "Missing") is None
+    assert await call(m.transition_project, project_id="missing", target="cancelled", reason="Missing") is None
 
 
 @pytest.mark.asyncio
 async def test_filters_and_stable_paging(db):
     m = manager(db)
-    parents = [await call(m.create, "A"), await call(m.create, "B")]
+    parents = [await call(m.create, name="A"), await call(m.create, name="B")]
     now = int(time.time())
     for i, owner in enumerate(["alice", "bob", "alice", None, "alice", "bob"]):
         await call(
@@ -112,7 +114,7 @@ async def test_filters_and_stable_paging(db):
                 "transitions": [],
             },
         )
-    await call(m.transition_project, "0", "cancelled", "Stop")
+    await call(m.transition_project, project_id="0", target="cancelled", reason="Stop")
     pages = [await call(m.list_projects, user_id="alice", status="proposed", limit=1, page=p) for p in [1, 2]]
     assert [p[1] for p in pages] == [2, 2]
     assert [p[0][0]["id"] for p in pages] == ["4", "2"]
@@ -124,10 +126,10 @@ async def test_filters_and_stable_paging(db):
 @pytest.mark.asyncio
 async def test_validation_parent_visibility_and_immutable_fields(db):
     m = manager(db)
-    parent = await call(m.create, "SDK", user_id="alice")
+    parent = await call(m.create, name="SDK", user_id="alice")
     with pytest.raises(LookupError):
-        await call(m.create_project, parent["id"], "Hidden", user_id="bob", scoped_user_id="bob")
-    record = await call(m.create_project, parent["id"], "Work")
+        await call(m.create_project, product_id=parent["id"], name="Hidden", user_id="bob", scoped_user_id="bob")
+    record = await call(m.create_project, product_id=parent["id"], name="Work")
     for fields in [
         {"status": "done"},
         {"id": "other"},
@@ -151,8 +153,8 @@ async def test_validation_parent_visibility_and_immutable_fields(db):
 @pytest.mark.asyncio
 async def test_custom_table_migrations_and_configuration_roundtrip(db):
     m = manager(db)
-    parent = await call(m.create, "SDK")
-    record = await call(m.create_project, parent["id"], "Roundtrip", user_id="alice")
+    parent = await call(m.create, name="SDK")
+    record = await call(m.create_project, product_id=parent["id"], name="Roundtrip", user_id="alice")
     assert await call(db.table_exists, db.projects_table_name)
     assert not await call(db.table_exists, "agno_company_projects")
     assert await call(db.get_latest_schema_version, db.projects_table_name)

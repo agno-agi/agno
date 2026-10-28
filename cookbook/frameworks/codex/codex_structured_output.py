@@ -34,7 +34,7 @@ class Movie(BaseModel):
 agent = CodexAgent(
     name="Codex Movie Writer",
     model="gpt-5.6-luna",
-    sandbox="read-only",
+    sandbox_mode="read-only",
     output_schema=Movie,
 )
 

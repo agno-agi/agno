@@ -103,6 +103,12 @@ def component_hook(component: Any, name: str) -> Optional[Callable[..., Awaitabl
     return getattr(component, name)
 
 
+def queue_terminal_writer(component: Any) -> Optional[Callable[..., Awaitable[Any]]]:
+    """Return the terminal writer of a component whose external compute must retire before its ticket settles."""
+    resolve = getattr(type(component), "_queue_terminal_writer", None)
+    return resolve(component) if resolve is not None else None
+
+
 def fallback_allowed(result: RunPersistOutcome) -> bool:
     """Whether the unfenced whole-session fallback may run after the atomic
     primitive's outcome.

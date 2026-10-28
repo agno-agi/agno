@@ -691,6 +691,7 @@ class RedisDb(VectorDb):
             text_query = TextQuery(
                 text=query,
                 text_field_name="content",
+                num_results=limit,
                 filter_expression=filter_expression,
             )
 

@@ -6,7 +6,7 @@ queue depth - depth trending up is the early-warning signal the queue exists
 to provide.
 """
 
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -111,9 +111,12 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         summary="List Queue Jobs",
         response_model=PaginatedResponse[QueueJobSchema],
         description=(
-            "List job queue jobs, optionally filtered by status. Repeat the status param to "
-            "match any of several (e.g. status=failed&status=cancelled for the requeueable "
-            "set; status=failed alone is the dead-letter list). Useful sort_by fields: "
+            "List job queue jobs, optionally filtered by status, session and submitting user. "
+            "Repeat status or session_id to match any of several (e.g. "
+            "status=failed&status=cancelled for the requeueable set; status=failed alone is "
+            "the dead-letter list; session_id=s1&session_id=s2 for one conversation's jobs). "
+            "An operator surface: the filters are conveniences, never authorization - the "
+            "admin gate covers the whole router. Useful sort_by fields: "
             "created_at (default), updated_at, completed_at, status, attempt, component_type, "
             "component_id, user_id. Unknown sort fields are ignored."
         ),
@@ -123,6 +126,10 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         status: Optional[List[str]] = Query(
             default=None, description="Status filter; repeatable to match any of several statuses"
         ),
+        session_id: Optional[List[str]] = Query(
+            default=None, description="Session filter; repeatable to match any of several sessions"
+        ),
+        user_id: Optional[str] = Query(default=None, description="Owner filter: only jobs submitted by this user"),
         limit: int = Query(default=20, description="Number of jobs to return per page", ge=1, le=1000),
         page: int = Query(default=1, description="Page number for pagination", ge=1),
         sort_by: str = Query(default="created_at", description="Field to sort jobs by"),
@@ -131,9 +138,22 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         for s in status or []:
             if s not in JOB_STATUSES:
                 raise HTTPException(status_code=400, detail=f"Invalid status {s!r}; expected one of {JOB_STATUSES}")
+        if (session_id is not None and not all(session_id)) or user_id == "":
+            raise HTTPException(status_code=400, detail="session_id and user_id must not be empty")
         store = _get_store(request)
+        # Only pass filters that were asked for: custom stores on the older list_jobs signature keep working.
+        filters: Dict[str, Any] = {}
+        if session_id:
+            filters["session_id"] = session_id
+        if user_id:
+            filters["user_id"] = user_id
         jobs, total_count = await store.list_jobs(
-            status=status or None, limit=limit, page=page, sort_by=sort_by, sort_order=sort_order.value
+            status=status or None,
+            limit=limit,
+            page=page,
+            sort_by=sort_by,
+            sort_order=sort_order.value,
+            **filters,
         )
         return PaginatedResponse(
             data=[QueueJobSchema(**job) for job in jobs],

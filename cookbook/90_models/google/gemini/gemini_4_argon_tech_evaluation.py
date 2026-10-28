@@ -18,10 +18,18 @@ from pydantic import BaseModel, Field
 
 
 class TechnologyBrief(BaseModel):
-    comparison: List[str] = Field(description="Key strengths and limitations of each technology")
-    recommendation: str = Field(description="Recommended technology and why it fits the requirements")
-    risks: List[str] = Field(description="Risks and unknowns to resolve before adoption")
-    sources: List[str] = Field(description="URLs of official documentation used in the comparison")
+    comparison: List[str] = Field(
+        description="Key strengths and limitations of each technology"
+    )
+    recommendation: str = Field(
+        description="Recommended technology and why it fits the requirements"
+    )
+    risks: List[str] = Field(
+        description="Risks and unknowns to resolve before adoption"
+    )
+    sources: List[str] = Field(
+        description="URLs of official documentation used in the comparison"
+    )
 
 
 # ---------------------------------------------------------------------------

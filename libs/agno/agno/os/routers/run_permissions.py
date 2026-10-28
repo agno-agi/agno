@@ -21,7 +21,7 @@ async def _require_endpoint_permission(
     parts = path.strip("/").split("/")
     if len(parts) >= 2 and parts[0] in ("agents", "teams", "workflows") and parts[1] in RESERVED_MEMBER_IDS:
         detail = (
-            "Manager specialists are internal. Select OS Manager as the Task executor instead."
+            "Manager specialists are internal. Select a registered agent, team or workflow as the Task executor."
             if action == "accept"
             else "Manager specialists are internal. Schedule OS Manager instead."
         )

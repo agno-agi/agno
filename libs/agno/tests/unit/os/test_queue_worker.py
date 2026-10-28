@@ -2695,3 +2695,31 @@ class TestCancellationStage:
         worker = make_worker(store, agent, make_config())
         assert await worker._persist_run_error(make_job("e1"), "boom") is True
         assert captured == [{"status": "ERROR"}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+async def test_component_cleanup_gates_cancelled_ticket(cleanup_fails):
+    from agno.exceptions import RunCancelledException
+    from agno.run.status_persist import RunPersistOutcome
+
+    store = InMemoryQueueStore()
+    calls = []
+
+    class CleanupAgent(FakeAgent):
+        def _queue_terminal_writer(self):
+            async def write(job, error, status, cancellation_stage):
+                calls.append((await store.get_job(job["id"]))["status"])
+                if cleanup_fails:
+                    raise OSError("provider unavailable")
+                return RunPersistOutcome.UPDATED
+
+            return write
+
+    agent = CleanupAgent(raises=RunCancelledException("cancelled"))
+    worker = make_worker(store, agent, make_config())
+    await store.enqueue_job(make_job("cleanup"))
+    claimed = await store.claim_job(worker.worker_id)
+    await worker._execute_claimed(claimed)
+    assert calls == ["running"]
+    assert (await store.get_job("cleanup"))["status"] == ("running" if cleanup_fails else "cancelled")

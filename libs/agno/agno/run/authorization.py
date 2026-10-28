@@ -260,4 +260,6 @@ def public_payload(payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]
     """Keep persisted caller claims out of tool results and API responses."""
     if payload is None:
         return None
-    return {key: value for key, value in payload.items() if key != AUTHORIZATION_KEY} or None
+    return {
+        key: value for key, value in payload.items() if key not in {AUTHORIZATION_KEY, "_agno_company_acceptance"}
+    } or None

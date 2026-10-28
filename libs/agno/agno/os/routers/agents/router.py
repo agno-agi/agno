@@ -42,6 +42,7 @@ from agno.os.auth import (
 from agno.os.checkpoints import build_run_checkpoint_snapshot, list_run_checkpoints
 from agno.os.event_streams import get_event_stream
 from agno.os.job_queue import (
+    _new_queued_run_id,
     aattach_waiting_on,
     acontinue_via_queue,
     aenqueue_ticket,
@@ -91,6 +92,7 @@ from agno.os.utils import (
     format_sse_event,
     get_agent_by_id,
     get_request_kwargs,
+    is_form_field_omitted,
     parse_files_metadata,
     process_audio,
     process_document,
@@ -727,6 +729,8 @@ def get_agent_router(
         ),
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
+        if await is_form_field_omitted(request, "stream"):
+            stream = True
 
         files_metadata_list = parse_files_metadata(files_metadata)
 
@@ -869,6 +873,27 @@ def get_agent_router(
         # Extract auth token for remote agents
         auth_token = get_auth_token_from_request(request)
 
+        from agno.agents.base import BaseExternalAgent
+
+        if isinstance(agent, BaseExternalAgent) and agent.sandbox is not None:
+            from agno.os.routers.agents.sandbox import sandbox_run_response
+
+            return await sandbox_run_response(
+                agent,
+                getattr(request.app.state, "queue_worker", None),
+                request,
+                input=message,
+                session_id=session_id,
+                user_id=user_id,
+                kwargs=kwargs,
+                stream=stream,
+                background=background,
+                version=version,
+                images=base64_images,
+                files=input_files,
+                unsupported_media=bool(base64_audios or base64_videos),
+            )
+
         # Background execution
         if background:
             if isinstance(agent, RemoteAgent):
@@ -905,7 +930,7 @@ def get_agent_router(
                     from agno.os.event_streams import get_event_stream as _ges
                     from agno.run.base import RunStatus as _RS
 
-                    queued_run_id = str(uuid4())
+                    queued_run_id = _new_queued_run_id()
                     queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                     queued_stream_payload["scope"] = resolve_queue_scope(
                         agent_id,
@@ -1028,7 +1053,7 @@ def get_agent_router(
             ):
                 # 202 must honor input_schema exactly like the inline path (400)
                 validate_seam_input(agent, message)
-                queued_run_id = str(uuid4())
+                queued_run_id = _new_queued_run_id()
                 queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                 queued_payload["scope"] = resolve_queue_scope(
                     agent_id,
@@ -1431,6 +1456,10 @@ def get_agent_router(
         ),
     ):
         kwargs = await get_request_kwargs(request, continue_agent_run)
+        if await is_form_field_omitted(request, "stream"):
+            stream = True
+        if await is_form_field_omitted(request, "replace_original"):
+            replace_original = None
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -2081,6 +2110,7 @@ def get_agent_router(
                             db_id=agent_db.id if agent_db else None,
                             sessions=sessions,
                             metadata=AgentSummaryResponse.from_agent(agent).metadata or {"sdk": "external"},
+                            sandboxed=AgentSummaryResponse.from_agent(agent).sandboxed,
                         )
                     )
 
@@ -2184,6 +2214,7 @@ def get_agent_router(
                 name=agent.name,
                 description=getattr(agent, "description", None),
                 metadata=AgentSummaryResponse.from_agent(agent).metadata or {"sdk": "external"},
+                sandboxed=AgentSummaryResponse.from_agent(agent).sandboxed,
             )
 
     @router.get(

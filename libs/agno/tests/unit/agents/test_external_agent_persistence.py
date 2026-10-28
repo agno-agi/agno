@@ -120,3 +120,29 @@ def test_history_follows_fork_ancestry_and_subsequent_turns(agent, source):
     if source != "missing":
         expected.insert(0, "earlier turn")
     assert [message["content"] for message in history] == expected
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_strict_runtime_persistence_failure_cannot_emit_completion(agent, monkeypatch, stream):
+    agent.strict_persistence = True
+
+    def fail(*args, **kwargs):
+        raise OSError("native history disk full")
+
+    monkeypatch.setattr(agent.db, "upsert_run", fail)
+    seen = []
+    with pytest.raises(OSError, match="disk full"):
+        if stream:
+            for item in agent.run("hello", session_id="strict", stream=True):
+                seen.append(item.event)
+        else:
+            agent.run("hello", session_id="strict")
+    assert "RunCompleted" not in seen
+
+
+def test_strict_missing_native_identity_rejects_prior_completed_history(agent):
+    agent.require_native_resume = True
+    agent.run("first", session_id="strict")
+    with pytest.raises(ValueError, match="Native conversation identity"):
+        agent._check_native_resume(None, agent.get_session("strict"))
+    agent._check_native_resume("native-id", agent.get_session("strict"))

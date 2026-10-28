@@ -109,13 +109,31 @@ async def arun_diagnostics(
             # Driver and provider exceptions can echo credentials; keep the type only.
             checks.append(CheckResult(name=name, status="FAIL", detail=f"Check failed ({type(exc).__name__})"))
     if agent_os.company is not None:
-        reason = agent_os.product_manager_unavailable_reason
+        reason = agent_os.company_manager_unavailable_reason
         checks.append(
             CheckResult(
-                "company", "WARN" if reason else "PASS", reason or "Product Manager configured; model not called"
+                "company", "WARN" if reason else "PASS", reason or "Company Manager configured; model not called"
             )
         )
-    for key in required_env:
+    source_env: set[str] = set()
+    if agent_os.company is not None:
+        for declaration in agent_os.company.products:
+            from agno.company.declarations import Product
+
+            product = declaration if isinstance(declaration, Product) else Product.model_validate(declaration)
+            source_env.update(source.credential_ref for source in product.sources if source.credential_ref)
+        if agent_os._company_db is not None:
+            try:
+                page = 1
+                while True:
+                    rows, total = await _call_db(agent_os._company_db, "get_sources", limit=100, page=page)
+                    source_env.update(row["credential_ref"] for row in rows if row.get("credential_ref"))
+                    if page * 100 >= total:
+                        break
+                    page += 1
+            except Exception as exc:
+                checks.append(CheckResult("company_sources", "FAIL", f"Source check failed ({type(exc).__name__})"))
+    for key in sorted(set(required_env) | source_env):
         present = bool(os.getenv(key))
         checks.append(
             CheckResult(

@@ -628,21 +628,11 @@ def get_authentication_dependency(settings: AgnoAPISettings):
         if _is_jwt_configured():
             return True
 
-        # If no security key is set, skip authentication entirely
-        if not settings or not settings.os_security_key:
-            return True
-
-        # If security is enabled but no authorization header provided, fail
-        if not credentials:
-            raise HTTPException(status_code=401, detail="Authorization header required")
-
-        token = credentials.credentials
-
         # Check internal service token (used by scheduler executor).
         # ``INTERNAL_SCHEDULER_USER_ID`` identifies the caller, not the owner of the work:
         # routes prefer the executor's form-field ``user_id`` so writes land on the schedule owner.
         internal_token = getattr(request.app.state, "internal_service_token", None)
-        if internal_token and hmac.compare_digest(token, internal_token):
+        if token and internal_token and _constant_time_equal(token, internal_token):
             request.state.authenticated = True
             request.state.user_id = INTERNAL_SCHEDULER_USER_ID
             request.state.scopes = list(INTERNAL_SERVICE_SCOPES)
@@ -652,6 +642,16 @@ def get_authentication_dependency(settings: AgnoAPISettings):
             # server-only — no client input maps onto this attribute.
             request.state.is_internal_service = True
             return True
+
+        # If no security key is set, skip authentication entirely
+        if not settings or not settings.os_security_key:
+            return True
+
+        # If security is enabled but no authorization header provided, fail
+        if not credentials:
+            raise HTTPException(status_code=401, detail="Authorization header required")
+
+        token = credentials.credentials
 
         # Verify the token against the security key in constant time, like the internal token
         # above and the middleware path, so a mismatch position cannot be timed.
