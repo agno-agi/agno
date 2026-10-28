@@ -159,6 +159,53 @@ def test_routine_cancel_stops_the_running_run(system):
     assert client.post(path + "/archive").status_code == 200
 
 
+def test_routine_cancel_leaves_a_live_run_to_its_executor(system):
+    import time
+
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+    from agno.run.cancel import is_cancelled
+    from agno.session import AgentSession
+
+    client, _, db = system
+    product = client.post("/company/products", json={"name": "Docs"}).json()
+    body = dict(
+        product_id=product["id"], name="review", executor_type="agent", executor_id="reader", instructions="Review"
+    )
+    routine_id = client.post("/company/routines", json=body).json()["id"]
+    path = "/company/routines/" + routine_id
+    now = int(time.time())
+    run = RunOutput(
+        run_id="live-routine-run", agent_id="reader", session_id="routine-session", status=RunStatus.running
+    )
+    db.upsert_session(AgentSession(session_id="routine-session", agent_id="reader"))
+    db.upsert_run(run, session_id="routine-session")
+    db.create_schedule_run(
+        {
+            "id": "live-schedule-run",
+            "schedule_id": routine_id,
+            "attempt": 1,
+            "triggered_at": now,
+            "status": "running",
+            "run_id": "live-routine-run",
+            "session_id": "routine-session",
+            "created_at": now,
+        }
+    )
+    response = client.post(path + "/cancel")
+    assert response.status_code == 200, response.text
+    assert is_cancelled("live-routine-run")
+    # The run is still executing, so the row stays running until its executor stops and records the result.
+    assert db.get_schedule_run("live-schedule-run")["status"] == "running"
+    assert client.post(path + "/archive").status_code == 409
+    run.status = RunStatus.cancelled
+    db.upsert_run(run, session_id="routine-session")
+    # Once the run has stopped, a repeated cancel records its final status.
+    assert client.post(path + "/cancel").status_code == 200
+    assert db.get_schedule_run("live-schedule-run")["status"] == "cancelled"
+    assert client.post(path + "/archive").status_code == 200
+
+
 def test_product_metadata_edits_keep_linked_routines(system):
     client, _, db = system
     product = client.post("/company/products", json={"name": "Docs", "metadata": {"team": "a"}}).json()

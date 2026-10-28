@@ -5,7 +5,7 @@ import json
 import time
 from contextvars import ContextVar
 from inspect import signature
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import quote
 
 from agno.db.schemas.scheduler import (
@@ -37,6 +37,24 @@ def _to_form_value(v: Any) -> str:
     if isinstance(v, (dict, list)):
         return json.dumps(v)
     return str(v)
+
+
+def _terminal_run_status(data: Dict[str, Any], company_routine: bool) -> Tuple[str, Optional[str]]:
+    """Map a terminal component run to its schedule run status and error."""
+    run_status = data.get("status")
+    company_error = None
+    if company_routine:
+        from agno.company.routines import _routine_failure
+
+        company_error = _routine_failure(data)
+    if run_status == "COMPLETED":
+        return ("failed" if company_error else "success"), company_error
+    if run_status == "PAUSED":
+        return "paused", None
+    if run_status == "CANCELLED":
+        # A cancelled run was stopped on purpose, so it is neither a failure nor retried.
+        return "cancelled", data.get("error") or "Run was cancelled"
+    return "failed", company_error or data.get("error") or f"Run failed with status {run_status}"
 
 
 _active_schedule_run: ContextVar[Optional[tuple]] = ContextVar("active_schedule_run", default=None)
@@ -619,24 +637,7 @@ class ScheduleExecutor:
                 from agno.run.authorization import AUTHORIZATION_HEADER
 
                 authority = json.loads(headers.get(AUTHORIZATION_HEADER, "{}"))
-                company_error = None
-                if authority.get("company_routine"):
-                    from agno.company.routines import _routine_failure
-
-                    company_error = _routine_failure(data)
-                if run_status == "COMPLETED":
-                    status = "failed" if company_error else "success"
-                    error = company_error
-                elif run_status == "PAUSED":
-                    status = "paused"
-                    error = None
-                elif run_status == "CANCELLED":
-                    # A cancelled run was stopped on purpose, so it is neither a failure nor retried.
-                    status = "cancelled"
-                    error = data.get("error") or "Run was cancelled"
-                else:
-                    status = "failed"
-                    error = company_error or data.get("error") or f"Run failed with status {run_status}"
+                status, error = _terminal_run_status(data, bool(authority.get("company_routine")))
 
                 # Extract input, output, and requirements from RunOutput
                 run_input = data.get("input") if isinstance(data.get("input"), dict) else None
