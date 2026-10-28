@@ -1,8 +1,8 @@
 """
-Openai Reasoning O3 Mini
-========================
+Openai Reasoning GPT-5.6 Sol
+============================
 
-Cookbook example for `openai/responses/reasoning_o3_mini.py`.
+Cookbook example for `openai/responses/reasoning_gpt_5_6_sol.py`.
 """
 
 from agno.agent import Agent

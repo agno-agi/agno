@@ -33,26 +33,6 @@ Live GPT-6 execution was not tested.
 
 ---
 
-### o3_mini.py
-
-**Status:** PASS
-
-**Description:** Moved off `o3-mini`, which OpenAI shut down on 2026-10-23, to `OpenAIResponses(id="gpt-5.6-sol")`.
-
-**Result:** The answer prints.
-
----
-
-### o3_mini_with_tools.py
-
-**Status:** PASS
-
-**Description:** Moved off `o3-mini` to `OpenAIResponses(id="gpt-5.6-sol")`. `OpenAIChat` rejects function tools for this model (`use /v1/responses or set reasoning_effort to 'none'`).
-
-**Result:** The agent calls `web_search` and prints the report. Some DuckDuckGo searches returned "No results found"; the run still completes.
-
----
-
 ### reasoning_effort.py
 
 **Status:** PASS
@@ -70,5 +50,25 @@ Live GPT-6 execution was not tested.
 **Description:** Moved the reasoning model off `o3-mini`, which OpenAI shut down on 2026-10-23 (404), to its listed replacement `gpt-5.6-sol`.
 
 **Result:** Reasoning events stream and the final answer prints.
+
+---
+
+### gpt_5_6_sol.py
+
+**Status:** PASS
+
+**Description:** Renamed from `o3_mini.py`: `o3-mini` was shut down on 2026-10-23, and the example now runs its listed replacement, `OpenAIResponses(id="gpt-5.6-sol")`.
+
+**Result:** The trolley-problem answer prints.
+
+---
+
+### gpt_5_6_sol_with_tools.py
+
+**Status:** PASS
+
+**Description:** Renamed from `o3_mini_with_tools.py` and moved to `OpenAIResponses(id="gpt-5.6-sol")`. `OpenAIChat` rejects function tools for this model (`use /v1/responses or set reasoning_effort to 'none'`).
+
+**Result:** The agent calls `web_search` and prints the report.
 
 ---

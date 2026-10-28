@@ -46,21 +46,11 @@ encrypted reasoning plus tool-call replay.
 
 ---
 
-### deep_research_agent.py
+### reasoning_gpt_5_6_sol.py
 
 **Status:** PASS
 
-**Description:** `o4-mini-deep-research` was shut down on 2026-07-23; OpenAI lists `gpt-5.6-sol` as the replacement. The deep-research id was what added `web_search_preview`, so the example now passes that tool itself.
-
-**Result:** The semaglutide report streams with web-sourced figures. Real OpenAI calls, no mocks.
-
----
-
-### reasoning_o3_mini.py
-
-**Status:** PASS
-
-**Description:** Moved the reasoning model off `o3-mini`, which OpenAI shut down on 2026-10-23 (404), to its listed replacement `gpt-5.6-sol`.
+**Description:** Renamed from `reasoning_o3_mini.py`: `o3-mini` was shut down on 2026-10-23, and the example now runs its listed replacement, `gpt-5.6-sol`.
 
 **Result:** The agent calls `get_current_stock_price` and prints the NVDA report.
 

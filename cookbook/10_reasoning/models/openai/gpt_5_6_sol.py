@@ -1,13 +1,12 @@
 """
-O3 Mini With Tools
-==================
+GPT-5.6 Sol
+===========
 
 Demonstrates this reasoning cookbook example.
 """
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
-from agno.tools.websearch import WebSearchTools
 
 
 # ---------------------------------------------------------------------------
@@ -16,12 +15,12 @@ from agno.tools.websearch import WebSearchTools
 def run_example() -> None:
     agent = Agent(
         model=OpenAIResponses(id="gpt-5.6-sol"),
-        tools=[WebSearchTools(enable_news=False)],
-        instructions="Use tables to display data.",
-        markdown=True,
     )
-
-    agent.print_response("Write a report comparing NVDA to TSLA", stream=True)
+    agent.print_response(
+        "Solve the trolley problem. Evaluate multiple ethical frameworks. "
+        "Include an ASCII diagram of your solution.",
+        stream=True,
+    )
 
 
 # ---------------------------------------------------------------------------
