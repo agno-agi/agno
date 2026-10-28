@@ -21,15 +21,18 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from agno.agent import Agent, RemoteAgent
+from agno.os.interfaces.agui.handlers import validate_subagent_visibility
 from agno.os.interfaces.agui.input import (
     extract_context,
     extract_media,
+    extract_resume_entries,
     extract_tool_messages,
     extract_user_input,
     parse_client_tools,
     validate_state,
 )
-from agno.os.interfaces.agui.resume import resume_paused_run
+from agno.os.interfaces.agui.interrupts import validate_interrupt_outcome
+from agno.os.interfaces.agui.resume import resume_paused_run, resume_paused_run_from_entries
 from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
 from agno.os.middleware.user_scope import assert_session_writable, caller_is_admin, resolve_run_user_id
 from agno.run.base import RunContext
@@ -41,6 +44,8 @@ async def run_entity(
     entity: Union[Agent, RemoteAgent, Team, RemoteTeam],
     run_input: RunAgentInput,
     user_id: Optional[str] = None,
+    subagent_visibility: Optional[str] = None,
+    emit_interrupt_outcome: bool = False,
 ) -> AsyncIterator[BaseEvent]:
     """Shared handler for running an Agent or Team with AG-UI input/output mapping.
 
@@ -57,6 +62,7 @@ async def run_entity(
         user_input = extract_user_input(messages)
         images, audio, videos, files = extract_media(messages)
         tool_messages = extract_tool_messages(messages)
+        resume_entries = extract_resume_entries(run_input)
 
         # 2. Convert frontend tool definitions to Agno Functions
         client_tools = parse_client_tools(run_input.tools) or None
@@ -81,11 +87,27 @@ async def run_entity(
         )
 
         run_kwargs: dict = {}
-        if ui_deps:
-            run_kwargs["add_dependencies_to_context"] = True
 
-        # 4. Determine if this is a resume (trailing ToolMessages) or fresh run
-        if tool_messages:
+        # 4. Determine if this is a resume, on either channel, or a fresh run.
+        # A request carrying both is answered from both: the array names the
+        # interrupts the run reported, the tool messages beside it carry the
+        # results of tools the frontend ran, and one assistant turn can pause on
+        # both kinds at once. They are merged rather than one being dropped, the
+        # array winning where both answer one requirement. An array that answers
+        # no paused run answers nothing at all, and the protocol proceeds without
+        # entries it does not recognise, so the request falls through to the
+        # fresh run it otherwise describes.
+        response_stream = None
+        if resume_entries:
+            response_stream = await resume_paused_run_from_entries(
+                entity=entity,  # type: ignore[arg-type]
+                session_id=run_input.thread_id,
+                resume_entries=resume_entries,
+                tool_messages=tool_messages,
+                run_context=run_context,
+                run_kwargs=run_kwargs,
+            )
+        elif tool_messages:
             # Resume: frontend executed external tools and sent results back
             response_stream = await resume_paused_run(
                 entity=entity,  # type: ignore[arg-type]
@@ -94,8 +116,15 @@ async def run_entity(
                 run_context=run_context,
                 run_kwargs=run_kwargs,
             )
-        else:
+
+        if response_stream is None:
             # Fresh run: new user input
+            # The dependency option belongs to this branch alone: it is read
+            # while a user message is built, and a continue replays the paused
+            # run's stored messages instead of building one. A resumed run still
+            # receives the request's context through run_context.dependencies.
+            if ui_deps:
+                run_kwargs["add_dependencies_to_context"] = True
             if isinstance(entity, (RemoteAgent, RemoteTeam)):
                 # A RunContext is an in-process object: RemoteAgent/RemoteTeam forward every
                 # unknown kwarg as a form field, and the remote AgentOS would hand the
@@ -126,6 +155,8 @@ async def run_entity(
             thread_id=run_input.thread_id,
             run_id=run_id,
             run_state=session_state,
+            subagent_visibility=subagent_visibility,
+            emit_interrupt_outcome=emit_interrupt_outcome,
         ):
             yield event
 
@@ -135,12 +166,23 @@ async def run_entity(
 
 
 def attach_routes(
-    router: APIRouter, agent: Optional[Union[Agent, RemoteAgent]] = None, team: Optional[Union[Team, RemoteTeam]] = None
+    router: APIRouter,
+    agent: Optional[Union[Agent, RemoteAgent]] = None,
+    team: Optional[Union[Team, RemoteTeam]] = None,
+    subagent_visibility: Optional[str] = None,
+    emit_interrupt_outcome: bool = False,
 ) -> APIRouter:
     if agent is None and team is None:
         raise ValueError("Either agent or team must be provided.")
 
-    entity = agent or team
+    # Validated at mount time, not per request: an unserveable setting is a
+    # startup failure, never an in-band error after a run has already begun.
+    subagent_visibility = validate_subagent_visibility(subagent_visibility)
+    emit_interrupt_outcome = validate_interrupt_outcome(emit_interrupt_outcome)
+
+    # An agent takes precedence over a team, decided on presence, so the entity a
+    # request runs is the one the interface's scope mapping named.
+    entity = agent if agent is not None else team
     encoder = EventEncoder()
 
     @router.post("/agui", name="run_agent")
@@ -159,18 +201,25 @@ def attach_routes(
             is_admin=caller_is_admin(request),
         )
 
-        # A trailing tool message resumes a paused run with caller-supplied answers, which
-        # is a /continue. REST, MCP and the WebSocket all refuse to continue a run that is
-        # paused on an admin-required approval; this transport must too, or the run's
-        # initiator confirms the approval themselves by replaying the tool call here.
-        # Decided before the stream opens so the refusal is a real 403.
+        # A trailing tool message, or an entry in the request's resume array, resumes a
+        # paused run with caller-supplied answers, which is a /continue. REST, MCP and the
+        # WebSocket all refuse to continue a run that is paused on an admin-required
+        # approval; this transport must too, or the run's initiator confirms the approval
+        # themselves by replaying the tool call here. Both channels pass the one check, or
+        # a caller refused on one succeeds on the other. Decided before the stream opens so
+        # the refusal is a real 403, and asked of the run the request would actually
+        # continue: a request carrying both channels continues the first paused run either
+        # key finds, so the lookup is handed both lists exactly as run_entity hands them on.
         tool_messages = extract_tool_messages(run_input.messages or [])
-        if tool_messages:
+        resume_entries = extract_resume_entries(run_input)
+        if tool_messages or resume_entries:
             from agno.os.auth import run_continuation_blocked_reason
             from agno.os.interfaces.agui.resume import find_resume_target_run_id
 
             entity_db = getattr(entity, "db", None)
-            run_id = await find_resume_target_run_id(entity, run_input.thread_id, tool_messages)
+            run_id = await find_resume_target_run_id(
+                entity, run_input.thread_id, tool_messages=tool_messages, resume_entries=resume_entries
+            )
             reason = await run_continuation_blocked_reason(
                 entity_db,
                 run_id,
@@ -182,7 +231,13 @@ def attach_routes(
                 raise HTTPException(status_code=403, detail=reason)
 
         async def event_generator():
-            async for event in run_entity(entity, run_input, user_id=user_id):  # type: ignore
+            async for event in run_entity(
+                entity,  # type: ignore[arg-type]
+                run_input,
+                user_id=user_id,
+                subagent_visibility=subagent_visibility,
+                emit_interrupt_outcome=emit_interrupt_outcome,
+            ):
                 yield encoder.encode(event)
 
         return StreamingResponse(
