@@ -5,8 +5,8 @@ OpenAI reasoning model examples, including effort, stream, and summary modes.
 ## Examples
 
 - [`gpt_6.py`](gpt_6.py) — GPT-6 Astra with medium reasoning effort, reasoning summaries, and streaming.
-- `o3_mini.py`
-- `o3_mini_with_tools.py`
+- `gpt_5_6_sol.py`
+- `gpt_5_6_sol_with_tools.py`
 - `reasoning_effort.py`
 - `reasoning_model_gpt_4_1.py`
 - `reasoning_stream.py`
