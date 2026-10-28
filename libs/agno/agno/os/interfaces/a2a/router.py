@@ -15,7 +15,7 @@ try:
     from a2a.server.routes import create_jsonrpc_routes
     from a2a.types import AgentCard, AgentProvider, SecurityScheme
 except ImportError as e:
-    raise ImportError("`a2a` not installed. Please install it with `pip install -U a2a-sdk`") from e
+    raise ImportError("`a2a-sdk` 1.x not installed. Please install it with `pip install -U 'agno[a2a]'`") from e
 
 
 from agno.agent import Agent, RemoteAgent
@@ -106,7 +106,7 @@ def attach_routes(
     @router.get("/agents/{id}/.well-known/agent-card.json")
     async def get_agent_card(request: Request, id: str):
         await authorize_a2a_access(request, "agents", id, "read")
-        agent = get_agent_by_id(id, agents, create_fresh=True)
+        agent = get_agent_by_id(id, agents)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -157,7 +157,7 @@ def attach_routes(
     @router.get("/teams/{id}/.well-known/agent-card.json")
     async def get_team_card(request: Request, id: str):
         await authorize_a2a_access(request, "teams", id, "read")
-        team = get_team_by_id(id, teams, create_fresh=True)
+        team = get_team_by_id(id, teams)
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -208,7 +208,7 @@ def attach_routes(
     @router.get("/workflows/{id}/.well-known/agent-card.json")
     async def get_workflow_card(request: Request, id: str):
         await authorize_a2a_access(request, "workflows", id, "read")
-        workflow = get_workflow_by_id(id, workflows, create_fresh=True)
+        workflow = get_workflow_by_id(id, workflows)
         if not workflow:
             raise HTTPException(status_code=404, detail="Workflow not found")
 

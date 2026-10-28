@@ -7,7 +7,7 @@ try:
     from a2a.types import SendMessageRequest
     from google.protobuf.json_format import ParseDict
 except ImportError as e:
-    raise ImportError("`a2a` not installed. Please install it with `pip install -U a2a-sdk`") from e
+    raise ImportError("`a2a-sdk` 1.x not installed. Please install it with `pip install -U 'agno[a2a]'`") from e
 
 
 from agno.os.auth import acheck_resource_access, resolve_authorization_provider, run_continuation_blocked_reason
@@ -163,6 +163,9 @@ async def authorize_a2a_request(request: Request, resource_type: str, entity: An
     if not isinstance(request_body, dict):
         return
     method = request_body.get("method")
+    # A method that is not a string is left to the A2A server to reject
+    if not isinstance(method, str):
+        method = None
     action = "read" if method in _READ_METHODS else "run"
 
     # 2. Check the caller may read or run the entity

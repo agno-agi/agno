@@ -40,7 +40,7 @@ try:
     from a2a.types import Message as A2AMessage
     from google.protobuf.json_format import MessageToDict
 except ImportError as e:
-    raise ImportError("`a2a` not installed. Please install it with `pip install -U a2a-sdk`") from e
+    raise ImportError("`a2a-sdk` 1.x not installed. Please install it with `pip install -U 'agno[a2a]'`") from e
 
 
 __all__ = ["A2AClient"]
@@ -506,6 +506,7 @@ class A2AClient:
         Raises:
             HTTPStatusError: If the server returns an HTTP error (4xx, 5xx)
             RemoteServerUnavailableError: If connection fails or times out
+            A2AError: If the server answers with an A2A error, e.g. TaskNotFoundError (from a2a.utils.errors)
         """
         a2a_message = self._build_message(
             message=message,
@@ -589,6 +590,7 @@ class A2AClient:
         Raises:
             HTTPStatusError: If the server returns an HTTP error (4xx, 5xx)
             RemoteServerUnavailableError: If connection fails or times out
+            A2AError: If the server answers with an A2A error, e.g. TaskNotFoundError (from a2a.utils.errors)
 
         Example:
             ```python
@@ -674,6 +676,7 @@ class A2AClient:
         Raises:
             HTTPStatusError: If the server returns an HTTP error (4xx, 5xx)
             RemoteServerUnavailableError: If connection fails or times out
+            A2AError: If the server answers with an A2A error, e.g. TaskNotFoundError (from a2a.utils.errors)
         """
         try:
             agent_card = await self._aget_a2a_card(headers=headers)
@@ -721,6 +724,7 @@ class A2AClient:
         Raises:
             HTTPStatusError: If the server returns an HTTP error (4xx, 5xx)
             RemoteServerUnavailableError: If connection fails or times out
+            A2AError: If the server answers with an A2A error, e.g. TaskNotFoundError (from a2a.utils.errors)
         """
         try:
             agent_card = await self._aget_a2a_card(headers=headers)

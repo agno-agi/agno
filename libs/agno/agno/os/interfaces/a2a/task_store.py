@@ -8,7 +8,7 @@ try:
     from a2a.utils.constants import DEFAULT_LIST_TASKS_PAGE_SIZE
     from a2a.utils.task import ListTasksCursor, decode_list_tasks_cursor, encode_list_tasks_cursor
 except ImportError as e:
-    raise ImportError("`a2a` not installed. Please install it with `pip install -U a2a-sdk`") from e
+    raise ImportError("`a2a-sdk` 1.x not installed. Please install it with `pip install -U 'agno[a2a]'`") from e
 
 
 from agno.db.base import AsyncBaseDb, BaseDb

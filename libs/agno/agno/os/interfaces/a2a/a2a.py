@@ -8,7 +8,7 @@ from typing_extensions import List
 try:
     from a2a.types import AgentProvider, SecurityScheme
 except ImportError as e:
-    raise ImportError("`a2a` not installed. Please install it with `pip install -U a2a-sdk`") from e
+    raise ImportError("`a2a-sdk` 1.x not installed. Please install it with `pip install -U 'agno[a2a]'`") from e
 
 
 from agno.agent import Agent

@@ -47,7 +47,7 @@ try:
     from a2a.server.tasks import TaskUpdater
     from a2a.types import TaskState
 except ImportError as e:
-    raise ImportError("`a2a` not installed. Please install it with `pip install -U a2a-sdk`") from e
+    raise ImportError("`a2a-sdk` 1.x not installed. Please install it with `pip install -U 'agno[a2a]'`") from e
 
 
 from agno.os.interfaces.a2a.utils import (
@@ -55,6 +55,7 @@ from agno.os.interfaces.a2a.utils import (
     RESPONSE_ARTIFACT_NAME,
     map_content_to_part,
     map_media_to_artifacts,
+    to_json_safe,
 )
 from agno.run.agent import (
     MemoryUpdateCompletedEvent,
@@ -389,9 +390,9 @@ async def stream_run_events_to_task(
     if completion_event:
         completion_metadata = getattr(completion_event, "metadata", None)
         if completion_metadata:
-            status_metadata.update(completion_metadata)
+            status_metadata.update(to_json_safe(completion_metadata))
         if hasattr(completion_event, "metrics") and completion_event.metrics:  # type: ignore
-            status_metadata["metrics"] = completion_event.metrics.to_dict()  # type: ignore
+            status_metadata["metrics"] = to_json_safe(completion_event.metrics.to_dict())  # type: ignore
     if user_id:
         status_metadata["userId"] = user_id
 

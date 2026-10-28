@@ -6,6 +6,7 @@ from typing_extensions import List, Union
 
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
+from agno.utils.serialize import json_serializer
 
 try:
     from a2a.helpers import new_data_part, new_raw_part, new_text_part, new_url_part
@@ -21,7 +22,7 @@ try:
     from a2a.types import Message as A2AMessage
     from google.protobuf.json_format import MessageToDict
 except ImportError as e:
-    raise ImportError("`a2a` not installed. Please install it with `pip install -U a2a-sdk`") from e
+    raise ImportError("`a2a-sdk` 1.x not installed. Please install it with `pip install -U 'agno[a2a]'`") from e
 
 
 from agno.media import Audio, File, Image, Video
@@ -169,6 +170,11 @@ def map_paused_run_to_parts(paused_run: Any) -> List[Part]:
     return parts
 
 
+def to_json_safe(value: Any) -> Any:
+    """Convert run metadata or content to plain JSON types, which A2A structured data requires."""
+    return json.loads(json.dumps(value, default=json_serializer))
+
+
 def restore_integers(value: Any) -> Any:
     """Restore the integers of data read from an A2A data part.
 
@@ -190,7 +196,7 @@ def map_content_to_part(content: Any) -> Part:
     if hasattr(content, "model_dump"):
         return new_data_part(content.model_dump(mode="json"), media_type="application/json")
     if isinstance(content, (dict, list)):
-        return new_data_part(content, media_type="application/json")
+        return new_data_part(to_json_safe(content), media_type="application/json")
     return new_text_part(content if isinstance(content, str) else str(content))
 
 
@@ -305,13 +311,14 @@ def map_run_output_to_a2a_task(run_output: Union[RunOutput, TeamRunOutput, Workf
     artifacts.extend(map_media_to_artifacts(run_output))
 
     # 3. Build the task metadata
+    # The run's own metadata goes first, so it cannot override the user or metrics
     metadata: Dict[str, Any] = {}
+    if hasattr(run_output, "metadata") and run_output.metadata:
+        metadata.update(to_json_safe(run_output.metadata))
+    if hasattr(run_output, "metrics") and run_output.metrics:
+        metadata["metrics"] = to_json_safe(run_output.metrics.to_dict())
     if hasattr(run_output, "user_id") and run_output.user_id:
         metadata["userId"] = run_output.user_id
-    if hasattr(run_output, "metrics") and run_output.metrics:
-        metadata["metrics"] = run_output.metrics.to_dict()
-    if hasattr(run_output, "metadata") and run_output.metadata:
-        metadata.update(run_output.metadata)
 
     # 4. Build and return the A2A task
     run_status = getattr(run_output, "status", None)

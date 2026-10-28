@@ -21,7 +21,7 @@ try:
         UnsupportedOperationError,
     )
 except ImportError as e:
-    raise ImportError("`a2a` not installed. Please install it with `pip install -U a2a-sdk`") from e
+    raise ImportError("`a2a-sdk` 1.x not installed. Please install it with `pip install -U 'agno[a2a]'`") from e
 
 
 from agno.os.interfaces.a2a.utils import FINISHED_TASK_STATES, map_a2a_message_to_run_input

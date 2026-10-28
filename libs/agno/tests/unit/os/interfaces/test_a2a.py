@@ -5,13 +5,19 @@ set by a caller's post-processing step) must ride the terminal status-update
 event, which the A2A client reads as the run's out-of-band metadata.
 """
 
+from datetime import datetime
+from types import SimpleNamespace
 from typing import AsyncIterator, List, Union
+from unittest.mock import patch
 
 import pytest
 from a2a.server.context import ServerCallContext
 from a2a.server.tasks import TaskUpdater
 from a2a.types import (
     ListTasksRequest,
+    Message,
+    Part,
+    Role,
     Task,
     TaskArtifactUpdateEvent,
     TaskState,
@@ -23,9 +29,12 @@ from google.protobuf.json_format import MessageToDict
 from agno.agent import Agent
 from agno.os.interfaces.a2a.agent_card import build_agent_card
 from agno.os.interfaces.a2a.context import A2AUser
+from agno.os.interfaces.a2a.executor import A2AExecutor
 from agno.os.interfaces.a2a.streaming import stream_run_events_to_task
 from agno.os.interfaces.a2a.task_store import A2ATaskStore
-from agno.run.agent import RunCompletedEvent, RunContentEvent, RunErrorEvent, RunStartedEvent
+from agno.os.interfaces.a2a.utils import map_run_output_to_a2a_task
+from agno.run.agent import RunCompletedEvent, RunContentEvent, RunErrorEvent, RunOutput, RunStartedEvent
+from agno.run.base import RunStatus
 from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
 from agno.run.team import RunStartedEvent as TeamRunStartedEvent
 
@@ -211,3 +220,71 @@ class TestA2ATaskStore:
         )
         assert len(next_page.tasks) == 1
         assert not {task.id for task in completed.tasks} & {task.id for task in next_page.tasks}
+
+
+class TestRunMetadataOnTask:
+    @pytest.mark.asyncio
+    async def test_completion_metadata_that_is_not_json_still_completes_the_task(self):
+        stream = _agent_stream(
+            RunStartedEvent(run_id="run-1", session_id="ctx-1"),
+            RunCompletedEvent(
+                content="Hi",
+                run_id="run-1",
+                session_id="ctx-1",
+                metadata={"requested_at": datetime(2026, 1, 1)},
+            ),
+        )
+
+        event_queue = _RecordingEventQueue()
+        await stream_run_events_to_task(stream, TaskUpdater(event_queue, "run-1", "ctx-1"))
+
+        final = _final_status_update(event_queue.events)
+        assert final.status.state == TaskState.TASK_STATE_COMPLETED
+        assert MessageToDict(final.metadata) == {"requested_at": "2026-01-01T00:00:00"}
+
+    def test_stored_run_metadata_does_not_override_the_run_user(self):
+        run_output = RunOutput(
+            run_id="run-1",
+            session_id="ctx-1",
+            agent_id="agent-1",
+            user_id="alice",
+            status=RunStatus.completed,
+            content="Hi",
+            metadata={"userId": "mallory", "requested_at": datetime(2026, 1, 1)},
+        )
+
+        task = map_run_output_to_a2a_task(run_output)
+
+        metadata = MessageToDict(task.metadata)
+        assert metadata["userId"] == "alice"
+        assert metadata["requested_at"] == "2026-01-01T00:00:00"
+
+
+class TestExecutorFailure:
+    @pytest.mark.asyncio
+    async def test_a_failed_final_status_update_still_ends_the_task_failed(self):
+        async def _empty_stream(**kwargs):
+            return
+            yield
+
+        async def _fail_on_final_status(event_stream, updater, user_id=None):
+            # The updater marks itself terminal before the event is built, so the event never goes out
+            await updater.update_status(TaskState.TASK_STATE_COMPLETED, metadata={"bad": object()})
+
+        executor = A2AExecutor(entity_type="agent", entity_id="agent-1")
+        context = SimpleNamespace(
+            message=Message(message_id="m-1", role=Role.ROLE_USER, parts=[Part(text="Hi")]),
+            task_id="run-1",
+            context_id="ctx-1",
+            current_task=None,
+            call_context=SimpleNamespace(state={}),
+        )
+        event_queue = _RecordingEventQueue()
+        with (
+            patch.object(executor, "_get_entity", return_value=SimpleNamespace(arun=_empty_stream)),
+            patch("agno.os.interfaces.a2a.executor.stream_run_events_to_task", _fail_on_final_status),
+        ):
+            await executor.execute(context, event_queue)
+
+        final = _final_status_update(event_queue.events)
+        assert final.status.state == TaskState.TASK_STATE_FAILED

@@ -139,6 +139,14 @@ def test_a2a_agent_card(test_agent: Agent, test_client: TestClient):
     assert card["preferredTransport"] == "JSONRPC"
 
 
+def test_a2a_request_with_a_malformed_method_is_a_json_rpc_error(test_agent: Agent, test_client: TestClient):
+    """A method that is not a string is rejected by the A2A server, not a 500 from the permission check."""
+    response = test_client.post(f"/a2a/agents/{test_agent.id}", json={"jsonrpc": "2.0", "id": 1, "method": ["x"]})
+
+    assert response.status_code == 200
+    assert response.json()["error"]["code"] == -32600
+
+
 def test_a2a(test_agent: Agent, test_client: TestClient):
     """Test the basic non-streaming A2A flow."""
 

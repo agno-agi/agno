@@ -8,7 +8,7 @@ try:
     from a2a.types import InternalError, InvalidParamsError, Task, TaskState
     from a2a.types import Message as A2AMessage
 except ImportError as e:
-    raise ImportError("`a2a` not installed. Please install it with `pip install -U a2a-sdk`") from e
+    raise ImportError("`a2a-sdk` 1.x not installed. Please install it with `pip install -U 'agno[a2a]'`") from e
 
 
 from agno.agent import Agent, RemoteAgent
@@ -204,7 +204,11 @@ class A2AExecutor(AgentExecutor):
         # Handle any critical error
         except Exception as e:
             log_error(f"Error running {self.entity_type} {self.entity_id} over A2A: {str(e)}")
-            await updater.failed(message=updater.new_agent_message(parts=[new_text_part(f"Error: {str(e)}")]))
+            # A fresh updater: the failed update may have marked this one terminal before its event went out
+            failed_updater = TaskUpdater(event_queue, context.task_id, context.context_id)
+            await failed_updater.failed(
+                message=failed_updater.new_agent_message(parts=[new_text_part(f"Error: {str(e)}")])
+            )
 
     async def _continue_task(
         self, entity: Any, message: A2AMessage, updater: TaskUpdater, current_task: Task, user_id: Optional[str]

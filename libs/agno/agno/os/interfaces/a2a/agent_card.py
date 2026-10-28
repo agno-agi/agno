@@ -13,7 +13,7 @@ try:
         StringList,
     )
 except ImportError as e:
-    raise ImportError("`a2a` not installed. Please install it with `pip install -U a2a-sdk`") from e
+    raise ImportError("`a2a-sdk` 1.x not installed. Please install it with `pip install -U 'agno[a2a]'`") from e
 
 
 _DEFAULT_CARD_VERSION = "0.0.1"
