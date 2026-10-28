@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import inspect
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
@@ -111,6 +112,9 @@ if TYPE_CHECKING:
     from agno.os.manager import OSManager
     from agno.os.manager.manager import _Manager
     from agno.os.schema import FileSystemConfig
+
+# FastAPI 0.142.0 added the telemetry argument; earlier versions reject it
+_FASTAPI_SUPPORTS_TELEMETRY = "telemetry" in inspect.signature(FastAPI.__init__).parameters
 
 
 @asynccontextmanager
@@ -1172,6 +1176,11 @@ class AgentOS:
         return [w for w in (self.workflows or []) if isinstance(w, Workflow)]
 
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
+        app_kwargs: Dict[str, Any] = {}
+        # FastAPI 0.142.0+ traces every request once a global tracer provider exists, which
+        # tracing=True installs. Opt out so only Agno runs produce spans.
+        if self.tracing and _FASTAPI_SUPPORTS_TELEMETRY:
+            app_kwargs["telemetry"] = {"tracing": False}
         return FastAPI(
             title=self.name or "Agno AgentOS",
             version=self.version or "1.0.0",
@@ -1180,6 +1189,7 @@ class AgentOS:
             redoc_url="/redoc" if self.settings.docs_enabled else None,
             openapi_url="/openapi.json" if self.settings.docs_enabled else None,
             lifespan=lifespan,
+            **app_kwargs,
         )
 
     async def _acheck_sandbox_tables(self) -> None:

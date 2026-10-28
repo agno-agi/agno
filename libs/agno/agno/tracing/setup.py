@@ -16,6 +16,8 @@ try:
     from opentelemetry.sdk.trace import SpanLimits, TracerProvider  # type: ignore
     from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor, SpanProcessor  # type: ignore
 
+    from agno.tracing.processor import AgnoSpanFilterProcessor
+
     OPENTELEMETRY_AVAILABLE = True
 except ImportError:
     OPENTELEMETRY_AVAILABLE = False
@@ -105,7 +107,8 @@ def setup_tracing(
             processor = SimpleSpanProcessor(exporter)
             log_debug("Tracing configured with SimpleSpanProcessor")
 
-        tracer_provider.add_span_processor(processor)
+        # Store only Agno runs, even when other libraries emit spans into this provider
+        tracer_provider.add_span_processor(AgnoSpanFilterProcessor(processor))
 
         # Set the global tracer provider
         trace_api.set_tracer_provider(tracer_provider)

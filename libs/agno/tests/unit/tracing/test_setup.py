@@ -5,6 +5,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from agno.tracing import setup as tracing
+from agno.tracing.processor import AGNO_INSTRUMENTATION_SCOPE
 
 pytest.importorskip("openinference.instrumentation.agno")
 
@@ -35,7 +36,7 @@ def test_setup_retains_llm_attributes_and_respects_explicit_limits(
     try:
         instrumentor.instrument.assert_called_once_with(tracer_provider=provider)
         attributes = {f"llm.input_messages.{i}.message.content": f"Message {i}" for i in range(300)}
-        with provider.get_tracer(__name__).start_as_current_span("model", attributes=attributes):
+        with provider.get_tracer(AGNO_INSTRUMENTATION_SCOPE).start_as_current_span("model", attributes=attributes):
             pass
         assert provider.force_flush()
         (span,) = exporter.get_finished_spans()
