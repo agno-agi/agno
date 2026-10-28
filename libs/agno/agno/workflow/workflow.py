@@ -6813,8 +6813,8 @@ class Workflow:
                     return cancelled_generator()
                 return run_response
 
-        # Handle edited output from post-execution review
-        for step_req in run_response.step_requirements or []:
+        # Apply only the active review's edit; earlier requirements are resolved history.
+        for step_req in _active_reqs:
             if step_req.edited_output is not None:
                 kwargs["edited_output"] = step_req.edited_output
                 break
@@ -8843,8 +8843,8 @@ class Workflow:
                     return cancelled_generator()
                 return run_response
 
-        # Handle edited output from post-execution review
-        for step_req in run_response.step_requirements or []:
+        # Apply only the active review's edit; earlier requirements are resolved history.
+        for step_req in _active_reqs:
             if step_req.edited_output is not None:
                 kwargs["edited_output"] = step_req.edited_output
                 break
