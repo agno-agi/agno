@@ -1,10 +1,11 @@
 import inspect
 import time
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from agno.os.auth import get_authentication_dependency
+from agno.os.auth import afilter_resources_by_access, get_authentication_dependency
 from agno.os.routers.registry.utils import (
     build_learning_resource,
     build_memory_manager_resource,
@@ -34,6 +35,32 @@ from agno.registry import Registry
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_error
+
+
+@dataclass
+class _AccessKey:
+    """One key a registry entry can be granted under, in the shape the access filter reads."""
+
+    id: str
+    index: int
+
+
+async def _afilter_entries_by_access(
+    request: Request, resources: List[RegistryContentResponse]
+) -> List[RegistryContentResponse]:
+    """Keep the registry entries the caller may read.
+
+    An entry is granted by its name or its id (registry:<name-or-id>:read), since
+    tools, models and most other entries have no id of their own.
+    """
+    keys = [
+        _AccessKey(id=key, index=index)
+        for index, resource in enumerate(resources)
+        for key in {resource.name, resource.id}
+        if key
+    ]
+    allowed = {key.index for key in await afilter_resources_by_access(request, keys, "registry")}
+    return [resource for index, resource in enumerate(resources) if index in allowed]
 
 
 def get_registry_router(registry: Registry, settings: AgnoAPISettings = AgnoAPISettings()) -> APIRouter:
@@ -557,6 +584,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
         description="List all resources in the registry with optional filtering.",
     )
     async def list_registry(
+        request: Request,
         resource_type: Optional[RegistryResourceType] = Query(None, description="Filter by resource type"),
         name: Optional[str] = Query(None, description="Filter by name (partial match)"),
         page: int = Query(1, ge=1, description="Page number"),
@@ -565,6 +593,9 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
         try:
             start_time_ms = time.time() * 1000
             resources = _get_resources(resource_type)
+
+            if getattr(request.state, "authorization_enabled", False):
+                resources = await _afilter_entries_by_access(request, resources)
 
             if name:
                 needle = name.lower().strip()

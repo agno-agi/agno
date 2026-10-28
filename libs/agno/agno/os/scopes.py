@@ -81,6 +81,7 @@ class AgentOSScope(str, Enum):
     - teams:<team-id>:run - Run specific team
     - workflows:<workflow-id>:read - Read specific workflow
     - workflows:<workflow-id>:run - Run specific workflow
+    - registry:<entry>:read - List one registry entry, matched by its name or id
 
     Wildcards:
     - agents:*:run - Run any agent
@@ -667,6 +668,10 @@ def get_resource_context_from_path(path: str) -> Tuple[Optional[str], Optional[s
     # /workflows (and /a2a/{family}) own the resource type.
     type_match = re.match(r"^/(?:a2a/)?(agents|teams|workflows)(?:/|$)", path)
     if not type_match:
+        # The registry listing is a collection of named entries: a caller holding only
+        # per-entry scopes (registry:<entry>:read) gets a filtered list, like /agents.
+        if re.match(r"^/registry/?$", path):
+            return "registry", None
         return None, None
 
     resource_type = type_match.group(1)
