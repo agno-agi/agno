@@ -117,6 +117,14 @@ if TYPE_CHECKING:
 _FASTAPI_SUPPORTS_TELEMETRY = "telemetry" in inspect.signature(FastAPI.__init__).parameters
 
 
+def _agno_tracing_is_active() -> bool:
+    try:
+        from agno.tracing.setup import is_agno_tracing_active
+    except ImportError:
+        return False
+    return is_agno_tracing_active()
+
+
 @asynccontextmanager
 async def mcp_lifespan(_, mcp_tools):
     """Manage MCP connection lifecycle inside a FastAPI app"""
@@ -1178,8 +1186,10 @@ class AgentOS:
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         app_kwargs: Dict[str, Any] = {}
         # FastAPI 0.142.0+ traces every request once a global tracer provider exists, which
-        # tracing=True installs. Opt out so only Agno runs produce spans.
-        if self.tracing and _FASTAPI_SUPPORTS_TELEMETRY:
+        # tracing=True installs. Opt out so only Agno runs produce spans, unless the
+        # provider is the application's own: then Agno stores nothing and its request
+        # spans belong to the application's backend.
+        if self.tracing and _FASTAPI_SUPPORTS_TELEMETRY and _agno_tracing_is_active():
             app_kwargs["telemetry"] = {"tracing": False}
         return FastAPI(
             title=self.name or "Agno AgentOS",

@@ -56,6 +56,60 @@ def test_nested_agno_runs_keep_their_parent(provider_and_exporter):
     assert spans["Member.arun"].parent.span_id == team_span.get_span_context().span_id
 
 
+def test_runs_sharing_a_foreign_trace_get_traces_of_their_own(provider_and_exporter):
+    provider, exporter = provider_and_exporter
+    agno_tracer = provider.get_tracer(AGNO_INSTRUMENTATION_SCOPE)
+    http_tracer = provider.get_tracer("fastapi")
+
+    # e.g. two requests carrying the same traceparent header
+    with http_tracer.start_as_current_span("POST /agents/{agent_id}/runs") as request_span:
+        for name in ("Alice.arun", "Bob.arun"):
+            with agno_tracer.start_as_current_span(name):
+                with agno_tracer.start_as_current_span(f"{name}.model"):
+                    pass
+
+    spans = _exported(exporter)
+    shared_trace_id = request_span.get_span_context().trace_id
+    alice, bob = spans["Alice.arun"], spans["Bob.arun"]
+    assert len({shared_trace_id, alice.context.trace_id, bob.context.trace_id}) == 3
+    for run in (alice, bob):
+        child = spans[f"{run.name}.model"]
+        assert child.context.trace_id == run.context.trace_id
+        assert (child.parent.trace_id, child.parent.span_id) == (run.context.trace_id, run.context.span_id)
+
+
+def test_run_without_a_parent_keeps_its_trace_id(provider_and_exporter):
+    provider, exporter = provider_and_exporter
+
+    with provider.get_tracer(AGNO_INSTRUMENTATION_SCOPE).start_as_current_span("Agent.run") as run_span:
+        pass
+
+    (span,) = exporter.get_finished_spans()
+    assert span.context.trace_id == run_span.get_span_context().trace_id
+
+
+def test_runs_of_different_users_sharing_a_foreign_trace_are_stored_apart(tmp_path):
+    from agno.db.sqlite import SqliteDb
+
+    db = SqliteDb(db_file=str(tmp_path / "traces.db"))
+    provider = TracerProvider()
+    provider.add_span_processor(AgnoSpanFilterProcessor(SimpleSpanProcessor(DatabaseSpanExporter(db=db))))
+    try:
+        with provider.get_tracer("fastapi").start_as_current_span("POST /agents/{agent_id}/runs"):
+            for user in ("alice", "bob"):
+                with provider.get_tracer(AGNO_INSTRUMENTATION_SCOPE).start_as_current_span(
+                    "Agent.arun",
+                    attributes={"agno.agent.id": "agent", "agno.run.id": f"run-{user}", "user.id": user},
+                ):
+                    pass
+    finally:
+        provider.shutdown()
+
+    for user in ("alice", "bob"):
+        (trace,), _ = db.get_traces(run_id=f"run-{user}")
+        assert trace.user_id == user
+
+
 def test_spans_outside_agno_runs_are_dropped(provider_and_exporter):
     provider, exporter = provider_and_exporter
     http_tracer = provider.get_tracer("fastapi")
