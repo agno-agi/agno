@@ -14,6 +14,7 @@ except ImportError as e:
 from agno.agent import Agent, RemoteAgent
 from agno.agent.protocol import AgentProtocol
 from agno.agents.base import BaseExternalAgent
+from agno.exceptions import RunNotFoundError
 from agno.os.interfaces.a2a.auth import resolve_a2a_user_id
 from agno.os.interfaces.a2a.streaming import map_background_stream_to_run_events, stream_run_events_to_task
 from agno.os.interfaces.a2a.task_store import A2ATaskStore
@@ -266,6 +267,11 @@ class A2AExecutor(AgentExecutor):
         # A continue that is refused leaves the run paused, so the task keeps waiting
         except Exception as e:
             log_error(f"Error continuing {self.entity_type} {self.entity_id} over A2A: {str(e)}")
+            # A run of an entity without a database is not stored, so it cannot be continued anywhere:
+            # the task ends instead of waiting for good
+            if isinstance(e, RunNotFoundError) and getattr(entity, "db", None) is None:
+                await updater.failed(message=updater.new_agent_message(parts=[new_text_part(f"Error: {str(e)}")]))
+                return
             parts = [new_text_part(f"Error: {str(e)}")]
             if current_task.status.HasField("message"):
                 parts.extend(part for part in current_task.status.message.parts if part.HasField("data"))

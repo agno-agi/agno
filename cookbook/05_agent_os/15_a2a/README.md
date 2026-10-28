@@ -119,7 +119,9 @@ need no header, so standard A2A v0.3 clients (for example ones built on
   entity for the caller, including runs started outside A2A.
 - A Workflow, or an entity without a database, runs in the server process. Its
   run is stored when it ends, and a run that is still going when the server
-  restarts is lost.
+  restarts is lost. A paused run can be continued only when the entity has a
+  database: without one, a continue sent to an Agent or Team task ends it
+  `failed`.
 - `A2AClient` sends requests to its `base_url`, whatever URL the Agent card
   advertises. If a server's endpoint is not at the URL its card is served
   from, pass the endpoint as `base_url`; the client then assumes A2A v1.0.
