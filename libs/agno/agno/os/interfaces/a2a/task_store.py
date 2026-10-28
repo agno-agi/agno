@@ -106,6 +106,14 @@ class A2ATaskStore(TaskStore):
                     self._live_tasks.pop(task.id, None)
                     return
 
+        # A paused run is stored, and every replica reads its task from there.
+        # The paused task is not kept here: it is read back from the stored run.
+        if task.status.state == TaskState.TASK_STATE_INPUT_REQUIRED:
+            run_output = await self._get_run(task.id)
+            if run_output is not None and run_output.status == RunStatus.paused:
+                self._live_tasks.pop(task.id, None)
+                return
+
         if task.status.state in FINISHED_TASK_STATES:
             self._live_tasks.pop(task.id, None)
             self._finished_tasks[task.id] = (owner, task)
