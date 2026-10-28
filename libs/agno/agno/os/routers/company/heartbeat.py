@@ -23,9 +23,6 @@ from agno.os.routers.schedules.schema import ScheduleCreate, ScheduleResponse, S
 from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.scheduler.cron import is_on_demand
 
-# A margin past the Routine's timeout for the executor to record its final status.
-_RUN_SETTLE_GRACE_SECONDS = 300
-
 
 class SourceCreate(Source):
     product_id: str
@@ -124,12 +121,15 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             raise HTTPException(404, "Routine not found")
         return row
 
-    def outlived(run, row):
-        # The scheduler stops waiting for a run at the Routine's timeout, so past it and the poller's stale-claim
-        # grace no process is left to settle the row.
-        return run["triggered_at"] + (row.get("timeout_seconds") or 3600) + _RUN_SETTLE_GRACE_SECONDS < time.time()
+    def outlived(run, row, request):
+        from agno.scheduler.executor import run_deadline
 
-    async def running_runs(row, include_outlived=False):
+        # The scheduler stops waiting for a run at its timeout, so past the deadline no process is left to settle it.
+        executor = getattr(request.app.state, "scheduler_executor", None)
+        timeout = row.get("timeout_seconds") or (executor.timeout if executor is not None else None)
+        return timeout is not None and run_deadline(run["triggered_at"], timeout) < time.time()
+
+    async def running_runs(row, request, include_outlived=False):
         # An older run can still be running after a newer one finished, so read every run. A paused
         # row is not counted: the scheduler stops polling at the pause and never updates it after approval.
         runs: List[Dict[str, Any]] = []
@@ -137,7 +137,9 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         while True:
             rows, total = await call(schedule_db.get_schedule_runs, row["id"], limit=100, page=page)
             runs.extend(
-                run for run in rows if run["status"] == "running" and (include_outlived or not outlived(run, row))
+                run
+                for run in rows
+                if run["status"] == "running" and (include_outlived or not outlived(run, row, request))
             )
             if page * 100 >= total:
                 return runs
@@ -286,7 +288,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             updates["name"] = product_id + "." + updates["name"]
         if "executor_type" in updates or "executor_id" in updates:
             # Cancel reaches a live run through the Routine's executor, so the executor stays until it ends.
-            if await running_runs(row):
+            if await running_runs(row, request):
                 raise HTTPException(
                     409, f"Wait for the run to stop, or cancel it with POST /company/routines/{routine_id}/cancel"
                 )
@@ -341,12 +343,12 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     async def cancel_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
         await product(row["payload"]["metadata"]["product_id"], include_deleted=True)
-        runs = [run for run in await running_runs(row, include_outlived=True) if run.get("run_id")]
+        runs = [run for run in await running_runs(row, request, include_outlived=True) if run.get("run_id")]
         if not runs:
             raise HTTPException(409, "Routine has no running run")
         from agno.os.routers.company.runs import _run_route
         from agno.os.routers.run_permissions import _require_endpoint_permission
-        from agno.scheduler.executor import _TERMINAL_STATUSES, _terminal_run_status
+        from agno.scheduler.executor import terminal_run_status
 
         # Cancelling enters the executor route under the internal service token, so re-check the caller's own permission.
         await _require_endpoint_permission(request, row["endpoint"], "POST")
@@ -358,7 +360,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             if response.status_code < 300:
                 status: Optional[str] = None
                 error: Optional[str] = "Run was cancelled"
-                if outlived(run, row):
+                if outlived(run, row, request):
                     status = "cancelled"
                 else:
                     # A live run stops at its next checkpoint and its executor records the result, so only
@@ -368,9 +370,9 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
                         # The run no longer exists, so no executor is left to settle the row.
                         status = "cancelled"
                     elif current.status_code < 300:
-                        data = json.loads(bytes(current.body))
-                        if data.get("status") in _TERMINAL_STATUSES:
-                            status, error = _terminal_run_status(data, company_routine=True)
+                        settled = terminal_run_status(json.loads(bytes(current.body)), company_routine=True)
+                        if settled is not None:
+                            status, error = settled
                 if status is not None:
                     await call(
                         schedule_db.update_schedule_run,
@@ -387,7 +389,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     async def archive_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
         await product(row["payload"]["metadata"]["product_id"], include_deleted=True)
-        if await running_runs(row):
+        if await running_runs(row, request):
             raise HTTPException(
                 409, f"Wait for the run to stop, or cancel it with POST /company/routines/{routine_id}/cancel"
             )
@@ -403,7 +405,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         row = await routine(routine_id, request, include_deleted=True)
         product_id = row["payload"]["metadata"]["product_id"]
         await product(product_id, include_deleted=True)
-        if await running_runs(row):
+        if await running_runs(row, request):
             raise HTTPException(
                 409, f"Wait for the run to stop, or cancel it with POST /company/routines/{routine_id}/cancel"
             )

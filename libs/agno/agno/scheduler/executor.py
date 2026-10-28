@@ -39,9 +39,20 @@ def _to_form_value(v: Any) -> str:
     return str(v)
 
 
-def _terminal_run_status(data: Dict[str, Any], company_routine: bool) -> Tuple[str, Optional[str]]:
-    """Map a terminal component run to its schedule run status and error."""
+# A safety margin past a run's timeout before nothing is left to record its final status.
+RUN_DEADLINE_MARGIN_SECONDS = 300
+
+
+def run_deadline(triggered_at: int, timeout_seconds: int) -> int:
+    """When the executor has stopped waiting on a run, plus the safety margin."""
+    return triggered_at + timeout_seconds + RUN_DEADLINE_MARGIN_SECONDS
+
+
+def terminal_run_status(data: Dict[str, Any], company_routine: bool) -> Optional[Tuple[str, Optional[str]]]:
+    """Map a finished component run to its schedule run status and error; None while it has not finished."""
     run_status = data.get("status")
+    if run_status not in _TERMINAL_STATUSES:
+        return None
     company_error = None
     if company_routine:
         from agno.company.routines import _routine_failure
@@ -583,8 +594,11 @@ class ScheduleExecutor:
         timeout_seconds: int,
     ) -> Dict[str, Any]:
         """Poll a run status endpoint until the run reaches a terminal state."""
+        from agno.run.authorization import AUTHORIZATION_HEADER
+
         poll_url = f"{self.base_url}/{resource_type}/{resource_id}/runs/{run_id}"
         deadline = time.monotonic() + timeout_seconds
+        company_routine = bool(json.loads(headers.get(AUTHORIZATION_HEADER, "{}")).get("company_routine"))
 
         while True:
             if time.monotonic() >= deadline:
@@ -632,12 +646,9 @@ class ScheduleExecutor:
                 continue
 
             run_status = data.get("status")
-
-            if run_status in _TERMINAL_STATUSES:
-                from agno.run.authorization import AUTHORIZATION_HEADER
-
-                authority = json.loads(headers.get(AUTHORIZATION_HEADER, "{}"))
-                status, error = _terminal_run_status(data, bool(authority.get("company_routine")))
+            settled = terminal_run_status(data, company_routine)
+            if settled is not None:
+                status, error = settled
 
                 # Extract input, output, and requirements from RunOutput
                 run_input = data.get("input") if isinstance(data.get("input"), dict) else None

@@ -126,6 +126,8 @@ def test_routine_delete_requires_admin(tmp_path):
 
 
 def test_routine_cancel_stops_the_running_run(system):
+    import time
+
     from agno.run.cancel import is_cancelled
 
     client, _, db = system
@@ -141,22 +143,51 @@ def test_routine_cancel_stops_the_running_run(system):
             "id": "schedule-run",
             "schedule_id": routine_id,
             "attempt": 1,
-            "triggered_at": 1,
+            "triggered_at": int(time.time()),
             "status": "running",
             "run_id": "routine-run",
             "session_id": "routine-session",
-            "created_at": 1,
+            "created_at": int(time.time()),
         }
     )
+    assert client.post(path + "/archive").status_code == 409
     response = client.post(path + "/cancel")
     assert response.status_code == 200, response.text
     assert is_cancelled("routine-run")
-    # No executor is left to settle this row, so the cancel records it.
+    # The run no longer exists, so no executor is left to settle this row and the cancel records it.
     assert db.get_schedule_run("schedule-run")["status"] == "cancelled"
     response = client.post(path + "/cancel")
     assert response.status_code == 409
     assert response.json()["detail"] == "Routine has no running run"
     assert client.post(path + "/archive").status_code == 200
+
+
+def test_routine_run_past_its_deadline_stops_blocking(system):
+    client, _, db = system
+    product = client.post("/company/products", json={"name": "Docs"}).json()
+    body = dict(
+        product_id=product["id"], name="review", executor_type="agent", executor_id="reader", instructions="Review"
+    )
+    routine_id = client.post("/company/routines", json=body).json()["id"]
+    path = "/company/routines/" + routine_id
+    db.create_schedule_run(
+        {
+            "id": "stale-schedule-run",
+            "schedule_id": routine_id,
+            "attempt": 1,
+            "triggered_at": 1,
+            "status": "running",
+            "run_id": "stale-routine-run",
+            "session_id": "routine-session",
+            "created_at": 1,
+        }
+    )
+    # The scheduler stopped waiting for this run long ago, so it blocks nothing even without a cancel.
+    assert client.patch(path, json={"executor_id": "reader"}).status_code == 200
+    assert client.post(path + "/archive").status_code == 200
+    assert client.post(path + "/restore").status_code == 200
+    assert client.post(path + "/cancel").status_code == 200
+    assert db.get_schedule_run("stale-schedule-run")["status"] == "cancelled"
 
 
 def test_routine_cancel_leaves_a_live_run_to_its_executor(system):
