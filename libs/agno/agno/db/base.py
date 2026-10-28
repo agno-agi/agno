@@ -599,6 +599,72 @@ class BaseDb(ABC):
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
+    def search_sessions(
+        self,
+        filter_expr: Optional[Dict[str, Any]] = None,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Search session fields before pagination, retaining only the requested page.
+
+        Adapters whose ``get_sessions`` accepts ``filter_expr`` filter natively. Others use a
+        portable fallback that reads every visible session once, without run histories where
+        supported, so its cost scales with the number of sessions visible to the caller.
+        """
+        from inspect import signature
+
+        from agno.db.session_filters import matches_session_filter, normalize_session_filter
+
+        if page < 1 or limit < 1:
+            raise ValueError("Page and limit must be positive")
+        if sort_by not in ("created_at", "updated_at") or sort_order not in ("asc", "desc"):
+            raise ValueError("Invalid session sort")
+        expression = normalize_session_filter(filter_expr)
+        parameters = signature(self.get_sessions).parameters
+        query: Dict[str, Any] = dict(
+            session_type=session_type, user_id=user_id, sort_by=sort_by, sort_order=sort_order, deserialize=False
+        )
+        if expression is None or "filter_expr" in parameters:
+            native: Dict[str, Any] = {"filter_expr": expression} if expression is not None else {}
+            result = self.get_sessions(**query, **native, limit=limit, page=page)
+            return cast(Tuple[List[Dict[str, Any]], int], result)
+        # One unpaginated read gives a consistent snapshot and avoids rescanning adapters that page in memory.
+        skip_runs = "include_runs" in parameters
+        run_options: Dict[str, Any] = {"include_runs": False} if skip_runs else {}
+        result = self.get_sessions(**query, **run_options)
+        sessions, _ = cast(Tuple[List[Dict[str, Any]], int], result)
+        matches = [session for session in sessions if matches_session_filter(session, expression)]
+        results = matches[(page - 1) * limit : page * limit]
+        if skip_runs:
+            # Runs were skipped while scanning; load them for unnamed sessions so display names can be inferred.
+            from agno.db.utils import merge_runs_table_with_legacy_blob
+
+            unnamed = [
+                index
+                for index, session in enumerate(results)
+                if session.get("session_name") is None
+                and (session.get("session_data") or {}).get("session_name") is None
+            ]
+            runs_by_session = self._get_sessions_runs([results[i]["session_id"] for i in unnamed]) if unnamed else {}
+            for index in unnamed:
+                session = results[index]
+                if runs_by_session is not None:
+                    table_runs = runs_by_session.get(session["session_id"], [])
+                    session["runs"] = merge_runs_table_with_legacy_blob(table_runs, session.get("runs"))
+                    continue
+                full_session = self.get_session(session_id=session["session_id"], user_id=user_id, deserialize=False)
+                if isinstance(full_session, dict):
+                    results[index] = full_session
+        return results, len(matches)
+
+    def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """Run dicts for several sessions in one read, or None when the adapter can only load them per session."""
+        return None
+
     @abstractmethod
     def rename_session(
         self,
@@ -1981,7 +2047,9 @@ class BaseDb(ABC):
         """List Tasks and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
-    def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+    def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
         """Update descriptive fields on an active Task within the owner scope."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
@@ -2087,9 +2155,14 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     def update_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+        self, schedule_id: str, user_id: Optional[str] = None, *, preserve_updated_at: bool = False, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
-        """Update a schedule by ID."""
+        """Update a schedule by ID.
+
+        ``preserve_updated_at`` leaves ``updated_at`` as stored; the executor sets it when it disables a
+        Company routine, so only a user edit moves that timestamp. An adapter that does not name the
+        parameter still disables the row, and the executor logs that the timestamp will advance.
+        """
         raise NotImplementedError
 
     def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
@@ -2107,6 +2180,7 @@ class BaseDb(ABC):
         Matches provenance-tagged rows and generic rows whose endpoint is the
         component's run endpoint, across owners (archiving the target is a
         system action). ``reason`` lands in disabled_reason; enable clears it.
+        Company-managed schedules keep their ``updated_at``: an archive is not a user edit.
 
         Returns:
             The number of schedules disabled.
@@ -2133,8 +2207,13 @@ class BaseDb(ABC):
         *,
         worker_id: Optional[str] = None,
         locked_at: Optional[int] = None,
+        preserve_updated_at: bool = False,
     ) -> bool:
-        """Release a schedule, optionally matching its worker and individual claim timestamp."""
+        """Release a schedule, optionally matching its worker and individual claim timestamp.
+
+        ``preserve_updated_at`` leaves ``updated_at`` as stored, so releasing a routine the user edited
+        mid-run does not read as a newer edit.
+        """
         raise NotImplementedError
 
     # --- Schedule Runs (Optional) ---
@@ -2897,6 +2976,57 @@ class AsyncBaseDb(ABC):
         include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
+
+    async def search_sessions(
+        self,
+        filter_expr: Optional[Dict[str, Any]] = None,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Search session fields before pagination, retaining only the requested page.
+
+        Adapters whose ``get_sessions`` accepts ``filter_expr`` filter natively. Others use a
+        portable fallback that reads every visible session once, without run histories where
+        supported, so its cost scales with the number of sessions visible to the caller.
+        """
+        from inspect import signature
+
+        from agno.db.session_filters import matches_session_filter, normalize_session_filter
+
+        if page < 1 or limit < 1:
+            raise ValueError("Page and limit must be positive")
+        if sort_by not in ("created_at", "updated_at") or sort_order not in ("asc", "desc"):
+            raise ValueError("Invalid session sort")
+        expression = normalize_session_filter(filter_expr)
+        parameters = signature(self.get_sessions).parameters
+        query: Dict[str, Any] = dict(
+            session_type=session_type, user_id=user_id, sort_by=sort_by, sort_order=sort_order, deserialize=False
+        )
+        if expression is None or "filter_expr" in parameters:
+            native: Dict[str, Any] = {"filter_expr": expression} if expression is not None else {}
+            result = await self.get_sessions(**query, **native, limit=limit, page=page)
+            return cast(Tuple[List[Dict[str, Any]], int], result)
+        # One unpaginated read gives a consistent snapshot and avoids rescanning adapters that page in memory.
+        skip_runs = "include_runs" in parameters
+        run_options: Dict[str, Any] = {"include_runs": False} if skip_runs else {}
+        result = await self.get_sessions(**query, **run_options)
+        sessions, _ = cast(Tuple[List[Dict[str, Any]], int], result)
+        matches = [session for session in sessions if matches_session_filter(session, expression)]
+        results = matches[(page - 1) * limit : page * limit]
+        if skip_runs:
+            # Runs were skipped while scanning; load them for unnamed sessions so display names can be inferred.
+            for index, session in enumerate(results):
+                if (session.get("session_data") or {}).get("session_name") is None:
+                    full_session = await self.get_session(
+                        session_id=session["session_id"], user_id=user_id, deserialize=False
+                    )
+                    if isinstance(full_session, dict):
+                        results[index] = full_session
+        return results, len(matches)
 
     @abstractmethod
     async def rename_session(
@@ -3959,7 +4089,9 @@ class AsyncBaseDb(ABC):
         """List Tasks and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
-    async def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+    async def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
         """Update descriptive fields on an active Task within the owner scope."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
@@ -4066,9 +4198,14 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     async def update_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+        self, schedule_id: str, user_id: Optional[str] = None, *, preserve_updated_at: bool = False, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
-        """Update a schedule by ID."""
+        """Update a schedule by ID.
+
+        ``preserve_updated_at`` leaves ``updated_at`` as stored; the executor sets it when it disables a
+        Company routine, so only a user edit moves that timestamp. An adapter that does not name the
+        parameter still disables the row, and the executor logs that the timestamp will advance.
+        """
         raise NotImplementedError
 
     async def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
@@ -4099,8 +4236,13 @@ class AsyncBaseDb(ABC):
         *,
         worker_id: Optional[str] = None,
         locked_at: Optional[int] = None,
+        preserve_updated_at: bool = False,
     ) -> bool:
-        """Release a schedule, optionally matching its worker and individual claim timestamp."""
+        """Release a schedule, optionally matching its worker and individual claim timestamp.
+
+        ``preserve_updated_at`` leaves ``updated_at`` as stored, so releasing a routine the user edited
+        mid-run does not read as a newer edit.
+        """
         raise NotImplementedError
 
     # --- Schedule Runs (Optional) ---
