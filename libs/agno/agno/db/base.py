@@ -1019,6 +1019,7 @@ class BaseDb(ABC):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
+        kind: Optional[Literal["run", "request"]] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters with pagination.
 
@@ -1037,6 +1038,8 @@ class BaseDb(ABC):
             filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
                 Supports composable queries with AND/OR/NOT logic and operators
                 like EQ, NEQ, GT, GTE, LT, LTE, IN, CONTAINS, STARTSWITH.
+            kind: "run" keeps traces of an agent, team or workflow run; "request" keeps
+                traces with none of those, such as HTTP requests that started no run.
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces with datetime fields, total count).
@@ -3294,6 +3297,7 @@ class AsyncBaseDb(ABC):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
+        kind: Optional[Literal["run", "request"]] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters with pagination.
 
@@ -3312,6 +3316,8 @@ class AsyncBaseDb(ABC):
             filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
                 Supports composable queries with AND/OR/NOT logic and operators
                 like EQ, NEQ, GT, GTE, LT, LTE, IN, CONTAINS, STARTSWITH.
+            kind: "run" keeps traces of an agent, team or workflow run; "request" keeps
+                traces with none of those, such as HTTP requests that started no run.
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces with datetime fields, total count).

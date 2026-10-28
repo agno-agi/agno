@@ -65,7 +65,7 @@ def test_tracing_uses_default_db(mock_setup_tracing, default_db):
 
     AgentOS(agents=[agent], db=default_db, tracing=True)
 
-    mock_setup_tracing.assert_called_once_with(db=default_db)
+    mock_setup_tracing.assert_called_once_with(db=default_db, include_application_spans=False)
 
 
 @pytest.mark.parametrize("agent_class", [Agent, ClaudeAgent, CodexAgent])
@@ -75,7 +75,7 @@ def test_tracing_discovers_agent_db(mock_setup_tracing, default_db, agent_class)
 
     AgentOS(agents=[agent], tracing=True)
 
-    mock_setup_tracing.assert_called_once_with(db=default_db)
+    mock_setup_tracing.assert_called_once_with(db=default_db, include_application_spans=False)
 
 
 @patch("agno.os.app.setup_tracing_for_os")
@@ -84,7 +84,7 @@ def test_tracing_explicit_db_takes_precedence_over_external_agent(mock_setup_tra
 
     AgentOS(agents=[agent], db=default_db, tracing=True)
 
-    mock_setup_tracing.assert_called_once_with(db=default_db)
+    mock_setup_tracing.assert_called_once_with(db=default_db, include_application_spans=False)
     assert agent.db is secondary_db
 
 
@@ -95,7 +95,7 @@ def test_tracing_skips_agents_without_db(mock_setup_tracing, default_db):
 
     AgentOS(agents=[agent, codex], tracing=True)
 
-    mock_setup_tracing.assert_called_once_with(db=default_db)
+    mock_setup_tracing.assert_called_once_with(db=default_db, include_application_spans=False)
 
 
 @pytest.mark.parametrize("component", ["team", "workflow"])
@@ -110,7 +110,7 @@ def test_tracing_falls_back_when_external_agent_has_no_db(mock_setup_tracing, de
 
     AgentOS(agents=[agent], tracing=True, **components)
 
-    mock_setup_tracing.assert_called_once_with(db=default_db)
+    mock_setup_tracing.assert_called_once_with(db=default_db, include_application_spans=False)
 
 
 @patch("agno.os.app.log_warning")

@@ -2777,12 +2777,12 @@ def json_schema_to_pydantic_model(schema: Dict[str, Any]) -> Type[BaseModel]:
         return create_model(model_name)
 
 
-def setup_tracing_for_os(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> None:
+def setup_tracing_for_os(db: Union[BaseDb, AsyncBaseDb, RemoteDb], include_application_spans: bool = False) -> None:
     """Set up OpenTelemetry tracing for this agent/team/workflow."""
     try:
         from agno.tracing import setup_tracing
 
-        setup_tracing(db=db)
+        setup_tracing(db=db, include_application_spans=include_application_spans)
     except ImportError as e:
         log_warning(
             f"tracing=True but OpenTelemetry packages not installed. : {e}"
@@ -2803,7 +2803,7 @@ def format_duration_ms(duration_ms: Optional[int]) -> str:
         Formatted string like "150ms" or "1.50s"
     """
     if duration_ms is None or duration_ms < 1000:
-        return f"{duration_ms or 0}ms"
+        return f"{round(duration_ms or 0)}ms"
     return f"{duration_ms / 1000:.2f}s"
 
 

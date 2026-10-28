@@ -13,6 +13,7 @@ through the same routes used by monitoring clients.
 | `read_traces.py` | Run sync and async agents, fetch their traces, and print the nested span trees. |
 | `filtering.py` | Build a `FilterExpr`, inspect the filter schema, and execute an advanced trace search. |
 | `traces_to_clickhouse.py` | Split transactional sessions from a batched ClickHouse trace store and select it with `db_id`. |
+| `trace_requests.py` | Trace the HTTP requests an AgentOS serves with `trace_requests=True`, with runs nested inside them. |
 | `metrics.py` | Refresh daily metrics from persisted sessions and read the aggregate back. |
 
 ## Prerequisites
@@ -57,7 +58,19 @@ The other files generate and inspect their own data in one process:
 .venvs/demo/bin/python cookbook/05_agent_os/13_observability/filtering.py
 .venvs/demo/bin/python cookbook/05_agent_os/13_observability/metrics.py
 .venvs/demo/bin/python cookbook/05_agent_os/13_observability/traces_to_clickhouse.py
+.venvs/demo/bin/python cookbook/05_agent_os/13_observability/trace_requests.py
 ```
+
+## Request tracing
+
+`trace_requests=True` (with `tracing=True`) also traces the HTTP requests the
+OS serves, using FastAPI's built-in request tracing (FastAPI 0.142.0 or
+later; older versions log a warning and trace runs only). A run started over
+HTTP is stored nested inside its request span, and keeps its name, run ID and
+session ID. Requests that start no run are stored as traces of their own.
+`GET /traces?kind=run` and `GET /traces?kind=request` separate the two, and
+`GET /traces/endpoints` aggregates request traces by endpoint. `/health`, the
+trace routes, CORS preflights and WebSocket connections are not traced.
 
 ## Dedicated trace storage
 

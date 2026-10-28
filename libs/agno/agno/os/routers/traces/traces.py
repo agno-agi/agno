@@ -1,5 +1,6 @@
+import inspect
 import logging
-from typing import Any, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from fastapi import Depends, HTTPException, Query, Request
 from fastapi.routing import APIRouter
@@ -12,11 +13,15 @@ from agno.os.routers.traces.schemas import (
     TRACE_FILTER_SCHEMA,
     FilterSchemaResponse,
     TraceDetail,
+    TraceEndpointStats,
     TraceNode,
     TraceSearchGroupBy,
     TraceSearchRequest,
     TraceSessionStats,
     TraceSummary,
+    find_request_span,
+    find_run_span,
+    http_request_metadata,
 )
 from agno.os.schema import (
     BadRequestResponse,
@@ -30,7 +35,7 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import AgnoHTTPException, timestamp_to_datetime
 from agno.remote.base import RemoteDb
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_warning
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +57,16 @@ def _apply_user_scope_to_filter(filter_expr_dict: Optional[dict], effective_user
     if filter_expr_dict is None:
         return user_clause
     return {"op": "AND", "conditions": [user_clause, filter_expr_dict]}
+
+
+def _trace_kind_kwargs(db: Union[BaseDb, AsyncBaseDb], kind: Optional[str]) -> Dict[str, Any]:
+    """Pass the kind filter only to databases that implement it (SQLite and Postgres for now)."""
+    if kind is None:
+        return {}
+    if "kind" not in inspect.signature(db.get_traces).parameters:
+        log_warning(f"{type(db).__name__} does not support filtering traces by kind; returning all traces")
+        return {}
+    return {"kind": kind}
 
 
 def _require_trace_owner(trace: Any, effective_user_id: Optional[str]) -> None:
@@ -170,6 +185,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         page: int = Query(default=1, description="Page number (1-indexed)", ge=0),
         limit: int = Query(default=20, description="Number of traces per page", ge=1),
         db_id: Optional[str] = Query(default=None, description="Database ID to query traces from"),
+        kind: Optional[Literal["run", "request"]] = Query(
+            default=None,
+            description="'run' keeps traces of an agent, team or workflow run; 'request' keeps traces of requests that started no run",
+        ),
+        name: Optional[List[str]] = Query(
+            default=None, description="Filter by trace name, e.g. 'GET /sessions'. Repeat to match any of several"
+        ),
     ):
         """Get list of traces with optional filters and pagination"""
         import time as time_module
@@ -203,6 +225,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
             start_time_dt = timestamp_to_datetime(start_time, "start_time") if start_time else None
             end_time_dt = timestamp_to_datetime(end_time, "end_time") if end_time else None
+            name_filter = {"op": "IN", "key": "name", "values": name} if name else None
 
             if isinstance(db, AsyncBaseDb):
                 traces, total_count = await db.get_traces(
@@ -217,6 +240,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     end_time=end_time_dt,
                     limit=limit,
                     page=page,
+                    filter_expr=name_filter,
+                    **_trace_kind_kwargs(db, kind),
                 )
             else:
                 traces, total_count = db.get_traces(
@@ -231,6 +256,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     end_time=end_time_dt,
                     limit=limit,
                     page=page,
+                    filter_expr=name_filter,
+                    **_trace_kind_kwargs(db, kind),
                 )
 
             end_time_ms = time_module.time() * 1000
@@ -240,20 +267,26 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
 
             trace_inputs = {}
+            trace_requests = {}
             for trace in traces:
                 if isinstance(db, AsyncBaseDb):
                     spans = await db.get_spans(trace_id=trace.trace_id)
                 else:
                     spans = db.get_spans(trace_id=trace.trace_id)
 
-                # Find root span and extract input
-                root_span = next((s for s in spans if not s.parent_span_id), None)
+                # Find the run span and extract input
+                root_span = find_run_span(spans)
                 if root_span and hasattr(root_span, "attributes"):
                     trace_inputs[trace.trace_id] = root_span.attributes.get("input.value")
+                if request_span := find_request_span(spans):
+                    trace_requests[trace.trace_id] = http_request_metadata(request_span)
 
             # Build response
             trace_summaries = [
-                TraceSummary.from_trace(trace, input=trace_inputs.get(trace.trace_id)) for trace in traces
+                TraceSummary.from_trace(
+                    trace, input=trace_inputs.get(trace.trace_id), request=trace_requests.get(trace.trace_id)
+                )
+                for trace in traces
             ]
 
             return PaginatedResponse(
@@ -291,6 +324,76 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     async def get_traces_filter_schema():
         """Return the filter schema for traces (fields, operators, enum values)"""
         return TRACE_FILTER_SCHEMA
+
+    @router.get(
+        "/traces/endpoints",
+        response_model=PaginatedResponse[TraceEndpointStats],
+        response_model_exclude_none=True,
+        tags=["Traces"],
+        operation_id="get_trace_endpoint_stats",
+        summary="Get Request Trace Statistics by Endpoint",
+        description=(
+            "Aggregate traces that belong to no agent, team or workflow run, grouped by trace name. "
+            "With AgentOS(trace_requests=True), these are HTTP requests that started no run, named "
+            "'<METHOD> <route>' (e.g. 'GET /sessions'). Ordered by number of traces, descending."
+        ),
+    )
+    async def get_trace_endpoint_stats(
+        request: Request,
+        start_time: Optional[str] = Query(
+            default=None, description="Only count traces created after this time (ISO 8601 with timezone)"
+        ),
+        end_time: Optional[str] = Query(
+            default=None, description="Only count traces created before this time (ISO 8601 with timezone)"
+        ),
+        page: int = Query(default=1, description="Page number (1-indexed)", ge=1),
+        limit: int = Query(default=20, description="Number of endpoints per page", ge=1),
+        db_id: Optional[str] = Query(default=None, description="Database ID to query statistics from"),
+    ):
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id)
+
+        if isinstance(db, RemoteDb):
+            raise HTTPException(status_code=501, detail="Endpoint statistics are not available for remote databases")
+
+        try:
+            start_time_dt = timestamp_to_datetime(start_time, "start_time") if start_time else None
+            end_time_dt = timestamp_to_datetime(end_time, "end_time") if end_time else None
+            stats_kwargs: Dict[str, Any] = dict(
+                user_id=effective_user_id,
+                start_time=start_time_dt,
+                end_time=end_time_dt,
+                limit=limit,
+                page=page,
+                group_by="endpoint",
+            )
+            if isinstance(db, AsyncBaseDb):
+                stats_list, total_count = await db.get_trace_stats(**stats_kwargs)
+            else:
+                stats_list, total_count = db.get_trace_stats(**stats_kwargs)
+
+            total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
+            return PaginatedResponse(
+                data=[
+                    TraceEndpointStats(
+                        name=stat["name"],
+                        total_traces=stat["total_traces"],
+                        avg_duration_ms=stat.get("avg_duration_ms"),
+                        p95_duration_ms=stat.get("p95_duration_ms"),
+                        max_duration_ms=stat.get("max_duration_ms"),
+                        error_traces=stat.get("error_traces") or 0,
+                        first_trace_at=stat["first_trace_at"],
+                        last_trace_at=stat["last_trace_at"],
+                    )
+                    for stat in stats_list
+                    if stat.get("name")
+                ],
+                meta=PaginationInfo(page=page, limit=limit, total_pages=total_pages, total_count=total_count),
+            )
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            log_error(f"Error retrieving trace endpoint statistics: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error retrieving trace endpoint statistics: {str(e)}")
 
     @router.get(
         "/traces/{trace_id}",
@@ -776,12 +879,14 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                         filter_expr=filter_expr_dict,
                         limit=body.limit,
                         page=body.page,
+                        **_trace_kind_kwargs(db, body.kind),
                     )
                 else:
                     traces, total_count = db.get_traces(
                         filter_expr=filter_expr_dict,
                         limit=body.limit,
                         page=body.page,
+                        **_trace_kind_kwargs(db, body.kind),
                     )
 
                 end_time_ms = time_module.time() * 1000
