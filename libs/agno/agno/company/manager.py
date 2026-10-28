@@ -108,7 +108,7 @@ class CompanyManager:
         return self._write_routine(product_id, routine, fields, user_id)
 
     def _write_routine(self, product_id: str, routine: Any, fields: Dict[str, Any], user_id: Optional[str]):
-        """Create, link and enable the schedule; a failed link or enable leaves no schedule behind."""
+        """Create and link the schedule, then enable it if requested; roll back failed writes."""
         from agno.scheduler import ScheduleManager
 
         schedules = ScheduleManager(self.schedule_db)
@@ -124,7 +124,7 @@ class CompanyManager:
             if self.db.add_product_routine(product_id, schedule.id) is None:
                 raise RuntimeError("Routine could not be linked to its Product")
             linked = True
-            enabled = schedules.enable(schedule.id, user_id=user_id)
+            enabled = schedules.enable(schedule.id, user_id=user_id) if routine.enabled else schedule
             if enabled is None:
                 raise RuntimeError("Routine could not be enabled")
         except Exception:
@@ -1013,7 +1013,7 @@ class AsyncCompanyManager:
         return await self._write_routine(product_id, routine, fields, user_id)
 
     async def _write_routine(self, product_id: str, routine: Any, fields: Dict[str, Any], user_id: Optional[str]):
-        """Create, link and enable the schedule; a failed link or enable leaves no schedule behind."""
+        """Create and link the schedule, then enable it if requested; roll back failed writes."""
         from agno.scheduler import ScheduleManager
 
         schedules = ScheduleManager(self.schedule_db)
@@ -1029,7 +1029,7 @@ class AsyncCompanyManager:
             if await self.db.add_product_routine(product_id, schedule.id) is None:
                 raise RuntimeError("Routine could not be linked to its Product")
             linked = True
-            enabled = await schedules.aenable(schedule.id, user_id=user_id)
+            enabled = await schedules.aenable(schedule.id, user_id=user_id) if routine.enabled else schedule
             if enabled is None:
                 raise RuntimeError("Routine could not be enabled")
         except Exception:

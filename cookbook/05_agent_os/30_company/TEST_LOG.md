@@ -399,3 +399,16 @@ No paid model calls or real outbound notification deliveries were exercised.
 **Result:** Both configurations persisted the Company Manager Routine with automatic acceptance disabled. These checks validate configuration; they do not execute a review or make model calls.
 
 ---
+
+### 11_disabled_routine.py
+
+**Status:** PASS
+
+**Description:** Create a visible scheduled Routine with `enabled=False`, enable it
+through the same resume endpoint used by the UI, and restart the application.
+
+**Result:** The initial list response reports disabled. Resume enables the existing
+routine, and startup preserves that choice. Uses temporary SQLite storage with no
+model calls or scheduler execution.
+
+---

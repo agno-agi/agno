@@ -263,7 +263,9 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         schedule = await call(ScheduleCreate, **fields)
         row = await call(handlers["create_schedule"], schedule, request)
         await call(db.add_product_routine, body.product_id, row["id"])
-        return await routine_response(await call(handlers["enable_schedule"], row["id"], request))
+        if body.enabled:
+            row = await call(handlers["enable_schedule"], row["id"], request)
+        return await routine_response(row)
 
     @router.patch("/routines/{routine_id}", response_model=RoutineResponse)
     async def update_routine(routine_id: str, body: RoutineUpdate, request: Request, _: bool = Depends(auth)):
