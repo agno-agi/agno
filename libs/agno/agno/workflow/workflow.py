@@ -627,16 +627,17 @@ def _record_input_media(
 ) -> None:
     """Put the caller's input media on the run so a pause persists it.
 
-    The lists are the same objects the executor extends, so the run tracks them.
+    Keep an input snapshot: output media is restored from step_results on resume.
+    Sharing the growing output lists would count outputs twice and retain rejected media.
     """
     if images:
-        run_response.images = images
+        run_response.images = images.copy()
     if videos:
-        run_response.videos = videos
+        run_response.videos = videos.copy()
     if audio:
-        run_response.audio = audio
+        run_response.audio = audio.copy()
     if files:
-        run_response.files = files
+        run_response.files = files.copy()
 
 
 @dataclass
@@ -2996,13 +2997,13 @@ class Workflow:
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
                 previous_step_outputs: Dict[str, StepOutput] = {}
 
-                shared_images: List[Image] = execution_input.images or []
+                shared_images: List[Image] = (execution_input.images or []).copy()
                 output_images: List[Image] = (execution_input.images or []).copy()  # Start with input images
-                shared_videos: List[Video] = execution_input.videos or []
+                shared_videos: List[Video] = (execution_input.videos or []).copy()
                 output_videos: List[Video] = (execution_input.videos or []).copy()  # Start with input videos
-                shared_audio: List[Audio] = execution_input.audio or []
+                shared_audio: List[Audio] = (execution_input.audio or []).copy()
                 output_audio: List[Audio] = (execution_input.audio or []).copy()  # Start with input audio
-                shared_files: List[File] = execution_input.files or []
+                shared_files: List[File] = (execution_input.files or []).copy()
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
                 _record_input_media(workflow_run_response, output_images, output_videos, output_audio, output_files)
 
@@ -3386,13 +3387,13 @@ class Workflow:
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
                 previous_step_outputs: Dict[str, StepOutput] = {}
 
-                shared_images: List[Image] = execution_input.images or []
+                shared_images: List[Image] = (execution_input.images or []).copy()
                 output_images: List[Image] = (execution_input.images or []).copy()  # Start with input images
-                shared_videos: List[Video] = execution_input.videos or []
+                shared_videos: List[Video] = (execution_input.videos or []).copy()
                 output_videos: List[Video] = (execution_input.videos or []).copy()  # Start with input videos
-                shared_audio: List[Audio] = execution_input.audio or []
+                shared_audio: List[Audio] = (execution_input.audio or []).copy()
                 output_audio: List[Audio] = (execution_input.audio or []).copy()  # Start with input audio
-                shared_files: List[File] = execution_input.files or []
+                shared_files: List[File] = (execution_input.files or []).copy()
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
                 _record_input_media(workflow_run_response, output_images, output_videos, output_audio, output_files)
 
@@ -4001,13 +4002,13 @@ class Workflow:
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
                 previous_step_outputs: Dict[str, StepOutput] = {}
 
-                shared_images: List[Image] = execution_input.images or []
+                shared_images: List[Image] = (execution_input.images or []).copy()
                 output_images: List[Image] = (execution_input.images or []).copy()  # Start with input images
-                shared_videos: List[Video] = execution_input.videos or []
+                shared_videos: List[Video] = (execution_input.videos or []).copy()
                 output_videos: List[Video] = (execution_input.videos or []).copy()  # Start with input videos
-                shared_audio: List[Audio] = execution_input.audio or []
+                shared_audio: List[Audio] = (execution_input.audio or []).copy()
                 output_audio: List[Audio] = (execution_input.audio or []).copy()  # Start with input audio
-                shared_files: List[File] = execution_input.files or []
+                shared_files: List[File] = (execution_input.files or []).copy()
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
                 _record_input_media(workflow_run_response, output_images, output_videos, output_audio, output_files)
 
@@ -4415,13 +4416,13 @@ class Workflow:
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
                 previous_step_outputs: Dict[str, StepOutput] = {}
 
-                shared_images: List[Image] = execution_input.images or []
+                shared_images: List[Image] = (execution_input.images or []).copy()
                 output_images: List[Image] = (execution_input.images or []).copy()  # Start with input images
-                shared_videos: List[Video] = execution_input.videos or []
+                shared_videos: List[Video] = (execution_input.videos or []).copy()
                 output_videos: List[Video] = (execution_input.videos or []).copy()  # Start with input videos
-                shared_audio: List[Audio] = execution_input.audio or []
+                shared_audio: List[Audio] = (execution_input.audio or []).copy()
                 output_audio: List[Audio] = (execution_input.audio or []).copy()  # Start with input audio
-                shared_files: List[File] = execution_input.files or []
+                shared_files: List[File] = (execution_input.files or []).copy()
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
                 _record_input_media(workflow_run_response, output_images, output_videos, output_audio, output_files)
 
@@ -6989,7 +6990,9 @@ class Workflow:
         """Continue executing a workflow from a specific step index."""
         try:
             # Initialize execution state (restores step outputs and media from previous execution)
-            state = ContinueExecutionState(workflow_run_response, execution_input)
+            state = ContinueExecutionState(
+                workflow_run_response, execution_input, remove_last_output=kwargs.get("remove_last_output", False)
+            )
 
             # Get user input and router selection from kwargs if provided
             user_input = kwargs.get("user_input")
@@ -6999,16 +7002,10 @@ class Workflow:
 
             # Handle edited output from post-execution review
             edited_output = kwargs.get("edited_output")
-            if edited_output is not None and state.collected_step_outputs:
+            if edited_output is not None and state.collected_step_outputs and not kwargs.get("remove_last_output"):
                 last = state.collected_step_outputs[-1]
                 if isinstance(last, StepOutput):
                     last.content = edited_output
-
-            # Handle retry — remove last output so step re-executes cleanly
-            if kwargs.get("remove_last_output") and state.collected_step_outputs:
-                removed = state.collected_step_outputs.pop()
-                if isinstance(removed, StepOutput) and removed.step_name:
-                    state.previous_step_outputs.pop(removed.step_name, None)
 
             # Local references for easier access within the loop
             collected_step_outputs = state.collected_step_outputs
@@ -7834,7 +7831,9 @@ class Workflow:
         current_step = None
         try:
             # Initialize execution state (restores step outputs and media from previous execution)
-            state = ContinueExecutionState(workflow_run_response, execution_input)
+            state = ContinueExecutionState(
+                workflow_run_response, execution_input, remove_last_output=kwargs.get("remove_last_output", False)
+            )
 
             # Local references for easier access within the loop
             collected_step_outputs = state.collected_step_outputs
@@ -7858,16 +7857,10 @@ class Workflow:
 
             # Handle edited output from post-execution review
             edited_output = kwargs.get("edited_output")
-            if edited_output is not None and state.collected_step_outputs:
+            if edited_output is not None and state.collected_step_outputs and not kwargs.get("remove_last_output"):
                 last = state.collected_step_outputs[-1]
                 if isinstance(last, StepOutput):
                     last.content = edited_output
-
-            # Handle retry — remove last output so step re-executes cleanly
-            if kwargs.get("remove_last_output") and state.collected_step_outputs:
-                removed = state.collected_step_outputs.pop()
-                if isinstance(removed, StepOutput) and removed.step_name:
-                    state.previous_step_outputs.pop(removed.step_name, None)
 
             # Continue from the paused step
             for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type, index]
@@ -9052,7 +9045,9 @@ class Workflow:
         _system_cancelled = False
         try:
             # Initialize execution state (restores step outputs and media from previous execution)
-            state = ContinueExecutionState(workflow_run_response, execution_input)
+            state = ContinueExecutionState(
+                workflow_run_response, execution_input, remove_last_output=kwargs.get("remove_last_output", False)
+            )
 
             # Local references for easier access within the loop
             collected_step_outputs = state.collected_step_outputs
@@ -9074,16 +9069,10 @@ class Workflow:
 
             # Handle edited output from post-execution review
             edited_output = kwargs.get("edited_output")
-            if edited_output is not None and state.collected_step_outputs:
+            if edited_output is not None and state.collected_step_outputs and not kwargs.get("remove_last_output"):
                 last = state.collected_step_outputs[-1]
                 if isinstance(last, StepOutput):
                     last.content = edited_output
-
-            # Handle retry — remove last output so step re-executes cleanly
-            if kwargs.get("remove_last_output") and state.collected_step_outputs:
-                removed = state.collected_step_outputs.pop()
-                if isinstance(removed, StepOutput) and removed.step_name:
-                    state.previous_step_outputs.pop(removed.step_name, None)
 
             # Continue from the paused step
             for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type, index]
@@ -9594,7 +9583,9 @@ class Workflow:
         current_step = None
         try:
             # Initialize execution state (restores step outputs and media from previous execution)
-            state = ContinueExecutionState(workflow_run_response, execution_input)
+            state = ContinueExecutionState(
+                workflow_run_response, execution_input, remove_last_output=kwargs.get("remove_last_output", False)
+            )
 
             # Local references for easier access within the loop
             collected_step_outputs = state.collected_step_outputs
@@ -9618,16 +9609,10 @@ class Workflow:
 
             # Handle edited output from post-execution review
             edited_output = kwargs.get("edited_output")
-            if edited_output is not None and state.collected_step_outputs:
+            if edited_output is not None and state.collected_step_outputs and not kwargs.get("remove_last_output"):
                 last = state.collected_step_outputs[-1]
                 if isinstance(last, StepOutput):
                     last.content = edited_output
-
-            # Handle retry — remove last output so step re-executes cleanly
-            if kwargs.get("remove_last_output") and state.collected_step_outputs:
-                removed = state.collected_step_outputs.pop()
-                if isinstance(removed, StepOutput) and removed.step_name:
-                    state.previous_step_outputs.pop(removed.step_name, None)
 
             # Continue from the paused step
             for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type, index]

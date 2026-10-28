@@ -407,24 +407,29 @@ class ContinueExecutionState:
         self,
         workflow_run_response: "WorkflowRunOutput",
         execution_input: "WorkflowExecutionInput",
+        remove_last_output: bool = False,
     ):
         # Restore previous step outputs from step_results
         self.collected_step_outputs: List[Union["StepOutput", List["StepOutput"]]] = list(
             workflow_run_response.step_results or []
         )
+        # Discard rejected output before restoring either content or media.
+        if remove_last_output and self.collected_step_outputs:
+            self.collected_step_outputs.pop()
+
         self.previous_step_outputs: Dict[str, "StepOutput"] = {}
         for step_output in self.collected_step_outputs:
             if isinstance(step_output, StepOutput) and step_output.step_name:
                 self.previous_step_outputs[step_output.step_name] = step_output
 
         # Initialize media lists
-        self.shared_images: List["Image"] = execution_input.images or []
+        self.shared_images: List["Image"] = (execution_input.images or []).copy()
         self.output_images: List["Image"] = (execution_input.images or []).copy()
-        self.shared_videos: List["Video"] = execution_input.videos or []
+        self.shared_videos: List["Video"] = (execution_input.videos or []).copy()
         self.output_videos: List["Video"] = (execution_input.videos or []).copy()
-        self.shared_audio: List["Audio"] = execution_input.audio or []
+        self.shared_audio: List["Audio"] = (execution_input.audio or []).copy()
         self.output_audio: List["Audio"] = (execution_input.audio or []).copy()
-        self.shared_files: List["File"] = execution_input.files or []
+        self.shared_files: List["File"] = (execution_input.files or []).copy()
         self.output_files: List["File"] = (execution_input.files or []).copy()
 
         # Restore shared media from previous steps
@@ -494,6 +499,7 @@ def finalize_workflow_completion(
     workflow_run_response.images = state.output_images
     workflow_run_response.videos = state.output_videos
     workflow_run_response.audio = state.output_audio
+    workflow_run_response.files = state.output_files
     workflow_run_response.status = RunStatus.completed
     workflow_run_response.paused_step_index = None
     workflow_run_response.paused_step_name = None
