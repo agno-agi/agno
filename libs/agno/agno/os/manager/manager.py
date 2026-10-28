@@ -158,6 +158,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     """
     from agno.db.base import AsyncBaseDb, BaseDb
     from agno.tools.agentos import AgentOSTools
+    from agno.tools.knowledge.bases import KnowledgeBaseTools
     from agno.tools.studio import StudioTools
     from agno.tools.studio_runner import StudioRunnerTools
     from agno.utils.live_sequence import LiveSequence
@@ -213,7 +214,25 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         num_history_runs=5,
     )
 
-    operator_tools = [AgentOSTools(db=db), _diagnostics_tool(agent_os, config.required_env)]
+    operator_tools = [
+        AgentOSTools(db=db),
+        _diagnostics_tool(agent_os, config.required_env),
+        # The bases the /knowledge routes serve, read live: AgentOS discovers them
+        # after the manager is built and again on every resync. remove_content
+        # requires confirmation.
+        KnowledgeBaseTools(
+            knowledge=LiveSequence(lambda: getattr(agent_os, "knowledge_instances", None) or []),
+            # Same rule the auth middleware applies, read per call.
+            user_isolation=lambda: bool(
+                agent_os.user_isolation
+                or (
+                    agent_os.authorization
+                    and agent_os.authorization_config is not None
+                    and agent_os.authorization_config.user_isolation
+                )
+            ),
+        ),
+    ]
     docs_tools: List[Any] = []
     operator_instructions = [OPERATOR_INSTRUCTIONS, FOCUSED_EXECUTION_INSTRUCTIONS, EXPLANATION_INSTRUCTIONS]
     if workspace is not None:

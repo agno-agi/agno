@@ -3,22 +3,27 @@
 ``KnowledgeTools`` is the read side — think, search, analyze — for product agents.
 ``KnowledgeManagementTools`` is the write side — ingest, list, remove — for builder and
 operator agents, so widening one never leaks write capability into the other.
+``KnowledgeBaseTools`` is the write side across every knowledge base an AgentOS serves,
+addressed by the ids the OS UI uses.
 
-Both resolve on first access (PEP 562).
+All resolve on first access (PEP 562).
 """
 
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from agno.tools.knowledge.bases import KnowledgeBaseTools
     from agno.tools.knowledge.knowledge import KnowledgeTools
     from agno.tools.knowledge.management import KnowledgeManagementTools
 
 __all__ = [
+    "KnowledgeBaseTools",
     "KnowledgeManagementTools",
     "KnowledgeTools",
 ]
 
 _LAZY_ATTRS = {
+    "KnowledgeBaseTools": "agno.tools.knowledge.bases",
     "KnowledgeManagementTools": "agno.tools.knowledge.management",
     "KnowledgeTools": "agno.tools.knowledge.knowledge",
 }

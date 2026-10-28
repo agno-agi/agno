@@ -31,6 +31,7 @@ from agno.registry._reserved import (
 )
 from agno.run import RunContext
 from agno.tools.agentos import AgentOSTools
+from agno.tools.knowledge import KnowledgeBaseTools
 from agno.tools.studio import StudioTools
 from agno.tools.studio_runner import StudioRunnerTools
 
@@ -297,6 +298,33 @@ def test_builder_operator_and_lead_carry_the_framework_toolkits(db):
     assert runner.include_all_components and runner.self_dispatch == "once"
     # Attached resources ride the lead.
     assert any(callable(t) and getattr(t, "__name__", "") == "<lambda>" for t in os.manager.tools)
+
+
+def test_platform_manager_manages_the_knowledge_bases_the_os_serves(db, tmp_path):
+    from agno.knowledge.knowledge import Knowledge
+    from tests.unit.tools.test_knowledge_management_tools import StubVectorDb
+
+    def kb(name):
+        return Knowledge(
+            name=name, vector_db=StubVectorDb(), contents_db=SqliteDb(db_file=str(tmp_path / f"{name}.db"))
+        )
+
+    app_agent = Agent(id="app", model=OfflineModel(), knowledge=kb("docs"))
+    os = AgentOS(db=db, agents=[app_agent], manager=OSManager(model=OfflineModel()), telemetry=False)
+    toolkit = next(t for t in manager_member(os, OPERATOR_ID).tools if isinstance(t, KnowledgeBaseTools))
+    assert not any(isinstance(t, KnowledgeBaseTools) for t in manager_member(os, BUILDER_ID).tools)
+    assert toolkit.functions["remove_content"].requires_confirmation is True
+    names = lambda: [row["name"] for row in json.loads(toolkit.list_knowledge_bases())["knowledge_bases"]]  # noqa: E731
+    assert names() == ["docs"]
+
+    # Read live: a base the OS discovers later is visible without rebuilding the manager.
+    os.agents.append(Agent(id="support", model=OfflineModel(), knowledge=kb("support")))
+    os._auto_discover_knowledge_instances()
+    assert names() == ["docs", "support"]
+
+    assert toolkit._owner(RunContext(run_id="r", session_id="s", user_id="alice")) is None
+    os.user_isolation = True
+    assert toolkit._owner(RunContext(run_id="r", session_id="s", user_id="alice")) == "alice"
 
 
 def test_operator_reads_the_workspace_but_not_env_files(db, workspace):
