@@ -25,3 +25,33 @@ encrypted reasoning plus tool-call replay.
 **Result:** The API accepted `xhigh`, the run streamed a thinking summary for 4.0s and answered the riddle correctly.
 
 ---
+
+### agent_flex_tier.py
+
+**Status:** PASS
+
+**Description:** Moved off `o4-mini`, which OpenAI shut down on 2026-10-23 (404), to `gpt-5.6-terra`. Runs `OpenAIResponses(id="gpt-5.6-terra", service_tier="flex")` against the live API.
+
+**Result:** The flex tier request is accepted and the two-sentence story prints.
+
+---
+
+### zdr_reasoning_agent.py
+
+**Status:** PASS
+
+**Description:** Moved off `o4-mini` to `gpt-5.6-terra`. Runs three turns with `store=False`, `reasoning_summary="auto"` and history from `InMemoryDb`.
+
+**Result:** All three turns answer and the follow-ups resolve "that country" from history.
+
+---
+
+### reasoning_gpt_5_6_sol.py
+
+**Status:** PASS
+
+**Description:** Renamed from `reasoning_o3_mini.py`: `o3-mini` was shut down on 2026-10-23, and the example now runs its listed replacement, `gpt-5.6-sol`.
+
+**Result:** The agent calls `get_current_stock_price` and prints the NVDA report.
+
+---
