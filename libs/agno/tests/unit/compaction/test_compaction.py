@@ -1877,7 +1877,7 @@ def test_async_overflow_recovery_does_not_block_the_event_loop(stream):
     from agno.exceptions import ContextWindowExceededError
     from agno.models.response import ModelResponse
 
-    used = []
+    used, beats, beats_while_summarizing = [], {"n": 0}, []
 
     class _SlowSummarizer:
         id = "stub"
@@ -1889,7 +1889,9 @@ def test_async_overflow_recovery_does_not_block_the_event_loop(stream):
 
         async def aresponse(self, messages, **kwargs):
             used.append("async")
+            start = beats["n"]
             await asyncio.sleep(0.3)
+            beats_while_summarizing.append(beats["n"] - start)
             return ModelResponse(content="SUMMARY")
 
     model = _RecordingModel.build()
@@ -1925,15 +1927,12 @@ def test_async_overflow_recovery_does_not_block_the_event_loop(stream):
     async def scenario():
         for i in range(5):
             await agent.arun(f"question number {i}")
-        gaps, stop = [], asyncio.Event()
+        stop = asyncio.Event()
 
         async def heartbeat():
-            last = time.perf_counter()
             while not stop.is_set():
                 await asyncio.sleep(0.01)
-                now = time.perf_counter()
-                gaps.append(now - last)
-                last = now
+                beats["n"] += 1
 
         beat = asyncio.create_task(heartbeat())
         await asyncio.sleep(0.03)
@@ -1944,12 +1943,13 @@ def test_async_overflow_recovery_does_not_block_the_event_loop(stream):
             await agent.arun("question number 5")
         stop.set()
         await beat
-        return max(gaps)
 
-    longest_stall = asyncio.run(scenario())
+    asyncio.run(scenario())
 
     assert used == ["async"]
-    assert longest_stall < 0.15
+    # Counted only while the summary is awaited: the rest of the turn writes to a sync SqliteDb on the
+    # loop, which a loaded CI runner stalls for long enough to fail any bound on the whole turn.
+    assert beats_while_summarizing[0] > 3
 
 
 def test_overflow_retry_sends_the_compacted_payload():

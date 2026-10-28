@@ -38,7 +38,7 @@ agent = CodexAgent(
     id=AGENT_ID,
     name="Codex Metrics",
     model="gpt-5.6-luna",
-    sandbox="read-only",
+    sandbox_mode="read-only",
     db=db,
 )
 agent_os = AgentOS(agents=[agent], db=db)
@@ -123,6 +123,9 @@ def verify():
                 f"total_tokens={(today.get('token_metrics') or {}).get('total_tokens')}"
             )
             assert today.get("agent_runs_count") == 2
+            # The Models Runs card on the metrics page: runs counted per model and provider.
+            print(f"Metrics page (today): model_metrics={today.get('model_metrics')}")
+            assert today.get("model_metrics"), "runs are counted per model"
     print("PASS: Codex run, session and OS metrics are visible through AgentOS")
 
 

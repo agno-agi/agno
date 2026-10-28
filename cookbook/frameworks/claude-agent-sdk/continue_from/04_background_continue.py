@@ -49,7 +49,7 @@ async def main():
         workspace = Path(workdir)
         agent = ClaudeAgent(
             id="continue-demo",
-            model="claude-sonnet-4-6",
+            model="claude-sonnet-5-5",
             db=SqliteDb(db_file=str(workspace / "runs.db")),
             cwd=workdir,
             # The SDK's default system prompt does not name the working directory, so tell
@@ -57,8 +57,6 @@ async def main():
             system_prompt=f"Your working directory is {workdir}. Create and run files there.",
             allowed_tools=["Write", "Bash"],
             permission_mode="bypassPermissions",
-            max_turns=8,
-            max_budget_usd=0.5,
         )
 
         source = await agent.arun(

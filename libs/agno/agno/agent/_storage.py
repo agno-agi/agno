@@ -29,6 +29,7 @@ from agno.exceptions import ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.registry._reserved import RESERVED_MANAGER_IDS, _reserved_manager_id_message
 from agno.registry.registry import Registry, _memory_manager_resource_name
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
@@ -1656,6 +1657,9 @@ def load(
     Returns:
         The agent loaded from the database or None if not found.
     """
+
+    if id in RESERVED_MANAGER_IDS:
+        raise ComponentRehydrationError(_reserved_manager_id_message(id))
 
     if published_only and version is None and label is None:
         # Dispatch semantics on demand: resolve strictly through the live
