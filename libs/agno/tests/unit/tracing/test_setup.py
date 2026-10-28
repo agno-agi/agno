@@ -4,10 +4,38 @@ import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+from agno.agent import Agent
+from agno.models.base import Model
+from agno.models.response import ModelResponse
 from agno.tracing import setup as tracing
 from agno.tracing.processor import AGNO_INSTRUMENTATION_SCOPE
 
 pytest.importorskip("openinference.instrumentation.agno")
+
+
+class MockModel(Model):
+    """Offline model returning a canned response."""
+
+    def __init__(self):
+        super().__init__(id="mock", name="mock", provider="mock")
+
+    def invoke(self, *args, **kwargs):
+        return ModelResponse(content="ok")
+
+    async def ainvoke(self, *args, **kwargs):
+        return ModelResponse(content="ok")
+
+    def invoke_stream(self, *args, **kwargs):
+        yield ModelResponse(content="ok")
+
+    async def ainvoke_stream(self, *args, **kwargs):
+        yield ModelResponse(content="ok")
+
+    def _parse_provider_response(self, response, **kwargs):
+        return response
+
+    def _parse_provider_response_delta(self, response):
+        return response
 
 
 @pytest.mark.parametrize("batch_processing", [False, True])
@@ -78,3 +106,21 @@ def test_agno_tracing_is_active_once_its_provider_is_global(monkeypatch):
         assert tracing.is_agno_tracing_active() is True
     finally:
         global_provider["provider"].shutdown()
+
+
+def test_setup_stores_spans_from_the_real_instrumentor(monkeypatch):
+    exporter = InMemorySpanExporter()
+    set_provider = MagicMock()
+    monkeypatch.setattr(tracing.trace_api, "get_tracer_provider", lambda: None)
+    monkeypatch.setattr(tracing.trace_api, "set_tracer_provider", set_provider)
+    monkeypatch.setattr(tracing, "DatabaseSpanExporter", lambda db: exporter)
+
+    tracing.setup_tracing(db=MagicMock(), batch_processing=False)
+    provider = set_provider.call_args.args[0]
+    try:
+        Agent(model=MockModel(), telemetry=False).run("Say hi")
+        # The filter keeps spans by instrumentation scope, so a rename in openinference would drop every span
+        assert "Agent.run" in [span.name for span in exporter.get_finished_spans()]
+    finally:
+        tracing.AgnoInstrumentor().uninstrument()
+        provider.shutdown()
