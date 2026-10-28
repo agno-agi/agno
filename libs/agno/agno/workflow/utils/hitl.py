@@ -306,12 +306,16 @@ def check_output_review_status(
         except Exception as e:
             import logging
 
+            # Fail closed: a predicate error must not silently disable the
+            # review gate. Pausing for human review surfaces the error to a
+            # human instead of letting unreviewed output through, and avoids
+            # turning a predicate bug into a workflow crash by re-raising.
             logging.getLogger(__name__).warning(
-                "requires_output_review predicate raised %s: %s — defaulting to no review",
+                "requires_output_review predicate raised %s: %s — defaulting to review",
                 type(e).__name__,
                 e,
             )
-            requires_review = False
+            requires_review = True
 
     if not requires_review:
         return StepPauseResult(should_pause=False)
