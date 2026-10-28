@@ -140,6 +140,10 @@ def attach_routes(
                 request_context_builder=A2ARequestContextBuilder(task_store=agent_task_store),
             )
             request_handlers[f"agents/{agent_id}"] = agent_handler
+        else:
+            # A resync may replace the agent under the same id: its running tasks stay, the new agent runs
+            agent_handler.agent_executor.agents = agents
+            agent_handler.task_store.set_entity(agent)
         _attach_a2a_endpoint(
             router,
             create_jsonrpc_routes(
@@ -191,6 +195,10 @@ def attach_routes(
                 request_context_builder=A2ARequestContextBuilder(task_store=team_task_store),
             )
             request_handlers[f"teams/{team_id}"] = team_handler
+        else:
+            # A resync may replace the team under the same id: its running tasks stay, the new team runs
+            team_handler.agent_executor.teams = teams
+            team_handler.task_store.set_entity(team)
         _attach_a2a_endpoint(
             router,
             create_jsonrpc_routes(
@@ -242,6 +250,10 @@ def attach_routes(
                 request_context_builder=A2ARequestContextBuilder(task_store=workflow_task_store),
             )
             request_handlers[f"workflows/{workflow_id}"] = workflow_handler
+        else:
+            # A resync may replace the workflow under the same id: its running tasks stay, the new workflow runs
+            workflow_handler.agent_executor.workflows = workflows
+            workflow_handler.task_store.set_entity(workflow)
         _attach_a2a_endpoint(
             router,
             create_jsonrpc_routes(

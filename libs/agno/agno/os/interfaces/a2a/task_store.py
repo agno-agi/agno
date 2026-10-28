@@ -55,6 +55,11 @@ class A2ATaskStore(TaskStore):
         # saves the task, and must not be taken for a task that already exists.
         self._new_task_ids: Set[str] = set()
 
+    def set_entity(self, entity: Any) -> None:
+        """Serve a new instance of the entity, as AgentOS resync gives one under the same id."""
+        self.entity = entity
+        self.db = getattr(entity, "db", None)
+
     def holds_task(self, task_id: str) -> bool:
         """Whether this process holds the task while it runs or waits, and so streams its events."""
         return task_id in self._live_tasks
