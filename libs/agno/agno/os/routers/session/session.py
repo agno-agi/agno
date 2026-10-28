@@ -736,7 +736,9 @@ def attach_routes(
             "e.g. status=PENDING&status=RUNNING&status=PAUSED is the live set a queue tray shows). "
             "By default all runs are returned as a list. Pass 'limit' to receive a cursor-paginated "
             "response instead: the newest 'limit' runs, or those before 'before_run_index' or after "
-            "'after_run_index'. Runs are always in chronological order and carry their 'run_index'. "
+            "'after_run_index'. Pages count top-level runs; member and step runs come with their parent "
+            "and filters select the top-level runs. Take the next cursor from meta.before_run_index or "
+            "meta.after_run_index. Runs are always in chronological order and carry their 'run_index'. "
             "Response schema varies based on session type. For lightweight entries, use "
             "GET /sessions/{session_id}/run-previews."
         ),
@@ -927,7 +929,7 @@ def attach_routes(
             )
 
         try:
-            page_runs, total_count, has_more = await get_session_runs_window(
+            page = await get_session_runs_window(
                 db,
                 session_id=session_id,
                 limit=limit,
@@ -945,8 +947,14 @@ def attach_routes(
             raise HTTPException(status_code=422, detail=str(e))
 
         return CursorPaginatedResponse(
-            data=page_runs,
-            meta=CursorPaginationInfo(limit=limit, total_count=total_count, has_more=has_more),
+            data=page.runs,
+            meta=CursorPaginationInfo(
+                limit=limit,
+                total_count=page.total_count,
+                has_more=page.has_more,
+                before_run_index=page.before_run_index,
+                after_run_index=page.after_run_index,
+            ),
         )
 
     @router.get(

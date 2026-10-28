@@ -1929,8 +1929,10 @@ class AgentOSClient:
 
         Pagination is opt-in: without ``limit`` the server returns every run as a list. With
         ``limit`` it returns a :class:`CursorPaginatedResponse` holding the newest ``limit`` runs,
-        or those before ``before_run_index`` / after ``after_run_index``. Runs are always in
-        chronological order and carry their ``run_index``.
+        or those before ``before_run_index`` / after ``after_run_index``. Pages count top-level
+        runs; member and step runs come with their parent. Take the next cursor from
+        ``meta.before_run_index`` / ``meta.after_run_index``. Runs are always in chronological
+        order and carry their ``run_index``.
 
         Args:
             session_id: ID of the session

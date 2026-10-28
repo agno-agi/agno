@@ -10,7 +10,7 @@ REST) never blocks its event loop on database I/O.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple, Type, Union
+from typing import Any, Dict, List, Literal, NamedTuple, Optional, Set, Tuple, Type, Union
 
 from starlette.concurrency import run_in_threadpool
 
@@ -272,17 +272,32 @@ class _IndexedSessionRuns:
         return run_schema
 
 
+def _run_matches_filters(
+    run: Dict[str, Any],
+    created_after: Optional[int],
+    created_before: Optional[int],
+    statuses: Optional[Set[str]],
+) -> bool:
+    created_at = run.get("created_at")
+    # `is not None` (not truthiness): a bound of 0 is a real epoch timestamp, and a run
+    # whose created_at is 0 must still be filtered rather than silently kept.
+    if created_after is not None and created_at is not None and created_at < created_after:
+        return False
+    if created_before is not None and created_at is not None and created_at > created_before:
+        return False
+    if statuses is not None and not run_status_matches(run.get("status"), statuses):
+        return False
+    return True
+
+
 async def _get_indexed_session_runs(
     db: Union[BaseDb, AsyncBaseDb],
     *,
     session_id: str,
     session_type: Optional[SessionType],
     user_id: Optional[str],
-    created_after: Optional[int],
-    created_before: Optional[int],
-    statuses: Optional[Set[str]] = None,
 ) -> _IndexedSessionRuns:
-    """The session's listed runs in chronological order.
+    """The session's listed runs in chronological order, unfiltered.
 
     ``run_index`` is the run's position in the session's full history, assigned
     before any filter so it stays stable across filters and across endpoints.
@@ -293,15 +308,6 @@ async def _get_indexed_session_runs(
 
     indexed: List[_IndexedRun] = []
     for run_index, run in enumerate(session.get("runs") or []):
-        created_at = run.get("created_at")
-        # `is not None` (not truthiness): a bound of 0 is a real epoch timestamp, and a run
-        # whose created_at is 0 must still be filtered rather than silently kept.
-        if created_after is not None and created_at is not None and created_at < created_after:
-            continue
-        if created_before is not None and created_at is not None and created_at > created_before:
-            continue
-        if statuses is not None and not run_status_matches(run.get("status"), statuses):
-            continue
         schema_class = _run_schema_class(run, resolved_type)
         if schema_class is not None:
             indexed.append((run_index, run, schema_class))
@@ -321,15 +327,20 @@ async def get_session_runs(
 
     Raises :class:`SessionNotFoundError` when the session does not exist.
     """
-    indexed = await _get_indexed_session_runs(
-        db,
-        session_id=session_id,
-        session_type=session_type,
-        user_id=user_id,
-        created_after=created_after,
-        created_before=created_before,
-    )
-    return [indexed.render(indexed_run) for indexed_run in indexed.runs]
+    indexed = await _get_indexed_session_runs(db, session_id=session_id, session_type=session_type, user_id=user_id)
+    return [
+        indexed.render(indexed_run)
+        for indexed_run in indexed.runs
+        if _run_matches_filters(indexed_run[1], created_after, created_before, None)
+    ]
+
+
+class SessionRunsPage(NamedTuple):
+    runs: List[AnyRunSchema]
+    total_count: int
+    has_more: bool
+    before_run_index: Optional[int]
+    after_run_index: Optional[int]
 
 
 async def get_session_runs_window(
@@ -344,14 +355,16 @@ async def get_session_runs_window(
     created_after: Optional[int] = None,
     created_before: Optional[int] = None,
     statuses: Optional[Set[str]] = None,
-) -> Tuple[List[AnyRunSchema], int, bool]:
+) -> SessionRunsPage:
     """One cursor page of a session's runs, in chronological order.
 
-    With ``after_run_index`` the page is the oldest ``limit`` runs after it;
-    otherwise it is the newest ``limit`` runs, before ``before_run_index`` when
-    given. ``statuses`` (upper-cased) filters before paging. Returns
-    ``(runs, total_count, has_more)``, where ``has_more`` reports runs beyond the
-    page in the paging direction.
+    Pages count top-level runs: runs with no parent in the session. Member and
+    step runs come with their top-level run, at any depth, and do not consume
+    the limit. Filters (timestamps, upper-cased ``statuses``) select top-level
+    runs. With ``after_run_index`` the page is the oldest ``limit`` top-level
+    runs after it; otherwise it is the newest ``limit``, before
+    ``before_run_index`` when given. The returned cursors are the page's first
+    and last top-level run_index, to pass back for the older or newer page.
 
     Raises :class:`SessionNotFoundError` when the session does not exist and
     :class:`InvalidRunCursorError` when both cursors are given.
@@ -359,24 +372,43 @@ async def get_session_runs_window(
     if before_run_index is not None and after_run_index is not None:
         raise InvalidRunCursorError("Pass at most one of before_run_index and after_run_index")
 
-    indexed = await _get_indexed_session_runs(
-        db,
-        session_id=session_id,
-        session_type=session_type,
-        user_id=user_id,
-        created_after=created_after,
-        created_before=created_before,
-        statuses=statuses,
-    )
+    indexed = await _get_indexed_session_runs(db, session_id=session_id, session_type=session_type, user_id=user_id)
+
+    listed_ids = {run.get("run_id") for _, run, _ in indexed.runs}
+    children: Dict[str, List[str]] = {}
+    top_level: List[_IndexedRun] = []
+    for indexed_run in indexed.runs:
+        run = indexed_run[1]
+        parent_run_id = run.get("parent_run_id")
+        if parent_run_id is not None and parent_run_id in listed_ids and parent_run_id != run.get("run_id"):
+            children.setdefault(parent_run_id, []).append(run["run_id"])
+        elif _run_matches_filters(run, created_after, created_before, statuses):
+            top_level.append(indexed_run)
 
     if after_run_index is not None:
-        candidates = [indexed_run for indexed_run in indexed.runs if indexed_run[0] > after_run_index]
+        candidates = [indexed_run for indexed_run in top_level if indexed_run[0] > after_run_index]
         window = candidates[:limit]
     else:
         if before_run_index is not None:
-            candidates = [indexed_run for indexed_run in indexed.runs if indexed_run[0] < before_run_index]
+            candidates = [indexed_run for indexed_run in top_level if indexed_run[0] < before_run_index]
         else:
-            candidates = indexed.runs
+            candidates = top_level
         window = candidates[-limit:]
 
-    return [indexed.render(indexed_run) for indexed_run in window], len(indexed.runs), len(candidates) > limit
+    selected_ids = {run["run_id"] for _, run, _ in window}
+    pending = list(selected_ids)
+    while pending:
+        for child_id in children.get(pending.pop(), []):
+            if child_id not in selected_ids:
+                selected_ids.add(child_id)
+                pending.append(child_id)
+
+    return SessionRunsPage(
+        runs=[
+            indexed.render(indexed_run) for indexed_run in indexed.runs if indexed_run[1].get("run_id") in selected_ids
+        ],
+        total_count=len(top_level),
+        has_more=len(candidates) > limit,
+        before_run_index=window[0][0] if window else None,
+        after_run_index=window[-1][0] if window else None,
+    )

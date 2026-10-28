@@ -588,7 +588,13 @@ class TestSessionRunsPagination:
         assert resp.status_code == 200
         body = resp.json()
         assert [r["run_index"] for r in body["data"]] == [3, 4]
-        assert body["meta"] == {"limit": 2, "total_count": 5, "has_more": True}
+        assert body["meta"] == {
+            "limit": 2,
+            "total_count": 5,
+            "has_more": True,
+            "before_run_index": 3,
+            "after_run_index": 4,
+        }
 
     def test_before_run_index_pages_back_to_the_start(self, client):
         resp = client.get("/sessions/paged/runs?user_id=user-1&limit=2&before_run_index=3")
@@ -646,7 +652,13 @@ class TestSessionRunsPagination:
 
         body = client.get("/sessions/mixed/runs?user_id=user-1&status=error&limit=2").json()
         assert [r["run_index"] for r in body["data"]] == [2, 4]
-        assert body["meta"] == {"limit": 2, "total_count": 3, "has_more": True}
+        assert body["meta"] == {
+            "limit": 2,
+            "total_count": 3,
+            "has_more": True,
+            "before_run_index": 2,
+            "after_run_index": 4,
+        }
 
     def test_invalid_status_rejected_when_paging(self, client):
         resp = client.get("/sessions/paged/runs?user_id=user-1&status=bogus&limit=2")
@@ -660,6 +672,148 @@ class TestSessionRunsPagination:
     def test_missing_session_returns_404(self, client):
         resp = client.get("/sessions/missing/runs?user_id=user-1&limit=2")
         assert resp.status_code == 404
+
+
+def _seed_team_session(db: InMemoryDb, session_id: str, runs: list) -> None:
+    _seed_session(
+        db,
+        {
+            "session_id": session_id,
+            "team_id": "team",
+            "user_id": "user-1",
+            "session_type": "team",
+            "created_at": 1_700_000_000,
+            "runs": runs,
+        },
+    )
+
+
+def _team_run(run_id: str, created_at: int, **extra) -> dict:
+    return {"run_id": run_id, "team_id": "team", "created_at": created_at, **extra}
+
+
+def _member_run(run_id: str, parent_run_id: str, created_at: int, **extra) -> dict:
+    return {"run_id": run_id, "agent_id": "member", "parent_run_id": parent_run_id, "created_at": created_at, **extra}
+
+
+class TestSessionRunsPaginationGroups:
+    """Pages count top-level runs; member and step runs come along with their parent."""
+
+    def test_members_do_not_consume_the_limit(self):
+        db = InMemoryDb()
+        runs = []
+        for i in range(5):
+            runs += [_member_run(f"m{i}a", f"p{i}", 10 * i), _member_run(f"m{i}b", f"p{i}", 10 * i + 1)]
+            runs.append(_team_run(f"p{i}", 10 * i + 2))
+        _seed_team_session(db, "team-groups", runs)
+        client = _build_client(db)
+
+        body = client.get("/sessions/team-groups/runs?type=team&user_id=user-1&limit=2").json()
+        assert [r["run_id"] for r in body["data"]] == ["m3a", "m3b", "p3", "m4a", "m4b", "p4"]
+        assert body["meta"]["total_count"] == 5
+        assert body["meta"]["has_more"] is True
+
+        older = client.get(
+            f"/sessions/team-groups/runs?type=team&user_id=user-1&limit=2&before_run_index={body['meta']['before_run_index']}"
+        ).json()
+        assert [r["run_id"] for r in older["data"]] == ["m1a", "m1b", "p1", "m2a", "m2b", "p2"]
+
+    def test_meta_cursor_does_not_skip_a_parent_stored_between_a_member_and_its_parent(self):
+        db = InMemoryDb()
+        _seed_team_session(
+            db,
+            "interleaved",
+            [_team_run("A", 1), _member_run("B-member", "B", 2), _team_run("C", 3), _team_run("B", 4)],
+        )
+        client = _build_client(db)
+
+        page = client.get("/sessions/interleaved/runs?type=team&user_id=user-1&limit=1").json()
+        assert [r["run_id"] for r in page["data"]] == ["B-member", "B"]
+        assert page["meta"]["before_run_index"] == 3
+
+        older = client.get(
+            f"/sessions/interleaved/runs?type=team&user_id=user-1&limit=1&before_run_index={page['meta']['before_run_index']}"
+        ).json()
+        assert [r["run_id"] for r in older["data"]] == ["C"]
+
+    def test_member_without_its_parent_in_the_session_is_a_top_level_run(self):
+        db = InMemoryDb()
+        _seed_team_session(db, "orphans", [_team_run("p0", 1), _member_run("orphan", "gone", 2), _team_run("p1", 3)])
+        client = _build_client(db)
+
+        body = client.get("/sessions/orphans/runs?type=team&user_id=user-1&limit=10").json()
+        assert [r["run_id"] for r in body["data"]] == ["p0", "orphan", "p1"]
+        assert body["meta"]["total_count"] == 3
+
+    def test_nested_descendants_come_with_the_top_level_run(self):
+        db = InMemoryDb()
+        _seed_team_session(
+            db,
+            "nested",
+            [
+                _team_run("old", 1),
+                {"run_id": "sub-team", "team_id": "sub", "parent_run_id": "top", "created_at": 2},
+                _member_run("sub-member", "sub-team", 3),
+                _team_run("top", 4),
+            ],
+        )
+        client = _build_client(db)
+
+        body = client.get("/sessions/nested/runs?type=team&user_id=user-1&limit=1").json()
+        assert [r["run_id"] for r in body["data"]] == ["sub-team", "sub-member", "top"]
+
+    def test_filters_select_top_level_runs_and_keep_their_members(self):
+        db = InMemoryDb()
+        _seed_team_session(
+            db,
+            "filtered-groups",
+            [
+                _team_run("p0", 100, status="ERROR"),
+                _member_run("m1", "p1", 150, status="COMPLETED"),
+                _team_run("p1", 300, status="ERROR"),
+                _team_run("p2", 400, status="COMPLETED"),
+            ],
+        )
+        client = _build_client(db)
+
+        body = client.get(
+            "/sessions/filtered-groups/runs?type=team&user_id=user-1&limit=5&status=error&created_after=200"
+        ).json()
+        assert [r["run_id"] for r in body["data"]] == ["m1", "p1"]
+        assert body["meta"]["total_count"] == 1
+
+    def test_workflow_step_runs_come_with_their_workflow_run(self):
+        db = InMemoryDb()
+        _seed_session(
+            db,
+            {
+                "session_id": "wf-groups",
+                "workflow_id": "wf",
+                "user_id": "user-1",
+                "session_type": "workflow",
+                "created_at": 1,
+                "runs": [
+                    {"run_id": "w0", "workflow_id": "wf", "created_at": 1},
+                    {"run_id": "step", "agent_id": "a", "parent_run_id": "w1", "created_at": 2},
+                    {"run_id": "w1", "workflow_id": "wf", "created_at": 3},
+                ],
+            },
+        )
+        client = _build_client(db)
+
+        body = client.get("/sessions/wf-groups/runs?type=workflow&user_id=user-1&limit=1").json()
+        assert [r["run_id"] for r in body["data"]] == ["step", "w1"]
+        assert body["meta"]["total_count"] == 2
+
+    def test_empty_page_has_no_cursors(self):
+        db = InMemoryDb()
+        _seed_agent_session_with_runs(db, "empty-page", count=2)
+        client = _build_client(db)
+
+        body = client.get("/sessions/empty-page/runs?user_id=user-1&limit=2&before_run_index=0").json()
+        assert body["data"] == []
+        assert "before_run_index" not in body["meta"]
+        assert "after_run_index" not in body["meta"]
 
 
 class TestSessionRunPreviewsRunIndex:

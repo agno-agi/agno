@@ -1082,6 +1082,8 @@ class CursorPaginationInfo(BaseModel):
     limit: int = Field(..., description="Maximum number of items in this page", ge=1)
     total_count: int = Field(..., description="Total count of items matching the filters", ge=0)
     has_more: bool = Field(..., description="Whether more items exist beyond this page in the paging direction")
+    before_run_index: Optional[int] = Field(None, description="Pass as before_run_index to get the older page")
+    after_run_index: Optional[int] = Field(None, description="Pass as after_run_index to get the newer page")
 
 
 class CursorPaginatedResponse(BaseModel, Generic[T]):
