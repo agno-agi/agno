@@ -269,7 +269,7 @@ async def _login_codex(agent: Any, api_key: str) -> None:
         raise SandboxError("Codex login failed: " + message[:500]) from None
 
 
-async def _execute(directory: Path, request: Dict[str, Any]) -> Dict[str, Any]:
+async def _execute(directory: Path, request: Dict[str, Any], repository_token: Optional[str] = None) -> Dict[str, Any]:
     from agno.sandbox.repository import RepositoryPreparationError, _aprepare, _read_pin, validate_repository_override
 
     native = directory.parent.parent / "native"
@@ -285,6 +285,7 @@ async def _execute(directory: Path, request: Dict[str, Any]) -> Dict[str, Any]:
                 native,
                 resume=request.get("native_session_id") is not None,
                 override=override,
+                token=repository_token,
             )
         except asyncio.CancelledError:
             # Preparation drains its filesystem work before cancellation propagates. No
@@ -349,6 +350,14 @@ async def _execute_harness(directory: Path, request: Dict[str, Any]) -> Dict[str
 
 
 def _worker(directory: Path) -> None:
+    from agno.sandbox.repository import READ_TOKEN_ENV
+
+    # Only repository preparation reads the checkout token. Taking it out of the environment
+    # before the harness starts keeps it from the SDK, its CLI and every command the model
+    # runs. This process's exec-time environment still shows it, as do the server's, the
+    # supervisor's and PID 1's; only a separate UID hides those. Sandbox.exec commands do
+    # not pass through the worker and still receive it.
+    repository_token = os.environ.pop(READ_TOKEN_ENV, None) or None
     request = json.loads((directory / "request.json").read_bytes())
     root = directory.parent.parent
     try:
@@ -360,7 +369,9 @@ def _worker(directory: Path) -> None:
             )
 
             async def bounded_execute() -> Dict[str, Any]:
-                return await asyncio.wait_for(_execute(directory, request), request.get("execution_timeout", 900))
+                return await asyncio.wait_for(
+                    _execute(directory, request, repository_token), request.get("execution_timeout", 900)
+                )
 
             result = asyncio.run(bounded_execute())
             payload = _encode(result)

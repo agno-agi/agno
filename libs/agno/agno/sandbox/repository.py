@@ -12,6 +12,10 @@ from typing import Any, Dict, Optional
 
 from agno.sandbox.base import SandboxError
 
+# The read-only checkout token in Sandbox.env. The runtime worker hands it to preparation
+# and keeps it out of the harness environment.
+READ_TOKEN_ENV = "GITHUB_READ_TOKEN"
+
 
 @dataclass(frozen=True)
 class Repository:
@@ -116,6 +120,7 @@ def _prepare(
     *,
     resume: bool,
     override: Optional[Dict[str, str]] = None,
+    token: Optional[str] = None,
 ) -> Path:
     repository = validate_repository(repository)
     override = validate_repository_override({"repository": override} if override is not None else None, repository)
@@ -143,7 +148,8 @@ def _prepare(
         # Discard inherited Git overrides, helpers and tracing. Authentication exists only
         # in the child environment, never in argv, a remote URL, or a Git config file.
         env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-        token = env.pop("GITHUB_READ_TOKEN", None)
+        inherited = env.pop(READ_TOKEN_ENV, None)
+        token = inherited if token is None else token
         env.update(GIT_TERMINAL_PROMPT="0", GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
         settings = [("http.followRedirects", "false"), ("credential.helper", ""), ("core.hooksPath", os.devnull)]
         if token:
@@ -210,8 +216,9 @@ async def _aprepare(
     *,
     resume: bool,
     override: Optional[Dict[str, str]] = None,
+    token: Optional[str] = None,
 ) -> Path:
     # Drain filesystem work before cancellation can hand this workspace to a retry.
     from agno.sandbox.checkpoint import _thread
 
-    return await _thread(_prepare, repository, workspace, native, resume=resume, override=override)
+    return await _thread(_prepare, repository, workspace, native, resume=resume, override=override, token=token)

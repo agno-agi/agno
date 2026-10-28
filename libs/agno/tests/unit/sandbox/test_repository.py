@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import subprocess
+import sys
 import tarfile
 import threading
 import time
@@ -343,6 +344,62 @@ def test_worker_preparation_failure_is_retryable_before_model(tmp_path, monkeypa
     result = json.loads((directory / "result.json").read_text())
     assert result["type"] == "execution_error"
     assert result["reason"] == "repository_preparation_failed"
+
+
+def test_worker_gives_the_token_to_preparation_and_not_to_the_harness(tmp_path, monkeypatch):
+    import os
+
+    from agno.sandbox import runtime
+
+    monkeypatch.setenv("AGNO_SANDBOX_TEST_RUNTIME", "1")
+    monkeypatch.setenv("GITHUB_READ_TOKEN", "read-secret")
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    directory = tmp_path / "jobs/first"
+    directory.mkdir(parents=True)
+    request = {
+        "version": 1,
+        "execution_id": "first",
+        "sdk": "fixture",
+        "input": "inspect",
+        "agent_id": "a",
+        "session_id": "s",
+        "run_id": "r",
+        "config": {"repository": SPEC},
+    }
+    (directory / "request.json").write_text(json.dumps(request))
+    seen = {}
+
+    async def prepare(*args, token=None, **kwargs):
+        seen["token"], seen["preparation_env"] = token, os.environ.get("GITHUB_READ_TOKEN")
+
+    async def harness(*args):
+        seen["harness_env"] = os.environ.get("GITHUB_READ_TOKEN")
+        # The SDKs start their CLIs with the inherited environment, as any subprocess does.
+        child = subprocess.run(
+            [sys.executable, "-c", "import os; print(os.environ.get('GITHUB_READ_TOKEN'))"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        seen["child_env"] = child.stdout.strip()
+        return {"type": "execution_finished"}
+
+    monkeypatch.setattr(repository, "_aprepare", prepare)
+    monkeypatch.setattr(repository, "_read_pin", lambda *args: {})
+    monkeypatch.setattr(runtime, "_execute_harness", harness)
+    runtime._worker(directory)
+    assert json.loads((directory / "result.json").read_text())["type"] == "execution_finished"
+    assert seen == {"token": "read-secret", "preparation_env": None, "harness_env": None, "child_env": "None"}
+
+
+def test_prepare_uses_a_token_passed_by_the_worker(tmp_path, local_repository, monkeypatch):
+    _, _, calls, _ = local_repository
+    monkeypatch.delenv("GITHUB_READ_TOKEN", raising=False)
+    encoded = base64.b64encode(b"x-access-token:read-secret").decode()
+    repository._prepare(SPEC, tmp_path / "workspace", tmp_path / "runtime/native", resume=False, token="read-secret")
+    env = calls[0][1]["env"]
+    settings = {env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"] for i in range(int(env["GIT_CONFIG_COUNT"]))}
+    assert settings["http.https://github.com/.extraheader"] == "Authorization: Basic " + encoded
 
 
 def test_runtime_fingerprint_includes_repository(tmp_path, monkeypatch):

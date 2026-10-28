@@ -139,9 +139,12 @@ Public GitHub repositories need no token. For a private repository, set
 read token. It is read only from the sandbox environment; the host environment is not
 forwarded automatically. `GITHUB_TOKEN` is refused once a repository is configured. Git
 receives authentication through its child environment, with redirects and interactive
-prompting disabled, and never stores the token in the checkout or checkpoint. Model/tools
-running inside the sandbox can access its environment; never put a publishing credential
-there.
+prompting disabled, and never stores the token in the checkout or checkpoint. The runtime
+worker removes `GITHUB_READ_TOKEN` from its environment before the harness starts, so the
+SDKs and the commands the model runs do not inherit it. Processes in the sandbox can still
+read it from other processes' `/proc/<pid>/environ`, and `Sandbox.exec` commands receive
+the full sandbox environment. Other variables in the sandbox environment reach the model's
+tools; never put a publishing credential there.
 
 The completed run exposes `{url, branch, commit}` at
 `run.metadata["sandbox"]["repository"]`, alongside its checkpoint and resumed status.
