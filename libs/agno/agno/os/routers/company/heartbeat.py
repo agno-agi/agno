@@ -23,7 +23,7 @@ from agno.os.routers.schedules.schema import ScheduleCreate, ScheduleResponse, S
 from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.scheduler.cron import is_on_demand
 
-# The scheduler poller's stale-claim grace, reused as the margin past a run's timeout.
+# A margin past the Routine's timeout for the executor to record its final status.
 _RUN_SETTLE_GRACE_SECONDS = 300
 
 
@@ -287,7 +287,9 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         if "executor_type" in updates or "executor_id" in updates:
             # Cancel reaches a live run through the Routine's executor, so the executor stays until it ends.
             if await running_runs(row):
-                raise HTTPException(409, f"Cancel the run with POST /company/routines/{routine_id}/cancel first")
+                raise HTTPException(
+                    409, f"Wait for the run to stop, or cancel it with POST /company/routines/{routine_id}/cancel"
+                )
             executor_type = updates.pop("executor_type", row["target_type"])
             executor_id = updates.pop("executor_id", row["target_id"])
             updates["endpoint"] = await call(
@@ -386,7 +388,9 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         row = await routine(routine_id, request)
         await product(row["payload"]["metadata"]["product_id"], include_deleted=True)
         if await running_runs(row):
-            raise HTTPException(409, f"Cancel the run with POST /company/routines/{routine_id}/cancel first")
+            raise HTTPException(
+                409, f"Wait for the run to stop, or cancel it with POST /company/routines/{routine_id}/cancel"
+            )
         await call(handlers["disable_schedule"], routine_id, request)
         metadata = {**row["payload"]["metadata"], "deleted_at": int(time.time())}
         await call(schedule_db.update_schedule, routine_id, payload={**row["payload"], "metadata": metadata})
@@ -400,7 +404,9 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         product_id = row["payload"]["metadata"]["product_id"]
         await product(product_id, include_deleted=True)
         if await running_runs(row):
-            raise HTTPException(409, f"Cancel the run with POST /company/routines/{routine_id}/cancel first")
+            raise HTTPException(
+                409, f"Wait for the run to stop, or cancel it with POST /company/routines/{routine_id}/cancel"
+            )
         # Deleting the schedule also deletes its run history.
         await call(handlers["delete_schedule"], routine_id, request)
         await call(manager._unlink_routine, product_id, routine_id)
