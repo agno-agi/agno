@@ -629,6 +629,14 @@ class AsyncSqliteDb(AsyncBaseDb):
             )
             return self.approvals_table
 
+        elif table_type == "compactions":
+            self.compactions_table = await self._get_or_create_table(
+                table_name=self.compactions_table_name,
+                table_type="compactions",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.compactions_table
+
         elif table_type == "auth_tokens":
             self.auth_tokens_table = await self._get_or_create_table(
                 table_name=self.auth_tokens_table_name,
@@ -1215,6 +1223,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 return False
             runs_table = await self._get_table(table_type="runs")
             transcripts_table = await self._get_table(table_type="transcripts")
+            compactions_table = await self._get_table(table_type="compactions")
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
@@ -1233,6 +1242,9 @@ class AsyncSqliteDb(AsyncBaseDb):
                     await sess.execute(
                         transcripts_table.delete().where(transcripts_table.c.agno_session_id == session_id)
                     )
+                # Compactions retain the folded transcript and must not survive session deletion.
+                if compactions_table is not None:
+                    await sess.execute(compactions_table.delete().where(compactions_table.c.session_id == session_id))
 
                 log_debug(f"Successfully deleted session with session_id: {session_id}")
 
@@ -1263,6 +1275,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 return
             runs_table = await self._get_table(table_type="runs")
             transcripts_table = await self._get_table(table_type="transcripts")
+            compactions_table = await self._get_table(table_type="compactions")
 
             async with self.async_session_factory() as sess, sess.begin():
                 # The ids a user_id-scoped delete is allowed to touch. The
@@ -1292,6 +1305,11 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if transcripts_table is not None:
                     await sess.execute(
                         transcripts_table.delete().where(transcripts_table.c.agno_session_id.in_(cascade_ids))
+                    )
+                # Remove archived transcripts only for sessions this delete is allowed to touch.
+                if compactions_table is not None:
+                    await sess.execute(
+                        compactions_table.delete().where(compactions_table.c.session_id.in_(cascade_ids))
                     )
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")  # type: ignore
