@@ -63,10 +63,11 @@ class PubmedTools(Toolkit):
             if abstract_sections:
                 for section in abstract_sections:
                     label = section.get("Label", "")
+                    section_text = "".join(section.itertext())
                     if label:
-                        abstract_text += f"{label}: {section.text}\n\n"
+                        abstract_text += f"{label}: {section_text}\n\n"
                     else:
-                        abstract_text += f"{section.text}\n\n"
+                        abstract_text += f"{section_text}\n\n"
                 abstract_text = abstract_text.strip()
             else:
                 abstract_text = "No abstract available"
@@ -124,7 +125,7 @@ class PubmedTools(Toolkit):
             articles.append(
                 {
                     "Published": pub_date.text if pub_date is not None else "No date available",
-                    "Title": title.text if title is not None else "No title available",
+                    "Title": "".join(title.itertext()) if title is not None else "No title available",
                     "Summary": abstract_text,
                     "First_Author": first_author,
                     "DOI": doi,

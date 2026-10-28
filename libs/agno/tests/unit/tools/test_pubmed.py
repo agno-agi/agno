@@ -180,3 +180,46 @@ def test_search_pubmed_formats_article_results(mock_httpx_get, results_expanded,
     result = PubmedTools(results_expanded=results_expanded).search_pubmed("test query")
 
     assert json.loads(result) == [expected_result]
+
+
+@pytest.mark.parametrize("results_expanded", [False, True])
+@pytest.mark.parametrize(
+    ("title_xml", "abstract_xml", "expected_title", "expected_summary"),
+    [
+        (
+            "Effects of <i>BRCA1</i> variants",
+            '<AbstractText Label="RESULTS">We found <b>improved</b> survival.</AbstractText>'
+            "<AbstractText><i>BRCA1</i> remained significant.</AbstractText>",
+            "Effects of BRCA1 variants",
+            "RESULTS: We found improved survival.\n\nBRCA1 remained significant.",
+        ),
+        (
+            "<i>BRCA1</i> and H<sub>2</sub>O",
+            "<AbstractText>Preserve <b>nested <i>emphasis</i> text</b> and tails.</AbstractText>",
+            "BRCA1 and H2O",
+            "Preserve nested emphasis text and tails.",
+        ),
+        (
+            "Plain title",
+            '<AbstractText Label="METHODS">Plain methods.</AbstractText><AbstractText>Plain conclusion.</AbstractText>',
+            "Plain title",
+            "METHODS: Plain methods.\n\nPlain conclusion.",
+        ),
+    ],
+    ids=["formatted-sections", "leading-and-nested-tags", "plain-text"],
+)
+def test_search_pubmed_preserves_inline_text(
+    mock_httpx_get, results_expanded, title_xml, abstract_xml, expected_title, expected_summary
+):
+    details_xml = f"""<PubmedArticleSet><PubmedArticle><MedlineCitation><Article>
+        <ArticleTitle>{title_xml}</ArticleTitle>
+        <Abstract>{abstract_xml}</Abstract>
+    </Article></MedlineCitation></PubmedArticle></PubmedArticleSet>"""
+    mock_httpx_get.side_effect = [MagicMock(content=ESEARCH_XML), MagicMock(content=details_xml.encode())]
+
+    results = json.loads(PubmedTools(results_expanded=results_expanded).search_pubmed("test query"))
+
+    assert len(results) == 1
+    assert f"Title: {expected_title}\n" in results[0]
+    summary_prefix = "Summary:\n" if results_expanded else "Summary: "
+    assert results[0].endswith(summary_prefix + expected_summary)
