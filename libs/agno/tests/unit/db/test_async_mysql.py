@@ -1,9 +1,13 @@
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from sqlalchemy import Column, Table
+from sqlalchemy.dialects import mysql
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agno.db.mysql.async_mysql import AsyncMySQLDb
+from agno.db.mysql.schemas import get_table_schema_definition
+from agno.db.schemas.evals import EvalRunRecord, EvalType
 
 
 @pytest.fixture
@@ -59,3 +63,41 @@ async def test_delete_runs_raises_on_a_backend_failure(async_mysql_db):
 
     with pytest.raises(OSError, match="server closed"):
         await async_mysql_db.delete_runs(["run-1", "run-2"])
+
+
+@pytest.mark.asyncio
+async def test_create_eval_run_creates_missing_table_and_inserts_records(async_mysql_db, monkeypatch):
+    """The first evaluation must be inserted without explicitly creating tables first."""
+    table = Table(
+        async_mysql_db.eval_table_name,
+        async_mysql_db.metadata,
+        *(Column(name, config["type"]()) for name, config in get_table_schema_definition("evals").items()),
+    )
+    create_table = AsyncMock(return_value=table)
+    monkeypatch.setattr(async_mysql_db, "_create_table", create_table)
+    monkeypatch.setattr("agno.db.mysql.async_mysql.ais_table_available", AsyncMock(return_value=False))
+
+    session = AsyncMock()
+    session.__aenter__.return_value = session
+    session.begin = Mock(return_value=session)
+    monkeypatch.setattr(async_mysql_db, "async_session_factory", Mock(return_value=session))
+
+    # Exercise table resolution on the first write and its cached result on the next.
+    for run_id in ("first-eval", "second-eval"):
+        eval_run = EvalRunRecord(
+            run_id=run_id,
+            eval_type=EvalType.ACCURACY,
+            name="First evaluations",
+            eval_data={"score": 0.9},
+            eval_input={"prompt": "test prompt"},
+        )
+        assert await async_mysql_db.create_eval_run(eval_run) == eval_run
+        statement = session.execute.await_args.args[0]
+        assert statement.table is table
+        parameters = statement.compile(dialect=mysql.dialect()).params
+        assert parameters.items() >= eval_run.model_dump().items()
+        assert isinstance(parameters["created_at"], int)
+        assert isinstance(parameters["updated_at"], int)
+
+    create_table.assert_awaited_once_with(table_name=async_mysql_db.eval_table_name, table_type="evals")
+    assert session.execute.await_count == 2
