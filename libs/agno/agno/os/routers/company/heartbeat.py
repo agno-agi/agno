@@ -265,6 +265,9 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         await call(db.add_product_routine, body.product_id, row["id"])
         if body.enabled:
             row = await call(handlers["enable_schedule"], row["id"], request)
+        else:
+            # Finish creation without activation so duplicate requests cannot recover this as pending.
+            row = await call(handlers["disable_schedule"], row["id"], request)
         return await routine_response(row)
 
     @router.patch("/routines/{routine_id}", response_model=RoutineResponse)

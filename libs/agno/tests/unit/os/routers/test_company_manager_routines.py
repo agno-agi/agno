@@ -914,3 +914,36 @@ async def test_disabled_routine_visible_and_resume_survives_restart(tmp_path, cr
         saved = (await s.client.get(path, headers=s.headers)).json()
         assert saved["enabled"] is True and saved["id"] == rows[0]["id"]
         assert (await s.client.get("/company/routines", headers=s.headers)).json()["meta"]["total_count"] == 1
+
+
+@pytest.mark.parametrize("async_db", [False, True])
+@pytest.mark.parametrize("on_demand", [False, True])
+async def test_completed_disabled_routine_cannot_be_recovered_as_pending(tmp_path, async_db, on_demand):
+    db = (AsyncSqliteDb if async_db else SqliteDb)(db_file=str(tmp_path / "disabled-creation.db"))
+    os = make_os(db)
+    routine = declaration(enabled=False)
+    if on_demand:
+        routine.cron_expr = None
+    try:
+        async with AsyncClient(transport=ASGITransport(app=os.get_app()), base_url="http://test") as client:
+            product = await client.post("/company/products", json={"name": "Docs"})
+            assert product.status_code == 201, product.text
+            body = {"product_id": product.json()["id"], **routine.model_dump()}
+            response = await client.post("/company/routines", json=body)
+            assert response.status_code == 201, response.text
+            row = response.json()
+            assert row["enabled"] is False
+            assert "_agno_pending_creation" not in row["payload"]
+            for duplicate in (body, {**body, "enabled": True}, {k: v for k, v in body.items() if k != "enabled"}):
+                response = await client.post("/company/routines", json=duplicate)
+                assert response.status_code == 409, response.text
+                saved = await _call(db, "get_schedule", row["id"])
+                assert saved["enabled"] is False
+                assert "_agno_pending_creation" not in saved["payload"]
+            rows = (await client.get("/company/routines")).json()["data"]
+            assert [item["id"] for item in rows] == [row["id"]]
+            response = await client.post("/company/routines/" + row["id"] + "/resume")
+            assert response.status_code == 200, response.text
+            assert response.json()["enabled"] is True
+    finally:
+        await _call(db, "close")
