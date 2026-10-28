@@ -17,6 +17,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
+from agno.workflow._media import _aggregate_media
 from agno.workflow.step import Step, UnresolvableCallableError
 from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput, StepRequirement, StepType
 
@@ -310,6 +311,7 @@ class Steps:
                             step_type=StepType.STEPS,
                             content=f"Steps {self.name} paused at inner step",
                             steps=all_results,
+                            **_aggregate_media(all_results),
                             is_paused=True,
                         )
 
@@ -330,6 +332,7 @@ class Steps:
                             step_type=StepType.STEPS,
                             content=f"Steps {self.name} paused at inner step",
                             steps=all_results,
+                            **_aggregate_media(all_results),
                             is_paused=True,
                         )
 
@@ -356,6 +359,7 @@ class Steps:
                 success=all(result.success for result in all_results) if all_results else True,
                 stop=any(result.stop for result in all_results) if all_results else False,
                 steps=all_results,
+                **_aggregate_media(all_results),
             )
 
         except RunCancelledException:
@@ -476,6 +480,7 @@ class Steps:
                         step_type=StepType.STEPS,
                         content=f"Steps {self.name} paused at inner step",
                         steps=all_results,
+                        **_aggregate_media(all_results),
                         is_paused=True,
                     )
                     return
@@ -530,6 +535,7 @@ class Steps:
                 success=all(result.success for result in all_results) if all_results else True,
                 stop=any(result.stop for result in all_results) if all_results else False,
                 steps=all_results,
+                **_aggregate_media(all_results),
             )
 
         except RunCancelledException:
@@ -616,6 +622,7 @@ class Steps:
                             step_type=StepType.STEPS,
                             content=f"Steps {self.name} paused at inner step",
                             steps=all_results,
+                            **_aggregate_media(all_results),
                             is_paused=True,
                         )
 
@@ -636,6 +643,7 @@ class Steps:
                             step_type=StepType.STEPS,
                             content=f"Steps {self.name} paused at inner step",
                             steps=all_results,
+                            **_aggregate_media(all_results),
                             is_paused=True,
                         )
 
@@ -661,6 +669,7 @@ class Steps:
                 success=all(result.success for result in all_results) if all_results else True,
                 stop=any(result.stop for result in all_results) if all_results else False,
                 steps=all_results,
+                **_aggregate_media(all_results),
             )
 
         except RunCancelledException:
@@ -781,6 +790,7 @@ class Steps:
                         step_type=StepType.STEPS,
                         content=f"Steps {self.name} paused at inner step",
                         steps=all_results,
+                        **_aggregate_media(all_results),
                         is_paused=True,
                     )
                     return
@@ -834,6 +844,7 @@ class Steps:
                 success=all(result.success for result in all_results) if all_results else True,
                 stop=any(result.stop for result in all_results) if all_results else False,
                 steps=all_results,
+                **_aggregate_media(all_results),
             )
 
         except RunCancelledException:

@@ -19,6 +19,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_error, log_warning, logger
+from agno.workflow._media import _aggregate_media
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_loop_end_condition, is_cel_expression
 from agno.workflow.step import Step, UnresolvableCallableError
 from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput, StepRequirement, StepType
@@ -498,6 +499,7 @@ class Loop:
                         step_type=StepType.LOOP,
                         content=f"Loop {self.name} paused at inner step",
                         steps=flattened,
+                        **_aggregate_media(flattened),
                         is_paused=True,
                     )
 
@@ -557,6 +559,7 @@ class Loop:
                         content=f"Loop {self.name} completed iteration {iteration}/{self.max_iterations}",
                         success=True,
                         steps=flattened_so_far,
+                        **_aggregate_media(flattened_so_far),
                         requires_iteration_review_pause=True,
                     )
 
@@ -579,6 +582,7 @@ class Loop:
             success=all(result.success for result in flattened_results) if flattened_results else True,
             stop=any(result.stop for result in flattened_results) if flattened_results else False,
             steps=flattened_results,
+            **_aggregate_media(flattened_results),
         )
 
     def execute_stream(
@@ -704,6 +708,7 @@ class Loop:
                         step_type=StepType.LOOP,
                         content=f"Loop {self.name} paused at inner step",
                         steps=flattened,
+                        **_aggregate_media(flattened),
                         is_paused=True,
                     )
                     return
@@ -784,6 +789,7 @@ class Loop:
                         content=f"Loop {self.name} completed iteration {iteration}/{self.max_iterations}",
                         success=True,
                         steps=flattened_so_far,
+                        **_aggregate_media(flattened_so_far),
                         requires_iteration_review_pause=True,
                     )
                     yield review_output
@@ -823,6 +829,7 @@ class Loop:
             success=all(result.success for result in flattened_results) if flattened_results else True,
             stop=any(result.stop for result in flattened_results) if flattened_results else False,
             steps=flattened_results,
+            **_aggregate_media(flattened_results),
         )
 
     async def aexecute(
@@ -896,6 +903,7 @@ class Loop:
                         step_type=StepType.LOOP,
                         content=f"Loop {self.name} paused at inner step",
                         steps=flattened,
+                        **_aggregate_media(flattened),
                         is_paused=True,
                     )
 
@@ -954,6 +962,7 @@ class Loop:
                         content=f"Loop {self.name} completed iteration {iteration}/{self.max_iterations}",
                         success=True,
                         steps=flattened_so_far,
+                        **_aggregate_media(flattened_so_far),
                         requires_iteration_review_pause=True,
                     )
 
@@ -976,6 +985,7 @@ class Loop:
             success=all(result.success for result in flattened_results) if flattened_results else True,
             stop=any(result.stop for result in flattened_results) if flattened_results else False,
             steps=flattened_results,
+            **_aggregate_media(flattened_results),
         )
 
     async def aexecute_stream(
@@ -1101,6 +1111,7 @@ class Loop:
                         step_type=StepType.LOOP,
                         content=f"Loop {self.name} paused at inner step",
                         steps=flattened,
+                        **_aggregate_media(flattened),
                         is_paused=True,
                     )
                     return
@@ -1181,6 +1192,7 @@ class Loop:
                         content=f"Loop {self.name} completed iteration {iteration}/{self.max_iterations}",
                         success=True,
                         steps=flattened_so_far,
+                        **_aggregate_media(flattened_so_far),
                         requires_iteration_review_pause=True,
                     )
                     yield review_output
@@ -1220,4 +1232,5 @@ class Loop:
             success=all(result.success for result in flattened_results) if flattened_results else True,
             stop=any(result.stop for result in flattened_results) if flattened_results else False,
             steps=flattened_results,
+            **_aggregate_media(flattened_results),
         )

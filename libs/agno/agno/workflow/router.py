@@ -18,6 +18,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_error, log_warning, logger
+from agno.workflow._media import _aggregate_media
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_router_selector, is_cel_expression
 from agno.workflow.step import Step, UnresolvableCallableError
 from agno.workflow.types import (
@@ -693,6 +694,7 @@ class Router:
                         step_type=StepType.ROUTER,
                         content=f"Router {self.name} paused at inner step",
                         steps=all_results,
+                        **_aggregate_media(all_results),
                         is_paused=True,
                     )
 
@@ -704,6 +706,7 @@ class Router:
                         step_type=StepType.ROUTER,
                         content=f"Router {self.name} paused at inner step",
                         steps=all_results,
+                        **_aggregate_media(all_results),
                         is_paused=True,
                     )
 
@@ -758,6 +761,7 @@ class Router:
             success=all(result.success for result in all_results) if all_results else True,
             stop=any(result.stop for result in all_results) if all_results else False,
             steps=all_results,
+            **_aggregate_media(all_results),
         )
 
     def execute_stream(
@@ -877,6 +881,7 @@ class Router:
                         step_type=StepType.ROUTER,
                         content=f"Router {self.name} paused at inner step",
                         steps=all_results,
+                        **_aggregate_media(all_results),
                         is_paused=True,
                     )
                     return
@@ -948,6 +953,7 @@ class Router:
             success=all(result.success for result in all_results) if all_results else True,
             stop=any(result.stop for result in all_results) if all_results else False,
             steps=all_results,
+            **_aggregate_media(all_results),
         )
 
     async def aexecute(
@@ -1027,6 +1033,7 @@ class Router:
                         step_type=StepType.ROUTER,
                         content=f"Router {self.name} paused at inner step",
                         steps=all_results,
+                        **_aggregate_media(all_results),
                         is_paused=True,
                     )
 
@@ -1038,6 +1045,7 @@ class Router:
                         step_type=StepType.ROUTER,
                         content=f"Router {self.name} paused at inner step",
                         steps=all_results,
+                        **_aggregate_media(all_results),
                         is_paused=True,
                     )
 
@@ -1095,6 +1103,7 @@ class Router:
             success=all(result.success for result in all_results) if all_results else True,
             stop=any(result.stop for result in all_results) if all_results else False,
             steps=all_results,
+            **_aggregate_media(all_results),
         )
 
     async def aexecute_stream(
@@ -1218,6 +1227,7 @@ class Router:
                         step_type=StepType.ROUTER,
                         content=f"Router {self.name} paused at inner step",
                         steps=all_results,
+                        **_aggregate_media(all_results),
                         is_paused=True,
                     )
                     return
@@ -1290,4 +1300,5 @@ class Router:
             error=None,
             stop=any(result.stop for result in all_results) if all_results else False,
             steps=all_results,
+            **_aggregate_media(all_results),
         )

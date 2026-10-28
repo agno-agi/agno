@@ -18,6 +18,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_error, log_warning, logger
+from agno.workflow._media import _aggregate_media
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_condition_evaluator, is_cel_expression
 from agno.workflow.step import Step, UnresolvableCallableError
 from agno.workflow.types import (
@@ -602,6 +603,7 @@ class Condition:
                             step_type=StepType.CONDITION,
                             content=f"Condition {self.name} paused at inner step",
                             steps=all_results,
+                            **_aggregate_media(all_results),
                             is_paused=True,
                         )
 
@@ -655,6 +657,7 @@ class Condition:
             error=None,
             stop=any(result.stop for result in all_results) if all_results else False,
             steps=all_results,
+            **_aggregate_media(all_results),
         )
 
     def execute_stream(
@@ -848,6 +851,7 @@ class Condition:
                         step_type=StepType.CONDITION,
                         content=f"Condition {self.name} paused at inner step",
                         steps=all_results,
+                        **_aggregate_media(all_results),
                         is_paused=True,
                     )
                     return
@@ -925,6 +929,7 @@ class Condition:
             success=all(result.success for result in all_results) if all_results else True,
             stop=any(result.stop for result in all_results) if all_results else False,
             steps=all_results,
+            **_aggregate_media(all_results),
         )
 
     async def aexecute(
@@ -1055,6 +1060,7 @@ class Condition:
                             step_type=StepType.CONDITION,
                             content=f"Condition {self.name} paused at inner step",
                             steps=all_results,
+                            **_aggregate_media(all_results),
                             is_paused=True,
                         )
 
@@ -1108,6 +1114,7 @@ class Condition:
             error=None,
             stop=any(result.stop for result in all_results) if all_results else False,
             steps=all_results,
+            **_aggregate_media(all_results),
         )
 
     async def aexecute_stream(
@@ -1302,6 +1309,7 @@ class Condition:
                         step_type=StepType.CONDITION,
                         content=f"Condition {self.name} paused at inner step",
                         steps=all_results,
+                        **_aggregate_media(all_results),
                         is_paused=True,
                     )
                     return
@@ -1380,4 +1388,5 @@ class Condition:
             success=all(result.success for result in all_results) if all_results else True,
             stop=any(result.stop for result in all_results) if all_results else False,
             steps=all_results,
+            **_aggregate_media(all_results),
         )

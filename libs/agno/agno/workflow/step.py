@@ -77,6 +77,7 @@ from agno.session.workflow import WorkflowSession
 from agno.team import Team
 from agno.utils.log import log_debug, log_warning, logger, use_agent_logger, use_team_logger, use_workflow_logger
 from agno.utils.merge_dict import merge_dictionaries
+from agno.workflow._media import _aggregate_media
 from agno.workflow.types import (
     ErrorRequirement,
     ExecutorType,
@@ -3035,6 +3036,7 @@ class Step:
             success=nested_run_output.status != RunStatus.error,
             error=nested_run_output.error if hasattr(nested_run_output, "error") else None,
             steps=nested_steps if nested_steps else None,  # Include nested workflow's step results
+            **_aggregate_media([nested_run_output]),
         )
 
     def _execute_nested_workflow_stream(
@@ -3192,6 +3194,7 @@ class Step:
             if nested_run_output is not None and hasattr(nested_run_output, "error")
             else None,
             steps=nested_steps if nested_steps else None,
+            **_aggregate_media([nested_run_output] if nested_run_output is not None else (nested_steps or [])),
         )
 
     async def _aexecute_nested_workflow(
@@ -3312,6 +3315,7 @@ class Step:
             success=nested_run_output.status != RunStatus.error,
             error=nested_run_output.error if hasattr(nested_run_output, "error") else None,
             steps=nested_steps if nested_steps else None,  # Include nested workflow's step results
+            **_aggregate_media([nested_run_output]),
         )
 
     async def _aexecute_nested_workflow_stream(
@@ -3470,6 +3474,7 @@ class Step:
             if nested_run_output is not None and hasattr(nested_run_output, "error")
             else None,
             steps=nested_steps if nested_steps else None,
+            **_aggregate_media([nested_run_output] if nested_run_output is not None else (nested_steps or [])),
         )
 
     def _resolve_media_storage(
