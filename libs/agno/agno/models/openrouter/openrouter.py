@@ -12,6 +12,75 @@ from agno.models.openai.like import OpenAILike
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 
+# Fields that carry reasoning text. Streamed fragments split a single reasoning
+# block across many chunks (text in pieces, signature in a final text-less
+# fragment); these text fields must be concatenated when merging by index.
+_REASONING_TEXT_FIELDS = ("text", "data")
+
+
+def _merge_reasoning_details(reasoning_details: Optional[List[Any]]) -> List[Any]:
+    """Reconstruct complete reasoning detail blocks from streamed fragments.
+
+    OpenRouter streams one reasoning block across multiple chunks sharing the
+    same ``index`` — text arrives in pieces and the signature (Anthropic) or
+    encrypted payload (Gemini) can arrive in a final text-less fragment. The
+    streaming accumulator appends each fragment to a list, so the stored
+    ``reasoning_details`` would otherwise be separate partial fragments. Replaying
+    those verbatim corrupts Anthropic's signed thinking blocks and fails the next
+    request with ``Invalid signature in thinking block`` (agno-agi/agno#8794).
+
+    A shared ``index`` alone is not proof of a shared block: fragments merge only
+    while the block identity holds. An ``id`` missing from a chunk does not break
+    the run (OpenRouter often carries it on just the first or final fragment),
+    but a fragment whose ``id`` disagrees with the one already established for
+    that index starts a new block — cross-merging would concatenate the second
+    block's text/data onto the first and drop the first id. Fragments without an
+    ``index`` (and non-dict entries) pass through in place, so the original list
+    order is preserved. Other provider-data lists (e.g. ``server_tool_blocks``)
+    are never touched.
+    """
+    if not reasoning_details:
+        return []
+
+    blocks: Dict[Any, Any] = {}  # block key -> merged dict (or passthrough entry)
+    first_pos: Dict[Any, int] = {}  # block key -> position of its first fragment
+    open_key: Dict[Any, Any] = {}  # index -> key of the block currently receiving fragments
+    established_id: Dict[Any, Any] = {}  # index -> last non-None id merged into the open block
+
+    for pos, fragment in enumerate(reasoning_details):
+        if not isinstance(fragment, dict) or "index" not in fragment:
+            raw_key = ("raw", pos)
+            blocks[raw_key] = fragment
+            first_pos[raw_key] = pos
+            continue
+
+        idx = fragment["index"]
+        fid = fragment.get("id")
+        key = open_key.get(idx)
+        if key is not None:
+            prior_id = established_id.get(idx)
+            if fid is not None and prior_id is not None and fid != prior_id:
+                key = None  # a different block is reusing this index
+
+        if key is None:
+            key = ("block", idx, pos)
+            blocks[key] = {}
+            first_pos[key] = pos
+            open_key[idx] = key
+        if fid is not None:
+            established_id[idx] = fid
+
+        target = blocks[key]
+        for field, value in fragment.items():
+            if value is None:
+                continue
+            if field in _REASONING_TEXT_FIELDS and isinstance(value, str):
+                target[field] = target.get(field, "") + value
+            else:
+                target[field] = value
+
+    return [blocks[key] for key in sorted(first_pos, key=lambda k: first_pos[k])]
+
 
 @dataclass
 class OpenRouter(OpenAILike):
@@ -96,7 +165,10 @@ class OpenRouter(OpenAILike):
 
         if message.role == "assistant" and message.provider_data:
             if message.provider_data.get("reasoning_details"):
-                message_dict["reasoning_details"] = message.provider_data["reasoning_details"]
+                # Reconstruct complete reasoning detail blocks per index before
+                # replay. Streaming accumulates fragments into a list; replaying
+                # them verbatim corrupts Anthropic's signed thinking blocks (#8794).
+                message_dict["reasoning_details"] = _merge_reasoning_details(message.provider_data["reasoning_details"])
 
         return message_dict
 
