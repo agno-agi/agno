@@ -1,7 +1,9 @@
 """Task HTTP lifecycle and persistence contracts, following Products."""
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 
+import jwt
 import pytest
 from fastapi.testclient import TestClient
 
@@ -9,6 +11,7 @@ from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.os import AgentOS, CompanyConfig
+from agno.os.config import AuthorizationConfig
 from agno.team import Team
 from agno.workflow import Workflow
 
@@ -299,3 +302,51 @@ def test_task_project_must_belong_to_same_product(client):
 def test_invalid_acceptance(client, body):
     path = "/company/tasks/" + create(client)["id"]
     assert client.post(path + "/transitions", json=body).status_code == 422
+
+
+def test_project_approval_keeps_ready_validation_and_permissions(client):
+    product = client.post("/company/products", json={"name": "SDK"}).json()
+    project = client.post("/company/projects", json={"product_id": product["id"], "name": "Release"}).json()
+    body = dict(product_id=product["id"], project_id=project["id"], title="Ship", status="ready")
+    missing_executor = client.post("/company/tasks", json=body)
+    assert missing_executor.status_code == 422
+    assert "executor" in missing_executor.text
+    body.update(executor_type="agent", executor_id="writer")
+    secret = "company-project-approval-test-signing-key"
+    app = AgentOS(
+        id="approval-tests",
+        agents=[Agent(id="writer")],
+        db=client.app.state.task_test_db,
+        company=CompanyConfig(),
+        telemetry=False,
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[secret], algorithm="HS256", user_isolation=False),
+    ).get_app()
+    with TestClient(app) as protected:
+        for scopes, expected in [(["tasks:write"], 403), (["tasks:write", "agents:writer:run"], 422)]:
+            token = jwt.encode(
+                dict(
+                    sub="reviewer",
+                    aud="approval-tests",
+                    scopes=scopes,
+                    exp=datetime.now(timezone.utc) + timedelta(hours=1),
+                    iat=datetime.now(timezone.utc),
+                ),
+                secret,
+                algorithm="HS256",
+            )
+            headers = {"Authorization": "Bearer " + token}
+            response = protected.post("/company/tasks", json=body, headers=headers)
+            assert response.status_code == expected, response.text
+            if expected == 422:
+                assert response.json()["detail"] == (
+                    "Cannot create Tasks in a proposed Project; approve the Project first"
+                )
+            assert client.get("/company/tasks").json()["meta"]["total_count"] == 0
+        approved = client.post(
+            "/company/projects/" + project["id"] + "/transitions", json={"target": "active", "reason": "Approved"}
+        )
+        assert approved.status_code == 200, approved.text
+        created = protected.post("/company/tasks", json=body, headers=headers)
+        assert created.status_code == 201, created.text
+        assert created.json()["status"] == "ready"

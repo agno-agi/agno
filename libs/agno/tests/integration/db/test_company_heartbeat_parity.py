@@ -636,6 +636,44 @@ async def test_routine_service_cannot_create_a_plain_task(heartbeat):
 
 
 @pytest.mark.asyncio
+async def test_intake_requires_project_approval_and_deduplicates_retry(heartbeat, tmp_path):
+    _, _, call = heartbeat
+    path = tmp_path / "release.md"
+    path.write_text("Document the released API")
+    product = await call("create", name="API")
+    project = await call("create_project", product_id=product["id"], name="Guide")
+    project = await call("get_project", project["id"])
+    source = await call("create_source", product_id=product["id"], type="markdown", reference=str(path))
+    observed = (await call("read_source", source["id"], "observation"))[0]
+    proposal = dict(
+        title="Document API",
+        brief="Write guide",
+        proposal_key="guide",
+        evidence_links=[observed["link"]],
+        evidence_hashes={observed["link"]: observed["content_hash"]},
+    )
+    for run_id in ("pending-first", "pending-retry"):
+        with pytest.raises(ValueError, match="Cannot create Tasks in a proposed Project; approve the Project first"):
+            await call("intake", source_id=source["id"], run_id=run_id, proposal=proposal, project_id=project["id"])
+        assert (await call("list_tasks", product_id=product["id"]))[1] == 0
+        assert await call("get_project", project["id"]) == project
+
+    await call("transition_project", project_id=project["id"], target="active", reason="Human approved")
+    task = await call(
+        "intake", source_id=source["id"], run_id="approved-run", proposal=proposal, project_id=project["id"]
+    )
+    assert task["status"] == "backlog" and task["project_id"] == project["id"]
+    assert task["evidence"][0]["run_id"] == "approved-run"
+    assert task["evidence"][0]["content_hash"] == observed["content_hash"]
+    for run_id in ("approved-retry", "approved-repeat"):
+        assert (
+            await call("intake", source_id=source["id"], run_id=run_id, proposal=proposal, project_id=project["id"])
+            == task
+        )
+    assert (await call("list_tasks", product_id=product["id"]))[1] == 1
+
+
+@pytest.mark.asyncio
 async def test_intake_preserves_proposed_executor_and_project(heartbeat, tmp_path):
     _, _, call = heartbeat
     path = tmp_path / "release.md"
