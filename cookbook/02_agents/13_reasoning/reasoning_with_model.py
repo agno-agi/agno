@@ -14,7 +14,7 @@ from agno.models.openai import OpenAIResponses
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.6"),
     # Use a native reasoning model for the thinking step
-    reasoning_model=OpenAIResponses(id="o3-mini"),
+    reasoning_model=OpenAIResponses(id="gpt-5.6-sol"),
     markdown=True,
 )
 

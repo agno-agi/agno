@@ -29,6 +29,7 @@ from agno.exceptions import ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.registry._reserved import RESERVED_MANAGER_IDS, _reserved_manager_id_message
 from agno.registry.registry import Registry, _memory_manager_resource_name
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
@@ -44,7 +45,6 @@ from agno.utils.db_fallback import require_db_fallback_matches
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.string import generate_id_from_name
-
 
 # MemoryManager.__init__ (agno/memory/manager.py) auto-generates
 # ``memory_manager_<8 hex>`` when no id is passed. Such an id is minted fresh
@@ -1657,6 +1657,9 @@ def load(
     Returns:
         The agent loaded from the database or None if not found.
     """
+
+    if id in RESERVED_MANAGER_IDS:
+        raise ComponentRehydrationError(_reserved_manager_id_message(id))
 
     if published_only and version is None and label is None:
         # Dispatch semantics on demand: resolve strictly through the live

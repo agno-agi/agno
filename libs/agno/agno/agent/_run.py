@@ -59,6 +59,10 @@ from agno.run.approval import (
     acreate_approval_from_pause,
     create_approval_from_pause,
 )
+
+# Strong references to background tasks so they aren't garbage-collected mid-execution.
+# See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+from agno.run.background import _background_tasks
 from agno.run.cancel import (
     acancel_run as acancel_run_global,
 )
@@ -122,10 +126,6 @@ from agno.utils.log import (
     log_warning,
 )
 from agno.utils.response import get_paused_content
-
-# Strong references to background tasks so they aren't garbage-collected mid-execution.
-# See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
-_background_tasks: set[asyncio.Task[None]] = set()
 
 # Cancel raises immediately on every event. Only terminal events bypass so the
 # run's own cancel handler can yield them to the stream.
@@ -1996,81 +1996,29 @@ async def _arun_background(
 
     log_info(f"Background run {run_response.run_id} created with PENDING status")
 
-    # 4. Spawn the background task. Execution waits for a concurrency slot
-    # (background_run_slot); the run stays PENDING while waiting in line and
-    # can be cancelled without consuming a slot.
-    async def _background_task() -> None:
-        try:
-            async with background_run_slot(run_id=run_response.run_id):
-                # Transition to RUNNING via the atomic helper (row-locked
-                # patch when the DB supports it, fresh-read + save otherwise).
-                run_response.status = RunStatus.running
-                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
+    from agno.run.background import _execute_background, _spawn_background
 
-                # Execute the actual run — _arun handles everything including
-                # session persistence and cleanup
-                await _arun(
-                    agent,
-                    run_response=run_response,
-                    run_context=run_context,
-                    user_id=user_id,
-                    response_format=response_format,
-                    session_id=session_id,
-                    add_history_to_context=add_history_to_context,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    debug_mode=debug_mode,
-                    background_tasks=background_tasks,
-                    **kwargs,
-                )
-        except RunCancelledException:
-            # Cancelled while waiting for a slot — _arun never started, so
-            # persist CANCELLED and deregister the run here.
-            log_info(f"Background run {run_response.run_id} cancelled while waiting for a slot")
-            try:
-                run_response.status = RunStatus.cancelled
-                run_response.cancellation_stage = CancellationStage.pending
-                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
-            except Exception as e:
-                log_error(f"Failed to persist cancelled state for background run {run_response.run_id}: {str(e)}")
-            await acleanup_run(run_context.run_id)
-        except asyncio.CancelledError:
-            # Task-level shutdown (event loop stopping), not run-cancellation:
-            # best-effort persist so pollers are not left with a run stuck at
-            # PENDING/RUNNING forever. The durable queue's drain handles this
-            # properly; this is the non-durable path's honest fallback.
-            from agno.run.concurrency import is_worker_managed
+    async def execute() -> None:
+        await _arun(
+            agent,
+            run_response=run_response,
+            run_context=run_context,
+            user_id=user_id,
+            response_format=response_format,
+            session_id=session_id,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
 
-            if is_worker_managed(getattr(run_response, "run_id", None) or ""):
-                raise  # worker-claimed: the QueueWorker owns this terminal
-            if run_response.status == RunStatus.paused:
-                # The leg already PAUSED and parked valid, continuable HITL
-                # state (persisted by the leg itself) - a routine deploy's
-                # shutdown must not stamp CANCELLED over it. This in-memory
-                # check is the ONLY protection off-Postgres: adapters without
-                # the atomic primitive reach the whole-session fallback, which
-                # no DB-side guard covers.
-                raise
-            with contextlib.suppress(Exception):
-                run_response.status = RunStatus.cancelled
-                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
-            raise
-        except Exception as e:
-            log_error(f"Background run {run_response.run_id} failed: {str(e)}")
-            # Persist ERROR status — only persist the changed run (O(1))
-            try:
-                run_response.status = RunStatus.error
-                error_run = await abuild_full_run_storage_copy(agent, run_response, session_id)
-                await apersist_run_transition(agent, "agent", session_id, error_run, user_id=user_id, full_run=True)
-            except Exception as e:
-                log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
-            # Note: acleanup_run is already called by _arun's finally block
+    async def transition(full_run: bool) -> None:
+        storage_run = await abuild_full_run_storage_copy(agent, run_response, session_id) if full_run else run_response
+        await apersist_run_transition(agent, "agent", session_id, storage_run, user_id=user_id, full_run=full_run)
 
-    task = asyncio.create_task(_background_task())
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
-
-    # 5. Return immediately with the PENDING response
+    _spawn_background(_execute_background(run_response, execute, transition, slot_factory=background_run_slot))
     return run_response
 
 
@@ -2105,7 +2053,6 @@ async def _arun_background_stream(
     """
     from agno.agent._session import asave_run, asave_session
     from agno.agent._storage import aread_or_create_session, update_metadata
-    from agno.os.event_streams import get_event_stream
 
     run_id = run_response.run_id
     if not run_id:
@@ -2124,147 +2071,53 @@ async def _arun_background_stream(
     await asave_session(agent, session=agent_session)
     await asave_run(agent, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
 
-    # Pre-register with the event buffer so reconnecting clients can attach and
-    # wait while the run is still queued (no events buffered yet).
-    with contextlib.suppress(Exception):
-        # Fail-open: a Redis blip must not strand an accepted run
-        await get_event_stream().register_run(run_id, RunStatus.pending)
+    from agno.run.background import _BackgroundStream, _execute_background, _spawn_background
 
-    log_info(f"Background stream run {run_id} persisted with PENDING status")
+    await aregister_run(run_id)
+    transport = _BackgroundStream(run_response)
+    await transport.register()
 
-    # 2. Create queue for forwarding SSE strings to the caller
-    sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+    async def execute() -> None:
+        async for event in _arun_stream(
+            agent,
+            run_response=run_response,
+            run_context=run_context,
+            user_id=user_id,
+            response_format=response_format,
+            stream_events=stream_events,
+            yield_run_output=yield_run_output,
+            session_id=session_id,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            pre_session=agent_session,
+            **kwargs,
+        ):
+            if not isinstance(event, RunOutput):
+                await transport.publish(event)
 
-    # 3. Spawn detached background task. Execution waits for a concurrency slot
-    # (background_run_slot); the run stays PENDING while waiting in line and
-    # can be cancelled without consuming a slot.
-    async def _background_producer() -> None:
-        event_stream = get_event_stream()
-        from agno.os.utils import format_sse_event_with_index
+    async def transition(full_run: bool) -> None:
+        storage_run = await abuild_full_run_storage_copy(agent, run_response, session_id) if full_run else run_response
+        await apersist_run_transition(agent, "agent", session_id, storage_run, user_id=user_id, full_run=full_run)
 
-        # Wait for a concurrency slot before executing. The run stays PENDING
-        # while queued and can be cancelled without consuming a slot.
-        slot_cm = background_run_slot(run_id=run_id)
-        slot_held = False
-        try:
-            await slot_cm.__aenter__()
-            slot_held = True
-
-            # Transition to RUNNING now that a slot is held (atomic helper)
-            run_response.status = RunStatus.running
-            await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
-            with contextlib.suppress(Exception):
-                # Fail-open: coordination writes must not kill the run
-                await event_stream.set_run_status(run_id, RunStatus.running)
-
-            async for event in _arun_stream(
-                agent,
-                run_response=run_response,
-                run_context=run_context,
-                user_id=user_id,
-                response_format=response_format,
-                stream_events=stream_events,
-                yield_run_output=yield_run_output,
-                session_id=session_id,
-                add_history_to_context=add_history_to_context,
-                add_dependencies_to_context=add_dependencies_to_context,
-                add_session_state_to_context=add_session_state_to_context,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                pre_session=agent_session,
-                **kwargs,
-            ):
-                if isinstance(event, RunOutput):
-                    continue
-
-                # Buffer + publish to live tails (the event stream owns the index)
-                event_index: Optional[int] = None
-                try:
-                    event_index = await event_stream.add_event(run_id, event)
-                except Exception:
-                    log_warning(f"Failed to buffer event for run {run_id}")
-
-                # Format as SSE for the primary queue (original client)
-                sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
-                try:
-                    await sse_queue.put(sse_data)
-                except Exception:
-                    log_warning(f"Failed to push SSE data to queue for run {run_id}")
-
-        except asyncio.CancelledError:
-            # Task-level shutdown (event loop stopping), not run-cancellation:
-            # best-effort persist so pollers are not left with a run stuck at
-            # PENDING/RUNNING forever (parity with the non-stream producer)
-            from agno.run.concurrency import is_worker_managed
-
-            if is_worker_managed(getattr(run_response, "run_id", None) or ""):
-                raise  # worker-claimed: the QueueWorker owns this terminal
-            if run_response.status == RunStatus.paused:
-                # The leg already PAUSED and parked valid, continuable HITL
-                # state (persisted by the leg itself) - a routine deploy's
-                # shutdown must not stamp CANCELLED over it. This in-memory
-                # check is the ONLY protection off-Postgres: adapters without
-                # the atomic primitive reach the whole-session fallback, which
-                # no DB-side guard covers.
-                raise
-            with contextlib.suppress(Exception):
-                run_response.status = RunStatus.cancelled
-                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
-            raise
-        except RunCancelledException:
-            # Cancelled while waiting for a slot — execution never started, so
-            # persist CANCELLED and deregister the run here.
-            log_info(f"Background stream run {run_id} cancelled while waiting for a slot")
-            try:
-                run_response.status = RunStatus.cancelled
-                run_response.cancellation_stage = CancellationStage.pending
-                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
-            except Exception:
-                log_error(f"Failed to persist cancelled state for background stream run {run_id}", exc_info=True)
-            await acleanup_run(run_id)
-        except Exception:
-            log_error(f"Background stream run {run_id} failed", exc_info=True)
-            # Persist ERROR status — only persist the changed run (O(1))
-            try:
-                run_response.status = RunStatus.error
-                error_run = await abuild_full_run_storage_copy(agent, run_response, session_id)
-                await apersist_run_transition(agent, "agent", session_id, error_run, user_id=user_id, full_run=True)
-            except Exception:
-                log_error(f"Failed to persist error state for background stream run {run_id}", exc_info=True)
-
-        finally:
-            if slot_held:
-                await slot_cm.__aexit__(None, None, None)
-
-            # Signal primary queue FIRST — unblocks the original client
-            try:
-                await sse_queue.put(None)
-            except Exception:
-                log_warning(f"Failed to signal primary queue for run {run_id} completion")
-
-            # Mark run terminal in the event stream and wake all tails
-            # (shielded to survive task cancellation)
-            try:
-                await asyncio.shield(event_stream.complete_run(run_id, run_response.status or RunStatus.completed))
-            except (Exception, asyncio.CancelledError):
-                log_warning(f"Failed to mark run {run_id} as completed in event stream")
-
-    task = asyncio.create_task(_background_producer())
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
-
-    # 4. Yield SSE strings from the queue. Emit SSE keepalive comments on idle
-    # so proxies do not kill the connection while the run waits for a slot (or
-    # during long silent stretches of execution).
-    while True:
-        try:
-            sse_data = await asyncio.wait_for(sse_queue.get(), timeout=SSE_KEEPALIVE_INTERVAL_SECONDS)
-        except asyncio.TimeoutError:
-            yield ": keepalive\n\n"
-            continue
-        if sse_data is None:
-            break
-        yield sse_data
+    _spawn_background(
+        _execute_background(
+            run_response,
+            execute,
+            transition,
+            on_running=transport.running,
+            on_terminal=transport.complete,
+            slot_factory=background_run_slot,
+        )
+    )
+    pump = transport.pump(SSE_KEEPALIVE_INTERVAL_SECONDS)
+    try:
+        async for item in pump:
+            yield item
+    finally:
+        await pump.aclose()
 
 
 async def _arun_stream(

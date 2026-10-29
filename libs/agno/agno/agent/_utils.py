@@ -170,6 +170,7 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
     # Create a new Agent
     try:
         new_agent = agent.__class__(**fields_for_new_agent)
+        new_agent._registry_excluded = agent._registry_excluded
         log_debug(f"Created new {agent.__class__.__name__}")
         return new_agent
     except Exception as e:

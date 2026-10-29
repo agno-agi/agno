@@ -140,6 +140,35 @@ async def get_sessions_page(
     return sessions, total_count  # type: ignore[return-value]
 
 
+async def search_sessions_page(
+    db: Union[BaseDb, AsyncBaseDb],
+    *,
+    filter_expr: Optional[Dict[str, Any]] = None,
+    session_type: Optional[SessionType] = None,
+    user_id: Optional[str] = None,
+    limit: int = 20,
+    page: int = 1,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+) -> Tuple[List[Dict[str, Any]], int]:
+    """One page of sessions matching an advanced filter, as raw dicts plus the total count.
+
+    Raises ``ValueError`` for an invalid filter, page, or sort so each surface can report it as a client error.
+    """
+    kwargs: Dict[str, Any] = dict(
+        filter_expr=filter_expr,
+        session_type=session_type,
+        user_id=user_id,
+        limit=limit,
+        page=page,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    if isinstance(db, AsyncBaseDb):
+        return await db.search_sessions(**kwargs)
+    return await run_in_threadpool(lambda: db.search_sessions(**kwargs))
+
+
 async def _get_session_dict(
     db: Union[BaseDb, AsyncBaseDb],
     *,
@@ -172,7 +201,9 @@ async def _get_session_dict(
     return session, session_type  # type: ignore[return-value]
 
 
-def classify_session_run(run: Dict[str, Any], session_type: SessionType) -> Optional[AnyRunSchema]:
+def classify_session_run(
+    run: Dict[str, Any], session_type: SessionType, *, session: Optional[Dict[str, Any]] = None
+) -> Optional[AnyRunSchema]:
     """Render one persisted run dict as the schema matching its actual shape.
 
     Team and workflow sessions can contain member/step runs of other kinds, so
@@ -181,7 +212,7 @@ def classify_session_run(run: Dict[str, Any], session_type: SessionType) -> Opti
     runs that carry neither an agent_id nor a team_id (returns None).
     """
     if session_type == SessionType.AGENT:
-        return RunSchema.from_dict(run)
+        return RunSchema.from_dict(run, session=session)
     if session_type == SessionType.TEAM:
         if run.get("agent_id") is not None:
             return RunSchema.from_dict(run)
@@ -224,5 +255,5 @@ async def get_session_runs(
             continue
         filtered.append(run)
 
-    classified = (classify_session_run(run, resolved_type) for run in filtered)
+    classified = (classify_session_run(run, resolved_type, session=session) for run in filtered)
     return [run_schema for run_schema in classified if run_schema is not None]

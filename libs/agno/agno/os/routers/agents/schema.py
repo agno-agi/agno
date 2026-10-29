@@ -47,6 +47,7 @@ class AgentResponse(BaseModel):
     is_component: bool = False
     current_version: Optional[int] = None
     stage: Optional[str] = None
+    sandboxed: bool = False
 
     @classmethod
     def from_factory(cls, factory: AgentFactory) -> AgentResponse:
@@ -66,6 +67,22 @@ class AgentResponse(BaseModel):
             is_factory=True,
             input_schema=factory_input_schema,
             factory_input_schema=factory_input_schema,
+        )
+
+    @classmethod
+    def from_harness_agent(cls, agent: Any) -> "AgentResponse":
+        """A harness agent (Claude Code, Codex) as a team member or workflow step, shown the way the
+        agents route shows it."""
+        from agno.os.schema import AgentSummaryResponse
+
+        summary = AgentSummaryResponse.from_agent(agent)
+        return cls(
+            id=agent.id,
+            name=agent.name,
+            description=agent.description,
+            role=agent.role,
+            metadata=summary.metadata or {"sdk": agent.sdk},
+            sandboxed=summary.sandboxed,
         )
 
     @classmethod

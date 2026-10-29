@@ -91,7 +91,48 @@ from agno.workflow.types import (
 )
 
 if TYPE_CHECKING:
+    from agno.agents.base import BaseExternalAgent
     from agno.workflow.workflow import Workflow
+
+
+def _harness_step_kwargs(executor: Any, workflow_run_response: Optional["WorkflowRunOutput"]) -> Dict[str, Any]:
+    """Run options that tell a harness agent (Claude Code, Codex) it runs as this workflow's step.
+
+    The workflow id is passed on every call instead of being stored on the agent, because the same
+    harness agent instance can also run on its own, for example when AgentOS serves it directly.
+    A native Agent or Team gets nothing extra.
+    """
+    from agno.agents.base import BaseExternalAgent
+
+    if isinstance(executor, BaseExternalAgent) and workflow_run_response is not None:
+        if workflow_run_response.workflow_id is None:
+            # Without it the agent would save its own session on the workflow's session id.
+            raise ValueError(
+                f"Harness agent '{executor.get_id()}' cannot run as a step of a workflow without a workflow id"
+            )
+        return {"_workflow_id": workflow_run_response.workflow_id}
+    return {}
+
+
+def _read_workflow_session(db: Any, session_id: Optional[str]) -> Optional[WorkflowSession]:
+    """The workflow session ``session_id`` from a harness step's database, if it has one."""
+    from agno.db.base import BaseDb, SessionType
+
+    if session_id is None or not isinstance(db, BaseDb):
+        return None
+    session = db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW)
+    return session if isinstance(session, WorkflowSession) else None
+
+
+async def _aread_workflow_session(db: Any, session_id: Optional[str]) -> Optional[WorkflowSession]:
+    """Async variant of ``_read_workflow_session``."""
+    from agno.db.base import AsyncBaseDb, SessionType
+
+    if session_id is not None and isinstance(db, AsyncBaseDb):
+        session = await db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW)
+        return session if isinstance(session, WorkflowSession) else None
+    return _read_workflow_session(db, session_id)
+
 
 # Terminal events always reach the wire even when stream_executor_events is False
 _EXECUTOR_TERMINAL_EVENT_TYPES = (
@@ -229,7 +270,7 @@ class Step:
     name: Optional[str] = None
 
     # Executor options - only one should be provided
-    agent: Optional[Agent] = None
+    agent: Optional[Union[Agent, "BaseExternalAgent"]] = None
     team: Optional[Team] = None
     executor: Optional[StepExecutor] = None
     workflow: Optional["Workflow"] = None  # Nested workflow support
@@ -261,7 +302,7 @@ class Step:
     def __init__(
         self,
         name: Optional[str] = None,
-        agent: Optional[Agent] = None,
+        agent: Optional[Union[Agent, "BaseExternalAgent"]] = None,
         team: Optional[Team] = None,
         executor: Optional[StepExecutor] = None,
         workflow: Optional["Workflow"] = None,
@@ -305,6 +346,9 @@ class Step:
         self.executor = executor
         self.workflow = workflow
         self.hitl_executor = hitl_executor
+        # The database of the workflow that runs this step, set when the workflow prepares its steps.
+        # A harness step's runs are stored there, by the workflow.
+        self._workflow_db: Optional[Any] = None
 
         self._validate_executor_config()
 
@@ -337,7 +381,7 @@ class Step:
 
         self._set_active_executor()
 
-    def _get_hitl_executor(self) -> Optional[Union[Agent, Team]]:
+    def _get_hitl_executor(self) -> Optional[Union[Agent, Team, "BaseExternalAgent"]]:
         if self._executor_type in ("agent", "team"):
             return self.active_executor
         if self._executor_type == "function":
@@ -539,7 +583,9 @@ class Step:
             # Without a pin, code-defined registry agents win as before.
             if pinned is None and registry and agent_id:
                 registry_agent = registry.get_agent(agent_id)
-                if registry_agent is not None:
+                from agno.agents.base import BaseExternalAgent
+
+                if registry_agent is not None and not isinstance(registry_agent, BaseExternalAgent):
                     try:
                         # Deep copy to isolate mutable state between concurrent requests
                         agent = registry_agent.deep_copy()
@@ -616,7 +662,9 @@ class Step:
             # A pinned lenient load may still fall back to a code-defined agent.
             if agent is None and pinned is not None and registry and agent_id:
                 registry_agent = registry.get_agent(agent_id)
-                if registry_agent is not None:
+                from agno.agents.base import BaseExternalAgent
+
+                if registry_agent is not None and not isinstance(registry_agent, BaseExternalAgent):
                     try:
                         agent = registry_agent.deep_copy()
                     except Exception as e:
@@ -1000,7 +1048,7 @@ class Step:
 
             if pinned is None and registry and hitl_agent_id:
                 registry_agent = registry.get_agent(hitl_agent_id)
-                if registry_agent is not None:
+                if isinstance(registry_agent, Agent):
                     try:
                         hitl_executor = registry_agent.deep_copy()
                         if strict and hitl_executor is registry_agent:
@@ -1074,7 +1122,7 @@ class Step:
 
             if hitl_executor is None and pinned is not None and registry and hitl_agent_id:
                 registry_agent = registry.get_agent(hitl_agent_id)
-                if registry_agent is not None:
+                if isinstance(registry_agent, Agent):
                     try:
                         hitl_executor = registry_agent.deep_copy()
                     except Exception as e:
@@ -1606,6 +1654,7 @@ class Step:
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
+                        kwargs.update(_harness_step_kwargs(self.active_executor, workflow_run_response))
 
                         # Forward background_tasks if provided
                         if background_tasks is not None:
@@ -1973,6 +2022,7 @@ class Step:
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
+                        kwargs.update(_harness_step_kwargs(self.active_executor, workflow_run_response))
 
                         # Forward background_tasks if provided
                         if background_tasks is not None:
@@ -2356,6 +2406,7 @@ class Step:
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
+                        kwargs.update(_harness_step_kwargs(self.active_executor, workflow_run_response))
 
                         # Forward background_tasks if provided
                         if background_tasks is not None:
@@ -2736,6 +2787,7 @@ class Step:
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
+                        kwargs.update(_harness_step_kwargs(self.active_executor, workflow_run_response))
 
                         # Forward background_tasks if provided
                         if background_tasks is not None:
@@ -2935,7 +2987,13 @@ class Step:
         session: Union[AgentSession, TeamSession, WorkflowSession, None] = None
 
         if self.agent:
-            session = self.agent.get_session(session_id=session_id)
+            from agno.agents.base import BaseExternalAgent
+
+            if isinstance(self.agent, BaseExternalAgent):
+                # A harness step's runs are stored by the workflow, in the workflow session.
+                session = _read_workflow_session(self._workflow_db or self.agent.db, session_id)
+            else:
+                session = self.agent.get_session(session_id=session_id)
             if not session:
                 log_warning("Session not found")
                 return []
@@ -2975,7 +3033,13 @@ class Step:
         session: Union[AgentSession, TeamSession, WorkflowSession, None] = None
 
         if self.agent:
-            session = await self.agent.aget_session(session_id=session_id)
+            from agno.agents.base import BaseExternalAgent
+
+            if isinstance(self.agent, BaseExternalAgent):
+                # A harness step's runs are stored by the workflow, in the workflow session.
+                session = await _aread_workflow_session(self._workflow_db or self.agent.db, session_id)
+            else:
+                session = await self.agent.aget_session(session_id=session_id)
             if not session:
                 log_warning("Session not found")
                 return []
@@ -3027,13 +3091,12 @@ class Step:
             executor_run_response.parent_run_id = workflow_run_response.run_id
             executor_run_response.workflow_step_id = self.step_id
 
-            # Scrub the executor response based on the executor's storage flags before storing
-            store_media = getattr(hitl_executor, "store_media", True)
-            store_tool_messages = getattr(hitl_executor, "store_tool_messages", True)
-            store_history_messages = getattr(hitl_executor, "store_history_messages", True)
-            if not store_media or not store_tool_messages or not store_history_messages:
-                if hasattr(hitl_executor, "scrub_run_output_for_storage"):
-                    hitl_executor.scrub_run_output_for_storage(executor_run_response)  # type: ignore
+            # Scrub the executor response based on the executor's storage flags before storing.
+            # A harness agent (Claude Code, Codex) has no such flags and keeps everything.
+            from agno.team._members import member_storage
+
+            if not member_storage(hitl_executor).keeps_all:
+                hitl_executor.scrub_run_output_for_storage(executor_run_response)  # type: ignore
 
             # Get the raw response from the step's active executor
             raw_response = executor_run_response

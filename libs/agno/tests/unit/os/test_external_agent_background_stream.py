@@ -1,6 +1,4 @@
-"""External agents don't support background=True; the resumable streaming route
-must degrade to inline SSE instead of forwarding raw event objects to Starlette
-(which crashes with "'RunStartedEvent' object has no attribute 'encode'")."""
+"""External agents publish indexed background SSE through the native REST route."""
 
 import tempfile
 from dataclasses import dataclass
@@ -35,7 +33,7 @@ def client():
     return TestClient(app, raise_server_exceptions=False)
 
 
-def test_background_stream_degrades_to_inline_sse(client):
+def test_background_stream_is_indexed_sse(client):
     response = client.post(
         "/agents/echo-agent/runs",
         data={"message": "hi", "stream": "true", "background": "true"},
@@ -44,6 +42,7 @@ def test_background_stream_degrades_to_inline_sse(client):
     events = [line for line in response.text.splitlines() if line.startswith("event:")]
     assert any("RunStarted" in line for line in events)
     assert any("RunCompleted" in line for line in events)
+    assert "event_index" in response.text
 
 
 def test_plain_stream_still_works(client):

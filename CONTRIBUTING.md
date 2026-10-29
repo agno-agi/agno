@@ -50,6 +50,14 @@ _These guidelines are enforced automatically by our [PR Lint workflow](.github/w
 
 > From here on you have to use `uv pip install` to install missing packages
 
+On Unix, `dev_setup.sh` installs local editable `agnoctl[dev]` and `agno[demo]`
+into `.venv`, including development tools and demo dependencies for cookbook work.
+Use `./scripts/demo_setup.sh` for a separate `.venvs/demo` environment with the
+same dependencies, then activate it with `source .venvs/demo/bin/activate`.
+Both scripts use Python 3.12 and recreate only their target environment on each
+run; deactivate any active environment first. Individual cookbooks may require
+additional dependencies, credentials, or services.
+
 ## Formatting and validation
 
 Ensure your code meets our quality standards by running the appropriate formatting and validation script before submitting a pull request:

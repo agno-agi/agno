@@ -16,7 +16,9 @@ import pytest
 from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.exceptions import ComponentRehydrationError
+from agno.media import Image
 from agno.models.base import Model
+from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput, RunRequirement, ToolExecution
 from agno.run.base import RunStatus
@@ -154,6 +156,51 @@ async def test_normal_custom_function_returns_step_output():
 # =============================================================================
 # 2. Issue #9928: Async non-streaming custom executor pause & storage
 # =============================================================================
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("executor_kind", ["agent", "team"])
+@pytest.mark.parametrize("disabled_flag", [None, "store_media", "store_tool_messages", "store_history_messages"])
+async def test_custom_executor_storage_respects_inner_executor_flags(asynchronous, executor_kind, disabled_flag):
+    _, _, _, requirement = _create_mock_paused_team()
+    settings = {"store_media": True, "store_tool_messages": True, "store_history_messages": True}
+    if disabled_flag:
+        settings[disabled_flag] = False
+    if executor_kind == "agent":
+        executor = Agent(id="inner", telemetry=False, **settings)
+        response = RunOutput(run_id="inner-run", agent_id="inner")
+    else:
+        executor = Team(id="inner", members=[], telemetry=False, **settings)
+        response = TeamRunOutput(run_id="inner-run", team_id="inner")
+    response.status = RunStatus.paused
+    response.requirements = [requirement]
+    response.images = [Image(content=b"private-image")]
+    response.messages = [
+        Message(role="user", content="current input"),
+        Message(role="user", content="earlier input", from_history=True),
+        Message(role="tool", content="private tool result", tool_call_id="earlier-call"),
+    ]
+
+    def custom_executor(step_input: StepInput):
+        return response
+
+    workflow = Workflow(
+        id="storage-flags",
+        steps=[Step(name="custom", executor=custom_executor, hitl_executor=executor)],
+        telemetry=False,
+    )
+    output = await workflow.arun("go") if asynchronous else workflow.run("go")
+
+    assert output.status == RunStatus.paused
+    assert output.step_requirements[0].requires_executor_input
+    stored = output.step_executor_runs[0]
+    assert stored.run_id == "inner-run"
+    assert stored.requirements[0].id == requirement.id
+    assert bool(stored.images) == (disabled_flag != "store_media")
+    assert any(message.role == "tool" for message in stored.messages) == (disabled_flag != "store_tool_messages")
+    assert any(message.from_history for message in stored.messages) == (disabled_flag != "store_history_messages")
+    assert any(message.content == "current input" for message in stored.messages)
 
 
 @pytest.mark.asyncio
@@ -459,6 +506,36 @@ def test_step_to_dict_and_get_links_with_hitl_executor():
     assert any(
         link.get("child_component_id") == "team-special-1" and link.get("link_kind") == "step_team" for link in links
     )
+
+
+@pytest.mark.parametrize("external", [False, True])
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("pinned", [False, True])
+def test_rehydrate_hitl_agent_accepts_only_native_registry_agents(external, strict, pinned):
+    from agno.agents.claude import ClaudeAgent
+    from agno.registry import Registry
+
+    def custom_executor(step_input: StepInput):
+        return "ok"
+
+    agent = ClaudeAgent(id="inner") if external else Agent(id="inner", telemetry=False)
+    registry = Registry(agents=[agent], functions=[custom_executor])
+    config = {"type": "Step", "name": "custom", "executor_ref": "custom_executor", "hitl_agent_id": "inner"}
+    links = [{"child_component_id": "inner", "link_kind": "step_agent", "child_version": 1}] if pinned else None
+
+    if external and strict:
+        with pytest.raises(ComponentRehydrationError, match="references hitl agent 'inner'"):
+            Step.from_dict(config, registry=registry, links=links, strict=True)
+        return
+
+    step = Step.from_dict(config, registry=registry, links=links, strict=strict)
+    if external:
+        assert step.hitl_executor is None
+        assert step.to_dict()["hitl_agent_id"] == "inner"
+    else:
+        assert isinstance(step.hitl_executor, Agent)
+        assert step.hitl_executor.id == "inner"
+        assert step.hitl_executor is not agent
 
 
 def test_workflow_deep_copy_preserves_hitl_executor():

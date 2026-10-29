@@ -651,8 +651,9 @@ def _derive_entrypoint_schema(
         if requires_user_input and user_input_fields:
             excluded_params.extend(user_input_fields)
 
-        # Get filtered list of parameter types
-        param_type_hints = {name: type_hints.get(name) for name in sig.parameters if name not in excluded_params}
+        # Preserve Annotated metadata for schemas after filtering injected types.
+        schema_type_hints = get_type_hints(entrypoint, include_extras=True)
+        param_type_hints = {name: schema_type_hints.get(name) for name in sig.parameters if name not in excluded_params}
 
         # Parse docstring for parameters
         param_descriptions: Dict[str, Any] = {}
@@ -1016,9 +1017,16 @@ class UserInputField:
     value: Optional[Any] = None
 
     def to_dict(self) -> Dict[str, Any]:
+        if isinstance(self.field_type, type):
+            # Plain classes expose __name__ (e.g. "int").
+            serialized_field_type = self.field_type.__name__
+        else:
+            # PEP 604 unions (e.g. `int | None`) and typing special forms have no
+            # __name__; fall back to str() so serialization never crashes.
+            serialized_field_type = str(self.field_type)
         return {
             "name": self.name,
-            "field_type": str(self.field_type.__name__),
+            "field_type": serialized_field_type,
             "description": self.description,
             "value": self.value,
         }
@@ -1516,9 +1524,10 @@ class Function(BaseModel):
                 del type_hints["files"]
             # log_info(f"Type hints for {function_name}: {type_hints}")
 
-            # Filter out return type and only process parameters
+            # Preserve Annotated metadata for schemas after filtering injected types.
+            schema_type_hints = get_type_hints(c, include_extras=True)
             param_type_hints = {
-                name: type_hints.get(name)
+                name: schema_type_hints.get(name)
                 for name in sig.parameters
                 if name not in ("return", "self")
                 and name not in FRAMEWORK_INJECTED_PARAMS
@@ -2587,6 +2596,19 @@ class FunctionCall(BaseModel):
         self.function._save_to_cache(cache_file, result_to_cache)
 
     def execute(self) -> FunctionExecutionResult:
+        """Run the function with the caller authority appropriate to its owning component."""
+        from agno.run.authorization import _authorized_tool_result, _tool_authorization
+
+        with _tool_authorization(self.function) as authority:
+            outcome = self._execute()
+            if outcome.status == "success":
+                original_result = outcome.result
+                outcome.result = _authorized_tool_result(original_result, authority)
+                if self.result is original_result:
+                    self.result = outcome.result
+            return outcome
+
+    def _execute(self) -> FunctionExecutionResult:
         """Runs the function call."""
         from inspect import isgenerator, isgeneratorfunction
 
@@ -2606,6 +2628,12 @@ class FunctionCall(BaseModel):
         # Check cache if enabled and not a generator function
         cached_result = None
         cacheable = self.function.cache_results and not isgeneratorfunction(self.function.entrypoint)
+        if cacheable and getattr(self.function.entrypoint, "_agno_authorization_sensitive", False):
+            from agno.run.authorization import authorization_for
+
+            # Re-decide permission before serving a result after grants change.
+            # An entrypoint cache hit would otherwise skip its authorization check.
+            cacheable = authorization_for(self.function._run_context) is None
         if cacheable and _has_injected_media(entrypoint_args):
             log_debug(f"Skipping cache for {self.function.name}: the call carries attached media")
             cacheable = False
@@ -2846,6 +2874,19 @@ class FunctionCall(BaseModel):
         return chain
 
     async def aexecute(self) -> FunctionExecutionResult:
+        """Run the function asynchronously with its owning component's caller authority."""
+        from agno.run.authorization import _authorized_tool_result, _tool_authorization
+
+        with _tool_authorization(self.function) as authority:
+            outcome = await self._aexecute()
+            if outcome.status == "success":
+                original_result = outcome.result
+                outcome.result = _authorized_tool_result(original_result, authority)
+                if self.result is original_result:
+                    self.result = outcome.result
+            return outcome
+
+    async def _aexecute(self) -> FunctionExecutionResult:
         """Runs the function call asynchronously."""
         from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator, isgeneratorfunction
 
@@ -2870,6 +2911,12 @@ class FunctionCall(BaseModel):
         cacheable = self.function.cache_results and not (
             isasyncgenfunction(self.function.entrypoint) or isgeneratorfunction(self.function.entrypoint)
         )
+        if cacheable and getattr(self.function.entrypoint, "_agno_authorization_sensitive", False):
+            from agno.run.authorization import authorization_for
+
+            # Re-decide permission before serving a result after grants change.
+            # An entrypoint cache hit would otherwise skip its authorization check.
+            cacheable = authorization_for(self.function._run_context) is None
         if cacheable and _has_injected_media(entrypoint_args):
             log_debug(f"Skipping cache for {self.function.name}: the call carries attached media")
             cacheable = False

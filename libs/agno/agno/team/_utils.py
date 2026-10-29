@@ -152,6 +152,7 @@ def deep_copy(team: Team, *, update: Optional[Dict[str, Any]] = None) -> Team:
     # Create a new Team
     try:
         new_team = team.__class__(**fields_for_new_team)
+        new_team._registry_excluded = team._registry_excluded
         log_debug(f"Created new {team.__class__.__name__}")
         return new_team
     except Exception as e:
