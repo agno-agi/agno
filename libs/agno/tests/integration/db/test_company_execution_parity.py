@@ -4090,3 +4090,83 @@ async def test_execution_provenance_checks_original_stores_after_reassignment(sy
             if store is not db:
                 await _call(store, "close")
         replacement.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind,id", [("agent", "writer"), ("team", "editors")])
+@pytest.mark.parametrize(
+    "deleted,background,stream",
+    [(True, False, False), (True, False, True), (True, True, False), (True, True, True), (False, False, False)],
+)
+async def test_failed_run_continuation_checks_original_task(system, monkeypatch, kind, id, deleted, background, stream):
+    from agno.company.execution import _call
+
+    client, db, worker, os, components = system
+    await _call(db, "_create_all_tables")
+    worker._task_execution_provider = os._task_execution_provider
+    worker.config.max_attempts = 1
+    task = await accepted(client, kind, id)
+    component = components[id]
+    target = component.model
+    attribute = "invoke"
+    original = getattr(target, attribute)
+    calls = []
+    failing = True
+
+    def produce(*args, **kwargs):
+        calls.append(True)
+        if failing:
+            raise RuntimeError("Synthetic execution failure")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(target, attribute, produce)
+    route = f"/{kind}s/{id}/runs"
+    response = await client.post(
+        route,
+        data={"message": "Draft", "session_id": task["session_id"], "stream": "false", "background": "true"},
+    )
+    assert response.status_code == 202, response.text
+    run_id = response.json()["run_id"]
+    assert (await execute(worker))["status"] == "failed"
+    before_run = await _call(db, "get_run", run_id, deserialize=False)
+    assert before_run["status"] == "ERROR"
+    before_job = await worker.store.get_job(run_id)
+    from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TASK_IDS
+
+    assert before_job["payload"][QUEUE_ACCEPTANCE_TASK_IDS] == [task["id"]]
+    if deleted:
+        removed = await client.delete(f"/company/tasks/{task['id']}")
+        assert removed.status_code == 204, removed.text
+    failing = False
+    calls.clear()
+    if not deleted:
+        recovered = await client.post(
+            route + f"/{run_id}/continue", data={"session_id": task["session_id"], "stream": "false"}
+        )
+        assert recovered.status_code == 200, recovered.text
+        assert recovered.json()["run_id"] == run_id and calls
+        removed = await client.delete(f"/company/tasks/{task['id']}")
+        assert removed.status_code == 204, removed.text
+        for _ in range(2):
+            followup = await client.post(
+                route + f"/{run_id}/continue", data={"session_id": task["session_id"], "stream": "false"}
+            )
+            assert followup.status_code == 200, followup.text
+            assert followup.json()["run_id"] != run_id
+        return
+    for _ in range(2):
+        refused = await asyncio.wait_for(
+            client.post(
+                route + f"/{run_id}/continue",
+                data={
+                    "session_id": task["session_id"],
+                    "stream": str(stream).lower(),
+                    "background": str(background).lower(),
+                },
+            ),
+            timeout=10,
+        )
+        assert refused.status_code == 409, refused.text
+        assert not calls
+        assert await _call(db, "get_run", run_id, deserialize=False) == before_run
+        assert await worker.store.get_job(run_id) == before_job

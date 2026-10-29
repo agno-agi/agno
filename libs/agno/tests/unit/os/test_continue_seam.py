@@ -1018,3 +1018,31 @@ async def test_unavailable_queue_lookup_refuses_detached_fallback(monkeypatch):
     with pytest.raises(HTTPException) as error:
         await acontinue_via_queue(make_worker(store), "r1", {})
     assert error.value.status_code == 503
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error,status", [(ValueError("Task execution identity changed"), 409), (RuntimeError("Unavailable"), 503)]
+)
+async def test_failed_inline_continue_verifies_task_identity(error, status):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from fastapi import HTTPException
+
+    from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TASK_IDS, QUEUE_ACCEPTANCE_TOKEN
+    from agno.os.job_queue import araise_if_ticket_owns_continue
+
+    store = InMemoryQueueStore()
+    job = make_job()
+    job["status"] = "failed"
+    job["payload"].update({QUEUE_ACCEPTANCE_TOKEN: "old-owner", QUEUE_ACCEPTANCE_TASK_IDS: ["original-task"]})
+    await store.enqueue_job(job)
+    before = await store.get_job("r1")
+    worker = make_worker(store)
+    worker._task_execution_provider = SimpleNamespace(enabled=True, aacquire=AsyncMock(side_effect=error))
+    for _ in range(2):
+        with pytest.raises(HTTPException) as exc:
+            await araise_if_ticket_owns_continue(worker, "r1", "workflow", "wf-1")
+        assert exc.value.status_code == status
+        assert await store.get_job("r1") == before

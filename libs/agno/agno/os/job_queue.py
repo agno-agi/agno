@@ -2615,7 +2615,12 @@ async def asettle_paused_ticket(queue_worker: Any, run_id: str, final_status: An
 
 
 async def araise_if_ticket_owns_continue(
-    queue_worker: Any, run_id: str, component_type: Optional[str] = None, component_id: Optional[str] = None
+    queue_worker: Any,
+    run_id: str,
+    component_type: Optional[str] = None,
+    component_id: Optional[str] = None,
+    *,
+    component: Any = None,
 ) -> None:
     """Inline-door admission gate: a durable ticket in paused/queued/running
     OWNS its run's continuation, and no non-queue door may execute one.
@@ -2634,7 +2639,9 @@ async def araise_if_ticket_owns_continue(
     (completed/failed/cancelled) allow inline: the queue is done with that
     run, matching the durable seam's swept-leg philosophy. A ticket for a
     DIFFERENT component allows inline too - the caller's own run lookup
-    reports not-found honestly (cross-component case).
+    reports not-found honestly (cross-component case). Failed Company tickets
+    must still verify their original Task identity before resuming. A run
+    that already completed instead starts a new follow-up.
 
     Raises 409 (use the durable door / continuation in progress) or 503
     (ticket lookup failed - FAIL CLOSED: executing while unable to verify
@@ -2687,6 +2694,18 @@ async def araise_if_ticket_owns_continue(
             detail=f"A continuation of run {run_id} is already queued or executing; "
             "poll the run or attach via a background=true continue",
         )
+
+    if status == "failed":
+        from agno.company.execution import _prepare_queue_fallback, _queue_provider
+
+        with _queue_admission_errors():
+            if _queue_provider(queue_worker, job) is None:
+                return
+            if component is not None:
+                run = await component.aget_run_output(run_id, job["session_id"], user_id=job.get("user_id"))
+                if getattr(run, "status", None) == "COMPLETED":
+                    return
+            await _prepare_queue_fallback(queue_worker, job)
 
 
 @contextlib.contextmanager

@@ -1668,6 +1668,7 @@ def get_team_router(
                 run_id,
                 component_type="team",
                 component_id=getattr(team, "id", None) or team_id,
+                component=team,
             )
 
         if stream and background:

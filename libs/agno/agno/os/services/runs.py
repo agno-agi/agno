@@ -76,7 +76,11 @@ async def continue_paused_run(
         "workflow" if isinstance(component, Workflow) else ("team" if isinstance(component, Team) else "agent")
     )
     await araise_if_ticket_owns_continue(
-        get_active_queue_worker(), run_id, component_type=component_type, component_id=getattr(component, "id", None)
+        get_active_queue_worker(),
+        run_id,
+        component_type=component_type,
+        component_id=getattr(component, "id", None),
+        component=component,
     )
     if isinstance(component, Workflow):
         result: AnyRunOutput = await component.acontinue_run(

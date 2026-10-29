@@ -1795,6 +1795,7 @@ def get_agent_router(
                 run_id,
                 component_type="agent",
                 component_id=getattr(agent, "id", None) or agent_id,
+                component=agent,
             )
 
         if stream and background:
