@@ -82,6 +82,10 @@ class SandboxRuntimeClient:
         committed for this session, Claude's session id or Codex's thread id, when it has one:
         the runtime refuses to run, without calling the model, unless the sandbox holds exactly
         that conversation. Leave it None for a session's first turn."""
+        if (config or {}).get("approval_mode") == "human":
+            capabilities = await self._rpc(computer, "capabilities", {"execution_id": execution_id})
+            if "human_approvals_v1" not in capabilities.get("capabilities", []):
+                raise SandboxError("Rebuild the sandbox image: native human approvals are unsupported")
         response = await self._rpc(
             computer,
             "start",
@@ -135,6 +139,26 @@ class SandboxRuntimeClient:
                 **({"metadata": metadata} if metadata is not None else {}),
             )
         )
+
+    async def aresolve(self, execution: RuntimeExecution, approval: Dict[str, Any]) -> Dict[str, Any]:
+        """Deliver one reviewed decision to the exact waiting native request."""
+        return await self._rpc(
+            execution.computer,
+            "resolve",
+            {
+                "execution_id": execution.execution_id,
+                "run_id": execution.run_id,
+                "agent_id": execution.computer.agent_id,
+                "session_id": execution.computer.session_id,
+                "approval_id": approval["id"],
+                "status": approval["status"],
+                "native": approval["context"]["native_approval"],
+            },
+        )
+
+    def resolve(self, execution: RuntimeExecution, approval: Dict[str, Any]) -> Dict[str, Any]:
+        """Synchronous decision delivery."""
+        return _sync(self.aresolve(execution, approval))
 
     async def apoll(self, execution: RuntimeExecution, *, cursor: int = 0, wait: float = 0.0) -> RuntimePage:
         """One page from the journal. ``wait`` long-polls inside the container for up to that

@@ -42,11 +42,13 @@ from agno.run.agent import (
     RunCancelledEvent,
     RunCompletedEvent,
     RunContentEvent,
+    RunContinuedEvent,
     RunErrorEvent,
     RunEvent,
     RunInput,
     RunOutput,
     RunOutputEvent,
+    RunPausedEvent,
     RunStartedEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
@@ -236,6 +238,9 @@ class BaseExternalAgent:
     description: Optional[str] = None
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     markdown: bool = True
+    # Opt in to native permission requests resolved through AgentOS.
+    approval_mode: Optional[str] = None
+    approval_timeout: float = 900
     # Fail closed when native context is missing; sandbox restoration requires exact continuity.
     require_native_resume: bool = False
     # Propagate local persistence failures before acknowledging a runtime result.
@@ -283,6 +288,11 @@ class BaseExternalAgent:
         if self.events_to_skip is None:
             self.events_to_skip = [RunEvent.run_content]
         self._check_output_schema(self.output_schema)
+        if self.approval_mode == "human":
+            from agno.agents._approval import validate_human_mode
+
+            validate_human_mode(self)
+            self.store_events = True
         if self.repository is not None:
             from agno.sandbox.repository import Repository
 
@@ -1297,7 +1307,10 @@ class BaseExternalAgent:
         """Recorded on a run that ends in error. The durable job queue reads ``retryable`` so a
         failure that would repeat (a limit, authentication, billing, a bad request) fails the job
         at once instead of being re-driven for every remaining queue attempt."""
-        return {"retryable": self._is_retryable_error(error), "error_type": error_type_of(error)}
+        return {
+            "retryable": self.approval_mode != "human" and self._is_retryable_error(error),
+            "error_type": error_type_of(error),
+        }
 
     def _should_retry(self, error: Exception, attempt: int, num_attempts: int) -> bool:
         if attempt >= num_attempts - 1:
@@ -1611,7 +1624,11 @@ class BaseExternalAgent:
         """The session's unfinished run (pending or running), other than ``exclude_run_id``."""
         for run in getattr(session, "runs", None) or []:
             status = getattr(run.status, "value", run.status)
-            if run.run_id != exclude_run_id and status in (RunStatus.pending.value, RunStatus.running.value):
+            if run.run_id != exclude_run_id and status in (
+                RunStatus.pending.value,
+                RunStatus.running.value,
+                RunStatus.paused.value,
+            ):
                 return run
         return None
 
@@ -1637,7 +1654,7 @@ class BaseExternalAgent:
                 ahead = False
                 continue
             status = getattr(run.status, "value", run.status)
-            if status == RunStatus.running.value:
+            if status in (RunStatus.running.value, RunStatus.paused.value):
                 return run
             elected_ahead = queue_ordered and getattr(run, "queue_attempt", None) is not None
             if ahead and status == RunStatus.pending.value and not elected_ahead:
@@ -1967,6 +1984,11 @@ class BaseExternalAgent:
     # ---------------------------------------------------------------------------
 
     async def _arun_non_stream(self, input: Any, **kwargs: Any) -> RunOutput:
+        if self.approval_mode == "human":
+            async for item in self._arun_stream(input, **{**kwargs, "yield_run_output": True}):
+                if isinstance(item, RunOutput):
+                    return item
+            raise RuntimeError("Human approval run produced no result")
         team_id, workflow_id = self._pop_run_parent(kwargs)
         parent_id = self._parent_id(team_id, workflow_id)
         if self.sandbox is not None:
@@ -2094,6 +2116,8 @@ class BaseExternalAgent:
     async def _arun_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
         team_id, workflow_id = self._pop_run_parent(kwargs)
         parent_id = self._parent_id(team_id, workflow_id)
+        if self.approval_mode == "human" and parent_id is not None:
+            raise ValueError("Human approvals currently require a standalone Claude or Codex agent")
         if self.sandbox is not None:
             if parent_id is None:
                 events = _sandbox_harness().astream(self, input, **kwargs)
@@ -2169,6 +2193,12 @@ class BaseExternalAgent:
             accumulated_content = ""
             warnings: List[Dict[str, Any]] = []
             tools: Dict[str, ToolExecution] = {}
+            approval_ids: List[str] = []
+            bridge = None
+            if self.approval_mode == "human":
+                from agno.agents._approval import ApprovalBridge
+
+                bridge = ApprovalBridge(self, run_id, session_id, user_id)
             status = RunStatus.completed
             run_error: Optional[Exception] = None
             attempts_made = 0
@@ -2186,29 +2216,75 @@ class BaseExternalAgent:
                         adapter_metrics = None
                         structured_output = None
                         try:
-                            async for event in self._arun_adapter_stream(
+                            source = self._arun_adapter_stream(
                                 input, history=history, run_id=run_id, session=session, run_state=run_state, **kwargs
-                            ):
-                                if isinstance(event, ExternalRunMetricsEvent):
-                                    adapter_metrics = event.metrics
-                                    continue
-                                if isinstance(event, ExternalRunStructuredOutputEvent):
-                                    structured_output = event.structured_output
-                                    continue
-                                if isinstance(event, ExternalRunWarningEvent) and event.warning is not None:
-                                    warnings.append(event.warning)
-                                if isinstance(event, RunContentEvent):
-                                    if event.content:
-                                        timer.set_time_to_first_token()
-                                    accumulated_content += event.content or ""
-                                elif isinstance(event, (ToolCallStartedEvent, ToolCallCompletedEvent)) and event.tool:
-                                    key = event.tool.tool_call_id or str(uuid4())
-                                    if key not in tools:
-                                        tools[key] = copy(event.tool)
-                                    elif isinstance(event, ToolCallCompletedEvent):
-                                        tools[key].result = event.tool.result
-                                        tools[key].tool_call_error = event.tool.tool_call_error
-                                yield keep(event)
+                            )
+                            if bridge is not None:
+                                source = bridge.events(source)
+                            try:
+                                async for event in source:
+                                    if isinstance(event, ExternalRunMetricsEvent):
+                                        adapter_metrics = event.metrics
+                                        continue
+                                    if isinstance(event, ExternalRunStructuredOutputEvent):
+                                        structured_output = event.structured_output
+                                        continue
+                                    if isinstance(event, ExternalRunWarningEvent) and event.warning is not None:
+                                        warnings.append(event.warning)
+                                    if isinstance(event, RunContentEvent):
+                                        if event.content:
+                                            timer.set_time_to_first_token()
+                                        accumulated_content += event.content or ""
+                                    elif (
+                                        isinstance(event, (ToolCallStartedEvent, ToolCallCompletedEvent)) and event.tool
+                                    ):
+                                        key = event.tool.tool_call_id or str(uuid4())
+                                        if key not in tools:
+                                            tools[key] = copy(event.tool)
+                                        elif isinstance(event, ToolCallCompletedEvent):
+                                            tools[key].result = event.tool.result
+                                            tools[key].tool_call_error = event.tool.tool_call_error
+                                    if isinstance(event, (RunPausedEvent, RunContinuedEvent)) and bridge is not None:
+                                        if isinstance(event, RunPausedEvent):
+                                            for tool in event.tools or []:
+                                                tools[tool.tool_call_id or ""] = tool
+                                        approval_ids = [
+                                            key
+                                            for key, record in bridge.requests.items()
+                                            if not (record.get("resolution_data") or {}).get("native_approval")
+                                        ]
+                                        snapshot = self._build_run_output(
+                                            run_id,
+                                            session_id,
+                                            user_id,
+                                            input,
+                                            accumulated_content,
+                                            RunStatus.paused if approval_ids else RunStatus.running,
+                                            list(tools.values()) or None,
+                                        )
+                                        from agno.run.requirement import RunRequirement
+
+                                        snapshot.requirements = [
+                                            RunRequirement.from_dict(requirement)
+                                            for approval_id in approval_ids
+                                            for requirement in bridge.requests[approval_id].get("requirements", [])
+                                        ]
+                                        snapshot.metadata = {
+                                            "native_approval": {"owner": bridge.owner, "approval_ids": approval_ids}
+                                        }
+                                        if isinstance(event, RunPausedEvent):
+                                            event.content = accumulated_content
+                                            event.tools = list(tools.values())
+                                        keep(event)
+                                        snapshot.events = list(stored_events or [])
+                                        if session is not None:
+                                            await self._apersist_run_in_session(session, snapshot, strict=True)
+                                        yield event
+                                    else:
+                                        yield keep(event)
+                            finally:
+                                if bridge is not None:
+                                    await source.aclose()  # type: ignore[attr-defined]
                             break
                         except RunCancelledException:
                             raise
@@ -2244,6 +2320,8 @@ class BaseExternalAgent:
                 run.metadata = {**(run.metadata or {}), **self._failure_metadata(run_error)}
             if attempts_made > 1:
                 run.metadata = {**(run.metadata or {}), "attempts": attempts_made}
+            if bridge is not None:
+                run.metadata = {**(run.metadata or {}), "native_approval": {"owner": bridge.owner, "approval_ids": []}}
             self._apply_output_schema(run, output_schema, structured_output)
             self._finish_run_output(run, run_state, continuation)
             fields: Dict[str, Any] = dict(
@@ -2270,7 +2348,12 @@ class BaseExternalAgent:
             if session is not None and parent_id is not None:
                 await self._apersist_member_state(session)
             elif session is not None:
-                await self._apersist_run_in_session(session, run)
+                await self._apersist_run_in_session(session, run, strict=bridge is not None)
+            if bridge is not None:
+                from agno.agents._approval import db_call
+
+                for approval_id in bridge.requests:
+                    await db_call(self.db, "update_approval", approval_id, run_status=run.status.value)
             yield terminal
             if (
                 stored_events is not None

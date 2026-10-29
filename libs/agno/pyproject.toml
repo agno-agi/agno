@@ -429,6 +429,7 @@ embedders = [
 # All libraries for testing
 tests = [
     "claude-agent-sdk>=0.2.148",
+    "openai-codex==0.163.0; python_version >= '3.10'",
   "agno[pages]",
     "agno[a2a]",
     "agno[slack]",

@@ -575,7 +575,7 @@ class SandboxCoordinator:
                             lease,
                             status="ERROR",
                             reason="Sandbox execution computer was lost; recover from the previous completed turn",
-                            retryable=True,
+                            retryable=config.get("approval_mode") != "human",
                         )
                         yield self._terminal(committed)
                         yield RunOutput.from_dict(committed)
@@ -603,6 +603,8 @@ class SandboxCoordinator:
                         yield RunOutput.from_dict(committed)
                         return
                     cursor = 0
+                    pending_approvals: Dict[str, Dict[str, Any]] = {}
+                    delivered_approvals: set[str] = set()
                     while True:
                         if heartbeat_error:
                             raise heartbeat_error[0]
@@ -613,13 +615,48 @@ class SandboxCoordinator:
                             yield self._terminal(committed)
                             yield RunOutput.from_dict(committed)
                             return
-                        page = await self.client.apoll(execution, cursor=cursor, wait=self.poll_wait)
+                        from agno.agents._approval import db_call
+
+                        for approval_id in list(pending_approvals):
+                            if approval_id in delivered_approvals:
+                                continue
+                            decision = await db_call(self.store.db, "get_approval", approval_id)
+                            if (
+                                decision
+                                and decision.get("status") in ("approved", "rejected")
+                                and (
+                                    (decision.get("resolution_data") or {}).get("native_approval")
+                                    == decision["context"].get("native_approval")
+                                )
+                            ):
+
+                                async def deliver(record: Dict[str, Any]) -> Dict[str, Any]:
+                                    if record["execution_id"] != execution.execution_id:
+                                        raise SandboxError("Native approval execution changed")
+                                    acknowledgement = await self.client.aresolve(execution, decision)
+                                    if acknowledgement.get("accepted") is not True:
+                                        raise SandboxError("Runtime did not acknowledge the native decision")
+                                    return record
+
+                                await self.store._aoperation(lease, deliver)
+                                delivered_approvals.add(approval_id)
+                        page = await self.client.apoll(
+                            execution,
+                            cursor=cursor,
+                            wait=min(self.poll_wait, 0.2) if pending_approvals else self.poll_wait,
+                        )
                         cursor = page.cursor
                         # One lease check per page, before its events are published; the heartbeat
                         # keeps the lease alive. A resumed caller may receive provisional events
                         # again; queue/event transport supplies its own attempt fencing.
                         await self.store.aget(lease)
                         for event in page.events:
+                            if event.get("event") == "RunPaused" and event.get("approval"):
+                                await self.store._anative_approval_event(lease, event)
+                                pending_approvals[event["approval"]["id"]] = event["approval"]
+                            elif event.get("event") == "RunContinued" and event.get("approval_id"):
+                                await self.store._anative_approval_event(lease, event)
+                                pending_approvals.pop(event["approval_id"], None)
                             yield run_output_event_from_dict(event)
                         if page.result is not None:
                             if page.result["type"] != "execution_finished":
@@ -661,7 +698,8 @@ class SandboxCoordinator:
                         lease,
                         status=result["status"],
                         reason=str(result.get("content", "Execution failed"))[:8192],
-                        retryable=(result.get("metadata") or {}).get("retryable") is not False,
+                        retryable=config.get("approval_mode") != "human"
+                        and (result.get("metadata") or {}).get("retryable") is not False,
                     )
                 else:
                     committed = await self._finalize(lease)
@@ -690,7 +728,7 @@ class SandboxCoordinator:
                         lease,
                         status="ERROR" if cause == "timeout" else "CANCELLED",
                         reason="Run timed out" if cause == "timeout" else "Run cancelled",
-                        retryable=cause == "timeout",
+                        retryable=cause == "timeout" and config.get("approval_mode") != "human",
                     )
             # Shutdown/disconnect alone detaches; the queue's next attempt uses
             # this generation's execution journal instead of rerunning tools.

@@ -577,8 +577,12 @@ class DockerSandbox(Sandbox):
 
         A failed or lost reply never touches compute: the coordinator reconciles.
         """
-        if operation not in ("start", "poll") or not isinstance(payload, bytes) or len(payload) > 1024 * 1024:
-            raise ValueError("Runtime RPC requires start/poll and a payload no larger than 1 MiB")
+        if (
+            operation not in ("start", "poll", "resolve", "capabilities")
+            or not isinstance(payload, bytes)
+            or len(payload) > 1024 * 1024
+        ):
+            raise ValueError("Runtime RPC requires start/poll/resolve/capabilities and a payload no larger than 1 MiB")
         if handle.runtime_url is None:
             # Exec fallback: fixed runtime argv, bounded, and never stopping compute on a failed or
             # lost reply. A control request is not a command that could run forever.

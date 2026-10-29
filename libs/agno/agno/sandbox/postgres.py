@@ -781,6 +781,8 @@ class _SandboxStore:
         older ones are queued in ``retired_checkpoints`` for the coordinator to delete.
         """
 
+        approvals = await self._table("approvals", self.db.approvals_table_name)
+
         def commit(connection: Connection) -> Tuple[bool, Dict[str, Any]]:
             row = self._locked(connection, lease)
             record = dict(row["record"])
@@ -823,6 +825,7 @@ class _SandboxStore:
                     **({"repository": result["repository"]} if result.get("repository") is not None else {}),
                 },
             }
+            self._retire_native_approvals(connection, approvals, run)
             session_data = dict(session["session_data"] or {})
             session_data["sandbox"] = {
                 "native": result["session"].get("session_data") or {},
@@ -910,6 +913,8 @@ class _SandboxStore:
         Records the stop on the run unless another writer already finished it.
         """
 
+        approvals = await self._table("approvals", self.db.approvals_table_name)
+
         def finish(connection: Connection) -> Dict[str, Any]:
             record = dict(self._locked(connection, lease)["record"])
             if record["phase"] != "stopping" or not record.get("computer_stopped"):
@@ -947,6 +952,7 @@ class _SandboxStore:
                     "retryable": record.get("stop_retryable", False),
                     "sandbox": sandbox,
                 }
+                self._retire_native_approvals(connection, approvals, run)
                 connection.execute(
                     update(self.runs)
                     .where(self.runs.c.run_id == lease.run_id)
@@ -1041,6 +1047,98 @@ class _SandboxStore:
             )
             .on_conflict_do_nothing()
         )
+
+    @staticmethod
+    def _retire_native_approvals(connection: Connection, approvals: Any, run: Dict[str, Any]) -> None:
+        native = (run.get("metadata") or {}).get("native_approval")
+        if native is None:
+            return
+        for row in connection.execute(select(approvals).where(approvals.c.run_id == run["run_id"])).mappings():
+            if not (row.get("context") or {}).get("native_approval"):
+                continue
+            values: Dict[str, Any] = {"run_status": run["status"]}
+            if row.get("run_status") == "PAUSED" and row["status"] in ("pending", "approved", "rejected"):
+                values["status"] = "expired" if row.get("expires_at", 0) <= time.time() else "cancelled"
+            connection.execute(approvals.update().where(approvals.c.id == row["id"]).values(**values))
+        run["metadata"]["native_approval"] = {**native, "approval_ids": []}
+        run["requirements"] = []
+
+    async def _anative_approval_event(self, lease: SandboxLease, event: Dict[str, Any]) -> None:
+        """Commit a live permission wait and its approval under execution fencing."""
+        approvals = await self._table("approvals", self.db.approvals_table_name)
+        assert approvals is not None
+
+        def publish(connection: Connection) -> None:
+            binding = self._locked(connection, lease)
+            service, _ = self._service_run(connection, lease)
+            if str(service["status"]).upper() in _FINISHED:
+                raise SandboxLeaseLost("Native approval execution already finished")
+            run = dict(service["run_data"])
+            metadata = dict(run.get("metadata") or {})
+            native = dict(metadata.get("native_approval") or {})
+            ids = list(native.get("approval_ids") or [])
+            if event["event"] == "RunPaused":
+                record = dict(event["approval"])
+                record.setdefault("created_at", int(time.time()))
+                record["updated_at"] = int(time.time())
+                record.update(
+                    run_id=lease.run_id, session_id=lease.session_id, agent_id=lease.agent_id, user_id=lease.user_id
+                )
+                context = dict(record.get("context") or {})
+                context["sandbox"] = {
+                    "execution_id": binding["record"]["execution_id"],
+                    "generation": binding["record"]["computer"]["generation"],
+                }
+                record["context"] = context
+                previous = (
+                    connection.execute(select(approvals).where(approvals.c.id == record["id"])).mappings().first()
+                )
+                if previous is None:
+                    connection.execute(approvals.insert().values(**record))
+                elif any(
+                    previous[key] != record[key] for key in ("run_id", "session_id", "agent_id", "user_id", "context")
+                ):
+                    raise SandboxError("Native approval identity was reused")
+                # Replaying an already acknowledged request does not pause it again.
+                if previous is None or previous.get("run_status") == "PAUSED":
+                    if record["id"] not in ids:
+                        ids.append(record["id"])
+                    requirements = list(run.get("requirements") or [])
+                    known = {r["tool_execution"].get("approval_id") for r in requirements}
+                    if record["id"] not in known:
+                        requirements.extend(record["requirements"])
+                    run["requirements"] = requirements
+                    run["tools"] = event.get("tools") or [r["tool_execution"] for r in requirements]
+                    if event.get("content") is not None:
+                        run["content"] = event["content"]
+            else:
+                approval_id = event.get("approval_id")
+                ids = [value for value in ids if value != approval_id]
+                connection.execute(
+                    approvals.update()
+                    .where(
+                        approvals.c.id == approval_id,
+                        approvals.c.run_id == lease.run_id,
+                    )
+                    .values(run_status="RUNNING")
+                )
+                run["requirements"] = [
+                    r for r in run.get("requirements") or [] if r["tool_execution"].get("approval_id") != approval_id
+                ]
+            native.update(approval_ids=ids, execution_id=binding["record"]["execution_id"])
+            metadata["native_approval"] = native
+            run.update(metadata=metadata, status="PAUSED" if ids else "RUNNING")
+            connection.execute(
+                self.runs.update()
+                .where(self.runs.c.run_id == lease.run_id)
+                .values(
+                    status=run["status"],
+                    run_data=self._json(run),
+                    updated_at=int(time.time()),
+                )
+            )
+
+        await self._transaction(publish)
 
     async def _apublish_events(self, run: Dict[str, Any], events: list[Dict[str, Any]]) -> None:
         """Attach transport indices without rewriting a committed recovery boundary."""

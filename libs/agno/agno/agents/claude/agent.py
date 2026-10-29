@@ -38,6 +38,7 @@ from agno.agents.base import (
     ExternalRunResult,
     ExternalRunStructuredOutputEvent,
     ExternalRunWarningEvent,
+    run_coroutine_sync,
 )
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.exceptions import ModelProviderError, RunNotContinuableError
@@ -234,6 +235,14 @@ class ClaudeAgent(BaseExternalAgent):
                 DeprecationWarning,
                 stacklevel=2,
             )
+        if self.approval_mode not in (None, "human"):
+            raise ValueError("Claude approval_mode must be 'human' or None")
+        if self.approval_mode == "human":
+            opts = self._option_values()
+            if opts.get("can_use_tool") or opts.get("permission_prompt_tool_name"):
+                raise ValueError("Human approvals cannot be combined with a custom permission handler")
+            if opts.get("permission_mode") in ("bypassPermissions", "dontAsk"):
+                raise ValueError("Human approvals require a permission mode that can request approval")
         self._validate_runtime_options(self._option_values())
         if self._effective_model() is None:
             # Like a native model's default id: the default is what the SDK runs and the run records.
@@ -370,6 +379,23 @@ class ClaudeAgent(BaseExternalAgent):
         store = session_store if session_store is not None else self._transcript_store(agno_session_id)
         if store is not None:
             opts["session_store"] = store
+        if self.approval_mode == "human":
+            from agno.agents._approval import current_bridge
+
+            if opts.get("can_use_tool") or opts.get("permission_prompt_tool_name"):
+                raise ValueError("Human approvals cannot be combined with a custom permission handler")
+            if opts.get("permission_mode") in ("bypassPermissions", "dontAsk"):
+                raise ValueError("Human approvals require a native permission mode that can ask")
+            bridge = current_bridge()
+
+            async def can_use_tool(name: str, arguments: Dict[str, Any], context: Any) -> Any:
+                native = {"sdk": "claude", "tool_call_id": getattr(context, "tool_use_id", None)}
+                allowed = await bridge.request(name, arguments, native)
+                if allowed:
+                    return sdk.PermissionResultAllow(updated_input=arguments)
+                return sdk.PermissionResultDeny(message="Rejected by the AgentOS reviewer")
+
+            opts["can_use_tool"] = can_use_tool
         return sdk.ClaudeAgentOptions(**opts)
 
     # ---------------------------------------------------------------------------
@@ -837,6 +863,25 @@ class ClaudeAgent(BaseExternalAgent):
         sibling run. A finished run is always continued as a new sibling run with fork lineage, as native
         agents do, whatever fork is set to. Files the agent changed are not rewound.
         """
+        if self.approval_mode == "human":
+            from agno.agents._approval import continue_run, sync_events
+
+            continuation = continue_run(
+                self,
+                run_response,
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                requirements=requirements,
+                updated_tools=updated_tools,
+                input=input,
+                fork=fork,
+                regenerate=regenerate,
+                continue_from=continue_from,
+                additional_instructions=additional_instructions,
+                stream=stream,
+            )
+            return sync_events(continuation) if stream else run_coroutine_sync(continuation)
         self._check_continue_args(requirements, updated_tools, regenerate, replace_original, additional_instructions)
         source = run_response or self.get_run_output(run_id or "", session_id, user_id)
         if source is None:
@@ -873,6 +918,24 @@ class ClaudeAgent(BaseExternalAgent):
         **kwargs: Any,
     ) -> Any:
         """Async continue_run: returns a coroutine, or an async iterator when stream=True."""
+        if self.approval_mode == "human":
+            from agno.agents._approval import continue_run
+
+            return continue_run(
+                self,
+                run_response,
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                requirements=requirements,
+                updated_tools=updated_tools,
+                stream=stream,
+                input=input,
+                fork=fork,
+                regenerate=regenerate,
+                continue_from=continue_from,
+                additional_instructions=additional_instructions,
+            )
         self._check_continue_args(requirements, updated_tools, regenerate, replace_original, additional_instructions)
         kwargs.pop("background_tasks", None)
         call = dict(

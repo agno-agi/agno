@@ -53,6 +53,53 @@ def test_runtime_writer_lock_is_exclusive(tmp_path):
                 pytest.fail("two writers")
 
 
+@pytest.mark.parametrize("status", ["approved", "rejected"])
+def test_native_decision_is_bound_to_live_execution(dispatch, monkeypatch, status):
+    import time
+
+    from agno.db.sqlite import SqliteDb
+
+    root, calls, request = dispatch
+    runtime._start(root, request)
+    directory = runtime._job(root, "e")
+    (root / "native").mkdir(exist_ok=True)
+    db = SqliteDb(db_file=str(root / "native" / "history.db"))
+    native = {"owner": "owner", "digest": "digest"}
+    db.create_approval(
+        {
+            "id": "approval",
+            "run_id": "r",
+            "session_id": "s",
+            "agent_id": "a",
+            "status": "pending",
+            "approval_type": "required",
+            "source_type": "agent",
+            "pause_type": "confirmation",
+            "context": {"native_approval": native},
+            "expires_at": int(time.time()) + 60,
+        }
+    )
+    runtime._atomic(directory / "status.json", runtime._encode({"phase": "running", "pid": 123, "start": "start"}))
+    decision = {**request, "approval_id": "approval", "status": status, "native": native}
+    for field in ("run_id", "session_id", "agent_id"):
+        with pytest.raises(SandboxError, match="identity"):
+            runtime._resolve(root, {**decision, field: "other"})
+    with pytest.raises(SandboxError, match="does not match"):
+        runtime._resolve(root, {**decision, "native": {"owner": "other"}})
+    monkeypatch.setattr(runtime, "_process_start", lambda pid: "different-process")
+    with pytest.raises(SandboxError, match="no longer available"):
+        runtime._resolve(root, decision)
+    assert db.get_approval("approval")["status"] == "pending"
+    monkeypatch.setattr(runtime, "_process_start", lambda pid: "start")
+    assert runtime._resolve(root, decision)["accepted"]
+    assert runtime._resolve(root, decision)["accepted"]
+    with pytest.raises(SandboxError, match="already been resolved"):
+        runtime._resolve(root, {**decision, "status": "rejected" if status == "approved" else "approved"})
+    assert db.get_approval("approval")["status"] == status
+    assert len(calls) == 1, "Decision delivery must never spawn a replacement process"
+    db.db_engine.dispose()
+
+
 def test_execution_journal_replays_without_service_completion(dispatch):
     root, calls, request = dispatch
     runtime._start(root, request)
@@ -143,6 +190,18 @@ class Provider:
 
     async def astop(self, computer):
         self.stopped = True
+
+
+@pytest.mark.asyncio
+async def test_old_runtime_is_refused_before_starting_human_harness():
+    provider = Provider()
+    client = SandboxRuntimeClient(provider)
+    with pytest.raises(SandboxError, match="Rebuild the sandbox image"):
+        await client.astart(
+            HANDLE, execution_id="e", run_id="r", sdk="claude", input="work", config={"approval_mode": "human"}
+        )
+    assert len(provider.requests) == 1
+    assert "input" not in provider.requests[0], "Old runtime received a start request"
 
 
 @pytest.mark.asyncio

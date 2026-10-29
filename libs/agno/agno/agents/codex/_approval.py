@@ -1,0 +1,145 @@
+"""Nonblocking permission transport for the pinned Codex app-server SDK.
+
+The SDK's synchronous approval callback runs on its only reader thread. This
+small transport subclass schedules requests on the owning loop instead, retaining
+the SDK's thread/turn API, response router and serialized writes.
+"""
+
+import asyncio
+from typing import Any, Dict
+
+from agno.agents._approval import ApprovalBridge
+
+
+def human_client(config: Any, bridge: ApprovalBridge) -> Any:
+    from importlib.metadata import version
+
+    from openai_codex import AsyncCodex
+    from openai_codex.async_client import AsyncCodexClient
+    from openai_codex.client import CodexClient
+
+    if version("openai-codex") != "0.163.0":
+        raise ValueError("Human approvals require the tested openai-codex==0.163.0 transport")
+    loop = asyncio.get_running_loop()
+
+    class PermissionClient(CodexClient):
+        def __init__(self) -> None:
+            super().__init__(config=config)
+            self.pending: Dict[Any, Any] = {}
+            self.items: Dict[str, Any] = {}
+
+        def _write_message(self, payload: Any) -> None:
+            if payload.get("method") in ("thread/start", "thread/resume", "turn/start"):
+                payload = {
+                    **payload,
+                    "params": {
+                        **(payload.get("params") or {}),
+                        "approvalPolicy": "on-request",
+                        "approvalsReviewer": "user",
+                    },
+                }
+            super()._write_message(payload)
+
+        async def decide(self, message: Any) -> None:
+            request_id = message["id"]
+            try:
+                method = message["method"]
+                params = message.get("params") or {}
+                if method not in (
+                    "item/commandExecution/requestApproval",
+                    "item/fileChange/requestApproval",
+                    "item/permissions/requestApproval",
+                ):
+                    raise ValueError("Unsupported native approval request")
+                item = self.items.get(str(params.get("itemId", "")), {})
+                # The review surface shows the action, not protocol routing or
+                # policy-amendment options this bridge never grants.
+                arguments = {
+                    key: value
+                    for key, value in params.items()
+                    if key
+                    not in (
+                        "threadId",
+                        "turnId",
+                        "itemId",
+                        "startedAtMs",
+                        "kind",
+                        "commandActions",
+                        "availableDecisions",
+                        "proposedExecpolicyAmendment",
+                        "proposedNetworkPolicyAmendments",
+                    )
+                }
+                if method == "item/fileChange/requestApproval":
+                    if not item.get("changes"):
+                        raise ValueError("File approval has no reviewable changes")
+                    arguments["changes"] = item["changes"]
+                if method == "item/commandExecution/requestApproval":
+                    arguments["command"] = params.get("command") or item.get("command")
+                    if not arguments["command"] and not params.get("networkApprovalContext"):
+                        raise ValueError("Command approval has no reviewable action")
+                native = {
+                    "sdk": "codex",
+                    "request_id": request_id,
+                    "method": method,
+                    "thread_id": params.get("threadId"),
+                    "turn_id": params.get("turnId"),
+                    "tool_call_id": params.get("itemId"),
+                    "request": params,
+                }
+                allowed = await bridge.request(method.split("/")[1], arguments, native)
+                if method == "item/permissions/requestApproval":
+                    result = {"permissions": params.get("permissions", {}) if allowed else {}, "scope": "turn"}
+                else:
+                    result = {"decision": "accept" if allowed else "decline"}
+                self._write_message({"id": request_id, "result": result})
+            except Exception as error:
+                self._write_message({"id": request_id, "error": {"code": -32603, "message": str(error)}})
+
+        def _reader_loop(self) -> None:
+            try:
+                while True:
+                    message: Any = self._read_message()
+                    if "method" in message and "id" in message:
+                        self.pending = {key: task for key, task in self.pending.items() if not task.done()}
+                        if len(self.pending) >= 32 or message["id"] in self.pending:
+                            self._write_message(
+                                {
+                                    "id": message["id"],
+                                    "error": {"code": -32603, "message": "Too many pending permission requests"},
+                                }
+                            )
+                            continue
+                        self.pending[message["id"]] = asyncio.run_coroutine_threadsafe(self.decide(message), loop)
+                    elif "method" in message:
+                        params = message.get("params") or {}
+                        if message["method"] == "item/started" and isinstance(params.get("item"), dict):
+                            item = params["item"]
+                            if len(self.items) >= 1024:
+                                self.items.clear()
+                            self.items[item.get("id", "")] = item
+                        self._router.route_notification(self._coerce_notification(message["method"], params))
+                    else:
+                        self._router.route_response(message)
+            except BaseException as error:
+                for task in self.pending.values():
+                    task.cancel()
+                self._router.fail_all(error)
+
+        def close(self) -> None:
+            for task in list(self.pending.values()):
+                task.cancel()
+            super().close()
+
+    class PermissionAsyncClient(AsyncCodexClient):
+        def __init__(self) -> None:
+            self._sync = PermissionClient()
+
+    class HumanCodex(AsyncCodex):
+        def __init__(self) -> None:
+            self._client = PermissionAsyncClient()
+            self._init = None
+            self._initialized = False
+            self._init_lock = asyncio.Lock()
+
+    return HumanCodex()

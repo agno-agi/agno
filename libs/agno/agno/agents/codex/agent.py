@@ -177,7 +177,9 @@ class CodexAgent(BaseExternalAgent):
         instructions: Developer instructions appended to the Codex system prompt.
         base_instructions: Replaces the Codex built-in system prompt entirely.
         sandbox_mode: "read-only", "workspace-write" or "full-access". Defaults to the Codex default.
-        approval_mode: "auto_review" or "deny_all" for escalated permission requests.
+        approval_mode: "auto_review", "deny_all", or "human" for escalated permission requests.
+            Human mode requires a database and forwards requests to AgentOS Approvals.
+        approval_timeout: Maximum seconds to wait for a human permission decision (default 900).
         reasoning_effort: "minimal", "low", "medium", "high" or "xhigh".
         cwd: Working directory for the agent.
         keep_uploads: Keep files attached to a run under cwd/.agno/uploads/<run_id>/ after the run.
@@ -305,6 +307,21 @@ class CodexAgent(BaseExternalAgent):
                 "CodexAgent input must be a string. Native Codex input objects are not supported; "
                 "use the native SDK for images, skills or external tool messages."
             )
+
+    def acontinue_run(self, run_response: Any = None, **kwargs: Any) -> Any:
+        """Deliver reviewed native permissions to the existing execution."""
+        from agno.agents._approval import continue_run
+
+        if self.approval_mode != "human":
+            raise ValueError("Codex continuation requires approval_mode='human'")
+        return continue_run(self, run_response, **kwargs)
+
+    def continue_run(self, run_response: Any = None, **kwargs: Any) -> Any:
+        """Synchronous native permission continuation."""
+        from agno.agents._approval import sync_events
+
+        continuation = self.acontinue_run(run_response, **kwargs)
+        return sync_events(continuation) if kwargs.get("stream") else run_coroutine_sync(continuation)
 
     def _refuse_host_operation(self, operation: str) -> None:
         if self.sandbox is not None:
@@ -457,7 +474,14 @@ class CodexAgent(BaseExternalAgent):
         sdk = _sdk()
         config = self._codex_config(sdk)
         api_key = (config.env or {}).get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
-        async with sdk.AsyncCodex(config) as codex:
+        if self.approval_mode == "human":
+            from agno.agents._approval import current_bridge
+            from agno.agents.codex._approval import human_client
+
+            client = human_client(config, current_bridge())
+        else:
+            client = sdk.AsyncCodex(config)
+        async with client as codex:
             if api_key:
                 # The app-server inherits the environment but requires an explicit login.
                 # Keep a user's ChatGPT or other non-API-key account, as sandbox runs do.
@@ -549,7 +573,9 @@ class CodexAgent(BaseExternalAgent):
         if "sandbox" in options:
             options["sandbox"] = self._to_sandbox(sdk, options["sandbox"])
         if "approval_mode" in options:
-            options["approval_mode"] = self._to_approval_mode(sdk, options["approval_mode"])
+            options["approval_mode"] = self._to_approval_mode(
+                sdk, "auto_review" if self.approval_mode == "human" else options["approval_mode"]
+            )
 
     def _turn_kwargs(self, sdk: Any, output_schema: Optional[Any] = None) -> Dict[str, Any]:
         self._validate_options()

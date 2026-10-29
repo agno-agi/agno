@@ -1213,6 +1213,11 @@ class QueueWorker:
                     "settled before the sweep (only the ticket write was lost)"
                 )
             return settled
+        if status_value == "PAUSED" and (getattr(run_output, "metadata", None) or {}).get("native_approval"):
+            # A native process was still executing, not a replayable HITL leg.
+            # The normal owner-loss path fences/stops compute; never park this
+            # as a ticket whose continuation would launch the prompt again.
+            return False
         if status_value == "PAUSED":
             if (job.get("payload") or {}).get("stream"):
                 # The leg's own paused sentinel is written by the executor's
@@ -1585,6 +1590,8 @@ class QueueWorker:
         fields: Dict[str, Any] = {
             "status": RunStatus.cancelled.value if status == "cancelled" else RunStatus.error.value,
         }
+        if getattr(component, "approval_mode", None) == "human":
+            fields["requirements"] = []
         if cancellation_stage is not None:
             # Rides the same fenced patch as the status: the adapters apply
             # fields onto the stored run, so no adapter knows the key
@@ -1599,6 +1606,10 @@ class QueueWorker:
             user_id=job.get("user_id"),
             expected_attempt=job.get("attempt"),
         )
+        if result == RunPersistOutcome.UPDATED and getattr(component, "approval_mode", None) == "human":
+            from agno.agents._approval import _retire_direct_approvals
+
+            await _retire_direct_approvals(component, job["id"], fields["status"])
         if not fallback_allowed(result):
             # UPDATED, STALE_ATTEMPT (a newer attempt owns the row) or
             # TERMINAL_REFUSED (completed/cancelled wins) - all final; the
@@ -1722,6 +1733,20 @@ class QueueWorker:
             return True
         raw = getattr(run, "status", None)
         status = raw.value if isinstance(raw, RunStatus) else raw
+        if (
+            getattr(component, "approval_mode", None) == "human"
+            and getattr(component, "sandbox", None) is None
+            and run is not None
+            and status not in (RunStatus.completed.value, RunStatus.cancelled.value)
+        ):
+            # A direct native process belonged to the lost worker. Re-entering
+            # arun would repeat its tools, not reconnect to that process.
+            error = "Native approval execution owner was lost; the turn cannot be replayed"
+            if not await self._persist_run_error(job, error):
+                return True
+            await self._asettle_ticket(job["id"], job["attempt"], "failed", error)
+            await self._terminate_stream_view(job, "error")
+            return True
         if run is None or str(status).upper() != RunStatus.error.value or not self._run_is_not_retryable(run):
             return False
         error = str(getattr(run, "content", "") or "run errored")
@@ -2078,7 +2103,7 @@ class QueueWorker:
             with authorization_scope(lambda: authority):
                 await self._execute_claimed_inner(job, ownership)
 
-    async def _await_with_timeout(self, execution: Any, ownership: Any) -> Any:
+    async def _await_with_timeout(self, execution: Any, ownership: Any, component: Any = None, job: Any = None) -> Any:
         """asyncio.wait_for with cause attribution: the cancellation cause is
         stamped BEFORE the cancel is delivered, because the foreground
         cancellation-persist guards consult it while the execution unwinds.
@@ -2087,8 +2112,23 @@ class QueueWorker:
         not."""
         exec_task = asyncio.ensure_future(execution)
         try:
-            done, _ = await asyncio.wait({exec_task}, timeout=self.config.timeout_seconds)
-        except asyncio.CancelledError:
+            if getattr(component, "approval_mode", None) == "human" and job is not None:
+                from agno.agents._approval import wait_for_execution
+
+                async def waiting() -> bool:
+                    run = await component.aget_run_output(
+                        job["id"], session_id=job.get("session_id"), user_id=job.get("user_id")
+                    )
+                    return run is not None and bool((run.metadata or {}).get("native_approval", {}).get("approval_ids"))
+
+                assert self.config.timeout_seconds is not None
+                finished = await wait_for_execution(
+                    exec_task, self.config.timeout_seconds, component.approval_timeout, waiting
+                )
+                done = {exec_task} if finished else set()
+            else:
+                done, _ = await asyncio.wait({exec_task}, timeout=self.config.timeout_seconds)
+        except BaseException:
             # Drain or loop shutdown cancelled US (stop() stamped the drain
             # cause before cancelling): propagate to the execution task
             exec_task.cancel()
@@ -2315,7 +2355,7 @@ class QueueWorker:
                     **call_kwargs,
                 )
             if self.config.timeout_seconds:
-                result = await self._await_with_timeout(execution, ownership)
+                result = await self._await_with_timeout(execution, ownership, component, job)
             else:
                 result = await execution
 

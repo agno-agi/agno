@@ -493,7 +493,7 @@ async def agent_resumable_continue_response_streamer(
 
 
 async def _resume_stream_generator(
-    agent: Union[Agent, RemoteAgent],
+    agent: Any,
     run_id: str,
     last_event_index: Optional[int],
     session_id: Optional[str],
@@ -878,6 +878,8 @@ def get_agent_router(
         if isinstance(agent, BaseExternalAgent) and agent.sandbox is not None:
             from agno.os.routers.agents.sandbox import sandbox_run_response
 
+            if getattr(agent, "approval_mode", None) == "human":
+                background = True
             return await sandbox_run_response(
                 agent,
                 getattr(request.app.state, "queue_worker", None),
@@ -893,6 +895,10 @@ def get_agent_router(
                 files=input_files,
                 unsupported_media=bool(base64_audios or base64_videos),
             )
+
+        # Human permission waits outlive the browser connection.
+        if getattr(agent, "approval_mode", None) == "human":
+            background = True
 
         # Background execution
         if background:
@@ -1592,6 +1598,41 @@ def get_agent_router(
         # error - so a paused-only check here can only block requests the
         # core supports. Teams are equally ungated; workflows still refuse
         # non-paused continues because their core requires PAUSED.
+
+        # A live native callback owns this continuation: never requeue its turn.
+        if getattr(agent, "approval_mode", None) == "human":
+            from agno.agents._approval import submit_decisions, tail_stored
+            from agno.models.response import ToolExecution
+            from agno.os.event_streams import get_event_stream
+
+            if fork or regenerate or input is not None or continue_from != "end" or additional_instructions:
+                raise HTTPException(status_code=400, detail="Native approval continuation only delivers a decision")
+            assert session_id
+            event_stream = get_event_stream()
+            cursor = (await event_stream.get_event_count(run_id)) - 1
+            try:
+                parsed_tools = [ToolExecution.from_dict(t) for t in tools_data or []]
+                submitted = await submit_decisions(agent, run_id, session_id, user_id, parsed_tools)
+            except (ValueError, TypeError, KeyError) as error:
+                raise HTTPException(status_code=409, detail=str(error))
+            if stream:
+                if await event_stream.get_run_status(run_id) is None:
+
+                    async def stored_native_events():
+                        from agno.run.agent import RunOutput
+
+                        async for event in tail_stored(agent, run_id, session_id, user_id, len(submitted.events or [])):
+                            if not isinstance(event, RunOutput):
+                                yield f"event: {event.event}\ndata: {event.to_json()}\n\n"
+
+                    return StreamingResponse(stored_native_events(), media_type="text/event-stream")
+                return StreamingResponse(
+                    _resume_stream_generator(agent, run_id, cursor, session_id, user_id),
+                    media_type="text/event-stream",
+                )
+            return JSONResponse(
+                status_code=202, content={"run_id": run_id, "session_id": session_id, "status": "PAUSED"}
+            )
 
         # Convert tools dict to RunRequirement and ToolExecution objects if provided
         requirements = None

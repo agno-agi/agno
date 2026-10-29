@@ -138,6 +138,64 @@ async def rows(store):
     )
 
 
+async def test_native_approval_pause_is_fenced_and_retired_on_stop(store):
+    from agno.agents._approval import db_call
+
+    await seed(store)
+    state = await claim(store)
+    await store.aset_computer(state.lease, computer(state))
+    approval_id = str(uuid4())
+    tool = {
+        "tool_call_id": "tool",
+        "tool_name": "Bash",
+        "tool_args": {"command": "write-marker"},
+        "requires_confirmation": True,
+        "approval_id": approval_id,
+    }
+    event = {
+        "event": "RunPaused",
+        "content": "I will request permission for this command.",
+        "tools": [{"tool_call_id": "earlier", "tool_name": "Read", "result": "done"}, tool],
+        "approval": {
+            "id": approval_id,
+            "run_id": "run",
+            "session_id": "session",
+            "agent_id": "agent",
+            "user_id": "user",
+            "status": "pending",
+            "run_status": "PAUSED",
+            "approval_type": "required",
+            "source_type": "agent",
+            "pause_type": "confirmation",
+            "tool_name": "Bash",
+            "tool_args": tool["tool_args"],
+            "requirements": [{"tool_execution": tool}],
+            "context": {"native_approval": {"owner": "owner", "digest": "digest"}},
+            "expires_at": int(time.time()) + 60,
+        },
+    }
+    await store._anative_approval_event(state.lease, event)
+    await store._anative_approval_event(state.lease, event)
+    run, _, _ = await rows(store)
+    assert run["status"] == "PAUSED"
+    assert run["run_data"]["content"] == event["content"]
+    assert run["run_data"]["tools"] == event["tools"]
+    assert len(run["run_data"]["requirements"]) == 1
+    approval = await db_call(store.db, "get_approval", approval_id)
+    assert approval["context"]["sandbox"]["execution_id"] == state.record["execution_id"]
+    await store.arelinquish(state.lease)
+    successor = await claim(store, owner="successor")
+    assert successor.record["execution_id"] == state.record["execution_id"]
+    with pytest.raises(SandboxLeaseLost):
+        await store._anative_approval_event(state.lease, event)
+    await store.abegin_stop(successor.lease, status="ERROR", reason="runtime lost")
+    await store.aconfirm_stopped(successor.lease, "ref")
+    stopped = await store.afinish_stop(successor.lease)
+    assert stopped["requirements"] == []
+    assert stopped["metadata"]["native_approval"]["approval_ids"] == []
+    assert (await db_call(store.db, "get_approval", approval_id))["status"] == "cancelled"
+
+
 async def test_independent_instances_have_one_owner(store):
     await seed(store)
     other_db = new_db(type(store.db), store.db.session_table_name.removeprefix("sb_sessions_"))
