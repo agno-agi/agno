@@ -205,8 +205,12 @@ class Sandbox(ABC):
         connection; the default spawns the runtime over exec, which works on any
         image carrying the package but costs a process per request.
         """
-        if operation not in ("start", "poll") or not isinstance(payload, bytes) or len(payload) > 1024 * 1024:
-            raise ValueError("Runtime RPC requires start/poll and a payload no larger than 1 MiB")
+        if (
+            operation not in ("start", "poll", "resolve", "capabilities")
+            or not isinstance(payload, bytes)
+            or len(payload) > 1024 * 1024
+        ):
+            raise ValueError("Runtime RPC requires start/poll/resolve/capabilities and a payload no larger than 1 MiB")
         try:
             wait = float(json.loads(payload).get("wait", 0) or 0)
         except (ValueError, AttributeError):
