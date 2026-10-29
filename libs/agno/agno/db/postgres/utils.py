@@ -627,7 +627,7 @@ def _os_metrics_run_metrics(run_data: Any, keys: Sequence[str] = ()) -> Any:
     """Build the metrics of a stored run with only token counts, the given keys and whether details were reported."""
     metrics = run_data["metrics"]
     pairs: List[Any] = []
-    for key in [*OS_METRICS_TOKEN_FIELDS, *keys]:
+    for key in list(OS_METRICS_TOKEN_FIELDS) + list(keys):
         pairs.extend([key, metrics[key]])
     pairs.extend(["details", metrics["details"].astext.notin_(_OS_METRICS_EMPTY_DETAILS)])
     return func.jsonb_strip_nulls(func.jsonb_build_object(*pairs))
