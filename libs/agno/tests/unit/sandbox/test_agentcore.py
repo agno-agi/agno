@@ -2,6 +2,7 @@
 
 import base64
 import dataclasses
+import hashlib
 import io
 import json
 import os
@@ -23,6 +24,7 @@ from botocore.exceptions import ClientError, EndpointConnectionError
 
 import agno.sandbox.agentcore.sandbox as agentcore_sandbox
 from agno.sandbox.agentcore import AgentCoreCheckpointTransfer, AgentCoreSandbox, server
+from agno.sandbox.agentcore.sandbox import _Refusal
 from agno.sandbox.base import SandboxError
 from agno.sandbox.checkpoint import CheckpointRef, FileCheckpointStore
 
@@ -439,8 +441,12 @@ def test_only_established_forwarder_connections_over_loopback_are_trusted(monkey
 def computer(tmp_path, monkeypatch):
     """The real server operations on temporary directories, as this test's user."""
     control, workspace, runtime = tmp_path / "control", tmp_path / "workspace", tmp_path / "runtime"
+    storage = tmp_path / "storage"
     control.mkdir(mode=0o700)
+    storage.mkdir()
+    monkeypatch.setattr(server, "_storage_mounted", lambda: storage.is_dir())
     for name, value in (
+        ("_STORAGE", storage),
         ("_CONTROL", control),
         ("_CLAIM", control / "claim.json"),
         ("_WORKSPACE", workspace),
@@ -469,23 +475,30 @@ def computer(tmp_path, monkeypatch):
         try:
             return server._OPERATIONS[operation](payload)
         except Exception as error:
-            # The real server answers errors in the body, which _invoke raises as SandboxError,
-            # or as a refusal carrying its code.
+            # The real server answers errors in the body, which _invoke raises as
+            # SandboxError, or as a refusal carrying its code.
             message = f"AgentCore sandbox refused {operation}: {type(error).__name__}: {error}"
             if isinstance(error, server._Refused):
-                raise agentcore_sandbox._Refusal(message, error.code) from error
+                raise _Refusal(message, error.code) from error
             raise SandboxError(message) from error
 
     value._invoke = invoke
 
     def replace_microvm():
-        # AgentCore starts a blank microVM: nothing of the old one survives.
+        # AgentCore starts a blank microVM: nothing of the old one survives, except
+        # the session storage mount, which outlives a stop.
         for path in (control, workspace, runtime):
             shutil.rmtree(path, ignore_errors=True)
         control.mkdir(mode=0o700)
+        server._state.update(token=None, supervisor=None)
 
     return SimpleNamespace(
-        sandbox=value, control=control, workspace=workspace, native=runtime / "native", replace=replace_microvm
+        sandbox=value,
+        control=control,
+        workspace=workspace,
+        native=runtime / "native",
+        storage=storage,
+        replace=replace_microvm,
     )
 
 
@@ -885,3 +898,161 @@ async def test_a_repeated_claim_racing_a_restore_never_fails_the_computer(comput
     monkeypatch.setattr(server, "_lifecycle", racing)
     assert await transfer.arestore(replacement, reference) == {"turn": 1}
     assert raced and not server._marked(server._FAILED)
+
+
+# Session storage
+
+
+async def _captured(computer, tmp_path, state=None):
+    handle = await computer.sandbox.acreate("s")
+    computer.workspace.joinpath("app.py").write_text("print('hi')\n")
+    computer.native.mkdir(mode=0o700, exist_ok=True)
+    computer.native.joinpath("transcript.jsonl").write_text('{"turn": 1}\n')
+    transfer = AgentCoreCheckpointTransfer(computer.sandbox, FileCheckpointStore(tmp_path / "store"))
+    reference = await transfer.acapture(handle, state=state or {"turn": 1})
+    return handle, transfer, reference
+
+
+def stop_replaces_the_microvm(computer):
+    # A stop ends the microVM; the next call to the session starts a blank one.
+    data = computer.sandbox._data
+    original = data.stop_runtime_session
+
+    def stop(**kwargs):
+        original(**kwargs)
+        computer.replace()
+
+    data.stop_runtime_session = stop
+
+
+@pytest.mark.asyncio
+async def test_a_capture_keeps_its_archive_on_session_storage(computer, tmp_path):
+    _, _, reference = await _captured(computer, tmp_path)
+    kept = computer.storage / server._KEPT
+    assert kept.stat().st_size == reference.size
+    assert hashlib.sha256(kept.read_bytes()).hexdigest() == reference.sha256
+    assert [path.name for path in computer.storage.iterdir()] == [server._KEPT]
+
+
+@pytest.mark.asyncio
+async def test_resume_restores_the_kept_checkpoint_on_a_replacement_microvm(computer, tmp_path):
+    handle, transfer, reference = await _captured(computer, tmp_path)
+    stop_replaces_the_microvm(computer)
+    await computer.sandbox.astop(handle)
+
+    resumed, state = await transfer.aresume("s", reference)
+    assert state == {"turn": 1}
+    assert (resumed.provider_ref, resumed.generation) == (handle.provider_ref, handle.generation)
+    assert resumed.name != handle.name
+    assert computer.workspace.joinpath("app.py").read_text() == "print('hi')\n"
+    assert computer.native.joinpath("transcript.jsonl").read_text() == '{"turn": 1}\n'
+    assert not list(computer.control.glob("*.checkpoint"))
+    # The resumed computer works for its new handle and never for the old one.
+    assert server._require({"expect": computer.sandbox._expect(resumed)})
+    with pytest.raises(PermissionError, match="identity mismatch"):
+        server._require({"expect": computer.sandbox._expect(handle)})
+    # A resumed generation is used, so it never takes a restore on top.
+    with pytest.raises(SandboxError, match="empty, unused"):
+        await transfer.arestore(resumed, reference)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("damage", ["tamper", "delete", "replace with a link", "stale"])
+async def test_resume_refuses_a_copy_that_does_not_match_the_reference(computer, tmp_path, damage):
+    handle, transfer, reference = await _captured(computer, tmp_path)
+    kept = computer.storage / server._KEPT
+    if damage == "tamper":
+        data = bytearray(kept.read_bytes())
+        data[len(data) // 2] ^= 1
+        kept.write_bytes(bytes(data))
+    elif damage == "delete":
+        kept.unlink()
+    elif damage == "replace with a link":
+        (tmp_path / "elsewhere").write_bytes(kept.read_bytes())
+        kept.unlink()
+        kept.symlink_to(tmp_path / "elsewhere")
+    else:
+        # A later capture replaced the copy; the earlier reference no longer matches.
+        await transfer.acapture(handle, state={"turn": 2})
+    await computer.sandbox.astop(handle)
+    # Replaced by hand, so the stop after the failed resume leaves its leftovers visible.
+    computer.replace()
+
+    with pytest.raises(SandboxError, match="session storage"):
+        await transfer.aresume("s", reference)
+    # Nothing was claimed, and the microVM the resume reached is stopped.
+    assert server._load_claim() is None
+    assert computer.sandbox._data.stops == [handle.provider_ref] * 2
+    assert not list(computer.control.glob("*.checkpoint"))
+
+
+@pytest.mark.asyncio
+async def test_a_resume_whose_runtime_never_starts_leaves_nothing_behind(computer, tmp_path, monkeypatch):
+    handle, transfer, reference = await _captured(computer, tmp_path)
+    await computer.sandbox.astop(handle)
+    computer.replace()
+
+    def never_starts(claim):
+        raise RuntimeError("The sandbox runtime server did not become ready")
+
+    monkeypatch.setattr(server, "_start_runtime", never_starts)
+    with pytest.raises(SandboxError, match="did not become ready"):
+        await transfer.aresume("s", reference)
+    assert server._load_claim() is None
+    assert computer.sandbox._data.stops == [handle.provider_ref] * 2
+    assert not list(computer.control.glob("*.checkpoint"))
+
+
+@pytest.mark.asyncio
+async def test_resume_never_touches_a_generation_that_is_still_running(computer, tmp_path):
+    handle, transfer, reference = await _captured(computer, tmp_path)
+    with pytest.raises(SandboxError, match="still running"):
+        await transfer.aresume("s", reference)
+    assert computer.sandbox._data.stops == []
+    assert server._require({"expect": computer.sandbox._expect(handle)})
+
+
+@pytest.mark.asyncio
+async def test_resume_replaces_a_retired_microvm_and_tries_once_more(computer, tmp_path):
+    handle, transfer, reference = await _captured(computer, tmp_path)
+    computer.replace()
+    # A lookup reached the replacement first and retired it.
+    assert server._describe({}) == {"claimed": False}
+    stop_replaces_the_microvm(computer)
+
+    resumed, state = await transfer.aresume("s", reference)
+    assert state == {"turn": 1}
+    assert computer.sandbox._data.stops == [handle.provider_ref]
+    assert server._require({"expect": computer.sandbox._expect(resumed)})
+
+
+@pytest.mark.asyncio
+async def test_without_session_storage_capture_works_and_resume_is_refused(computer, tmp_path):
+    shutil.rmtree(computer.storage)
+    handle, transfer, reference = await _captured(computer, tmp_path)
+    stop_replaces_the_microvm(computer)
+    await computer.sandbox.astop(handle)
+    with pytest.raises(SandboxError, match="session storage"):
+        await transfer.aresume("s", reference)
+
+
+@pytest.mark.asyncio
+async def test_a_copy_that_cannot_be_kept_never_fails_the_capture(computer, tmp_path):
+    computer.storage.chmod(0o500)
+    try:
+        _, _, reference = await _captured(computer, tmp_path)
+    finally:
+        computer.storage.chmod(0o700)
+    assert reference.size > 0
+    assert list(computer.storage.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_resume_keeps_the_generation_configuration(computer, tmp_path):
+    handle, transfer, reference = await _captured(computer, tmp_path)
+    stop_replaces_the_microvm(computer)
+    await computer.sandbox.astop(handle)
+    resumed, _ = await transfer.aresume("s", reference)
+    assert resumed.config_digest == handle.config_digest
+    with pytest.raises(SandboxError, match="different configuration"):
+        await computer.sandbox.acreate("s", env={"CHANGED": "1"})
