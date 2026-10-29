@@ -103,6 +103,27 @@ the native process again. The final queue/approval suite and mandatory format an
 validation scripts passed. These lifecycle changes were tested without new model
 calls; the earlier live/UI evidence applies to the previously recorded heads.
 
+### Runnable local Postgres cookbook (29 October 2026)
+
+**Status:** PASS
+
+**Description:** Simplified `agentos.py` to explicit local Postgres and Docker
+image values, `QueueConfig(durable=True, db=db)`, and process-local coordination.
+No infrastructure environment variables or Redis configuration. Updated the
+shared image recipe to the tested Claude/Codex SDK versions and built it with
+the documented `build_image.py` command.
+
+**Result:** Four fresh live cases passed through this cookbook's actual AgentOS
+app and Postgres queue: Claude and Codex, approve and reject. Each case verified
+the pending approval, absence of the marker before approval and before Continue,
+final COMPLETED run and queue ticket, retained approval decision, and marker
+presence only for approvals in the restored checkpoint. Used a disposable
+Postgres container at the literal cookbook URL and the newly built
+`agno-sandbox:human-approvals` image. Only existing model credentials were loaded;
+the tested app had no Redis coordination. The exact documented entry point also
+served `/health` successfully on port 7777 with infrastructure environment
+variables unset. Mandatory format and validation passed.
+
 ### Validation limits
 
 Hosted AgentCore was not deployed or exercised. Its operation forwarding and the

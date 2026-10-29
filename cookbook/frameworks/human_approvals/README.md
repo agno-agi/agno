@@ -9,16 +9,36 @@ It never replays the prompt or starts a replacement turn.
 
 ## Run
 
-Install `agno[os,postgres,claude,codex]` from this checkout. Forwarding Codex approvals
-currently require `openai-codex==0.163.0`; the transport refuses untested versions.
-Set `DATABASE_URL`, `ANTHROPIC_API_KEY`, and `OPENAI_API_KEY`, then run:
+Run from the repository root with Docker running and the development `.venv`
+installed with `agno[os,postgres,claude,codex]`. The code uses the standard local
+Postgres URL (`postgresql+psycopg://ai:ai@localhost:5532/ai`) and the image
+`agno-sandbox:human-approvals` directly. No database, image, queue, or Redis
+environment variables are needed.
+
+Start the cookbook Postgres container if it is not already running, then build
+the sandbox image from this checkout:
 
 ```sh
-python cookbook/frameworks/human_approvals/agentos.py
+./cookbook/scripts/run_pgvector.sh
+.venv/bin/python cookbook/frameworks/sandbox/build_image.py --tag agno-sandbox:human-approvals
 ```
 
-Connect `http://localhost:7777` in AgentOS. Select an agent and ask it to run a
-command that needs native permission. Inspect the command and arguments in
+The image includes both native SDKs, including the tested `openai-codex==0.163.0`
+transport. Supply the model credentials for whichever agent you want to test:
+`ANTHROPIC_API_KEY` (or `CLAUDE_CODE_OAUTH_TOKEN`) for Claude, `OPENAI_API_KEY` for
+Codex. If your credentials are already exported, no additional setup is needed.
+Start the server:
+
+```sh
+.venv/bin/python cookbook/frameworks/human_approvals/agentos.py
+```
+
+Connect `http://localhost:7777` in AgentOS. Select either agent and ask:
+
+> Create approval-test.txt containing "approved" in the workspace. Request native
+> permission if needed. If permission is rejected, stop without a workaround.
+
+Inspect the command or file change in
 **Approvals**, approve or reject, then choose **Continue Run**. Approval alone does
 not execute it. Under user isolation, existing administrator approval rules apply.
 The requesting user cannot approve by forging a tool result on the continue API.
@@ -36,13 +56,11 @@ and are not routed to the UI. Codex config values `approval_policy` and
 `approvals_reviewer` are also respected. Do not combine `approval_policy` with the
 SDK's `approval_mode` shorthand.
 
-For Docker, also set `REDIS_URL` for shared queue coordination and `AGNO_SANDBOX_IMAGE` to a sandbox image built with this Agno version
-and both native SDKs. This local example keeps checkpoints under `tmp/native-approval-checkpoints`; use a shared checkpoint store such as S3 for replicas on different hosts. The control plane checks the runtime's approval capability
-before starting the harness. Upgrade existing Docker and AgentCore images together
-with the API: old images are rejected rather than silently denying or approving.
-The same authenticated decision RPC is used by Docker and AgentCore. Sandbox
-runtime credentials and its local approval database stay inside the sandbox;
-control-plane database credentials are not sent to it.
+This example runs one AgentOS process with `QueueConfig(durable=True, db=db)`.
+Postgres stores the queue and approvals; event streaming and cancellation use the
+process-local defaults. Redis is not required. Checkpoints are stored under
+`tmp/native-approval-checkpoints`. To change the database or image, edit the values
+in `agentos.py`.
 
 ## Lifecycle and limits
 
@@ -51,12 +69,11 @@ control-plane database credentials are not sent to it.
 - `approval_timeout` bounds each request. Sandbox and queue active execution
   budgets exclude human waiting, with an additional cumulative waiting budget
   equal to `approval_timeout`. Heartbeats and session exclusivity remain held.
-- Refreshing or closing a browser does not cancel a background run. Decisions are
-  persisted and can be delivered from another API replica.
+- Refreshing or closing a browser does not cancel a background run. This cookbook
+  serves one local API process; it does not configure multi-replica coordination.
 - AgentOS starts agents that can request approval in the background automatically;
   nonstreaming HTTP submissions return 202 and the run can be polled or streamed.
-- A surviving sandbox worker can be reattached using its original execution
-  journal and identity. A lost native process cannot be resumed from an approval;
+- A lost native process cannot be resumed from an approval;
   the run fails and the previous completed checkpoint remains the recovery point.
 - Cancellation and expiry never approve a pending action. Approval history is
   retained; terminal runs no longer offer executable requirements.
