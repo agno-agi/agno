@@ -48,34 +48,6 @@ class RoutineResponse(ScheduleResponse):
     deleted_at: Optional[int] = None
 
 
-def sort_routines(rows: List[Dict[str, Any]], sort_by: str, sort_order: str) -> List[Dict[str, Any]]:
-    """Order stored Routine rows for listing, before paging."""
-    reverse = sort_order == "desc"
-    if sort_by == "next_run_at":
-        # A paused or on-demand Routine has no next run, whatever timestamp is stored; those go last either way.
-        due: List[Dict[str, Any]] = []
-        rest: List[Dict[str, Any]] = []
-        for row in rows:
-            has_next = row["enabled"] and row["cron_expr"] and row.get("next_run_at") is not None
-            (due if has_next else rest).append(row)
-        due.sort(key=lambda row: (row["next_run_at"], row["id"]), reverse=reverse)
-        rest.sort(key=lambda row: (row.get("created_at") or 0, row["id"]), reverse=reverse)
-        return due + rest
-    if sort_by == "schedule_type":
-        # Matches the response's schedule_type: "on_demand" sorts before "scheduled".
-        return sorted(
-            rows,
-            key=lambda row: ("scheduled" if row["cron_expr"] else "on_demand", row.get("created_at") or 0, row["id"]),
-            reverse=reverse,
-        )
-    if sort_by == "enabled":
-        return sorted(
-            rows, key=lambda row: (bool(row["enabled"]), row.get("created_at") or 0, row["id"]), reverse=reverse
-        )
-    # One reverse flag orders equal timestamps by id in the same direction as the timestamp.
-    return sorted(rows, key=lambda row: (get_sort_value(row, sort_by), row["id"]), reverse=reverse)
-
-
 class RoutineUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
@@ -173,12 +145,39 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
                 return runs
             page += 1
 
+    def schedule_type(row):
+        return "on_demand" if is_on_demand(row["cron_expr"]) else "scheduled"
+
+    def sort_routines(rows, sort_by, sort_order):
+        reverse = sort_order == "desc"
+        if sort_by == "next_run_at":
+            # A paused or on-demand Routine has no next run, whatever timestamp is stored; those go last either way.
+            upcoming: List[Dict[str, Any]] = []
+            rest: List[Dict[str, Any]] = []
+            for row in rows:
+                has_next = row["enabled"] and schedule_type(row) == "scheduled" and row.get("next_run_at") is not None
+                (upcoming if has_next else rest).append(row)
+            upcoming.sort(key=lambda row: (row["next_run_at"], row["id"]), reverse=reverse)
+            rest.sort(key=lambda row: (row.get("created_at") or 0, row["id"]), reverse=reverse)
+            return upcoming + rest
+        if sort_by == "schedule_type":
+            # "on_demand" sorts before "scheduled".
+            return sorted(
+                rows, key=lambda row: (schedule_type(row), row.get("created_at") or 0, row["id"]), reverse=reverse
+            )
+        if sort_by == "enabled":
+            return sorted(
+                rows, key=lambda row: (bool(row["enabled"]), row.get("created_at") or 0, row["id"]), reverse=reverse
+            )
+        # One reverse flag orders equal timestamps by id in the same direction as the timestamp.
+        return sorted(rows, key=lambda row: (get_sort_value(row, sort_by), row["id"]), reverse=reverse)
+
     async def routine_responses(rows):
         latest = await call(schedule_db.get_latest_schedule_runs, [row["id"] for row in rows])
         return [
             {
                 **row,
-                "schedule_type": "scheduled" if row["cron_expr"] else "on_demand",
+                "schedule_type": schedule_type(row),
                 "last_run": latest.get(row["id"]),
                 "deleted_at": (row.get("payload") or {}).get("metadata", {}).get("deleted_at"),
             }
