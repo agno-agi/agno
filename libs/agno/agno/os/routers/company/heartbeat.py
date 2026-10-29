@@ -2,6 +2,7 @@
 
 import asyncio
 import inspect
+import json
 import time
 from typing import Any, Dict, List, Literal, Optional, Union
 from urllib.parse import quote
@@ -120,14 +121,26 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             raise HTTPException(404, "Routine not found")
         return row
 
-    async def running_runs(routine_id):
+    def outlived(run, row, request):
+        from agno.scheduler.executor import run_deadline
+
+        # The scheduler stops waiting for a run at its timeout, so past the deadline no process is left to settle it.
+        executor = getattr(request.app.state, "scheduler_executor", None)
+        timeout = row.get("timeout_seconds") or (executor.timeout if executor is not None else None)
+        return timeout is not None and run_deadline(run["triggered_at"], timeout) < time.time()
+
+    async def running_runs(row, request, include_outlived=False):
         # An older run can still be running after a newer one finished, so read every run. A paused
         # row is not counted: the scheduler stops polling at the pause and never updates it after approval.
         runs: List[Dict[str, Any]] = []
         page = 1
         while True:
-            rows, total = await call(schedule_db.get_schedule_runs, routine_id, limit=100, page=page)
-            runs.extend(run for run in rows if run["status"] == "running")
+            rows, total = await call(schedule_db.get_schedule_runs, row["id"], limit=100, page=page)
+            runs.extend(
+                run
+                for run in rows
+                if run["status"] == "running" and (include_outlived or not outlived(run, row, request))
+            )
             if page * 100 >= total:
                 return runs
             page += 1
@@ -247,10 +260,18 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             policy = body.auto_accept.model_dump()
             await _authorize_auto_accept(request, policy, agent_os)
             fields["payload"]["metadata"]["auto_accept"] = policy
+        if not body.enabled:
+            # Retry matching must distinguish disabled creation from a request to enable it.
+            fields["payload"]["metadata"]["initial_enabled"] = False
         schedule = await call(ScheduleCreate, **fields)
         row = await call(handlers["create_schedule"], schedule, request)
         await call(db.add_product_routine, body.product_id, row["id"])
-        return await routine_response(await call(handlers["enable_schedule"], row["id"], request))
+        if body.enabled:
+            row = await call(handlers["enable_schedule"], row["id"], request)
+        else:
+            # Finish creation without activation so duplicate requests cannot recover this as pending.
+            row = await call(handlers["disable_schedule"], row["id"], request)
+        return await routine_response(row)
 
     @router.patch("/routines/{routine_id}", response_model=RoutineResponse)
     async def update_routine(routine_id: str, body: RoutineUpdate, request: Request, _: bool = Depends(auth)):
@@ -275,8 +296,10 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             updates["name"] = product_id + "." + updates["name"]
         if "executor_type" in updates or "executor_id" in updates:
             # Cancel reaches a live run through the Routine's executor, so the executor stays until it ends.
-            if await running_runs(routine_id):
-                raise HTTPException(409, f"Cancel the run with POST /company/routines/{routine_id}/cancel first")
+            if await running_runs(row, request):
+                raise HTTPException(
+                    409, f"Wait for the run to stop, or cancel it with POST /company/routines/{routine_id}/cancel"
+                )
             executor_type = updates.pop("executor_type", row["target_type"])
             executor_id = updates.pop("executor_id", row["target_id"])
             updates["endpoint"] = await call(
@@ -328,32 +351,44 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     async def cancel_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
         await product(row["payload"]["metadata"]["product_id"], include_deleted=True)
-        runs = [run for run in await running_runs(routine_id) if run.get("run_id")]
+        runs = [run for run in await running_runs(row, request, include_outlived=True) if run.get("run_id")]
         if not runs:
             raise HTTPException(409, "Routine has no running run")
         from agno.os.routers.company.runs import _run_route
         from agno.os.routers.run_permissions import _require_endpoint_permission
+        from agno.scheduler.executor import terminal_run_status
 
         # Cancelling enters the executor route under the internal service token, so re-check the caller's own permission.
         await _require_endpoint_permission(request, row["endpoint"], "POST")
         responses = []
         for run in runs:
-            response = await _run_route(
-                request,
-                row["endpoint"] + "/" + quote(run["run_id"], safe="") + "/cancel",
-                "POST",
-                owner=run.get("user_id"),
-                session_id=run.get("session_id"),
-            )
+            path = row["endpoint"] + "/" + quote(run["run_id"], safe="")
+            owner, session_id = run.get("user_id"), run.get("session_id")
+            response = await _run_route(request, path + "/cancel", "POST", owner=owner, session_id=session_id)
             if response.status_code < 300:
-                # A row left by a process that stopped mid-run is never settled by its executor, so record the cancel.
-                await call(
-                    schedule_db.update_schedule_run,
-                    run["id"],
-                    status="cancelled",
-                    error="Run was cancelled",
-                    completed_at=int(time.time()),
-                )
+                status: Optional[str] = None
+                error: Optional[str] = "Run was cancelled"
+                if outlived(run, row, request):
+                    status = "cancelled"
+                else:
+                    # A live run stops at its next checkpoint and its executor records the result, so only
+                    # a finished or missing run is recorded here.
+                    current = await _run_route(request, path, "GET", owner=owner, session_id=session_id)
+                    if current.status_code == 404:
+                        # The run no longer exists, so no executor is left to settle the row.
+                        status = "cancelled"
+                    elif current.status_code < 300:
+                        settled = terminal_run_status(json.loads(bytes(current.body)), company_routine=True)
+                        if settled is not None:
+                            status, error = settled
+                if status is not None:
+                    await call(
+                        schedule_db.update_schedule_run,
+                        run["id"],
+                        status=status,
+                        error=error,
+                        completed_at=int(time.time()),
+                    )
             responses.append(response)
         # A failed cancel is reported even when a later one succeeded.
         return next((response for response in responses if response.status_code >= 300), responses[-1])
@@ -362,8 +397,10 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     async def archive_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
         await product(row["payload"]["metadata"]["product_id"], include_deleted=True)
-        if await running_runs(routine_id):
-            raise HTTPException(409, f"Cancel the run with POST /company/routines/{routine_id}/cancel first")
+        if await running_runs(row, request):
+            raise HTTPException(
+                409, f"Wait for the run to stop, or cancel it with POST /company/routines/{routine_id}/cancel"
+            )
         await call(handlers["disable_schedule"], routine_id, request)
         metadata = {**row["payload"]["metadata"], "deleted_at": int(time.time())}
         await call(schedule_db.update_schedule, routine_id, payload={**row["payload"], "metadata": metadata})
@@ -376,8 +413,10 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         row = await routine(routine_id, request, include_deleted=True)
         product_id = row["payload"]["metadata"]["product_id"]
         await product(product_id, include_deleted=True)
-        if await running_runs(routine_id):
-            raise HTTPException(409, f"Cancel the run with POST /company/routines/{routine_id}/cancel first")
+        if await running_runs(row, request):
+            raise HTTPException(
+                409, f"Wait for the run to stop, or cancel it with POST /company/routines/{routine_id}/cancel"
+            )
         # Deleting the schedule also deletes its run history.
         await call(handlers["delete_schedule"], routine_id, request)
         await call(manager._unlink_routine, product_id, routine_id)
