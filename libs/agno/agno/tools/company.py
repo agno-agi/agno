@@ -41,6 +41,7 @@ def _public_source(source: Dict[str, Any]) -> Dict[str, Any]:
 # Keep nullable schemas and normalize empty strings before Pydantic validation.
 _OptionalString = Annotated[Optional[str], BeforeValidator(_empty_to_none)]
 _OptionalInt = Annotated[Optional[int], BeforeValidator(_empty_to_none)]
+_OptionalBool = Annotated[Optional[bool], BeforeValidator(_empty_to_none)]
 _OptionalSourceConfig = Annotated[Optional[Dict[str, List[str]]], BeforeValidator(_empty_to_none)]
 
 
@@ -121,7 +122,7 @@ def _chat_sources(sources, agent, team, run_context):
         )
 
 
-def _routine_declaration(name, executor_type, executor_id, template, instructions, cron_expr, timezone):
+def _routine_declaration(name, executor_type, executor_id, template, instructions, cron_expr, timezone, enabled=True):
     return Routine.model_validate(
         dict(
             name=name,
@@ -131,6 +132,7 @@ def _routine_declaration(name, executor_type, executor_id, template, instruction
             instructions=_empty_to_none(instructions),
             cron_expr=_empty_to_none(cron_expr),
             timezone=_empty_to_none(timezone) or "UTC",
+            enabled=True if _empty_to_none(enabled) is None else enabled,
         )
     )
 
@@ -369,6 +371,7 @@ class CompanyTools(Toolkit):
         instructions: _OptionalString = None,
         cron_expr: _OptionalString = None,
         timezone: _OptionalString = "UTC",
+        enabled: _OptionalBool = True,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Create a Routine for the calling human; automated runs cannot create Routines.
@@ -378,12 +381,15 @@ class CompanyTools(Toolkit):
             instructions: Custom instructions; null uses the selected template.
             cron_expr: Cron expression; null creates an on-demand Routine.
             timezone: Schedule timezone; null uses UTC.
+            enabled: Whether the new Routine starts enabled; null uses true. False requires a human to resume it.
         """
         _require_human_creation(_agno_run_context)
         _permission("products", "write", _agno_run_context)
         _permission("schedules", "write", _agno_run_context)
         _permission("routines", "write", _agno_run_context)
-        routine = _routine_declaration(name, executor_type, executor_id, template, instructions, cron_expr, timezone)
+        routine = _routine_declaration(
+            name, executor_type, executor_id, template, instructions, cron_expr, timezone, enabled
+        )
         return _public_json(
             self._sync().create_routine(
                 product_id=product_id,
@@ -469,6 +475,7 @@ class CompanyTools(Toolkit):
         instructions: _OptionalString = None,
         cron_expr: _OptionalString = None,
         timezone: _OptionalString = "UTC",
+        enabled: _OptionalBool = True,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Create a Routine for the calling human; automated runs cannot create Routines.
@@ -478,12 +485,15 @@ class CompanyTools(Toolkit):
             instructions: Custom instructions; null uses the selected template.
             cron_expr: Cron expression; null creates an on-demand Routine.
             timezone: Schedule timezone; null uses UTC.
+            enabled: Whether the new Routine starts enabled; null uses true. False requires a human to resume it.
         """
         _require_human_creation(_agno_run_context)
         await _apermission("products", "write", _agno_run_context)
         await _apermission("schedules", "write", _agno_run_context)
         await _apermission("routines", "write", _agno_run_context)
-        routine = _routine_declaration(name, executor_type, executor_id, template, instructions, cron_expr, timezone)
+        routine = _routine_declaration(
+            name, executor_type, executor_id, template, instructions, cron_expr, timezone, enabled
+        )
         # A synchronous database runs the manager in a worker thread, where only a plain check can run.
         check = (
             self._aroutine_check(routine, _agno_run_context)
