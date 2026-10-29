@@ -2844,17 +2844,9 @@ async def acontinue_via_queue(
             # floor would skip its early events for the attacher.
             persisted = existing_continue.get("tail_from", tail_from)
             return {"outcome": "attach", "job": job, "tail_from": persisted}
-        # A queued ticket without a continue block is a fresh submission that
-        # has not executed - continuing it is a state error the detached
-        # path reports properly (the run row cannot be PAUSED and the ticket
-        # pre-execution at once except transiently)
-        with _queue_admission_errors():
-            await _prepare_queue_fallback(queue_worker, job)
-        return None
     if status != "paused":
-        # Terminal ticket under a paused run row (e.g. the leg was swept or
-        # timed out after the pause write): the detached path can still
-        # continue the run; the caller logs the bypass
+        # A queued ticket without a continuation has not run; a terminal ticket
+        # no longer owns the run. Both leave continuation to the detached path.
         with _queue_admission_errors():
             await _prepare_queue_fallback(queue_worker, job)
         return None
