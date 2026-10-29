@@ -81,6 +81,8 @@ async def continue_paused_run(
         component_type=component_type,
         component_id=getattr(component, "id", None),
         component=component,
+        session_id=session_id,
+        user_id=user_id,
     )
     if isinstance(component, Workflow):
         result: AnyRunOutput = await component.acontinue_run(

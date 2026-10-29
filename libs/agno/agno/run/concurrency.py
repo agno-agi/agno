@@ -424,6 +424,7 @@ class _TaskExecutionProvider:
 _task_execution_provider: ContextVar[Optional[_TaskExecutionProvider]] = ContextVar(
     "task_execution_provider", default=None
 )
+_queued_execution: ContextVar[bool] = ContextVar("queued_execution", default=False)
 _task_execution_ids: ContextVar[Dict[str, Tuple[str, ...]]] = ContextVar("task_execution_ids", default={})
 _task_execution_producer: ContextVar[Any] = ContextVar("task_execution_producer", default=None)
 _task_execution_claim: ContextVar[Any] = ContextVar("task_execution_claim", default=None)
@@ -445,14 +446,19 @@ def current_task_execution_provider() -> Optional[_TaskExecutionProvider]:
     return _task_execution_provider.get()
 
 
+def current_execution_origin() -> str:
+    return "queue" if _queued_execution.get() else "inline"
+
+
 def current_task_execution() -> Any:
     """Return trusted producer identity for a child execution boundary."""
     return _task_execution_producer.get()
 
 
 @contextmanager
-def task_execution_scope(provider: Optional[_TaskExecutionProvider]) -> Iterator[None]:
+def task_execution_scope(provider: Optional[_TaskExecutionProvider], *, queued: bool = False) -> Iterator[None]:
     token = _task_execution_provider.set(provider)
+    queue_origin = _queued_execution.set(queued)
     identities = _task_execution_ids.set({})
     producer = _task_execution_producer.set(None)
     claim = _task_execution_claim.set(None)
@@ -460,6 +466,7 @@ def task_execution_scope(provider: Optional[_TaskExecutionProvider]) -> Iterator
     try:
         yield
     finally:
+        _queued_execution.reset(queue_origin)
         _task_execution_acceptance.reset(acceptance)
         _task_execution_claim.reset(claim)
         _task_execution_producer.reset(producer)

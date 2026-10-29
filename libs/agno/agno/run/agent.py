@@ -704,6 +704,8 @@ class RunOutput:
     # against a NEWER stored value, so a presumed-dead attempt's late write
     # cannot clobber its successor. None outside durable-queue execution.
     queue_attempt: Optional[int] = None
+    # Set by the actual producer; absent on older runs whose origin is unknown.
+    execution_origin: Optional[str] = None
     # For a CANCELLED run, where it was when cancelled (see CancellationStage).
     # None on runs written before the field existed and on shutdown
     # interrupts: consumers treat None as unknown.

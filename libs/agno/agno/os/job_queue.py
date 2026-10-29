@@ -2621,6 +2621,8 @@ async def araise_if_ticket_owns_continue(
     component_id: Optional[str] = None,
     *,
     component: Any = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> None:
     """Inline-door admission gate: a durable ticket in paused/queued/running
     OWNS its run's continuation, and no non-queue door may execute one.
@@ -2641,15 +2643,16 @@ async def araise_if_ticket_owns_continue(
     DIFFERENT component allows inline too - the caller's own run lookup
     reports not-found honestly (cross-component case). Failed Company tickets
     must still verify their original Task identity before resuming. A run
-    that already completed instead starts a new follow-up.
+    that already completed instead starts a new follow-up. After ticket
+    cleanup, a retained queue-attempt marker prevents an unverifiable
+    Company retry; ordinary nonqueued continuations remain eligible.
 
     Raises 409 (use the durable door / continuation in progress) or 503
     (ticket lookup failed - FAIL CLOSED: executing while unable to verify
     ownership is exactly the race this gate exists to prevent). No queue
-    worker configured means no tickets can exist: allow.
+    worker configured means no tickets can exist, but stored run origin still
+    needs verification.
     """
-    if queue_worker is None:
-        return
     from fastapi import HTTPException
 
     try:
@@ -2659,16 +2662,36 @@ async def araise_if_ticket_owns_continue(
         # race during exactly the outages this gate exists for. Third-party
         # stores whose get_job lacks the strict flag keep best-effort
         # semantics (the TypeError retry below).
-        try:
-            job = await queue_worker.store.get_job(run_id, strict=True)
-        except TypeError:
-            job = await queue_worker.store.get_job(run_id)
+        if queue_worker is None:
+            job = None
+        else:
+            try:
+                job = await queue_worker.store.get_job(run_id, strict=True)
+            except TypeError:
+                job = await queue_worker.store.get_job(run_id)
     except Exception:
         raise HTTPException(
             status_code=503,
             detail=f"Could not verify continuation ownership for run {run_id}; retry the request",
         )
-    if job is None or job.get("job_type", "run") != "run":
+    if job is None:
+        from agno.remote.base import BaseRemote
+
+        if component is not None and component_type != "workflow" and not isinstance(component, BaseRemote):
+            with _queue_admission_errors():
+                run = await component.aget_run_output(run_id, session_id, user_id=user_id)
+                if run is None:
+                    raise HTTPException(status_code=404, detail="Run not found")
+                if run.status != "COMPLETED" and (
+                    getattr(run, "queue_attempt", None) is not None
+                    or getattr(run, "execution_origin", None) != "inline"
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Cannot verify the run's original execution identity; start a new run instead",
+                    )
+        return
+    if job.get("job_type", "run") != "run":
         return
     if component_type is not None and job.get("component_type") != component_type:
         return
@@ -3025,6 +3048,7 @@ async def aprepare_queued_run(
             status=RunStatus.pending,
             # 0 marks a durable queue ticket's row before any claim; in-process rows stay None.
             queue_attempt=0,
+            execution_origin="queue",
         )
 
         async def load_agent_session() -> Any:
@@ -3062,6 +3086,7 @@ async def aprepare_queued_run(
             input=TeamRunInput(input_content=input),
             status=RunStatus.pending,
             queue_attempt=0,
+            execution_origin="queue",
         )
 
         async def load_team_session() -> Any:

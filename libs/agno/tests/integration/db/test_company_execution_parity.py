@@ -4098,7 +4098,10 @@ async def test_execution_provenance_checks_original_stores_after_reassignment(sy
     "deleted,background,stream",
     [(True, False, False), (True, False, True), (True, True, False), (True, True, True), (False, False, False)],
 )
-async def test_failed_run_continuation_checks_original_task(system, monkeypatch, kind, id, deleted, background, stream):
+@pytest.mark.parametrize("expired", [False, True])
+async def test_failed_run_continuation_checks_original_task(
+    system, monkeypatch, kind, id, deleted, background, stream, expired
+):
     from agno.company.execution import _call
 
     client, db, worker, os, components = system
@@ -4130,6 +4133,8 @@ async def test_failed_run_continuation_checks_original_task(system, monkeypatch,
     assert (await execute(worker))["status"] == "failed"
     before_run = await _call(db, "get_run", run_id, deserialize=False)
     assert before_run["status"] == "ERROR"
+    assert (await component.aget_run_output(run_id, task["session_id"])).queue_attempt is not None
+    assert (await component.aget_run_output(run_id, task["session_id"])).execution_origin == "queue"
     before_job = await worker.store.get_job(run_id)
     from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TASK_IDS
 
@@ -4147,13 +4152,36 @@ async def test_failed_run_continuation_checks_original_task(system, monkeypatch,
         assert recovered.json()["run_id"] == run_id and calls
         removed = await client.delete(f"/company/tasks/{task['id']}")
         assert removed.status_code == 204, removed.text
+        if expired:
+            assert await worker.store.cleanup_jobs(older_than_seconds=-1) == 1
+            assert await worker.store.get_job(run_id) is None
         for _ in range(2):
             followup = await client.post(
                 route + f"/{run_id}/continue", data={"session_id": task["session_id"], "stream": "false"}
             )
             assert followup.status_code == 200, followup.text
             assert followup.json()["run_id"] != run_id
+            stored_fork = await component.aget_run_output(followup.json()["run_id"], task["session_id"])
+            assert stored_fork.queue_attempt is None
+        if expired:
+            failing = True
+            failed_fork = await client.post(
+                route + f"/{run_id}/continue", data={"session_id": task["session_id"], "stream": "false"}
+            )
+            assert failed_fork.status_code == 200, failed_fork.text
+            fork_id = failed_fork.json()["run_id"]
+            assert fork_id != run_id and failed_fork.json()["status"] == "ERROR"
+            failing = False
+            retry = await client.post(
+                route + f"/{fork_id}/continue", data={"session_id": task["session_id"], "stream": "false"}
+            )
+            assert retry.status_code == 200, retry.text
+            assert retry.json()["run_id"] == fork_id and retry.json()["status"] == "COMPLETED"
         return
+    if expired:
+        assert await worker.store.cleanup_jobs(older_than_seconds=-1) == 1
+        before_job = await worker.store.get_job(run_id)
+        assert before_job is None
     for _ in range(2):
         refused = await asyncio.wait_for(
             client.post(
@@ -4170,3 +4198,56 @@ async def test_failed_run_continuation_checks_original_task(system, monkeypatch,
         assert not calls
         assert await _call(db, "get_run", run_id, deserialize=False) == before_run
         assert await worker.store.get_job(run_id) == before_job
+
+
+@pytest.mark.parametrize("kind,id", [("agent", "writer"), ("team", "editors")])
+@pytest.mark.parametrize("historical", [False, True])
+async def test_ordinary_failed_run_recovers_without_queue_ticket(system, monkeypatch, kind, id, historical):
+    from agno.company.execution import _call
+
+    client, db, worker, os, components = system
+    await _call(db, "_create_all_tables")
+    await _call(worker.store._store, "_get_table", table_type="jobs", create_table_if_not_found=True)
+    worker._task_execution_provider = os._task_execution_provider
+    session_id = str(uuid4())
+    target = components[id].model
+    original = target.invoke
+    failing = True
+
+    def produce(*args, **kwargs):
+        if failing:
+            raise RuntimeError("Synthetic inline failure")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(target, "invoke", produce)
+    route = f"/{kind}s/{id}/runs"
+    result = await client.post(
+        route, data={"message": "Draft", "session_id": session_id, "stream": "false", "background": "false"}
+    )
+    assert result.status_code == 200, result.text
+    run_id = result.json()["run_id"]
+    assert result.json()["status"] == "ERROR"
+    assert await worker.store.get_job(run_id) is None
+    assert await worker.store.get_job(run_id, strict=True) is None
+    stored = await components[id].aget_run_output(run_id, session_id)
+    assert stored.queue_attempt is None
+    assert stored.execution_origin == "inline"
+
+    failing = False
+    if historical:
+        stored.execution_origin = None
+        await _call(db, "upsert_run", stored, session_id=session_id)
+        assert (await components[id].aget_run_output(run_id, session_id)).execution_origin is None
+        before = await _call(db, "get_run", run_id, deserialize=False)
+        for _ in range(2):
+            refused = await client.post(
+                route + f"/{run_id}/continue", data={"session_id": session_id, "stream": "false"}
+            )
+            assert refused.status_code == 409, refused.text
+            assert await _call(db, "get_run", run_id, deserialize=False) == before
+        return
+    for _ in range(2):
+        recovered = await client.post(route + f"/{run_id}/continue", data={"session_id": session_id, "stream": "false"})
+        assert recovered.status_code == 200, recovered.text
+        assert recovered.json()["status"] == "COMPLETED"
+        assert (recovered.json()["run_id"] == run_id) == (_ == 0)

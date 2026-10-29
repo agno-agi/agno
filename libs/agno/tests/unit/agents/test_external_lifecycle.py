@@ -12,6 +12,7 @@ from agno.db.sqlite import SqliteDb
 from agno.db.sqlite.async_sqlite import AsyncSqliteDb
 from agno.run.agent import RunContentEvent, RunOutput
 from agno.run.base import RunStatus
+from agno.run.concurrency import task_execution_scope
 
 
 @dataclass
@@ -72,6 +73,20 @@ async def test_pending_running_terminal(agent, fail):
     assert result.status == (RunStatus.error if fail else RunStatus.completed)
     assert agent.calls[0]["run_id"] == pending.run_id
     assert await agent.aget_session("missing") is None
+
+
+@pytest.mark.asyncio
+async def test_external_run_origin_survives_pending_to_terminal(agent):
+    queued_id = str(uuid4())
+    pending = await agent._aprepare_pending_run(queued_id, "queued-origin", None, "go", queued=True)
+    assert pending.execution_origin == "queue"
+    with task_execution_scope(None, queued=True):
+        completed = agent._build_run_output(queued_id, "queued-origin", None, "go", "done", RunStatus.completed)
+    assert completed.execution_origin == "queue"
+
+    agent.release.set()
+    ordinary = await agent.arun("go", run_id=str(uuid4()), session_id="inline-origin")
+    assert ordinary.execution_origin == "inline"
 
 
 @pytest.mark.asyncio

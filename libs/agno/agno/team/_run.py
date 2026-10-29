@@ -79,7 +79,12 @@ from agno.run.cancel import (
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
-from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot, guard_task_execution
+from agno.run.concurrency import (
+    SSE_KEEPALIVE_INTERVAL_SECONDS,
+    background_run_slot,
+    current_execution_origin,
+    guard_task_execution,
+)
 from agno.run.messages import RunMessages
 from agno.run.status_persist import apersist_run_transition
 from agno.run.team import (
@@ -2064,6 +2069,7 @@ def run_dispatch(
         # Create a new run_response for this attempt
         run_response = TeamRunOutput(
             run_id=run_id,
+            execution_origin=current_execution_origin(),
             session_id=session_id,
             user_id=user_id,
             team_id=team.id,
@@ -4265,6 +4271,7 @@ def arun_dispatch(  # type: ignore
     # Create a new run_response for this attempt
     run_response = TeamRunOutput(
         run_id=run_id,
+        execution_origin=current_execution_origin(),
         user_id=user_id,
         session_id=session_id,
         team_id=team.id,
@@ -6997,6 +7004,8 @@ def _fork_team_run(run_response: "TeamRunOutput", message_index: int) -> "TeamRu
 
     forked = copy.deepcopy(run_response)
     forked.run_id = str(uuid4())
+    forked.queue_attempt = None
+    forked.execution_origin = "inline"
     forked.forked_from_run_id = run_response.run_id
     forked.forked_from_message_index = message_index
     forked.metrics = RunMetrics()
@@ -7214,6 +7223,8 @@ def _build_forked_team_session(source_session: TeamSession, new_user_id: Optiona
 
     for run in forked_runs:
         run.run_id = str(uuid4())
+        run.queue_attempt = None
+        run.execution_origin = "inline"
         run.session_id = new_session_id
         if not getattr(run, "forked_from_session_id", None):
             run.forked_from_session_id = source_session.session_id

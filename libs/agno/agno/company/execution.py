@@ -505,7 +505,7 @@ async def _queue_execution(worker: Any, job: Dict[str, Any]) -> AsyncIterator[Di
 
     provider = _queue_provider(worker, job)
     owner = await _acquire_queue_execution(worker, job, rotate=True)
-    with task_execution_scope(provider):
+    with task_execution_scope(provider, queued=True):
         yield owner
     # Cancellation or an unresolved exception cannot establish that detached work stopped.
     await _release_queue_execution(worker, {**job, "payload": {**(job.get("payload") or {}), **owner}})

@@ -54,7 +54,7 @@ from agno.run.agent import (
     ToolCallStartedEvent,
 )
 from agno.run.base import RunStatus
-from agno.run.concurrency import guard_task_execution, retain_task_execution
+from agno.run.concurrency import current_execution_origin, guard_task_execution, retain_task_execution
 from agno.session.agent import AgentSession
 from agno.utils.events import error_type_of
 from agno.utils.log import log_exception, log_warning
@@ -1395,7 +1395,9 @@ class BaseExternalAgent:
     ) -> RunOutput:
         """Persist an idempotent PENDING row before background or queued execution."""
         if self.sandbox is not None:
-            return await _sandbox_harness().aprepare_pending_run(self, run_id, session_id, user_id, input, media)
+            return await _sandbox_harness().aprepare_pending_run(
+                self, run_id, session_id, user_id, input, media, queued=queued
+            )
         from agno.os.job_queue import _aappend_pending_run
 
         run = RunOutput(
@@ -1408,6 +1410,7 @@ class BaseExternalAgent:
             status=RunStatus.pending,
             # 0 marks a durable queue ticket's row before any claim; in-process rows stay None.
             queue_attempt=0 if queued else None,
+            execution_origin="queue" if queued else "inline",
         )
         session = await _aappend_pending_run(
             self, session_id, run.to_dict(), user_id, lambda: self.aread_or_create_session(session_id, user_id)
@@ -1776,6 +1779,7 @@ class BaseExternalAgent:
             agent_name=self.name,
             session_id=session_id,
             user_id=user_id,
+            execution_origin=current_execution_origin(),
             model=model_id,
             model_provider=model_provider,
             input=(

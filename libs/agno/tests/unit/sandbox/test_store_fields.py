@@ -1,8 +1,36 @@
 from dataclasses import fields
+from types import SimpleNamespace
+
+import pytest
 
 from agno.db.postgres import AsyncPostgresDb, PostgresDb
 from agno.run.agent import RunOutput
 from agno.sandbox.postgres import _RUNTIME_RUN_FIELDS
+
+
+@pytest.mark.asyncio
+async def test_sandbox_pending_run_keeps_queue_origin_before_claim(monkeypatch):
+    from agno.sandbox import _harness
+
+    class Store:
+        row = None
+
+        async def aprepare(self, row):
+            self.row = row
+
+    store = Store()
+    monkeypatch.setattr(_harness, "coordinator", lambda agent: SimpleNamespace(store=store))
+    agent = SimpleNamespace(get_id=lambda: "agent", name="agent")
+    run = await _harness.aprepare_pending_run(agent, "run", "session", None, "input", queued=True)
+
+    assert run.execution_origin == "queue"
+    assert run.queue_attempt == 0
+    assert store.row["execution_origin"] == "queue"
+    assert store.row["queue_attempt"] == 0
+
+    ordinary = await _harness.aprepare_pending_run(agent, "other", "session", None, "input")
+    assert ordinary.execution_origin == "inline"
+    assert ordinary.queue_attempt is None
 
 
 def test_runtime_run_fields_exist_on_run_output():
