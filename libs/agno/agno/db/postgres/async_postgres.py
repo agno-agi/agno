@@ -2777,6 +2777,21 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
 
+    async def _lock_os_metrics(self, sess: Any, table: Table, wait_for_rebuild: bool) -> bool:
+        """Lock the table's OS metrics rebuild for this transaction, or only try to when not waiting."""
+        if wait_for_rebuild:
+            await sess.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext('agno_os_metrics'), hashtext(:table_name))"),
+                {"table_name": table.fullname},
+            )
+            return True
+        return (
+            await sess.execute(
+                text("SELECT pg_try_advisory_xact_lock(hashtext('agno_os_metrics'), hashtext(:table_name))"),
+                {"table_name": table.fullname},
+            )
+        ).scalar_one()
+
     async def _calculate_month_os_metrics(
         self, table: Table, totals_table: Table, wait_for_rebuild: bool
     ) -> List[Dict[str, Any]]:
@@ -2796,20 +2811,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         results: List[Dict[str, Any]] = []
         async with self.async_session_factory() as sess, sess.begin():
             # Under the days' lock, so a month is written by one rebuild only
-            if wait_for_rebuild:
-                await sess.execute(
-                    text("SELECT pg_advisory_xact_lock(hashtext('agno_os_metrics'), hashtext(:table_name))"),
-                    {"table_name": table.fullname},
-                )
-            else:
-                locked = (
-                    await sess.execute(
-                        text("SELECT pg_try_advisory_xact_lock(hashtext('agno_os_metrics'), hashtext(:table_name))"),
-                        {"table_name": table.fullname},
-                    )
-                ).scalar_one()
-                if not locked:
-                    return results
+            if not await self._lock_os_metrics(sess, table, wait_for_rebuild):
+                return results
 
             total_rows_result = await sess.execute(
                 select(totals_table.c.aggregation_period, totals_table.c.date, totals_table.c.completed)
@@ -2934,25 +2937,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             async with self.async_session_factory() as sess, sess.begin():
                 # One rebuild of this table at a time: a second one waits here, or skips when told not to wait.
                 # The lock is released when the day's transaction ends
-                if wait_for_rebuild:
-                    await sess.execute(
-                        text("SELECT pg_advisory_xact_lock(hashtext('agno_os_metrics'), hashtext(:table_name))"),
-                        {"table_name": table.fullname},
-                    )
-                else:
-                    locked = (
-                        await sess.execute(
-                            text(
-                                "SELECT pg_try_advisory_xact_lock(hashtext('agno_os_metrics'), hashtext(:table_name))"
-                            ),
-                            {"table_name": table.fullname},
-                        )
-                    ).scalar_one()
-                    if not locked:
-                        # Reset the throttle so the next read tries again
-                        self._os_metrics_refreshed_at = 0.0
-                        log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
-                        return None
+                if not await self._lock_os_metrics(sess, table, wait_for_rebuild):
+                    # Reset the throttle so the next read tries again
+                    self._os_metrics_refreshed_at = 0.0
+                    log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                    return None
 
                 # Skip a day a rebuild this one waited for has completed
                 latest_completed = (

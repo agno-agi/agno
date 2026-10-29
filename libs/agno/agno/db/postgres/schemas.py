@@ -9,7 +9,7 @@ from agno.db.schemas.mcp_oauth import MCP_OAUTH_TABLE_SCHEMAS
 
 try:
     from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import BigInteger, Boolean, Date, DateTime, Integer, SmallInteger, String, Text
+    from sqlalchemy.types import BigInteger, Boolean, Date, DateTime, Integer, String, Text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -169,7 +169,7 @@ OS_METRICS_TABLE_SCHEMA = {
     "model_calls_count": {"type": BigInteger, "nullable": False, "default": 0},
     "total_model_call_ms": {"type": BigInteger, "nullable": False, "default": 0},
     "max_model_call_ms": {"type": BigInteger, "nullable": True},
-    "buckets_version": {"type": SmallInteger, "nullable": False, "default": 1},
+    "buckets_version": {"type": Integer, "nullable": False, "default": 1},
     "status_metrics": {"type": JSONB, "nullable": False, "default": {}},
     "additional_token_metrics": {"type": JSONB, "nullable": False, "default": {}},
     "duration_buckets": {"type": JSONB, "nullable": False, "default": {}},
@@ -201,7 +201,7 @@ OS_METRICS_TOTALS_TABLE_SCHEMA = {
     "model_calls_count": {"type": BigInteger, "nullable": False, "default": 0},
     "total_model_call_ms": {"type": BigInteger, "nullable": False, "default": 0},
     "max_model_call_ms": {"type": BigInteger, "nullable": True},
-    "buckets_version": {"type": SmallInteger, "nullable": False, "default": 1},
+    "buckets_version": {"type": Integer, "nullable": False, "default": 1},
     "status_metrics": {"type": JSONB, "nullable": False, "default": {}},
     "additional_token_metrics": {"type": JSONB, "nullable": False, "default": {}},
     "duration_buckets": {"type": JSONB, "nullable": False, "default": {}},
@@ -212,7 +212,7 @@ OS_METRICS_TOTALS_TABLE_SCHEMA = {
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
     "completed": {"type": Boolean, "nullable": False, "default": False},
-    "version": {"type": BigInteger, "nullable": False, "default": 1},
+    "version": {"type": Integer, "nullable": False, "default": 1},
 }
 
 VERSIONS_TABLE_SCHEMA = {

@@ -849,17 +849,6 @@ OS_METRICS_PERIODS = ("daily", "monthly")
 # What a row of agno_os_metrics is counted under, by the type of the session or run.
 OS_METRICS_COMPONENT_TYPES = ("agent", "team", "workflow")
 
-# The columns a row of agno_os_metrics is unique by, and a row of agno_os_metrics_totals.
-OS_METRICS_KEY_COLUMNS = (
-    "aggregation_period",
-    "date",
-    "user_id",
-    "component_type",
-    "component_id",
-    "parent_component_id",
-)
-OS_METRICS_TOTALS_KEY_COLUMNS = ("aggregation_period", "date")
-
 # The token counts kept in columns of their own. The rarer ones are kept in
 # additional_token_metrics.
 _OS_METRICS_TOKEN_COLUMNS = ("input_tokens", "output_tokens", "total_tokens")
