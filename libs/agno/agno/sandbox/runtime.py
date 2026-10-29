@@ -341,10 +341,10 @@ async def _execute_harness(directory: Path, request: Dict[str, Any], waits: Opti
                 run = event
             elif event.event not in _TERMINAL_EVENTS:
                 if waits is not None:
-                    if event.event == "RunPaused" and getattr(event, "native_request", None):
-                        waits.add(event.native_request["tool_call_id"])
+                    if event.event == "RunPaused" and getattr(event, "external_agent_request", None):
+                        waits.add(event.external_agent_request["tool_call_id"])
                     elif event.event == "RunContinued":
-                        waits.discard(getattr(event, "native_request_id", None))
+                        waits.discard(getattr(event, "external_agent_request_id", None))
                 _append(directory, event.to_dict())
         if run is None:
             raise SandboxError("SDK runtime did not produce an execution result")

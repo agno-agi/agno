@@ -300,9 +300,9 @@ class RunCompletedEvent(BaseAgentRunEvent):
 
 @dataclass
 class RunPausedEvent(BaseAgentRunEvent):
-    # A harness's native permission request or question (owner, digest, native context), carried from a
-    # sandbox runtime to the host so the paused run can record it.
-    native_request: Optional[Dict[str, Any]] = None
+    # An external agent's (Claude Code, Codex) native permission request or question: owner, digest and
+    # native context, carried from a sandbox runtime to the host so the paused run can record it.
+    external_agent_request: Optional[Dict[str, Any]] = None
     content: Optional[Any] = None
     event: str = RunEvent.run_paused.value
     tools: Optional[List[ToolExecution]] = None
@@ -321,8 +321,8 @@ class RunPausedEvent(BaseAgentRunEvent):
 
 @dataclass
 class RunContinuedEvent(BaseAgentRunEvent):
-    # The native permission request or question this continuation answered.
-    native_request_id: Optional[str] = None
+    # The external agent's permission request or question this continuation answered.
+    external_agent_request_id: Optional[str] = None
     event: str = RunEvent.run_continued.value
 
 

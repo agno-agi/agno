@@ -252,7 +252,7 @@ class HITLBridge:
             agent_id=self.agent.get_id(),
             tools=[tool],
             requirements=[requirement],
-            native_request={
+            external_agent_request={
                 "tool_call_id": tool_call_id,
                 "owner": self.owner,
                 "digest": digest,
@@ -291,7 +291,7 @@ class HITLBridge:
                                 run_id=self.run_id,
                                 session_id=self.session_id,
                                 agent_id=self.agent.get_id(),
-                                native_request_id=tool_call_id,
+                                external_agent_request_id=tool_call_id,
                             ),
                             acknowledged,
                         )

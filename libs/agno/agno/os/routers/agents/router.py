@@ -111,6 +111,7 @@ from agno.run.base import RunStatus
 from agno.utils.log import log_debug, log_error, log_warning
 
 if TYPE_CHECKING:
+    from agno.agents.base import BaseExternalAgent
     from agno.os.app import AgentOS
 
 
@@ -493,7 +494,7 @@ async def agent_resumable_continue_response_streamer(
 
 
 async def _resume_stream_generator(
-    agent: Any,
+    agent: Union[Agent, RemoteAgent, "BaseExternalAgent"],
     run_id: str,
     last_event_index: Optional[int],
     session_id: Optional[str],
@@ -1603,10 +1604,11 @@ def get_agent_router(
         # receives the chat's confirm or reject. Never requeue its turn.
         from agno.agents.base import BaseExternalAgent
 
+        native_agent = agent if isinstance(agent, BaseExternalAgent) and agent._uses_native_hitl else None
         native_run = None
-        if isinstance(agent, BaseExternalAgent) and agent._uses_native_hitl:
-            native_run = await agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)
-        if native_run is not None and (native_run.metadata or {}).get("native_hitl"):
+        if native_agent is not None:
+            native_run = await native_agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)
+        if native_agent is not None and native_run is not None and (native_run.metadata or {}).get("native_hitl"):
             from agno.agents._hitl import submit_decisions, tail_stored
             from agno.models.response import ToolExecution
             from agno.os.event_streams import get_event_stream
@@ -1625,10 +1627,12 @@ def get_agent_router(
             cursor = (await event_stream.get_event_count(run_id)) - 1 if tracked else -1
             if tracked:
                 # Reopen before the decision lands, so the events it releases reach this client.
-                await amark_continue_stream_running(run_id, component=agent, session_id=session_id, user_id=user_id)
+                await amark_continue_stream_running(
+                    run_id, component=native_agent, session_id=session_id, user_id=user_id
+                )
             try:
                 parsed_tools = [ToolExecution.from_dict(t) for t in tools_data or []]
-                submitted = await submit_decisions(agent, run_id, session_id, user_id, parsed_tools)
+                submitted = await submit_decisions(native_agent, run_id, session_id, user_id, parsed_tools)
             except (ValueError, TypeError, KeyError) as error:
                 if tracked:
                     with contextlib.suppress(Exception):
@@ -1644,14 +1648,14 @@ def get_agent_router(
 
                         answered = set(hitl_state(submitted).get("decisions") or {})
                         async for event in tail_stored(
-                            agent, run_id, session_id, user_id, len(submitted.events or []), answered
+                            native_agent, run_id, session_id, user_id, len(submitted.events or []), answered
                         ):
                             if not isinstance(event, RunOutput):
                                 yield f"event: {event.event}\ndata: {event.to_json()}\n\n"
 
                     return StreamingResponse(stored_native_events(), media_type="text/event-stream")
                 return StreamingResponse(
-                    _resume_stream_generator(agent, run_id, cursor, session_id, user_id),
+                    _resume_stream_generator(native_agent, run_id, cursor, session_id, user_id),
                     media_type="text/event-stream",
                 )
             return JSONResponse(

@@ -455,8 +455,8 @@ async def test_a_native_pause_from_the_runtime_is_recorded_on_the_host_run(syste
         if not injected:
             request = {"tool_call_id": "tool", "owner": "owner", "digest": "digest", "native": {}, "expires_at": 0}
             page.events[:0] = [
-                {"event": "RunPaused", "run_id": "first", "native_request": request},
-                {"event": "RunContinued", "run_id": "first", "native_request_id": "tool"},
+                {"event": "RunPaused", "run_id": "first", "external_agent_request": request},
+                {"event": "RunContinued", "run_id": "first", "external_agent_request_id": "tool"},
             ]
             injected.append(True)
         return page

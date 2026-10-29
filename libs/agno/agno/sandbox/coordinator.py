@@ -668,13 +668,13 @@ class SandboxCoordinator:
                         # again; queue/event transport supplies its own attempt fencing.
                         await self.store.aget(lease)
                         for event in page.events:
-                            if event.get("event") == "RunPaused" and event.get("native_request"):
+                            if event.get("event") == "RunPaused" and event.get("external_agent_request"):
                                 await self.store._anative_hitl_event(lease, event)
-                                request = event["native_request"]
+                                request = event["external_agent_request"]
                                 pending_requests[request["tool_call_id"]] = request
-                            elif event.get("event") == "RunContinued" and event.get("native_request_id"):
+                            elif event.get("event") == "RunContinued" and event.get("external_agent_request_id"):
                                 await self.store._anative_hitl_event(lease, event)
-                                pending_requests.pop(event["native_request_id"], None)
+                                pending_requests.pop(event["external_agent_request_id"], None)
                             yield run_output_event_from_dict(event)
                         if page.result is not None:
                             if page.result["type"] != "execution_finished":

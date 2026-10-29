@@ -810,7 +810,7 @@ async def test_codex_reader_does_not_wait_for_a_permission_decision(monkeypatch,
         await asyncio.sleep(0.01)
     assert notifications, "A pending permission request blocked the SDK reader"
     assert not sent
-    request = event.native_request
+    request = event.external_agent_request
     decided = RunOutput(
         run_id="run",
         session_id="session",
@@ -1043,7 +1043,7 @@ async def test_an_acknowledged_request_is_not_a_new_pause():
         run_id="run",
         session_id="session",
         status=RunStatus.paused,
-        events=[RunContinuedEvent(native_request_id="first")],
+        events=[RunContinuedEvent(external_agent_request_id="first")],
         metadata={KEY: {"pending": ["second"]}},
     )
     completed = RunOutput(run_id="run", session_id="session", status=RunStatus.completed, content="done")

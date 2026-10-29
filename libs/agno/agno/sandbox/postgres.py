@@ -1078,7 +1078,7 @@ class _SandboxStore:
                 r["tool_execution"]["tool_call_id"]: r for r in run.get("requirements") or [] if r.get("tool_execution")
             }
             if event["event"] == "RunPaused":
-                request = dict(event["native_request"])
+                request = dict(event["external_agent_request"])
                 tool_call_id = request["tool_call_id"]
                 state["owner"] = request["owner"]
                 # A reclaim replays the runtime's events: an already answered request does not pause again.
@@ -1097,7 +1097,7 @@ class _SandboxStore:
                     if event.get("content") is not None:
                         run["content"] = event["content"]
             else:
-                tool_call_id = event.get("native_request_id")
+                tool_call_id = event.get("external_agent_request_id")
                 pending = [value for value in pending if value != tool_call_id]
             run["requirements"] = [requirements[key] for key in pending if key in requirements]
             state.update(requests=requests, pending=pending, decisions=decisions)

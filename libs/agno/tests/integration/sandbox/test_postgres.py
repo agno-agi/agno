@@ -154,7 +154,7 @@ async def test_native_hitl_pause_is_fenced_and_retired_on_stop(store):
         "event": "RunPaused",
         "content": "I will request permission for this command.",
         "tools": [{"tool_call_id": "earlier", "tool_name": "Read", "result": "done"}, tool],
-        "native_request": {
+        "external_agent_request": {
             "tool_call_id": "tool",
             "owner": "owner",
             "digest": "digest",
@@ -215,7 +215,7 @@ async def test_native_continuation_hands_over_on_the_run_and_sees_the_next_pause
             state.lease,
             {
                 "event": "RunPaused",
-                "native_request": {
+                "external_agent_request": {
                     "tool_call_id": tool_call_id,
                     "owner": "owner",
                     "digest": action_digest({"tool_name": "Bash", "tool_args": arguments, "native": {}}),
@@ -274,7 +274,7 @@ async def test_native_continuation_hands_over_on_the_run_and_sees_the_next_pause
             "owner": "owner",
         }
         # The coordinator delivered it; the runtime continued, then asked again.
-        await store._anative_hitl_event(state.lease, {"event": "RunContinued", "native_request_id": first})
+        await store._anative_hitl_event(state.lease, {"event": "RunContinued", "external_agent_request_id": first})
         second, _ = await pause()
         items = await asyncio.wait_for(task, 5)
         if stream == "http":
@@ -312,7 +312,7 @@ async def test_a_stale_continuation_cannot_overwrite_a_run_that_moved_on(store):
             "expires_at": int(time.time()) + 60,
             "requirement": {"tool_execution": tool},
         }
-        await store._anative_hitl_event(state.lease, {"event": "RunPaused", "native_request": confirmation})
+        await store._anative_hitl_event(state.lease, {"event": "RunPaused", "external_agent_request": confirmation})
 
     async def hand_over(pending, marker):
         fields = {"status": "RUNNING", "metadata": {KEY: {"pending": [], "marker": marker}}}
@@ -324,7 +324,7 @@ async def test_a_stale_continuation_cannot_overwrite_a_run_that_moved_on(store):
     await pause("first")
     assert await hand_over(["first"], "first")
     assert not await hand_over(["first"], "repeated")
-    await store._anative_hitl_event(state.lease, {"event": "RunContinued", "native_request_id": "first"})
+    await store._anative_hitl_event(state.lease, {"event": "RunContinued", "external_agent_request_id": "first"})
     await pause("second")
     run, _, _ = await rows(store)
     assert run["status"] == "PAUSED"
