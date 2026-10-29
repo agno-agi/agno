@@ -324,6 +324,49 @@ def test_agent_os_sse_exposes_member_content_event() -> None:
     assert [response["agent_id"] for response in completed["member_responses"]] == [MEMBER_ID]
 
 
+def test_agent_os_background_sse_exposes_member_content_event(tmp_path: Any) -> None:
+    team = _route_team(db=SqliteDb(db_file=str(tmp_path / "route-background.db")))
+    client = TestClient(AgentOS(teams=[team], telemetry=False).get_app())
+
+    frames: list[tuple[str, dict[str, Any]]] = []
+    with client.stream(
+        "POST",
+        f"/teams/{TEAM_ID}/runs",
+        data={"message": INPUT, "stream": "true", "background": "true"},
+    ) as response:
+        assert response.status_code == 200
+        event_name = ""
+        for line in response.iter_lines():
+            if line.startswith("event:"):
+                event_name = line[len("event:") :].strip()
+            elif line.startswith("data:"):
+                frames.append((event_name, json.loads(line[len("data:") :])))
+
+    team_run_id = next(
+        payload["run_id"]
+        for name, payload in frames
+        if name == TeamRunEvent.run_started.value and payload.get("run_id")
+    )
+    member_payload = next(
+        payload
+        for name, payload in frames
+        if name == RunEvent.run_content.value and payload.get("agent_id") == MEMBER_ID
+    )
+    assert member_payload["content"] == MEMBER_TEXT
+    assert member_payload["agent_name"] == "Member One"
+    assert member_payload["parent_run_id"] == team_run_id
+
+    team_payload = next(
+        payload
+        for name, payload in frames
+        if name == TeamRunEvent.run_content.value and payload.get("content") == MEMBER_TEXT
+    )
+    assert team_payload["team_id"] == TEAM_ID
+    assert "agent_id" not in team_payload
+    assert sum(name == TeamRunEvent.tool_call_started.value for name, _ in frames) == 1
+    assert sum(name == TeamRunEvent.tool_call_completed.value for name, _ in frames) == 1
+
+
 @pytest.mark.asyncio
 async def test_route_agui_emits_member_response_text_only_once() -> None:
     pytest.importorskip("ag_ui.core")
