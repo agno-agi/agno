@@ -6,6 +6,9 @@ allow. Each request pauses the run in the chat with a confirmation card, like an
 agent's confirmation tool. Confirm or reject it right there; the same Claude or Codex
 process, still waiting, continues with that answer. Nothing is replayed.
 
+Their multiple-choice questions to you pause the same way, as user feedback like Agno's
+ask_user tool: pick an option, or type your own answer, and the harness reads it.
+
 Both agents run in a Docker sandbox, through a durable queue on local Postgres.
 
 Build the image and start Postgres (once):
@@ -16,7 +19,8 @@ With your model credentials available, start AgentOS:
     .venv/bin/python cookbook/frameworks/human_in_the_loop/agentos.py
 
 Connect http://localhost:7777 in the AgentOS UI. Ask either agent to create
-confirm-test.txt, then confirm or reject the request in the chat.
+confirm-test.txt, then confirm or reject the request in the chat. To try a question, ask:
+"Ask me which color I prefer, Red or Blue, then tell me what I picked."
 """
 
 from pathlib import Path
@@ -39,7 +43,7 @@ sandbox = DockerSandbox(
     image="agno-sandbox:human-in-the-loop",
     namespace="human-in-the-loop",
     network="isolated",
-    checkpoints=FileCheckpointStore(Path("tmp/native-confirmation-checkpoints")),
+    checkpoints=FileCheckpointStore(Path("tmp/native-hitl-checkpoints")),
 )
 
 # ---------------------------------------------------------------------------
@@ -53,7 +57,7 @@ claude = ClaudeAgent(
     db=db,
     sandbox=sandbox,
     permission_mode="default",
-    confirmation_timeout=900,
+    hitl_timeout=900,
 )
 codex = CodexAgent(
     id="codex-confirm",
@@ -63,7 +67,15 @@ codex = CodexAgent(
     sandbox=sandbox,
     sandbox_mode="read-only",
     approval_policy="on-request",
-    confirmation_timeout=900,
+    # Codex offers its question tool outside plan mode only behind this feature flag, and its
+    # built-in instructions ask required questions in plain text, so ask it to use the tool.
+    config={"features": {"default_mode_request_user_input": True}},
+    instructions=(
+        "When you need to ask the user a question, including a required one, call the "
+        "request_user_input tool instead of asking in a message, so the chat can show the "
+        "question with its options."
+    ),
+    hitl_timeout=900,
 )
 
 # ---------------------------------------------------------------------------

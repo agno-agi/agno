@@ -878,7 +878,7 @@ def get_agent_router(
         if isinstance(agent, BaseExternalAgent) and agent.sandbox is not None:
             from agno.os.routers.agents.sandbox import sandbox_run_response
 
-            if getattr(agent, "_uses_native_confirmations", False):
+            if getattr(agent, "_uses_native_hitl", False):
                 background = True
             return await sandbox_run_response(
                 agent,
@@ -897,7 +897,7 @@ def get_agent_router(
             )
 
         # A native permission request waits for its confirmation longer than a browser connection lives.
-        if getattr(agent, "_uses_native_confirmations", False):
+        if getattr(agent, "_uses_native_hitl", False):
             background = True
 
         # Background execution
@@ -1604,10 +1604,10 @@ def get_agent_router(
         from agno.agents.base import BaseExternalAgent
 
         native_run = None
-        if isinstance(agent, BaseExternalAgent) and agent._uses_native_confirmations:
+        if isinstance(agent, BaseExternalAgent) and agent._uses_native_hitl:
             native_run = await agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)
-        if native_run is not None and (native_run.metadata or {}).get("native_confirmation"):
-            from agno.agents._confirmation import submit_decisions, tail_stored
+        if native_run is not None and (native_run.metadata or {}).get("native_hitl"):
+            from agno.agents._hitl import submit_decisions, tail_stored
             from agno.models.response import ToolExecution
             from agno.os.event_streams import get_event_stream
             from agno.os.utils import amark_continue_stream_running
@@ -1615,7 +1615,7 @@ def get_agent_router(
             if fork or regenerate or input is not None or continue_from != "end" or additional_instructions:
                 raise HTTPException(
                     status_code=400,
-                    detail="Continuing a native confirmation only delivers the confirm or reject decision",
+                    detail="Continuing a native request only delivers its decision",
                 )
             assert session_id
             event_stream = get_event_stream()
@@ -1640,9 +1640,9 @@ def get_agent_router(
                     async def stored_native_events():
                         from agno.run.agent import RunOutput
 
-                        from agno.agents._confirmation import confirmation_state
+                        from agno.agents._hitl import hitl_state
 
-                        answered = set(confirmation_state(submitted).get("decisions") or {})
+                        answered = set(hitl_state(submitted).get("decisions") or {})
                         async for event in tail_stored(
                             agent, run_id, session_id, user_id, len(submitted.events or []), answered
                         ):

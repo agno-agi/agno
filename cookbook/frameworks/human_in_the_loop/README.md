@@ -5,6 +5,10 @@ database, including one supplied by `AgentOS(db=...)`, each request pauses the A
 requires confirmation, the same human-in-the-loop flow as an Agno agent's confirmation tool. The person in
 the chat confirms or rejects it; there is no admin approval and nothing appears on the Approvals page.
 
+Their multiple-choice questions to the user pause the same way, as user feedback like Agno's `ask_user`
+tool: Claude's `AskUserQuestion` and Codex's `request_user_input`. The chat shows the questions and options;
+the selections, or an answer typed instead, go back to the harness as its answers.
+
 The native Claude or Codex process stays alive while the run is paused. Continuing the run with the tool
 confirmed or rejected delivers that answer to the same process, which carries on from where it asked. It
 never replays the prompt or starts a replacement turn.
@@ -31,7 +35,12 @@ Connect `http://localhost:7777` in AgentOS, select either agent and ask:
 > Create confirm-test.txt containing "confirmed" in the workspace.
 
 The run pauses with a confirmation card for the command or file change. Confirm or reject it in the chat;
-the run continues in the same message.
+the run continues in the same message. To try a question, ask:
+
+> Ask me which color I prefer, Red or Blue, then tell me what I picked.
+
+The run pauses with the question and its options. Pick one, or type your own answer, and the agent replies
+with it.
 
 ## Which requests pause
 
@@ -40,10 +49,16 @@ Native policy decides which operations ask, so not every tool call needs confirm
 - **Claude:** `permission_mode="default"`, `"acceptEdits"` or `"plan"` can ask; `"bypassPermissions"` and
   `"dontAsk"` keep their native behavior. A `can_use_tool` callback or `permission_prompt_tool_name` you
   supply stays in charge.
+- **Questions:** Claude's `AskUserQuestion` pauses whenever Agno handles its permission requests. Codex
+  offers `request_user_input` outside plan mode only with
+  `config={"features": {"default_mode_request_user_input": True}}`, a flag Codex marks as under
+  development. Codex's built-in instructions also tell it to ask required questions in plain text, so the
+  example's `instructions` ask it to use the tool. When every question is skipped, Claude is told the user declined to answer; Codex receives
+  empty answers. Codex questions marked secret are refused, because answers are stored on the run.
 - **Codex:** `approval_policy="on-request"` or `"untrusted"` can ask; `"never"` does not. `sandbox_mode`
   separately controls filesystem isolation. Leaving `approval_policy` unset uses the native configuration's
   policy. The SDK's `approval_mode="auto_review"` and `"deny_all"` keep their behavior and never pause. Codex
-  confirmations need `openai-codex==0.163.0`.
+  permission requests and questions need `openai-codex==0.163.0`.
 
 ## How it works
 
@@ -62,9 +77,9 @@ Native policy decides which operations ask, so not every tool call needs confirm
 
 ## Limits
 
-- Only confirm and reject are supported. Edited arguments, new input, forks, regeneration and standing
-  permission grants are refused.
-- `confirmation_timeout` (default 900 seconds) bounds each request. Queued and sandboxed runs also keep a
+- Permission requests support confirm and reject; questions support selecting options or typing an
+  answer. Edited arguments, new input, forks, regeneration and standing permission grants are refused.
+- `hitl_timeout` (default 900 seconds) bounds each request. Queued and sandboxed runs also keep a
   cumulative waiting budget of that length, separate from their active execution budget.
 - AgentOS runs these agents in the background, so a wait outlives the browser connection; nonstreaming HTTP
   submissions return 202.
@@ -73,4 +88,4 @@ Native policy decides which operations ask, so not every tool call needs confirm
 - Team members and workflow steps keep running what their native policy permits; an actual permission
   request inside one fails before the action runs.
 - This example runs one AgentOS process with `QueueConfig(durable=True, db=db)`; Redis is not required.
-  Checkpoints are stored under `tmp/native-confirmation-checkpoints`.
+  Checkpoints are stored under `tmp/native-hitl-checkpoints`.

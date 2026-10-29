@@ -40,7 +40,7 @@ from agno.agents.base import (
     ExternalRunWarningEvent,
     run_coroutine_sync,
 )
-from agno.agents._confirmation import KEY as NATIVE_CONFIRMATION
+from agno.agents._hitl import KEY as NATIVE_HITL
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.exceptions import ModelProviderError, RunNotContinuableError
 from agno.metrics import BaseMetrics, ModelMetrics, RunMetrics
@@ -115,6 +115,41 @@ class ClaudeResultError(RuntimeError):
         self.errors = errors
         self.api_error_status = api_error_status
         self.assistant_error = assistant_error
+
+
+async def _ask_user_question(sdk: Any, arguments: Dict[str, Any], native: Dict[str, Any]) -> Any:
+    """Pause for Claude's AskUserQuestion as user feedback and hand the selections back to Claude.
+
+    Claude reads the answers from the allowed tool input, keyed by question text; a multi-select answer
+    is comma-separated. When every question is skipped, Claude is told the user declined to answer.
+    """
+    from agno.agents._hitl import current_bridge
+
+    questions = arguments.get("questions")
+    if (
+        not isinstance(questions, list)
+        or not questions
+        or not all(isinstance(q, dict) and q.get("question") for q in questions)
+    ):
+        raise ValueError("AskUserQuestion has no questions to ask")
+    asked = [
+        {
+            "question": str(q["question"]),
+            "header": q.get("header"),
+            "options": [
+                {"label": str(o.get("label", "")), "description": o.get("description")}
+                for o in q.get("options") or []
+                if isinstance(o, dict)
+            ],
+            "multi_select": q.get("multiSelect") is True,
+        }
+        for q in questions
+    ]
+    selections = await current_bridge().ask("AskUserQuestion", arguments, native, asked)
+    answers = {q["question"]: ", ".join(selected) for q, selected in zip(asked, selections) if selected}
+    if not answers:
+        return sdk.PermissionResultDeny(message="The user declined to answer these questions")
+    return sdk.PermissionResultAllow(updated_input={**arguments, "answers": answers})
 
 
 @agent_dataclass
@@ -225,7 +260,7 @@ class ClaudeAgent(BaseExternalAgent):
     _sdk_session_ids: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     @property
-    def _uses_native_confirmations(self) -> bool:
+    def _uses_native_hitl(self) -> bool:
         opts = self._option_values()
         mode = self.permission_mode if self.permission_mode is not None else opts.get("permission_mode")
         mode = self.options_kwargs.get("permission_mode", mode)
@@ -384,11 +419,13 @@ class ClaudeAgent(BaseExternalAgent):
         store = session_store if session_store is not None else self._transcript_store(agno_session_id)
         if store is not None:
             opts["session_store"] = store
-        if self._uses_native_confirmations:
-            from agno.agents._confirmation import current_bridge
+        if self._uses_native_hitl:
+            from agno.agents._hitl import current_bridge
 
             async def can_use_tool(name: str, arguments: Dict[str, Any], context: Any) -> Any:
                 native = {"sdk": "claude", "tool_call_id": getattr(context, "tool_use_id", None)}
+                if name == "AskUserQuestion":
+                    return await _ask_user_question(sdk, arguments, native)
                 allowed = await current_bridge().request(name, arguments, native)
                 if allowed:
                     return sdk.PermissionResultAllow(updated_input=arguments)
@@ -863,8 +900,8 @@ class ClaudeAgent(BaseExternalAgent):
         agents do, whatever fork is set to. Files the agent changed are not rewound.
         """
         source = run_response or self.get_run_output(run_id or "", session_id, user_id)
-        if source is not None and (source.metadata or {}).get(NATIVE_CONFIRMATION):
-            from agno.agents._confirmation import continue_run, sync_events
+        if source is not None and (source.metadata or {}).get(NATIVE_HITL):
+            from agno.agents._hitl import continue_run, sync_events
 
             continuation = continue_run(
                 self,
@@ -920,8 +957,8 @@ class ClaudeAgent(BaseExternalAgent):
         """Async continue_run: returns a coroutine, or an async iterator when stream=True."""
         if regenerate:
             raise ValueError("Claude continuation does not support regenerate")
-        resolved = kwargs.pop("_confirmation_resolved", False)
-        if self._uses_native_confirmations and run_response is None and not resolved:
+        resolved = kwargs.pop("_hitl_resolved", False)
+        if self._uses_native_hitl and run_response is None and not resolved:
 
             async def dispatch():
                 source = await self.aget_run_output(run_id or "", session_id, user_id)
@@ -939,7 +976,7 @@ class ClaudeAgent(BaseExternalAgent):
                     replace_original=replace_original,
                     additional_instructions=additional_instructions,
                     stream=stream,
-                    _confirmation_resolved=True,
+                    _hitl_resolved=True,
                     **kwargs,
                 )
                 if stream:
@@ -956,8 +993,8 @@ class ClaudeAgent(BaseExternalAgent):
                     return item
 
             return result()
-        if run_response is not None and (run_response.metadata or {}).get(NATIVE_CONFIRMATION):
-            from agno.agents._confirmation import continue_run
+        if run_response is not None and (run_response.metadata or {}).get(NATIVE_HITL):
+            from agno.agents._hitl import continue_run
 
             return continue_run(
                 self,

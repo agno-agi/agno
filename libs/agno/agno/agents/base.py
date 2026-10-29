@@ -238,9 +238,9 @@ class BaseExternalAgent:
     description: Optional[str] = None
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     markdown: bool = True
-    # Seconds a native permission request waits for its confirmation, and a continuation client waits.
+    # Seconds a native permission request or question waits for the person's decision, and a continuation client waits.
     # Queue/sandbox execution also uses this as its cumulative human-wait budget.
-    confirmation_timeout: float = 900
+    hitl_timeout: float = 900
     # Fail closed when native context is missing; sandbox restoration requires exact continuity.
     require_native_resume: bool = False
     # Propagate local persistence failures before acknowledging a runtime result.
@@ -288,10 +288,10 @@ class BaseExternalAgent:
         if self.events_to_skip is None:
             self.events_to_skip = [RunEvent.run_content]
         self._check_output_schema(self.output_schema)
-        if self._uses_native_confirmations:
-            from agno.agents._confirmation import validate_native_confirmations
+        if self._uses_native_hitl:
+            from agno.agents._hitl import validate_native_hitl
 
-            validate_native_confirmations(self)
+            validate_native_hitl(self)
             self.store_events = True
         if self.repository is not None:
             from agno.sandbox.repository import Repository
@@ -304,7 +304,7 @@ class BaseExternalAgent:
             _sandbox_harness().validate(self)
 
     @property
-    def _uses_native_confirmations(self) -> bool:
+    def _uses_native_hitl(self) -> bool:
         """Whether native policy can ask for permission and a database can hold the paused run."""
         return False
 
@@ -1152,7 +1152,7 @@ class BaseExternalAgent:
                 row = RunOutput.from_dict(row)
             if not isinstance(row, RunOutput) or row.agent_id != self.get_id() or row.session_id is None:
                 return
-            from agno.agents._confirmation import KEY as native_key
+            from agno.agents._hitl import KEY as native_key
 
             native = (row.metadata or {}).get(native_key)
             statuses = [RunStatus.pending.value, RunStatus.running.value]
@@ -1464,7 +1464,7 @@ class BaseExternalAgent:
         run = await self._aprepare_pending_run(run_id, session_id, user_id, input)
         await aregister_run(run_id)
         transport = (
-            _BackgroundStream(run, yield_run_output=yield_run_output, end_at_pause=self._uses_native_confirmations)
+            _BackgroundStream(run, yield_run_output=yield_run_output, end_at_pause=self._uses_native_hitl)
             if stream
             else None
         )
@@ -2004,7 +2004,7 @@ class BaseExternalAgent:
     # ---------------------------------------------------------------------------
 
     async def _arun_non_stream(self, input: Any, **kwargs: Any) -> RunOutput:
-        if self._uses_native_confirmations:
+        if self._uses_native_hitl:
             events = self._arun_stream(input, **{**kwargs, "yield_run_output": True, "_native_non_stream": True})
             try:
                 async for item in events:
@@ -2012,7 +2012,7 @@ class BaseExternalAgent:
                         return item
             finally:
                 await events.aclose()  # type: ignore[attr-defined]
-            raise RuntimeError("Native confirmation run produced no result")
+            raise RuntimeError("Paused native run produced no result")
         team_id, workflow_id = self._pop_run_parent(kwargs)
         parent_id = self._parent_id(team_id, workflow_id)
         if self.sandbox is not None:
@@ -2215,7 +2215,7 @@ class BaseExternalAgent:
             history = (
                 self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
             )
-            stored_events: Optional[List[Any]] = [] if self.store_events or self._uses_native_confirmations else None
+            stored_events: Optional[List[Any]] = [] if self.store_events or self._uses_native_hitl else None
             skipped = {event.value for event in self.events_to_skip or []}
 
             def keep(event: Any) -> Any:
@@ -2233,12 +2233,12 @@ class BaseExternalAgent:
             warnings: List[Dict[str, Any]] = []
             tools: Dict[str, ToolExecution] = {}
             bridge = None
-            if self._uses_native_confirmations:
-                from agno.agents._confirmation import ConfirmationBridge, validate_native_confirmations
+            if self._uses_native_hitl:
+                from agno.agents._hitl import HITLBridge, validate_native_hitl
 
-                validate_native_confirmations(self)
-                allow_requests = parent_id is None and not getattr(self, "_nested_native_confirmations", False)
-                bridge = ConfirmationBridge(self, run_id, session_id, user_id, allow_requests=allow_requests)
+                validate_native_hitl(self)
+                allow_requests = parent_id is None and not getattr(self, "_nested_native_hitl", False)
+                bridge = HITLBridge(self, run_id, session_id, user_id, allow_requests=allow_requests)
             status = RunStatus.completed
             run_error: Optional[Exception] = None
             attempts_made = 0
@@ -2264,7 +2264,7 @@ class BaseExternalAgent:
                             )
                             if bridge is not None:
                                 if bridge.closed:
-                                    bridge = ConfirmationBridge(
+                                    bridge = HITLBridge(
                                         self, run_id, session_id, user_id, allow_requests=allow_requests
                                     )
                                 source = bridge.events(source)
@@ -2295,7 +2295,7 @@ class BaseExternalAgent:
                                         if isinstance(event, RunPausedEvent):
                                             for tool in event.tools or []:
                                                 tools[tool.tool_call_id or ""] = tool
-                                        from agno.agents._confirmation import KEY as native_key
+                                        from agno.agents._hitl import KEY as native_key
 
                                         # The paused run is the shared state: its requirements are what the
                                         # chat confirms, and its metadata is how the continuation finds them.
@@ -2363,7 +2363,7 @@ class BaseExternalAgent:
             if attempts_made > 1:
                 run.metadata = {**(run.metadata or {}), "attempts": attempts_made}
             if bridge is not None and bridge.requests:
-                from agno.agents._confirmation import KEY as native_key
+                from agno.agents._hitl import KEY as native_key
 
                 run.metadata = {**(run.metadata or {}), native_key: {**bridge.state(), "pending": []}}
                 if run_error is not None:

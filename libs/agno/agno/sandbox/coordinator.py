@@ -358,7 +358,7 @@ class SandboxCoordinator:
         runtime's native execution is waiting for it. A decision is delivered only for the exact
         request it answers: the same owner and the same action digest.
         """
-        from agno.agents._confirmation import KEY, db_call
+        from agno.agents._hitl import KEY, db_call
 
         row = await db_call(self.store.db, "get_run", run_id)
         metadata = (row.get("metadata") if isinstance(row, dict) else getattr(row, "metadata", None)) or {}
@@ -374,16 +374,8 @@ class SandboxCoordinator:
                 record: Dict[str, Any], tool_call_id: str = tool_call_id, decision: Dict[str, Any] = decision
             ) -> Dict[str, Any]:
                 if record["execution_id"] != execution.execution_id:
-                    raise SandboxError("Native confirmation execution changed")
-                acknowledgement = await self.client.aresolve(
-                    execution,
-                    {
-                        "tool_call_id": tool_call_id,
-                        "confirmed": decision["confirmed"] is True,
-                        "digest": decision["digest"],
-                        "owner": decision["owner"],
-                    },
-                )
+                    raise SandboxError("Native execution changed")
+                acknowledgement = await self.client.aresolve(execution, {"tool_call_id": tool_call_id, **decision})
                 if acknowledgement.get("accepted") is not True:
                     raise SandboxError("Runtime did not acknowledge the native decision")
                 return record
@@ -622,7 +614,7 @@ class SandboxCoordinator:
                             lease,
                             status="ERROR",
                             reason="Sandbox execution computer was lost; recover from the previous completed turn",
-                            retryable=not config.get("_native_confirmations", False),
+                            retryable=not config.get("_native_hitl", False),
                         )
                         yield self._terminal(committed)
                         yield RunOutput.from_dict(committed)
@@ -676,13 +668,13 @@ class SandboxCoordinator:
                         # again; queue/event transport supplies its own attempt fencing.
                         await self.store.aget(lease)
                         for event in page.events:
-                            if event.get("event") == "RunPaused" and event.get("native_confirmation"):
-                                await self.store._anative_confirmation_event(lease, event)
-                                request = event["native_confirmation"]
+                            if event.get("event") == "RunPaused" and event.get("native_request"):
+                                await self.store._anative_hitl_event(lease, event)
+                                request = event["native_request"]
                                 pending_requests[request["tool_call_id"]] = request
-                            elif event.get("event") == "RunContinued" and event.get("native_confirmation_id"):
-                                await self.store._anative_confirmation_event(lease, event)
-                                pending_requests.pop(event["native_confirmation_id"], None)
+                            elif event.get("event") == "RunContinued" and event.get("native_request_id"):
+                                await self.store._anative_hitl_event(lease, event)
+                                pending_requests.pop(event["native_request_id"], None)
                             yield run_output_event_from_dict(event)
                         if page.result is not None:
                             if page.result["type"] != "execution_finished":
@@ -724,7 +716,7 @@ class SandboxCoordinator:
                         lease,
                         status=result["status"],
                         reason=str(result.get("content", "Execution failed"))[:8192],
-                        retryable=not config.get("_native_confirmations", False)
+                        retryable=not config.get("_native_hitl", False)
                         and (result.get("metadata") or {}).get("retryable") is not False,
                     )
                 else:
@@ -754,7 +746,7 @@ class SandboxCoordinator:
                         lease,
                         status="ERROR" if cause == "timeout" else "CANCELLED",
                         reason="Run timed out" if cause == "timeout" else "Run cancelled",
-                        retryable=cause == "timeout" and not config.get("_native_confirmations", False),
+                        retryable=cause == "timeout" and not config.get("_native_hitl", False),
                     )
             # Shutdown/disconnect alone detaches; the queue's next attempt uses
             # this generation's execution journal instead of rerunning tools.

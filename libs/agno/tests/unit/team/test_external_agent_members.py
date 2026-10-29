@@ -414,7 +414,7 @@ def test_a_codex_member_takes_a_delegated_task_and_resumes_its_thread(db, monkey
     module.types = test_codex.SimpleNamespace(ReasoningEffort=test_codex.ReasoningEffort)  # type: ignore[attr-defined]
     monkeypatch.setattr(codex_module, "_sdk", lambda: module)
     monkeypatch.setattr(
-        "agno.agents.codex._confirmation.human_client",
+        "agno.agents.codex._hitl.human_client",
         lambda config, bridge, **kwargs: test_codex.FakeAsyncCodex(config),
     )
 

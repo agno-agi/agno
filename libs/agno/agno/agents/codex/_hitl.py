@@ -1,19 +1,21 @@
-"""Nonblocking permission transport for the pinned Codex app-server SDK.
+"""Nonblocking permission and question transport for the pinned Codex app-server SDK.
 
 The SDK's synchronous approval callback runs on its only reader thread. This
 small transport subclass schedules requests on the owning loop instead, retaining
-the SDK's thread/turn API, response router and serialized writes.
+the SDK's thread/turn API, response router and serialized writes. Codex's
+questions to the user (``item/tool/requestUserInput``) pause the run as user
+feedback, and the selections are sent back as the answers.
 """
 
 import asyncio
 from typing import Any, Dict, Optional
 
-from agno.agents._confirmation import ConfirmationBridge
+from agno.agents._hitl import HITLBridge
 
 
 def human_client(
     config: Any,
-    bridge: Optional[ConfirmationBridge],
+    bridge: Optional[HITLBridge],
     approval_policy: Optional[str] = None,
     reviewer: str = "user",
 ) -> Any:
@@ -24,7 +26,7 @@ def human_client(
     from openai_codex.client import CodexClient
 
     if version("openai-codex") != "0.163.0":
-        raise ValueError("Native confirmations require the tested openai-codex==0.163.0 transport")
+        raise ValueError("Native human-in-the-loop requires the tested openai-codex==0.163.0 transport")
     loop = asyncio.get_running_loop()
 
     class PermissionClient(CodexClient):
@@ -45,11 +47,52 @@ def human_client(
                 payload = {**payload, "params": params}
             super()._write_message(payload)
 
+        async def answer(self, params: Dict[str, Any], native: Dict[str, Any]) -> Dict[str, Any]:
+            questions = params.get("questions")
+            if (
+                not isinstance(questions, list)
+                or not questions
+                or not all(isinstance(q, dict) and q.get("id") for q in questions)
+            ):
+                raise ValueError("Codex question request has no questions")
+            if any(q.get("isSecret") for q in questions):
+                # Answers are stored on the run, so a secret is never collected this way.
+                raise ValueError("Secret Codex questions are not supported in the chat")
+            asked = [
+                {
+                    "question": str(q.get("question") or q.get("header") or q["id"]),
+                    "header": q.get("header"),
+                    "options": [
+                        {"label": str(o.get("label", "")), "description": o.get("description")}
+                        for o in q.get("options") or []
+                        if isinstance(o, dict)
+                    ],
+                }
+                for q in questions
+            ]
+            arguments = {"questions": questions}
+            if bridge is None:
+                raise ValueError("A native question requires an Agno run with a database")
+            selections = await bridge.ask("requestUserInput", arguments, native, asked)
+            return {"answers": {q["id"]: {"answers": selected} for q, selected in zip(questions, selections)}}
+
         async def decide(self, message: Any) -> None:
             request_id = message["id"]
             try:
                 method = message["method"]
                 params = message.get("params") or {}
+                if method == "item/tool/requestUserInput":
+                    native = {
+                        "sdk": "codex",
+                        "request_id": request_id,
+                        "method": method,
+                        "thread_id": params.get("threadId"),
+                        "turn_id": params.get("turnId"),
+                        "tool_call_id": params.get("itemId"),
+                        "request": params,
+                    }
+                    self._write_message({"id": request_id, "result": await self.answer(params, native)})
+                    return
                 if method not in (
                     "item/commandExecution/requestApproval",
                     "item/fileChange/requestApproval",

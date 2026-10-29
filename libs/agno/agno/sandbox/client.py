@@ -82,10 +82,10 @@ class SandboxRuntimeClient:
         committed for this session, Claude's session id or Codex's thread id, when it has one:
         the runtime refuses to run, without calling the model, unless the sandbox holds exactly
         that conversation. Leave it None for a session's first turn."""
-        if (config or {}).get("_native_confirmations", False):
+        if (config or {}).get("_native_hitl", False):
             capabilities = await self._rpc(computer, "capabilities", {"execution_id": execution_id})
-            if "native_confirmations_v1" not in capabilities.get("capabilities", []):
-                raise SandboxError("Rebuild the sandbox image: native confirmations are unsupported")
+            if "native_hitl_v1" not in capabilities.get("capabilities", []):
+                raise SandboxError("Rebuild the sandbox image: native human-in-the-loop is unsupported")
         response = await self._rpc(
             computer,
             "start",
@@ -141,7 +141,11 @@ class SandboxRuntimeClient:
         )
 
     async def aresolve(self, execution: RuntimeExecution, decision: Dict[str, Any]) -> Dict[str, Any]:
-        """Deliver one confirm or reject to the exact native request waiting in the runtime."""
+        """Deliver one decision to the exact native request waiting in the runtime: a confirm or
+        reject, or the answers to its questions."""
+        answer = (
+            {"answers": decision["answers"]} if "answers" in decision else {"confirmed": decision["confirmed"] is True}
+        )
         return await self._rpc(
             execution.computer,
             "resolve",
@@ -151,7 +155,7 @@ class SandboxRuntimeClient:
                 "agent_id": execution.computer.agent_id,
                 "session_id": execution.computer.session_id,
                 "tool_call_id": decision["tool_call_id"],
-                "confirmed": decision["confirmed"] is True,
+                **answer,
                 "digest": decision["digest"],
                 "owner": decision["owner"],
             },

@@ -212,8 +212,8 @@ def _agent(request: Dict[str, Any], native: Path) -> Any:
     # database. It has no network credentials and is checkpointed after SDK drain.
     db = SqliteDb(db_file=str(native / "history.db"))
     config = dict(request.get("config", {}))
-    config.pop("_native_confirmations", None)
-    nested_confirmations = config.pop("_nested_native_confirmations", False)
+    config.pop("_native_hitl", None)
+    nested_hitl = config.pop("_nested_native_hitl", False)
     repository = config.pop("repository", None)
     config.update(
         id=request["agent_id"],
@@ -233,7 +233,7 @@ def _agent(request: Dict[str, Any], native: Path) -> Any:
         from agno.agents.codex import CodexAgent
 
         agent = CodexAgent(**config)
-    agent._nested_native_confirmations = nested_confirmations
+    agent._nested_native_hitl = nested_hitl
     return agent
 
 
@@ -341,10 +341,10 @@ async def _execute_harness(directory: Path, request: Dict[str, Any], waits: Opti
                 run = event
             elif event.event not in _TERMINAL_EVENTS:
                 if waits is not None:
-                    if event.event == "RunPaused" and getattr(event, "native_confirmation", None):
-                        waits.add(event.native_confirmation["tool_call_id"])
+                    if event.event == "RunPaused" and getattr(event, "native_request", None):
+                        waits.add(event.native_request["tool_call_id"])
                     elif event.event == "RunContinued":
-                        waits.discard(getattr(event, "native_confirmation_id", None))
+                        waits.discard(getattr(event, "native_request_id", None))
                 _append(directory, event.to_dict())
         if run is None:
             raise SandboxError("SDK runtime did not produce an execution result")
@@ -374,9 +374,9 @@ def _worker(directory: Path) -> None:
             )
 
             async def bounded_execute() -> Dict[str, Any]:
-                if not request.get("config", {}).get("_native_confirmations", False):
+                if not request.get("config", {}).get("_native_hitl", False):
                     return await asyncio.wait_for(_execute(directory, request), request.get("execution_timeout", 900))
-                from agno.agents._confirmation import wait_for_execution
+                from agno.agents._hitl import wait_for_execution
 
                 waits: set = set()
                 task = asyncio.create_task(_execute(directory, request, waits))
@@ -384,7 +384,7 @@ def _worker(directory: Path) -> None:
                     finished = await wait_for_execution(
                         task,
                         request.get("execution_timeout", 900),
-                        request["config"].get("confirmation_timeout", 900),
+                        request["config"].get("hitl_timeout", 900),
                         lambda: bool(waits),
                     )
                     if not finished:
@@ -416,7 +416,7 @@ def _capabilities(request: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "version": _VERSION,
         "execution_id": request.get("execution_id"),
-        "capabilities": ["native_confirmations_v1"],
+        "capabilities": ["native_hitl_v1"],
     }
 
 
@@ -425,28 +425,34 @@ def _resolve(root: Path, request: Dict[str, Any]) -> Dict[str, Any]:
 
     The decision is recorded on the runtime's paused run, which the waiting execution reads.
     """
-    from agno.agents._confirmation import record_decision
+    from agno.agents._hitl import record_decision
     from agno.agents.base import run_coroutine_sync
 
     directory = _job(root, request["execution_id"])
     original = json.loads((directory / "request.json").read_bytes())
     if any(request.get(key) != original.get(key) for key in ("run_id", "session_id", "agent_id", "execution_id")):
-        raise SandboxError("Native confirmation execution identity mismatch")
+        raise SandboxError("Native execution identity mismatch")
     tool_call_id = request.get("tool_call_id")
     if not isinstance(tool_call_id, str) or not tool_call_id or len(tool_call_id) > 256:
-        raise ValueError("Invalid native confirmation identity")
-    if not isinstance(request.get("confirmed"), bool):
-        raise ValueError("A native confirmation decision must confirm or reject")
+        raise ValueError("Invalid native request identity")
+    answers = request.get("answers")
+    if answers is not None:
+        if not isinstance(answers, list) or not all(
+            isinstance(selected, list) and all(isinstance(value, str) for value in selected) for selected in answers
+        ):
+            raise ValueError("Native question answers must be lists of selections")
+    elif not isinstance(request.get("confirmed"), bool):
+        raise ValueError("A native decision must confirm or reject")
     if not isinstance(request.get("digest"), str) or not isinstance(request.get("owner"), str):
-        raise ValueError("A native confirmation decision must name the request it answers")
-    with _lock(directory / "confirmation.lock"):
+        raise ValueError("A native decision must name the request it answers")
+    with _lock(directory / "hitl.lock"):
         state = json.loads((directory / "status.json").read_bytes())
         if (
             (directory / "result.json").exists()
             or state.get("phase") != "running"
             or _process_start(state["pid"]) != state.get("start")
         ):
-            raise SandboxError("Native confirmation execution is no longer available")
+            raise SandboxError("Native execution is no longer available")
         agent = _agent(original, root / "native")
         try:
             accepted = run_coroutine_sync(
@@ -456,7 +462,8 @@ def _resolve(root: Path, request: Dict[str, Any]) -> Dict[str, Any]:
                     original["session_id"],
                     original.get("user_id"),
                     tool_call_id=tool_call_id,
-                    confirmed=request["confirmed"],
+                    confirmed=request.get("confirmed"),
+                    answers=answers,
                     digest=request["digest"],
                     owner=request["owner"],
                 )
@@ -466,7 +473,7 @@ def _resolve(root: Path, request: Dict[str, Any]) -> Dict[str, Any]:
         finally:
             agent.db.db_engine.dispose()
         if not accepted:
-            raise SandboxError("Native confirmation was already decided differently")
+            raise SandboxError("Native request was already decided differently")
         return {"version": _VERSION, "execution_id": request["execution_id"], "accepted": True}
 
 

@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from agno.agents._confirmation import KEY, current_bridge, db_call, submit_decisions, sync_events, tail_stored
+from agno.agents._hitl import KEY, current_bridge, db_call, submit_decisions, sync_events, tail_stored
 from agno.agents.base import BaseExternalAgent
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.models.response import ToolExecution
@@ -25,14 +25,14 @@ from agno.session import AgentSession
 @dataclass
 class Harness(BaseExternalAgent):
     @property
-    def _uses_native_confirmations(self):
+    def _uses_native_hitl(self):
         return self.db is not None
 
     calls: int = 0
     executions: int = 0
 
     def acontinue_run(self, run_response=None, **kwargs):
-        from agno.agents._confirmation import continue_run
+        from agno.agents._hitl import continue_run
 
         return continue_run(self, run_response, **kwargs)
 
@@ -73,7 +73,7 @@ def answered(run, confirmed):
 @pytest.mark.parametrize("database", [SqliteDb, AsyncSqliteDb])
 async def test_chat_decision_releases_the_same_native_execution_once(tmp_path, confirmed, database):
     db = database(db_file=str(tmp_path / "confirm.db"))
-    agent = Harness(id="test", db=db, confirmation_timeout=5)
+    agent = Harness(id="test", db=db, hitl_timeout=5)
     task = asyncio.create_task(agent.arun("work", session_id="session", run_id="run"))
     try:
         run = await pending(agent)
@@ -100,7 +100,7 @@ async def test_chat_decision_releases_the_same_native_execution_once(tmp_path, c
 @pytest.mark.asyncio
 async def test_no_approval_rows_are_created(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "confirm.db"))
-    agent = Harness(id="test", db=db, confirmation_timeout=5)
+    agent = Harness(id="test", db=db, hitl_timeout=5)
     task = asyncio.create_task(agent.arun("work", session_id="session", run_id="run"))
     try:
         run = await pending(agent)
@@ -115,20 +115,20 @@ async def test_no_approval_rows_are_created(tmp_path):
 
 @pytest.mark.asyncio
 async def test_expiry_does_not_execute(tmp_path):
-    agent = Harness(id="test", db=SqliteDb(db_file=str(tmp_path / "confirm.db")), confirmation_timeout=0.2)
+    agent = Harness(id="test", db=SqliteDb(db_file=str(tmp_path / "confirm.db")), hitl_timeout=0.2)
     result = await agent.arun("work", session_id="session", run_id="run")
     assert result.status == RunStatus.error
     assert "expired" in result.content
     assert agent.executions == 0
 
 
-def test_native_confirmations_require_storage():
-    assert not Harness()._uses_native_confirmations
+def test_native_hitl_requires_storage():
+    assert not Harness()._uses_native_hitl
 
 
 @pytest.mark.asyncio
 async def test_changed_arguments_and_wrong_session_are_refused(tmp_path):
-    agent = Harness(id="test", db=SqliteDb(db_file=str(tmp_path / "confirm.db")), confirmation_timeout=5)
+    agent = Harness(id="test", db=SqliteDb(db_file=str(tmp_path / "confirm.db")), hitl_timeout=5)
     task = asyncio.create_task(agent.arun("work", session_id="session", run_id="run"))
     try:
         run = await pending(agent)
@@ -146,7 +146,7 @@ async def test_changed_arguments_and_wrong_session_are_refused(tmp_path):
 
 @pytest.mark.asyncio
 async def test_cancel_while_waiting_never_executes(tmp_path):
-    agent = Harness(id="test", db=SqliteDb(db_file=str(tmp_path / "confirm.db")), confirmation_timeout=5)
+    agent = Harness(id="test", db=SqliteDb(db_file=str(tmp_path / "confirm.db")), hitl_timeout=5)
     task = asyncio.create_task(agent.arun("work", session_id="session", run_id="run"))
     await pending(agent)
     await agent.acancel_run("run")
@@ -158,7 +158,7 @@ async def test_cancel_while_waiting_never_executes(tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failed_status", [RunStatus.paused, RunStatus.running])
 async def test_snapshot_failure_never_releases_the_native_action(tmp_path, monkeypatch, failed_status):
-    agent = Harness(id="test", db=SqliteDb(db_file=str(tmp_path / "confirm.db")), confirmation_timeout=5)
+    agent = Harness(id="test", db=SqliteDb(db_file=str(tmp_path / "confirm.db")), hitl_timeout=5)
     persist = agent._apersist_run_in_session
     decided = False
 
@@ -202,7 +202,7 @@ async def test_simultaneous_requests_pause_one_at_a_time(tmp_path):
             self.executions = sum(results)
             yield RunContentEvent(content="done")
 
-    agent = ParallelHarness(id="parallel", db=SqliteDb(db_file=str(tmp_path / "parallel.db")), confirmation_timeout=5)
+    agent = ParallelHarness(id="parallel", db=SqliteDb(db_file=str(tmp_path / "parallel.db")), hitl_timeout=5)
     task = asyncio.create_task(agent.arun("work", run_id="run", session_id="session"))
     try:
         first = await pending(agent)
@@ -230,7 +230,7 @@ async def test_successive_requests_with_lifecycle_events_excluded(tmp_path, monk
     agent = Harness(
         id="agent",
         db=SqliteDb(db_file=str(tmp_path / "events.db")),
-        confirmation_timeout=5,
+        hitl_timeout=5,
         events_to_skip=[RunEvent.run_paused, RunEvent.run_continued],
     )
 
@@ -260,7 +260,7 @@ async def test_successive_requests_with_lifecycle_events_excluded(tmp_path, monk
 
 @pytest.mark.asyncio
 async def test_a_recorded_decision_survives_a_later_failure(tmp_path, monkeypatch):
-    agent = Harness(id="agent", db=SqliteDb(db_file=str(tmp_path / "audit.db")), confirmation_timeout=5)
+    agent = Harness(id="agent", db=SqliteDb(db_file=str(tmp_path / "audit.db")), hitl_timeout=5)
 
     async def source(input, **kwargs):
         assert await current_bridge().request("Bash", {"command": "echo test"}, {})
@@ -325,7 +325,7 @@ def test_public_sync_continuation_releases_the_original_run(tmp_path, monkeypatc
 
     db = SqliteDb(db_file=str(tmp_path / "db"))
     cls = ClaudeAgent if sdk == "claude" else CodexAgent
-    agent = cls(id="test", db=db, confirmation_timeout=5)
+    agent = cls(id="test", db=db, hitl_timeout=5)
     executed = []
 
     async def source(input, **kwargs):
@@ -367,7 +367,7 @@ async def test_agentos_chat_confirmation_reaches_the_live_harness(tmp_path):
     from agno.run.background import await_background_runs
 
     db = SqliteDb(db_file=str(tmp_path / "api.db"))
-    agent = Harness(id="test", db=db, confirmation_timeout=5)
+    agent = Harness(id="test", db=db, hitl_timeout=5)
     app = AgentOS(id="confirm-test", db=db, agents=[agent]).get_app()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         # The chat's stream ends at the pause, as for an Agno agent's confirmation tool.
@@ -410,25 +410,254 @@ async def test_agentos_chat_confirmation_reaches_the_live_harness(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Native questions pause as user feedback
+# ---------------------------------------------------------------------------
+
+QUESTIONS = [
+    {
+        "question": "Which color?",
+        "header": "Color",
+        "options": [{"label": "Red", "description": None}, {"label": "Blue", "description": "Calm"}],
+        "multi_select": False,
+    },
+    {
+        "question": "Which sizes?",
+        "header": "Size",
+        "options": [{"label": "S", "description": None}, {"label": "M", "description": None}],
+        "multi_select": True,
+    },
+]
+
+
+@dataclass
+class Asking(Harness):
+    async def _arun_adapter_stream(self, input, **kwargs):
+        import json
+
+        self.calls += 1
+        answers = await current_bridge().ask("AskUserQuestion", {"questions": QUESTIONS}, {"sdk": "fixture"}, QUESTIONS)
+        yield RunContentEvent(content=json.dumps(answers))
+
+
+def feedback(run, selections):
+    """The paused run's tools as the chat sends them back after answering the questions."""
+    tools = []
+    for requirement in run.requirements:
+        tool = ToolExecution.from_dict(requirement.tool_execution.to_dict())
+        for question, selected in zip(tool.user_feedback_schema, selections):
+            question.selected_options = selected
+        tool.answered = True
+        tools.append(tool)
+    return tools
+
+
+@pytest.mark.asyncio
+async def test_agentos_chat_answers_reach_the_live_harness(tmp_path):
+    import json
+    import re
+
+    import httpx
+
+    from agno.os import AgentOS
+    from agno.run.background import await_background_runs
+
+    db = SqliteDb(db_file=str(tmp_path / "api.db"))
+    agent = Asking(id="test", db=db, hitl_timeout=5)
+    app = AgentOS(id="feedback-test", db=db, agents=[agent]).get_app()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/agents/test/runs", data={"message": "work", "session_id": "session", "stream": "true"}
+        )
+        assert response.status_code == 200, response.text
+        assert "RunPaused" in response.text and "RunCompleted" not in response.text
+        run_id = re.search(r'"run_id":\s*"([^"]+)"', response.text).group(1)
+        run = await pending(agent, run_id)
+        # The same pause as Agno's ask_user tool: user feedback, not a confirmation.
+        requirement = run.requirements[0]
+        assert requirement.pause_type == "user_feedback" and requirement.needs_user_feedback
+        tool = requirement.tool_execution
+        assert tool.requires_user_input and not tool.requires_confirmation
+        assert [q.question for q in tool.user_feedback_schema] == ["Which color?", "Which sizes?"]
+        assert tool.user_feedback_schema[1].multi_select and tool.user_feedback_schema[0].options[1].label == "Blue"
+        # A confirm without selections does not answer the questions.
+        confirmed = ToolExecution.from_dict(tool.to_dict())
+        confirmed.confirmed = True
+        response = await client.post(
+            f"/agents/test/runs/{run_id}/continue",
+            data={"session_id": "session", "stream": "false", "tools": json.dumps([confirmed.to_dict()])},
+        )
+        assert response.status_code == 409, response.text
+        tools = [t.to_dict() for t in feedback(run, [["Blue"], ["S", "a custom size"]])]
+        response = await client.post(
+            f"/agents/test/runs/{run_id}/continue",
+            data={"session_id": "session", "stream": "true", "tools": json.dumps(tools)},
+        )
+        assert response.status_code == 200, response.text
+        assert "RunContinued" in response.text and "RunCompleted" in response.text
+        await await_background_runs(timeout=2)
+        result = await agent.aget_run_output(run_id, session_id="session")
+        assert result.status == RunStatus.completed
+        assert json.loads(result.content) == [["Blue"], ["S", "a custom size"]]
+        assert agent.calls == 1
+        # The answered questions stay on the run's tool, as the chat history shows them.
+        stored = next(t for t in result.tools if t.tool_name == "AskUserQuestion")
+        assert stored.answered and not stored.requires_confirmation
+        assert [q.selected_options for q in stored.user_feedback_schema] == [["Blue"], ["S", "a custom size"]]
+        assert stored.user_feedback_schema[0].options[1].selected is True
+        assert not result.requirements
+        response = await client.post(
+            f"/agents/test/runs/{run_id}/continue",
+            data={"session_id": "session", "stream": "false", "tools": json.dumps(tools)},
+        )
+        assert response.status_code == 409, response.text
+
+
+@pytest.mark.asyncio
+async def test_native_question_answers_must_match_the_asked_questions(tmp_path):
+    agent = Asking(id="test", db=SqliteDb(db_file=str(tmp_path / "ask.db")), hitl_timeout=5)
+    task = asyncio.create_task(agent.arun("work", session_id="session", run_id="run"))
+    try:
+        run = await pending(agent)
+        unanswered = feedback(run, [["Blue"], None])
+        with pytest.raises(ValueError, match="Answer every question"):
+            await submit_decisions(agent, "run", "session", None, unanswered)
+        renamed = feedback(run, [["Blue"], ["S"]])
+        renamed[0].user_feedback_schema[0].question = "Which shape?"
+        with pytest.raises(ValueError, match="Answer every question"):
+            await submit_decisions(agent, "run", "session", None, renamed)
+        changed = feedback(run, [["Blue"], ["S"]])
+        changed[0].tool_args = {"questions": []}
+        with pytest.raises(ValueError, match="does not match"):
+            await submit_decisions(agent, "run", "session", None, changed)
+        assert (await agent.aget_run_output("run", "session")).status == RunStatus.paused
+        # A skipped question is an empty selection.
+        await submit_decisions(agent, "run", "session", None, feedback(run, [[], ["M"]]))
+        result = await asyncio.wait_for(task, 5)
+        assert result.content == '[[], ["M"]]'
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_claude_ask_user_question_answers_by_question_text(monkeypatch):
+    from agno.agents import _hitl
+    from agno.agents.claude.agent import _ask_user_question
+
+    asked = []
+    selections = [["Blue"], ["S", "M"]]
+
+    async def ask(name, arguments, native, questions):
+        asked.append((name, questions))
+        return selections
+
+    monkeypatch.setattr(_hitl, "current_bridge", lambda: SimpleNamespace(ask=ask))
+    sdk = SimpleNamespace(
+        PermissionResultAllow=lambda **kw: ("allow", kw), PermissionResultDeny=lambda **kw: ("deny", kw)
+    )
+    arguments = {
+        "questions": [
+            {"question": "Which color?", "header": "Color", "options": [{"label": "Red"}, {"label": "Blue"}]},
+            {"question": "Which sizes?", "header": "Size", "options": [{"label": "S"}], "multiSelect": True},
+        ]
+    }
+    behavior, result = await _ask_user_question(sdk, arguments, {"sdk": "claude"})
+    assert behavior == "allow"
+    assert result["updated_input"] == {**arguments, "answers": {"Which color?": "Blue", "Which sizes?": "S, M"}}
+    assert asked[0][0] == "AskUserQuestion" and asked[0][1][1]["multi_select"] is True
+    selections = [[], []]
+    behavior, result = await _ask_user_question(sdk, arguments, {"sdk": "claude"})
+    assert behavior == "deny" and "declined" in result["message"]
+    with pytest.raises(ValueError, match="no questions"):
+        await _ask_user_question(sdk, {"questions": []}, {"sdk": "claude"})
+
+
+@pytest.mark.asyncio
+async def test_codex_request_user_input_answers_by_question_id(monkeypatch):
+    pytest.importorskip("openai_codex")
+    from openai_codex.client import CodexClient
+
+    from agno.agents.codex._hitl import human_client
+
+    asked = []
+    sent = []
+
+    async def ask(name, arguments, native, questions):
+        asked.append((name, arguments, native, questions))
+        return [["Blue"], []]
+
+    client = human_client(None, SimpleNamespace(ask=ask))._client._sync
+    monkeypatch.setattr(CodexClient, "_write_message", lambda self, message: sent.append(message))
+    questions = [
+        {
+            "id": "color",
+            "header": "Color",
+            "question": "Which color?",
+            "isOther": True,
+            "isSecret": False,
+            "options": [{"label": "Red", "description": "Warm"}, {"label": "Blue", "description": "Calm"}],
+        },
+        {
+            "id": "note",
+            "header": "Note",
+            "question": "Anything else?",
+            "isOther": True,
+            "isSecret": False,
+            "options": None,
+        },
+    ]
+    params = {"threadId": "thread", "turnId": "turn", "itemId": "item", "questions": questions}
+    await client.decide({"id": 9, "method": "item/tool/requestUserInput", "params": params})
+    assert sent == [{"id": 9, "result": {"answers": {"color": {"answers": ["Blue"]}, "note": {"answers": []}}}}]
+    name, arguments, native, asked_questions = asked[0]
+    assert name == "requestUserInput" and native["tool_call_id"] == "item"
+    assert asked_questions[0]["options"][1] == {"label": "Blue", "description": "Calm"}
+    assert asked_questions[1]["options"] == []
+    asked.clear()
+    secret = {**params, "questions": [{**questions[0], "isSecret": True}]}
+    await client.decide({"id": 10, "method": "item/tool/requestUserInput", "params": secret})
+    assert not asked and "error" in sent[-1]
+
+
+@pytest.mark.asyncio
+async def test_sandbox_client_delivers_answers_or_a_confirmation():
+    from agno.sandbox.client import RuntimeExecution, SandboxRuntimeClient
+
+    calls = []
+
+    async def rpc(computer, operation, payload):
+        calls.append(payload)
+        return {"accepted": True}
+
+    client = SimpleNamespace(_rpc=rpc)
+    execution = RuntimeExecution(computer=SimpleNamespace(agent_id="a", session_id="s"), execution_id="e", run_id="r")
+    base = {"tool_call_id": "t", "digest": "d", "owner": "o"}
+    await SandboxRuntimeClient.aresolve(client, execution, {**base, "answers": [["Blue"]]})
+    await SandboxRuntimeClient.aresolve(client, execution, {**base, "confirmed": True})
+    assert calls[0]["answers"] == [["Blue"]] and "confirmed" not in calls[0]
+    assert calls[1]["confirmed"] is True and "answers" not in calls[1]
+
+
+# ---------------------------------------------------------------------------
 # Native policy selection
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("sdk", ["claude", "codex"])
 @pytest.mark.parametrize("nested", [True, False])
-def test_runtime_keeps_native_confirmation_routing_and_parent_boundary(tmp_path, sdk, nested):
+def test_runtime_keeps_native_hitl_routing_and_parent_boundary(tmp_path, sdk, nested):
     from agno.sandbox.runtime import _agent
 
     agent = _agent(
         {
             "agent_id": "test",
             "sdk": sdk,
-            "config": {"_native_confirmations": True, "_nested_native_confirmations": nested},
+            "config": {"_native_hitl": True, "_nested_native_hitl": nested},
         },
         tmp_path,
     )
-    assert agent._uses_native_confirmations
-    assert agent._nested_native_confirmations is nested
+    assert agent._uses_native_hitl
+    assert agent._nested_native_hitl is nested
 
 
 @pytest.mark.parametrize(
@@ -447,9 +676,9 @@ def test_claude_native_policy_selects_chat_confirmation(tmp_path, mode, forwarde
     from agno.os import AgentOS
 
     agent = ClaudeAgent(id="claude", permission_mode=mode)
-    assert not agent._uses_native_confirmations
+    assert not agent._uses_native_hitl
     AgentOS(agents=[agent], db=SqliteDb(db_file=str(tmp_path / "db")), telemetry=False).get_app()
-    assert agent._uses_native_confirmations is forwarded
+    assert agent._uses_native_hitl is forwarded
     options = agent._build_options()
     assert options.permission_mode == mode
     assert (options.can_use_tool is not None) is forwarded
@@ -464,7 +693,7 @@ def test_claude_explicit_permission_callback_remains_authoritative(tmp_path):
         raise AssertionError("Option inspection must not invoke the callback")
 
     agent = ClaudeAgent(db=SqliteDb(db_file=str(tmp_path / "db")), options=ClaudeAgentOptions(can_use_tool=decide))
-    assert not agent._uses_native_confirmations
+    assert not agent._uses_native_hitl
     assert agent._build_options().can_use_tool is decide
 
 
@@ -476,7 +705,7 @@ def test_claude_legacy_policy_precedence_is_preserved(tmp_path, named, legacy, f
         agent = ClaudeAgent(
             db=SqliteDb(db_file=str(tmp_path / "db")), permission_mode=named, options_kwargs={"permission_mode": legacy}
         )
-    assert agent._uses_native_confirmations is forwarded
+    assert agent._uses_native_hitl is forwarded
     assert agent._build_options().permission_mode == legacy
 
 
@@ -500,11 +729,11 @@ def test_codex_native_policy_selects_chat_confirmation(tmp_path, settings, forwa
     from agno.sandbox._harness import _config
 
     agent = CodexAgent(id="codex", **settings)
-    assert not agent._uses_native_confirmations
+    assert not agent._uses_native_hitl
     AgentOS(agents=[agent], db=SqliteDb(db_file=str(tmp_path / "db")), telemetry=False).get_app()
-    assert agent._uses_native_confirmations is forwarded
+    assert agent._uses_native_hitl is forwarded
     config = _config(agent, None)
-    assert config.get("_native_confirmations", False) is forwarded
+    assert config.get("_native_hitl", False) is forwarded
 
 
 # ---------------------------------------------------------------------------
@@ -518,7 +747,7 @@ async def test_codex_transport_preserves_native_policy(monkeypatch, policy):
     pytest.importorskip("openai_codex")
     from openai_codex.client import CodexClient
 
-    from agno.agents.codex._confirmation import human_client
+    from agno.agents.codex._hitl import human_client
 
     messages = []
     monkeypatch.setattr(CodexClient, "_write_message", lambda self, value: messages.append(value))
@@ -549,11 +778,11 @@ async def test_codex_reader_does_not_wait_for_a_permission_decision(monkeypatch,
 
     from openai_codex.client import CodexClient
 
-    from agno.agents import _confirmation
-    from agno.agents.codex._confirmation import human_client
+    from agno.agents import _hitl
+    from agno.agents.codex._hitl import human_client
 
-    agent = Harness(id="test", db=SqliteDb(db_file=str(tmp_path / "confirm.db")), confirmation_timeout=5)
-    bridge = _confirmation.ConfirmationBridge(agent, "run", "session", None)
+    agent = Harness(id="test", db=SqliteDb(db_file=str(tmp_path / "confirm.db")), hitl_timeout=5)
+    bridge = _hitl.HITLBridge(agent, "run", "session", None)
     client = human_client(None, bridge)._client._sync
     incoming = queue.Queue()
     sent = []
@@ -581,7 +810,7 @@ async def test_codex_reader_does_not_wait_for_a_permission_decision(monkeypatch,
         await asyncio.sleep(0.01)
     assert notifications, "A pending permission request blocked the SDK reader"
     assert not sent
-    request = event.native_confirmation
+    request = event.native_request
     decided = RunOutput(
         run_id="run",
         session_id="session",
@@ -599,7 +828,7 @@ async def test_codex_reader_does_not_wait_for_a_permission_decision(monkeypatch,
     async def read(*args, **kwargs):
         return decided
 
-    monkeypatch.setattr(_confirmation, "read_run", read)
+    monkeypatch.setattr(_hitl, "read_run", read)
     continued, acknowledged = await asyncio.wait_for(bridge.queue.get(), 3)
     assert continued.event == "RunContinued"
     assert not sent, "The native execution must wait for the continuation to be recorded"
@@ -623,7 +852,7 @@ async def test_codex_native_decision_shapes(monkeypatch, allowed, kind):
     pytest.importorskip("openai_codex")
     from openai_codex.client import CodexClient
 
-    from agno.agents.codex._confirmation import human_client
+    from agno.agents.codex._hitl import human_client
 
     requests = []
     sent = []
@@ -658,7 +887,7 @@ async def test_codex_native_decision_shapes(monkeypatch, allowed, kind):
 @pytest.mark.asyncio
 async def test_codex_closed_transport_does_not_leak_a_callback_exception(monkeypatch):
     pytest.importorskip("openai_codex")
-    from agno.agents.codex._confirmation import human_client
+    from agno.agents.codex._hitl import human_client
 
     async def request(*args):
         return True
@@ -787,7 +1016,7 @@ async def test_stored_tail_detects_a_new_request_without_stored_events():
             run.metadata[KEY]["pending"] = ["second"]
         return run
 
-    agent = SimpleNamespace(confirmation_timeout=0.25, aget_run_output=read)
+    agent = SimpleNamespace(hitl_timeout=0.25, aget_run_output=read)
     items = [item async for item in tail_stored(agent, "run", "session", None, 0)]
     assert items[-1].metadata[KEY]["pending"] == ["second"]
     assert any(getattr(item, "event", None) == "RunPaused" for item in items)
@@ -803,7 +1032,7 @@ async def test_stored_tail_sees_a_new_pause_that_lands_before_its_first_read():
     async def read(*args, **kwargs):
         return run
 
-    agent = SimpleNamespace(confirmation_timeout=0.25, aget_run_output=read)
+    agent = SimpleNamespace(hitl_timeout=0.25, aget_run_output=read)
     items = [item async for item in tail_stored(agent, "run", "session", None, 0, answered={"first"})]
     assert items[-1] is run
 
@@ -814,7 +1043,7 @@ async def test_an_acknowledged_request_is_not_a_new_pause():
         run_id="run",
         session_id="session",
         status=RunStatus.paused,
-        events=[RunContinuedEvent(native_confirmation_id="first")],
+        events=[RunContinuedEvent(native_request_id="first")],
         metadata={KEY: {"pending": ["second"]}},
     )
     completed = RunOutput(run_id="run", session_id="session", status=RunStatus.completed, content="done")
@@ -823,14 +1052,14 @@ async def test_an_acknowledged_request_is_not_a_new_pause():
     async def read(*args, **kwargs):
         return next(states)
 
-    agent = SimpleNamespace(confirmation_timeout=0.25, aget_run_output=read)
+    agent = SimpleNamespace(hitl_timeout=0.25, aget_run_output=read)
     items = [item async for item in tail_stored(agent, "run", "session", None, 0, {"first", "second"})]
     assert items[-1].status == RunStatus.completed
 
 
 @pytest.mark.asyncio
 async def test_run_read_is_scoped_without_loading_session_history(tmp_path, monkeypatch):
-    from agno.agents._confirmation import read_run
+    from agno.agents._hitl import read_run
 
     db = SqliteDb(db_file=str(tmp_path / "scope.db"))
     agent = Harness(id="agent", db=db)
@@ -875,7 +1104,7 @@ async def test_sync_continuation_iterator_inside_a_running_loop():
 
 @pytest.mark.asyncio
 async def test_human_wait_has_a_separate_bounded_budget():
-    from agno.agents._confirmation import wait_for_execution
+    from agno.agents._hitl import wait_for_execution
 
     task = asyncio.create_task(asyncio.sleep(0.15))
     assert await wait_for_execution(task, 0.05, 0.5, lambda: True)
@@ -899,7 +1128,7 @@ async def test_budget_read_failure_does_not_cancel_the_native_execution():
     async def read(*args, **kwargs):
         raise RuntimeError("transient database outage")
 
-    agent = SimpleNamespace(_uses_native_confirmations=True, confirmation_timeout=1, aget_run_output=read)
+    agent = SimpleNamespace(_uses_native_hitl=True, hitl_timeout=1, aget_run_output=read)
     worker = QueueWorker(
         store=InMemoryQueueStore(),
         resolve_component=lambda *_: agent,
@@ -914,7 +1143,7 @@ async def test_budget_read_failure_does_not_cancel_the_native_execution():
 
 @pytest.mark.asyncio
 async def test_budget_poll_retains_the_human_wait_during_a_database_outage(monkeypatch):
-    from agno.agents import _confirmation
+    from agno.agents import _hitl
     from agno.job_queue.config import QueueConfig
     from agno.job_queue.store import InMemoryQueueStore
     from agno.os.job_queue import QueueWorker
@@ -928,8 +1157,8 @@ async def test_budget_poll_retains_the_human_wait_during_a_database_outage(monke
             return RunOutput(metadata={KEY: {"pending": ["waiting"]}})
         raise RuntimeError("transient database outage")
 
-    monkeypatch.setattr(_confirmation, "read_run", read)
-    agent = SimpleNamespace(_uses_native_confirmations=True, confirmation_timeout=3)
+    monkeypatch.setattr(_hitl, "read_run", read)
+    agent = SimpleNamespace(_uses_native_hitl=True, hitl_timeout=3)
     worker = QueueWorker(
         store=InMemoryQueueStore(),
         resolve_component=lambda *_: agent,

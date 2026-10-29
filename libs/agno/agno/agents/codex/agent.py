@@ -180,7 +180,7 @@ class CodexAgent(BaseExternalAgent):
         approval_mode: Native SDK "auto_review" or "deny_all" behavior, when explicitly selected.
         approval_policy: Native Codex policy: "on-request", "untrusted", or "never".
             With a database, a request for user review pauses the run for confirmation in the chat.
-        confirmation_timeout: Seconds a permission request waits for confirmation in the chat, and a
+        hitl_timeout: Seconds a permission request waits for confirmation in the chat, and a
             continuation client waits (default 900).
             Also bounds cumulative human waiting within a queued or sandboxed run.
         reasoning_effort: "minimal", "low", "medium", "high" or "xhigh".
@@ -315,7 +315,7 @@ class CodexAgent(BaseExternalAgent):
         return policy, reviewer
 
     @property
-    def _uses_native_confirmations(self) -> bool:
+    def _uses_native_hitl(self) -> bool:
         if self.db is None:
             return False
         policy, reviewer = self._native_approval_settings()
@@ -342,15 +342,15 @@ class CodexAgent(BaseExternalAgent):
 
     def acontinue_run(self, run_response: Any = None, **kwargs: Any) -> Any:
         """Deliver reviewed native permissions to the existing execution."""
-        from agno.agents._confirmation import continue_run
+        from agno.agents._hitl import continue_run
 
-        if not self._uses_native_confirmations:
-            raise ValueError("Codex continuation requires a pending native confirmation")
+        if not self._uses_native_hitl:
+            raise ValueError("Codex continuation requires a pending native request")
         return continue_run(self, run_response, **kwargs)
 
     def continue_run(self, run_response: Any = None, **kwargs: Any) -> Any:
         """Synchronous native permission continuation."""
-        from agno.agents._confirmation import sync_events
+        from agno.agents._hitl import sync_events
 
         continuation = self.acontinue_run(run_response, **kwargs)
         return sync_events(continuation) if kwargs.get("stream") else run_coroutine_sync(continuation)
@@ -509,9 +509,9 @@ class CodexAgent(BaseExternalAgent):
         thread = self.thread_options if self.thread_options is not None else self.thread_kwargs
         native_config = self.config if self.config is not None else thread.get("config") or {}
         policy = self.approval_policy or native_config.get("approval_policy")
-        if self._uses_native_confirmations or (policy is not None and policy != "never"):
-            from agno.agents._confirmation import active_bridge
-            from agno.agents.codex._confirmation import human_client
+        if self._uses_native_hitl or (policy is not None and policy != "never"):
+            from agno.agents._hitl import active_bridge
+            from agno.agents.codex._hitl import human_client
 
             client = human_client(
                 config, active_bridge(), approval_policy=policy, reviewer=self._native_approval_settings()[1]

@@ -44,7 +44,7 @@ def run_matches(run: Dict[str, Any], stored_status: Optional[str], expected: Dic
     """Whether a stored run has every expected value.
 
     ``expected`` maps "status" to the run's status, and any other dotted path into the run's data, such
-    as "metadata.native_confirmation.pending", to the value it must hold.
+    as "metadata.native_hitl.pending", to the value it must hold.
     """
     from agno.db.utils import canonical_run_status
 

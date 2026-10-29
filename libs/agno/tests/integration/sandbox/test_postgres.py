@@ -138,8 +138,8 @@ async def rows(store):
     )
 
 
-async def test_native_confirmation_pause_is_fenced_and_retired_on_stop(store):
-    from agno.agents._confirmation import KEY
+async def test_native_hitl_pause_is_fenced_and_retired_on_stop(store):
+    from agno.agents._hitl import KEY
 
     await seed(store)
     state = await claim(store)
@@ -154,7 +154,7 @@ async def test_native_confirmation_pause_is_fenced_and_retired_on_stop(store):
         "event": "RunPaused",
         "content": "I will request permission for this command.",
         "tools": [{"tool_call_id": "earlier", "tool_name": "Read", "result": "done"}, tool],
-        "native_confirmation": {
+        "native_request": {
             "tool_call_id": "tool",
             "owner": "owner",
             "digest": "digest",
@@ -163,8 +163,8 @@ async def test_native_confirmation_pause_is_fenced_and_retired_on_stop(store):
             "requirement": {"tool_execution": tool},
         },
     }
-    await store._anative_confirmation_event(state.lease, event)
-    await store._anative_confirmation_event(state.lease, event)
+    await store._anative_hitl_event(state.lease, event)
+    await store._anative_hitl_event(state.lease, event)
     run, _, _ = await rows(store)
     assert run["status"] == "PAUSED"
     assert run["run_data"]["content"] == event["content"]
@@ -177,7 +177,7 @@ async def test_native_confirmation_pause_is_fenced_and_retired_on_stop(store):
     successor = await claim(store, owner="successor")
     assert successor.record["execution_id"] == state.record["execution_id"]
     with pytest.raises(SandboxLeaseLost):
-        await store._anative_confirmation_event(state.lease, event)
+        await store._anative_hitl_event(state.lease, event)
     await store.abegin_stop(successor.lease, status="ERROR", reason="runtime lost")
     await store.aconfirm_stopped(successor.lease, "ref")
     stopped = await store.afinish_stop(successor.lease)
@@ -191,16 +191,16 @@ async def test_native_continuation_hands_over_on_the_run_and_sees_the_next_pause
     the coordinator delivers it, and the continuation then sees the runtime's next request."""
     import json
 
-    from agno.agents._confirmation import KEY, action_digest, db_call
+    from agno.agents._hitl import KEY, action_digest, db_call
     from agno.models.response import ToolExecution
     from agno.run.agent import RunOutput, RunPausedEvent
     from agno.run.base import RunStatus
-    from tests.unit.agents.test_native_confirmation import Harness
+    from tests.unit.agents.test_native_hitl import Harness
 
     await seed(store)
     state = await claim(store)
     await store.aset_computer(state.lease, computer(state))
-    agent = Harness(id="agent", db=store.db, confirmation_timeout=5)
+    agent = Harness(id="agent", db=store.db, hitl_timeout=5)
 
     async def pause():
         tool_call_id = str(uuid4())
@@ -211,11 +211,11 @@ async def test_native_continuation_hands_over_on_the_run_and_sees_the_next_pause
             "tool_args": arguments,
             "requires_confirmation": True,
         }
-        await store._anative_confirmation_event(
+        await store._anative_hitl_event(
             state.lease,
             {
                 "event": "RunPaused",
-                "native_confirmation": {
+                "native_request": {
                     "tool_call_id": tool_call_id,
                     "owner": "owner",
                     "digest": action_digest({"tool_name": "Bash", "tool_args": arguments, "native": {}}),
@@ -274,7 +274,7 @@ async def test_native_continuation_hands_over_on_the_run_and_sees_the_next_pause
             "owner": "owner",
         }
         # The coordinator delivered it; the runtime continued, then asked again.
-        await store._anative_confirmation_event(state.lease, {"event": "RunContinued", "native_confirmation_id": first})
+        await store._anative_hitl_event(state.lease, {"event": "RunContinued", "native_request_id": first})
         second, _ = await pause()
         items = await asyncio.wait_for(task, 5)
         if stream == "http":
@@ -296,7 +296,7 @@ async def test_native_continuation_hands_over_on_the_run_and_sees_the_next_pause
 async def test_a_stale_continuation_cannot_overwrite_a_run_that_moved_on(store):
     """The decision write is conditional on the pending request: once the run continued and paused again
     for a new request, a stale continuation for the earlier one changes nothing."""
-    from agno.agents._confirmation import KEY
+    from agno.agents._hitl import KEY
 
     await seed(store)
     state = await claim(store)
@@ -312,9 +312,7 @@ async def test_a_stale_continuation_cannot_overwrite_a_run_that_moved_on(store):
             "expires_at": int(time.time()) + 60,
             "requirement": {"tool_execution": tool},
         }
-        await store._anative_confirmation_event(
-            state.lease, {"event": "RunPaused", "native_confirmation": confirmation}
-        )
+        await store._anative_hitl_event(state.lease, {"event": "RunPaused", "native_request": confirmation})
 
     async def hand_over(pending, marker):
         fields = {"status": "RUNNING", "metadata": {KEY: {"pending": [], "marker": marker}}}
@@ -326,7 +324,7 @@ async def test_a_stale_continuation_cannot_overwrite_a_run_that_moved_on(store):
     await pause("first")
     assert await hand_over(["first"], "first")
     assert not await hand_over(["first"], "repeated")
-    await store._anative_confirmation_event(state.lease, {"event": "RunContinued", "native_confirmation_id": "first"})
+    await store._anative_hitl_event(state.lease, {"event": "RunContinued", "native_request_id": "first"})
     await pause("second")
     run, _, _ = await rows(store)
     assert run["status"] == "PAUSED"

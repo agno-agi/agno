@@ -823,7 +823,7 @@ class _SandboxStore:
                     **({"repository": result["repository"]} if result.get("repository") is not None else {}),
                 },
             }
-            self._retire_native_confirmations(run)
+            self._retire_native_hitl(run)
             session_data = dict(session["session_data"] or {})
             session_data["sandbox"] = {
                 "native": result["session"].get("session_data") or {},
@@ -948,7 +948,7 @@ class _SandboxStore:
                     "retryable": record.get("stop_retryable", False),
                     "sandbox": sandbox,
                 }
-                self._retire_native_confirmations(run)
+                self._retire_native_hitl(run)
                 connection.execute(
                     update(self.runs)
                     .where(self.runs.c.run_id == lease.run_id)
@@ -1045,9 +1045,9 @@ class _SandboxStore:
         )
 
     @staticmethod
-    def _retire_native_confirmations(run: Dict[str, Any]) -> None:
+    def _retire_native_hitl(run: Dict[str, Any]) -> None:
         """A finished or stopped turn leaves no native permission request pending."""
-        from agno.agents._confirmation import KEY
+        from agno.agents._hitl import KEY
 
         native = (run.get("metadata") or {}).get(KEY)
         if native is None:
@@ -1055,19 +1055,19 @@ class _SandboxStore:
         run["metadata"][KEY] = {**native, "pending": []}
         run["requirements"] = []
 
-    async def _anative_confirmation_event(self, lease: SandboxLease, event: Dict[str, Any]) -> None:
+    async def _anative_hitl_event(self, lease: SandboxLease, event: Dict[str, Any]) -> None:
         """Record a native permission request, or its answer, on the run under execution fencing.
 
         The paused run is what the chat confirms and what a continuation decides; the decision lands on
         the same row, which the coordinator reads to deliver it to the runtime.
         """
-        from agno.agents._confirmation import KEY
+        from agno.agents._hitl import KEY
 
         def publish(connection: Connection) -> None:
             binding = self._locked(connection, lease)
             service, _ = self._service_run(connection, lease)
             if str(service["status"]).upper() in _FINISHED:
-                raise SandboxLeaseLost("Native confirmation execution already finished")
+                raise SandboxLeaseLost("Native execution already finished")
             run = dict(service["run_data"])
             metadata = dict(run.get("metadata") or {})
             state = dict(metadata.get(KEY) or {})
@@ -1078,7 +1078,7 @@ class _SandboxStore:
                 r["tool_execution"]["tool_call_id"]: r for r in run.get("requirements") or [] if r.get("tool_execution")
             }
             if event["event"] == "RunPaused":
-                request = dict(event["native_confirmation"])
+                request = dict(event["native_request"])
                 tool_call_id = request["tool_call_id"]
                 state["owner"] = request["owner"]
                 # A reclaim replays the runtime's events: an already answered request does not pause again.
@@ -1097,7 +1097,7 @@ class _SandboxStore:
                     if event.get("content") is not None:
                         run["content"] = event["content"]
             else:
-                tool_call_id = event.get("native_confirmation_id")
+                tool_call_id = event.get("native_request_id")
                 pending = [value for value in pending if value != tool_call_id]
             run["requirements"] = [requirements[key] for key in pending if key in requirements]
             state.update(requests=requests, pending=pending, decisions=decisions)

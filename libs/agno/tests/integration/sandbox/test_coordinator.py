@@ -443,6 +443,34 @@ async def test_native_mirror_failure_cannot_publish_success(system, monkeypatch)
     assert (await binding(coordinator))["record"]["checkpoint"] is None
 
 
+async def test_a_native_pause_from_the_runtime_is_recorded_on_the_host_run(system, monkeypatch):
+    """The coordinator recognizes the runtime's paused and continued events by their native request."""
+    coordinator, spec, _ = system
+    poll = coordinator.client.apoll
+    injected = []
+    recorded = []
+
+    async def paused(*args, **kwargs):
+        page = await poll(*args, **kwargs)
+        if not injected:
+            request = {"tool_call_id": "tool", "owner": "owner", "digest": "digest", "native": {}, "expires_at": 0}
+            page.events[:0] = [
+                {"event": "RunPaused", "run_id": "first", "native_request": request},
+                {"event": "RunContinued", "run_id": "first", "native_request_id": "tool"},
+            ]
+            injected.append(True)
+        return page
+
+    async def record(lease, event):
+        recorded.append(event["event"])
+
+    monkeypatch.setattr(coordinator.client, "apoll", paused)
+    monkeypatch.setattr(coordinator.store, "_anative_hitl_event", record)
+    output = await run(coordinator, spec)
+    assert output.status == RunStatus.completed
+    assert recorded == ["RunPaused", "RunContinued"]
+
+
 async def test_next_turn_requires_the_committed_native_conversation(system, monkeypatch):
     coordinator, spec, _ = system
     await run(coordinator, spec)
