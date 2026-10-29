@@ -68,8 +68,8 @@ from agno.run.team import (
     TeamRunOutputEvent,
 )
 from agno.session import TeamSession
-from agno.team._members import member_knowledge_filters, member_storage
 from agno.team._member_execution import run_member_sync, stream_member_sync
+from agno.team._members import member_knowledge_filters, member_storage
 from agno.tools.function import Function
 from agno.utils.knowledge import (
     get_agentic_or_user_search_filters,

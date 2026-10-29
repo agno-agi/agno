@@ -61,8 +61,8 @@ from agno.team._default_tools import (
     _cascading_cancel_run,
     _member_run_kwargs,
 )
-from agno.team._members import member_knowledge_filters, member_storage
 from agno.team._member_execution import run_member_sync, stream_member_sync
+from agno.team._members import member_knowledge_filters, member_storage
 from agno.team.task import TaskList, TaskStatus, save_task_list
 from agno.tools.function import Function
 from agno.utils.events import (
