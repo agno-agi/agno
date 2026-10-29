@@ -113,16 +113,20 @@ jobs:
                   issue => issue.repository.nameWithOwner.toLowerCase() === `${owner}/${repo}`.toLowerCase()
                 );
 
-                const bodyWithoutCode = body
-                  .replace(/```[\s\S]*?```/g, '')
-                  .replace(/`[^`\n]*`/g, '');
                 const closingRef = new RegExp(
-                  `\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\\s+(?:#|${owner}/${repo}#|https://github\\.com/${owner}/${repo}/issues/)(\\d+)`,
+                  `\\b(?:(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\\s+(?:#|${owner}/${repo}#|https://github\\.com/${owner}/${repo}/issues/)|https://github\\.com/${owner}/${repo}/issues/)(\\d+)`,
                   'gi',
                 );
-                const bodyRefs = new Set(
-                  [...bodyWithoutCode.matchAll(closingRef)].map(m => parseInt(m[1], 10))
-                );
+                function getBodyClosingIssueRefs(text) {
+                  if (!text) return new Set();
+                  const stripped = text
+                    .replace(/```[\s\S]*?```/g, '')
+                    .replace(/`[^`\n]*`/g, '');
+                  return new Set(
+                    [...stripped.matchAll(closingRef)].map(m => parseInt(m[1], 10))
+                  );
+                }
+                const bodyRefs = getBodyClosingIssueRefs(body);
 
                 for (const number of bodyRefs) {
                   if (linkedIssues.some(i => i.number === number)) continue;
@@ -185,10 +189,12 @@ jobs:
                       per_page: 10,
                     });
                     for (const item of searchResult.items) {
+                      // GitHub search matches numbers anywhere in the body (e.g. test counts). Verify genuine issue reference.
                       if (
                         item.number !== prNumber
                         && item.pull_request
                         && new Date(item.created_at) < new Date(pr.created_at)
+                        && getBodyClosingIssueRefs(item.body).has(issue.number)
                       ) {
                         duplicates.push({ issue: issue.number, pr: item.number });
                       }
