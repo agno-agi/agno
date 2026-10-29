@@ -16,7 +16,9 @@ Then send a turn and poll it:
 
 AgentOS, the queue and the database stay on this host; each turn runs Claude Code in an AgentCore
 microVM, which reaches Bedrock through the runtime's execution role. With a queue, any replica may
-run the next attempt, so every replica must read the same checkpoint directory.
+run the next attempt, so every replica must read the same checkpoints: set
+AGNO_SANDBOX_CHECKPOINT_BUCKET to keep them in S3 (needs agno[s3]). Unset, they stay in a directory
+on this host, which only a single replica can use.
 """
 
 import os
@@ -28,8 +30,19 @@ from agno.job_queue.config import QueueConfig, RedisCoordination
 from agno.os import AgentOS
 from agno.sandbox.agentcore import AgentCoreSandbox
 from agno.sandbox.checkpoint import FileCheckpointStore
+from agno.sandbox.s3 import S3CheckpointStore
 
 runtime_arn = os.environ["AGENTCORE_RUNTIME_ARN"]
+
+# Every replica must restore every other replica's checkpoints. With AGNO_SANDBOX_CHECKPOINT_BUCKET
+# set they live in that S3 bucket, which any number of replicas share. Without it they stay in a
+# directory on this host, which is only safe while this one process is the deployment's only replica.
+bucket = os.getenv("AGNO_SANDBOX_CHECKPOINT_BUCKET")
+checkpoints = (
+    S3CheckpointStore(bucket, prefix="sandbox/checkpoints")
+    if bucket
+    else FileCheckpointStore(Path.home() / ".agno" / "sandbox" / "checkpoints")
+)
 
 db = PostgresDb(
     db_url=os.getenv(
@@ -43,9 +56,7 @@ agent = ClaudeAgent(
     sandbox=AgentCoreSandbox(
         runtime_arn,
         env={"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_REGION": runtime_arn.split(":")[3]},
-        checkpoints=FileCheckpointStore(
-            Path.home() / ".agno" / "sandbox" / "checkpoints"
-        ),
+        checkpoints=checkpoints,
     ),
 )
 agent_os = AgentOS(

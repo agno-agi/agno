@@ -6,6 +6,7 @@ PostgreSQL is supported for production, with the same sync and async methods.
 | File | What it teaches |
 | --- | --- |
 | `01_manage_products.py` | Create two owners' Products, list unscoped or by owner, soft-delete, inspect and restore. |
+| [`10_customer_feedback/`](10_customer_feedback/README.md) | Live GPT-6.1 Sol feedback review, human acceptance, and a saved product brief through the AgentOS UI. |
 
 Run with the development environment:
 
@@ -26,10 +27,65 @@ Read and create/update require `products:read` and `products:write` respectively
 `CompanyManager` takes a sync database; `AsyncCompanyManager` takes an async
 database and exposes the same methods as coroutines. `list()` returns rows and
 a total. `user_id=None` is unscoped; a string filters by owner before paging.
-The HTTP layer derives ownership from authenticated identity. Reads are
-company-wide for callers with the read scope. With isolation on, writes to
-another owner's Product return 403. Unscoped callers with the write scope can
-change every Product; admins bypass owner isolation.
+The HTTP layer records the authenticated caller as the creator. Company records
+are shared: reads need the read scope and writes need the write or delete scope,
+whoever created the Product. User isolation does not restrict Company records.
+
+## Weekly Company Manager review
+
+`10_weekly_product_review.py` runs a Company Routine with the framework's
+`company-manager-internal` agent. It reads Sources and existing work, proposes
+only evidence-backed Backlog Tasks, and updates status without accepting work.
+The same declaration works with or without OS Manager; no application agent is
+needed. Company Manager is the only framework manager that can run a Routine:
+OS Manager, Platform Builder and Platform Manager can change the platform, and
+Routines run unattended on Source content, so they are refused as executors.
+Company Manager stays out of Studio's reusable registry and is served through
+its normal agent routes whether or not OS Manager is enabled.
+
+Check both configurations without model calls or an active scheduler:
+
+```bash
+.venv/bin/python cookbook/05_agent_os/30_company/10_weekly_product_review.py --check
+.venv/bin/python cookbook/05_agent_os/30_company/10_weekly_product_review.py --check --with-os-manager
+```
+
+Start the local server with `--enable-weekly-review` to opt in to Monday reviews
+at 09:00 `Europe/London`. Use `--source /absolute/path/to/docs.md` to select a
+local Source, and `--with-os-manager` to serve OS Manager alongside it. Scheduled runs require
+provider credentials and incur model usage. Automatic acceptance remains off.
+Omitting the opt-in flag creates no new Routine; it does not remove a previously
+saved schedule. Pause an existing Routine through its Company API/UI control.
+
+The example uses SQLite and no authentication for local development. For an
+authorized deployment, use PostgreSQL and configure the Routine through the
+existing authenticated Routine API, setup API or human Company chat so the
+caller's grant is saved.
+A code/YAML declaration's `user_id` is attribution, not a grant. An authorized
+execution-changing PATCH (for example, updating `instructions`) can authorize an
+existing declared Routine. A timing-only edit does not replace its authority.
+For direct Python bootstrap or `CompanyManager.create_routine`, pass the owning
+`AgentOS` as `agent_os=agent_os` when selecting a framework manager.
+
+The caller needs Routine/schedule configuration permissions and the target's
+agent/team run permission; scheduled result polling also needs the target's read
+permission. Grant only the Company tools the review uses: Sources and existing
+work reads, proposal writes, wiki reads/writes and decision recall. Delegation
+retains those grants and Routine restrictions. Company-wide collaborative reads
+keep their existing visibility; Source contents and mutations retain Product
+checks, and private sessions retain the deployment's ownership isolation.
+
+Any caller with `routines:write`, `schedules:write` and the executor's run
+permission can manually trigger, edit, pause or resume a Routine, including one
+created by another user or seeded without an owner. Manual runs use the caller's
+authority and record that caller in the run's `user_id`. The scheduler follows
+the run with that authority, so the caller also needs the executor's read
+permission for the run to be recorded as successful. The saved Routine creator
+and authorization remain unchanged for scheduled runs; only edits to the
+executor, instructions or acceptance policy save the editor's authorization. A
+Routine with automatic acceptance accepts proposals with the saved grant of the
+user who authorized it, so under user isolation only that user can trigger it
+manually.
 
 ## Work records
 
@@ -46,13 +102,21 @@ tools. HTTP rejects omission with 422; Python managers and tools raise
 then pass its ID to the Task proposal. A Backlog Task can move between Projects
 but cannot clear its Project. Existing nullable storage rows remain readable.
 
-Projects start `proposed` and move to `active`, then `done`. Tasks start
-`backlog` and move through `ready`, `in_progress`, `in_review`, and `done`.
-Either can be `cancelled` from any non-terminal state. Each transition takes
-`target` and a non-empty `reason`; history is returned on the record. Tasks
-may return to Backlog to clear acceptance and change scope, and In review may
-return to In progress for revisions by starting the next run attempt. Direct HTTP
-transitions to In progress return 409 and name the runs endpoint. Terminal states cannot transition.
+Projects start `proposed` and move to `active`, then `done`. A Project can be
+`cancelled` from any non-terminal state, and its terminal states cannot transition.
+Tasks are created in `backlog` by default; `POST /company/tasks` also accepts
+`status` set to `ready` (with `executor_type` and `executor_id`, under the same
+acceptance checks as the Ready transition) or `cancelled`. Tasks move through
+`ready`, `in_progress`, `in_review`, and `done`. Each transition takes `target`
+and a non-empty `reason`; history is returned on the record. A Task can move to
+Backlog, Ready or Cancelled from any other state, including `done` and `cancelled`.
+Backlog clears acceptance so scope can change. In progress is entered only by
+starting a run: direct HTTP transitions to In progress return 409 and name the
+runs endpoint. While a run attempt is still executing or paused awaiting approval,
+moves out of In progress return 409 and name that run's cancel endpoint. In review and Done follow a run;
+reaching them from any state other than In progress and In review respectively
+requires an earlier run attempt.
+A done or cancelled Task cannot reopen inside a done or cancelled Project.
 
 The HTTP routes use `/company/projects` and `/company/tasks`, with the same
 CRUD, paging, soft delete and restore conventions as Products, plus
@@ -66,20 +130,21 @@ read scope, matching Products. Edits and transitions are collaborative: callers 
 scope can update or transition another creator's work, even with user isolation
 enabled. This includes cancellation and returning Tasks to Backlog. The creator
 stays unchanged, and transition history records the acting caller. Ready still
-requires the caller's executor run permission; accepted Tasks must return to
-Backlog before editing. Delete and restore remain owner-scoped when user
-isolation is enabled, with the existing admin bypass.
+requires the caller's executor run permission; accepted Tasks keep their Project,
+evidence and executor until returned to Backlog, while title and brief stay
+editable at any stage (Company tools run by Routines and executors edit Backlog
+Tasks only). Delete and restore need the delete scope, not ownership.
 New work can use another owner's Product or Project, with the Task and
 Project still required to belong to the same Product. Manager and storage
 methods retain explicit owner filters for direct callers.
 
 
-## Playbook and Product Manager
+## Playbook and Company Manager
 
 | File | Demonstrates |
 | --- | --- |
 | `04_manage_playbook.py` | Sync/async wiki namespaces, atomic page creation, version conflicts and the learning decision log without a model. |
-| `05_product_manager.py` | Model resolution, a standalone Product Manager, bounded Company tools and explicit MCP publication without a model call. |
+| `05_company_manager.py` | Model resolution, a standalone Company Manager, bounded Company tools and explicit MCP publication without a model call. |
 
 Each Product has a durable wiki namespace with `brief.md` (human direction) and
 `status.md` (current work). A second namespace holds company context. Default
@@ -89,10 +154,9 @@ The company namespace has the same surface at `/company/wiki`. Writes require th
 filesystem `expected_version` read with the page; zero means create only. Conflicts
 return 409. Pages are Markdown and paths must be relative and normalized.
 
-Wiki reads require `wiki:read`; writes require `wiki:write`. Product ownership
-controls writes under isolation. Company pages are unowned shared documents, so
-only unscoped callers (admins, or isolation disabled) can change them. Every caller
-with read permission can read both namespaces. Company services use FileSystem;
+Wiki reads require `wiki:read`; writes require `wiki:write`. Product and company
+pages are shared documents, so any caller with `wiki:write` can change them, and
+every caller with read permission can read both namespaces. Company services use FileSystem;
 its existing backend owns storage and version checks.
 
 GET and POST `/company/decisions` use `decisions:read` and `decisions:write`.
@@ -105,11 +169,15 @@ ID when supplying decision tools. Standalone CompanyTools and direct MCP calls
 leave agent attribution unset. The log is append-only: later outcomes are new
 entries that reference the original decision.
 
-Product Manager uses `CompanyConfig(model=...)`, otherwise the first declared
+Company Manager uses `CompanyConfig(model=...)`, otherwise the first declared
 registry model. If neither exists, its unavailable reason appears in diagnostics
-and manual APIs still work. With OS Manager enabled it is an internal member;
-otherwise it is a standalone agent, available at `GET /agents/product-manager-internal`
-and `POST /agents/product-manager-internal/runs`. Its id is reserved and its tools stay out of
+and manual APIs still work. It is served at `GET /agents/company-manager-internal`
+and `POST /agents/company-manager-internal/runs`. When OS Manager is enabled it also
+gets a separate Company Manager member that carries the manager's tool-call limit and
+focused instructions; the served agent, which direct chat and Routines use, keeps its
+own policy. It was previously named Product Manager with the id
+`product-manager-internal`; that id stays reserved, and `AgentOS.product_manager`
+remains a deprecated alias of `AgentOS.company_manager`. Its id is reserved and its tools stay out of
 the registry. It proposes Projects and Backlog Tasks, edits owned proposals,
 updates `status.md` with a version check, and logs decisions through its learning
 machine. It can read Sources and add website Sources with permission and Product
@@ -191,7 +259,7 @@ same session and owner in both isolation modes. The ordinary session ownership
 check still rejects unrelated sessions. For a legacy session created by a starter,
 Company recovers with the recorded reservation identity and transfers an idle
 session to the Task owner only after matching its original reservation and run. Engineering executors cannot be started yet. Framework-reserved executors,
-including Product Manager and OS Manager, cannot be accepted or started as
+including Company Manager and OS Manager, cannot be accepted or started as
 Task executors.
 
 Executor input contains only the Task brief, its evidence and the current
@@ -206,7 +274,7 @@ GET `/company/attention?product_id=...` returns `proposals`, `in_review` and
 `failed` counts using the Task list filters. Omitting Product counts all work.
 Attention and run reads are company-wide with `tasks:read`; Task lists also
 accept `failed=true`. Failed work means an In progress Task whose latest result
-is `ERROR` or `CANCELLED`. Moving the Task to Cancelled, Backlog, Ready or In review
+is `ERROR` or `CANCELLED`. Moving the Task to Cancelled, Backlog, Ready, In review or Done
 clears it from failed attention while preserving the result as history. Starting
 a new attempt clears the previous result. `failed=false`
 includes all other Tasks, including those with no result. The Task table is
@@ -225,8 +293,8 @@ parent. Lifecycle status stays unchanged. Restore brings back only those
 children; records archived separately or before the parent stay archived.
 Restore the parent before restoring individual children.
 
-A Product or Project with Ready, In progress, or In review Tasks refuses archive,
-even if an active Task was separately archived.
+A Product or Project with Ready, In progress, or In review Tasks refuses archive.
+Tasks that were separately archived don't count, since lists and counts hide them.
 The API returns 409 with `detail.message` and `detail.tasks`, an array of `{id,
 title}` objects. Managers raise `ValueError` with the same detail dictionary.
 Finish or cancel that work first. Backlog Tasks may move to another active
@@ -293,7 +361,7 @@ instead of silently dropping its Routine. Give it `CompanyTools(db)` and
 `load_routine_skills()` for reader, Intake and Summary tools. AgentOS binds its
 interfaces to custom `CompanyTools(db)` executors automatically; an explicit
 `interfaces=` override is preserved, and `summary_tools=False` disables delivery.
-Product Manager has no outbound Summary tool. Enable the existing AgentOS scheduler and queue to run schedules; the
+Company Manager has no outbound Summary tool. Enable the existing AgentOS scheduler and queue to run schedules; the
 cookbook only creates and inspects them. Scheduling alone never grants acceptance.
 The OS scheduler database owns Routine definitions/history even with a separate
 Company database. `metadata.routine_ids` links them to Products.
@@ -312,7 +380,7 @@ report without disclosing values. These readers use local files or an unauthenti
 website GET: `credential_ref` is a diagnostic prerequisite, not an authentication
 adapter, and its value is never passed to an executor or reader.
 Source reads require `sources:read`, not a separate filesystem grant.
-`read_company_source` without `path` returns a content-free index (`data`,
+`read_product_source` without `path` returns a content-free index (`data`,
 `total_count`, `next_offset`). Use a filename glob in `pattern` and `offset`/`limit`
 to page through it. Discovery does not open document contents. Pass a returned
 `path` to read one document; the response contains evidence and up to 8,000
@@ -342,7 +410,7 @@ such a rejection. It stores hashes and links, without copying document content
 into the Task. Reuse the issue key across content and wording edits; a distinct issue
 has a distinct key. Database uniqueness remains scoped to the Product.
 Routines must use evidence-backed Intake: plain `propose_company_task` and
-Company service Task creation reject Routine authority. Human and Product Manager
+Company service Task creation reject Routine authority. Human and Company Manager
 proposals retain their normal behavior.
 
 `/company/routines` wraps the scheduler. Writes require both `routines:write`
@@ -354,19 +422,20 @@ and already-created schedules still return 409; a retry never undoes a deliberat
 pause. Resume also repairs a missing Product link before activation.
 
 Routine reads and histories are company-wide, including under user isolation.
-Writes retain scheduler ownership; under user isolation, another user's mutation
-returns 403.
+Like Projects and Tasks, any caller with the Routine write scopes can add a
+Routine to any active Product, including an unowned declared Product, and edit,
+pause or resume any Routine; the creator stays recorded on the schedule.
 Pause/resume use scheduler disable/enable and its filtered state response; saved
 authorization claims are never returned. Routine schedule names follow scheduler
 validation, including the 255-character limit on `product_id + "." + name`.
 Invalid names return 422 before creation, including setup. Sources use `sources:read`,
-`sources:write` and `sources:delete`, with Product ownership on writes.
+`sources:write` and `sources:delete` on any Product.
 `POST /company/setup` uses `products:write` to seed a blank deployment; nested
 Sources and Routines also require their own write permissions. Retries and
 restarts repair interrupted creation and linking, retain existing edits and do not
 restore archived records. Setup returns 201 for creation and 200 for a retry.
 If the deployment already has Products other than this setup identity, setup
-returns 409 instead of returning another owner's Product.
+returns 409.
 
 Summary uses Product metadata such as
 `{"summary": {"interface": "slack", "destination": "C012345"}}` and the matching
@@ -386,7 +455,7 @@ success. No live messages are sent by this cookbook.
 
 Task evidence identity and deduplication are part of the initial Company schema.
 Task responses expose `origin`, `routine_id` and `dedupe_key`. Human-created Tasks
-have origin `human`, Product Manager proposals have `product_manager`, and Routine
+have origin `human`, Company Manager proposals have `product_manager`, and Routine
 proposals have `routine` with the trusted Routine id.
 Automatic acceptance is opt-in as described below.
 
@@ -422,17 +491,19 @@ indistinguishable from the checked record. Project completion still refuses any
 current non-terminal Task, but child evidence changes do not advance the Project's
 timestamp and are not fenced by this comparison.
 
-Each minute it checks Ready Tasks and authorized Routine proposals using the
-scheduler's ordinary claims and release. A tick records history only when it
-accepts, dispatches, completes, or recovers work, or encounters an execution
-error. Dispatch failures, including unavailable queue storage or a missing
-executor, produce failed history with Task-specific reasons, readable through
-`/schedules/{id}/runs`. Idle ticks and expected acceptance-policy skips leave no
+Each hour it checks Ready Tasks and authorized Routine proposals using the
+scheduler's ordinary claims and release. The cadence is
+`CompanyConfig(cron_expr="0 * * * *")`. The setting must be a cron
+expression; a changed cron is applied to the existing schedule on restart. A tick
+records history only when it accepts, dispatches, completes, or recovers work, or
+encounters an execution error. Dispatch failures, including unavailable queue
+storage or a missing executor, produce failed history with Task-specific reasons,
+readable through `/schedules/{id}/runs`. Idle ticks and expected acceptance-policy skips leave no
 run rows. Unexpected database errors are recorded even before dispatch starts.
 Engineering executors and a previous attempt whose ticket is still active are
 expected skips. If a Ready Task's accepting human loses permission, the Task
 returns to Backlog with the refusal reason and appears in attention; the failed
-tick is recorded once instead of repeating every minute.
+tick is recorded once instead of repeating every hour.
 
 Recovery runs before current Routine pause, policy and permission checks. It only
 reconciles existing reservations and never enqueues work. A terminal durable run
@@ -492,7 +563,7 @@ COMPANY_AUTOMATION=1 .venv/bin/python cookbook/05_agent_os/30_company/06_execute
 COMPANY_AUTOMATION=1 COMPANY_DB=postgres .venv/bin/python cookbook/05_agent_os/30_company/06_execute_tasks.py
 ```
 
-The example advances the existing schedule's due time to avoid a one-minute
+The example advances the existing schedule's due time to avoid an hour-long
 wait. The poller still claims the schedule, and Tasks still enter the ordinary
 executor run route and durable queue. A pending submission retains its original
 attempt on restart. The queue owns execution retry limits; new ticks do not
@@ -532,7 +603,7 @@ Every authorization names an exact executor type and ID. A proposal with no
 executor receives that authorized executor at acceptance. A proposal that names
 an executor must name the same one. It must belong to the Routine's Product and
 carry the framework's Routine origin. `propose_company_task` and
-`intake_company_source` require a Project and can name a proposed executor; neither can
+`intake_product_source` require a Project and can name a proposed executor; neither can
 accept work. Source IDs and work scope are optional bounds. Omitted Source/scope
 bounds impose no additional restriction; an empty allowed-ID list permits no matching work.
 `project_ids` can include `null` for legacy Tasks without a Project; new Tasks require a Project. Unknown fields and
@@ -592,7 +663,7 @@ checking the caller's authority.
 In a local deployment with authentication disabled, API callers are trusted
 operators, as for the existing scheduler. Code/YAML declarations remain
 proposal-only: write an automatic authorization through the human API.
-Executors and Product Manager retain no `schedules:write` or SchedulerTools.
+Executors and Company Manager retain no `schedules:write` or SchedulerTools.
 Private authorization is removed from public payloads and executor input;
 Routine metadata is data, never a source of broader executor authority.
 
@@ -603,8 +674,9 @@ one Task and only terminal Tasks. Each proposal is a versioned page under
 `project-completion/`; unchanged scans do not rewrite it. New open work withdraws
 the proposal. A human accepts it through the existing Project transition route.
 Refresh cannot transition a Project. Moving a Project to Done returns 409 with
-the open Task names and ids until every Task is Done or Cancelled, including
-Tasks that were manually archived while still open.
+the open Task names and ids until every visible Task is Done or Cancelled. Tasks
+archived while still open don't count, and restoring one into a Done or
+Cancelled Project is refused as open work.
 
 Products store `metadata.archive_window_days`, default 14. Refresh soft-archives
 Done and Cancelled Projects and Tasks whose last update is strictly older than
@@ -616,8 +688,8 @@ Refresh processes qualifying Projects before standalone Tasks, so a single
 maintenance pass preserves the Project's cascade as one restorable group.
 Restoring the Project restores only children taken by that cascade; Tasks
 independently archived before that pass stay archived. Retention skips terminal
-Projects that still contain Backlog work and refuses active Tasks. New open Tasks
-cannot be added or moved into Done or Cancelled Projects.
+Projects that still contain visible Backlog work and refuses active Tasks. New
+open Tasks cannot be added or moved into Done or Cancelled Projects.
 Restore retains the lifecycle and starts a fresh retention window. Archived
 records leave normal lists, grouped counts and execution. Read an individual
 record with `include_deleted=true` for inspection; lists still hide children
@@ -630,7 +702,7 @@ are protected. The Refresh Skill updates status.md to reflect the remaining work
 The maintenance tool requires Routine authority, Product ownership when
 isolation applies, `products:read`, `projects:read`, `projects:delete`,
 `tasks:read`, `tasks:delete`, `wiki:read` and `wiki:write` on the saved caller.
-No scheduler-write grant is added. Product Manager does not receive maintenance
+No scheduler-write grant is added. Company Manager does not receive maintenance
 or outbound Summary tools. Existing schedule instructions retain the scheduler's
 snapshot behavior; apply the revised Refresh Skill through an authorized PATCH.
 
@@ -727,7 +799,7 @@ when its policy sets `complete_projects: true`.
 A custom Routine does maintenance only when it calls the Refresh tool, and
 Summary bookkeeping only when it calls the Summary tool.
 
-Product Manager and executors can call `add_company_source(product_id, reference, config=None)`
+Company Manager and executors can call `add_product_source(product_id, reference, config=None)`
 when granted `sources:write` and permitted to write the Product. Repository and
 path Sources remain human-added. Source storage has a single existing JSON
 field, `config`: server-stamped `config.metadata.agent_id` or
@@ -761,7 +833,20 @@ Omit `cron_expr` (or use null) to create an on-demand Routine in code, YAML,
 setup, or `POST /company/routines`. It stays enabled with `next_run_at: null`
 and is never claimed by the poller. `PATCH /company/routines/{id}` with a cron
 makes it scheduled; `{"cron_expr": null}` removes the schedule and keeps history.
-Pause and resume also apply to on-demand Routines.
+On-demand Routines cannot be paused, and resume returns 409 while one is enabled;
+a disabled on-demand Routine resumes.
+
+`POST /company/routines/{id}/archive` archives a Routine: it is paused, records
+`deleted_at`, keeps its run history, leaves the Product's Routine list, and is hidden
+from reads, lists and attention counts unless `include_deleted=true`.
+`POST /company/routines/{id}/restore` relinks it under an active Product; a
+scheduled Routine comes back paused, an on-demand one comes back enabled.
+`DELETE /company/routines/{id}`
+removes the Routine, active or archived, with its run history and its Product
+link. Archive and delete return 409 while a run is executing; cancel it first.
+Archive and restore need `routines:delete` and `schedules:delete`; delete needs
+`agent_os:admin`, set in the scope mapping. A Routine declared in code is created again on the next
+startup unless its declaration is removed.
 
 On-demand execution is a scheduler rule for all schedules. The generic schedule
 API accepts an empty or omitted cron on creation and an empty cron on update;
@@ -774,9 +859,11 @@ execution and returns its schedule-run record when it finishes. It uses the
 same owner and executor permission checks as the other Routine controls;
 paused Routines return 409. Automation and non-Company schedule IDs return 404.
 A concurrent GET exposes the live `last_run.run_id` and `session_id` while
-execution is running. Stop uses the existing executor cancel route, such as
-`POST /agents/{executor_id}/runs/{run_id}/cancel` (or the equivalent Team or
-Workflow route). There is no separate Routine stop operation.
+execution is running. `POST /company/routines/{id}/cancel` stops that run through
+the executor's cancel route, with the same Routine scopes as pause and resume plus
+the caller's run permission on the executor. It returns 409 when no run is running.
+The schedule run then records `cancelled` with the error `Run was cancelled`; a
+cancelled run is not retried and does not count as a failed Routine.
 
 `08_custom_routines.py` demonstrates on-demand declaration, single read, pause,
 resume, and adding/removing a cron without calling a model.

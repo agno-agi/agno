@@ -6,9 +6,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 from agno.agent import Agent
+from agno.agents.base import BaseExternalAgent
 from agno.os.manager.config import OSManager
 from agno.os.manager.prompts import (
     BUILDER_INSTRUCTIONS,
+    EXPLANATION_INSTRUCTIONS,
+    FOCUSED_EXECUTION_INSTRUCTIONS,
     MANAGER_INSTRUCTIONS,
     OPERATOR_INSTRUCTIONS,
 )
@@ -28,11 +31,11 @@ class _Manager:
     team: Team
     builder: Agent
     operator: Agent
-    product_manager: Optional[Agent] = None
+    company_manager: Optional[Agent] = None
 
     @property
     def agents(self) -> List[Agent]:
-        return [self.builder, self.operator, *([self.product_manager] if self.product_manager is not None else [])]
+        return [self.builder, self.operator, *([self.company_manager] if self.company_manager is not None else [])]
 
     @property
     def components(self) -> List[Any]:
@@ -203,7 +206,8 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
                 requires_confirmation_tools=["archive_component", "delete_version", "delete_schedule"],
             ),
         ],
-        instructions=BUILDER_INSTRUCTIONS,
+        instructions=[BUILDER_INSTRUCTIONS, FOCUSED_EXECUTION_INSTRUCTIONS],
+        tool_call_limit=config.member_tool_call_limit,
         add_datetime_to_context=True,
         add_history_to_context=True,
         num_history_runs=5,
@@ -211,7 +215,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
 
     operator_tools = [AgentOSTools(db=db), _diagnostics_tool(agent_os, config.required_env)]
     docs_tools: List[Any] = []
-    operator_instructions = [OPERATOR_INSTRUCTIONS]
+    operator_instructions = [OPERATOR_INSTRUCTIONS, FOCUSED_EXECUTION_INSTRUCTIONS, EXPLANATION_INSTRUCTIONS]
     if workspace is not None:
         operator_tools.extend(workspace.get_tools())
         operator_instructions.append(workspace.instructions())
@@ -236,13 +240,14 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         offload_tool_results=config.offload_tool_results,
         tools=[*operator_tools, *docs_tools],
         instructions=operator_instructions,
+        tool_call_limit=config.member_tool_call_limit,
         add_datetime_to_context=True,
         add_history_to_context=True,
         num_history_runs=5,
     )
 
     members: List[Any] = [builder, operator]
-    instructions: List[str] = [MANAGER_INSTRUCTIONS]
+    instructions: List[str] = [MANAGER_INSTRUCTIONS, FOCUSED_EXECUTION_INSTRUCTIONS, EXPLANATION_INSTRUCTIONS]
     if config.instructions:
         instructions.append(config.instructions)
     team = Team(
@@ -263,7 +268,9 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
             StudioRunnerTools(
                 registry=registry,
                 db=db,
-                include_agents=LiveSequence(lambda: agent_os._agents),
+                include_agents=LiveSequence(
+                    lambda: [a for a in (agent_os.agents or []) if isinstance(a, (Agent, BaseExternalAgent))]
+                ),
                 include_teams=LiveSequence(lambda: agent_os._teams),
                 include_workflows=LiveSequence(lambda: agent_os._workflows),
                 include_all_components=True,
@@ -272,6 +279,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         ],
         members=members,
         instructions=instructions,
+        tool_call_limit=config.tool_call_limit,
         search_past_sessions=True,
         add_datetime_to_context=True,
         add_history_to_context=True,

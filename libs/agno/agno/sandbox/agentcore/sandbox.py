@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Sequence
 from uuid import uuid4
 
 from agno.sandbox.agentcore.server import _MAX_STAGED
-from agno.sandbox.base import ExecResult, Sandbox, SandboxError, SandboxHandle, _identity
+from agno.sandbox.base import ExecResult, Sandbox, SandboxError, SandboxHandle, _identity, _retention
 from agno.utils.log import log_debug
 
 if TYPE_CHECKING:
@@ -139,6 +139,7 @@ class AgentCoreSandbox(Sandbox):
         checkpoints: Optional["CheckpointStore"] = None,
         env: Optional[Mapping[str, str]] = None,
         execution_timeout: Optional[float] = None,
+        retain_checkpoints: Optional[int] = 3,
     ) -> None:
         try:
             import boto3
@@ -161,6 +162,7 @@ class AgentCoreSandbox(Sandbox):
         self.checkpoints = checkpoints
         self.env = dict(env) if env is not None else None
         self.execution_timeout = execution_timeout
+        self.retain_checkpoints = _retention(retain_checkpoints)
         self.runtime_arn, self.namespace, self.qualifier, self.lifetime = runtime_arn, namespace, qualifier, lifetime
         session = boto_session or boto3.session.Session()
 

@@ -51,6 +51,7 @@ Conversations use the configured model and incur provider charges.
 | `manager_builds_agents.py` | “Create a calculator agent named Budget Helper.” Then: “Run Budget Helper: what is 15% of 240?” | Platform Builder publishes the agent. The second request runs it and should return 36. |
 | `manager_source.py` | “Read basic_manager.py, then check the Agno docs for how to add knowledge.” | Platform Manager reads the configured root and consults the docs MCP server; no notebook or memory setup is needed. |
 | `manager_source.py` | “How does learning work?” | OS Manager can search docs directly and answer the concept question without a deployment audit. |
+| `manager_source.py` | “What is Agno?” or “Can you tell me about learning machines?” | A brief explanation grounded in the Agno documentation, with links. An explicitly general machine-learning question retains its broader meaning. |
 | `check_manager_permissions.py` | Run it directly; no chat or model key needed. | Seven HTTP checks confirm discovery, session access, rejected audiences, and denied publication. |
 | `manager_with_resources.py` | “Save a note in project.md: the demo is on Friday.” Then: “Read project.md.” | The shared notebook stores and retrieves the note. |
 | `manager_with_resources.py` | “Remember that I prefer short answers.” Then ask about your preference in a new session with the same user id. | The manager can save and retrieve a user preference across sessions. |
@@ -88,6 +89,39 @@ and reading her own sessions. It does not grant publishing, scheduling, source
 reads, or platform-wide operational reports. Even a signed JWT claiming admin
 cannot override that role. Production tokens should come from your identity provider.
 
+## Run Claude and Codex engineers
+
+Register external agents in `AgentOS(agents=[...])` to let OS Manager discover
+and run them by name or ID. For example:
+
+```python
+from pathlib import Path
+
+from agno.agents.claude import ClaudeAgent
+from agno.agents.codex import CodexAgent
+from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIResponses
+from agno.os import AgentOS, OSManager
+
+db = SqliteDb(db_file="tmp/engineers.db")
+claude = ClaudeAgent(id="claude-engineer", name="Claude Engineer", cwd=str(Path.cwd()), db=db)
+codex = CodexAgent(id="codex-engineer", name="Codex Engineer", cwd=str(Path.cwd()), db=db)
+agent_os = AgentOS(
+    db=db,
+    agents=[claude, codex],
+    manager=OSManager(model=OpenAIResponses(id="gpt-5.6-luna")),
+)
+agent_os.manager.print_response("List the available agents.")
+agent_os.manager.print_response("Ask Codex Engineer to explain this repository without changing files.")
+```
+
+Install and authenticate the corresponding harness SDKs before running an
+engineer. These calls spend model usage and execute in the configured workspace.
+The manager's sync and async run tools preserve the caller's identity and keep a
+separate continuing session for each engineer and user. Existing run permissions
+still apply. External agents are dispatch targets, not Studio edit targets or
+persisted team/workflow members.
+
 ## Manager settings
 
 | Setting | Default | Effect |
@@ -99,6 +133,8 @@ cannot override that role. Production tokens should come from your identity prov
 | `tools`, `knowledge`, `learning` | Empty / `None` | Extra resources for the lead team; not automatically available for builds. |
 | `instructions` | `None` | Appends instructions to the lead team's existing prompt. |
 | `required_env` | Empty | Names whose presence diagnostics checks; values are never returned. |
+| `tool_call_limit` | `8` | Ordinary tool executions per coordinator run, including delegations. `None` disables the limit; `0` refuses all ordinary tools. |
+| `member_tool_call_limit` | `24` | Ordinary tool executions per specialist invocation, including the Company Manager member when Company is enabled. `None` disables the limit. |
 | `num_history_runs` | `7` | Lead-team history depth. Members retain five runs. |
 | `offload_tool_results` | `True` | Stores large tool results on supported databases; accepts `False` or a `ResultStore`. |
 
@@ -109,7 +145,23 @@ launch the server. Setting `root` does not enable file writes or shell execution
 The manager is instructed to keep explanations scoped to the question and to
 request concise specialist answers when delegation is necessary. Documentation
 access on the lead lets it answer framework questions without a specialist run.
-Model choices still determine the actual tool calls and latency.
+Short grounding and stopping rules also reach the builder, operator and attached
+Company Manager member. Guidance for explaining framework concepts from the docs goes only
+to the lead and Platform Manager, the roles with documentation access. Source
+investigation guidance stays with Platform Manager.
+
+The limits use the existing Agent/Team tool execution mechanism. Each member
+invocation has its own allowance; there is no shared budget across the run tree.
+The `read_result` and `search_result` tools remain exempt when result offloading
+is active. A refusal is returned to the model, which is instructed to stop and
+report verified progress and gaps. These limits do not bound model turns, tokens,
+latency, or application components dispatched through runner tools.
+
+Increase the limits for larger builds or plans. Set either limit to `None` to
+restore unlimited ordinary tool executions for that level. Ordinary application
+agents and the served Company Manager, which runs direct chat and Routines, retain their existing limits. Custom
+`instructions` remain specific to the lead team. Model choices still determine
+actual routing and answer quality; prompt guidance is not an execution guarantee.
 
 ## When to use a registry
 
@@ -139,11 +191,13 @@ composition are fixed. Its members are:
 - **Platform Manager** (`platform-manager-internal`): checks activity, runs diagnostics,
   reads source when `root` is set, and queries Agno documentation by default.
 
-Only OS Manager is exposed in config, discovery, REST and MCP. Platform Builder
-and Platform Manager are internal members: they are absent from `/config`,
-`/agents` and the public team detail, and their standalone agent routes return
-422 with an explanation that the component ID is reserved. OS Manager
-delegates to them; their child runs and tool results remain
+Only OS Manager is exposed as a standalone target in config, discovery, REST and MCP.
+Platform Builder and Platform Manager appear as nested members in `/teams` and
+`/teams/os-manager-internal`, so the team graph shows its composition. Built-in members,
+including Product Manager, list their model and tools but not their instructions. They remain
+excluded from the application registry, `/config` agent list and `/agents`, and
+their standalone agent routes return 422 with an explanation that the component
+ID is reserved. OS Manager delegates to them; their child runs and tool results remain
 available inside its session for replay and diagnostics. Schedule the manager
 team, not either specialist. Ordinary run grants, including `teams:os-manager-internal:run`, let a user talk to the manager. Access
 to the manager does not grant its tools additional permissions:

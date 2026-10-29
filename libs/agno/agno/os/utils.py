@@ -2389,8 +2389,10 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
     if isinstance(step, Step):
         # Check step's agent
         if step.agent:
-            if step.agent.tools and isinstance(step.agent.tools, list):
-                for tool in step.agent.tools:
+            # A harness agent (Claude Code, Codex) has no Agno tools.
+            step_tools = getattr(step.agent, "tools", None)
+            if step_tools and isinstance(step_tools, list):
+                for tool in step_tools:
                     # Alternate method of using isinstance(tool, MCPTools) to avoid imports
                     if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                         if tool not in mcp_tools:

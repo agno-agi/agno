@@ -506,6 +506,8 @@ async def test_checkpoint_round_trip_into_a_replacement_microvm(computer, tmp_pa
     (computer.workspace / "src").mkdir()
     (computer.workspace / "src" / "app.py").write_text("print('hi')\n" * 4000)
     (computer.workspace / "link").symlink_to("src/app.py")
+    (computer.workspace / ".venv" / "bin").mkdir(parents=True)
+    (computer.workspace / ".venv" / "bin" / "python3").symlink_to("/usr/local/bin/python3")
     computer.native.mkdir(mode=0o700)
     (computer.native / "transcript.jsonl").write_text('{"turn": 1}\n')
     (computer.native / "codex" / ".tmp" / "plugins").mkdir(parents=True)
@@ -522,6 +524,7 @@ async def test_checkpoint_round_trip_into_a_replacement_microvm(computer, tmp_pa
     assert await transfer.arestore(replacement, reference) == {"turn": 1}
     assert (computer.workspace / "src" / "app.py").read_text() == "print('hi')\n" * 4000
     assert os.readlink(computer.workspace / "link") == "src/app.py"
+    assert os.readlink(computer.workspace / ".venv" / "bin" / "python3") == "/usr/local/bin/python3"
     assert (computer.native / "transcript.jsonl").read_text() == '{"turn": 1}\n'
     assert (computer.native / "codex" / ".tmp" / "marketplaces").is_dir()
     assert not (computer.native / "codex" / "auth.json").exists()

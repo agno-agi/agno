@@ -329,3 +329,73 @@ No paid model calls or real outbound notification deliveries were exercised.
 **Result:** All 164 focused queue and sandbox unit cases and all 309 queue-store parity/Company admission integration cases passed, with no skips. New coverage checks errors across sync/async PostgreSQL, Redis and in-memory stores, and matching listing results with both flag values on in-memory, fake/real Redis and sync/async PostgreSQL. Full format, clean Python 3.10 validation and whitespace checks passed. No model calls were made.
 
 ---
+
+### 10_weekly_product_review.py — framework manager Routine executors (2026-10-20)
+
+**Status:** PASS
+
+**Description:** Checked the opt-in weekly Product Manager review with OS Manager disabled and enabled using `--check` and `--check --with-os-manager`. Both construct and persist the owned-manager schedule without running a model. Offline scripted-model tests exercise bootstrap, API and human chat configuration, native/Studio delegation, queued execution, caller permissions, Product restrictions, private run ownership, reserved-ID collisions, evidence-backed intake, deduplication and versioned status updates.
+
+**Result:** On main base `cb14cab365`, all 1,059 affected unit cases passed, including the 69 manager Routine cases; those 69 also passed in a clean Python 3.10 environment. All 409 selected existing Routine/heartbeat/automatic-execution integration cases passed. The new manager queue/configuration tests and existing chat tests passed 176 cases, with 52 unsupported synchronous-tool/asynchronous-database combinations skipped. The 18 supported chat cases passed again after isolating their schedule database fixture. Integration coverage uses sync/async SQLite and PostgreSQL Company stores and a real PostgreSQL durable worker. Full format, clean CI-dependency validation and whitespace checks passed. The shared Python 3.12 environment's nine mypy diagnostics also reproduce on the unchanged original base; the clean validation gate has none. No paid model calls. Live proposal quality and semantic duplicate detection are not evaluated by scripted responses.
+
+---
+
+### 10_weekly_product_review.py — Routine result recovery follow-up (2026-10-20)
+
+**Status:** PASS
+
+**Description:** Rechecked both `--check` configurations after correcting Routine result reporting. Regression tests verify that a status version conflict can recover through a confirmed later write to the same Product, while denied writes and unresolved conflicts remain failures. Native and Studio delegation report provider failures, and nested failed or cancelled member results remain failures.
+
+**Result:** All 82 manager Routine tests passed on Python 3.12 and Python 3.10, including 13 new regression cases; seven new cases failed before the fix. Another 729 Company, manager and scheduler unit cases passed. SQLite chat integration passed nine cases, with three unsupported synchronous-tool/asynchronous-database cases skipped. Both cookbook checks, the full format script, clean Python 3.10 validation and whitespace checks passed. Formatting-only changes to two unrelated baseline files were excluded. PostgreSQL queue integration was not rerun for this follow-up. No paid model calls.
+
+---
+
+### 05_company_manager.py and 10_weekly_product_review.py — Company Manager rename and Routine executor rule (2026-10-20)
+
+**Status:** PASS
+
+**Description:** Product Manager is renamed Company Manager (`company-manager-internal`); `product-manager-internal` stays reserved and `AgentOS.product_manager` is a deprecated alias. Company Manager is the only framework manager that can execute a Routine. Ran `05_company_manager.py`, `10_weekly_product_review.py --check` and `--check --with-os-manager`.
+
+**Result:** All three runs passed without model calls; both weekly variants persist `/agents/company-manager-internal/runs`. Offline tests cover refusal of OS Manager, both specialists and the legacy id through the endpoint resolver, bootstrap, the Routine API and human chat tools, with no partial Product written.
+
+---
+
+### 05_company_manager.py and 10_weekly_product_review.py — merge with main and separate manager member (2026-10-21)
+
+**Status:** PASS
+
+**Description:** Merged main (Routine linkage and ownership, OS Manager tool budgets) into the Company Manager Routine branch. With OS Manager enabled, the team now holds its own Company Manager member carrying `member_tool_call_limit` and focused instructions, while the served Company Manager used by chat and Routines keeps its standalone policy. Ran `05_company_manager.py`, `10_weekly_product_review.py --check` and `--check --with-os-manager`.
+
+**Result:** All three runs passed without model calls. A new regression case fails when the member and served agent are the same object (the served agent inherits the member limit) and passes with separate instances.
+
+---
+
+### 05_company_manager.py — Product tool names (2026-10-22)
+
+**Status:** PASS
+
+**Description:** Ran the offline Company Manager example with `update_product_status`.
+
+**Result:** Saved the Backlog proposal, Product status and decision; no model calls.
+
+---
+
+### 08_custom_routines.py — Product tool names (2026-10-22)
+
+**Status:** PASS
+
+**Description:** Ran the offline custom Routine example with `add_product_source`.
+
+**Result:** Repeated website discovery reused the same attributed Source; Routine controls and Source archival passed without model calls or website requests.
+
+---
+
+### 10_weekly_product_review.py — Product tool names (2026-10-22)
+
+**Status:** PASS
+
+**Description:** Updated review instructions to `read_product_source` and `intake_product_source`; ran `--check` and `--check --with-os-manager`.
+
+**Result:** Both configurations persisted the Company Manager Routine with automatic acceptance disabled. These checks validate configuration; they do not execute a review or make model calls.
+
+---

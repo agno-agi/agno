@@ -9,8 +9,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Optional
 
-from agno.run import RunContext
 from agno.offload.store import READ_MAX_CHARS
+from agno.run import RunContext
 from agno.tools.function import Function
 
 OFFLOAD_INSTRUCTION = (

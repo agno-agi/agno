@@ -1421,6 +1421,7 @@ class PostgresDb(BaseDb):
             compactions_table = self._get_table(table_type="compactions")
 
             with self.Session() as sess, sess.begin():
+                sandbox_leftovers = self._collect_sandbox_leftovers(sess, [session_id])
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
                 if user_id is not None:
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
@@ -1446,6 +1447,7 @@ class PostgresDb(BaseDb):
 
             # Cascade offloaded tool results after the session delete commits.
             self._cascade_tool_results([session_id])
+            self._release_sandbox_leftovers(sandbox_leftovers)
             # A deleted session's deserialized history must not stay resident.
             self._run_object_cache.drop_session(session_id)
             return True
@@ -1487,6 +1489,7 @@ class PostgresDb(BaseDb):
                 # to protect, so it also cleans up after a session whose row
                 # is already gone.
                 cascade_ids = session_ids if user_id is None else deletable_ids
+                sandbox_leftovers = self._collect_sandbox_leftovers(sess, deletable_ids)
 
                 delete_stmt = table.delete().where(table.c.session_id.in_(deletable_ids))
                 result = sess.execute(delete_stmt)
@@ -1512,12 +1515,40 @@ class PostgresDb(BaseDb):
 
             # Cascade offloaded tool results after the session delete commits.
             self._cascade_tool_results(cascade_ids)
+            self._release_sandbox_leftovers(sandbox_leftovers)
             for deleted_id in cascade_ids:
                 self._run_object_cache.drop_session(deleted_id)
 
         except Exception as e:
             log_error(f"Error deleting sessions: {str(e)}")
             raise e
+
+    def _collect_sandbox_leftovers(self, sess: Any, session_ids: List[str]) -> List[Any]:
+        """Read what deleting these sessions would orphan in a sandbox, before the cascade drops their bindings.
+
+        A savepoint keeps a failed read from rolling back the delete itself.
+        """
+        collected = []
+        for coordinator in list(getattr(self, "sandbox_coordinators", None) or []):
+            try:
+                with sess.begin_nested():
+                    collected.append(
+                        (coordinator, coordinator.collect_deleted_sessions(sess.connection(), session_ids))
+                    )
+            except Exception as e:
+                log_warning(f"Could not read sandbox resources of deleted sessions: {e}")
+        return collected
+
+    @staticmethod
+    def _release_sandbox_leftovers(collected: List[Any]) -> None:
+        """Remove deleted sessions' sandbox computers and checkpoints, after the delete commits."""
+        for coordinator, leftovers in collected:
+            if not leftovers:
+                continue
+            try:
+                coordinator.release_deleted_sessions(leftovers)
+            except Exception as e:
+                log_warning(f"Could not remove sandbox resources of deleted sessions: {e}")
 
     def _cascade_tool_results(self, session_ids: List[str]) -> None:
         """Cascade result offloading on session delete: read the index rows,
@@ -1823,6 +1854,7 @@ class PostgresDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
         include_runs: bool = True,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and component_id.
@@ -1853,6 +1885,9 @@ class PostgresDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        from agno.db.session_filters import normalize_session_filter, session_filter_to_sqlalchemy
+
+        filter_expr = normalize_session_filter(filter_expr)
         validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="sessions")
@@ -1862,6 +1897,9 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
+
+                if filter_expr is not None:
+                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table))
 
                 # Filtering
                 if user_id is not None:
@@ -2867,47 +2905,70 @@ class PostgresDb(BaseDb):
                 return []
             runs_table = self._get_table(table_type="runs")
 
-            columns = [
+            filters = []
+            if start_timestamp is not None:
+                filters.append(table.c.created_at >= start_timestamp)
+            if end_timestamp is not None:
+                filters.append(table.c.created_at <= end_timestamp)
+
+            stmt = select(
                 table.c.session_id,
                 table.c.user_id,
                 table.c.session_data,
                 table.c.created_at,
                 table.c.session_type,
-            ]
-            # Include the legacy runs column if it still exists, to count not yet migrated runs
-            if "runs" in table.c:
-                columns.append(table.c.runs)
-
-            stmt = select(*columns)
-
-            if start_timestamp is not None:
-                stmt = stmt.where(table.c.created_at >= start_timestamp)
-            if end_timestamp is not None:
-                stmt = stmt.where(table.c.created_at <= end_timestamp)
+            ).where(*filters)
 
             with self.Session() as sess:
                 result = sess.execute(stmt).fetchall()
                 sessions = [dict(record._mapping) for record in result]
+                if not sessions:
+                    return sessions
 
-                # Attach lightweight run info (model and provider) from the runs table
-                if runs_table is not None and sessions:
-                    session_ids = [s["session_id"] for s in sessions]
-                    runs_stmt = select(
-                        runs_table.c.session_id,
-                        runs_table.c.run_data["model"].astext.label("model"),
-                        runs_table.c.run_data["model_provider"].astext.label("model_provider"),
-                    ).where(runs_table.c.session_id.in_(session_ids))
+                # Only each run's model and provider are read, never whole runs
+                runs_stmts = []
+                if runs_table is not None:
+                    # Subquery, not a list of ids: one bind parameter per session overflows the driver's limit
+                    runs_stmts.append(
+                        select(
+                            runs_table.c.session_id,
+                            runs_table.c.run_data["model"].astext.label("model"),
+                            # A missing provider counts as "", not "None"
+                            func.coalesce(runs_table.c.run_data["model_provider"].astext, "").label("model_provider"),
+                        ).where(runs_table.c.session_id.in_(select(table.c.session_id).where(*filters)))
+                    )
+                # Runs not yet migrated out of the legacy column, extracted in the database instead of loading the column
+                if "runs" in table.c:
+                    legacy_runs = sa_cast(table.c.runs, postgresql.JSONB)
+                    legacy_run = func.jsonb_array_elements(
+                        case(
+                            (func.jsonb_typeof(legacy_runs) == "array", legacy_runs),
+                            else_=func.jsonb_build_array(),
+                        ),
+                        type_=postgresql.JSONB,
+                    ).column_valued("legacy_run", joins_implicitly=True)
+                    legacy_runs_stmt = select(
+                        table.c.session_id,
+                        legacy_run["model"].astext.label("model"),
+                        func.coalesce(legacy_run["model_provider"].astext, "").label("model_provider"),
+                    ).where(*filters)
+                    if runs_table is not None:
+                        legacy_runs_stmt = legacy_runs_stmt.where(
+                            ~select(runs_table.c.session_id)
+                            .where(runs_table.c.session_id == table.c.session_id)
+                            .exists()
+                        )
+                    runs_stmts.append(legacy_runs_stmt)
 
-                    runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+                runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+                for runs_stmt in runs_stmts:
                     for session_id, model, model_provider in sess.execute(runs_stmt).fetchall():
                         runs_by_session.setdefault(session_id, []).append(
                             {"model": model, "model_provider": model_provider}
                         )
 
-                    for s in sessions:
-                        runs_data = runs_by_session.get(s["session_id"], [])
-                        if runs_data or not s.get("runs"):
-                            s["runs"] = runs_data
+                for s in sessions:
+                    s["runs"] = runs_by_session.get(s["session_id"], [])
 
                 return sessions
 
@@ -2945,9 +3006,12 @@ class PostgresDb(BaseDb):
                 return starting_date
 
         # 2. No metrics records. Return the date of the first recorded session.
-        first_session, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
-
-        first_session_date = first_session[0]["created_at"] if first_session else None  # type: ignore[index]
+        # Queried directly rather than through get_sessions, which also counts and loads runs
+        sessions_table = self._get_table(table_type="sessions")
+        if sessions_table is None:
+            return None
+        with self.Session() as sess:
+            first_session_date = sess.execute(select(func.min(sessions_table.c.created_at))).scalar()
 
         # 3. No metrics records and no sessions records. Return None.
         if first_session_date is None:
@@ -7183,7 +7247,7 @@ class PostgresDb(BaseDb):
             raise
 
     def update_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+        self, schedule_id: str, user_id: Optional[str] = None, *, preserve_updated_at: bool = False, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.scheduler import validate_schedule_update
 
@@ -7196,7 +7260,8 @@ class PostgresDb(BaseDb):
                 # A system-set disabled_reason describes why the row was off;
                 # turning it on retires the explanation.
                 kwargs.setdefault("disabled_reason", None)
-            kwargs["updated_at"] = int(time.time())
+            if not preserve_updated_at:
+                kwargs["updated_at"] = int(time.time())
             with self.Session() as sess, sess.begin():
                 stmt = table.update().where(table.c.id == schedule_id)
                 if user_id is not None:
@@ -7277,6 +7342,8 @@ class PostgresDb(BaseDb):
         The table is passed in because the caller may hold an open transaction
         on this scoped session; _get_table would try to begin a second one.
         """
+        from sqlalchemy import literal
+
         from agno.db.schemas.scheduler import build_run_endpoint
 
         endpoint = build_run_endpoint(target_type, target_id)
@@ -7301,7 +7368,15 @@ class PostgresDb(BaseDb):
                 ),
                 table.c.enabled.is_(True),
             )
-            .values(enabled=False, disabled_reason=reason, updated_at=int(time.time()))
+            # An archive cascade is not a user edit, so a Company routine keeps its last-edit time.
+            .values(
+                enabled=False,
+                disabled_reason=reason,
+                updated_at=case(
+                    (table.c.managed_by == "company", table.c.updated_at),
+                    else_=literal(int(time.time()), table.c.updated_at.type),
+                ),
+            )
         )
         return int(result.rowcount or 0)
 
@@ -7383,12 +7458,15 @@ class PostgresDb(BaseDb):
         *,
         worker_id: Optional[str] = None,
         locked_at: Optional[int] = None,
+        preserve_updated_at: bool = False,
     ) -> bool:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return False
-            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+            if not preserve_updated_at:
+                updates["updated_at"] = int(time.time())
             # A cron may be cleared while this claim is running. Never re-arm
             # an on-demand schedule using the executor's older schedule snapshot.
             updates["next_run_at"] = case(
@@ -9281,6 +9359,7 @@ class PostgresDb(BaseDb):
 
     def update_product(self, product_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.products import product_metadata, validate_product_fields
+        from agno.db.sql.company import update_product_row
 
         validate_product_fields(fields)
         if "metadata" in fields:
@@ -9288,12 +9367,8 @@ class PostgresDb(BaseDb):
         table = self._get_table(table_type="products")
         if table is None:
             return None
-        stmt = table.update().where(table.c.id == product_id, table.c.deleted_at.is_(None))
-        if user_id is not None:
-            stmt = stmt.where(table.c.user_id == user_id)
         with self.Session() as sess, sess.begin():
-            result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table)).fetchone()
-            return dict(result._mapping) if result else None
+            return update_product_row(sess, table, product_id, user_id, fields)
 
     def get_product_counts(self, product_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         from agno.db.sql.company import product_counts
@@ -9478,7 +9553,7 @@ class PostgresDb(BaseDb):
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.projects import project_transition_fields
         from agno.db.schemas.tasks import _acceptance_count
-        from agno.db.sql.company import lock_child
+        from agno.db.sql.company import lock_child, open_project_tasks
 
         table = self._get_table(table_type="projects")
         if table is None:
@@ -9516,10 +9591,7 @@ class PostgresDb(BaseDb):
             existing = dict(row._mapping)
             open_tasks = []
             if tasks_table is not None:
-                open_query = select(tasks_table).where(
-                    tasks_table.c.project_id == project_id,
-                    tasks_table.c.status.not_in(["done", "cancelled"]),
-                )
+                open_query = open_project_tasks(tasks_table, project_id)
                 open_tasks = [dict(task._mapping) for task in sess.execute(open_query).fetchall()]
             fields = project_transition_fields(existing, target, reason, accepted_by, tasks=open_tasks)
             if auto_accept is not None:
@@ -9663,7 +9735,9 @@ class PostgresDb(BaseDb):
             rows = sess.execute(stmt).fetchall()
             return [dict(row._mapping) for row in rows], total
 
-    def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+    def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.tasks import validate_task_fields
         from agno.db.sql.company import lock_child, require_project
 
@@ -9671,7 +9745,11 @@ class PostgresDb(BaseDb):
         table = self._get_table(table_type="tasks")
         if table is None:
             return None
-        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None), table.c.status == "backlog")
+        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None))
+        if set(fields) - {"title", "brief"}:
+            stmt = stmt.where(table.c.status == "backlog")
+        if expected_status is not None:
+            stmt = stmt.where(table.c.status == expected_status)
         if user_id is not None:
             stmt = stmt.where(table.c.user_id == user_id)
         products = self._get_table(table_type="products", create_table_if_not_found=True)
@@ -9718,7 +9796,7 @@ class PostgresDb(BaseDb):
         products = self._get_table(table_type="products", create_table_if_not_found=True)
         projects = self._get_table(table_type="projects", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
-            lock_child(sess, products, projects, table, task_id)
+            lock_child(sess, products, projects, table, task_id, restoring=True)
             existing = sess.execute(select(table).where(table.c.id == task_id)).mappings().first()
             if existing is None:
                 return None
@@ -9852,7 +9930,7 @@ class PostgresDb(BaseDb):
     ) -> Optional[Dict[str, Any]]:
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.tasks import _acceptance_count, task_transition_fields
-        from agno.db.sql.company import lock_child
+        from agno.db.sql.company import lock_child, require_project
 
         table = self._get_table(table_type="tasks")
         if table is None:
@@ -9892,6 +9970,9 @@ class PostgresDb(BaseDb):
                 fields["transitions"][-1]["auto_accept"] = auto_accept
             else:
                 lock_child(sess, products, projects, table, task_id)
+            if existing["status"] in {"done", "cancelled"}:
+                # Reopened work must not land in a completed or cancelled Project.
+                require_project(sess, projects, existing["project_id"], existing["product_id"], target)
             update = table.update().where(
                 table.c.id == task_id,
                 table.c.deleted_at.is_(None),

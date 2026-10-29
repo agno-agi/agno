@@ -69,7 +69,8 @@ def existing_task_proposal(sess: Any, tasks: Any, data: Dict[str, Any]) -> Optio
     return dict(row._mapping) if row is not None else None
 
 
-def lock_child(sess: Any, products: Any, projects: Any, table: Any, record_id: str) -> None:
+def lock_child(sess: Any, products: Any, projects: Any, table: Any, record_id: str, restoring: bool = False) -> None:
+    """Restoring checks the record's own status, so hidden open work cannot re-enter a terminal Project."""
     row = sess.execute(select(table).where(table.c.id == record_id)).first()
     if row is None:
         return
@@ -78,7 +79,17 @@ def lock_child(sess: Any, products: Any, projects: Any, table: Any, record_id: s
     # Read the Project again after taking the Product lock: a move may have won it.
     if "project_id" in table.c:
         row = sess.execute(select(table).where(table.c.id == record_id)).one()
-        require_project(sess, projects, row._mapping["project_id"], record["product_id"])
+        status = row._mapping["status"] if restoring else None
+        require_project(sess, projects, row._mapping["project_id"], record["product_id"], status)
+
+
+def open_project_tasks(tasks: Any, project_id: str) -> Any:
+    """Visible non-terminal Tasks keep a Project from finishing or retiring; archived ones are hidden everywhere."""
+    return select(tasks).where(
+        tasks.c.project_id == project_id,
+        tasks.c.deleted_at.is_(None),
+        tasks.c.status.not_in(["done", "cancelled"]),
+    )
 
 
 def _event(record: Dict[str, Any], action: str, now: int, parent: Optional[Dict[str, str]] = None) -> Any:
@@ -134,10 +145,15 @@ def _restore_children(sess: Any, table: Any, condition: Any, parent: Dict[str, s
 
 
 def _refuse_open_tasks(sess: Any, tasks: Any, condition: Any) -> None:
+    # Archived Tasks are hidden from lists and counts, so they must not block either.
     rows = (
         sess.execute(
             select(tasks.c.id, tasks.c.title)
-            .where(condition, tasks.c.status.in_(["ready", "in_progress", "in_review"]))
+            .where(
+                condition,
+                tasks.c.deleted_at.is_(None),
+                tasks.c.status.in_(["ready", "in_progress", "in_review"]),
+            )
             .order_by(tasks.c.id)
         )
         .mappings()
@@ -202,13 +218,7 @@ def archive_project(
     if row is None:
         return False
     _refuse_open_tasks(sess, tasks, tasks.c.project_id == project_id)
-    if (
-        updated_before is not None
-        and sess.execute(
-            select(tasks.c.id).where(tasks.c.project_id == project_id, tasks.c.status.not_in(["done", "cancelled"]))
-        ).first()
-        is not None
-    ):
+    if updated_before is not None and sess.execute(open_project_tasks(tasks, project_id)).first() is not None:
         return False
     now = int(time.time())
     sess.execute(
@@ -349,3 +359,22 @@ def link_product_routine(sess: Any, products: Any, product_id: str, schedule_id:
             .returning(products)
         ).one()
     return dict(row._mapping)
+
+
+def update_product_row(
+    sess: Any, products: Any, product_id: str, user_id: Optional[str], fields: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """Update an active Product; replacing metadata keeps the Routine ids linked to it."""
+    stmt = products.update().where(products.c.id == product_id, products.c.deleted_at.is_(None))
+    if user_id is not None:
+        stmt = stmt.where(products.c.user_id == user_id)
+    if "metadata" in fields and "routine_ids" not in fields["metadata"]:
+        # A no-op UPDATE takes the write lock link_product_routine uses before reading the links.
+        row = sess.execute(stmt.values(updated_at=products.c.updated_at).returning(products.c.metadata)).first()
+        if row is None:
+            return None
+        routine_ids = (row[0] or {}).get("routine_ids")
+        if routine_ids:
+            fields = {**fields, "metadata": {**fields["metadata"], "routine_ids": routine_ids}}
+    result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(products)).fetchone()
+    return dict(result._mapping) if result else None
