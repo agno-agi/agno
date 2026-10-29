@@ -311,6 +311,7 @@ class Agent:
     # Exponential backoff: if True, the delay between retries is doubled each time
     exponential_backoff: bool = False
     # Return True to retry a failed run, or False to stop immediately
+    # If it raises, log a warning and use the default retry behavior
     retry_condition: Optional[Callable[[Exception], bool]] = None
 
     # --- Agent Response Model Settings ---

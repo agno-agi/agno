@@ -114,6 +114,78 @@ async def test_retry_condition_can_allow_retries(async_mode: bool, stream: bool)
     assert inspected_errors == [model.error, model.error]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("continuing", [False, True])
+@pytest.mark.parametrize("recover", [False, True])
+async def test_raising_retry_condition_falls_back_to_default_retries(
+    async_mode: bool, stream: bool, continuing: bool, recover: bool, monkeypatch: pytest.MonkeyPatch
+):
+    model = FailingModel()
+    inspected_errors = []
+    warnings = []
+
+    def retry_condition(error: Exception) -> bool:
+        inspected_errors.append(error)
+        if recover:
+            model.error = None
+        raise ValueError("predicate failed")
+
+    agent = Agent(
+        model=model,
+        db=InMemoryDb(),
+        retries=2,
+        delay_between_retries=0,
+        retry_condition=retry_condition,
+        telemetry=False,
+    )
+    monkeypatch.setattr("agno.agent._run.log_warning", warnings.append)
+    previous_run = await run_agent(agent, async_mode=async_mode, stream=False) if continuing else None
+    model.calls = 0
+    original_error = RuntimeError("capacity exhausted")
+    model.error = original_error
+
+    response = await run_agent(agent, async_mode=async_mode, stream=stream, run_response=previous_run)
+
+    assert model.calls == (2 if recover else 3)
+    assert inspected_errors == [original_error] * (1 if recover else 2)
+    predicate_warnings = [warning for warning in warnings if "retry_condition" in warning]
+    assert predicate_warnings == [
+        "retry_condition raised an exception: predicate failed. Falling back to the default retry behavior."
+    ] * len(inspected_errors)
+    if recover:
+        assert isinstance(response, RunOutput)
+        assert response.status == RunStatus.completed
+        assert response.content == "ok"
+    else:
+        if stream:
+            assert isinstance(response, RunErrorEvent)
+            assert response.error_type == "RuntimeError"
+            assert response.content == str(original_error)
+        else:
+            assert response.status == RunStatus.error
+            if not continuing:
+                assert response.content == str(original_error)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_retry_condition_does_not_swallow_base_exceptions(async_mode: bool, stream: bool):
+    model = FailingModel()
+    model.error = RuntimeError("capacity exhausted")
+
+    def retry_condition(error: Exception) -> bool:
+        raise SystemExit("stop")
+
+    agent = Agent(model=model, retries=2, delay_between_retries=0, retry_condition=retry_condition, telemetry=False)
+
+    with pytest.raises(SystemExit, match="stop"):
+        await run_agent(agent, async_mode=async_mode, stream=stream)
+    assert model.calls == 1
+
+
 def test_retry_condition_is_not_called_without_a_remaining_attempt():
     model = FailingModel()
     model.error = RuntimeError("failure")
