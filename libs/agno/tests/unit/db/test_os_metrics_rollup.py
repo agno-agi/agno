@@ -16,7 +16,6 @@ from agno.db.utils import (
     OS_METRICS_BUCKETS_VERSION,
     OS_METRICS_COMPONENT_TYPES,
     OS_METRICS_FIELDS,
-    OS_METRICS_KEY_COLUMNS,
     OS_METRICS_TOKEN_FIELDS,
     add_month_os_metrics,
     add_os_metrics_totals,
@@ -202,7 +201,10 @@ def test_row_shape():
     """A row carries the columns the upsert expects, keyed by aggregation period, date, owner, component and parent."""
     row = _only_row(runs=[_run()])
 
-    assert tuple(row[column] for column in OS_METRICS_KEY_COLUMNS) == (
+    assert tuple(
+        row[column]
+        for column in ("aggregation_period", "date", "user_id", "component_type", "component_id", "parent_component_id")
+    ) == (
         "daily",
         TARGET_DATE,
         "alice",
