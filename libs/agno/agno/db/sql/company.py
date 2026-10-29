@@ -42,7 +42,13 @@ def lock_product(sess: Any, products: Any, product_id: str) -> None:
 
 
 def require_project(
-    sess: Any, projects: Any, project_id: Optional[str], product_id: str, task_status: Optional[str] = None
+    sess: Any,
+    projects: Any,
+    project_id: Optional[str],
+    product_id: str,
+    task_status: Optional[str] = None,
+    *,
+    allow_proposed: bool = True,
 ) -> None:
     if project_id is None:
         return
@@ -51,6 +57,8 @@ def require_project(
         raise ValueError("Project is missing or archived")
     if row._mapping["product_id"] != product_id:
         raise ValueError("Task and Project must belong to the same Product")
+    if not allow_proposed and row._mapping["status"] == "proposed":
+        raise ValueError("Cannot create Tasks in a proposed Project; approve the Project first")
     if (
         task_status is not None
         and task_status not in {"done", "cancelled"}
