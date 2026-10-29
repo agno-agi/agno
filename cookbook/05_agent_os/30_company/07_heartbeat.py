@@ -73,6 +73,9 @@ if __name__ == "__main__":
             project = manager.create_project(
                 product_id=product_id, name="Review the release"
             )
+            manager.transition_project(
+                project_id=project["id"], target="active", reason="Human accepted scope"
+            )
             first = manager.intake(
                 source_id=source["id"],
                 run_id="first-scan",
@@ -94,9 +97,6 @@ if __name__ == "__main__":
             )
             assert first["id"] == again["id"]
             assert first["status"] == "backlog"
-            manager.transition_project(
-                project_id=project["id"], target="active", reason="Human accepted scope"
-            )
             manager.transition_task(
                 task_id=first["id"],
                 target="cancelled",

@@ -98,9 +98,21 @@ manually.
 A Product contains Projects and Routines. Every new Task belongs to a Project
 in that Product: `project_id` is required by Task creation and proposal/Intake
 tools. HTTP rejects omission with 422; Python managers and tools raise
-`ValueError`. When no Project fits, propose one with `propose_company_project`,
-then pass its ID to the Task proposal. A Backlog Task can move between Projects
+`ValueError`. New Tasks also require Project approval: creation under a `proposed`
+Project returns HTTP 422 or raises `ValueError`, including for Backlog drafts.
+When no approved Project fits, propose one with `propose_company_project` and wait
+for a human to transition it to `active`. On a later request or Routine run, pass
+its ID to the Task proposal. Project approval does not accept or execute Tasks.
+Existing duplicate proposals remain retrievable. A Backlog Task can move between Projects
 but cannot clear its Project. Existing nullable storage rows remain readable.
+
+A proposal-only Company Manager prompt can make these two approval steps explicit:
+
+> Propose up to three improvements with evidence, expected impact and acceptance
+> criteria. Check existing work for duplicates. Create Backlog Tasks only under
+> suitable approved Projects. Otherwise propose a Project, report that it awaits
+> human approval, and wait until a later request after approval to create its Tasks.
+> Do not approve Projects, accept Tasks or execute work.
 
 Projects start `proposed` and move to `active`, then `done`. A Project can be
 `cancelled` from any non-terminal state, and its terminal states cannot transition.
@@ -369,9 +381,41 @@ Company database. `metadata.routine_ids` links them to Products.
 The templates are packaged `SKILL.md` files under `agno/company/skills`, loaded
 through `LocalSkills`. Creation snapshots the selected Skill's instructions into
 the schedule, with the Product id explicitly included in the model message.
-Following scheduler behavior, restarting or editing a Skill never overwrites
-human-edited schedule instructions. Apply revised instructions to an existing
-Routine with an authorized PATCH to `/company/routines/{id}`.
+Following scheduler behavior, restarting or editing a Skill or code declaration
+never overwrites saved schedule instructions.
+
+### Update saved Routine instructions
+
+For an existing Routine, inspect its saved instructions before upgrading a
+proposal workflow. Keep its custom purpose, evidence requirements and constraints,
+and add the Project approval step: reuse an approved Project, or propose one and
+wait for human approval before creating its Tasks on a later run.
+
+Apply the **complete revised instruction text** with an authorized PATCH:
+
+```http
+PATCH /company/routines/{routine_id}
+Content-Type: application/json
+
+{"instructions": "Your complete revised instructions, including the Project approval step."}
+```
+
+The `instructions` field replaces the saved text; it does not append a paragraph.
+Supply the instruction text only, without the stored Product-context prefix;
+the endpoint adds that context. Do not send the schedule's raw payload or
+delete/recreate the Routine. An instructions-only update retains its ID, owner,
+executor, cadence, run history and acceptance policy. Keep customized instructions
+instead of replacing them wholesale with a new template.
+
+Make the update between runs. A scheduled Routine can be paused while editing
+and resumed afterward; on-demand Routines cannot be paused. An in-flight run may
+still use its original instructions. Read back the saved instructions, restart,
+and verify a subsequent run waits for Project approval, then creates Backlog
+proposals after approval. Existing Task auto-accept policies still apply where
+configured; this edit does not grant Project approval or change those policies.
+
+### Source readers
+
 Source types are `git` (a local checkout), `markdown` (a
 file or directory), and `website` (a single page). Optional `config.paths` limits
 local reads to relative files. Workspace exclusions and path confinement apply;
@@ -603,7 +647,7 @@ Every authorization names an exact executor type and ID. A proposal with no
 executor receives that authorized executor at acceptance. A proposal that names
 an executor must name the same one. It must belong to the Routine's Product and
 carry the framework's Routine origin. `propose_company_task` and
-`intake_product_source` require a Project and can name a proposed executor; neither can
+`intake_product_source` require an approved Project for new Tasks and can name a proposed executor; neither can
 accept work. Source IDs and work scope are optional bounds. Omitted Source/scope
 bounds impose no additional restriction; an empty allowed-ID list permits no matching work.
 `project_ids` can include `null` for legacy Tasks without a Project; new Tasks require a Project. Unknown fields and
