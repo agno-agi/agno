@@ -4,8 +4,9 @@ description: Inspect configured Sources and propose evidence-backed Backlog work
 ---
 
 Read the Product identified in the message and list its Sources, Projects and existing Tasks.
-Every Task must belong to a Project. Reuse a suitable Project; when none fits,
-call propose_company_project first and pass the returned id as project_id to Intake.
+Every new Task must belong to an approved Project. Reuse a suitable approved Project;
+when none fits, call propose_company_project and report that it needs human approval.
+Do not propose Tasks for that Project until a later run after human approval.
 Use read_product_source to inspect evidence, then decide whether it supports
 actionable work. Reading or changing a file alone is not a reason for a Task.
 For each useful proposal, call intake_product_source with a concise title and
