@@ -14,7 +14,7 @@
 
 ## Introduction
 
-Agno is a self-driving agent platform. Build agents for your product, your company, or your customers. Run them as durable services using AgentOS. Put them to work automating company operations.
+Agno is a self-driving agent platform. Build agents for your product, your company, or your customers. Run them as durable services on AgentOS. Put them to work automating company operations.
 
 - **Build** agents with the Agno, Claude Agent, or Codex SDKs. Combine agents into teams and workflows.
 - **Run** agents as durable services with built-in API and MCP. AgentOS handles authentication, role-based access, resume/replay, human approvals, scheduling, and durable execution.
