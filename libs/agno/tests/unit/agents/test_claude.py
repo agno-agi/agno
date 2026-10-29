@@ -1922,22 +1922,30 @@ def test_unset_model_falls_back_to_the_default_model(fake_sdk, tmp_db):
 
 
 def test_metrics_page_counts_runs_per_model(fake_sdk, tmp_db):
+    import time
+
     from fastapi.testclient import TestClient
 
     from agno.os import AgentOS
 
     agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, model="claude-sonnet-4-6")
-    client = TestClient(AgentOS(agents=[agent], db=tmp_db, telemetry=False).get_app())
-    for _ in range(2):
-        assert (
-            client.post("/agents/claude/runs", data={"message": "hi", "session_id": "s", "stream": "false"}).status_code
-            == 200
-        )
-    body = client.get("/metrics").json()
-    days = body["metrics"] if isinstance(body, dict) else body
-    today = days[-1]
-    assert today["agent_runs_count"] == 2
-    assert today["model_metrics"] == [{"model_id": "claude-sonnet-4-6", "model_provider": "Anthropic", "count": 2}]
+    with TestClient(AgentOS(agents=[agent], db=tmp_db, telemetry=False).get_app()) as client:
+        for _ in range(2):
+            response = client.post("/agents/claude/runs", data={"message": "hi", "session_id": "s", "stream": "false"})
+            assert response.status_code == 202
+            run_id = response.json()["run_id"]
+            for _ in range(200):
+                run = agent.get_run_output(run_id, "s")
+                if run is not None and run.status.value == "COMPLETED":
+                    break
+                time.sleep(0.01)
+            else:
+                raise AssertionError("Automatic background run did not complete")
+        body = client.get("/metrics").json()
+        days = body["metrics"] if isinstance(body, dict) else body
+        today = days[-1]
+        assert today["agent_runs_count"] == 2
+        assert today["model_metrics"] == [{"model_id": "claude-sonnet-4-6", "model_provider": "Anthropic", "count": 2}]
 
 
 @pytest.mark.parametrize("stream", [False, True])

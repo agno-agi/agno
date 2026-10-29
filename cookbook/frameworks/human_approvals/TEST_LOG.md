@@ -42,13 +42,43 @@ contracts, stale sandbox owners, duplicate delivery, old-image refusal, and dire
 worker loss without replay. PostgreSQL tests cover both database adapters.
 
 The rebased code also passed another real Docker Claude approval and Codex rejection
-with checkpoint evidence. Unsupported human mode in team/workflow execution is
-refused before the native adapter starts; non-human member regressions pass.
+with checkpoint evidence. Approval delivery is limited to standalone agents;
+the automatic-forwarding follow-up below preserves ordinary nested execution.
 
 The repository format and validation scripts passed using a clean development
 dependency environment. Optional-provider type drift in the full test environment
 was kept separate; seven SQLAlchemy typing errors were also reproduced on the
 unchanged base and corrected with type-only annotations/casts.
+
+### Automatic forwarding from native policy (29 October 2026)
+
+**Status:** PASS
+
+**Description:** Removed the additional Agno human-mode switch. Native Claude
+permission modes and Codex approval policies select automatic delivery when a
+database is available, including database injection by AgentOS and execution in
+Docker. Full-access/deny modes, custom Claude callbacks, ordinary transcript
+continuation, nonstreaming results, and retries before an approval remain intact.
+
+**Result:** The broad suite passed 1,567 cases with 12 adapter-specific skips;
+three continuation-router cases exposed a missing import. After fixing that
+import, all 349 focused agent, team, approval, and authorization cases passed,
+including all three failures. Another 21 real Docker/PostgreSQL team and workflow
+tests passed. Mandatory format and validation scripts passed.
+
+Eight fresh live cases passed: approve and reject for Claude and Codex, both
+direct and in Docker, without any extra approval mode. Each case verified no
+marker before approval and the correct final marker presence or absence.
+The actual AgentOS UI also approved and continued a new Claude run automatically;
+persisted run `16d0fab7-a8e3-46d8-ad77-8e681fa051a9` completed and its final checkpoint
+contained `automatic-ui-marker.txt` with exactly `approved`. The UI test used an
+isolated server on port 8791; Local AgentOS selection was restored afterward.
+The earlier API-worker restart evidence remains applicable: this follow-up did
+not change sandbox ownership recovery or decision delivery.
+
+Team/workflow agents still execute operations permitted by native policy. An
+actual nested permission request fails explicitly before the requested action,
+because nested approval delivery is not supported yet.
 
 ### Validation limits
 

@@ -413,6 +413,10 @@ def test_a_codex_member_takes_a_delegated_task_and_resumes_its_thread(db, monkey
     module.AsyncCodex = test_codex.FakeAsyncCodex  # type: ignore[attr-defined]
     module.types = test_codex.SimpleNamespace(ReasoningEffort=test_codex.ReasoningEffort)  # type: ignore[attr-defined]
     monkeypatch.setattr(codex_module, "_sdk", lambda: module)
+    monkeypatch.setattr(
+        "agno.agents.codex._approval.human_client",
+        lambda config, bridge, **kwargs: test_codex.FakeAsyncCodex(config),
+    )
 
     member = CodexAgent(id="codex-coder", name="Codex Coder", db=db)
     team = Team(

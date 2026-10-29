@@ -82,7 +82,7 @@ class SandboxRuntimeClient:
         committed for this session, Claude's session id or Codex's thread id, when it has one:
         the runtime refuses to run, without calling the model, unless the sandbox holds exactly
         that conversation. Leave it None for a session's first turn."""
-        if (config or {}).get("approval_mode") == "human":
+        if (config or {}).get("_native_approvals", False):
             capabilities = await self._rpc(computer, "capabilities", {"execution_id": execution_id})
             if "human_approvals_v1" not in capabilities.get("capabilities", []):
                 raise SandboxError("Rebuild the sandbox image: native human approvals are unsupported")

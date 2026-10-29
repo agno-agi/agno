@@ -1590,7 +1590,7 @@ class QueueWorker:
         fields: Dict[str, Any] = {
             "status": RunStatus.cancelled.value if status == "cancelled" else RunStatus.error.value,
         }
-        if getattr(component, "approval_mode", None) == "human":
+        if getattr(component, "_uses_native_approvals", False):
             fields["requirements"] = []
         if cancellation_stage is not None:
             # Rides the same fenced patch as the status: the adapters apply
@@ -1606,7 +1606,7 @@ class QueueWorker:
             user_id=job.get("user_id"),
             expected_attempt=job.get("attempt"),
         )
-        if result == RunPersistOutcome.UPDATED and getattr(component, "approval_mode", None) == "human":
+        if result == RunPersistOutcome.UPDATED and getattr(component, "_uses_native_approvals", False):
             from agno.agents._approval import _retire_direct_approvals
 
             await _retire_direct_approvals(component, job["id"], fields["status"])
@@ -1734,10 +1734,13 @@ class QueueWorker:
         raw = getattr(run, "status", None)
         status = raw.value if isinstance(raw, RunStatus) else raw
         if (
-            getattr(component, "approval_mode", None) == "human"
+            getattr(component, "_uses_native_approvals", False)
             and getattr(component, "sandbox", None) is None
             and run is not None
-            and status not in (RunStatus.completed.value, RunStatus.cancelled.value)
+            and (
+                status in (RunStatus.running.value, RunStatus.paused.value)
+                or (run.metadata or {}).get("native_approval")
+            )
         ):
             # A direct native process belonged to the lost worker. Re-entering
             # arun would repeat its tools, not reconnect to that process.
@@ -2112,7 +2115,7 @@ class QueueWorker:
         not."""
         exec_task = asyncio.ensure_future(execution)
         try:
-            if getattr(component, "approval_mode", None) == "human" and job is not None:
+            if getattr(component, "_uses_native_approvals", False) and job is not None:
                 from agno.agents._approval import wait_for_execution
 
                 async def waiting() -> bool:

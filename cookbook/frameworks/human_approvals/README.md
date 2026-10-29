@@ -1,13 +1,15 @@
 # Native harness approvals
 
-`approval_mode="human"` forwards Claude and Codex permission requests to AgentOS.
+Claude and Codex permission requests automatically reach AgentOS when the agent
+has a database, including one supplied by `AgentOS(db=...)`. Configure the native
+harness policy; no separate Agno approval mode is needed.
 The native process remains alive while the persisted run is PAUSED. Resolving an
 approval and choosing **Continue Run** delivers the decision to that same process.
 It never replays the prompt or starts a replacement turn.
 
 ## Run
 
-Install `agno[os,postgres,claude,codex]` from this checkout. Human Codex approvals
+Install `agno[os,postgres,claude,codex]` from this checkout. Forwarding Codex approvals
 currently require `openai-codex==0.163.0`; the transport refuses untested versions.
 Set `DATABASE_URL`, `ANTHROPIC_API_KEY`, and `OPENAI_API_KEY`, then run:
 
@@ -21,9 +23,18 @@ command that needs native permission. Inspect the command and arguments in
 not execute it. Under user isolation, existing administrator approval rules apply.
 The requesting user cannot approve by forging a tool result on the continue API.
 
-Native policy still determines which operations ask. Claude's `permission_mode`
-and Codex's `sandbox_mode` remain separate from who reviews requests. This does not
-make every tool call require confirmation. Existing defaults are unchanged.
+Native policy determines which operations ask; this does not make every tool call
+require confirmation. Claude uses `permission_mode="default"`, `"acceptEdits"`, or
+`"plan"`; `"bypassPermissions"` and `"dontAsk"` keep their native behavior. Explicit
+Claude permission callbacks remain in charge when supplied.
+
+Codex uses its native `approval_policy="on-request"` or `"untrusted"`; `"never"`
+does not ask. Its `sandbox_mode` independently controls filesystem isolation.
+Omitting `approval_policy` lets the native configuration/profile select the policy.
+The SDK's existing `approval_mode="auto_review"` and `"deny_all"` remain supported
+and are not routed to the UI. Codex config values `approval_policy` and
+`approvals_reviewer` are also respected. Do not combine `approval_policy` with the
+SDK's `approval_mode` shorthand.
 
 For Docker, also set `REDIS_URL` for shared queue coordination and `AGNO_SANDBOX_IMAGE` to a sandbox image built with this Agno version
 and both native SDKs. This local example keeps checkpoints under `tmp/native-approval-checkpoints`; use a shared checkpoint store such as S3 for replicas on different hosts. The control plane checks the runtime's approval capability
@@ -42,6 +53,8 @@ control-plane database credentials are not sent to it.
   equal to `approval_timeout`. Heartbeats and session exclusivity remain held.
 - Refreshing or closing a browser does not cancel a background run. Decisions are
   persisted and can be delivered from another API replica.
+- AgentOS starts agents that can request approval in the background automatically;
+  nonstreaming HTTP submissions return 202 and the run can be polled or streamed.
 - A surviving sandbox worker can be reattached using its original execution
   journal and identity. A lost native process cannot be resumed from an approval;
   the run fails and the previous completed checkpoint remains the recovery point.
@@ -50,8 +63,10 @@ control-plane database credentials are not sent to it.
 - Direct in-process runs need a persistent event loop while waiting. Use
   `arun(background=True)` or AgentOS. `acontinue_run` and `continue_run` deliver
   decisions; they do not create that original execution.
-- Human mode currently supports standalone agents. Team members and workflow
-  steps reject it before execution; their existing non-human modes are unchanged.
+- Approval delivery currently supports standalone agents. Team members and workflow
+  steps keep running operations their native policy permits; an actual request for
+  human permission fails explicitly before that action executes.
 
-This example uses PostgreSQL. Direct development runs can use SQLite. Human mode
-requires a database on the agent and disables automatic native-turn retries.
+This example uses PostgreSQL. Direct development runs can use SQLite. A database
+is required to persist and deliver decisions. Failures can be retried before any
+approval request; once a request is made, Agno never retries the native turn.

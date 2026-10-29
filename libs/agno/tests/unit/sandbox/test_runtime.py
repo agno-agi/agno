@@ -198,7 +198,7 @@ async def test_old_runtime_is_refused_before_starting_human_harness():
     client = SandboxRuntimeClient(provider)
     with pytest.raises(SandboxError, match="Rebuild the sandbox image"):
         await client.astart(
-            HANDLE, execution_id="e", run_id="r", sdk="claude", input="work", config={"approval_mode": "human"}
+            HANDLE, execution_id="e", run_id="r", sdk="claude", input="work", config={"_native_approvals": True}
         )
     assert len(provider.requests) == 1
     assert "input" not in provider.requests[0], "Old runtime received a start request"

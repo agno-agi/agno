@@ -6,12 +6,17 @@ the SDK's thread/turn API, response router and serialized writes.
 """
 
 import asyncio
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from agno.agents._approval import ApprovalBridge
 
 
-def human_client(config: Any, bridge: ApprovalBridge) -> Any:
+def human_client(
+    config: Any,
+    bridge: Optional[ApprovalBridge],
+    approval_policy: Optional[str] = None,
+    reviewer: str = "user",
+) -> Any:
     from importlib.metadata import version
 
     from openai_codex import AsyncCodex
@@ -30,14 +35,14 @@ def human_client(config: Any, bridge: ApprovalBridge) -> Any:
 
         def _write_message(self, payload: Any) -> None:
             if payload.get("method") in ("thread/start", "thread/resume", "turn/start"):
-                payload = {
-                    **payload,
-                    "params": {
-                        **(payload.get("params") or {}),
-                        "approvalPolicy": "on-request",
-                        "approvalsReviewer": "user",
-                    },
-                }
+                params = {**(payload.get("params") or {}), "approvalsReviewer": reviewer}
+                # The high-level SDK inserts its auto-review defaults. Omit its
+                # policy when unset so native config/profile policy remains authoritative.
+                if approval_policy is None:
+                    params.pop("approvalPolicy", None)
+                else:
+                    params["approvalPolicy"] = approval_policy
+                payload = {**payload, "params": params}
             super()._write_message(payload)
 
         async def decide(self, message: Any) -> None:
@@ -87,6 +92,8 @@ def human_client(config: Any, bridge: ApprovalBridge) -> Any:
                     "tool_call_id": params.get("itemId"),
                     "request": params,
                 }
+                if bridge is None:
+                    raise ValueError("Native permission request requires an Agno run with an approval database")
                 allowed = await bridge.request(method.split("/")[1], arguments, native)
                 if method == "item/permissions/requestApproval":
                     result = {"permissions": params.get("permissions", {}) if allowed else {}, "scope": "turn"}

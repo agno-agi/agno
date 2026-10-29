@@ -878,7 +878,7 @@ def get_agent_router(
         if isinstance(agent, BaseExternalAgent) and agent.sandbox is not None:
             from agno.os.routers.agents.sandbox import sandbox_run_response
 
-            if getattr(agent, "approval_mode", None) == "human":
+            if getattr(agent, "_uses_native_approvals", False):
                 background = True
             return await sandbox_run_response(
                 agent,
@@ -897,7 +897,7 @@ def get_agent_router(
             )
 
         # Human permission waits outlive the browser connection.
-        if getattr(agent, "approval_mode", None) == "human":
+        if getattr(agent, "_uses_native_approvals", False):
             background = True
 
         # Background execution
@@ -1600,7 +1600,12 @@ def get_agent_router(
         # non-paused continues because their core requires PAUSED.
 
         # A live native callback owns this continuation: never requeue its turn.
-        if getattr(agent, "approval_mode", None) == "human":
+        from agno.agents.base import BaseExternalAgent
+
+        native_run = None
+        if isinstance(agent, BaseExternalAgent) and agent._uses_native_approvals:
+            native_run = await agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)
+        if native_run is not None and (native_run.metadata or {}).get("native_approval"):
             from agno.agents._approval import submit_decisions, tail_stored
             from agno.models.response import ToolExecution
             from agno.os.event_streams import get_event_stream

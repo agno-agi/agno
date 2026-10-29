@@ -212,6 +212,8 @@ def _agent(request: Dict[str, Any], native: Path) -> Any:
     # database. It has no network credentials and is checkpointed after SDK drain.
     db = SqliteDb(db_file=str(native / "history.db"))
     config = dict(request.get("config", {}))
+    config.pop("_native_approvals", None)
+    nested_approvals = config.pop("_nested_native_approvals", False)
     repository = config.pop("repository", None)
     config.update(
         id=request["agent_id"],
@@ -226,10 +228,13 @@ def _agent(request: Dict[str, Any], native: Path) -> Any:
     if request["sdk"] == "claude":
         from agno.agents.claude import ClaudeAgent
 
-        return ClaudeAgent(**config)
-    from agno.agents.codex import CodexAgent
+        agent: Any = ClaudeAgent(**config)
+    else:
+        from agno.agents.codex import CodexAgent
 
-    return CodexAgent(**config)
+        agent = CodexAgent(**config)
+    agent._nested_native_approvals = nested_approvals
+    return agent
 
 
 async def _prepare_codex(native: Path) -> None:
@@ -369,7 +374,7 @@ def _worker(directory: Path) -> None:
             )
 
             async def bounded_execute() -> Dict[str, Any]:
-                if request.get("config", {}).get("approval_mode") != "human":
+                if not request.get("config", {}).get("_native_approvals", False):
                     return await asyncio.wait_for(_execute(directory, request), request.get("execution_timeout", 900))
                 from agno.agents._approval import wait_for_execution
 

@@ -27,6 +27,10 @@ async def db_call(db: Any, method: str, *args: Any, **kwargs: Any) -> Any:
     return await result if inspect.isawaitable(result) else result
 
 
+def active_bridge() -> Optional["ApprovalBridge"]:
+    return _current.get()
+
+
 def current_bridge() -> "ApprovalBridge":
     bridge = _current.get()
     if bridge is None:
@@ -42,11 +46,9 @@ def action_digest(value: Dict[str, Any]) -> str:
 
 def validate_human_mode(agent: Any) -> None:
     if agent.db is None:
-        raise ValueError("approval_mode='human' requires an approval-capable database")
+        raise ValueError("Native approvals require an approval-capable database")
     if not math.isfinite(agent.approval_timeout) or not 0 < agent.approval_timeout <= 86400:
         raise ValueError("approval_timeout must be between 0 and 86400 seconds")
-    if agent.retries:
-        raise ValueError("Human approval runs cannot automatically retry native execution")
 
 
 async def _retire_direct_approvals(agent: Any, run_id: str, status: str) -> None:
@@ -66,7 +68,7 @@ async def _retire_direct_approvals(agent: Any, run_id: str, status: str) -> None
 
 
 class ApprovalBridge:
-    def __init__(self, agent: Any, run_id: str, session_id: str, user_id: Optional[str]):
+    def __init__(self, agent: Any, run_id: str, session_id: str, user_id: Optional[str], allow_requests: bool = True):
         self.agent = agent
         self.run_id = run_id
         self.session_id = session_id
@@ -75,8 +77,11 @@ class ApprovalBridge:
         self.queue: asyncio.Queue[Any] = asyncio.Queue()
         self.requests: Dict[str, Dict[str, Any]] = {}
         self.closed = False
+        self.allow_requests = allow_requests
 
     async def request(self, tool_name: str, arguments: Dict[str, Any], native: Dict[str, Any]) -> bool:
+        if not self.allow_requests:
+            raise ValueError("Native approval requests currently require a standalone Claude or Codex agent")
         if self.closed:
             raise RuntimeError("The approval execution is no longer available")
         # Bound both persisted and transported data before emitting a reviewable action.

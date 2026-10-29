@@ -238,8 +238,7 @@ class BaseExternalAgent:
     description: Optional[str] = None
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     markdown: bool = True
-    # Opt in to native permission requests resolved through AgentOS.
-    approval_mode: Optional[str] = None
+    # Maximum wait for a native permission request forwarded to AgentOS.
     approval_timeout: float = 900
     # Fail closed when native context is missing; sandbox restoration requires exact continuity.
     require_native_resume: bool = False
@@ -288,7 +287,7 @@ class BaseExternalAgent:
         if self.events_to_skip is None:
             self.events_to_skip = [RunEvent.run_content]
         self._check_output_schema(self.output_schema)
-        if self.approval_mode == "human":
+        if self._uses_native_approvals:
             from agno.agents._approval import validate_human_mode
 
             validate_human_mode(self)
@@ -302,6 +301,11 @@ class BaseExternalAgent:
                 raise ValueError("agent.repository requires sandbox=")
         if self.sandbox is not None:
             _sandbox_harness().validate(self)
+
+    @property
+    def _uses_native_approvals(self) -> bool:
+        """Whether native policy can ask and an approval database is available."""
+        return False
 
     @property
     def sdk(self) -> str:
@@ -1308,7 +1312,7 @@ class BaseExternalAgent:
         failure that would repeat (a limit, authentication, billing, a bad request) fails the job
         at once instead of being re-driven for every remaining queue attempt."""
         return {
-            "retryable": self.approval_mode != "human" and self._is_retryable_error(error),
+            "retryable": self._is_retryable_error(error),
             "error_type": error_type_of(error),
         }
 
@@ -1984,11 +1988,15 @@ class BaseExternalAgent:
     # ---------------------------------------------------------------------------
 
     async def _arun_non_stream(self, input: Any, **kwargs: Any) -> RunOutput:
-        if self.approval_mode == "human":
-            async for item in self._arun_stream(input, **{**kwargs, "yield_run_output": True}):
-                if isinstance(item, RunOutput):
-                    return item
-            raise RuntimeError("Human approval run produced no result")
+        if self._uses_native_approvals:
+            events = self._arun_stream(input, **{**kwargs, "yield_run_output": True, "_native_non_stream": True})
+            try:
+                async for item in events:
+                    if isinstance(item, RunOutput):
+                        return item
+            finally:
+                await events.aclose()  # type: ignore[attr-defined]
+            raise RuntimeError("Native approval run produced no result")
         team_id, workflow_id = self._pop_run_parent(kwargs)
         parent_id = self._parent_id(team_id, workflow_id)
         if self.sandbox is not None:
@@ -2113,11 +2121,26 @@ class BaseExternalAgent:
         finally:
             self._release_session(state_session_id, run_id)
 
+    async def _native_non_stream_events(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        """Keep the adapter's nonstreaming result contract while multiplexing permission events."""
+        result = await self._arun_adapter(input, **kwargs)
+        if isinstance(result, ExternalRunResult):
+            for tool in result.tools or []:
+                yield ToolCallCompletedEvent(tool=tool)
+            for warning in result.warnings or []:
+                yield ExternalRunWarningEvent(warning=warning)
+            if result.metrics is not None:
+                yield ExternalRunMetricsEvent(metrics=result.metrics)
+            if result.structured_output is not None:
+                yield ExternalRunStructuredOutputEvent(structured_output=result.structured_output)
+            yield RunContentEvent(content=result.content)
+        else:
+            yield RunContentEvent(content=result)
+
     async def _arun_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        native_non_stream = kwargs.pop("_native_non_stream", False)
         team_id, workflow_id = self._pop_run_parent(kwargs)
         parent_id = self._parent_id(team_id, workflow_id)
-        if self.approval_mode == "human" and parent_id is not None:
-            raise ValueError("Human approvals currently require a standalone Claude or Codex agent")
         if self.sandbox is not None:
             if parent_id is None:
                 events = _sandbox_harness().astream(self, input, **kwargs)
@@ -2176,7 +2199,7 @@ class BaseExternalAgent:
             history = (
                 self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
             )
-            stored_events: Optional[List[Any]] = [] if self.store_events else None
+            stored_events: Optional[List[Any]] = [] if self.store_events or self._uses_native_approvals else None
             skipped = {event.value for event in self.events_to_skip or []}
 
             def keep(event: Any) -> Any:
@@ -2195,10 +2218,12 @@ class BaseExternalAgent:
             tools: Dict[str, ToolExecution] = {}
             approval_ids: List[str] = []
             bridge = None
-            if self.approval_mode == "human":
-                from agno.agents._approval import ApprovalBridge
+            if self._uses_native_approvals:
+                from agno.agents._approval import ApprovalBridge, validate_human_mode
 
-                bridge = ApprovalBridge(self, run_id, session_id, user_id)
+                validate_human_mode(self)
+                allow_requests = parent_id is None and not getattr(self, "_nested_native_approvals", False)
+                bridge = ApprovalBridge(self, run_id, session_id, user_id, allow_requests=allow_requests)
             status = RunStatus.completed
             run_error: Optional[Exception] = None
             attempts_made = 0
@@ -2216,10 +2241,17 @@ class BaseExternalAgent:
                         adapter_metrics = None
                         structured_output = None
                         try:
-                            source = self._arun_adapter_stream(
+                            adapter = self._arun_adapter_stream
+                            if native_non_stream and type(self)._arun_adapter is not BaseExternalAgent._arun_adapter:
+                                adapter = self._native_non_stream_events
+                            source = adapter(
                                 input, history=history, run_id=run_id, session=session, run_state=run_state, **kwargs
                             )
                             if bridge is not None:
+                                if bridge.closed:
+                                    bridge = ApprovalBridge(
+                                        self, run_id, session_id, user_id, allow_requests=allow_requests
+                                    )
                                 source = bridge.events(source)
                             try:
                                 async for event in source:
@@ -2289,7 +2321,11 @@ class BaseExternalAgent:
                         except RunCancelledException:
                             raise
                         except Exception as error:
-                            if not self._should_retry(error, attempt, num_attempts):
+                            if native_non_stream:
+                                self._collect_attempt_tools(run_state, tools)
+                            if (bridge is not None and bridge.requests) or not self._should_retry(
+                                error, attempt, num_attempts
+                            ):
                                 raise
                             # The failed attempt's events already reached the consumer. Say so before
                             # the retry streams a fresh answer, and keep it in the stored run's warnings.
@@ -2320,8 +2356,10 @@ class BaseExternalAgent:
                 run.metadata = {**(run.metadata or {}), **self._failure_metadata(run_error)}
             if attempts_made > 1:
                 run.metadata = {**(run.metadata or {}), "attempts": attempts_made}
-            if bridge is not None:
+            if bridge is not None and bridge.requests:
                 run.metadata = {**(run.metadata or {}), "native_approval": {"owner": bridge.owner, "approval_ids": []}}
+                if run_error is not None:
+                    run.metadata["retryable"] = False
             self._apply_output_schema(run, output_schema, structured_output)
             self._finish_run_output(run, run_state, continuation)
             fields: Dict[str, Any] = dict(

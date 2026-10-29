@@ -12,6 +12,10 @@ from agno.run.base import RunStatus
 
 @dataclass
 class Harness(BaseExternalAgent):
+    @property
+    def _uses_native_approvals(self):
+        return self.db is not None
+
     calls: int = 0
     executions: int = 0
 
@@ -42,7 +46,7 @@ async def pending(agent, run_id="run"):
 @pytest.mark.parametrize("database", [SqliteDb, AsyncSqliteDb])
 async def test_native_decision_releases_same_process_once(tmp_path, approved, database):
     db = database(db_file=str(tmp_path / "approvals.db"))
-    agent = Harness(id="test", db=db, approval_mode="human", approval_timeout=5)
+    agent = Harness(id="test", db=db, approval_timeout=5)
     task = asyncio.create_task(agent.arun("work", session_id="session", run_id="run"))
     try:
         run = await pending(agent)
@@ -74,7 +78,7 @@ async def test_native_decision_releases_same_process_once(tmp_path, approved, da
 @pytest.mark.asyncio
 async def test_expiry_does_not_execute(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "approvals.db"))
-    agent = Harness(id="test", db=db, approval_mode="human", approval_timeout=0.2)
+    agent = Harness(id="test", db=db, approval_timeout=0.2)
     result = await agent.arun("work", session_id="session", run_id="run")
     assert result.status == RunStatus.error
     assert "expired" in result.content
@@ -83,24 +87,160 @@ async def test_expiry_does_not_execute(tmp_path):
     assert rows[0]["status"] == "expired"
 
 
-def test_human_mode_requires_storage():
-    with pytest.raises(ValueError, match="database"):
-        Harness(approval_mode="human")
+def test_automatic_approvals_require_storage():
+    assert not Harness()._uses_native_approvals
+
+
+@pytest.mark.parametrize("sdk", ["claude", "codex"])
+@pytest.mark.parametrize("nested", [True, False])
+def test_runtime_keeps_native_approval_routing_and_parent_boundary(tmp_path, sdk, nested):
+    from agno.sandbox.runtime import _agent
+
+    agent = _agent(
+        {"agent_id": "test", "sdk": sdk, "config": {"_native_approvals": True, "_nested_native_approvals": nested}},
+        tmp_path,
+    )
+    assert agent._uses_native_approvals
+    assert agent._nested_native_approvals is nested
+
+
+@pytest.mark.parametrize(
+    "mode,forwarded",
+    [
+        (None, True),
+        ("default", True),
+        ("acceptEdits", True),
+        ("plan", True),
+        ("bypassPermissions", False),
+        ("dontAsk", False),
+    ],
+)
+def test_claude_native_policy_selects_automatic_forwarding(tmp_path, mode, forwarded):
+    from agno.agents.claude import ClaudeAgent
+    from agno.os import AgentOS
+
+    agent = ClaudeAgent(id="claude", permission_mode=mode)
+    assert not agent._uses_native_approvals
+    AgentOS(agents=[agent], db=SqliteDb(db_file=str(tmp_path / "db")), telemetry=False).get_app()
+    assert agent._uses_native_approvals is forwarded
+    options = agent._build_options()
+    assert options.permission_mode == mode
+    assert (options.can_use_tool is not None) is forwarded
+
+
+def test_claude_explicit_permission_callback_remains_authoritative(tmp_path):
+    from claude_agent_sdk import ClaudeAgentOptions
+
+    from agno.agents.claude import ClaudeAgent
+
+    async def decide(*args):
+        raise AssertionError("Option inspection must not invoke the callback")
+
+    agent = ClaudeAgent(db=SqliteDb(db_file=str(tmp_path / "db")), options=ClaudeAgentOptions(can_use_tool=decide))
+    assert not agent._uses_native_approvals
+    assert agent._build_options().can_use_tool is decide
+
+
+@pytest.mark.parametrize("named,legacy,forwarded", [("default", "dontAsk", False), ("dontAsk", "default", True)])
+def test_claude_legacy_policy_precedence_is_preserved(tmp_path, named, legacy, forwarded):
+    from agno.agents.claude import ClaudeAgent
+
+    with pytest.warns(DeprecationWarning):
+        agent = ClaudeAgent(
+            db=SqliteDb(db_file=str(tmp_path / "db")), permission_mode=named, options_kwargs={"permission_mode": legacy}
+        )
+    assert agent._uses_native_approvals is forwarded
+    assert agent._build_options().permission_mode == legacy
+
+
+@pytest.mark.parametrize(
+    "settings,forwarded",
+    [
+        ({}, True),
+        ({"approval_policy": "on-request"}, True),
+        ({"approval_policy": "untrusted"}, True),
+        ({"approval_policy": "never"}, False),
+        ({"approval_mode": "auto_review"}, False),
+        ({"approval_mode": "deny_all"}, False),
+        ({"config": {"approval_policy": "never"}}, False),
+        ({"config": {"approvals_reviewer": "auto_review"}}, False),
+        ({"turn_options": {"approval_mode": "deny_all"}}, False),
+    ],
+)
+def test_codex_native_policy_selects_automatic_forwarding(tmp_path, settings, forwarded):
+    from agno.agents.codex import CodexAgent
+    from agno.os import AgentOS
+    from agno.sandbox._harness import _config
+
+    agent = CodexAgent(id="codex", **settings)
+    assert not agent._uses_native_approvals
+    AgentOS(agents=[agent], db=SqliteDb(db_file=str(tmp_path / "db")), telemetry=False).get_app()
+    assert agent._uses_native_approvals is forwarded
+    config = _config(agent, None)
+    assert config.get("_native_approvals", False) is forwarded
+    assert config.get("approval_mode") != "human"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy", [None, "on-request", "untrusted", "never"])
+async def test_codex_transport_preserves_native_policy(monkeypatch, policy):
+    pytest.importorskip("openai_codex")
+    from openai_codex.client import CodexClient
+
+    from agno.agents.codex._approval import human_client
+
+    messages = []
+    monkeypatch.setattr(CodexClient, "_write_message", lambda self, value: messages.append(value))
+    client = human_client(None, None, approval_policy=policy)._client._sync
+    for method in ("thread/start", "thread/resume", "turn/start"):
+        client._write_message(
+            {
+                "id": 1,
+                "method": method,
+                "params": {
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "auto_review",
+                    "sandbox": "danger-full-access",
+                },
+            }
+        )
+        params = messages[-1]["params"]
+        assert params.get("approvalPolicy") == policy
+        assert params["approvalsReviewer"] == "user"
+        assert params["sandbox"] == "danger-full-access"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("parent", ["_team_id", "_workflow_id"])
 @pytest.mark.parametrize("stream", [True, False])
-async def test_nested_human_mode_refused_before_execution(tmp_path, parent, stream):
-    agent = Harness(db=SqliteDb(db_file=str(tmp_path / "db")), approval_mode="human")
-    with pytest.raises(ValueError, match="standalone"):
-        result = agent.arun("work", stream=stream, **{parent: "parent"})
-        if stream:
-            async for _ in result:
-                pass
-        else:
-            await result
-    assert agent.calls == 0
+async def test_nested_permission_request_fails_without_executing(tmp_path, parent, stream):
+    agent = Harness(db=SqliteDb(db_file=str(tmp_path / "db")))
+    result = agent.arun("work", stream=stream, yield_run_output=True, **{parent: "parent"})
+    if stream:
+        from agno.run.agent import RunOutput
+
+        outputs = [item async for item in result if isinstance(item, RunOutput)]
+        result = outputs[-1]
+    else:
+        result = await result
+    assert result.status == RunStatus.error
+    assert "standalone" in result.content
+    assert agent.calls == 1
+    assert agent.executions == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parent", ["_team_id", "_workflow_id"])
+async def test_nested_run_without_permission_request_keeps_working(tmp_path, parent, monkeypatch):
+    agent = Harness(db=SqliteDb(db_file=str(tmp_path / "db")))
+
+    async def source(input, **kwargs):
+        yield RunContentEvent(content="done")
+
+    monkeypatch.setattr(agent, "_arun_adapter_stream", source)
+    result = await agent.arun("work", **{parent: "parent"})
+    assert result.status == RunStatus.completed
+    assert result.content == "done"
 
 
 @pytest.mark.parametrize("sdk", ["claude", "codex"])
@@ -115,7 +255,7 @@ def test_public_sync_continuation_releases_original_run(tmp_path, monkeypatch, c
 
     db = SqliteDb(db_file=str(tmp_path / "db"))
     cls = ClaudeAgent if sdk == "claude" else CodexAgent
-    agent = cls(id="test", db=db, approval_mode="human", approval_timeout=5)
+    agent = cls(id="test", db=db, approval_timeout=5)
     executed = []
 
     async def source(input, **kwargs):
@@ -124,6 +264,11 @@ def test_public_sync_continuation_releases_original_run(tmp_path, monkeypatch, c
         yield RunContentEvent(content="done")
 
     monkeypatch.setattr(agent, "_arun_adapter_stream", source)
+
+    async def nonstream(input, **kwargs):
+        return "".join([event.content async for event in source(input, **kwargs)])
+
+    monkeypatch.setattr(agent, "_arun_adapter", nonstream)
     with ThreadPoolExecutor(max_workers=1) as pool:
         running = pool.submit(agent.run, "work", session_id="session", run_id="run")
         for _ in range(200):
@@ -149,7 +294,7 @@ async def test_changed_arguments_and_wrong_session_refused(tmp_path):
     from agno.models.response import ToolExecution
 
     db = SqliteDb(db_file=str(tmp_path / "approvals.db"))
-    agent = Harness(id="test", db=db, approval_mode="human", approval_timeout=5)
+    agent = Harness(id="test", db=db, approval_timeout=5)
     task = asyncio.create_task(agent.arun("work", session_id="session", run_id="run"))
     try:
         run = await pending(agent)
@@ -171,7 +316,7 @@ async def test_changed_arguments_and_wrong_session_refused(tmp_path):
 @pytest.mark.asyncio
 async def test_cancel_waiting_request_never_executes(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "approvals.db"))
-    agent = Harness(id="test", db=db, approval_mode="human", approval_timeout=5)
+    agent = Harness(id="test", db=db, approval_timeout=5)
     task = asyncio.create_task(agent.arun("work", session_id="session", run_id="run"))
     run = await pending(agent)
     await agent.acancel_run("run")
@@ -185,7 +330,7 @@ async def test_cancel_waiting_request_never_executes(tmp_path):
 @pytest.mark.parametrize("failed_status", [RunStatus.paused, RunStatus.running])
 async def test_snapshot_failure_never_releases_native_action(tmp_path, monkeypatch, failed_status):
     db = SqliteDb(db_file=str(tmp_path / "approvals.db"))
-    agent = Harness(id="test", db=db, approval_mode="human", approval_timeout=5)
+    agent = Harness(id="test", db=db, approval_timeout=5)
     persist = agent._apersist_run_in_session
 
     async def fail_snapshot(session, run, **kwargs):
@@ -226,7 +371,7 @@ async def test_codex_reader_does_not_wait_for_permission(monkeypatch, tmp_path):
     from agno.agents.codex._approval import human_client
 
     db = SqliteDb(db_file=str(tmp_path / "approvals.db"))
-    agent = Harness(id="test", db=db, approval_mode="human", approval_timeout=5)
+    agent = Harness(id="test", db=db, approval_timeout=5)
     bridge = ApprovalBridge(agent, "run", "session", None)
     client = human_client(None, bridge)._client._sync
     incoming = queue.Queue()
@@ -283,7 +428,7 @@ async def test_agentos_approval_api_to_live_harness(tmp_path):
     from agno.run.background import await_background_runs
 
     db = SqliteDb(db_file=str(tmp_path / "api.db"))
-    agent = Harness(id="test", db=db, approval_mode="human", approval_timeout=5)
+    agent = Harness(id="test", db=db, approval_timeout=5)
     app = AgentOS(id="approval-test", db=db, agents=[agent]).get_app()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
@@ -329,7 +474,7 @@ async def test_parallel_requests_are_all_persisted_before_release(tmp_path):
             yield RunContentEvent(content="done")
 
     db = SqliteDb(db_file=str(tmp_path / "parallel.db"))
-    agent = ParallelHarness(id="parallel", db=db, approval_mode="human", approval_timeout=5)
+    agent = ParallelHarness(id="parallel", db=db, approval_timeout=5)
     task = asyncio.create_task(agent.arun("work", run_id="run", session_id="session"))
     try:
         for _ in range(100):
@@ -376,7 +521,7 @@ async def test_reclaimed_direct_native_run_never_replays(tmp_path):
     from agno.session import AgentSession
 
     db = SqliteDb(db_file=str(tmp_path / "lost-owner.db"))
-    agent = Harness(id="test", db=db, approval_mode="human")
+    agent = Harness(id="test", db=db)
     run = RunOutput(
         run_id="run",
         session_id="session",

@@ -575,7 +575,7 @@ class SandboxCoordinator:
                             lease,
                             status="ERROR",
                             reason="Sandbox execution computer was lost; recover from the previous completed turn",
-                            retryable=config.get("approval_mode") != "human",
+                            retryable=not config.get("_native_approvals", False),
                         )
                         yield self._terminal(committed)
                         yield RunOutput.from_dict(committed)
@@ -698,7 +698,7 @@ class SandboxCoordinator:
                         lease,
                         status=result["status"],
                         reason=str(result.get("content", "Execution failed"))[:8192],
-                        retryable=config.get("approval_mode") != "human"
+                        retryable=not config.get("_native_approvals", False)
                         and (result.get("metadata") or {}).get("retryable") is not False,
                     )
                 else:
@@ -728,7 +728,7 @@ class SandboxCoordinator:
                         lease,
                         status="ERROR" if cause == "timeout" else "CANCELLED",
                         reason="Run timed out" if cause == "timeout" else "Run cancelled",
-                        retryable=cause == "timeout" and config.get("approval_mode") != "human",
+                        retryable=cause == "timeout" and not config.get("_native_approvals", False),
                     )
             # Shutdown/disconnect alone detaches; the queue's next attempt uses
             # this generation's execution journal instead of rerunning tools.

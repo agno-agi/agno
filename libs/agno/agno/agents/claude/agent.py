@@ -223,6 +223,18 @@ class ClaudeAgent(BaseExternalAgent):
     # Fallback Agno session_id -> SDK session id map, used when no db is configured.
     _sdk_session_ids: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
+    @property
+    def _uses_native_approvals(self) -> bool:
+        opts = self._option_values()
+        mode = self.permission_mode if self.permission_mode is not None else opts.get("permission_mode")
+        mode = self.options_kwargs.get("permission_mode", mode)
+        return (
+            self.db is not None
+            and mode not in ("bypassPermissions", "dontAsk")
+            and not opts.get("can_use_tool")
+            and not opts.get("permission_prompt_tool_name")
+        )
+
     def __post_init__(self) -> None:
         if self.options is not None and self.options_kwargs:
             raise ValueError("Use options or options_kwargs, not both.")
@@ -235,14 +247,6 @@ class ClaudeAgent(BaseExternalAgent):
                 DeprecationWarning,
                 stacklevel=2,
             )
-        if self.approval_mode not in (None, "human"):
-            raise ValueError("Claude approval_mode must be 'human' or None")
-        if self.approval_mode == "human":
-            opts = self._option_values()
-            if opts.get("can_use_tool") or opts.get("permission_prompt_tool_name"):
-                raise ValueError("Human approvals cannot be combined with a custom permission handler")
-            if opts.get("permission_mode") in ("bypassPermissions", "dontAsk"):
-                raise ValueError("Human approvals require a permission mode that can request approval")
         self._validate_runtime_options(self._option_values())
         if self._effective_model() is None:
             # Like a native model's default id: the default is what the SDK runs and the run records.
@@ -379,18 +383,12 @@ class ClaudeAgent(BaseExternalAgent):
         store = session_store if session_store is not None else self._transcript_store(agno_session_id)
         if store is not None:
             opts["session_store"] = store
-        if self.approval_mode == "human":
+        if self._uses_native_approvals:
             from agno.agents._approval import current_bridge
-
-            if opts.get("can_use_tool") or opts.get("permission_prompt_tool_name"):
-                raise ValueError("Human approvals cannot be combined with a custom permission handler")
-            if opts.get("permission_mode") in ("bypassPermissions", "dontAsk"):
-                raise ValueError("Human approvals require a native permission mode that can ask")
-            bridge = current_bridge()
 
             async def can_use_tool(name: str, arguments: Dict[str, Any], context: Any) -> Any:
                 native = {"sdk": "claude", "tool_call_id": getattr(context, "tool_use_id", None)}
-                allowed = await bridge.request(name, arguments, native)
+                allowed = await current_bridge().request(name, arguments, native)
                 if allowed:
                     return sdk.PermissionResultAllow(updated_input=arguments)
                 return sdk.PermissionResultDeny(message="Rejected by the AgentOS reviewer")
@@ -863,7 +861,8 @@ class ClaudeAgent(BaseExternalAgent):
         sibling run. A finished run is always continued as a new sibling run with fork lineage, as native
         agents do, whatever fork is set to. Files the agent changed are not rewound.
         """
-        if self.approval_mode == "human":
+        source = run_response or self.get_run_output(run_id or "", session_id, user_id)
+        if source is not None and (source.metadata or {}).get("native_approval"):
             from agno.agents._approval import continue_run, sync_events
 
             continuation = continue_run(
@@ -918,7 +917,45 @@ class ClaudeAgent(BaseExternalAgent):
         **kwargs: Any,
     ) -> Any:
         """Async continue_run: returns a coroutine, or an async iterator when stream=True."""
-        if self.approval_mode == "human":
+        if regenerate:
+            raise ValueError("Claude continuation does not support regenerate")
+        resolved = kwargs.pop("_approval_resolved", False)
+        if self._uses_native_approvals and run_response is None and not resolved:
+
+            async def dispatch():
+                source = await self.aget_run_output(run_id or "", session_id, user_id)
+                result = self.acontinue_run(
+                    source,
+                    run_id=run_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                    requirements=requirements,
+                    updated_tools=updated_tools,
+                    input=input,
+                    continue_from=continue_from,
+                    fork=fork,
+                    regenerate=regenerate,
+                    replace_original=replace_original,
+                    additional_instructions=additional_instructions,
+                    stream=stream,
+                    _approval_resolved=True,
+                    **kwargs,
+                )
+                if stream:
+                    async for event in result:
+                        yield event
+                else:
+                    yield await result
+
+            if stream:
+                return dispatch()
+
+            async def result():
+                async for item in dispatch():
+                    return item
+
+            return result()
+        if run_response is not None and (run_response.metadata or {}).get("native_approval"):
             from agno.agents._approval import continue_run
 
             return continue_run(

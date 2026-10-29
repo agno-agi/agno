@@ -36,7 +36,6 @@ claude = ClaudeAgent(
     db=db,
     sandbox=sandbox,
     permission_mode="default",
-    approval_mode="human",
     approval_timeout=900,
 )
 codex = CodexAgent(
@@ -46,7 +45,7 @@ codex = CodexAgent(
     db=db,
     sandbox=sandbox,
     sandbox_mode="read-only",
-    approval_mode="human",
+    approval_policy="on-request",
     approval_timeout=900,
 )
 
