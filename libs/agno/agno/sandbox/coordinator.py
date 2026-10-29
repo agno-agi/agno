@@ -9,6 +9,7 @@ import math
 import threading
 import time
 from contextlib import suppress
+from contextvars import copy_context
 from copy import deepcopy
 from dataclasses import asdict
 from queue import Queue
@@ -27,6 +28,12 @@ from agno.run.agent import (
     run_output_event_from_dict,
 )
 from agno.run.base import RunStatus
+from agno.run.concurrency import (
+    current_task_execution,
+    current_task_execution_provider,
+    guard_task_execution,
+    task_execution_store,
+)
 from agno.sandbox.base import Sandbox, SandboxError, SandboxHandle, _retention, _sync
 from agno.sandbox.checkpoint import CheckpointContentError, CheckpointObjectNotFound, CheckpointRef
 from agno.sandbox.client import RuntimeExecution, SandboxRuntimeClient
@@ -79,6 +86,7 @@ class SandboxCoordinator:
             raise ValueError("Use a 30-3600 second lease and a poll wait of up to 30 seconds")
         if not math.isfinite(warm_computer_seconds) or not 0 <= warm_computer_seconds <= 3600:
             raise ValueError("Keep computers warm for between 0 and 3600 seconds")
+        self.db = db
         self.store, self.provider, self.transfer = _SandboxStore(db), provider, transfer
         self.client = SandboxRuntimeClient(provider)
         self.lease_seconds, self.poll_wait, self.warm_computer_seconds = lease_seconds, poll_wait, warm_computer_seconds
@@ -104,6 +112,7 @@ class SandboxCoordinator:
         images: Optional[Sequence[Image]] = None,
         files: Optional[Sequence[File]] = None,
         session_metadata: Optional[Dict[str, Any]] = None,
+        _task_execution: Any = None,
     ) -> RunOutput:
         result = None
         async for value in self.astream(
@@ -117,6 +126,7 @@ class SandboxCoordinator:
             config=config,
             **({"metadata": metadata} if metadata is not None else {}),
             **({"session_metadata": session_metadata} if session_metadata is not None else {}),
+            _task_execution=_task_execution,
             env=env,
             queue_attempt=queue_attempt,
             execution_timeout=execution_timeout,
@@ -175,7 +185,24 @@ class SandboxCoordinator:
             if await self.provider.aget(handle.provider_ref) is not None:
                 raise SandboxError("Provider has not confirmed compute removal")
             await self.store.aconfirm_stopped(lease, handle.provider_ref)
-        return await self.store.afinish_stop(lease)
+        committed = await self.store.afinish_stop(lease)
+        await self._release_task_execution(state.record)
+        return committed
+
+    async def _release_task_execution(self, record: Dict[str, Any]) -> None:
+        identity = record.get("_company_execution")
+        if identity is None:
+            return
+        provider = current_task_execution_provider()
+        if (
+            provider is None
+            or not provider.enabled
+            or identity["company_db"]
+            != {name: getattr(provider.db, name, None) for name in ("id", "tasks_table_name", "db_schema")}
+        ):
+            raise SandboxError("The original Company execution database is unavailable")
+        for execution_id in {identity["execution_id"], record["execution_id"]}:
+            await provider.arelease(identity["session_id"], "sandbox:" + execution_id)
 
     async def _aterminate(
         self,
@@ -331,7 +358,8 @@ class SandboxCoordinator:
             finally:
                 items.put(done)
 
-        worker = threading.Thread(target=lambda: asyncio.run(pump()), name="sandbox-stream", daemon=True)
+        context = copy_context()
+        worker = threading.Thread(target=lambda: context.run(asyncio.run, pump()), name="sandbox-stream", daemon=True)
         worker.start()
         try:
             while True:
@@ -383,6 +411,7 @@ class SandboxCoordinator:
             await self.store._aoperation(lease, deliver)
             delivered.add(tool_call_id)
 
+    @guard_task_execution()
     async def astream(
         self,
         session_id: str,
@@ -401,6 +430,7 @@ class SandboxCoordinator:
         images: Optional[Sequence[Image]] = None,
         files: Optional[Sequence[File]] = None,
         session_metadata: Optional[Dict[str, Any]] = None,
+        _task_execution: Any = None,
     ) -> AsyncGenerator[Any, None]:
         """Run one turn and yield its events as they arrive, then the committed ``RunOutput`` last.
 
@@ -411,6 +441,7 @@ class SandboxCoordinator:
         checkpoint are stored, so a consumer that sees it can rely on it. Cancelling the consumer
         detaches it; the turn keeps running and a later call with the same run id reattaches.
         """
+        _task_execution = _task_execution or current_task_execution()
         if not isinstance(input, str) or sdk not in ("claude", "codex", "fixture"):
             raise ValueError("Sandbox runtime requires text input and a supported SDK")
         # Validate before any allocation, including JSON serializability and limits.
@@ -471,6 +502,18 @@ class SandboxCoordinator:
                 lease_seconds=self.lease_seconds,
                 prepared_run=prepared,
                 session_metadata=session_metadata,
+                _company_execution=(
+                    {
+                        "session_id": _task_execution[1],
+                        "task_ids": list(_task_execution[2]),
+                        "company_db": {
+                            name: getattr(_task_execution[0].db, name, None)
+                            for name in ("id", "tasks_table_name", "db_schema")
+                        },
+                    }
+                    if _task_execution is not None and _task_execution[2]
+                    else None
+                ),
             )
         )
         try:
@@ -482,6 +525,16 @@ class SandboxCoordinator:
                 await _settled(self.store.arelinquish(claim_task.result().lease))
             raise
         except SandboxRunFinished as finished:
+            from sqlalchemy import select
+
+            record: Optional[Dict[str, Any]] = await self.store._transaction(
+                lambda connection: connection.execute(
+                    select(self.store.bindings.c.record).where(self.store._key(session_id))
+                ).scalar_one_or_none()
+            )
+            execution_id = ((finished.run.get("metadata") or {}).get("sandbox") or {}).get("execution_id")
+            if record and execution_id == (record.get("_company_execution") or {}).get("execution_id"):
+                await self._release_task_execution(record)
             yield self._terminal(finished.run)
             yield RunOutput.from_dict(finished.run)
             return
@@ -513,6 +566,42 @@ class SandboxCoordinator:
             async def provision(record: Dict[str, Any]) -> Dict[str, Any]:
                 from agno.run.cancel import ais_cancelled
 
+                provider = _task_execution[0] if _task_execution is not None else current_task_execution_provider()
+                identity = record.get("_company_execution")
+                if identity is not None or (provider is not None and provider.enabled):
+                    if provider is None or not provider.enabled:
+                        raise SandboxError("The original Company execution database is unavailable")
+                    namespace = {
+                        name: getattr(provider.db, name, None) for name in ("id", "tasks_table_name", "db_schema")
+                    }
+                    if identity is not None and identity["company_db"] != namespace:
+                        raise SandboxError("The original Company execution database is unavailable")
+                    if identity is not None and identity["execution_id"] != record["execution_id"]:
+                        # The locked idle-to-new-execution transition confirms the predecessor stopped.
+                        await provider.arelease(identity["session_id"], "sandbox:" + identity["execution_id"])
+                    original_session = (
+                        identity["session_id"]
+                        if identity
+                        else (_task_execution[1] if _task_execution is not None else session_id)
+                    )
+                    expected_ids = (
+                        identity["task_ids"]
+                        if identity
+                        else (_task_execution[2] if _task_execution is not None else None)
+                    )
+                    ids = await provider.aacquire(
+                        original_session,
+                        "sandbox:" + record["execution_id"],
+                        expected_task_ids=expected_ids,
+                        execution_store=task_execution_store(self.store),
+                    )
+                    if ids:
+                        record["_company_execution"] = {
+                            "execution_id": record["execution_id"],
+                            "session_id": original_session,
+                            "task_ids": ids,
+                            "company_db": namespace,
+                        }
                 allocation = allocation_for(record)
                 if await ais_cancelled(run_id):
                     if record["phase"] == "stopping":
@@ -885,7 +974,7 @@ class SandboxCoordinator:
                 raise SandboxError("Provider has not confirmed compute removal")
             await self.store.aconfirm_stopped(lease, handle.provider_ref)
         try:
-            return await self.store.acommit(
+            committed = await self.store.acommit(
                 lease, keep_computer_until=keep_until, retain_checkpoints=self.retain_checkpoints
             )
         except SandboxRunFinished as finished:
@@ -894,7 +983,9 @@ class SandboxCoordinator:
             if keep_until is not None and handle is not None:
                 with suppress(Exception):
                     await self.provider.adestroy(handle)
-            return finished.run
+            committed = finished.run
+        await self._release_task_execution(state.record)
+        return committed
 
     @staticmethod
     def _terminal(run: Dict[str, Any]) -> Any:

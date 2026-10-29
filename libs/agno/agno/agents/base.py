@@ -1,7 +1,7 @@
 import asyncio
 import json
 from contextlib import asynccontextmanager, contextmanager, suppress
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from copy import copy
 from dataclasses import dataclass, field
 from functools import partial
@@ -54,6 +54,7 @@ from agno.run.agent import (
     ToolCallStartedEvent,
 )
 from agno.run.base import RunStatus
+from agno.run.concurrency import guard_task_execution, retain_task_execution
 from agno.session.agent import AgentSession
 from agno.utils.events import error_type_of
 from agno.utils.log import log_exception, log_warning
@@ -113,7 +114,7 @@ def run_coroutine_sync(coro: Awaitable[Any]) -> Any:
         import concurrent.futures
 
         with concurrent.futures.ThreadPoolExecutor() as pool:
-            return pool.submit(asyncio.run, coro).result()  # type: ignore[arg-type]
+            return pool.submit(copy_context().run, asyncio.run, coro).result()  # type: ignore[arg-type]
     return asyncio.run(coro)  # type: ignore[arg-type]
 
 
@@ -1433,6 +1434,7 @@ class BaseExternalAgent:
             return
         await self._apersist_run_in_session(session, run_response, strict=True)
 
+    @guard_task_execution(background=True)
     async def _astart_background(
         self,
         input: Any,
@@ -2003,6 +2005,7 @@ class BaseExternalAgent:
     # Internal: non-streaming
     # ---------------------------------------------------------------------------
 
+    @guard_task_execution()
     async def _arun_non_stream(self, input: Any, **kwargs: Any) -> RunOutput:
         if self._uses_native_hitl:
             events = self._arun_stream(input, **{**kwargs, "yield_run_output": True, "_native_non_stream": True})
@@ -2153,6 +2156,7 @@ class BaseExternalAgent:
         else:
             yield RunContentEvent(content=result)
 
+    @guard_task_execution()
     async def _arun_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
         native_non_stream = kwargs.pop("_native_non_stream", False)
         team_id, workflow_id = self._pop_run_parent(kwargs)
@@ -2233,6 +2237,7 @@ class BaseExternalAgent:
             warnings: List[Dict[str, Any]] = []
             tools: Dict[str, ToolExecution] = {}
             bridge = None
+            stop_unconfirmed = False
             if self._uses_native_hitl:
                 from agno.agents._hitl import HITLBridge, validate_native_hitl
 
@@ -2321,12 +2326,20 @@ class BaseExternalAgent:
                                     else:
                                         yield keep(event)
                             finally:
-                                if bridge is not None:
-                                    await source.aclose()  # type: ignore[attr-defined]
+                                try:
+                                    close = getattr(source, "aclose", None)
+                                    if close is not None:
+                                        await close()
+                                except BaseException:
+                                    stop_unconfirmed = True
+                                    retain_task_execution()
+                                    raise
                             break
                         except RunCancelledException:
                             raise
                         except Exception as error:
+                            if stop_unconfirmed:
+                                raise
                             if native_non_stream:
                                 self._collect_attempt_tools(run_state, tools)
                             if (bridge is not None and bridge.requests) or not self._should_retry(
@@ -2340,8 +2353,12 @@ class BaseExternalAgent:
                             yield keep(ExternalRunWarningEvent(run_id=run_id, agent_id=self.get_id(), warning=warning))
                             await self._await_retry(run_id, attempt, num_attempts, error)
             except RunCancelledException:
+                if stop_unconfirmed:
+                    raise
                 status = RunStatus.cancelled
             except Exception as error:
+                if stop_unconfirmed:
+                    raise
                 log_exception(f"Error in {self.sdk} agent '{self.id}': {error}")
                 run_error = error
                 status = RunStatus.error
@@ -2434,7 +2451,7 @@ class BaseExternalAgent:
             finally:
                 event_queue.put(_sentinel)
 
-        thread = threading.Thread(target=_run_async, daemon=True)
+        thread = threading.Thread(target=copy_context().run, args=(_run_async,), daemon=True)
         thread.start()
 
         while True:

@@ -189,19 +189,69 @@ def _lock_task_rows(sess: Any, tasks: Any, condition: Any) -> List[Dict[str, Any
     ]
 
 
-def acquire_task_execution(sess: Any, tasks: Any, session_id: str, token: str) -> List[str]:
-    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS, TASK_EXECUTION_REVISION
+def acquire_task_execution(
+    sess: Any,
+    tasks: Any,
+    session_id: str,
+    token: str,
+    *,
+    expected_task_ids: Optional[Sequence[str]] = None,
+    execution_store: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    from agno.db.schemas.tasks import (
+        TASK_EXECUTION_CLAIMS,
+        TASK_EXECUTION_PROVENANCE,
+        TASK_EXECUTION_REVISION,
+        task_execution_stores,
+    )
 
     rows = _lock_task_rows(sess, tasks, tasks.c.session_id == session_id)
+    if expected_task_ids is not None and {row["id"] for row in rows} != set(expected_task_ids):
+        raise ValueError("Task execution identity changed")
     for row in rows:
         metadata = dict(row.get("metadata") or {})
         claims = list(metadata.get(TASK_EXECUTION_CLAIMS) or [])
         if token not in claims:
             metadata[TASK_EXECUTION_CLAIMS] = [*claims, token]
-            # Retain this revision after release so preflight cannot miss a completed execution.
             metadata[TASK_EXECUTION_REVISION] = metadata.get(TASK_EXECUTION_REVISION, 0) + 1
+        if execution_store is not None:
+            provenance = metadata.get(TASK_EXECUTION_PROVENANCE, {"complete": False, "stores": []})
+            stores = task_execution_stores(
+                {"metadata": {TASK_EXECUTION_PROVENANCE: provenance}}, require_complete=False
+            )
+            provenance = {"complete": provenance["complete"] and bool(execution_store), "stores": list(stores)}
+            if execution_store and execution_store not in stores:
+                provenance["stores"].append(execution_store)
+            metadata[TASK_EXECUTION_PROVENANCE] = provenance
+            task_execution_stores({"metadata": metadata}, require_complete=False)
+        if metadata != (row.get("metadata") or {}):
             sess.execute(tasks.update().where(tasks.c.id == row["id"]).values(metadata=metadata))
     return [row["id"] for row in rows]
+
+
+def _reconcile_task_execution_provenance(
+    sess: Any, tasks: Any, expected_task: Dict[str, Any], verified_stores: List[Dict[str, str]]
+) -> None:
+    """Record an offline operator's complete inventory after all producers are drained."""
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS, TASK_EXECUTION_PROVENANCE, task_execution_stores
+
+    rows = _lock_task_rows(sess, tasks, tasks.c.id == expected_task["id"])
+    if rows != [expected_task]:
+        raise ValueError("Task changed during execution provenance verification")
+    metadata = dict(expected_task.get("metadata") or {})
+    if metadata.get(TASK_EXECUTION_CLAIMS):
+        raise ValueError("Cannot reconcile provenance with active Task executions")
+    stores = (
+        list(task_execution_stores(expected_task, require_complete=False))
+        if TASK_EXECUTION_PROVENANCE in metadata
+        else []
+    )
+    for store in verified_stores:
+        if store not in stores:
+            stores.append(store)
+    metadata[TASK_EXECUTION_PROVENANCE] = {"complete": True, "stores": stores}
+    task_execution_stores({"metadata": metadata})
+    sess.execute(tasks.update().where(tasks.c.id == expected_task["id"]).values(metadata=metadata))
 
 
 def release_task_execution(sess: Any, tasks: Any, session_id: str, token: str) -> None:
@@ -221,7 +271,7 @@ def release_task_execution(sess: Any, tasks: Any, session_id: str, token: str) -
 
 
 def _purge_tasks(sess: Any, tasks: Any, condition: Any, expected_tasks: Optional[List[Dict[str, Any]]]) -> None:
-    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS, TASK_EXECUTION_REVISION
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS, TASK_EXECUTION_REVISION, task_execution_stores
 
     # Reservation and admission share these row locks with permanent deletion.
     rows = _lock_task_rows(sess, tasks, condition)
@@ -229,12 +279,14 @@ def _purge_tasks(sess: Any, tasks: Any, condition: Any, expected_tasks: Optional
         if {row["id"]: row for row in rows} != {row["id"]: row for row in expected_tasks}:
             raise ValueError("Tasks changed during deletion verification; retry the request")
     for row in rows:
+        stores = task_execution_stores(row)
         if (row.get("metadata") or {}).get(TASK_EXECUTION_CLAIMS):
             raise ValueError("Cannot permanently delete with active Task executions")
         if row["status"] == "in_progress" and row.get("result") is None:
             raise ValueError("Cannot permanently delete with an unfinished Task attempt")
         if expected_tasks is None and (
-            (row.get("metadata") or {}).get(TASK_EXECUTION_REVISION)
+            stores
+            or (row.get("metadata") or {}).get(TASK_EXECUTION_REVISION)
             or row.get("job_id")
             or row.get("result") is not None
             or any("attempt" in entry for entry in row.get("transitions") or [])

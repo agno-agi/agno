@@ -7,6 +7,7 @@ from uuid import uuid4
 from agno.company.summary import _serialized_summary
 from agno.db.base import _UNSET_UPDATED_AT, AsyncBaseDb, BaseDb
 from agno.db.schemas.products import validate_product_fields
+from agno.db.schemas.tasks import TASK_EXECUTION_PROVENANCE
 
 
 def _validate_agent_source(type: str, executor_type: str, executor_id: Optional[str], run_id: Optional[str]) -> None:
@@ -436,6 +437,7 @@ class CompanyManager:
             "routine_id": routine_id,
             **_proposal_origin(),
             "session_id": str(uuid4()),
+            "metadata": {TASK_EXECUTION_PROVENANCE: {"complete": True, "stores": []}},
             "user_id": user_id,
             "transitions": [],
             "created_at": int(time.time()),
@@ -913,6 +915,7 @@ class CompanyManager:
                 "origin": "routine" if routine_id else "product_manager",
                 "routine_id": routine_id,
                 "session_id": str(uuid4()),
+                "metadata": {TASK_EXECUTION_PROVENANCE: {"complete": True, "stores": []}},
                 "user_id": user_id,
                 "transitions": [],
                 "created_at": int(time.time()),
@@ -1391,6 +1394,7 @@ class AsyncCompanyManager:
             "routine_id": routine_id,
             **_proposal_origin(),
             "session_id": str(uuid4()),
+            "metadata": {TASK_EXECUTION_PROVENANCE: {"complete": True, "stores": []}},
             "user_id": user_id,
             "transitions": [],
             "created_at": int(time.time()),
@@ -1872,6 +1876,7 @@ class AsyncCompanyManager:
                 "origin": "routine" if routine_id else "product_manager",
                 "routine_id": routine_id,
                 "session_id": str(uuid4()),
+                "metadata": {TASK_EXECUTION_PROVENANCE: {"complete": True, "stores": []}},
                 "user_id": user_id,
                 "transitions": [],
                 "created_at": int(time.time()),

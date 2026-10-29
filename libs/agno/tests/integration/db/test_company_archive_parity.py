@@ -23,7 +23,18 @@ async def call(fn, /, *args, **kwargs):
 
 
 @pytest_asyncio.fixture(params=["sqlite", "async_sqlite", "postgres", "async_postgres"])
-async def db(request, tmp_path):
+async def db(request, tmp_path, monkeypatch):
+    providers = []
+    get_app = AgentOS.get_app
+
+    def tracked_app(agent_os, *args, **kwargs):
+        app = get_app(agent_os, *args, **kwargs)
+        provider = agent_os._task_execution_provider
+        if provider is not None and provider not in providers:
+            providers.append(provider)
+        return app
+
+    monkeypatch.setattr(AgentOS, "get_app", tracked_app)
     backend = request.param
     suffix = uuid4().hex[:12]
     kwargs = {name + "_table": name + "_" + suffix for name in ("products", "projects", "tasks")}
@@ -37,6 +48,8 @@ async def db(request, tmp_path):
     try:
         yield database
     finally:
+        for provider in providers:
+            await provider.aclose()
         if "postgres" in backend:
             statement = text('DROP SCHEMA IF EXISTS "' + database.db_schema + '" CASCADE')
             if isinstance(database, AsyncBaseDb):
@@ -802,6 +815,8 @@ async def test_purge_owned_rows_and_preserve_unrelated_data(db, target, archived
         db.create_task,
         dict(id="legacy", product_id=product["id"], title="Legacy", status="backlog", created_at=1, transitions=[]),
     )
+    # This isolated imported fixture has no session or historical executions.
+    await reconcile_execution_provenance(db, legacy, [])
     source = await call(m.create_source, product_id=product["id"], type="markdown", reference="/tmp/manual.md")
     await call(m.delete_source, source["id"])
     await call(db.upsert_session, AgentSession(session_id="keep-session", created_at=1, updated_at=1))
@@ -1082,7 +1097,11 @@ async def test_purge_serializes_with_reservation_and_child_creation(db, operatio
                     {"expected_tasks": snapshot},
                 )
             elif operation == "execution":
-                method, args, kwargs = db.acquire_task_execution, (task["session_id"], "racing-run"), {}
+                method, args, kwargs = (
+                    db.acquire_task_execution,
+                    (task["session_id"], "racing-run"),
+                    {"expected_task_ids": [task["id"]]},
+                )
             elif operation == "reservation":
                 method, args, kwargs = (
                     db.start_task_run,
@@ -1119,7 +1138,7 @@ async def test_purge_serializes_with_reservation_and_child_creation(db, operatio
     if winner == "purge":
         assert purged is True
         if operation == "execution":
-            assert changed == []
+            assert isinstance(changed, ValueError) and "identity changed" in str(changed)
         else:
             assert changed is None if operation == "reservation" else isinstance(changed, (ValueError, LookupError))
         assert await call(db.get_task, task["id"], include_deleted=True) is None
@@ -1240,17 +1259,19 @@ async def execution_task(db, metadata=None):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("archived", [False, True])
 @pytest.mark.parametrize("metadata", [None, {"note": "preserve", "checkout": {"ref": "main"}}])
-async def test_execution_claims_preserve_rows_and_release_only_their_token(db, archived, metadata):
+@pytest.mark.parametrize("prepared", [False, True])
+async def test_execution_claims_preserve_rows_and_release_only_their_token(db, archived, metadata, prepared):
     m, product, project, task = await execution_task(db, metadata)
     if archived:
         await call(m.delete, product["id"])
     before = await call(db.get_task, task["id"], include_deleted=True)
     session_id = task["session_id"]
+    kwargs = {"expected_task_ids": [task["id"]]} if prepared else {}
     for cycle in range(2):
         first, second = f"first-{cycle}", f"second-{cycle}"
-        assert await call(db.acquire_task_execution, session_id, first) == [task["id"]]
-        assert await call(db.acquire_task_execution, session_id, first) == [task["id"]]
-        assert await call(db.acquire_task_execution, session_id, second) == [task["id"]]
+        assert await call(db.acquire_task_execution, session_id, first, **kwargs) == [task["id"]]
+        assert await call(db.acquire_task_execution, session_id, first, **kwargs) == [task["id"]]
+        assert await call(db.acquire_task_execution, session_id, second, **kwargs) == [task["id"]]
         claimed = await call(db.get_task, task["id"], include_deleted=True)
         assert set(claimed["metadata"]["_agno_execution_claims"]) == {first, second}
         assert claimed["metadata"]["_agno_execution_revision"] == (cycle + 1) * 2
@@ -1274,13 +1295,37 @@ async def test_execution_claims_preserve_rows_and_release_only_their_token(db, a
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mismatch", ["missing", "extra", "empty"])
+async def test_prepared_execution_identity_mismatch_keeps_all_rows_unchanged(db, mismatch):
+    metadata = {"note": "keep", "_agno_execution_claims": ["existing"], "_agno_execution_revision": 3}
+    m, product, project, task = await execution_task(db, metadata)
+    sibling = await call(db.create_task, {**task, "id": uuid4().hex, "metadata": None})
+    await call(m.delete_task, sibling["id"])
+    ids = [task["id"], sibling["id"]]
+    expected = {"missing": ids[:1], "extra": [*ids, "absent"], "empty": []}[mismatch]
+    before = [await call(db.get_task, task_id, include_deleted=True) for task_id in ids]
+    for cycle in range(2):
+        with pytest.raises(ValueError, match="Task execution identity changed"):
+            await call(db.acquire_task_execution, task["session_id"], f"new-{cycle}", expected_task_ids=expected)
+        assert [await call(db.get_task, task_id, include_deleted=True) for task_id in ids] == before
+    # Identity is a set; caller order and duplicate IDs do not change which rows are protected.
+    assert set(
+        await call(db.acquire_task_execution, task["session_id"], "matched", expected_task_ids=[*ids[::-1], ids[0]])
+    ) == set(ids)
+    for task_id in ids:
+        assert (
+            "matched" in (await call(db.get_task, task_id, include_deleted=True))["metadata"]["_agno_execution_claims"]
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("target", ["product", "project", "task"])
 @pytest.mark.parametrize("archived", [False, True])
 async def test_purge_refuses_execution_claim_even_in_verified_snapshot(db, target, archived):
     await call(db._get_table, table_type="schedules", create_table_if_not_found=True)
-    m, product, project, task = await execution_task(
-        db, {"_agno_execution_claims": ["live"], "_agno_execution_revision": 1}
-    )
+    m, product, project, task = await execution_task(db)
+    await reconcile_execution_provenance(db, task, [])
+    await call(db.acquire_task_execution, task["session_id"], "live")
     if archived:
         await call(m.delete, product["id"])
     snapshot = [await call(db.get_task, task["id"], include_deleted=True)]
@@ -1295,6 +1340,7 @@ async def test_purge_refuses_execution_claim_even_in_verified_snapshot(db, targe
 @pytest.mark.asyncio
 async def test_execution_revision_prevents_snapshot_aba_and_unverified_purge(db):
     m, product, project, task = await execution_task(db)
+    await reconcile_execution_provenance(db, task, [])
     snapshot = [await call(db.get_task, task["id"])]
     for token in ("first", "second"):
         await call(db.acquire_task_execution, task["session_id"], token)
@@ -1305,7 +1351,11 @@ async def test_execution_revision_prevents_snapshot_aba_and_unverified_purge(db)
             await call(m.purge_task, task["id"])
     current = await call(db.get_task, task["id"])
     assert await call(m.purge_task, task["id"], expected_tasks=[current])
-    assert await call(db.acquire_task_execution, task["session_id"], "after-delete") == []
+    for _ in range(2):
+        with pytest.raises(ValueError, match="Task execution identity changed"):
+            await call(db.acquire_task_execution, task["session_id"], "prepared", expected_task_ids=[task["id"]])
+        assert await call(db.acquire_task_execution, task["session_id"], "after-delete") == []
+        assert await call(db.acquire_task_execution, task["session_id"], "empty", expected_task_ids=[]) == []
     await call(db.release_task_execution, task["session_id"], "second")
 
 
@@ -1454,3 +1504,115 @@ async def test_execution_claims_are_private_in_edit_tool_results(db):
         assert result["title"] == title
         assert result["metadata"] == {"note": "public"}
         assert (await call(db.get_task, task["id"]))["metadata"] == metadata
+
+
+async def reconcile_execution_provenance(db, task, stores):
+    from agno.db.sql.company import _reconcile_task_execution_provenance
+
+    table = await call(db._get_table, table_type="tasks")
+    if isinstance(db, AsyncBaseDb):
+        async with db.async_session_factory() as session, session.begin():
+            await session.run_sync(_reconcile_task_execution_provenance, table, task, stores)
+    else:
+        with db.Session() as session, session.begin():
+            _reconcile_task_execution_provenance(session, table, task, stores)
+
+
+@pytest.mark.asyncio
+async def test_execution_provenance_legacy_requires_offline_verification(db):
+    m, _, _, task = await execution_task(db, {"note": "retained"})
+    for _ in range(2):
+        with pytest.raises(ValueError, match="provenance"):
+            await call(m.purge_task, task["id"], expected_tasks=[task])
+        assert await call(db.get_task, task["id"]) == task
+    await reconcile_execution_provenance(db, task, [])
+    verified = await call(db.get_task, task["id"])
+    assert verified["metadata"] == {"note": "retained", "_agno_execution_provenance": {"complete": True, "stores": []}}
+    assert await call(m.purge_task, task["id"], expected_tasks=[verified])
+
+
+@pytest.mark.asyncio
+async def test_execution_provenance_inventory_survives_release_without_certifying_legacy(db):
+    m = manager(db)
+    product = await call(m.create, name="Provenance")
+    project = await call(m.create_project, product_id=product["id"], name="Project")
+    fresh = await call(m.create_task, product_id=product["id"], project_id=project["id"], title="Fresh")
+    _, _, _, legacy = await execution_task(db)
+    stores = [dict(db_id=name, session_table="sessions", runs_table="runs") for name in ("original", "replacement")]
+    for task, complete in [(fresh, True), (legacy, False)]:
+        for cycle in range(2):
+            for store in stores:
+                await call(db.acquire_task_execution, task["session_id"], "run", execution_store=store)
+            await call(db.release_task_execution, task["session_id"], "run")
+            saved = await call(db.get_task, task["id"])
+            assert saved["metadata"]["_agno_execution_provenance"] == {"complete": complete, "stores": stores}
+            assert saved["metadata"]["_agno_execution_revision"] == cycle + 1
+        await call(db.acquire_task_execution, task["session_id"], "unpersisted", execution_store={})
+        await call(db.release_task_execution, task["session_id"], "unpersisted")
+        await call(db.acquire_task_execution, task["session_id"], "persisted", execution_store=stores[0])
+        await call(db.release_task_execution, task["session_id"], "persisted")
+        assert (await call(db.get_task, task["id"]))["metadata"]["_agno_execution_provenance"]["complete"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["edit", "claim"])
+async def test_execution_provenance_reconciliation_refuses_changed_or_claimed_row(db, change):
+    _, _, _, task = await execution_task(db)
+    if change == "edit":
+        await call(db.update_task, task["id"], title="Concurrent edit")
+    else:
+        await call(db.acquire_task_execution, task["session_id"], "live")
+    current = await call(db.get_task, task["id"])
+    with pytest.raises(ValueError, match="changed|active"):
+        await reconcile_execution_provenance(db, task if change == "edit" else current, [])
+    assert await call(db.get_task, task["id"]) == current
+
+
+@pytest.mark.asyncio
+async def test_execution_provenance_is_private_and_cannot_be_supplied_over_http(db):
+    import json
+
+    from agno.db.schemas.tasks import public_task
+    from agno.tools.company import _public_json
+
+    metadata = {"note": "public", "_agno_execution_provenance": {"complete": True, "stores": []}}
+    _, product, project, task = await execution_task(db, metadata)
+    assert public_task(task)["metadata"] == {"note": "public"}
+    assert json.loads(_public_json(task))["metadata"] == {"note": "public"}
+    app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
+    async with AsyncClient(transport=ASGITransport(app), base_url="http://test") as client:
+        assert (await client.get("/company/tasks/" + task["id"])).json()["metadata"] == {"note": "public"}
+        assert (await client.patch("/company/tasks/" + task["id"], json={"metadata": metadata})).status_code == 422
+        response = await client.post(
+            "/company/tasks",
+            json={"product_id": product["id"], "project_id": project["id"], "title": "Forged", "metadata": metadata},
+        )
+        assert response.status_code == 422
+    assert (await call(db.get_task, task["id"]))["metadata"] == metadata
+
+
+@pytest.mark.asyncio
+async def test_execution_provenance_reconciliation_preserves_recorded_stores_and_requires_runtime(db):
+    m, _, _, task = await execution_task(db)
+    original = {"db_id": "original", "session_table": "sessions", "runs_table": "runs"}
+    replacement = {"db_id": "replacement", "session_table": "sessions", "runs_table": "runs"}
+    await call(db.acquire_task_execution, task["session_id"], "old", execution_store=original)
+    await call(db.release_task_execution, task["session_id"], "old")
+    snapshot = await call(db.get_task, task["id"])
+    await reconcile_execution_provenance(db, snapshot, [replacement])
+    verified = await call(db.get_task, task["id"])
+    assert verified["metadata"]["_agno_execution_provenance"] == {"complete": True, "stores": [original, replacement]}
+    with pytest.raises(ValueError, match="verification"):
+        await call(m.purge_task, task["id"])
+    assert await call(db.get_task, task["id"]) == verified
+
+
+@pytest.mark.asyncio
+async def test_execution_provenance_offline_inventory_requires_runtime_even_without_revision(db):
+    m, _, _, task = await execution_task(db)
+    store = {"db_id": "historical", "session_table": "sessions", "runs_table": "runs"}
+    await reconcile_execution_provenance(db, task, [store])
+    verified = await call(db.get_task, task["id"])
+    with pytest.raises(ValueError, match="verification"):
+        await call(m.purge_task, task["id"])
+    assert await call(db.get_task, task["id"]) == verified

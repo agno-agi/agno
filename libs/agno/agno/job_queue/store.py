@@ -19,7 +19,7 @@ import asyncio
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TOKEN
+from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TASK_IDS, QUEUE_ACCEPTANCE_TOKEN
 from agno.job_queue.session import is_serialized, next_session_seq, session_blocked, session_blocker, with_session_seq
 
 
@@ -276,6 +276,7 @@ class InMemoryQueueStore:
         session_id: Optional[Union[str, List[str]]] = None,
         user_id: Optional[str] = None,
         raise_on_error: bool = False,
+        company_task_id: Optional[Union[str, List[str]]] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Paginated job listing: (page of jobs, total matching count).
 
@@ -288,12 +289,14 @@ class InMemoryQueueStore:
         to created_at when updated_at is None, matching the DB adapters."""
         statuses = [status] if isinstance(status, str) else status
         session_ids = [session_id] if isinstance(session_id, str) else session_id
+        task_ids = [company_task_id] if isinstance(company_task_id, str) else company_task_id
         async with self._lock:
             jobs = [
                 dict(j)
                 for j in self._jobs.values()
                 if (statuses is None or j["status"] in statuses)
                 and (session_ids is None or j.get("session_id") in session_ids)
+                and (task_ids is None or (j.get("payload") or {}).get("company_task_id") in task_ids)
                 and (user_id is None or j.get("user_id") == user_id)
             ]
         total_count = len(jobs)
@@ -312,10 +315,14 @@ class InMemoryQueueStore:
         start = max(page - 1, 0) * limit
         return jobs[start : start + limit], total_count
 
-    async def requeue_job(self, job_id: str, *, acceptance_token: Optional[str] = None) -> bool:
+    async def requeue_job(
+        self, job_id: str, *, acceptance_token: Optional[str] = None, acceptance_task_ids: Optional[List[str]] = None
+    ) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
         exactly one more execution by raising max_attempts to attempt + 1.
         A supplied acceptance token replaces the terminal ticket's prior owner."""
+        if (acceptance_token is None) != (acceptance_task_ids is None):
+            raise ValueError("Acceptance token and Task IDs must be supplied together")
         async with self._lock:
             job = self._jobs.get(job_id)
             if job is None or job["status"] not in ("failed", "cancelled"):
@@ -324,7 +331,11 @@ class InMemoryQueueStore:
             if is_serialized(job):
                 job["payload"] = with_session_seq(job, next_session_seq(job, self._jobs.values()))["payload"]
             if acceptance_token is not None:
-                job["payload"] = {**(job.get("payload") or {}), QUEUE_ACCEPTANCE_TOKEN: acceptance_token}
+                job["payload"] = {
+                    **(job.get("payload") or {}),
+                    QUEUE_ACCEPTANCE_TOKEN: acceptance_token,
+                    QUEUE_ACCEPTANCE_TASK_IDS: list(acceptance_task_ids or []),
+                }
             job.update(
                 status="queued",
                 max_attempts=job["attempt"] + 1,
@@ -337,7 +348,12 @@ class InMemoryQueueStore:
             return True
 
     async def continue_job(
-        self, job_id: str, continue_payload: Dict[str, Any], *, acceptance_token: Optional[str] = None
+        self,
+        job_id: str,
+        continue_payload: Dict[str, Any],
+        *,
+        acceptance_token: Optional[str] = None,
+        acceptance_task_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Continuation CAS: flip the EXISTING paused ticket back to queued,
         mirroring requeue_job's transition. No new rows, ever - id == run_id
@@ -357,6 +373,8 @@ class InMemoryQueueStore:
           click's inputs are discarded.
         - conflict: terminal ticket or no ticket; job is the row or None.
         """
+        if (acceptance_token is None) != (acceptance_task_ids is None):
+            raise ValueError("Acceptance token and Task IDs must be supplied together")
         async with self._lock:
             job = self._jobs.get(job_id)
             if job is None or job["status"] in ("completed", "failed", "cancelled"):
@@ -368,6 +386,7 @@ class InMemoryQueueStore:
             payload["continue"] = dict(continue_payload)
             if acceptance_token is not None and QUEUE_ACCEPTANCE_TOKEN not in payload:
                 payload[QUEUE_ACCEPTANCE_TOKEN] = acceptance_token
+                payload[QUEUE_ACCEPTANCE_TASK_IDS] = list(acceptance_task_ids or [])
             job.update(
                 status="queued",
                 payload=payload,

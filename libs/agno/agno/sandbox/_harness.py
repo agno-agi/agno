@@ -327,7 +327,7 @@ def _media_wire(media: Any) -> List[Dict[str, Any]]:
 
 
 def _execution(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
-    from agno.run.concurrency import get_worker_ownership
+    from agno.run.concurrency import current_task_execution, get_worker_ownership
     from agno.sandbox.media import decode_media
 
     # Metadata for the session the turn creates, set by the host for a team member; not a run option.
@@ -343,6 +343,7 @@ def _execution(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -
         run_id=run_id,
         input=input,
         sdk=agent._sandbox_runtime,
+        **({"_task_execution": current_task_execution()} if current_task_execution() is not None else {}),
         user_id=kwargs.get("user_id"),
         agent_name=agent.name,
         config=config,

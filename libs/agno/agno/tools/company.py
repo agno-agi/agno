@@ -1519,7 +1519,7 @@ class _AsyncSyncManager:
 
 
 def _public_json(value, **kwargs):
-    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS, TASK_EXECUTION_REVISION
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS, TASK_EXECUTION_PROVENANCE, TASK_EXECUTION_REVISION
     from agno.run.authorization import AUTHORIZATION_KEY
 
     def clean(item):
@@ -1528,7 +1528,13 @@ def _public_json(value, **kwargs):
                 key: clean(child)
                 for key, child in item.items()
                 if key
-                not in {AUTHORIZATION_KEY, "_agno_company_acceptance", TASK_EXECUTION_CLAIMS, TASK_EXECUTION_REVISION}
+                not in {
+                    AUTHORIZATION_KEY,
+                    "_agno_company_acceptance",
+                    TASK_EXECUTION_CLAIMS,
+                    TASK_EXECUTION_REVISION,
+                    TASK_EXECUTION_PROVENANCE,
+                }
             }
         if isinstance(item, list):
             return [clean(child) for child in item]

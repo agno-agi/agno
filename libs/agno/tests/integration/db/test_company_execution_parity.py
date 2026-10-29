@@ -89,6 +89,8 @@ async def system(request, tmp_path):
     app.state.queue_worker = worker
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client, db, worker, os, components
+    if os._task_execution_provider is not None:
+        await os._task_execution_provider.aclose()
     if isinstance(db, AsyncBaseDb):
         await db.close()
     else:
@@ -3675,11 +3677,15 @@ async def test_permanent_delete_checks_generic_run_without_company_attempt(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["runs", "executor", "storage"])
-async def test_unattempted_task_delete_refuses_unverifiable_executor_session(system, monkeypatch, failure):
+async def test_unattempted_task_delete_uses_recorded_store_after_executor_removal(system, monkeypatch, failure):
     from agno.company.execution import _call
 
     client, db, _, os, components = system
+    await _call(db, "_create_all_tables")
     task = await accepted(client)
+    descriptor = {"db_id": db.id, "session_table": db.session_table_name, "runs_table": db.runs_table_name}
+    await _call(db, "acquire_task_execution", task["session_id"], "original", execution_store=descriptor)
+    await _call(db, "release_task_execution", task["session_id"], "original")
     before = await _call(db, "get_task", task["id"])
     if failure == "executor":
         os.registry.agents.remove(components["writer"])
@@ -3695,8 +3701,10 @@ async def test_unattempted_task_delete_refuses_unverifiable_executor_session(sys
 
         monkeypatch.setattr(db, "get_runs", aunavailable if isinstance(db, AsyncBaseDb) else unavailable)
     response = await client.delete("/company/tasks/" + task["id"])
-    assert response.status_code == 503, response.text
-    assert await _call(db, "get_task", task["id"], include_deleted=True) == before
+    # Removing or reconfiguring the current executor does not erase the recorded store.
+    assert response.status_code == (503 if failure == "runs" else 204), response.text
+    if failure == "runs":
+        assert await _call(db, "get_task", task["id"], include_deleted=True) == before
 
 
 @pytest.mark.asyncio
@@ -3785,21 +3793,27 @@ async def test_permanent_delete_checks_live_tasks_below_archived_parents(system,
     assert started.status_code == 202, started.text
     await _call(db, "transition_task", task["id"], "backlog", "Replan")
     if resource == "products":
-        # Put the live Task beyond the first 100 rows of the newest-first list.
+        from agno.company import AsyncCompanyManager, CompanyManager
+
+        manager = AsyncCompanyManager(db) if isinstance(db, AsyncBaseDb) else CompanyManager(db)
+        # Fresh sessions have a known empty inventory, unlike imported legacy rows.
         for index in range(101):
             await _call(
-                db,
+                manager,
                 "create_task",
-                {
-                    "id": "later-" + str(index),
-                    "product_id": task["product_id"],
-                    "project_id": task["project_id"],
-                    "title": "Unused",
-                    "status": "backlog",
-                    "created_at": task["created_at"] + 100,
-                    "transitions": [],
-                },
+                product_id=task["product_id"],
+                project_id=task["project_id"],
+                title="Unused " + str(index),
             )
+        # Put the live Task beyond the first 100 rows of the newest-first list.
+        table = await _call(db, "_get_table", table_type="tasks")
+        statement = table.update().where(table.c.id != task["id"]).values(created_at=task["created_at"] + 100)
+        if isinstance(db, AsyncBaseDb):
+            async with db.async_session_factory() as session, session.begin():
+                await session.execute(statement)
+        else:
+            with db.Session() as session, session.begin():
+                session.execute(statement)
     product_path = "/company/products/" + task["product_id"]
     assert (await client.post(product_path + "/archive")).status_code == 200
     assert (await _call(db, "get_tasks", product_id=task["product_id"], include_deleted=True))[1] == 0
@@ -3941,3 +3955,138 @@ async def test_permanent_delete_verifies_legacy_zero_attempt(system, monkeypatch
         assert (await client.delete("/company/tasks/" + task["id"])).status_code == expected
     if state in {"live_run", "terminal"}:
         assert (await _call(db, "get_runs", session_id=task["session_id"], deserialize=False))[1] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("match", ["task", "session"])
+async def test_permanent_delete_filters_unrelated_queue_tickets(system, monkeypatch, match):
+    from agno.company.execution import _call
+    from agno.db.schemas.jobs import QueuedJob
+
+    client, db, worker, _, _ = system
+    await _call(db, "_create_all_tables")
+    task = await accepted(client)
+    payload = {"company_task_id": task["id"]} if match == "task" else {}
+    session_id = "different-session" if match == "task" else task["session_id"]
+    await worker.store.enqueue_job(
+        QueuedJob(
+            id="matching",
+            component_type="agent",
+            component_id="writer",
+            session_id=session_id,
+            payload=payload,
+            created_at=100,
+        ).to_dict()
+    )
+    for index in range(101):
+        await worker.store.enqueue_job(
+            QueuedJob(
+                id=f"unrelated-{index}",
+                component_type="agent",
+                component_id="writer",
+                session_id="unrelated",
+                payload={},
+                created_at=200 + index,
+            ).to_dict()
+        )
+    original = worker.config.db.list_jobs
+    calls = []
+
+    def tracked(*args, company_task_id=None, session_id=None, **kwargs):
+        calls.append({"company_task_id": company_task_id, "session_id": session_id, **kwargs})
+        if company_task_id is not None:
+            kwargs["company_task_id"] = company_task_id
+        return original(*args, session_id=session_id, **kwargs)
+
+    monkeypatch.setattr(worker.config.db, "list_jobs", tracked)
+    response = await client.delete("/company/tasks/" + task["id"])
+    assert response.status_code == 409, response.text
+    assert await _call(db, "get_task", task["id"]) is not None
+    assert all(call["limit"] == 1 and call["raise_on_error"] for call in calls)
+    assert calls[0]["company_task_id"] == [task["id"]]
+    if match == "session":
+        assert calls[1]["session_id"] == [task["session_id"]]
+    assert await worker.store.cancel_job("matching")
+    assert (await client.delete("/company/tasks/" + task["id"])).status_code == 204
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("history", ["paused", "missing", "ambiguous", "changed_table", "terminal", "legacy"])
+async def test_execution_provenance_checks_original_stores_after_reassignment(system, tmp_path, history):
+    from agno.company.execution import _call
+    from agno.run.agent import RunOutput
+    from agno.session.agent import AgentSession
+
+    client, db, _, os, components = system
+    await _call(db, "_create_all_tables")
+    replacement = SqliteDb(db_file=str(tmp_path / "replacement.db"), id="replacement")
+    replacement._create_all_tables()
+    try:
+        task = await accepted(client)
+        for store, state in [
+            (db, RunStatus.paused if history == "paused" else RunStatus.completed),
+            (replacement, RunStatus.completed),
+        ]:
+            descriptor = {
+                "db_id": store.id,
+                "session_table": store.session_table_name,
+                "runs_table": store.runs_table_name,
+            }
+            await _call(db, "acquire_task_execution", task["session_id"], store.id, execution_store=descriptor)
+            await _call(
+                store, "upsert_session", AgentSession(session_id=task["session_id"], created_at=1, updated_at=1)
+            )
+            await _call(
+                store, "upsert_run", RunOutput(run_id="run-" + store.id, status=state), session_id=task["session_id"]
+            )
+            await _call(db, "release_task_execution", task["session_id"], store.id)
+        assert (
+            await client.post(
+                "/company/tasks/" + task["id"] + "/transitions", json={"target": "backlog", "reason": "Reassign"}
+            )
+        ).status_code == 200
+        components["writer"].db = replacement
+        os.dbs[replacement.id] = [replacement]
+        os.dbs[db.id] = [db]
+        assert (
+            await client.post(
+                "/company/tasks/" + task["id"] + "/transitions",
+                json={"target": "ready", "reason": "Reassigned", "executor_type": "agent", "executor_id": "writer"},
+            )
+        ).status_code == 200
+        if history == "missing":
+            os.dbs.pop(db.id)
+        elif history == "ambiguous":
+            os.dbs[db.id].append(
+                SqliteDb(
+                    db_file=str(tmp_path / "ambiguous.db"),
+                    id=db.id,
+                    session_table=db.session_table_name,
+                    runs_table=db.runs_table_name,
+                )
+            )
+        elif history == "changed_table":
+            os.dbs[db.id] = [SqliteDb(db_file=str(tmp_path / "changed.db"), id=db.id, session_table="different")]
+        elif history == "legacy":
+            table = await _call(db, "_get_table", table_type="tasks")
+            statement = table.update().where(table.c.id == task["id"]).values(metadata=None)
+            if isinstance(db, AsyncBaseDb):
+                async with db.async_session_factory() as session, session.begin():
+                    await session.execute(statement)
+            else:
+                with db.Session() as session, session.begin():
+                    session.execute(statement)
+        before = await _call(db, "get_task", task["id"])
+        expected = 204 if history == "terminal" else (409 if history == "paused" else 503)
+        for _ in range(1 if expected == 204 else 2):
+            response = await client.delete("/company/tasks/" + task["id"])
+            assert response.status_code == expected, response.text
+            if expected != 204:
+                assert await _call(db, "get_task", task["id"]) == before
+        assert (await _call(db, "get_runs", session_id=task["session_id"], deserialize=False))[1] == 1
+        assert replacement.get_runs(session_id=task["session_id"], deserialize=False)[1] == 1
+    finally:
+        for store in os.dbs.get(db.id, []):
+            if store is not db:
+                await _call(store, "close")
+        replacement.close()

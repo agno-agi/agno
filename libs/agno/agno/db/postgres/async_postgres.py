@@ -32,7 +32,7 @@ from agno.db.schemas.authz import (
     AUTHZ_USERS,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
-from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TOKEN
+from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TASK_IDS, QUEUE_ACCEPTANCE_TOKEN
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.schemas.service_accounts import (
@@ -195,6 +195,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         if _engine is None:
             raise ValueError("One of db_url or db_engine must be provided")
 
+        self._execution_guard_url: Optional[str] = db_url if db_engine is None else None
         self.db_url: Optional[str] = db_url
         self.db_engine: AsyncEngine = _engine
         if id is None:
@@ -5636,6 +5637,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         session_id: Optional[Union[str, List[str]]] = None,
         user_id: Optional[str] = None,
         raise_on_error: bool = False,
+        company_task_id: Optional[Union[str, List[str]]] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List jobs, propagating read errors when raise_on_error is True."""
         try:
@@ -5649,6 +5651,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             if session_id is not None:
                 session_ids = [session_id] if isinstance(session_id, str) else list(session_id)
                 stmt = stmt.where(table.c.session_id.in_(session_ids))
+            if company_task_id is not None:
+                task_ids = [company_task_id] if isinstance(company_task_id, str) else list(company_task_id)
+                stmt = stmt.where(table.c.payload["company_task_id"].astext.in_(task_ids))
             if user_id is not None:
                 stmt = stmt.where(table.c.user_id == user_id)
             count_stmt = select(func.count()).select_from(stmt.alias())
@@ -5670,11 +5675,15 @@ class AsyncPostgresDb(AsyncBaseDb):
                 raise
             return [], 0
 
-    async def requeue_job(self, job_id: str, *, acceptance_token: Optional[str] = None) -> bool:
+    async def requeue_job(
+        self, job_id: str, *, acceptance_token: Optional[str] = None, acceptance_task_ids: Optional[List[str]] = None
+    ) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
         exactly one more execution by raising max_attempts to attempt + 1.
         A supplied acceptance token replaces the old owner and makes storage errors propagate.
         """
+        if (acceptance_token is None) != (acceptance_task_ids is None):
+            raise ValueError("Acceptance token and Task IDs must be supplied together")
         from agno.job_queue.session import is_serialized, with_session_seq
 
         try:
@@ -5719,6 +5728,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                         values["payload"] = {
                             **(values.get("payload", job.get("payload")) or {}),
                             QUEUE_ACCEPTANCE_TOKEN: acceptance_token,
+                            QUEUE_ACCEPTANCE_TASK_IDS: list(acceptance_task_ids or []),
                         }
                     await sess.execute(update(table).where(table.c.id == job_id).values(**values))
                     return True
@@ -5729,7 +5739,12 @@ class AsyncPostgresDb(AsyncBaseDb):
             return False
 
     async def continue_job(
-        self, job_id: str, continue_payload: Dict[str, Any], *, acceptance_token: Optional[str] = None
+        self,
+        job_id: str,
+        continue_payload: Dict[str, Any],
+        *,
+        acceptance_token: Optional[str] = None,
+        acceptance_task_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Continuation CAS: flip the EXISTING paused ticket back to queued,
         mirroring requeue_job's transition (row-locked read + conditional
@@ -5749,6 +5764,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         requeue_job): this CAS is the durable acceptance of the continue, and
         a DB failure must surface as a 500, never masquerade as "conflict".
         """
+        if (acceptance_token is None) != (acceptance_task_ids is None):
+            raise ValueError("Acceptance token and Task IDs must be supplied together")
         table = await self._get_table(table_type="jobs")
         if table is None:
             raise RuntimeError("Job queue table not found")
@@ -5765,8 +5782,9 @@ class AsyncPostgresDb(AsyncBaseDb):
                     return {"outcome": "attach", "job": job}
                 payload = dict(job.get("payload") or {})
                 payload["continue"] = dict(continue_payload)
-                if acceptance_token is not None:
-                    payload.setdefault(QUEUE_ACCEPTANCE_TOKEN, acceptance_token)
+                if acceptance_token is not None and QUEUE_ACCEPTANCE_TOKEN not in payload:
+                    payload[QUEUE_ACCEPTANCE_TOKEN] = acceptance_token
+                    payload[QUEUE_ACCEPTANCE_TASK_IDS] = list(acceptance_task_ids or [])
                 values: Dict[str, Any] = {
                     "status": "queued",
                     "payload": payload,
@@ -7173,7 +7191,14 @@ class AsyncPostgresDb(AsyncBaseDb):
             result = (await sess.execute(stmt.values(deleted_at=now, updated_at=now).returning(table.c.id))).fetchone()
             return result is not None
 
-    async def acquire_task_execution(self, session_id: str, token: str) -> List[str]:
+    async def acquire_task_execution(
+        self,
+        session_id: str,
+        token: str,
+        *,
+        expected_task_ids: Optional[Sequence[str]] = None,
+        execution_store: Optional[Dict[str, Any]] = None,
+    ) -> List[str]:
         """Protect all Tasks using this session, including archived records."""
         from agno.db.sql.company import acquire_task_execution
 
@@ -7181,7 +7206,14 @@ class AsyncPostgresDb(AsyncBaseDb):
         if tasks is None:
             raise CompanyDeletionUnavailableError("Company execution table is unavailable")
         async with self.async_session_factory() as sess, sess.begin():
-            return await sess.run_sync(acquire_task_execution, tasks, session_id, token)
+            return await sess.run_sync(
+                acquire_task_execution,
+                tasks,
+                session_id,
+                token,
+                expected_task_ids=expected_task_ids,
+                execution_store=execution_store,
+            )
 
     async def release_task_execution(self, session_id: str, token: str) -> None:
         """Release only this execution token without changing Task activity."""

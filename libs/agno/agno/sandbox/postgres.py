@@ -399,6 +399,7 @@ class _SandboxStore:
         lease_seconds: float = 60,
         prepared_run: Optional[Dict[str, Any]] = None,
         session_metadata: Optional[Dict[str, Any]] = None,
+        _company_execution: Optional[Dict[str, Any]] = None,
     ) -> SandboxState:
         """Own the session for ``run_id``; always continue with the returned state's lease.
 
@@ -583,6 +584,11 @@ class _SandboxStore:
                 )
                 if record.get("computer") is None:
                     record["computer_stopped"] = True
+            if _company_execution is not None and "_company_execution" not in record:
+                record["_company_execution"] = {
+                    **self._json(_company_execution),
+                    "execution_id": record["execution_id"],
+                }
             record["lease_seconds"] = lease_seconds
             updated = (
                 connection.execute(

@@ -552,7 +552,9 @@ class TestAcceptanceToken:
             previous = await store.get_job("r1")
             previous_payload = previous["payload"]
             previous_token = previous_payload["_agno_company_acceptance_token"]
-            assert await store.requeue_job("r1", acceptance_token=token)
+            assert await store.requeue_job(
+                "r1", acceptance_token=token, acceptance_task_ids=[] if (token) is not None else None
+            )
             queued = await store.get_job("r1")
             assert queued["payload"]["_agno_company_acceptance_token"] == token
             assert previous_payload["_agno_company_acceptance_token"] == previous_token
@@ -574,13 +576,17 @@ class TestAcceptanceToken:
         for token in ("second", "third"):
             claimed = await store.claim_job("w1")
             assert await store.complete_job("r1", "w1", claimed["attempt"], "paused")
-            result = await store.continue_job("r1", {"input": token}, acceptance_token=token)
+            result = await store.continue_job(
+                "r1", {"input": token}, acceptance_token=token, acceptance_task_ids=[] if (token) is not None else None
+            )
             assert result["outcome"] == "queued"
             assert result["job"]["payload"]["_agno_company_acceptance_token"] == (existing or "second")
             assert result["job"]["payload"]["continue"] == {"input": token}
             assert result["job"]["payload"]["input"] == "hello"
             before = await store.get_job("r1")
-            assert (await store.continue_job("r1", {}, acceptance_token="loser"))["outcome"] == "attach"
+            assert (await store.continue_job("r1", {}, acceptance_token="loser", acceptance_task_ids=[]))[
+                "outcome"
+            ] == "attach"
             assert await store.get_job("r1") == before
 
     @pytest.mark.asyncio
@@ -591,7 +597,7 @@ class TestAcceptanceToken:
             job["payload"]["_agno_company_acceptance_token"] = "original"
             await store.enqueue_job(job)
         before = await store.get_job("r1")
-        assert not await store.requeue_job("r1", acceptance_token="loser")
+        assert not await store.requeue_job("r1", acceptance_token="loser", acceptance_task_ids=[])
         assert await store.get_job("r1") == before
 
     @pytest.mark.asyncio
@@ -602,7 +608,7 @@ class TestAcceptanceToken:
             job["payload"]["_agno_company_acceptance_token"] = "original"
             await store.enqueue_job(job)
         before = await store.get_job("r1")
-        result = await store.continue_job("r1", {"input": "loser"}, acceptance_token="loser")
+        result = await store.continue_job("r1", {"input": "loser"}, acceptance_token="loser", acceptance_task_ids=[])
         assert result["outcome"] == ("attach" if status in ("queued", "running") else "conflict")
         assert await store.get_job("r1") == before
 
@@ -618,3 +624,28 @@ class TestAcceptanceToken:
                 == "queued"
             )
             assert (await store.get_job("r1"))["payload"]["_agno_company_acceptance_token"] == "original"
+
+
+@pytest.mark.asyncio
+async def test_acceptance_identity_pair_follows_generation(store):
+    await store.enqueue_job(make_job())
+    for token, ids in (("one", ["task"]), ("two", [])):
+        assert await store.cancel_job("r1")
+        assert await store.requeue_job("r1", acceptance_token=token, acceptance_task_ids=ids)
+        job = await store.get_job("r1")
+        assert job["payload"]["_agno_company_acceptance_token"] == token
+        assert job["payload"]["_agno_company_task_ids"] == ids
+        claimed = await store.claim_job("worker")
+        assert await store.complete_job("r1", "worker", claimed["attempt"], "paused")
+        continued = await store.continue_job("r1", {}, acceptance_token="loser", acceptance_task_ids=["other"])
+        assert continued["job"]["payload"]["_agno_company_task_ids"] == ids
+
+
+@pytest.mark.asyncio
+async def test_acceptance_identity_pair_is_required_before_write(store):
+    await store.enqueue_job(make_job())
+    assert await store.cancel_job("r1")
+    before = await store.get_job("r1")
+    with pytest.raises(ValueError, match="together"):
+        await store.requeue_job("r1", acceptance_token="orphan")
+    assert await store.get_job("r1") == before

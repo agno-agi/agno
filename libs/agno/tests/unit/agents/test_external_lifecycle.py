@@ -802,3 +802,164 @@ def test_decoded_answers_are_validated_as_they_are():
     run = RunOutput(run_id="r", content='{"left": ["a"], "right": 1}', status=RunStatus.completed)
     agent._apply_output_schema(run, Pair, None)
     assert run.content == Pair(left=["a"], right=1), "text is still parsed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_company_claim_survives_external_background_disconnect(agent, stream):
+    from agno.company.execution import _call
+    from agno.company.manager import AsyncCompanyManager, CompanyManager
+    from agno.db.base import AsyncBaseDb
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.run.background import await_background_runs
+    from agno.run.concurrency import _TaskExecutionProvider, task_execution_scope
+
+    manager = (AsyncCompanyManager if isinstance(agent.db, AsyncBaseDb) else CompanyManager)(agent.db)
+    product = await _call(manager, "create", name="Runtime")
+    project = await _call(manager, "create_project", product_id=product["id"], name="Draft")
+    task = await _call(manager, "create_task", product_id=product["id"], project_id=project["id"], title="Work")
+    provider = _TaskExecutionProvider(agent.db)
+    await provider.ainitialize()
+    try:
+        for _ in range(2):
+            agent.started.clear()
+            agent.release.clear()
+            with task_execution_scope(provider):
+                result = agent.arun("work", session_id=task["session_id"], background=True, stream=stream)
+                if stream:
+                    await result.__anext__()
+                    await result.aclose()
+                else:
+                    await result
+            await asyncio.wait_for(agent.started.wait(), 2)
+            row = await _call(agent.db, "get_task", task["id"])
+            assert row["metadata"].get(TASK_EXECUTION_CLAIMS), "Background execution lost its Task claim"
+            agent.release.set()
+            await await_background_runs()
+            await provider.aclose()
+            assert not (await _call(agent.db, "get_task", task["id"]))["metadata"].get(TASK_EXECUTION_CLAIMS)
+            provider = _TaskExecutionProvider(agent.db)
+            await provider.ainitialize()
+    finally:
+        agent.release.set()
+        await await_background_runs()
+        await provider.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_external_sync_thread_keeps_company_context(tmp_path, stream):
+    import threading
+
+    from agno.company.manager import CompanyManager
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.run.concurrency import _TaskExecutionProvider, task_execution_scope
+
+    db = SqliteDb(db_file=str(tmp_path / "thread.db"))
+    manager = CompanyManager(db)
+    product = manager.create(name="Runtime")
+    project = manager.create_project(product_id=product["id"], name="Draft")
+    task = manager.create_task(product_id=product["id"], project_id=project["id"], title="Work")
+    release = threading.Event()
+    entered = threading.Event()
+    observations = []
+
+    @dataclass
+    class ThreadAgent(BaseExternalAgent):
+        async def _arun_adapter(self, input, **kwargs):
+            observations.append(bool(db.get_task(task["id"])["metadata"].get(TASK_EXECUTION_CLAIMS)))
+            entered.set()
+            await asyncio.to_thread(release.wait)
+            return "done"
+
+        async def _arun_adapter_stream(self, input, **kwargs):
+            yield RunContentEvent(content=await self._arun_adapter(input, **kwargs))
+
+    external = ThreadAgent(id="external", db=db)
+    provider = _TaskExecutionProvider(db)
+    await provider.ainitialize()
+    try:
+        with task_execution_scope(provider):
+            if stream:
+                iterator = external.run("work", session_id=task["session_id"], stream=True)
+                next(iterator)
+                assert await asyncio.to_thread(entered.wait, 2)
+                iterator.close()
+                assert db.get_task(task["id"])["metadata"].get(TASK_EXECUTION_CLAIMS)
+                release.set()
+            else:
+                release.set()
+                assert external.run("work", session_id=task["session_id"]).status == RunStatus.completed
+        assert observations == [True]
+        for _ in range(200):
+            if not db.get_task(task["id"])["metadata"].get(TASK_EXECUTION_CLAIMS):
+                break
+            await asyncio.sleep(0.01)
+        assert not db.get_task(task["id"])["metadata"].get(TASK_EXECUTION_CLAIMS)
+    finally:
+        release.set()
+        await provider.aclose()
+        db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("cleanup_failure", [None, "error", "cancelled"])
+async def test_external_stream_claim_outlives_native_cleanup(tmp_path, cleanup_failure, native):
+    from agno.company.manager import CompanyManager
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.exceptions import RunCancelledException
+    from agno.run.concurrency import _TaskExecutionProvider, task_execution_scope
+
+    db = SqliteDb(db_file=str(tmp_path / "cleanup.db"))
+    manager = CompanyManager(db)
+    product = manager.create(name="Runtime")
+    project = manager.create_project(product_id=product["id"], name="Draft")
+    task = manager.create_task(product_id=product["id"], project_id=project["id"], title="Work")
+    cleanup_entered, cleanup_release = asyncio.Event(), asyncio.Event()
+    error_type = RunCancelledException if cleanup_failure == "cancelled" else RuntimeError
+
+    @dataclass
+    class CleanupAgent(BaseExternalAgent):
+        @property
+        def _uses_native_hitl(self):
+            return native
+
+        async def _arun_adapter_stream(self, input, **kwargs):
+            try:
+                yield RunContentEvent(content="working")
+                await asyncio.Event().wait()
+            finally:
+                cleanup_entered.set()
+                await cleanup_release.wait()
+                if cleanup_failure:
+                    raise error_type("native stop unconfirmed")
+
+    external = CleanupAgent(id="external", db=db)
+    provider = _TaskExecutionProvider(db)
+    await provider.ainitialize()
+
+    async def consume_and_close():
+        with task_execution_scope(provider):
+            stream = external.arun("work", session_id=task["session_id"], stream=True)
+            await stream.__anext__()
+            await stream.__anext__()
+            await stream.aclose()
+
+    closing = asyncio.create_task(consume_and_close())
+    try:
+        await asyncio.wait_for(cleanup_entered.wait(), 2)
+        assert db.get_task(task["id"])["metadata"].get(TASK_EXECUTION_CLAIMS), "Claim released before native cleanup"
+        cleanup_release.set()
+        if cleanup_failure:
+            with pytest.raises(error_type, match="native stop unconfirmed"):
+                await closing
+            assert db.get_task(task["id"])["metadata"].get(TASK_EXECUTION_CLAIMS)
+        else:
+            await closing
+            assert not db.get_task(task["id"])["metadata"].get(TASK_EXECUTION_CLAIMS)
+    finally:
+        cleanup_release.set()
+        await asyncio.gather(closing, return_exceptions=True)
+        await provider.aclose()
+        db.close()

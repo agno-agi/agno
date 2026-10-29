@@ -624,3 +624,280 @@ async def test_product_purge_uses_real_mongo_schedule_catalog(system, asynchrono
         else:
             schedule_db.db_client.drop_database(schedule_db.db_name)
         await _call(schedule_db, "close")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["agent", "team", "workflow"])
+@pytest.mark.parametrize("mode", ["sync", "sync_stream", "async", "async_stream", "background"])
+async def test_native_producer_protects_task_until_real_completion(tmp_path, system, kind, mode):
+    import asyncio
+    import threading
+
+    from agno.agent import Agent
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.db.sqlite import SqliteDb
+    from agno.run.background import await_background_runs
+    from agno.run.concurrency import _TaskExecutionProvider, task_execution_scope
+    from agno.team import Team
+    from agno.workflow import Step, StepOutput, Workflow
+    from tests.integration.db.test_company_execution_parity import OfflineModel
+
+    entered, finish = threading.Event(), threading.Event()
+
+    class BlockingModel(OfflineModel):
+        def invoke(self, *args, **kwargs):
+            entered.set()
+            assert finish.wait(10), "test did not release producer"
+            return super().invoke(*args, **kwargs)
+
+        async def ainvoke(self, *args, **kwargs):
+            entered.set()
+            assert await asyncio.to_thread(finish.wait, 10), "test did not release producer"
+            return OfflineModel.invoke(self, *args, **kwargs)
+
+        async def ainvoke_stream(self, *args, **kwargs):
+            yield await self.ainvoke(*args, **kwargs)
+
+    def work(step_input):
+        entered.set()
+        assert finish.wait(10), "test did not release workflow"
+        return StepOutput(content="Finished")
+
+    async def awork(step_input):
+        entered.set()
+        assert await asyncio.to_thread(finish.wait, 10), "test did not release workflow"
+        return StepOutput(content="Finished")
+
+    _, db, _, _, _ = system
+    run_db = SqliteDb(db_file=str(tmp_path / "runtime.db"))
+    manager = (AsyncCompanyManager if isinstance(db, AsyncBaseDb) else CompanyManager)(db)
+    product = await _call(manager, "create", name="Runtime")
+    project = await _call(manager, "create_project", product_id=product["id"], name="Review")
+    task = await _call(manager, "create_task", product_id=product["id"], project_id=project["id"], title="Draft")
+    if kind == "agent":
+        component = Agent(model=BlockingModel(), db=run_db, telemetry=False)
+    elif kind == "team":
+        component = Team(model=BlockingModel(), members=[], db=run_db, telemetry=False)
+    else:
+        component = Workflow(
+            steps=[Step(name="work", executor=work if mode.startswith("sync") else awork)], db=run_db, telemetry=False
+        )
+    provider = _TaskExecutionProvider(db)
+    await provider.ainitialize()
+
+    async def execute():
+        with task_execution_scope(provider):
+            kwargs = {"session_id": task["session_id"]}
+            if mode == "sync":
+                return await asyncio.to_thread(component.run, "Work", **kwargs)
+            if mode == "sync_stream":
+                return await asyncio.to_thread(lambda: list(component.run("Work", stream=True, **kwargs)))
+            if mode == "async_stream":
+                return [part async for part in component.arun("Work", stream=True, **kwargs)]
+            return await component.arun("Work", background=mode == "background", **kwargs)
+
+    running = asyncio.create_task(execute())
+    try:
+        assert await asyncio.to_thread(entered.wait, 8), "producer did not start"
+        row = await _call(db, "get_task", task["id"])
+        assert (row["metadata"] or {}).get(TASK_EXECUTION_CLAIMS), "real producer executed without a Task claim"
+        if mode == "background":
+            await running
+            assert ((await _call(db, "get_task", task["id"]))["metadata"] or {}).get(TASK_EXECUTION_CLAIMS)
+        await _call(db, "delete_task", task["id"])
+        archived = await _call(db, "get_task", task["id"], include_deleted=True)
+        with pytest.raises(ValueError, match="execut"):
+            await _call(db, "purge_task", task["id"], expected_tasks=[archived])
+    finally:
+        finish.set()
+        await running
+        await await_background_runs()
+        from agno.workflow.workflow import _workflow_background_tasks
+
+        if _workflow_background_tasks:
+            await asyncio.gather(*list(_workflow_background_tasks))
+        await provider.aclose()
+    assert not ((await _call(db, "get_task", task["id"], include_deleted=True))["metadata"] or {}).get(
+        TASK_EXECUTION_CLAIMS
+    )
+    run_db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_workflow_continuation_guards_session_not_workflow_default(tmp_path, stream):
+    import asyncio
+
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.db.sqlite import SqliteDb
+    from agno.run.concurrency import _TaskExecutionProvider, task_execution_scope
+    from agno.workflow import Step, StepOutput, Workflow
+    from agno.workflow.types import HumanReview
+
+    db = SqliteDb(db_file=str(tmp_path / "continue.db"))
+    manager = CompanyManager(db)
+    product = manager.create(name="Runtime")
+    project = manager.create_project(product_id=product["id"], name="Draft")
+    task = manager.create_task(product_id=product["id"], project_id=project["id"], title="Work")
+    entered, finish = asyncio.Event(), asyncio.Event()
+
+    async def work(step_input):
+        entered.set()
+        await finish.wait()
+        return StepOutput(content="Finished")
+
+    workflow = Workflow(
+        db=db,
+        steps=[Step(name="review", executor=work, human_review=HumanReview(requires_confirmation=True))],
+        telemetry=False,
+    )
+    provider = _TaskExecutionProvider(db)
+    await provider.ainitialize()
+    with task_execution_scope(provider):
+        paused = await workflow.arun("Work", session_id=task["session_id"])
+        paused.step_requirements[0].confirm()
+        workflow.session_id = "unrelated-default"
+
+        async def resume():
+            result = await workflow.acontinue_run(
+                paused, step_requirements=paused.step_requirements, session_id=task["session_id"], stream=stream
+            )
+            if stream:
+                return [part async for part in result]
+            return result
+
+        running = asyncio.create_task(resume())
+        try:
+            await asyncio.wait_for(entered.wait(), 3)
+            assert (db.get_task(task["id"])["metadata"] or {}).get(TASK_EXECUTION_CLAIMS)
+        finally:
+            finish.set()
+            await running
+            await provider.aclose()
+            db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("default_session", [None, "unrelated-default"])
+async def test_reloaded_workflow_background_continue_keeps_acceptance(tmp_path, monkeypatch, default_session):
+    import asyncio
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock
+
+    import agno.workflow.workflow as workflow_module
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.db.sqlite import SqliteDb
+    from agno.run.base import RunStatus
+    from agno.run.concurrency import _TaskExecutionProvider, task_execution_scope
+    from agno.workflow import Step, StepOutput, Workflow
+    from agno.workflow.types import HumanReview
+
+    db = SqliteDb(db_file=str(tmp_path / "background-continue.db"))
+    manager = CompanyManager(db)
+    product = manager.create(name="Continuation")
+    project = manager.create_project(product_id=product["id"], name="Draft")
+    task = manager.create_task(product_id=product["id"], project_id=project["id"], title="Work")
+    entered, finish = asyncio.Event(), asyncio.Event()
+    executed = []
+
+    async def work(step_input):
+        executed.append("finished")
+        return StepOutput(content="Finished")
+
+    def definition():
+        return Workflow(
+            id="continued",
+            db=db,
+            steps=[Step(name="review", executor=work, human_review=HumanReview(requires_confirmation=True))],
+            telemetry=False,
+        )
+
+    @asynccontextmanager
+    async def wait_for_slot(**kwargs):
+        entered.set()
+        await finish.wait()
+        yield
+
+    provider = _TaskExecutionProvider(db)
+    await provider.ainitialize()
+    try:
+        with task_execution_scope(provider):
+            paused = await definition().arun("Work", session_id=task["session_id"])
+            paused.step_requirements[0].confirm()
+            reloaded = definition()
+            reloaded.session_id = default_session
+            monkeypatch.setattr(workflow_module, "background_run_slot", wait_for_slot)
+            acknowledged = await reloaded.acontinue_run(
+                paused,
+                step_requirements=paused.step_requirements,
+                session_id=task["session_id"],
+                stream=True,
+                background=True,
+                enable_websocket=True,
+                websocket=AsyncMock(),
+            )
+        await asyncio.wait_for(entered.wait(), 3)
+        assert acknowledged.status == RunStatus.pending
+        assert not executed
+        assert (db.get_task(task["id"])["metadata"] or {}).get(TASK_EXECUTION_CLAIMS), (
+            "background continuation acknowledged without transferring its Task claim"
+        )
+    finally:
+        finish.set()
+        if workflow_module._workflow_background_tasks:
+            await asyncio.gather(*list(workflow_module._workflow_background_tasks))
+        await provider.aclose()
+        db.close()
+    assert acknowledged.status == RunStatus.completed
+    assert executed == ["finished"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["agent", "team", "workflow"])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_native_async_dispatch_keeps_prepared_identity_before_effects(tmp_path, monkeypatch, kind, stream):
+    from agno.agent import Agent
+    from agno.db.sqlite import SqliteDb
+    from agno.run.concurrency import _TaskExecutionProvider, remember_task_execution, task_execution_scope
+    from agno.team import Team
+    from agno.workflow import Step, StepOutput, Workflow
+    from tests.integration.db.test_company_execution_parity import OfflineModel
+
+    db = SqliteDb(db_file=str(tmp_path / "prepared.db"))
+    manager = CompanyManager(db)
+    product = manager.create(name="Prepared")
+    project = manager.create_project(product_id=product["id"], name="Draft")
+    task = manager.create_task(product_id=product["id"], project_id=project["id"], title="Work")
+    if kind == "agent":
+        component, initializer = Agent(model=OfflineModel(), db=db, telemetry=False), "initialize_agent"
+    elif kind == "team":
+        component, initializer = Team(model=OfflineModel(), members=[], db=db, telemetry=False), "initialize_team"
+    else:
+        component = Workflow(steps=[Step(name="work", executor=lambda _: StepOutput(content="done"))], db=db)
+        initializer = "initialize_workflow"
+    original = getattr(component, initializer)
+    effects = []
+
+    def initialize(*args, **kwargs):
+        effects.append("initialized")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(component, initializer, initialize)
+    provider = _TaskExecutionProvider(db)
+    await provider.ainitialize()
+    try:
+        with task_execution_scope(provider):
+            remember_task_execution(task["session_id"], [task["id"]])
+            table = db._get_table("tasks")
+            with db.Session() as session, session.begin():
+                session.execute(table.delete().where(table.c.id == task["id"]))
+            pending = component.arun("Work", session_id=task["session_id"], stream=stream)
+        with pytest.raises(ValueError, match="identity changed"):
+            if stream:
+                _ = [event async for event in pending]
+            else:
+                await pending
+        assert not effects
+    finally:
+        await provider.aclose()
+        db.close()

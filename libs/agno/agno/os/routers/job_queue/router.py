@@ -257,21 +257,21 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         # cancellation manager does not exist (same constraint as the sweep).
         # That needs two operators acting on one job simultaneously on an
         # admin-only surface; attempt-scoped intent (roadmap) closes it.
-        if clear_cancellation:
-            job = await store.get_job(job_id)
-            if job is None or job.get("status") not in ("failed", "cancelled"):
-                raise HTTPException(status_code=400, detail=f"Job {job_id} not found or not in a requeueable state")
-            try:
-                from agno.run.cancel import acleanup_run
+        if gate_job is None or gate_job.get("status") not in ("failed", "cancelled"):
+            raise HTTPException(status_code=400, detail=f"Job {job_id} not found or not in a requeueable state")
+        from agno.company.execution import _requeue_ticket
 
-                await acleanup_run(job_id)
-            except Exception:
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"Could not clear cancellation intent for job {job_id}; "
-                    "the job was NOT requeued - retry the request",
-                )
-        if not await store.requeue_job(job_id):
+        try:
+            accepted = await _requeue_ticket(
+                request.app.state.queue_worker, gate_job, clear_cancellation=clear_cancellation
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except Exception as error:
+            raise HTTPException(
+                status_code=503, detail="Could not safely requeue this job; retry after verification"
+            ) from error
+        if not accepted:
             raise HTTPException(status_code=400, detail=f"Job {job_id} not found or not in a requeueable state")
         # The requeued ticket is claimable now; claim it now (best-effort)
         wake_queue_worker(getattr(request.app.state, "queue_worker", None))

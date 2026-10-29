@@ -581,7 +581,7 @@ class TestAcceptanceToken:
             previous = db.get_job("r1")
             previous_payload = previous["payload"]
             previous_token = previous_payload["_agno_company_acceptance_token"]
-            assert db.requeue_job("r1", acceptance_token=token)
+            assert db.requeue_job("r1", acceptance_token=token, acceptance_task_ids=[] if (token) is not None else None)
             queued = db.get_job("r1")
             assert queued["payload"]["_agno_company_acceptance_token"] == token
             assert previous_payload["_agno_company_acceptance_token"] == previous_token
@@ -602,13 +602,15 @@ class TestAcceptanceToken:
         for token in ("second", "third"):
             claimed = db.claim_job("w1")
             assert db.complete_job("r1", "w1", claimed["attempt"], "paused")
-            result = db.continue_job("r1", {"input": token}, acceptance_token=token)
+            result = db.continue_job(
+                "r1", {"input": token}, acceptance_token=token, acceptance_task_ids=[] if (token) is not None else None
+            )
             assert result["outcome"] == "queued"
             assert result["job"]["payload"]["_agno_company_acceptance_token"] == (existing or "second")
             assert result["job"]["payload"]["continue"] == {"input": token}
             assert result["job"]["payload"]["input"] == "hello"
             before = db.get_job("r1")
-            assert (db.continue_job("r1", {}, acceptance_token="loser"))["outcome"] == "attach"
+            assert (db.continue_job("r1", {}, acceptance_token="loser", acceptance_task_ids=[]))["outcome"] == "attach"
             assert db.get_job("r1") == before
 
     @pytest.mark.parametrize("status", ["queued", "running", "paused", "completed", "missing"])
@@ -618,7 +620,7 @@ class TestAcceptanceToken:
             job["payload"]["_agno_company_acceptance_token"] = "original"
             db.enqueue_job(job)
         before = db.get_job("r1")
-        assert not db.requeue_job("r1", acceptance_token="loser")
+        assert not db.requeue_job("r1", acceptance_token="loser", acceptance_task_ids=[])
         assert db.get_job("r1") == before
 
     @pytest.mark.parametrize("status", ["queued", "running", "completed", "failed", "cancelled", "missing"])
@@ -628,7 +630,7 @@ class TestAcceptanceToken:
             job["payload"]["_agno_company_acceptance_token"] = "original"
             db.enqueue_job(job)
         before = db.get_job("r1")
-        result = db.continue_job("r1", {"input": "loser"}, acceptance_token="loser")
+        result = db.continue_job("r1", {"input": "loser"}, acceptance_token="loser", acceptance_task_ids=[])
         assert result["outcome"] == ("attach" if status in ("queued", "running") else "conflict")
         assert db.get_job("r1") == before
 
@@ -652,9 +654,9 @@ class TestAcceptanceToken:
         monkeypatch.setattr(pipeline_type, "execute", lost_response)
         with pytest.raises(ConnectionError, match="connection lost during acceptance"):
             if operation == "requeue":
-                db.requeue_job("r1", acceptance_token="new")
+                db.requeue_job("r1", acceptance_token="new", acceptance_task_ids=[])
             else:
-                db.continue_job("r1", {}, acceptance_token="new")
+                db.continue_job("r1", {}, acceptance_token="new", acceptance_task_ids=[])
         after = db.get_job("r1")
         if committed:
             assert after["status"] == "queued"
@@ -683,9 +685,9 @@ class TestAcceptanceToken:
 
         monkeypatch.setattr(db, "_q_save_job_in_pipe", racing_save)
         if operation == "requeue":
-            assert db.requeue_job("r1", acceptance_token="loser") is False
+            assert db.requeue_job("r1", acceptance_token="loser", acceptance_task_ids=[]) is False
         else:
-            assert db.continue_job("r1", {}, acceptance_token="loser")["outcome"] == "attach"
+            assert db.continue_job("r1", {}, acceptance_token="loser", acceptance_task_ids=[])["outcome"] == "attach"
         assert raced
         assert db.get_job("r1") == winner
 
@@ -721,7 +723,7 @@ class TestAcceptanceToken:
             return response
 
         monkeypatch.setattr(pipeline_type, "parse_response", lose_exec_response)
-        kwargs = {"acceptance_token": "new"} if guarded else {}
+        kwargs = {"acceptance_token": "new", "acceptance_task_ids": []} if guarded else {}
         args = ("r1",) if operation == "requeue" else ("r1", {})
         method = db.requeue_job if operation == "requeue" else db.continue_job
         if guarded:

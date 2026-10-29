@@ -180,6 +180,13 @@ class AsyncSqliteDb(AsyncBaseDb):
                 db_file = str(default_db_path)
                 log_debug(f"Created SQLite database: {default_db_path}")
 
+        # Only native file connections can be reproduced on a guard-owned loop.
+        self._execution_guard_url: Optional[str] = None
+        url = _engine.url
+        if db_engine is None and url.database and url.database != ":memory:" and not url.query:
+            self._execution_guard_url = url.set(database=str(Path(url.database).resolve())).render_as_string(
+                hide_password=False
+            )
         self.db_engine: AsyncEngine = _engine
         self.db_url: Optional[str] = db_url
         self.db_file: Optional[str] = db_file
@@ -6330,7 +6337,14 @@ class AsyncSqliteDb(AsyncBaseDb):
             result = (await sess.execute(stmt.values(deleted_at=now, updated_at=now).returning(table.c.id))).fetchone()
             return result is not None
 
-    async def acquire_task_execution(self, session_id: str, token: str) -> List[str]:
+    async def acquire_task_execution(
+        self,
+        session_id: str,
+        token: str,
+        *,
+        expected_task_ids: Optional[Sequence[str]] = None,
+        execution_store: Optional[Dict[str, Any]] = None,
+    ) -> List[str]:
         """Protect all Tasks using this session, including archived records."""
         from agno.db.sql.company import acquire_task_execution
 
@@ -6338,7 +6352,14 @@ class AsyncSqliteDb(AsyncBaseDb):
         if tasks is None:
             raise CompanyDeletionUnavailableError("Company execution table is unavailable")
         async with self.async_session_factory() as sess, sess.begin():
-            return await sess.run_sync(acquire_task_execution, tasks, session_id, token)
+            return await sess.run_sync(
+                acquire_task_execution,
+                tasks,
+                session_id,
+                token,
+                expected_task_ids=expected_task_ids,
+                execution_store=execution_store,
+            )
 
     async def release_task_execution(self, session_id: str, token: str) -> None:
         """Release only this execution token without changing Task activity."""

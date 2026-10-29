@@ -8813,7 +8813,14 @@ class SqliteDb(BaseDb):
             result = sess.execute(stmt.values(deleted_at=now, updated_at=now).returning(table.c.id)).fetchone()
             return result is not None
 
-    def acquire_task_execution(self, session_id: str, token: str) -> List[str]:
+    def acquire_task_execution(
+        self,
+        session_id: str,
+        token: str,
+        *,
+        expected_task_ids: Optional[Sequence[str]] = None,
+        execution_store: Optional[Dict[str, Any]] = None,
+    ) -> List[str]:
         """Protect all Tasks using this session, including archived records."""
         from agno.db.sql.company import acquire_task_execution
 
@@ -8821,7 +8828,9 @@ class SqliteDb(BaseDb):
         if tasks is None:
             raise CompanyDeletionUnavailableError("Company execution table is unavailable")
         with self.Session() as sess, sess.begin():
-            return acquire_task_execution(sess, tasks, session_id, token)
+            return acquire_task_execution(
+                sess, tasks, session_id, token, expected_task_ids=expected_task_ids, execution_store=execution_store
+            )
 
     def release_task_execution(self, session_id: str, token: str) -> None:
         """Release only this execution token without changing Task activity."""

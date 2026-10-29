@@ -211,16 +211,23 @@ def _error_body(detail: str, exc: BaseException) -> Dict[str, Any]:
 @asynccontextmanager
 async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
     """Initializes databases in the event loop and closes them on shutdown."""
-    if agent_os.auto_provision_dbs:
-        agent_os._initialize_sync_databases()
-        await agent_os._initialize_async_databases()
-    await agent_os._acheck_sandbox_tables()
-
-    yield
-
-    # Let in-flight cancel-persist tasks finish writing before the pool closes
-    await _drain_cancel_persist_tasks()
-    await agent_os._close_databases()
+    provider = agent_os._task_execution_provider
+    try:
+        if agent_os.auto_provision_dbs:
+            agent_os._initialize_sync_databases()
+            await agent_os._initialize_async_databases()
+        if provider is not None:
+            await provider.ainitialize()
+        await agent_os._acheck_sandbox_tables()
+        yield
+    finally:
+        # Let in-flight cancel-persist tasks finish writing before the pool closes.
+        await _drain_cancel_persist_tasks()
+        try:
+            if provider is not None:
+                await provider.aclose()
+        finally:
+            await agent_os._close_databases()
 
 
 @asynccontextmanager
@@ -512,6 +519,13 @@ class AgentOS:
                 company = replace(company, products=self.config.company.products)
         self.company = company
         self._company_db = (company.db if company.db is not None else db) if company is not None else None
+        from agno.run.concurrency import _TaskExecutionProvider
+
+        self._task_execution_provider = (
+            _TaskExecutionProvider(self._company_db, auto_provision=auto_provision_dbs)
+            if self._company_db is not None
+            else None
+        )
         self.checkpoint = checkpoint
 
         self.telemetry = telemetry
@@ -2292,7 +2306,11 @@ class AgentOS:
 
         from agno.os.authz.run_context import RunAuthorizationMiddleware
 
-        fastapi_app.add_middleware(RunAuthorizationMiddleware, authorization_app=fastapi_app)
+        fastapi_app.add_middleware(
+            RunAuthorizationMiddleware,
+            authorization_app=fastapi_app,
+            task_execution_provider=self._task_execution_provider,
+        )
 
         # Add trailing slash normalization middleware
         from agno.os.middleware.trailing_slash import TrailingSlashMiddleware

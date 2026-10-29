@@ -25,6 +25,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.run.concurrency import create_task_execution, guard_task_execution
+
 if TYPE_CHECKING:
     from fastapi import WebSocket
 
@@ -2940,6 +2942,7 @@ class Workflow:
                 partial_step_content += event.content
         return partial_step_content
 
+    @guard_task_execution(session_arg="session")
     def _execute(
         self,
         session: WorkflowSession,
@@ -3288,6 +3291,7 @@ class Workflow:
 
         return workflow_run_response
 
+    @guard_task_execution(session_arg="session")
     def _execute_stream(
         self,
         session: WorkflowSession,
@@ -3929,6 +3933,7 @@ class Workflow:
 
         return workflow_session, _session_state, session_metadata
 
+    @guard_task_execution(session_arg="session_id")
     async def _aexecute(
         self,
         session_id: str,
@@ -4292,6 +4297,7 @@ class Workflow:
 
         return workflow_run_response
 
+    @guard_task_execution(session_arg="session_id")
     async def _aexecute_stream(
         self,
         session_id: str,
@@ -4923,6 +4929,7 @@ class Workflow:
         await acleanup_run(workflow_run_response.run_id)  # type: ignore
         await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
+    @guard_task_execution(background=True)
     async def _arun_background(
         self,
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
@@ -5113,8 +5120,7 @@ class Workflow:
                 )
 
         # Create and start asyncio task
-        loop = asyncio.get_running_loop()
-        task = loop.create_task(
+        task = create_task_execution(
             execute_workflow_background(),
             name=f"workflow-background-{workflow_run_response.run_id}",
         )
@@ -5124,6 +5130,7 @@ class Workflow:
         # Return SAME object that will be updated by background execution
         return workflow_run_response
 
+    @guard_task_execution(background=True)
     async def _arun_background_stream_ws(
         self,
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
@@ -5383,8 +5390,7 @@ class Workflow:
                     log_warning(f"Failed to mark workflow run {publish_run_id} as completed in event stream")
 
         # Create and start asyncio task for background streaming execution
-        loop = asyncio.get_running_loop()
-        task = loop.create_task(
+        task = create_task_execution(
             execute_workflow_background_stream(),
             name=f"workflow-background-stream-ws-{workflow_run_response.run_id}",
         )
@@ -5394,6 +5400,7 @@ class Workflow:
         # Return SAME object that will be updated by background execution
         return workflow_run_response
 
+    @guard_task_execution(background=True)
     async def _arun_background_stream(
         self,
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
@@ -5635,7 +5642,7 @@ class Workflow:
                 except (Exception, asyncio.CancelledError):
                     log_warning(f"Failed to mark workflow run {run_id} as completed in event stream")
 
-        task = asyncio.create_task(
+        task = create_task_execution(
             _background_producer(),
             name=f"workflow-background-stream-{run_id}",
         )
@@ -5788,6 +5795,7 @@ class Workflow:
                 stream=stream,
             )
 
+    @guard_task_execution(session_arg="session")
     def _run_workflow_agent_stream(
         self,
         agent_input: Union[str, Dict[str, Any], List[Any], BaseModel],
@@ -5962,6 +5970,7 @@ class Workflow:
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
 
+    @guard_task_execution(session_arg="session")
     def _run_workflow_agent(
         self,
         agent_input: Union[str, Dict[str, Any], List[Any], BaseModel],
@@ -6187,6 +6196,7 @@ class Workflow:
 
             return _execute()
 
+    @guard_task_execution(session_arg="session")
     async def _arun_workflow_agent_stream(
         self,
         agent_input: Union[str, Dict[str, Any], List[Any], BaseModel],
@@ -6381,6 +6391,7 @@ class Workflow:
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
 
+    @guard_task_execution(session_arg="session")
     async def _arun_workflow_agent(
         self,
         agent_input: Union[str, Dict[str, Any], List[Any], BaseModel],
@@ -6593,6 +6604,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
     ) -> Iterator[WorkflowRunOutputEvent]: ...
 
+    @guard_task_execution()
     def continue_run(
         self,
         run_response: Optional[WorkflowRunOutput] = None,
@@ -6976,6 +6988,7 @@ class Workflow:
                 **kwargs,
             )
 
+    @guard_task_execution(session_arg="session")
     def _continue_execute(
         self,
         session: WorkflowSession,
@@ -7819,6 +7832,7 @@ class Workflow:
         """Store executor response from continue_run in workflow run response."""
         pass  # step_executor_runs is already populated by the initial run
 
+    @guard_task_execution(session_arg="session")
     def _continue_execute_stream(
         self,
         session: WorkflowSession,
@@ -8630,6 +8644,7 @@ class Workflow:
         enable_websocket: bool = False,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
+    @guard_task_execution()
     async def acontinue_run(
         self,
         run_response: Optional[WorkflowRunOutput] = None,
@@ -9038,6 +9053,7 @@ class Workflow:
                 **kwargs,
             )
 
+    @guard_task_execution(session_arg="session")
     async def _acontinue_execute(
         self,
         session: WorkflowSession,
@@ -9579,6 +9595,7 @@ class Workflow:
 
         return workflow_run_response
 
+    @guard_task_execution(session_arg="session")
     async def _acontinue_execute_stream(
         self,
         session: WorkflowSession,
@@ -10366,6 +10383,7 @@ class Workflow:
         if self.telemetry:
             self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
 
+    @guard_task_execution(session_arg="session", background=True)
     async def _acontinue_run_background_stream_ws(
         self,
         session: WorkflowSession,
@@ -10533,8 +10551,7 @@ class Workflow:
                 except (Exception, asyncio.CancelledError):
                     log_warning(f"Failed to mark workflow run {_continue_run_id} as completed in event stream")
 
-        loop = asyncio.get_running_loop()
-        task = loop.create_task(
+        task = create_task_execution(
             _execute_continue_background(),
             name=f"workflow-continue-{workflow_run_response.run_id}",
         )
@@ -10590,6 +10607,7 @@ class Workflow:
         add_session_state_to_context: Optional[bool] = None,
     ) -> Iterator[WorkflowRunOutputEvent]: ...
 
+    @guard_task_execution()
     def run(
         self,
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
@@ -10814,6 +10832,7 @@ class Workflow:
         add_session_state_to_context: Optional[bool] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
+    @guard_task_execution(async_dispatch=True)
     def arun(  # type: ignore
         self,
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,

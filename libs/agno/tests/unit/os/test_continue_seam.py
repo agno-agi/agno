@@ -984,3 +984,37 @@ class TestPausedGate409CarriesEscapeHatch:
         assert "requeue the ticket" in excinfo.value.detail, (
             "the 409 must carry the cancel+requeue escape hatch for the lost-row corner"
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["paused", "failed"])
+async def test_unverified_queue_restart_returns_conflict(status):
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    store = InMemoryQueueStore()
+    job = make_job()
+    job["status"] = status
+    await store.enqueue_job(job)
+    worker = make_worker(store)
+    worker._task_execution_provider = SimpleNamespace(enabled=True)
+    with pytest.raises(HTTPException) as error:
+        await acontinue_via_queue(worker, "r1", {})
+    assert error.value.status_code == 409
+    assert (await store.get_job("r1"))["status"] == status
+
+
+@pytest.mark.asyncio
+async def test_unavailable_queue_lookup_refuses_detached_fallback(monkeypatch):
+    from fastapi import HTTPException
+
+    store = InMemoryQueueStore()
+
+    async def unavailable(*args, **kwargs):
+        raise OSError("queue unavailable")
+
+    monkeypatch.setattr(store, "get_job", unavailable)
+    with pytest.raises(HTTPException) as error:
+        await acontinue_via_queue(make_worker(store), "r1", {})
+    assert error.value.status_code == 503

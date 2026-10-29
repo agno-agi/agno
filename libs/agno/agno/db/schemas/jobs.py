@@ -17,6 +17,7 @@ from typing import Any, Dict, Optional
 from agno.utils.dttm import now_epoch_s, to_epoch_s
 
 QUEUE_ACCEPTANCE_TOKEN = "_agno_company_acceptance_token"
+QUEUE_ACCEPTANCE_TASK_IDS = "_agno_company_task_ids"
 
 
 class QueueWriteOutcome(str, Enum):

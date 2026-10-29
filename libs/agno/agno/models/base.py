@@ -2606,7 +2606,9 @@ class Model(ABC):
                 result = await function_call.aexecute()
                 success = result.status == "success"
             else:
-                result = await asyncio.to_thread(function_call.execute)
+                from agno.run.concurrency import task_execution_thread
+
+                result = await asyncio.to_thread(task_execution_thread, function_call.execute)
                 success = result.status == "success"
         except AgentRunException as e:
             success = e

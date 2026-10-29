@@ -47,7 +47,11 @@ def seed(store, job_id, status="queued", created_at=None, attempt=0, session_id=
 @pytest.mark.parametrize("endpoint", ["/queue/jobs", "/queue/jobs/j0"])
 def test_queue_response_hides_acceptance_token(harness, factory_claims, endpoint):
     seed(harness.store, "j0")
-    payload = {"input": "hi", "_agno_company_acceptance_token": "owner-token"}
+    payload = {
+        "input": "hi",
+        "_agno_company_acceptance_token": "owner-token",
+        "_agno_company_task_ids": ["private-task"],
+    }
     if factory_claims:
         payload["scope"] = {"context": {"claims": {"sub": "test-user"}, "user_id": "test-user"}}
     harness.store._jobs["j0"]["payload"] = payload
@@ -58,6 +62,7 @@ def test_queue_response_hides_acceptance_token(harness, factory_claims, endpoint
         body = response.json()
         public_payload = (body["data"][0] if endpoint == "/queue/jobs" else body)["payload"]
         assert "_agno_company_acceptance_token" not in public_payload
+        assert "_agno_company_task_ids" not in public_payload
         assert public_payload["input"] == "hi"
         assert payload["_agno_company_acceptance_token"] == "owner-token"
         if factory_claims:

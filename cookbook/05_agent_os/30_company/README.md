@@ -320,10 +320,84 @@ manager. An unavailable catalog is not treated as empty. Raw database Product
 purge requires an explicitly verified Routine-link snapshot.
 
 Strict execution reads currently support SQLite, PostgreSQL and MongoDB, each in
-sync and async forms. An assigned Task still needs a verifiable executor session
-even without Company attempt history: ordinary Agent runs can use that session.
-Restore access to the original executor/run store before retrying; an unsupported
-reader or a failed read must not be treated as proof that no execution exists.
+sync and async forms. Deletion checks all recorded original run stores, even after
+executor reassignment or a return to Backlog. Restore access to every original
+store before retrying; an unsupported reader or a failed read is not proof that
+no execution exists. Keep database IDs stable and never repoint an old ID at an
+empty replacement. The session and run table names are part of this identity.
+
+Fresh manager-created Task sessions record their execution inventory privately.
+This guarantee requires upgrading every producer that can use those sessions and
+draining older producers before creating new Tasks. Standalone SDK producers that
+are not configured with the Company execution guard are outside this guarantee.
+For synchronous execution against an async Company database, the guard can reuse
+reproducible native connection settings. Injected async engines, in-memory databases
+and custom async adapters must use their owning async calling path; they cannot be
+silently copied onto a separate loop.
+
+Raw imports and older Tasks
+have unknown history and cannot be permanently deleted until explicitly verified.
+A new run or an empty current database does not verify past history.
+
+For an older Task, stop and drain all producers, including external and sandbox
+workers. Independently recover its **complete historical store inventory** from
+deployment configuration and backups, restoring any missing stores. The current
+AgentOS registry alone is insufficient. Resolve running/paused work and queued
+continuations before continuing. If the inventory cannot be established, leave the
+Task blocked. Do not automatically clear execution claims: release an exact token
+only after verifying its producer has stopped.
+
+An operator can then use the existing database transaction and private maintenance
+helper below. `original_stores` contains the actual adapters from that independently
+verified inventory, not just the currently registered adapters. An empty list is
+valid only when the operator has established that no historical store exists.
+The helper preserves prior recorded stores and refuses changed or claimed Tasks.
+There is no HTTP recovery endpoint.
+
+```python
+from agno.company.execution import _call
+from agno.db.base import AsyncBaseDb
+from agno.db.sql.company import _reconcile_task_execution_provenance
+
+
+async def reconcile_legacy_task(company_db, task_id, original_stores):
+    snapshot = await _call(company_db, "get_task", task_id, include_deleted=True)
+    if snapshot is None:
+        raise ValueError("Task not found")
+    descriptors = []
+    for store in original_stores:
+        if not snapshot.get("session_id"):
+            raise ValueError("Historical session identity is unknown")
+        rows, _ = await _call(
+            store, "get_runs", session_id=snapshot["session_id"],
+            deserialize=False, raise_on_error=True,
+        )
+        if any(row.get("status") not in {"COMPLETED", "ERROR", "CANCELLED"} for row in rows):
+            raise ValueError("Resolve historical executions first")
+        descriptors.append({
+            "db_id": store.id,
+            "session_table": store.session_table_name,
+            "runs_table": store.runs_table_name,
+        })
+    table = await _call(company_db, "_get_table", table_type="tasks")
+    if isinstance(company_db, AsyncBaseDb):
+        async with company_db.async_session_factory() as session, session.begin():
+            await session.run_sync(_reconcile_task_execution_provenance, table, snapshot, descriptors)
+    else:
+        with company_db.Session() as session, session.begin():
+            _reconcile_task_execution_provenance(session, table, snapshot, descriptors)
+```
+
+After reconciliation, register the original stores and retry ordinary deletion;
+its runtime checks and final locked snapshot still apply. Prepared generic queue
+continuations whose original Task identity is unknown remain blocked separately.
+For an older queue ticket, stop producers and independently recover its original
+Task IDs before a trusted maintenance update of the ticket's private identity.
+A missing identity must never become an empty list just because today's Task
+lookup is empty. Retain IDs for Tasks that were deleted: their old ticket must
+remain refused. Only a verified originally unrelated ticket may carry an empty
+list. After maintenance, use the existing restart route, which revalidates those
+original IDs before admission. There is no public repair or force endpoint.
 
 Separate sessions, run and queue history, approvals, traces, knowledge, files and
 checkpoints remain under their existing retention. Product wiki and summary files

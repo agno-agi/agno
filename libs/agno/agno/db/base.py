@@ -2088,7 +2088,14 @@ class BaseDb(ABC):
         """Soft-delete an active Task within the owner scope."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
-    def acquire_task_execution(self, session_id: str, token: str) -> List[str]:
+    def acquire_task_execution(
+        self,
+        session_id: str,
+        token: str,
+        *,
+        expected_task_ids: Optional[Sequence[str]] = None,
+        execution_store: Optional[Dict[str, Any]] = None,
+    ) -> List[str]:
         """Protect matching Task records until this execution token is released."""
         raise NotImplementedError("Company execution admission not supported by this database")
 
@@ -4177,7 +4184,14 @@ class AsyncBaseDb(ABC):
         """Soft-delete an active Task within the owner scope."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
-    async def acquire_task_execution(self, session_id: str, token: str) -> List[str]:
+    async def acquire_task_execution(
+        self,
+        session_id: str,
+        token: str,
+        *,
+        expected_task_ids: Optional[Sequence[str]] = None,
+        execution_store: Optional[Dict[str, Any]] = None,
+    ) -> List[str]:
         """Protect matching Task records until this execution token is released."""
         raise NotImplementedError("Company execution admission not supported by this database")
 
