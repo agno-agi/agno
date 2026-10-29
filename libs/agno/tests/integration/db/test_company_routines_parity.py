@@ -633,27 +633,28 @@ async def test_routine_sorting_precedes_paging(system):
 async def test_routine_sorting_by_next_run_schedule_type_and_enabled(system):
     client, db, _, _, _ = system
     hourly = "0 * * * *"
+    # Creation order differs from id order, so ties show which one breaks them.
     product_id = await seed_routines(
         client,
         db,
         {
-            "r-a": {"created_at": 100, "cron_expr": hourly, "enabled": True, "next_run_at": 3000},
+            "r-a": {"created_at": 500, "cron_expr": hourly, "enabled": True, "next_run_at": 3000},
             "r-b": {"created_at": 200, "cron_expr": hourly, "enabled": True, "next_run_at": 1000},
             # Paused: its stored next run doesn't count.
-            "r-c": {"created_at": 300, "cron_expr": hourly, "enabled": False, "next_run_at": 500},
-            "r-d": {"created_at": 400, "cron_expr": "", "enabled": True, "next_run_at": None},
-            "r-e": {"created_at": 500, "cron_expr": hourly, "enabled": True, "next_run_at": 2000},
+            "r-c": {"created_at": 400, "cron_expr": hourly, "enabled": False, "next_run_at": 500},
+            "r-d": {"created_at": 300, "cron_expr": "", "enabled": True, "next_run_at": None},
+            "r-e": {"created_at": 100, "cron_expr": hourly, "enabled": True, "next_run_at": 2000},
         },
     )
     expected = {
         # Routines without a next run come last in both directions.
-        ("next_run_at", "asc"): ["r-b", "r-e", "r-a", "r-c", "r-d"],
-        ("next_run_at", "desc"): ["r-a", "r-e", "r-b", "r-d", "r-c"],
+        ("next_run_at", "asc"): ["r-b", "r-e", "r-a", "r-d", "r-c"],
+        ("next_run_at", "desc"): ["r-a", "r-e", "r-b", "r-c", "r-d"],
         # Ties fall back to creation time in the same direction.
-        ("schedule_type", "asc"): ["r-d", "r-a", "r-b", "r-c", "r-e"],
-        ("schedule_type", "desc"): ["r-e", "r-c", "r-b", "r-a", "r-d"],
-        ("enabled", "asc"): ["r-c", "r-a", "r-b", "r-d", "r-e"],
-        ("enabled", "desc"): ["r-e", "r-d", "r-b", "r-a", "r-c"],
+        ("schedule_type", "asc"): ["r-d", "r-e", "r-b", "r-c", "r-a"],
+        ("schedule_type", "desc"): ["r-a", "r-c", "r-b", "r-e", "r-d"],
+        ("enabled", "asc"): ["r-c", "r-e", "r-b", "r-d", "r-a"],
+        ("enabled", "desc"): ["r-a", "r-d", "r-b", "r-e", "r-c"],
     }
     for (sort_by, sort_order), ids in expected.items():
         found = await listed_ids(client, product_id=product_id, sort_by=sort_by, sort_order=sort_order)
