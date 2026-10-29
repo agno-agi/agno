@@ -334,6 +334,7 @@ page uses three SQL statements in total, regardless of the number of cards.
 | File | Demonstrates |
 | --- | --- |
 | `07_heartbeat.py` | Code-declared Products, a reader Source, an Intake Skill, scheduler rows and duplicate-free scans without a model call. |
+| `11_disabled_routine.py` | A visible, initially disabled Routine that a human enables through the API used by the UI; activation survives restart. |
 
 Declare `Product`, `Source` and `Routine` from `agno.company`, then pass
 `CompanyConfig(products=[...])`. The same declarations work in OS configuration:
@@ -355,6 +356,13 @@ company:
           executor_id: source-reader
           cron_expr: "0 9 * * 1-5"
 ```
+
+Set `enabled=False` on a Python `Routine` (or `enabled: false` in YAML) to
+create it visibly but inactive. The default is `True`. Enable it later from the
+UI or `POST /company/routines/{id}/resume`. The initial value applies only when
+creating a routine; startup preserves saved enabled/disabled choices and other
+human edits. The same flag is accepted when creating a routine through the API
+or the sync/async Company Manager and Company tools.
 
 The executor must already be registered; an invalid declared target fails startup
 instead of silently dropping its Routine. Give it `CompanyTools(db)` and

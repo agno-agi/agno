@@ -1206,7 +1206,8 @@ async def test_refresh_requires_routine_and_saved_delete_authority(tmp_path, asy
 
 @pytest.mark.parametrize("failure", ["link", "enable"])
 @pytest.mark.parametrize("pause_pending", [False, True])
-def test_routine_create_recovers_disabled_pending_schedule(system, monkeypatch, failure, pause_pending):
+@pytest.mark.parametrize("enabled", [True, False])
+def test_routine_create_recovers_disabled_pending_schedule(system, monkeypatch, failure, pause_pending, enabled):
     client, _, db = system
     product = client.post("/company/products", json={"name": "Docs"}).json()
     body = dict(
@@ -1216,6 +1217,7 @@ def test_routine_create_recovers_disabled_pending_schedule(system, monkeypatch, 
         executor_type="agent",
         executor_id="reader",
         cron_expr="0 * * * *",
+        enabled=enabled,
     )
     method = "add_product_routine" if failure == "link" else "update_schedule"
     original = getattr(db, method)
@@ -1235,6 +1237,8 @@ def test_routine_create_recovers_disabled_pending_schedule(system, monkeypatch, 
     monkeypatch.setattr(db, method, original)
     # A changed request must not repurpose an interrupted creation.
     assert client.post("/company/routines", json={**body, "cron_expr": "30 * * * *"}).status_code == 409
+    assert client.post("/company/routines", json={**body, "enabled": not enabled}).status_code == 409
+    assert db.get_schedule(pending["id"])["enabled"] is False
     if pause_pending:
         assert client.post("/company/routines/" + pending["id"] + "/pause").status_code == 200
         assert client.post("/company/routines", json=body).status_code == 409
@@ -1244,7 +1248,7 @@ def test_routine_create_recovers_disabled_pending_schedule(system, monkeypatch, 
         return
     result = client.post("/company/routines", json=body)
     assert result.status_code == 201, result.text
-    assert result.json()["id"] == pending["id"] and result.json()["enabled"] is True
+    assert result.json()["id"] == pending["id"] and result.json()["enabled"] is enabled
     assert "_agno_pending_creation" not in result.json()["payload"]
     assert db.get_product(product["id"])["metadata"]["routine_ids"] == [pending["id"]]
     assert db.get_schedules()[1] == 1

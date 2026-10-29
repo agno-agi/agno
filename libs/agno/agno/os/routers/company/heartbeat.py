@@ -286,10 +286,18 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             policy = body.auto_accept.model_dump()
             await _authorize_auto_accept(request, policy, agent_os)
             fields["payload"]["metadata"]["auto_accept"] = policy
+        if not body.enabled:
+            # Retry matching must distinguish disabled creation from a request to enable it.
+            fields["payload"]["metadata"]["initial_enabled"] = False
         schedule = await call(ScheduleCreate, **fields)
         row = await call(handlers["create_schedule"], schedule, request)
         await call(db.add_product_routine, body.product_id, row["id"])
-        return await routine_response(await call(handlers["enable_schedule"], row["id"], request))
+        if body.enabled:
+            row = await call(handlers["enable_schedule"], row["id"], request)
+        else:
+            # Finish creation without activation so duplicate requests cannot recover this as pending.
+            row = await call(handlers["disable_schedule"], row["id"], request)
+        return await routine_response(row)
 
     @router.patch("/routines/{routine_id}", response_model=RoutineResponse)
     async def update_routine(routine_id: str, body: RoutineUpdate, request: Request, _: bool = Depends(auth)):
