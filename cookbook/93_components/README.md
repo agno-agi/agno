@@ -123,9 +123,15 @@ coder = get_agent_by_id(db=db, id="coder", registry=registry, strict=True)
 ```
 
 Through the components API, a stored external agent is an `agent` component
-whose config carries `"sdk": "claude-agent-sdk"` or `"sdk": "codex"`. A
-sandboxed run through AgentOS still needs the agent registered with
-`AgentOS(agents=[...])`; a stored sandboxed agent runs locally with `agent.run()`.
+whose config carries `"sdk": "claude-agent-sdk"` or `"sdk": "codex"`. AgentOS
+lists it, and `POST /agents/{id}/runs` submits a stored sandboxed agent to the
+durable sandbox queue like a registered one, as long as the sandbox is in the
+registry the AgentOS was given (`Registry(sandboxes=[...])`, or a code-defined
+agent that uses it). The ticket carries the version the request loaded, and the
+queue worker rebuilds that version from the database before running it on the
+registry sandbox; an explicit `version` form field pins one. The same
+requirements as for a registered sandboxed agent apply: a durable queue, a
+PostgresDb, and a sandbox with a shared `checkpoints=` store.
 
 ---
 

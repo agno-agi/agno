@@ -225,6 +225,12 @@ async def sandbox_run_response(
         raise HTTPException(status_code=400, detail=str(error)) from error
     except SandboxError as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
+    reader = agent
+    ticket_scope = (job.get("payload") or {}).get("scope") or {}
+    if stored and ticket_scope.get("version") != scope.get("version"):
+        # An idempotent retry answered with a ticket accepted under an earlier version: its run
+        # was written through that version's db, so it is read back through that version's agent.
+        reader = await worker._aresolve_job_component(job) or agent
     if stream:
         # Existing resume machinery chooses retained events or database replay,
         # including for an idempotent submission whose live keys have expired.
@@ -232,7 +238,7 @@ async def sandbox_run_response(
         from agno.os.utils import queued_run_tail_streamer
 
         if job.get("status") in ("completed", "failed", "cancelled"):
-            iterator = _resume_stream_generator(agent, job["id"], None, job["session_id"], user_id)
+            iterator = _resume_stream_generator(reader, job["id"], None, job["session_id"], user_id)
         else:
             iterator = queued_run_tail_streamer(job["id"])
         return StreamingResponse(iterator, media_type="text/event-stream")
@@ -255,7 +261,7 @@ async def sandbox_run_response(
                 status_code=503, detail="Accepted sandbox job is temporarily unavailable; reconnect using its run ID"
             )
         if current["status"] in ("completed", "failed", "cancelled"):
-            result = await agent.aget_run_output(job["id"], job["session_id"], user_id=user_id)
+            result = await reader.aget_run_output(job["id"], job["session_id"], user_id=user_id)
             if result is None and current["status"] == "failed" and current.get("error"):
                 # The job failed before its run row could be written; the ticket's error is all there is.
                 raise HTTPException(status_code=500, detail=current["error"])

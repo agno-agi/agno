@@ -53,18 +53,23 @@ class FakeSandbox(Sandbox):
 
 
 class StoredComponent:
-    """One stored agent config, served from a db the way the component loaders read it."""
+    """One stored agent's config versions, served from a db the way the component loaders read them."""
 
     def __init__(self, db: PostgresDb, config: Dict[str, Any], version: int = 1):
-        self.config, self.version = config, version
+        self.versions, self.version = {version: config}, version
         db.get_component = lambda component_id, **kwargs: {
             "component_id": component_id,
             "current_version": self.version,
         }
         db.get_config = lambda component_id, label=None, version=None, **kwargs: {
-            "config": self.config,
+            "config": self.versions[version or self.version],
             "version": version or self.version,
         }
+
+    def publish(self, config: Dict[str, Any]) -> int:
+        self.version += 1
+        self.versions[self.version] = config
+        return self.version
 
 
 class FakeWorker:
@@ -271,7 +276,7 @@ async def test_stored_agent_rebuilt_on_another_sandbox_or_database_is_refused(
 async def test_stored_agent_republished_during_acceptance_is_refused(accepted, db, registry, registry_sandbox):
     component = StoredComponent(db, ClaudeAgent(id="coder", db=db, sandbox=registry_sandbox, max_turns=3).to_dict())
     agent = await stored_agent(db, registry)
-    component.config = {**component.config, "max_turns": 5}
+    component.publish({**component.versions[1], "max_turns": 5})
     with pytest.raises(ValueError, match="changed while this request was being accepted"):
         await sandbox.enqueue_sandbox_run(
             agent,
@@ -311,6 +316,73 @@ async def test_version_pinning_is_accepted_for_stored_agents_only(accepted, db, 
             **common,
         )
     assert len(accepted) == 1
+
+
+@pytest.mark.asyncio
+async def test_idempotent_retry_after_a_publish_reads_the_result_through_the_tickets_version(
+    accepted, db, registry, registry_sandbox, monkeypatch
+):
+    from agno.agents.base import BaseExternalAgent
+    from agno.run.agent import RunOutput
+
+    first = ClaudeAgent(id="coder", db=db, sandbox=registry_sandbox).to_dict()
+    first["db"]["session_table"] = "v1_sessions"
+    component = StoredComponent(db, first)
+    component.publish({**first, "db": {**first["db"], "session_table": "v2_sessions"}})
+    agent = await stored_agent(db, registry)
+    assert agent.db.session_table_name == "v2_sessions"
+    scope = resolve_queue_scope("coder", [], db, None, None)
+    original = {
+        "id": "run-1",
+        "component_type": "agent",
+        "component_id": "coder",
+        "session_id": "s1",
+        "user_id": None,
+        "status": "completed",
+        "payload": {
+            "input": "hello",
+            "kwargs": {},
+            "stream": True,
+            "serialize_session": True,
+            "scope": {**scope, "version": 1},
+        },
+    }
+
+    async def duplicate(worker, job, component=None):
+        return {"reason": "duplicate", "job": original}
+
+    read_through = []
+
+    async def stored_output(self, run_id, session_id, user_id=None):
+        read_through.append(self.db.session_table_name)
+        return RunOutput(run_id=run_id, session_id=session_id, content="done")
+
+    async def completed(run_id):
+        return original
+
+    monkeypatch.setattr(sandbox, "aenqueue_ticket", duplicate)
+    monkeypatch.setattr(BaseExternalAgent, "aget_run_output", stored_output)
+    worker = FakeWorker(db, registry, [])
+    worker.store.get_job = completed
+
+    response = await sandbox.sandbox_run_response(
+        agent,
+        worker,
+        SimpleNamespace(headers={}),
+        input="hello",
+        session_id="s1",
+        user_id=None,
+        kwargs={},
+        stream=False,
+        background=False,
+        agents=[],
+        db=db,
+        scoped_user_id=None,
+    )
+
+    assert response.status_code == 200 and b"done" in response.body
+    # The original ran version 1, whose sessions live in another table than version 2's.
+    assert read_through == ["v1_sessions"]
 
 
 @pytest.mark.asyncio
