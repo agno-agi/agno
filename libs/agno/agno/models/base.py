@@ -2232,7 +2232,10 @@ class Model(ABC):
     def create_tool_call_skipped_result(self, function_call: FunctionCall) -> Message:
         return Message(
             role=self.tool_message_role,
-            content=f"Tool call {function_call.function.name} skipped: a prior tool call in the batch requested to stop.",
+            content=(
+                f"Tool call {function_call.function.name} skipped: "
+                "a prior tool call in the batch requested to stop."
+            ),
             tool_call_id=function_call.call_id,
             tool_name=function_call.function.name,
             tool_args=function_call.arguments,
@@ -3136,15 +3139,6 @@ class Model(ABC):
 
             # Add function call result to function call results
             function_call_results.append(function_call_result)
-
-            # Check if we should stop after this tool call
-            if function_call_result.stop_after_tool_call or any(m.stop_after_tool_call for m in additional_input):
-                stopped_due_to_stop_after_tool_call = True
-                for idx, fc in enumerate(function_calls):
-                    if fc.call_id == function_call_result.tool_call_id:
-                        stopped_at_index = idx
-                        break
-                break
 
         # Append stub results for any function calls in the batch that were not executed
         if stopped_due_to_stop_after_tool_call and stopped_at_index >= 0:

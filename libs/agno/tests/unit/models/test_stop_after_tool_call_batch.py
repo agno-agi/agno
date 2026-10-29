@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from agno.exceptions import StopAgentRun
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
@@ -306,3 +307,76 @@ async def test_async_batch_paused_tool_without_stop_is_not_stubbed():
         isinstance(e, ModelResponse) and getattr(e, "event", None) == ModelResponseEvent.tool_call_paused.value
         for e in events
     )
+
+
+@pytest.mark.asyncio
+async def test_async_batch_stop_agent_run_keeps_gathered_results():
+    """When tool 0 in an async batch raises StopAgentRun, tool 1's gathered result is preserved
+    and not replaced with a skipped stub."""
+    def tool_0() -> str:
+        raise StopAgentRun("stopping agent run")
+
+    tool1_mock = MagicMock(return_value="result_tool1")
+
+    def tool_1() -> str:
+        return tool1_mock()
+
+    func0 = Function.from_callable(tool_0, name="tool0")
+    func0.process_entrypoint()
+    fc0 = FunctionCall(function=func0, arguments={}, call_id="call_tool0")
+
+    func1 = Function.from_callable(tool_1, name="tool1")
+    func1.process_entrypoint()
+    fc1 = FunctionCall(function=func1, arguments={}, call_id="call_tool1")
+
+    model = _StubModel()
+    results: List[Message] = []
+    async for _ in model.arun_function_calls([fc0, fc1], function_call_results=results):
+        pass
+
+    assert tool1_mock.call_count == 1
+    assert len(results) == 2
+    assert results[0].tool_name == "tool0"
+    assert results[0].stop_after_tool_call is True
+    assert results[1].tool_name == "tool1"
+    assert results[1].content == "result_tool1"
+    assert "skipped" not in str(results[1].content)
+
+
+@pytest.mark.asyncio
+async def test_async_batch_stop_agent_run_stubs_only_unrun_calls():
+    """When tool 1 has static stop_after_tool_call, tool 0 raises StopAgentRun, and tool 2 was never run,
+    both gathered results (0 and 1) are kept, and only tool 2 receives a skipped stub."""
+    def tool_0() -> str:
+        raise StopAgentRun("stopping agent run")
+
+    t1_mock = MagicMock(return_value="result_tool1")
+    t2_mock = MagicMock(return_value="result_tool2")
+
+    func0 = Function.from_callable(tool_0, name="tool0")
+    func0.process_entrypoint()
+    fc0 = FunctionCall(function=func0, arguments={}, call_id="call_tool0")
+
+    func1 = Function.from_callable(lambda: t1_mock(), name="tool1")
+    func1.stop_after_tool_call = True
+    func1.process_entrypoint()
+    fc1 = FunctionCall(function=func1, arguments={}, call_id="call_tool1")
+
+    func2 = Function.from_callable(lambda: t2_mock(), name="tool2")
+    func2.process_entrypoint()
+    fc2 = FunctionCall(function=func2, arguments={}, call_id="call_tool2")
+
+    model = _StubModel()
+    results: List[Message] = []
+    async for _ in model.arun_function_calls([fc0, fc1, fc2], function_call_results=results):
+        pass
+
+    assert t1_mock.call_count == 1
+    assert t2_mock.call_count == 0
+    assert len(results) == 3
+    assert results[0].tool_name == "tool0"
+    assert results[1].tool_name == "tool1"
+    assert results[1].content == "result_tool1"
+    assert results[2].tool_name == "tool2"
+    assert "skipped" in str(results[2].content)
+
