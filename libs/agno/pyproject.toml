@@ -129,6 +129,7 @@ apify = ["apify-client"]
 arxiv = ["arxiv"]
 brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
+browser-use = ["browser-use-sdk>=3.10.0"]
 cartesia = ["cartesia"]
 # ipykernel 7.3 and jupyter_client 8.9 require Python >= 3.10; the markers keep
 # `pip install agno[code]` (and the tools/tests chains) resolvable on 3.9,
@@ -306,6 +307,7 @@ tools = [
   "agno[arxiv]",
   # "agno[brave]",  # Excluded: brave-search 0.2.0 ships invalid metadata (bad httpx specifier) that uv cannot parse; test_setup.sh installs it with --no-deps
   "agno[browserbase]",
+  "agno[browser-use]",
   "agno[cartesia]",
   "agno[code]",
   "agno[confluence]",
@@ -570,6 +572,7 @@ module = [
   "bson.*",
   "brave.*",
   "browserbase.*",
+  "browser_use_sdk.*",
   "cassio.*",
   "cerebras.*",
   "cerebras_cloud_sdk.*",

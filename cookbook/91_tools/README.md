@@ -35,6 +35,15 @@ tools = MCPTools(servers=["npx", "-y", "@anthropic/mcp-server-filesystem"])
 agent = Agent(tools=[tools])
 ```
 
+## Browser agent
+
+`browser_use_tools.py` gives the agent `run_browser_task`, which runs a task on
+the Browser Use Cloud agent in a cloud browser and returns its answer with a
+`session_id`. Set `BROWSER_USE_API_KEY` and the credentials for the agent's
+model, install `agno[browser-use]`, then run
+`python cookbook/91_tools/browser_use_tools.py` from the repository root.
+A run that does not finish within `timeout` seconds (default 900) is cancelled.
+
 ## Workspace speech
 
 `sixtydb_tools.py` uses 60db workspace voices. Set `SIXTYDB_API_KEY` and the
