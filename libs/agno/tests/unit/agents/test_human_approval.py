@@ -89,6 +89,62 @@ def test_human_mode_requires_storage():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("parent", ["_team_id", "_workflow_id"])
+@pytest.mark.parametrize("stream", [True, False])
+async def test_nested_human_mode_refused_before_execution(tmp_path, parent, stream):
+    agent = Harness(db=SqliteDb(db_file=str(tmp_path / "db")), approval_mode="human")
+    with pytest.raises(ValueError, match="standalone"):
+        result = agent.arun("work", stream=stream, **{parent: "parent"})
+        if stream:
+            async for _ in result:
+                pass
+        else:
+            await result
+    assert agent.calls == 0
+
+
+@pytest.mark.parametrize("sdk", ["claude", "codex"])
+@pytest.mark.parametrize("stream", [True, False])
+def test_public_sync_continuation_releases_original_run(tmp_path, monkeypatch, caplog, sdk, stream):
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from agno.agents.claude import ClaudeAgent
+    from agno.agents.codex import CodexAgent
+    from agno.run.agent import RunOutput
+
+    db = SqliteDb(db_file=str(tmp_path / "db"))
+    cls = ClaudeAgent if sdk == "claude" else CodexAgent
+    agent = cls(id="test", db=db, approval_mode="human", approval_timeout=5)
+    executed = []
+
+    async def source(input, **kwargs):
+        if await current_bridge().request("Bash", {"command": "marker"}, {"sdk": sdk}):
+            executed.append("marker")
+        yield RunContentEvent(content="done")
+
+    monkeypatch.setattr(agent, "_arun_adapter_stream", source)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        running = pool.submit(agent.run, "work", session_id="session", run_id="run")
+        for _ in range(200):
+            rows, _ = db.get_approvals(run_id="run")
+            run = agent.get_run_output("run", "session")
+            if rows and run is not None and run.status == RunStatus.paused:
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError("No persisted approval")
+        db.update_approval(rows[0]["id"], status="approved")
+        result = agent.continue_run(run_id="run", session_id="session", stream=stream)
+        if stream:
+            result = next(event for event in result if isinstance(event, RunOutput))
+        assert result.status == RunStatus.completed
+        assert running.result(timeout=2).status == RunStatus.completed
+    assert executed == ["marker"]
+    assert "Task was destroyed" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_changed_arguments_and_wrong_session_refused(tmp_path):
     from agno.models.response import ToolExecution
 

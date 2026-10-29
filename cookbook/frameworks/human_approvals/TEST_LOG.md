@@ -31,13 +31,19 @@ service and its sandbox image were not modified.
 **Description:** Native permission transport, persisted pause/continue, existing
 agent behavior, queue ownership, sandbox runtime, and real PostgreSQL integration.
 
-**Result:** Broad regression: 1,497 passed and 12 skipped. Subsequent focused
-approval/queue tests: 102 passed; persistence-failure and permission-shape tests:
-19 passed. Coverage includes approve/deny on sync and async SQLite, no execution
+**Result:** After rebasing onto current main, broad regression: 1,542 passed and
+33 skipped (including 21 Docker team/workflow cases requiring an explicit runtime
+image). All 21 of those cases then passed with the isolated runtime image and real
+Docker/PostgreSQL. Subsequent focused approval tests: 27 passed, including cleanup checks
+for both public synchronous continuation APIs. Coverage includes approve/deny on sync and async SQLite, no execution
 on expiry/cancellation/storage failure, altered arguments, unresolved continuation,
 parallel requests, nonblocking Codex reader, file-change/permission response
 contracts, stale sandbox owners, duplicate delivery, old-image refusal, and direct
 worker loss without replay. PostgreSQL tests cover both database adapters.
+
+The rebased code also passed another real Docker Claude approval and Codex rejection
+with checkpoint evidence. Unsupported human mode in team/workflow execution is
+refused before the native adapter starts; non-human member regressions pass.
 
 The repository format and validation scripts passed using a clean development
 dependency environment. Optional-provider type drift in the full test environment

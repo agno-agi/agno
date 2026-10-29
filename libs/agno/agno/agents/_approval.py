@@ -356,6 +356,7 @@ def sync_events(events: AsyncIterator[Any]) -> Iterator[Any]:
                 break
     finally:
         loop.run_until_complete(events.aclose())  # type: ignore[attr-defined]
+        loop.run_until_complete(loop.shutdown_asyncgens())
         loop.close()
 
 

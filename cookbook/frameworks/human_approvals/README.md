@@ -50,6 +50,8 @@ control-plane database credentials are not sent to it.
 - Direct in-process runs need a persistent event loop while waiting. Use
   `arun(background=True)` or AgentOS. `acontinue_run` and `continue_run` deliver
   decisions; they do not create that original execution.
+- Human mode currently supports standalone agents. Team members and workflow
+  steps reject it before execution; their existing non-human modes are unchanged.
 
 This example uses PostgreSQL. Direct development runs can use SQLite. Human mode
 requires a database on the agent and disables automatic native-turn retries.
