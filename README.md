@@ -14,7 +14,7 @@
 
 ## Introduction
 
-Agno is a self-driving agent platform. Build agents for your product, your company, or your customers. Run them as durable services on AgentOS. Put them to work automating company operations.
+Agno is a self-driving agent platform. Build agents for your company, product, or customers. Run them as durable services on AgentOS. Put them to work automating company operations.
 
 - **Build** agents with the Agno, Claude Agent, or Codex SDKs. Combine agents into teams and workflows.
 - **Run** agents as durable services with built-in API and MCP. AgentOS handles authentication, role-based access, resume/replay, human approvals, scheduling, and durable execution.
@@ -58,17 +58,18 @@ Choose a template for your cloud: [Docker](https://github.com/agno-agi/agentos-d
 ## What's included
 
 | Capability | What you can do |
-|---|---|
-| **Agents, teams, and workflows** | Build agents with routing, branching, loops, and parallel execution. |
-| **Memory and knowledge** | Give agents long-term memory and access to your documents and data. |
-| **Tools and integrations** | Connect agents to external services, databases, and MCP servers. |
-| **Durable execution** | Run background work with persistent execution state. |
-| **Human approval** | Pause work for review and resume after approval. |
-| **Observability** | Inspect conversations, tool calls, traces, and evaluation results. |
-| **Scheduling** | Run agents and workflows on a schedule. |
-| **Security** | Configure authentication, role-based access, and user isolation. |
-| **Coding agents and sandboxes** | Put Claude and Codex to work implementing and testing changes. |
-| **Company** | Organize Products, Projects, Tasks, and recurring improvement routines. |
+| --- | --- |
+| **[Agents](https://docs.agno.com/agents/overview) and [teams](https://docs.agno.com/teams/overview)** | Build agents that use tools, delegate work, and collaborate. |
+| **[Workflows](https://docs.agno.com/workflows/overview)** | Control execution with routing, conditions, loops, and parallel steps. |
+| **[Memory](https://docs.agno.com/memory/overview) and [knowledge](https://docs.agno.com/knowledge/overview)** | Remember users across sessions and retrieve answers from your data. |
+| **[Tools and integrations](https://docs.agno.com/tools/overview)** | Connect agents to APIs, databases, and MCP servers. |
+| **[Durable execution](https://docs.agno.com/agent-os/background-execution/durable-queue)** | Persist background jobs and track their status across restarts. |
+| **[Human approval](https://docs.agno.com/hitl/overview)** | Review sensitive actions before they run, then approve and continue. |
+| **[Observability](https://docs.agno.com/agent-os/tracing/overview)** | Trace runs, inspect tool calls, and diagnose failures. |
+| **[Scheduling](https://docs.agno.com/agent-os/scheduler/overview)** | Run agents, teams, and workflows on recurring schedules. |
+| **[Security](https://docs.agno.com/agent-os/security/overview)** | Control access with authentication, roles, and per-user data isolation. |
+| **[Coding agents](https://docs.agno.com/agent-platform/harness-agents)** | Run Claude and Codex in sandboxes to implement and test changes. |
+| **Company OS** | Organize work into products, projects, tasks, and recurring routines. |
 
 ## Tutorials
 
