@@ -9,7 +9,7 @@ from agno.db.schemas.mcp_oauth import MCP_OAUTH_TABLE_SCHEMAS
 
 try:
     from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import BigInteger, Boolean, Date, DateTime, Integer, String, Text
+    from sqlalchemy.types import BigInteger, Boolean, Date, DateTime, Integer, SmallInteger, String, Text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -149,33 +149,72 @@ METRICS_TABLE_SCHEMA = {
 }
 
 OS_METRICS_TABLE_SCHEMA = {
-    "id": {"type": String, "primary_key": True, "nullable": False},
-    "date": {"type": Date, "nullable": False, "index": True},
-    "aggregation_period": {"type": String, "nullable": False},
-    # Owner and component of this row. Empty string for none, since Postgres treats NULLs as distinct and the
-    # unique constraint below would not hold.
-    "user_id": {"type": String, "nullable": False, "default": ""},
-    "agent_id": {"type": String, "nullable": False, "default": ""},
-    "team_id": {"type": String, "nullable": False, "default": ""},
-    "workflow_id": {"type": String, "nullable": False, "default": ""},
-    # The agent, team or workflow whose run started the runs of this row
-    "parent_id": {"type": String, "nullable": False, "default": ""},
+    "aggregation_period": {"type": String, "primary_key": True, "nullable": False},
+    "date": {"type": Date, "primary_key": True, "nullable": False},
+    # Owner of this row. Empty string for no owner, since a primary key column cannot be NULL.
+    "user_id": {"type": String, "primary_key": True, "nullable": False, "default": ""},
+    "component_type": {"type": String, "primary_key": True, "nullable": False},
+    "component_id": {"type": String, "primary_key": True, "nullable": False},
+    "parent_component_id": {"type": String, "primary_key": True, "nullable": False, "default": ""},
     "sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
     "runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "input_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "output_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "duration_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_duration_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_duration_ms": {"type": BigInteger, "nullable": True},
+    "time_to_first_token_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_time_to_first_token_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_time_to_first_token_ms": {"type": BigInteger, "nullable": True},
+    "model_calls_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_model_call_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_model_call_ms": {"type": BigInteger, "nullable": True},
+    "buckets_version": {"type": SmallInteger, "nullable": False, "default": 1},
     "status_metrics": {"type": JSONB, "nullable": False, "default": {}},
-    "token_metrics": {"type": JSONB, "nullable": False, "default": {}},
-    "duration_metrics": {"type": JSONB, "nullable": False, "default": {}},
+    "additional_token_metrics": {"type": JSONB, "nullable": False, "default": {}},
+    "duration_buckets": {"type": JSONB, "nullable": False, "default": {}},
+    "time_to_first_token_buckets": {"type": JSONB, "nullable": False, "default": {}},
+    "model_call_buckets": {"type": JSONB, "nullable": False, "default": {}},
     "model_metrics": {"type": JSONB, "nullable": False, "default": []},
-    "metadata": {"type": JSONB, "nullable": True},
+    "additional_metrics": {"type": JSONB, "nullable": False, "default": {}},
     "created_at": {"type": BigInteger, "nullable": False},
-    "updated_at": {"type": BigInteger, "nullable": True, "index": True},
-    "completed": {"type": Boolean, "nullable": False, "default": False},
-    "_unique_constraints": [
-        {
-            "name": "uq_os_metrics_user_date_period_component",
-            "columns": ["user_id", "date", "aggregation_period", "agent_id", "team_id", "workflow_id", "parent_id"],
-        }
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "__composite_indexes__": [
+        # Covers one user's reads, WHERE user_id = :uid AND aggregation_period = :period AND date BETWEEN ...
+        {"name": "ix_os_metrics_user_period", "columns": ["user_id", "aggregation_period", "date"]},
     ],
+}
+
+OS_METRICS_TOTALS_TABLE_SCHEMA = {
+    "aggregation_period": {"type": String, "primary_key": True, "nullable": False},
+    "date": {"type": Date, "primary_key": True, "nullable": False},
+    "sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "input_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "output_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "duration_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_duration_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_duration_ms": {"type": BigInteger, "nullable": True},
+    "time_to_first_token_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_time_to_first_token_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_time_to_first_token_ms": {"type": BigInteger, "nullable": True},
+    "model_calls_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_model_call_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_model_call_ms": {"type": BigInteger, "nullable": True},
+    "buckets_version": {"type": SmallInteger, "nullable": False, "default": 1},
+    "status_metrics": {"type": JSONB, "nullable": False, "default": {}},
+    "additional_token_metrics": {"type": JSONB, "nullable": False, "default": {}},
+    "duration_buckets": {"type": JSONB, "nullable": False, "default": {}},
+    "time_to_first_token_buckets": {"type": JSONB, "nullable": False, "default": {}},
+    "model_call_buckets": {"type": JSONB, "nullable": False, "default": {}},
+    "model_metrics": {"type": JSONB, "nullable": False, "default": []},
+    "additional_metrics": {"type": JSONB, "nullable": False, "default": {}},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "completed": {"type": Boolean, "nullable": False, "default": False},
+    "version": {"type": BigInteger, "nullable": False, "default": 1},
 }
 
 VERSIONS_TABLE_SCHEMA = {
@@ -701,6 +740,7 @@ def get_table_schema_definition(
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
         "os_metrics": OS_METRICS_TABLE_SCHEMA,
+        "os_metrics_totals": OS_METRICS_TOTALS_TABLE_SCHEMA,
         "memories": MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,

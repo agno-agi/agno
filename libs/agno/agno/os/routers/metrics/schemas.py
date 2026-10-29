@@ -63,11 +63,7 @@ class MetricsRefreshStatusResponse(BaseModel):
     error: Optional[str] = Field(None, description="Error message if the most recent refresh failed")
 
 
-class OSMetricsRefreshResponse(BaseModel):
-    status: str = Field(..., description="Refresh status: 'completed' or 'failed'")
-    started_at: Optional[datetime] = Field(None, description="When the refresh started")
-    finished_at: Optional[datetime] = Field(None, description="When the refresh finished")
-    error: Optional[str] = Field(None, description="Error message if the refresh failed")
+class OSMetricsRefreshResponse(MetricsRefreshStatusResponse):
     previous_updated_at: Optional[datetime] = Field(
         None, description="Timestamp of the most recent metrics update before the refresh"
     )
@@ -82,14 +78,17 @@ class OSMetricsRefreshResponse(BaseModel):
     )
 
 
-class OSMetricsRefreshStatusResponse(BaseModel):
+class OSMetricsRefreshStatusResponse(MetricsRefreshStatusResponse):
     updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
     db_ids: Dict[str, Optional[datetime]] = Field(
         default_factory=dict, description="Databases the metrics were read from, each with its most recent update"
     )
     skipped_db_ids: Dict[str, str] = Field(
         default_factory=dict,
-        description="Databases left out of the metrics, each with the reason: 'timeout', 'failed' or 'unsupported'",
+        description=(
+            "Databases left out of the metrics, each with the reason: "
+            "'timeout', 'incomplete', 'failed' or 'unsupported'"
+        ),
     )
 
 
@@ -114,7 +113,10 @@ class OSModelMetricsResponse(BaseModel):
     )
     skipped_db_ids: Dict[str, str] = Field(
         default_factory=dict,
-        description="Databases left out of the metrics, each with the reason: 'timeout', 'failed' or 'unsupported'",
+        description=(
+            "Databases left out of the metrics, each with the reason: "
+            "'timeout', 'incomplete', 'failed' or 'unsupported'"
+        ),
     )
 
 
@@ -135,7 +137,10 @@ class OSSessionMetricsResponse(BaseModel):
     )
     change_percent: Optional[float] = Field(
         None,
-        description="Change of total_sessions against previous_total_sessions, in percent. None when the previous window had no sessions",
+        description=(
+            "Change of total_sessions against previous_total_sessions, in percent. "
+            "None when the previous window had no sessions"
+        ),
     )
     window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
     updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
@@ -144,7 +149,10 @@ class OSSessionMetricsResponse(BaseModel):
     )
     skipped_db_ids: Dict[str, str] = Field(
         default_factory=dict,
-        description="Databases left out of the metrics, each with the reason: 'timeout', 'failed' or 'unsupported'",
+        description=(
+            "Databases left out of the metrics, each with the reason: "
+            "'timeout', 'incomplete', 'failed' or 'unsupported'"
+        ),
     )
 
 
@@ -163,7 +171,10 @@ class OSTokenMetricsResponse(BaseModel):
     )
     change_percent: Optional[float] = Field(
         None,
-        description="Change of total_tokens against previous_total_tokens, in percent. None when the previous window used no tokens",
+        description=(
+            "Change of total_tokens against previous_total_tokens, in percent. "
+            "None when the previous window used no tokens"
+        ),
     )
     window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
     updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
@@ -172,7 +183,10 @@ class OSTokenMetricsResponse(BaseModel):
     )
     skipped_db_ids: Dict[str, str] = Field(
         default_factory=dict,
-        description="Databases left out of the metrics, each with the reason: 'timeout', 'failed' or 'unsupported'",
+        description=(
+            "Databases left out of the metrics, each with the reason: "
+            "'timeout', 'incomplete', 'failed' or 'unsupported'"
+        ),
     )
 
 
@@ -190,14 +204,19 @@ class OSRunMetricsResponse(BaseModel):
     status_metrics: Dict[str, int] = Field(..., description="Runs started in the window by their current status")
     success_rate: Optional[float] = Field(
         None,
-        description="Percentage of the window's finished runs (completed, errored or cancelled) that completed. None when no run finished",
+        description=(
+            "Percentage of the window's finished runs (completed, errored or cancelled) that completed. "
+            "None when no run finished"
+        ),
     )
     previous_total_runs: int = Field(
         ..., description="Runs started in the window of the same length that ends the day before this one", ge=0
     )
     change_percent: Optional[float] = Field(
         None,
-        description="Change of total_runs against previous_total_runs, in percent. None when the previous window had no runs",
+        description=(
+            "Change of total_runs against previous_total_runs, in percent. None when the previous window had no runs"
+        ),
     )
     window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
     updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
@@ -206,7 +225,10 @@ class OSRunMetricsResponse(BaseModel):
     )
     skipped_db_ids: Dict[str, str] = Field(
         default_factory=dict,
-        description="Databases left out of the metrics, each with the reason: 'timeout', 'failed' or 'unsupported'",
+        description=(
+            "Databases left out of the metrics, each with the reason: "
+            "'timeout', 'incomplete', 'failed' or 'unsupported'"
+        ),
     )
 
 
@@ -271,7 +293,10 @@ class OSLatencyMetricsResponse(BaseModel):
     )
     skipped_db_ids: Dict[str, str] = Field(
         default_factory=dict,
-        description="Databases left out of the metrics, each with the reason: 'timeout', 'failed' or 'unsupported'",
+        description=(
+            "Databases left out of the metrics, each with the reason: "
+            "'timeout', 'incomplete', 'failed' or 'unsupported'"
+        ),
     )
 
 
@@ -287,12 +312,16 @@ class OSUserMetricsResponse(BaseModel):
     total_users: int = Field(..., description="Users in the directory at the end of the window", ge=0)
     previous_total_users: int = Field(
         ...,
-        description="Users in the directory at the end of the window of the same length that ends the day before this one",
+        description=(
+            "Users in the directory at the end of the window of the same length that ends the day before this one"
+        ),
         ge=0,
     )
     change_percent: Optional[float] = Field(
         None,
-        description="Change of total_users against previous_total_users, in percent. None when the previous window had no users",
+        description=(
+            "Change of total_users against previous_total_users, in percent. None when the previous window had no users"
+        ),
     )
     window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
     updated_at: Optional[datetime] = Field(None, description="Timestamp of the directory read")

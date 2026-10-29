@@ -29,7 +29,11 @@ def _last(days):
     return f"starting_date={start.isoformat()}"
 
 
-def _day(days_ago, count):
+def _iso(day):
+    return f"{day.isoformat()}T00:00:00Z"
+
+
+def _created_row(days_ago, count):
     """A row of the directory's users-created-per-day read, keyed by the day's start in epoch seconds."""
     day = _today() - timedelta(days=days_ago)
     return {"date": int(datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc).timestamp()), "count": count}
@@ -53,7 +57,9 @@ def settings():
 def user_store():
     """Three users added before the last two days, one yesterday and two today."""
     store = MagicMock()
-    store.acreated_by_day = AsyncMock(side_effect=_created_by_day(_day(40, 1), _day(3, 2), _day(1, 1), _day(0, 2)))
+    store.acreated_by_day = AsyncMock(
+        side_effect=_created_by_day(_created_row(40, 1), _created_row(3, 2), _created_row(1, 1), _created_row(0, 2))
+    )
     return store
 
 
@@ -82,8 +88,8 @@ class TestUserCounts:
         body = client.get(f"/os/metrics/users?{_last(2)}").json()
 
         assert body["metrics"] == [
-            {"date": f"{(_today() - timedelta(days=1)).isoformat()}T00:00:00Z", "users_count": 4},
-            {"date": f"{_today().isoformat()}T00:00:00Z", "users_count": 6},
+            {"date": _iso(_today() - timedelta(days=1)), "users_count": 4},
+            {"date": _iso(_today()), "users_count": 6},
         ]
         assert body["total_users"] == 6
 
@@ -105,7 +111,7 @@ class TestUserCounts:
 
     def test_no_users_before_means_no_rate(self, client, user_store):
         """A window with nobody before it cannot show an infinite rise."""
-        user_store.acreated_by_day.side_effect = _created_by_day(_day(0, 3))
+        user_store.acreated_by_day.side_effect = _created_by_day(_created_row(0, 3))
         body = client.get(f"/os/metrics/users?{_last(1)}").json()
 
         assert body["total_users"] == 3
@@ -150,10 +156,10 @@ class TestAccess:
         assert resp.status_code == 403
         user_store.acreated_by_day.assert_not_awaited()
 
-    def test_os_without_a_user_directory_has_no_user_metrics(self):
+    def test_os_without_a_user_directory_has_no_user_metrics(self, settings):
         app = FastAPI()
         with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
-            app.include_router(get_metrics_router(dbs={}, settings=AgnoAPISettings()))
+            app.include_router(get_metrics_router(dbs={}, settings=settings))
         resp = TestClient(app).get("/os/metrics/users")
 
         assert resp.status_code == 503

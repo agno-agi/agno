@@ -92,18 +92,21 @@ one agent run, one agent session, one user, and 42 total tokens.
 
 **Test mode:** LIVE
 
-**Description:** Started the checked-in metrics AgentOS server against the
-local PostgreSQL, ran `metrics-researcher` (`gpt-5.5`) and
-`metrics-summarizer` (`gpt-5.6-luna`) twice each as one user, called
-`POST /os/metrics/refresh`, then read every `GET /os/metrics/*` route for that
-user on 2026-09-25.
+**Description:** Ran the checked-in example on 2026-10-29 against the local
+PostgreSQL: `metrics-researcher` (`gpt-5.5`) and `metrics-summarizer`
+(`gpt-5.6-luna`) ran once each as `observability-user`, the example printed the
+day's totals and started the server, then every `/os/metrics` route was called
+over HTTP on port 7777.
 
-**Result:** Every route answered 200 from the `agno_os_metrics` table: 4
-sessions, 4 completed runs (success rate 100%) and 134 tokens, equal to the
-four run outputs (46 + 26 + 35 + 27); `GET /os/metrics/models` listed each
-model with 2 runs; `GET /os/metrics/latency` returned the averages, medians,
-p95s and maxima; and `GET /os/metrics/refresh/status` returned the
-`updated_at` of the refresh.
+**Result:** Printed 18 sessions today, 20 runs today, 20 completed runs today,
+789 tokens today and 10 run(s) for each model, counting the earlier runs of the
+day in the same database. Every read route answered 200 with no database
+skipped; `?user_id=observability-user` returned that user's 2 sessions.
+`GET /os/metrics/users` answered 503, since the example passes no
+`user_directory`. `POST /os/metrics/refresh` answered `completed` with
+`changed: false`, `GET /os/metrics/refresh/status` then reported `completed`
+with its start and finish times, and a repeated read sent with its ETag
+answered 304 with no body.
 
 ---
 
