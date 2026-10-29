@@ -9,34 +9,24 @@
 </div>
 
 <p align="center">
-  The self-improving agent platform<br/>
+  The self-driving agent platform<br/>
 </p>
 
 ## Introduction
 
-Agno is a self-improving agent platform. Build agents for your product, your team, or your customers. Run them as durable services. Improve them with use.
+Agno is a self-driving agent platform. Build agents for your product, your company, or your customers. Run them as durable services on AgentOS. Put them to work automating company operations.
 
 - **Build** agents with the Agno, Claude Agent, or Codex SDKs. Combine agents into teams and workflows.
 - **Run** agents as durable services with built-in API and MCP. AgentOS handles authentication, role-based access, resume/replay, human approvals, scheduling, and durable execution.
-- **Improve** your agents using traces, evaluations, and past conversations. Automate self-improvement by scheduling coding agents to investigate failures, simulate scenarios, and test incremental improvements.
+- **Automate** company operations with Company OS. Give agents responsibilities, organize work into projects and tasks, and configure recurring routines. People set direction and review results; agents own and execute.
 
-Agno provides the orchestration and service layer around your agents, making them available as a REST API and MCP server. Build your agents once, make them available in:
+Agno provides the orchestration and service layer around your agents, making them available in:
 
 1. **Your product:** using the REST API.
 2. **Claude and ChatGPT:** using the MCP server.
 3. **Chat apps like Slack:** using Agno Interfaces.
 
 Run your platform in your own cloud and keep your data in your control. Review conversations, inspect traces, manage knowledge, and track your agent activity using the [AgentOS UI](https://os.agno.com).
-
-## Your agent platform
-
-Build with any SDK. Run with AgentOS. Manage with the Control Plane.
-
-| Layer | What it provides |
-|---|---|
-| **SDK** | Build agents with the Agno, Claude Agent, or Codex SDKs. |
-| **AgentOS** | Run your agents as secure, durable services with an API and MCP server. |
-| **Control Plane** | Monitor runs, inspect sessions, and manage your platform using the [AgentOS UI](https://os.agno.com). |
 
 ## Get started
 
