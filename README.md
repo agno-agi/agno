@@ -28,16 +28,6 @@ Agno provides the orchestration and service layer around your agents, making the
 
 Run your platform in your own cloud and keep your data in your control. Review conversations, inspect traces, manage knowledge, and track your agent activity using the [AgentOS UI](https://os.agno.com).
 
-## Agno agent platform
-
-Build with any SDK. Run with AgentOS. Manage with the Control Plane.
-
-| Layer | What it provides |
-|---|---|
-| **SDK** | Build agents with the Agno, Claude Agent, or Codex SDKs. |
-| **AgentOS** | Run your agents as secure, durable services with an API and MCP server. |
-| **Control Plane** | Monitor runs, inspect sessions, and manage your platform using the [AgentOS UI](https://os.agno.com). |
-
 ## Get started
 
 Agno is built for coding agents. Start with a pre-built template and give this prompt to your coding agent:
