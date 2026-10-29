@@ -28,7 +28,7 @@ Agno provides the orchestration and service layer around your agents, making the
 
 Run your platform in your own cloud and keep your data in your control. Review conversations, inspect traces, manage knowledge, and track your agent activity using the [AgentOS UI](https://os.agno.com).
 
-## Your agent platform
+## Agno agent platform
 
 Build with any SDK. Run with AgentOS. Manage with the Control Plane.
 
