@@ -386,6 +386,7 @@ async def test_scheduled_review_persists_evidence_and_caller_authority(tmp_path,
         manager = CompanyManager(s.db)
         product = manager.create(name="Docs", user_id="alice")
         project = manager.create_project(product_id=product["id"], name="Guides", user_id="alice")
+        manager.transition_project(project_id=project["id"], target="active", reason="Approved")
         path = tmp_path / "source.md"
         path.write_text("The released API needs a guide.")
         source = manager.create_source(product_id=product["id"], type="markdown", reference=str(path))
@@ -464,6 +465,7 @@ async def test_routine_mutation_fence_holds_even_for_admin(tmp_path, mode):
         manager = CompanyManager(s.db)
         product = manager.create(name="Docs", user_id="alice")
         project = manager.create_project(product_id=product["id"], name="Guides", user_id="alice")
+        project = manager.transition_project(project_id=project["id"], target="active", reason="Approved")
         task = manager.create_task(product_id=product["id"], project_id=project["id"], title="Guide", user_id="alice")
         observed = []
 

@@ -13,6 +13,7 @@ def test_task_storage(tmp_path):
     try:
         parent = m.create(name="SDK")
         project = m.create_project(product_id=parent["id"], name="Release")
+        m.transition_project(project_id=project["id"], target="active", reason="Approved")
         record = m.create_task(product_id=parent["id"], title="Work", project_id=project["id"], user_id="alice")
         assert db.get_task(record["id"], user_id="alice") == record
         assert db.delete_task(record["id"], user_id="bob") is False

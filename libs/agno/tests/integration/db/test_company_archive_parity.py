@@ -66,7 +66,9 @@ async def test_product_cascade_exact_restore_and_repeated_cycles(db, monkeypatch
     m = manager(db)
     product = await call(m.create, name="SDK", user_id="owner")
     project = await call(m.create_project, product_id=product["id"], name="Release", user_id="collaborator")
+    project = await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     old_project = await call(m.create_project, product_id=product["id"], name="Old")
+    await call(m.transition_project, project_id=old_project["id"], target="active", reason="Approved")
     old_project_task = await call(
         m.create_task, product_id=product["id"], title="Old project task", project_id=old_project["id"]
     )
@@ -133,6 +135,7 @@ async def test_project_cascade_and_parent_visibility_before_pagination(db):
     m = manager(db)
     product = await call(m.create, name="SDK")
     project = await call(m.create_project, product_id=product["id"], name="Release")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     old = await call(m.create_task, product_id=product["id"], title="Old", project_id=project["id"])
     await call(m.delete_task, old["id"])
     task = await call(m.create_task, product_id=product["id"], title="New", project_id=project["id"])
@@ -170,6 +173,7 @@ async def test_http_refuses_all_active_work_then_cascades_and_restores(db, paren
     m = manager(db)
     product = await call(m.create, name="SDK")
     project = await call(m.create_project, product_id=product["id"], name="Release")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     active = []
     for target in ["ready", "in_progress", "in_review"]:
         task = await call(m.create_task, product_id=product["id"], title=target, project_id=project["id"])
@@ -239,6 +243,8 @@ async def test_backlog_patch_move_and_cross_product_refusal(db):
     m = manager(db)
     product = await call(m.create, name="SDK")
     projects = [await call(m.create_project, product_id=product["id"], name=name) for name in ["One", "Two"]]
+    for project in projects:
+        await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     other_product = await call(m.create, name="Other")
     other = await call(m.create_project, product_id=other_product["id"], name="Other")
     task = await call(m.create_task, product_id=product["id"], title="Move", project_id=projects[0]["id"])
@@ -270,6 +276,7 @@ async def test_cascade_failure_rolls_back_parent_children_and_provenance(db, mon
     m = manager(db)
     product = await call(m.create, name="SDK")
     project = await call(m.create_project, product_id=product["id"], name="Release")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     task = await call(m.create_task, product_id=product["id"], title="Work", project_id=project["id"])
     if operation == "restore":
         await call(m.delete, product["id"])
@@ -310,6 +317,7 @@ async def test_acceptance_racing_archive_never_hides_active_work(db, parent_type
     ).get_app()
     product = await call(m.create, name="SDK")
     project = await call(m.create_project, product_id=product["id"], name="Release")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     task = await call(m.create_task, product_id=product["id"], title="Race", project_id=project["id"])
     parent = product if parent_type == "product" else project
     path = "/company/tasks/" + task["id"]
@@ -407,6 +415,7 @@ async def test_lists_hide_legacy_children_without_cascade_provenance(db, monkeyp
     m = manager(db)
     product = await call(m.create, name="Archived by an older release")
     project = await call(m.create_project, product_id=product["id"], name="Still active")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     await call(m.create_task, product_id=product["id"], title="Still active", project_id=project["id"])
     monkeypatch.setattr(archive, "_archive_children", lambda *args: None)
     await call(m.delete, product["id"])
@@ -427,11 +436,13 @@ async def test_response_counts_match_filtered_lists_and_exclude_archives(db):
     m = manager(db)
     product = await call(m.create, name="SDK")
     project = await call(m.create_project, product_id=product["id"], name="Release")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     active_project = await call(m.create_project, product_id=product["id"], name="Active")
     await call(m.transition_project, project_id=active_project["id"], target="active", reason="Start")
     terminal_project = await call(m.create_project, product_id=product["id"], name="Cancelled")
     await call(m.transition_project, project_id=terminal_project["id"], target="cancelled", reason="Stop")
     archived_project = await call(m.create_project, product_id=product["id"], name="Archived")
+    await call(m.transition_project, project_id=archived_project["id"], target="active", reason="Approved")
     await call(m.create_task, product_id=product["id"], title="Hidden by Project", project_id=archived_project["id"])
     await call(m.delete_project, archived_project["id"])
     statuses = ["backlog", "ready", "in_progress", "in_review", "done", "cancelled"]
@@ -516,6 +527,8 @@ async def test_counts_page_query_bound_and_5000_task_performance(db):
     m = manager(db)
     products = [await call(m.create, name="Product " + str(i)) for i in range(25)]
     projects = [await call(m.create_project, product_id=p["id"], name="Project") for p in products]
+    for project in projects:
+        await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     table = await call(db._get_table, table_type="tasks", create_table_if_not_found=True)
     task_rows = [
         {
@@ -601,6 +614,7 @@ async def test_separately_archived_active_task_does_not_block_parent_archive(db,
     m = manager(db)
     product = await call(m.create, name="SDK")
     project = await call(m.create_project, product_id=product["id"], name="Release")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     task = await call(m.create_task, product_id=product["id"], title="Archived", project_id=project["id"])
     await call(
         m.transition_task,
@@ -644,6 +658,7 @@ async def test_attention_excludes_archived_ancestors_with_execution_results(db, 
     m = manager(db)
     product = await call(m.create, name="SDK")
     project = await call(m.create_project, product_id=product["id"], name="Release")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     for status in ["backlog", "in_progress", "in_review"]:
         await call(
             db.create_task,

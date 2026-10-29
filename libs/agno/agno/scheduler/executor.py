@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 from contextvars import ContextVar
+from inspect import signature
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import quote
 
@@ -39,6 +40,22 @@ def _to_form_value(v: Any) -> str:
 
 
 _active_schedule_run: ContextVar[Optional[tuple]] = ContextVar("active_schedule_run", default=None)
+
+
+def _preserve_updated_at(db: Any, method: str, schedule: Schedule) -> Dict[str, Any]:
+    """Keyword for a ``db.<method>`` write that keeps a Company routine's last-edit time.
+
+    An adapter that does not name the parameter still gets the write: skipping a release or a disable
+    would leave a failing schedule stuck or armed. Its updated_at advances, and a warning is logged.
+    """
+    if schedule.managed_by == "company":
+        if "preserve_updated_at" in signature(getattr(db, method)).parameters:
+            return {"preserve_updated_at": True}
+        log_warning(
+            f"{type(db).__name__}.{method} does not accept preserve_updated_at; "
+            f"schedule {schedule.id} will have its updated_at advanced"
+        )
+    return {}
 
 
 class ScheduleExecutor:
@@ -164,10 +181,15 @@ class ScheduleExecutor:
 
                     disabled_reason = f"endpoint_drift:{sched.endpoint}!={sched.target_type}:{sched.target_id}"
                     try:
+                        disable = {
+                            "enabled": False,
+                            "disabled_reason": disabled_reason,
+                            **_preserve_updated_at(db, "update_schedule", sched),
+                        }
                         if asyncio.iscoroutinefunction(getattr(db, "update_schedule", None)):
-                            await db.update_schedule(schedule_id, enabled=False, disabled_reason=disabled_reason)
+                            await db.update_schedule(schedule_id, **disable)
                         else:
-                            db.update_schedule(schedule_id, enabled=False, disabled_reason=disabled_reason)
+                            db.update_schedule(schedule_id, **disable)
                     except Exception as exc:
                         log_error(f"Failed to disable schedule {schedule_id} after endpoint drift: {exc}")
 
@@ -235,7 +257,7 @@ class ScheduleExecutor:
                     else:
                         db.update_schedule_run(run_record_id, **updates)
 
-                    if last_status in ("success", "paused"):
+                    if last_status in ("success", "paused", "cancelled"):
                         break
 
                 except Exception as exc:
@@ -301,16 +323,15 @@ class ScheduleExecutor:
 
                     next_run_at = None
                     try:
+                        disable = {"enabled": False, **_preserve_updated_at(db, "update_schedule", sched)}
                         if asyncio.iscoroutinefunction(getattr(db, "update_schedule", None)):
-                            await db.update_schedule(schedule_id, enabled=False)
+                            await db.update_schedule(schedule_id, **disable)
                         else:
-                            db.update_schedule(schedule_id, enabled=False)
+                            db.update_schedule(schedule_id, **disable)
                     except Exception as exc:
                         log_error(f"Failed to disable schedule {schedule_id} after cron failure: {exc}")
 
                 try:
-                    from inspect import signature
-
                     release_kwargs: Dict[str, Any] = {"next_run_at": next_run_at}
                     # A poller can reclaim with the same worker ID. Match the
                     # individual claim so an expired invocation cannot release it.
@@ -320,6 +341,7 @@ class ScheduleExecutor:
                         release_kwargs["worker_id"] = sched.locked_by
                     if sched.locked_at is not None and "locked_at" in parameters:
                         release_kwargs["locked_at"] = sched.locked_at
+                    release_kwargs.update(_preserve_updated_at(db, "release_schedule", sched))
                     if asyncio.iscoroutinefunction(getattr(db, "release_schedule", None)):
                         await db.release_schedule(schedule_id, **release_kwargs)
                     else:
@@ -609,7 +631,8 @@ class ScheduleExecutor:
                     status = "paused"
                     error = None
                 elif run_status == "CANCELLED":
-                    status = "failed"
+                    # A cancelled run was stopped on purpose, so it is neither a failure nor retried.
+                    status = "cancelled"
                     error = data.get("error") or "Run was cancelled"
                 else:
                     status = "failed"

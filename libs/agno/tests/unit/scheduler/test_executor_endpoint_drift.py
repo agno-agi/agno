@@ -207,3 +207,75 @@ class TestDriftCheckScope:
         assert result["status"] == "failed"
         mock_db.create_schedule_run.assert_called_once()
         mock_db.update_schedule_run.assert_called_once()
+
+
+class TestCompanyEditTimePreservation:
+    """An executor-driven disable or release of a Company routine must not read as a user edit."""
+
+    @staticmethod
+    def _schedule(trigger, managed_by):
+        schedule = TestDriftCheckScope._schedule_dict(managed_by=managed_by, target_type="agent", target_id="a1")
+        if trigger == "endpoint_drift":
+            schedule["endpoint"] = "/agents/OTHER/runs"
+        else:
+            schedule["cron_expr"] = "not a cron"
+        return schedule
+
+    @staticmethod
+    def _adapter(shape):
+        """A db whose update and release writes are recorded as (method, keyword arguments)."""
+        writes = []
+
+        def declaring_update(schedule_id, user_id=None, *, preserve_updated_at=False, **kwargs):
+            writes.append(("update_schedule", {"preserve_updated_at": preserve_updated_at, **kwargs}))
+
+        def declaring_release(schedule_id, next_run_at=None, *, preserve_updated_at=False, **kwargs):
+            writes.append(("release_schedule", {"preserve_updated_at": preserve_updated_at, **kwargs}))
+
+        def strict_update(schedule_id, enabled=None, disabled_reason=None):
+            writes.append(("update_schedule", {"enabled": enabled}))
+
+        def strict_release(schedule_id, next_run_at=None):
+            writes.append(("release_schedule", {}))
+
+        def variadic_update(schedule_id, **kwargs):
+            writes.append(("update_schedule", kwargs))
+
+        def variadic_release(schedule_id, **kwargs):
+            writes.append(("release_schedule", kwargs))
+
+        db = MagicMock()
+        db.update_schedule, db.release_schedule = {
+            "declaring": (declaring_update, declaring_release),
+            "strict": (strict_update, strict_release),
+            "variadic": (variadic_update, variadic_release),
+        }[shape]
+        return db, writes
+
+    @staticmethod
+    async def _execute(executor, schedule, db):
+        ok = AsyncMock(return_value={"status": "success", "status_code": 200})
+        with patch.object(executor, "_call_endpoint", new=ok), patch("agno.scheduler.executor.log_warning") as warned:
+            await executor.execute(schedule, db)
+        return warned
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("managed_by,preserved", [("company", True), ("studio", False)])
+    @pytest.mark.parametrize("trigger", ["endpoint_drift", "invalid_cron"])
+    async def test_only_company_rows_are_flagged(self, executor, managed_by, preserved, trigger):
+        db, writes = self._adapter("declaring")
+        await self._execute(executor, self._schedule(trigger, managed_by), db)
+        assert [method for method, _ in writes] == ["update_schedule", "release_schedule"]
+        assert all(kwargs["preserve_updated_at"] is preserved for _, kwargs in writes)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("shape", ["strict", "variadic"])
+    @pytest.mark.parametrize("trigger", ["endpoint_drift", "invalid_cron"])
+    async def test_adapter_without_the_parameter_still_disables_and_releases(self, executor, shape, trigger):
+        db, writes = self._adapter(shape)
+        warned = await self._execute(executor, self._schedule(trigger, "company"), db)
+        assert [method for method, _ in writes] == ["update_schedule", "release_schedule"]
+        assert all("preserve_updated_at" not in kwargs for _, kwargs in writes)
+        messages = " ".join(str(call) for call in warned.call_args_list)
+        assert "update_schedule does not accept preserve_updated_at" in messages
+        assert "release_schedule does not accept preserve_updated_at" in messages

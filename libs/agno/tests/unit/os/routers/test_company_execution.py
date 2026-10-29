@@ -77,6 +77,11 @@ def accepted(client):
         json={"product_id": product["id"], "name": "Release"},
         headers=headers(scopes=["projects:write"]),
     ).json()
+    client.post(
+        f"/company/projects/{project['id']}/transitions",
+        json={"target": "active", "reason": "Approved"},
+        headers=headers(scopes=["projects:write"]),
+    )
     task = client.post(
         "/company/tasks",
         json={"product_id": product["id"], "project_id": project["id"], "title": "Draft", "brief": "Write"},
@@ -169,6 +174,7 @@ def test_python_acceptance_also_validates_registry(tmp_path):
     manager = CompanyManager(db)
     product = manager.create(name="SDK")
     project = manager.create_project(product_id=product["id"], name="Release")
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     task = manager.create_task(product_id=product["id"], title="Draft", project_id=project["id"])
     with pytest.raises(ValueError, match="missing"):
         manager.transition_task(

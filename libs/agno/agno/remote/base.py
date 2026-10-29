@@ -129,6 +129,9 @@ class RemoteDb:
         )
 
     # SESSIONS
+    async def search_sessions(self, **kwargs: Any) -> "PaginatedResponse[SessionSchema]":
+        return await self.client.asearch_sessions(**kwargs)
+
     async def get_sessions(self, **kwargs: Any) -> "PaginatedResponse[SessionSchema]":
         return await self.client.get_sessions(**kwargs)
 

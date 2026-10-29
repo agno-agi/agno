@@ -73,7 +73,7 @@ such as listing node labels or executing Cypher queries.
 import os
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.neo4j import Neo4jTools
 from dotenv import load_dotenv
 
@@ -135,7 +135,7 @@ if __name__ == "__main__":
 
     # Example: Use with AGNO Agent
     agent = Agent(
-        model=OpenAIChat(id="o3-mini"),
+        model=OpenAIResponses(id="gpt-5.6-sol"),
         tools=[neo4j_toolkit],
         markdown=True,
         description=description,

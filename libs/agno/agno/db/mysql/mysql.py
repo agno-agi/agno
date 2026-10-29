@@ -1035,6 +1035,7 @@ class MySQLDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
@@ -1060,6 +1061,9 @@ class MySQLDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        from agno.db.session_filters import normalize_session_filter, session_filter_to_sqlalchemy
+
+        filter_expr = normalize_session_filter(filter_expr)
         validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="sessions")
@@ -1069,6 +1073,10 @@ class MySQLDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
+
+                if filter_expr is not None:
+                    # Binary collation keeps string comparisons case-sensitive, matching other SQL backends.
+                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table, collation="utf8mb4_bin"))
 
                 # Filtering
                 if user_id is not None:
@@ -1115,7 +1123,8 @@ class MySQLDb(BaseDb):
 
                 result = sess.execute(stmt).fetchall()
                 if not result:
-                    return [] if deserialize else ([], 0)
+                    # An empty page still reports the total, so callers can paginate past the end.
+                    return [] if deserialize else ([], total_count)
 
                 session_dicts = [dict(row._mapping) for row in result]
 

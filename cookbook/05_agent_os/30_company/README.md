@@ -102,13 +102,21 @@ tools. HTTP rejects omission with 422; Python managers and tools raise
 then pass its ID to the Task proposal. A Backlog Task can move between Projects
 but cannot clear its Project. Existing nullable storage rows remain readable.
 
-Projects start `proposed` and move to `active`, then `done`. Tasks start
-`backlog` and move through `ready`, `in_progress`, `in_review`, and `done`.
-Either can be `cancelled` from any non-terminal state. Each transition takes
-`target` and a non-empty `reason`; history is returned on the record. Tasks
-may return to Backlog to clear acceptance and change scope, and In review may
-return to In progress for revisions by starting the next run attempt. Direct HTTP
-transitions to In progress return 409 and name the runs endpoint. Terminal states cannot transition.
+Projects start `proposed` and move to `active`, then `done`. A Project can be
+`cancelled` from any non-terminal state, and its terminal states cannot transition.
+Tasks are created in `backlog` by default; `POST /company/tasks` also accepts
+`status` set to `ready` (with `executor_type` and `executor_id`, under the same
+acceptance checks as the Ready transition) or `cancelled`. Tasks move through
+`ready`, `in_progress`, `in_review`, and `done`. Each transition takes `target`
+and a non-empty `reason`; history is returned on the record. A Task can move to
+Backlog, Ready or Cancelled from any other state, including `done` and `cancelled`.
+Backlog clears acceptance so scope can change. In progress is entered only by
+starting a run: direct HTTP transitions to In progress return 409 and name the
+runs endpoint. While a run attempt is still executing or paused awaiting approval,
+moves out of In progress return 409 and name that run's cancel endpoint. In review and Done follow a run;
+reaching them from any state other than In progress and In review respectively
+requires an earlier run attempt.
+A done or cancelled Task cannot reopen inside a done or cancelled Project.
 
 The HTTP routes use `/company/projects` and `/company/tasks`, with the same
 CRUD, paging, soft delete and restore conventions as Products, plus
@@ -122,8 +130,10 @@ read scope, matching Products. Edits and transitions are collaborative: callers 
 scope can update or transition another creator's work, even with user isolation
 enabled. This includes cancellation and returning Tasks to Backlog. The creator
 stays unchanged, and transition history records the acting caller. Ready still
-requires the caller's executor run permission; accepted Tasks must return to
-Backlog before editing. Delete and restore need the delete scope, not ownership.
+requires the caller's executor run permission; accepted Tasks keep their Project,
+evidence and executor until returned to Backlog, while title and brief stay
+editable at any stage (Company tools run by Routines and executors edit Backlog
+Tasks only). Delete and restore need the delete scope, not ownership.
 New work can use another owner's Product or Project, with the Task and
 Project still required to belong to the same Product. Manager and storage
 methods retain explicit owner filters for direct callers.
@@ -264,7 +274,7 @@ GET `/company/attention?product_id=...` returns `proposals`, `in_review` and
 `failed` counts using the Task list filters. Omitting Product counts all work.
 Attention and run reads are company-wide with `tasks:read`; Task lists also
 accept `failed=true`. Failed work means an In progress Task whose latest result
-is `ERROR` or `CANCELLED`. Moving the Task to Cancelled, Backlog, Ready or In review
+is `ERROR` or `CANCELLED`. Moving the Task to Cancelled, Backlog, Ready, In review or Done
 clears it from failed attention while preserving the result as history. Starting
 a new attempt clears the previous result. `failed=false`
 includes all other Tasks, including those with no result. The Task table is
@@ -664,8 +674,9 @@ one Task and only terminal Tasks. Each proposal is a versioned page under
 `project-completion/`; unchanged scans do not rewrite it. New open work withdraws
 the proposal. A human accepts it through the existing Project transition route.
 Refresh cannot transition a Project. Moving a Project to Done returns 409 with
-the open Task names and ids until every Task is Done or Cancelled, including
-Tasks that were manually archived while still open.
+the open Task names and ids until every visible Task is Done or Cancelled. Tasks
+archived while still open don't count, and restoring one into a Done or
+Cancelled Project is refused as open work.
 
 Products store `metadata.archive_window_days`, default 14. Refresh soft-archives
 Done and Cancelled Projects and Tasks whose last update is strictly older than
@@ -677,8 +688,8 @@ Refresh processes qualifying Projects before standalone Tasks, so a single
 maintenance pass preserves the Project's cascade as one restorable group.
 Restoring the Project restores only children taken by that cascade; Tasks
 independently archived before that pass stay archived. Retention skips terminal
-Projects that still contain Backlog work and refuses active Tasks. New open Tasks
-cannot be added or moved into Done or Cancelled Projects.
+Projects that still contain visible Backlog work and refuses active Tasks. New
+open Tasks cannot be added or moved into Done or Cancelled Projects.
 Restore retains the lifecycle and starts a fresh retention window. Archived
 records leave normal lists, grouped counts and execution. Read an individual
 record with `include_deleted=true` for inspection; lists still hide children
@@ -822,7 +833,20 @@ Omit `cron_expr` (or use null) to create an on-demand Routine in code, YAML,
 setup, or `POST /company/routines`. It stays enabled with `next_run_at: null`
 and is never claimed by the poller. `PATCH /company/routines/{id}` with a cron
 makes it scheduled; `{"cron_expr": null}` removes the schedule and keeps history.
-Pause and resume also apply to on-demand Routines.
+On-demand Routines cannot be paused, and resume returns 409 while one is enabled;
+a disabled on-demand Routine resumes.
+
+`POST /company/routines/{id}/archive` archives a Routine: it is paused, records
+`deleted_at`, keeps its run history, leaves the Product's Routine list, and is hidden
+from reads, lists and attention counts unless `include_deleted=true`.
+`POST /company/routines/{id}/restore` relinks it under an active Product; a
+scheduled Routine comes back paused, an on-demand one comes back enabled.
+`DELETE /company/routines/{id}`
+removes the Routine, active or archived, with its run history and its Product
+link. Archive and delete return 409 while a run is executing; cancel it first.
+Archive and restore need `routines:delete` and `schedules:delete`; delete needs
+`agent_os:admin`, set in the scope mapping. A Routine declared in code is created again on the next
+startup unless its declaration is removed.
 
 On-demand execution is a scheduler rule for all schedules. The generic schedule
 API accepts an empty or omitted cron on creation and an empty cron on update;
@@ -835,9 +859,11 @@ execution and returns its schedule-run record when it finishes. It uses the
 same owner and executor permission checks as the other Routine controls;
 paused Routines return 409. Automation and non-Company schedule IDs return 404.
 A concurrent GET exposes the live `last_run.run_id` and `session_id` while
-execution is running. Stop uses the existing executor cancel route, such as
-`POST /agents/{executor_id}/runs/{run_id}/cancel` (or the equivalent Team or
-Workflow route). There is no separate Routine stop operation.
+execution is running. `POST /company/routines/{id}/cancel` stops that run through
+the executor's cancel route, with the same Routine scopes as pause and resume plus
+the caller's run permission on the executor. It returns 409 when no run is running.
+The schedule run then records `cancelled` with the error `Run was cancelled`; a
+cancelled run is not retried and does not count as a failed Routine.
 
 `08_custom_routines.py` demonstrates on-demand declaration, single read, pause,
 resume, and adding/removing a cron without calling a model.

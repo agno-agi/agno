@@ -1,5 +1,6 @@
 """Company playbook, bounded tools and framework Company Manager contracts."""
 
+import contextvars
 import inspect
 import json
 
@@ -110,6 +111,9 @@ async def test_tools_identity_fence_and_learning(tmp_path, use_async):
         fn = getattr(tools, ("a" if use_async else "") + name)
         return await fn(*args, **kwargs) if use_async else fn(*args, **kwargs)
 
+    renamed = json.loads(await invoke("edit_company_project", project["id"], "Launch", "Ship", _agno_run_context=bob))
+    assert renamed["name"] == "Launch" and renamed["user_id"] == "alice"
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     task = json.loads(
         await invoke("propose_company_task", product["id"], "Draft", project_id=project["id"], _agno_run_context=alice)
     )
@@ -119,8 +123,6 @@ async def test_tools_identity_fence_and_learning(tmp_path, use_async):
     edited = json.loads(await invoke("edit_company_task", task["id"], "Draft v2", "bob's", _agno_run_context=bob))
     assert edited["title"] == "Draft v2" and edited["user_id"] == "alice"
     await invoke("edit_company_task", task["id"], "Draft", "better", _agno_run_context=alice)
-    renamed = json.loads(await invoke("edit_company_project", project["id"], "Launch", "Ship", _agno_run_context=bob))
-    assert renamed["name"] == "Launch" and renamed["user_id"] == "alice"
     manager.transition_task(
         task_id=task["id"],
         target="ready",
@@ -129,8 +131,9 @@ async def test_tools_identity_fence_and_learning(tmp_path, use_async):
         executor_id="writer",
         accepted_by="alice",
     )
-    with pytest.raises(ValueError, match="Backlog"):
-        await invoke("edit_company_task", task["id"], "changed", "no", _agno_run_context=alice)
+    accepted_edit = json.loads(await invoke("edit_company_task", task["id"], "changed", "yes", _agno_run_context=alice))
+    assert accepted_edit["title"] == "changed" and accepted_edit["brief"] == "yes"
+    assert accepted_edit["status"] == "ready" and accepted_edit["executor_id"] == "writer"
     await invoke("update_product_status", product["id"], "draft ready", 1, _agno_run_context=alice)
     entry = json.loads(
         await invoke("log_company_decision", "Draft first", reasoning="review needed", _agno_run_context=alice)
@@ -150,6 +153,131 @@ async def test_tools_identity_fence_and_learning(tmp_path, use_async):
         await invoke("propose_company_task", product["id"], "anonymous", project_id=project["id"])
 
 
+def _task_at(tmp_path, stage):
+    db = SqliteDb(db_file=str(tmp_path / "edit.db"))
+    manager = CompanyManager(db, registry=Registry(agents=[Agent(id="writer")]))
+    product = manager.create(name="SDK")
+    project = manager.create_project(product_id=product["id"], name="Release")
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
+    task = manager.create_task(product_id=product["id"], project_id=project["id"], title="Draft", brief="Original")
+    if stage != "backlog":
+        accept = {"executor_type": "agent", "executor_id": "writer", "accepted_by": "alice"} if stage == "ready" else {}
+        manager.transition_task(task_id=task["id"], target=stage, reason="Move", **accept)
+    return db, manager, manager.get_task(task["id"])
+
+
+async def _edit_task(tools, use_async, context, task_id):
+    if use_async:
+        return await tools.aedit_company_task(task_id, "Rewritten", "Rewritten brief", _agno_run_context=context)
+    return tools.edit_company_task(task_id, "Rewritten", "Rewritten brief", _agno_run_context=context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("routine", [False, True], ids=["executor", "routine"])
+@pytest.mark.parametrize("stage", ["backlog", "ready", "cancelled"])
+async def test_automated_callers_edit_task_content_only_in_backlog(tmp_path, use_async, routine, stage):
+    from agno.company.execution import _ExecutorAuthorization
+    from agno.company.routines import _RoutineAuthorization
+
+    db, manager, task = _task_at(tmp_path, stage)
+    tools = CompanyTools(db)
+    authority = _RoutineAuthorization(None, "routine") if routine else _ExecutorAuthorization(None)
+    context = RunContext(run_id="r", session_id="s", authorization=authority)
+    if stage == "backlog":
+        edited = json.loads(await _edit_task(tools, use_async, context, task["id"]))
+        assert (edited["title"], edited["brief"], edited["status"]) == ("Rewritten", "Rewritten brief", "backlog")
+        return
+    with pytest.raises(PermissionError, match="Backlog"):
+        await _edit_task(tools, use_async, context, task["id"])
+    assert manager.get_task(task["id"]) == task
+    context.authorization = None
+    edited = json.loads(await _edit_task(tools, use_async, context, task["id"]))
+    assert (edited["title"], edited["brief"], edited["status"]) == ("Rewritten", "Rewritten brief", stage)
+    assert edited["executor_id"] == task["executor_id"] and edited["accepted_at"] == task["accepted_at"]
+    db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("routine", [False, True], ids=["executor", "routine"])
+async def test_automated_edit_loses_to_acceptance_between_read_and_write(tmp_path, use_async, routine):
+    from agno.company.execution import _ExecutorAuthorization
+    from agno.company.routines import _RoutineAuthorization
+
+    db, manager, task = _task_at(tmp_path, "backlog")
+    authority = _RoutineAuthorization(None, "routine") if routine else _ExecutorAuthorization(None)
+    context = RunContext(run_id="r", session_id="s", authorization=authority)
+    real_update, accepted = db.update_task, {}
+
+    def accept_first(*args, **kwargs):
+        # A human acts in their own request, outside the automated run's authorization scope.
+        contextvars.Context().run(
+            manager.transition_task,
+            task_id=task["id"],
+            target="ready",
+            reason="Move",
+            executor_type="agent",
+            executor_id="writer",
+            accepted_by="alice",
+        )
+        accepted.update(manager.get_task(task["id"]))
+        return real_update(*args, **kwargs)
+
+    db.update_task = accept_first
+    with pytest.raises(PermissionError, match="Backlog"):
+        await _edit_task(CompanyTools(db), use_async, context, task["id"])
+    assert accepted["status"] == "ready" and accepted["accepted_at"] is not None
+    assert manager.get_task(task["id"]) == accepted
+    assert (accepted["title"], accepted["brief"]) == ("Draft", "Original")
+    db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_automatic_task_run_cannot_edit_accepted_task_content(tmp_path, use_async):
+    from agno.company.execution import _automatic_task
+
+    db, manager, task = _task_at(tmp_path, "ready")
+    context = RunContext(run_id="r", session_id="s")
+    token = _automatic_task.set({"id": task["id"]})
+    try:
+        with pytest.raises(PermissionError, match="Backlog"):
+            await _edit_task(CompanyTools(db), use_async, context, task["id"])
+    finally:
+        _automatic_task.reset(token)
+    assert manager.get_task(task["id"]) == task
+    db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_automated_edit_guard_keeps_permission_and_product_refusals(tmp_path, use_async):
+    from agno.company.routines import _RoutineAuthorization
+    from agno.os.authz.provider import AuthorizationContext
+    from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+    from agno.run.authorization import RunAuthorization, authorization_scope
+
+    db, manager, task = _task_at(tmp_path, "ready")
+    tools = CompanyTools(db)
+    denied = RunAuthorization(
+        provider=ScopeAuthorizationProvider(),
+        context=AuthorizationContext(principal_id="alice", scopes=["agents:run"]),
+        enforce_tools=False,
+    )
+    context = RunContext(run_id="r", session_id="s", authorization=_RoutineAuthorization(denied, "routine"))
+    with pytest.raises(PermissionError) as refused:
+        await _edit_task(tools, use_async, context, task["id"])
+    assert "Backlog" not in str(refused.value)
+    other = _RoutineAuthorization(None, "routine", product_id="another-product")
+    context = RunContext(run_id="r", session_id="s", authorization=other)
+    with authorization_scope(lambda: other):
+        with pytest.raises(PermissionError, match="configured Product"):
+            await _edit_task(tools, use_async, context, task["id"])
+    assert manager.get_task(task["id"]) == task
+    db.close()
+
+
 @pytest.mark.asyncio
 async def test_direct_mcp_has_only_bounded_tools(tmp_path):
     from fastmcp import Client
@@ -160,6 +288,7 @@ async def test_direct_mcp_has_only_bounded_tools(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "mcp.db"))
     product = CompanyManager(db).create(name="SDK")
     project = CompanyManager(db).create_project(product_id=product["id"], name="Release")
+    CompanyManager(db).transition_project(project_id=project["id"], target="active", reason="Approved")
     tools = CompanyTools(db)
     os = AgentOS(db=db, company=CompanyConfig(), mcp=MCPConfig(tools=[tools], default_tools=False), telemetry=False)
     async with Client(build_mcp_server(os)) as client:
@@ -193,6 +322,7 @@ async def test_company_manager_runs_tools_with_injected_identity(tmp_path, mode)
     db = SqliteDb(db_file=str(tmp_path / "runtime.db"))
     product = CompanyManager(db).create(name="SDK", user_id="alice")
     project = CompanyManager(db).create_project(product_id=product["id"], name="Release", user_id="alice")
+    CompanyManager(db).transition_project(project_id=project["id"], target="active", reason="Approved")
 
     class PlanningModel(Model):
         def __init__(self):
@@ -392,6 +522,7 @@ def test_refresh_archives_every_members_finished_work(tmp_path):
     manager = CompanyManager(db)
     product = manager.create(name="SDK", user_id="alice", metadata={"archive_window_days": 0})
     project = manager.create_project(product_id=product["id"], name="Release", user_id="alice")
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     tasks = {
         owner: manager.create_task(product_id=product["id"], title=owner, project_id=project["id"], user_id=owner)
         for owner in ("alice", "bob")
