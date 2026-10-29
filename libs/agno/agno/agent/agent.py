@@ -1978,7 +1978,12 @@ def get_agents(
         exclude_component_ids: Component IDs to exclude from results.
         user_id: If set, only load agents owned by this user, unowned (shared), or published.
     """
-    from agno.agents._storage import external_agent_from_config, is_external_agent_config
+    from agno.agents._storage import (
+        external_agent_from_config,
+        is_external_agent_config,
+        unavailable_external_agent,
+    )
+    from agno.exceptions import ComponentRehydrationError
     from agno.utils.log import log_error
 
     exclude_component_ids = set(exclude_component_ids or ()) | RESERVED_MANAGER_IDS
@@ -2031,9 +2036,14 @@ def get_agents(
                         # components so they stay visible and fixable.
                         agent: Union[Agent, BaseExternalAgent]
                         if is_external_agent_config(agent_config):
-                            agent = external_agent_from_config(
-                                agent_config, id=component_id, db=db, registry=registry, strict=False
-                            )
+                            try:
+                                agent = external_agent_from_config(
+                                    agent_config, id=component_id, db=db, registry=registry, strict=False
+                                )
+                            except ComponentRehydrationError as e:
+                                # Still listed, as a stand-in that reports why it cannot run.
+                                log_error(f"Agent {component_id} cannot be rebuilt from its config: {e}")
+                                agent = unavailable_external_agent(agent_config, component_id, db, str(e))
                         else:
                             agent = Agent.from_dict(agent_config, registry=registry, strict=False)
                             agent.id = component_id

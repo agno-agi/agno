@@ -107,7 +107,7 @@ def sandbox() -> FakeSandbox:
 
 @pytest.fixture
 def registry(db, sandbox) -> Registry:
-    return Registry(dbs=[db], schemas=[Answer], sandboxes=[sandbox])
+    return Registry(dbs=[db], schemas=[Answer], sandboxes=[sandbox], allow_host_external_agents=True)
 
 
 @pytest.fixture
@@ -477,6 +477,20 @@ class TestPersistence:
         assert by_id["coder"]._version == 1
         assert by_id["coder"]._stage == "published"
 
+    def test_save_refuses_to_change_what_an_id_loads_as(self, db):
+        ClaudeAgent(id="coder").save(db=db)
+
+        with pytest.raises(ValueError, match="stored as a 'claude-agent-sdk' external agent; saving an Agent"):
+            Agent(id="coder", name="Coder", db=db).save()
+        with pytest.raises(ValueError, match="saving a 'codex' external agent under the same id"):
+            CodexAgent(id="coder").save(db=db)
+        # The same adapter keeps versioning normally.
+        assert ClaudeAgent(id="coder", permission_mode="plan").save(db=db) == 2
+
+        Agent(id="native", name="Native", db=db).save()
+        with pytest.raises(ValueError, match="stored as an Agent; saving a 'claude-agent-sdk' external agent"):
+            ClaudeAgent(id="native").save(db=db)
+
     def test_agent_loaders_refuse_an_external_config(self, db, registry):
         ClaudeAgent(id="coder").save(db=db)
 
@@ -648,6 +662,15 @@ class TestStudioRunner:
 
         assert runner._find_agent("coder") is None
 
+    def test_dispatch_needs_the_host_opt_in(self, db):
+        from agno.tools.studio_runner import ComponentNotDispatchableError, StudioRunnerTools
+
+        ClaudeAgent(id="coder").save(db=db)
+        runner = StudioRunnerTools(db=db, registry=Registry(dbs=[db]))
+
+        with pytest.raises(ComponentNotDispatchableError, match="allow_host_external_agents"):
+            runner._find_agent("coder", for_dispatch=True)
+
     def test_dispatch_refuses_an_unresolvable_reference(self, db):
         from agno.tools.studio_runner import ComponentNeedsRegistryError, StudioRunnerTools
 
@@ -691,6 +714,22 @@ class TestRegistrySandboxes:
 
         assert registry.sandboxes == [sandbox]
 
+    def test_agentos_registers_the_sandbox_of_a_served_external_agent(self):
+        from agno.db.postgres import PostgresDb
+
+        sandbox = FakeSandbox(id="docker-local")
+        # A sandboxed agent needs Postgres; the engine connects lazily, so construction is enough.
+        served = ClaudeAgent(
+            id="coder", sandbox=sandbox, db=PostgresDb(db_url="postgresql+psycopg://ai:ai@127.0.0.1:1/none")
+        )
+
+        agent_os = AgentOS(id="test-os", agents=[served])
+
+        assert agent_os.registry is not None
+        assert agent_os.registry.get_sandbox("docker-local") is sandbox
+        rebuilt = ClaudeAgent.from_dict(served.to_dict(), registry=agent_os.registry, strict=True)
+        assert rebuilt.sandbox is sandbox
+
     def test_registry_route_lists_sandboxes(self):
         registry = Registry(sandboxes=[FakeSandbox(id="docker-local", env={"GITHUB_READ_TOKEN": "secret"})])
         app = FastAPI()
@@ -712,6 +751,36 @@ class TestRegistrySandboxes:
 
 
 class TestAgentOS:
+    def test_stored_external_agents_need_the_host_opt_in(self, db, echo_storable):
+        EchoAgent(id="echo-stored", name="Echo").save(db=db)
+        app = AgentOS(id="test-os", db=db, registry=Registry(dbs=[db])).get_app()
+        client = TestClient(app, raise_server_exceptions=False)
+
+        listed = client.get("/agents")
+        assert listed.status_code == 200, listed.text
+        assert [agent["id"] for agent in listed.json()] == ["echo-stored"]
+
+        detail = client.get("/agents/echo-stored")
+        assert detail.status_code == 422, detail.text
+        assert "allow_host_external_agents" in detail.json()["detail"]
+        run = client.post("/agents/echo-stored/runs", data={"message": "hi", "stream": "false"})
+        assert run.status_code == 422, run.text
+
+    def test_unresolvable_external_config_stays_listed(self, db, registry):
+        db.upsert_component(component_id="typo", component_type=ComponentType.AGENT, name="Typo")
+        db.upsert_config(component_id="typo", config={"sdk": "claude-agent-sdkk", "id": "typo"}, stage="published")
+        app = AgentOS(id="test-os", db=db, registry=registry).get_app()
+        client = TestClient(app, raise_server_exceptions=False)
+
+        listed = client.get("/agents")
+        assert listed.status_code == 200, listed.text
+        [entry] = listed.json()
+        assert entry["id"] == "typo" and entry["metadata"]["sdk"] == "claude-agent-sdkk"
+
+        run = client.post("/agents/typo/runs", data={"message": "hi", "stream": "false"})
+        assert run.status_code == 422, run.text
+        assert "claude-agent-sdkk" in run.json()["detail"]
+
     @pytest.fixture
     def client(self, db, registry, echo_storable) -> TestClient:
         ClaudeAgent(id="coder", name="Coder", description="Writes code", permission_mode="plan").save(db=db)

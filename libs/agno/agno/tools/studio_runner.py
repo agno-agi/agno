@@ -2023,7 +2023,11 @@ class StudioRunnerTools(Toolkit):
         config, resolved_version = loaded
         self._require_registry_for("agent", agent_id, config, version=resolved_version)
         from agno.agent.agent import Agent
-        from agno.agents._storage import external_agent_from_config, is_external_agent_config
+        from agno.agents._storage import (
+            external_agent_from_config,
+            is_external_agent_config,
+            require_host_execution_allowed,
+        )
 
         if is_external_agent_config(config):
             if not for_dispatch or self.db is None:
@@ -2035,8 +2039,12 @@ class StudioRunnerTools(Toolkit):
             except ComponentRehydrationError as rehydration_error:
                 raise ComponentNeedsRegistryError(str(rehydration_error)) from rehydration_error
             # The remaining dispatch guards inspect an Agent's graph and model roles, which an
-            # adapter does not have; its db routing is held to the same rule.
+            # adapter does not have; its db routing and host execution are held to the same rules.
             self._require_matching_db(config, adapter, "agent", agent_id)
+            try:
+                require_host_execution_allowed(adapter, self.registry)
+            except ComponentRehydrationError as refusal:
+                raise ComponentNotDispatchableError(str(refusal)) from refusal
             return adapter
 
         try:

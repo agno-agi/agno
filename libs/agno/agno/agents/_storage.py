@@ -42,6 +42,60 @@ STORABLE_ADAPTERS: Dict[str, Tuple[str, str]] = {
 _DEFAULT_EVENTS_TO_SKIP: List[RunEvent] = [RunEvent.run_content]
 
 
+def stored_agent_sdk(db: BaseDb, component_id: str) -> Optional[Tuple[bool, Optional[str]]]:
+    """(exists, sdk) for the component's current config; None when there is no config."""
+    try:
+        row = db.get_config(component_id=component_id)
+    except NotImplementedError:
+        return None
+    config = row.get("config") if isinstance(row, dict) else None
+    if not isinstance(config, dict):
+        return None
+    sdk = config.get("sdk")
+    return True, sdk if isinstance(sdk, str) else None
+
+
+def require_same_agent_kind(db: BaseDb, component_id: str, sdk: Optional[str]) -> None:
+    """Refuse a save that would change what a stored agent loads as.
+
+    Agent and the adapters share one catalog, keyed by id. Saving an Agent over
+    a stored ClaudeAgent (or the reverse) would silently switch runtimes and
+    drop the other kind's settings on the next load.
+    """
+    stored = stored_agent_sdk(db, component_id)
+    if stored is None:
+        return
+    _, stored_sdk = stored
+    if stored_sdk == sdk:
+        return
+
+    def describe(value: Optional[str]) -> str:
+        return "an Agent" if value is None else f"a {value!r} external agent"
+
+    raise ValueError(
+        f"Component {component_id!r} is stored as {describe(stored_sdk)}; saving {describe(sdk)} under the same "
+        "id would change what it loads as. Use another id, or delete the component first."
+    )
+
+
+def require_host_execution_allowed(agent: "BaseExternalAgent", registry: Optional["Registry"]) -> None:
+    """Refuse to serve a stored adapter on this host unless the deployer opted in.
+
+    A sandboxed adapter runs in a registered sandbox the deployer declared. One
+    without a sandbox runs on the AgentOS host with the working directory, MCP
+    server commands, plugins and permission mode its stored config names.
+    """
+    if agent.sandbox is not None:
+        return
+    if registry is not None and registry.allow_host_external_agents:
+        return
+    raise ComponentRehydrationError(
+        f"Agent '{agent.get_id()}' is a stored {agent.sdk!r} external agent without a sandbox, which this "
+        "AgentOS does not run on its host. Give it a registered sandbox, or opt in with "
+        "Registry(allow_host_external_agents=True)."
+    )
+
+
 def is_external_agent_config(config: Any) -> bool:
     """Whether a stored agent config describes an external adapter rather than an Agent."""
     return isinstance(config, dict) and isinstance(config.get("sdk"), str)
@@ -310,6 +364,27 @@ def external_agent_from_config(
     return bind_loaded_agent(agent, id, db, config, strict)
 
 
+def unavailable_external_agent(config: Dict[str, Any], id: str, db: BaseDb, reason: str) -> "BaseExternalAgent":
+    """A stand-in for a stored external agent this process cannot rebuild.
+
+    Listings keep it visible under its stored id, name and sdk; a run reports
+    the reason instead of executing.
+    """
+    from agno.agents.unavailable import UnavailableExternalAgent
+
+    sdk = config.get("sdk")
+    name = config.get("name")
+    description = config.get("description")
+    return UnavailableExternalAgent(
+        id=id,
+        name=name if isinstance(name, str) else None,
+        description=description if isinstance(description, str) else None,
+        db=db,
+        stored_sdk=sdk if isinstance(sdk, str) else "external",
+        reason=reason,
+    )
+
+
 def save(
     agent: "BaseExternalAgent",
     *,
@@ -329,6 +404,7 @@ def save(
         agent.id = generate_id_from_name(agent.name)
     if agent.id in RESERVED_MANAGER_IDS:
         raise ValueError(_reserved_manager_id_message(agent.id))
+    require_same_agent_kind(db_, agent.id, agent.sdk)
 
     config = to_dict(agent)
     try:

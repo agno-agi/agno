@@ -123,15 +123,20 @@ coder = get_agent_by_id(db=db, id="coder", registry=registry, strict=True)
 ```
 
 Through the components API, a stored external agent is an `agent` component
-whose config carries `"sdk": "claude-agent-sdk"` or `"sdk": "codex"`. AgentOS
-lists it, and `POST /agents/{id}/runs` submits a stored sandboxed agent to the
-durable sandbox queue like a registered one, as long as the sandbox is in the
-registry the AgentOS was given (`Registry(sandboxes=[...])`, or a code-defined
-agent that uses it). The ticket carries the version the request loaded, and the
-queue worker rebuilds that version from the database before running it on the
-registry sandbox; an explicit `version` form field pins one. The same
-requirements as for a registered sandboxed agent apply: a durable queue, a
-PostgresDb, and a sandbox with a shared `checkpoints=` store.
+whose config carries `"sdk": "claude-agent-sdk"` or `"sdk": "codex"`. A stored
+config names the working directory, MCP servers, plugins and permission mode
+the harness runs with, so AgentOS serves a stored agent without a sandbox only
+when the deployer opts in with `Registry(allow_host_external_agents=True)`;
+until then it is listed but answers 422. A stored sandboxed agent needs no
+opt-in: `POST /agents/{id}/runs` submits it to the durable sandbox queue like a
+registered one, as long as the sandbox is in the registry the AgentOS was given
+(`Registry(sandboxes=[...])`, or a code-defined agent that uses it). The ticket
+carries the version the request loaded, and the queue worker rebuilds that
+version from the database before running it on the registry sandbox; an
+explicit `version` form field pins one. The same requirements as for a
+registered sandboxed agent apply: a durable queue, a PostgresDb, and a sandbox
+with a shared `checkpoints=` store. Saving an `Agent` over a stored external
+agent, or the reverse, is refused so an id never changes kind.
 
 ---
 

@@ -1541,16 +1541,19 @@ def allow_draft_preview(
     return bool(isinstance(component, dict) and component.get("user_id") == actor)
 
 
-def _serve_stored_agent(agent: Any) -> Any:
-    """What AgentOS turns on for a registered external agent, applied to a stored one.
+def _serve_stored_agent(agent: Any, registry: Optional[Registry]) -> Any:
+    """What AgentOS applies to a stored external agent before serving it.
 
     A registered adapter gets store_events at AgentOS init so the built-in
     routes can replay its runs; a stored adapter is rebuilt per request and
-    never passes through that init.
+    never passes through that init. Running on the host is the deployer's
+    call, made on the registry, since the stored config decides what runs.
     """
+    from agno.agents._storage import require_host_execution_allowed
     from agno.agents.base import BaseExternalAgent
 
     if isinstance(agent, BaseExternalAgent):
+        require_host_execution_allowed(agent, registry)
         agent.store_events = True
     return agent
 
@@ -1634,7 +1637,7 @@ def get_agent_by_id(
                 strict=strict,
                 published_only=published_only,
             )
-            return _serve_stored_agent(db_agent)
+            return _serve_stored_agent(db_agent, registry)
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
             raise
@@ -1699,7 +1702,7 @@ async def get_agent_by_id_async(
                 strict=strict,
                 published_only=published_only,
             )
-            return _serve_stored_agent(db_agent)
+            return _serve_stored_agent(db_agent, registry)
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
             raise
