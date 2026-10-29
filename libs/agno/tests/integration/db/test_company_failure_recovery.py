@@ -510,6 +510,15 @@ async def test_strict_mongo_run_reads_distinguish_absence_from_failure(asynchron
         assert await _call(db, "get_runs", session_id="missing", deserialize=False, raise_on_error=True) == ([], 0)
         rows, total = await _call(db, "get_runs", session_id="retained", deserialize=False, raise_on_error=True)
         assert total == 1 and rows[0]["run_id"] == "stored"
+        if asynchronous:
+            fresh = AsyncMongoDb(db_url=url, db_name=db.db_name)
+            try:
+                fresh_rows, fresh_total = await fresh.get_runs(
+                    session_id="retained", deserialize=False, raise_on_error=True
+                )
+                assert fresh_total == 1 and fresh_rows[0]["run_id"] == "stored"
+            finally:
+                await fresh.close()
         collection = await _call(db, "_get_collection", table_type="runs")
 
         def fail(*args, **kwargs):

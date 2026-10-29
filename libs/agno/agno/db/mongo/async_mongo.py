@@ -537,7 +537,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
             if not hasattr(self, f"_{collection_name}_initialized"):
                 if not create_collection_if_not_found:
-                    return None
+                    return collection if await self.table_exists(collection_name) else None
                 # Create indexes asynchronously for async MongoDB collections
                 await create_collection_indexes_async(collection, collection_type)
                 setattr(self, f"_{collection_name}_initialized", True)
