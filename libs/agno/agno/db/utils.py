@@ -1458,25 +1458,32 @@ def get_months_to_calculate_os_metrics_for(
     return sorted(month_start for month_start in month_starts if os_metrics_month_end(month_start) <= latest_completed)
 
 
-def calculate_month_os_metrics(month_start: date, stored_rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Calculate the rows of agno_os_metrics of a completed month from the rows stored for its days.
+def add_month_os_metrics(
+    per_owner: Dict[Tuple[str, str, str, str], Dict[str, Any]], stored_rows: Sequence[Dict[str, Any]]
+) -> None:
+    """Add rows stored for the days of a month to the totals of each user, agent, team or workflow and parent."""
+    for row in stored_rows:
+        bucket_key = (row["user_id"], row["component_type"], row["component_id"], row["parent_component_id"])
+        bucket = per_owner.setdefault(bucket_key, empty_os_metrics_totals())
+        add_os_metrics_totals(bucket, row)
+
+
+def calculate_month_os_metrics(
+    month_start: date, per_owner: Dict[Tuple[str, str, str, str], Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Calculate the rows of agno_os_metrics of a completed month from the totals of its days.
 
     A completed day is never rebuilt, so a month of completed days never changes and its rows are
     written once.
 
     Args:
         month_start (date): The first day of the month.
-        stored_rows (Sequence[Dict[str, Any]]): The rows stored for the days of the month.
+        per_owner (Dict[Tuple[str, str, str, str], Dict[str, Any]]): The totals of each user, agent, team or
+            workflow and parent, added up by add_month_os_metrics.
 
     Returns:
         List[Dict[str, Any]]: One row per user, agent, team or workflow and parent.
     """
-    per_owner: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
-    for row in stored_rows:
-        bucket_key = (row["user_id"], row["component_type"], row["component_id"], row["parent_component_id"])
-        bucket = per_owner.setdefault(bucket_key, empty_os_metrics_totals())
-        add_os_metrics_totals(bucket, row)
-
     current_time = int(time.time())
 
     records: List[dict] = []

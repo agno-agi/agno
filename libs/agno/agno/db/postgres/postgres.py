@@ -28,7 +28,9 @@ from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.engine import _engine_options
 from agno.db.postgres.schemas import default_sandbox_table_name, get_table_schema_definition
 from agno.db.postgres.utils import (
+    OS_METRICS_BATCH_SIZE,
     OS_METRICS_IN_LIST_LIMIT,
+    OS_METRICS_STALE_KEYS_LIMIT,
     apply_sorting,
     build_os_metrics_runs,
     build_os_metrics_runs_query,
@@ -74,6 +76,7 @@ from agno.db.sql import mcp_oauth as mcp_oauth_sql
 from agno.db.utils import (
     HISTORY_SKIP_STATUSES,
     SessionRunObjectCache,
+    add_month_os_metrics,
     build_os_metrics_totals_row,
     build_single_run_row,
     calculate_date_os_metrics,
@@ -3344,16 +3347,23 @@ class PostgresDb(BaseDb):
                 default=None,
             )
             for month_start in get_months_to_calculate_os_metrics_for(day_starts, calculated_months, latest_completed):
+                # Server-side cursor, so a month of many rows is added up a batch at a time instead of held whole
                 result = sess.execute(
                     select(table).where(
                         table.c.aggregation_period == "daily",
                         table.c.date >= month_start,
                         table.c.date <= os_metrics_month_end(month_start),
-                    )
-                ).fetchall()
-                stored_rows = [dict(record._mapping) for record in result]
+                    ),
+                    execution_options={"stream_results": True},
+                )
+                per_owner: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
+                while True:
+                    batch = result.fetchmany(OS_METRICS_BATCH_SIZE)
+                    if not batch:
+                        break
+                    add_month_os_metrics(per_owner, [dict(record._mapping) for record in batch])
 
-                month_rows = calculate_month_os_metrics(month_start, stored_rows)
+                month_rows = calculate_month_os_metrics(month_start, per_owner)
                 bulk_upsert_os_metrics(session=sess, table=table, os_metrics_records=month_rows)
                 # Written last: a read takes a month from its rows only once the month has a total row
                 totals_row = build_os_metrics_totals_row(month_rows, "monthly", month_start, completed=True)
@@ -3516,7 +3526,7 @@ class PostgresDb(BaseDb):
                 stored_rows = [dict(record._mapping) for record in result]
 
                 changed_rows, stale_keys = os_metrics_rows_to_write(records, stored_rows)
-                for start in range(0, len(stale_keys), OS_METRICS_IN_LIST_LIMIT):
+                for start in range(0, len(stale_keys), OS_METRICS_STALE_KEYS_LIMIT):
                     sess.execute(
                         table.delete().where(
                             table.c.aggregation_period == "daily",
@@ -3526,7 +3536,7 @@ class PostgresDb(BaseDb):
                                 table.c.component_type,
                                 table.c.component_id,
                                 table.c.parent_component_id,
-                            ).in_(stale_keys[start : start + OS_METRICS_IN_LIST_LIMIT]),
+                            ).in_(stale_keys[start : start + OS_METRICS_STALE_KEYS_LIMIT]),
                         )
                     )
                 bulk_upsert_os_metrics(session=sess, table=table, os_metrics_records=changed_rows)
