@@ -1808,8 +1808,10 @@ class AgentOS:
             self.registry = Registry()
 
         try:
+            # External adapters are not in self._agents; the walk takes their sandboxes.
+            external_agents = [a for a in self.agents or [] if isinstance(a, BaseExternalAgent)]
             collect_components_from_os(
-                [a for a in self._agents if not self._owned_by_manager(a)],
+                [a for a in self._agents if not self._owned_by_manager(a)] + external_agents,
                 [t for t in self._teams if not self._owned_by_manager(t)],
                 self._workflows,
                 self.registry,

@@ -1612,6 +1612,9 @@ def save(
 
     if agent.id is None:
         agent.id = generate_id_from_name(agent.name)
+    from agno.agents._storage import require_same_agent_kind
+
+    require_same_agent_kind(db_, agent.id, None)
 
     try:
         # Create or update component

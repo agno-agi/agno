@@ -27,7 +27,9 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 # stored config refers to it by id and the registry supplies the live object.
 sandbox = DockerSandbox("agno-sandbox:local", id="docker-local", network="isolated")
 
-registry = Registry(dbs=[db], sandboxes=[sandbox])
+# allow_host_external_agents lets AgentOS run stored agents that have no sandbox on this host;
+# a stored config names the working directory, MCP servers and permission mode they run with.
+registry = Registry(dbs=[db], sandboxes=[sandbox], allow_host_external_agents=True)
 
 # ---------------------------------------------------------------------------
 # Create External Agents

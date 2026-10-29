@@ -123,9 +123,14 @@ coder = get_agent_by_id(db=db, id="coder", registry=registry, strict=True)
 ```
 
 Through the components API, a stored external agent is an `agent` component
-whose config carries `"sdk": "claude-agent-sdk"` or `"sdk": "codex"`. A
-sandboxed run through AgentOS still needs the agent registered with
-`AgentOS(agents=[...])`; a stored sandboxed agent runs locally with `agent.run()`.
+whose config carries `"sdk": "claude-agent-sdk"` or `"sdk": "codex"`. A stored
+config names the working directory, MCP servers, plugins and permission mode
+the harness runs with, so AgentOS serves a stored agent without a sandbox only
+when the deployer opts in with `Registry(allow_host_external_agents=True)`;
+until then it is listed but answers 422. A sandboxed run through AgentOS still
+needs the agent registered with `AgentOS(agents=[...])`; a stored sandboxed
+agent runs locally with `agent.run()`. Saving an `Agent` over a stored
+external agent, or the reverse, is refused so an id never changes kind.
 
 ---
 

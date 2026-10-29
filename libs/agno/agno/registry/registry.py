@@ -133,6 +133,11 @@ class Registry:
     # or cloud client, a checkpoint store and credentials, so a component
     # config names one by id and the registry supplies the live object.
     sandboxes: List[Any] = field(default_factory=list)
+    # Let a stored ClaudeAgent or CodexAgent config run on this host rather than only in a
+    # registered sandbox. A stored config names a working directory, MCP server commands,
+    # plugins and permission modes, so whoever can write components could start programs
+    # here; off by default, the deployer opts in.
+    allow_host_external_agents: bool = False
     # Code-defined agents, teams, and workflows (for rehydration)
     agents: List[Union[Agent, BaseExternalAgent]] = field(default_factory=list)
     teams: List[Team] = field(default_factory=list)
