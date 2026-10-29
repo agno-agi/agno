@@ -106,10 +106,7 @@ skipped; `?user_id=observability-user` returned that user's 2 sessions.
 `user_directory`. `POST /os/metrics/refresh` answered `completed` with
 `changed: false`, `GET /os/metrics/refresh/status` then reported `completed`
 with its start and finish times, and a repeated read sent with its ETag
-answered 304 with no body. Re-ran `run_os_metrics_demo()` on 2026-10-30, with the
-self-check now comparing against the day's runs before the two new ones: it
-passed and printed 19 sessions, 26 runs, 26 completed runs, 941 tokens and 12
-run(s) for each model; the server was not started in that run.
+answered 304 with no body.
 
 ---
 

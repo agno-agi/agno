@@ -51,11 +51,8 @@ except ImportError:
 # PostgreSQL has a hard limit of 65,535 bind parameters per statement, so IN lists are sent in chunks
 OS_METRICS_IN_LIST_LIMIT = 10000
 
-# PostgreSQL rejects a long IN list of row values as too complex, so stale rows are deleted in smaller chunks
-OS_METRICS_STALE_KEYS_LIMIT = 1000
-
-# Rows a rebuild reads at a time, so a day or a month of many rows is never held or decoded in one step
-OS_METRICS_BATCH_SIZE = 1000
+# Runs an async rebuild decodes at a time, so a day of many runs never holds the event loop in one step
+OS_METRICS_RUNS_BATCH_SIZE = 1000
 
 # Every assistant message's request duration, skipping messages carried over from an earlier run
 _OS_METRICS_CALL_DURATIONS_PATH: Any = literal_column(

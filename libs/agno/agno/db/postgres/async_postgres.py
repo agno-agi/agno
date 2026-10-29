@@ -13,9 +13,8 @@ from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.engine import _engine_options
 from agno.db.postgres.schemas import default_sandbox_table_name, get_table_schema_definition
 from agno.db.postgres.utils import (
-    OS_METRICS_BATCH_SIZE,
     OS_METRICS_IN_LIST_LIMIT,
-    OS_METRICS_STALE_KEYS_LIMIT,
+    OS_METRICS_RUNS_BATCH_SIZE,
     abulk_upsert_metrics,
     abulk_upsert_os_metrics,
     acreate_schema,
@@ -52,7 +51,6 @@ from agno.db.sql import authz as authz_sql
 from agno.db.utils import (
     HISTORY_SKIP_STATUSES,
     SessionRunObjectCache,
-    add_month_os_metrics,
     build_os_metrics_totals_row,
     build_single_run_row,
     calculate_date_os_metrics,
@@ -2822,26 +2820,17 @@ class AsyncPostgresDb(AsyncBaseDb):
                 default=None,
             )
             for month_start in get_months_to_calculate_os_metrics_for(day_starts, calculated_months, latest_completed):
-                # stream() uses a server-side cursor, so a month of many rows is added up a batch at a time
-                # instead of in one step that blocks the event loop
-                stored_rows_result = await sess.stream(
+                stored_rows_result = await sess.execute(
                     select(table).where(
                         table.c.aggregation_period == "daily",
                         table.c.date >= month_start,
                         table.c.date <= os_metrics_month_end(month_start),
                     )
                 )
-                per_owner: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
-                while True:
-                    batch = await stored_rows_result.fetchmany(OS_METRICS_BATCH_SIZE)
-                    if not batch:
-                        break
-                    # Calculation steps run in a thread so they never block the event loop
-                    await asyncio.to_thread(
-                        add_month_os_metrics, per_owner, [dict(record._mapping) for record in batch]
-                    )
+                stored_rows = [dict(record._mapping) for record in stored_rows_result.fetchall()]
 
-                month_rows = await asyncio.to_thread(calculate_month_os_metrics, month_start, per_owner)
+                # Calculation steps run in a thread so they never block the event loop
+                month_rows = await asyncio.to_thread(calculate_month_os_metrics, month_start, stored_rows)
                 await abulk_upsert_os_metrics(session=sess, table=table, os_metrics_records=month_rows)
                 # Written last: a read takes a month from its rows only once the month has a total row
                 totals_row = await asyncio.to_thread(
@@ -2997,7 +2986,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     )
                     run_rows: List[Any] = []
                     while True:
-                        batch = await runs_result.fetchmany(OS_METRICS_BATCH_SIZE)
+                        batch = await runs_result.fetchmany(OS_METRICS_RUNS_BATCH_SIZE)
                         if not batch:
                             break
                         run_rows.extend(batch)
@@ -3016,18 +3005,13 @@ class AsyncPostgresDb(AsyncBaseDb):
                 records = await asyncio.to_thread(
                     calculate_date_os_metrics, date_to_process, sessions, runs, stored_run_ids
                 )
-                stored_rows_result = await sess.stream(
+                stored_rows_result = await sess.execute(
                     select(table).where(table.c.aggregation_period == "daily", table.c.date == date_to_process)
                 )
-                stored_rows: List[Dict[str, Any]] = []
-                while True:
-                    batch = await stored_rows_result.fetchmany(OS_METRICS_BATCH_SIZE)
-                    if not batch:
-                        break
-                    stored_rows.extend(dict(record._mapping) for record in batch)
+                stored_rows = [dict(record._mapping) for record in stored_rows_result.fetchall()]
 
                 changed_rows, stale_keys = await asyncio.to_thread(os_metrics_rows_to_write, records, stored_rows)
-                for start in range(0, len(stale_keys), OS_METRICS_STALE_KEYS_LIMIT):
+                for start in range(0, len(stale_keys), OS_METRICS_IN_LIST_LIMIT):
                     await sess.execute(
                         table.delete().where(
                             table.c.aggregation_period == "daily",
@@ -3037,7 +3021,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                                 table.c.component_type,
                                 table.c.component_id,
                                 table.c.parent_component_id,
-                            ).in_(stale_keys[start : start + OS_METRICS_STALE_KEYS_LIMIT]),
+                            ).in_(stale_keys[start : start + OS_METRICS_IN_LIST_LIMIT]),
                         )
                     )
                 await abulk_upsert_os_metrics(session=sess, table=table, os_metrics_records=changed_rows)

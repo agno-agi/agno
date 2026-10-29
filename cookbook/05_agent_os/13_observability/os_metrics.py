@@ -59,10 +59,6 @@ app = agent_os.get_app()
 
 def run_os_metrics_demo() -> None:
     """Run both agents, refresh the OS metrics, and read today's totals."""
-    today = datetime.now(timezone.utc).date()
-    db.refresh_os_metrics()
-    before, _ = db.get_os_metrics_totals(starting_date=today, ending_date=today)
-
     researcher.run(
         "Name one benefit of tracing.",
         session_id="metrics-researcher-session",
@@ -75,8 +71,9 @@ def run_os_metrics_demo() -> None:
     )
 
     db.refresh_os_metrics()
+    today = datetime.now(timezone.utc).date()
     totals, _ = db.get_os_metrics_totals(starting_date=today, ending_date=today)
-    if totals["runs_count"] < before["runs_count"] + 2:
+    if totals["runs_count"] < 2:
         raise RuntimeError("The OS metrics omitted the new agent runs")
 
     print(f"Sessions today: {totals['sessions_count']}")

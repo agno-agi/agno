@@ -95,8 +95,6 @@ def _window(starting_date: Optional[date], ending_date: Optional[date]) -> tuple
     if ending_date is None:
         ending_date = datetime.now(timezone.utc).date()
     if starting_date is None:
-        if (ending_date - date.min).days < _DEFAULT_WINDOW_DAYS - 1:
-            raise HTTPException(status_code=422, detail="starting_date is required for an ending_date this early")
         starting_date = ending_date - timedelta(days=_DEFAULT_WINDOW_DAYS - 1)
     if starting_date > ending_date:
         raise HTTPException(status_code=422, detail="starting_date must be on or before ending_date")
@@ -812,12 +810,7 @@ def attach_routes(
 
     def _previous_starting_date(starting_date: date, ending_date: date) -> date:
         """The first day of the window of the same length that ends the day before this one starts."""
-        days = (ending_date - starting_date).days + 1
-        if (starting_date - date.min).days < days:
-            raise HTTPException(
-                status_code=422, detail="starting_date is too early to compare with the window before it"
-            )
-        return starting_date - timedelta(days=days)
+        return starting_date - timedelta(days=(ending_date - starting_date).days + 1)
 
     def _change_percent(total: int, previous_total: int) -> Optional[float]:
         # Nothing before means no rate to compare against, rather than an infinite rise

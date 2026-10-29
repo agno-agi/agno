@@ -65,12 +65,11 @@ Run two agents on different models, print today's OS metrics, then serve them:
 
 Then open `GET /os/metrics/sessions`, `/runs`, `/tokens`,
 `/latency`, or `/models` for the last 30 days, or narrow them with
-`?starting_date=YYYY-MM-DD&ending_date=YYYY-MM-DD`. The routes rebuild the OS
-metrics at most once a minute, so a new run can take up to a minute to show.
-`POST /os/metrics/refresh` rebuilds the OS metrics of every database of the
-AgentOS at once, and `GET /os/metrics/refresh/status` reports the status of the
-last refresh and when the OS metrics were last updated. `GET /os/metrics/users`
-needs a `user_directory` on the AgentOS and answers 503 without one.
+`?starting_date=YYYY-MM-DD&ending_date=YYYY-MM-DD`. `POST /os/metrics/refresh`
+rebuilds the OS metrics of every database of the AgentOS, and
+`GET /os/metrics/refresh/status` reports the status of the last refresh and when
+the OS metrics were last updated. `GET /os/metrics/users` needs a
+`user_directory` on the AgentOS and answers 503 without one.
 
 The other files generate and inspect their own data in one process:
 

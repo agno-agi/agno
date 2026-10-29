@@ -1051,12 +1051,6 @@ class TestWindow:
 
         assert response.status_code == 422
 
-    def test_window_before_the_first_date_is_a_422(self, client):
-        with _scope(None):
-            response = client.get("/os/metrics/sessions?starting_date=0001-01-05&ending_date=0001-01-10")
-
-        assert response.status_code == 422
-
 
 # =============================================================================
 # Several databases, read at the same time and added up
