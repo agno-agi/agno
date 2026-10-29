@@ -638,7 +638,7 @@ async def test_routine_sorting_by_next_run_schedule_type_and_enabled(system):
         client,
         db,
         {
-            "r-a": {"created_at": 500, "cron_expr": hourly, "enabled": True, "next_run_at": 3000},
+            "r-a": {"created_at": 500, "cron_expr": hourly, "enabled": True, "next_run_at": 1000},
             "r-b": {"created_at": 200, "cron_expr": hourly, "enabled": True, "next_run_at": 1000},
             # Paused: its stored next run doesn't count.
             "r-c": {"created_at": 400, "cron_expr": hourly, "enabled": False, "next_run_at": 500},
@@ -648,8 +648,8 @@ async def test_routine_sorting_by_next_run_schedule_type_and_enabled(system):
     )
     expected = {
         # Routines without a next run come last in both directions.
-        ("next_run_at", "asc"): ["r-b", "r-e", "r-a", "r-d", "r-c"],
-        ("next_run_at", "desc"): ["r-a", "r-e", "r-b", "r-c", "r-d"],
+        ("next_run_at", "asc"): ["r-b", "r-a", "r-e", "r-d", "r-c"],
+        ("next_run_at", "desc"): ["r-e", "r-a", "r-b", "r-c", "r-d"],
         # Ties fall back to creation time in the same direction.
         ("schedule_type", "asc"): ["r-d", "r-e", "r-b", "r-c", "r-a"],
         ("schedule_type", "desc"): ["r-a", "r-c", "r-b", "r-e", "r-d"],

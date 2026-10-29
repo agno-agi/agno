@@ -157,7 +157,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             for row in rows:
                 has_next = row["enabled"] and schedule_type(row) == "scheduled" and row.get("next_run_at") is not None
                 (upcoming if has_next else rest).append(row)
-            upcoming.sort(key=lambda row: (row["next_run_at"], row["id"]), reverse=reverse)
+            upcoming.sort(key=lambda row: (row["next_run_at"], row.get("created_at") or 0, row["id"]), reverse=reverse)
             rest.sort(key=lambda row: (row.get("created_at") or 0, row["id"]), reverse=reverse)
             return upcoming + rest
         if sort_by == "schedule_type":
