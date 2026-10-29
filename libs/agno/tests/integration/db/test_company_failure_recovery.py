@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.exc import OperationalError
 
 from agno.company.execution import _call, _reconcile_task_run
+from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.company.routines import _AutomationSkip, _manager_call
 from agno.db.base import AsyncBaseDb
 from agno.db.mongo import AsyncMongoDb, MongoDb
@@ -565,6 +566,12 @@ async def test_product_purge_uses_real_mongo_schedule_catalog(system, asynchrono
                 assert blocked.status_code == 409, blocked.text
                 assert routine["id"] in blocked.text
             before = await _call(company_db, "get_product", product_id)
+            manager_cls = AsyncCompanyManager if isinstance(company_db, AsyncBaseDb) else CompanyManager
+            manager = manager_cls(company_db, schedule_db=schedule_db)
+            for _ in range(2):
+                with pytest.raises(ValueError, match="Routine"):
+                    await _call(manager, "purge", product_id)
+                assert await _call(company_db, "get_product", product_id) == before
 
             def fail(*args, **kwargs):
                 raise RuntimeError("Schedule catalog unavailable")
@@ -581,6 +588,36 @@ async def test_product_purge_uses_real_mongo_schedule_catalog(system, asynchrono
             assert removed.status_code == 204, removed.text
             assert (await client.delete(path)).status_code == 204
             assert await _call(company_db, "get_product", product_id, include_deleted=True) is None
+            for _ in range(2):
+                product = (await client.post("/company/products", json={"name": "Failed link"})).json()
+
+                original_link = company_db.add_product_routine
+
+                async def fail_link(*args, **kwargs):
+                    # The verified empty catalog preceded this pending schedule's insert.
+                    await _call(company_db, "purge_product", product["id"], verified_routine_ids=())
+                    if isinstance(company_db, AsyncBaseDb):
+                        return await original_link(*args, **kwargs)
+                    return original_link(*args, **kwargs)
+
+                with monkeypatch.context() as unlinked:
+                    unlinked.setattr(company_db, "add_product_routine", fail_link)
+                    failed = await client.post(
+                        "/company/routines",
+                        json={
+                            "product_id": product["id"],
+                            "name": "Unlinked",
+                            "instructions": "Review",
+                            "executor_type": "agent",
+                            "executor_id": "writer",
+                        },
+                    )
+                assert failed.status_code == 422, failed.text
+                schedules, _ = await _call(schedule_db, "get_schedules", raise_on_error=True)
+                assert not any(
+                    (row.get("payload") or {}).get("metadata", {}).get("product_id") == product["id"]
+                    for row in schedules
+                )
     finally:
         if asynchronous:
             await schedule_db.db_client.drop_database(schedule_db.db_name)

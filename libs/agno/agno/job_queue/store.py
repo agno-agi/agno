@@ -19,6 +19,7 @@ import asyncio
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TOKEN
 from agno.job_queue.session import is_serialized, next_session_seq, session_blocked, session_blocker, with_session_seq
 
 
@@ -311,9 +312,10 @@ class InMemoryQueueStore:
         start = max(page - 1, 0) * limit
         return jobs[start : start + limit], total_count
 
-    async def requeue_job(self, job_id: str) -> bool:
+    async def requeue_job(self, job_id: str, *, acceptance_token: Optional[str] = None) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
-        exactly one more execution by raising max_attempts to attempt + 1."""
+        exactly one more execution by raising max_attempts to attempt + 1.
+        A supplied acceptance token replaces the terminal ticket's prior owner."""
         async with self._lock:
             job = self._jobs.get(job_id)
             if job is None or job["status"] not in ("failed", "cancelled"):
@@ -321,6 +323,8 @@ class InMemoryQueueStore:
             now = int(time.time())
             if is_serialized(job):
                 job["payload"] = with_session_seq(job, next_session_seq(job, self._jobs.values()))["payload"]
+            if acceptance_token is not None:
+                job["payload"] = {**(job.get("payload") or {}), QUEUE_ACCEPTANCE_TOKEN: acceptance_token}
             job.update(
                 status="queued",
                 max_attempts=job["attempt"] + 1,
@@ -332,7 +336,9 @@ class InMemoryQueueStore:
             )
             return True
 
-    async def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def continue_job(
+        self, job_id: str, continue_payload: Dict[str, Any], *, acceptance_token: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Continuation CAS: flip the EXISTING paused ticket back to queued,
         mirroring requeue_job's transition. No new rows, ever - id == run_id
         is load-bearing. The ticket's submit-time payload fields are kept and
@@ -341,6 +347,8 @@ class InMemoryQueueStore:
         more execution (max_attempts = attempt + 1), regardless of the
         configured retry budget - a continuation is user-triggered and must
         never silently re-run.
+
+        A supplied acceptance token fills an absent owner only on the winning CAS.
 
         Returns {"outcome": "queued" | "attach" | "conflict", "job": row}:
         - queued: the CAS won; the merged row is returned.
@@ -358,6 +366,8 @@ class InMemoryQueueStore:
             now = int(time.time())
             payload = dict(job.get("payload") or {})
             payload["continue"] = dict(continue_payload)
+            if acceptance_token is not None and QUEUE_ACCEPTANCE_TOKEN not in payload:
+                payload[QUEUE_ACCEPTANCE_TOKEN] = acceptance_token
             job.update(
                 status="queued",
                 payload=payload,

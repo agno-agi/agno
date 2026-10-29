@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from agno.company.execution import _call as _db_call
 from agno.company.execution import _TaskRunConflict, _verify_task_purge
 from agno.company.manager import AsyncCompanyManager, CompanyManager
-from agno.db.base import AsyncBaseDb, BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb, CompanyDeletionUnavailableError
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.company.schema import TaskCreate, TaskResponse, TaskStatus, TaskTransition, TaskUpdate
@@ -59,6 +59,8 @@ def get_tasks_router(
                 rows, total = result
                 return [_task_response(row, registry) for row in rows], total
             return _task_response(result, registry) if isinstance(result, dict) else result
+        except CompanyDeletionUnavailableError as exc:
+            raise HTTPException(status_code=503, detail="Company deletion tables are unavailable") from exc
         except NotImplementedError:
             raise HTTPException(status_code=503, detail="Company tasks not supported by the configured database")
         except PermissionError as exc:

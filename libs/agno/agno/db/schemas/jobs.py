@@ -16,6 +16,8 @@ from typing import Any, Dict, Optional
 
 from agno.utils.dttm import now_epoch_s, to_epoch_s
 
+QUEUE_ACCEPTANCE_TOKEN = "_agno_company_acceptance_token"
+
 
 class QueueWriteOutcome(str, Enum):
     """Why a fenced queue write did or did not land.

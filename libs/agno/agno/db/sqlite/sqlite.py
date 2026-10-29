@@ -13,6 +13,7 @@ from agno.db.base import (
     DELETED_CONFIG_STAGE,
     PIN_LINK_KINDS,
     BaseDb,
+    CompanyDeletionUnavailableError,
     ComponentArchivedError,
     ComponentCycleError,
     ComponentDependencyError,
@@ -8379,7 +8380,7 @@ class SqliteDb(BaseDb):
         user_id: Optional[str] = None,
         *,
         expected_tasks: Optional[List[Dict[str, Any]]] = None,
-        verified_routine_ids: Sequence[str] = (),
+        verified_routine_ids: Optional[Sequence[str]] = None,
     ) -> bool:
         """Permanently remove a Product after verifying its Task snapshot."""
         from agno.db.sql.company import purge_product
@@ -8391,7 +8392,7 @@ class SqliteDb(BaseDb):
         tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
         sources = self._get_table(table_type="sources", create_table_if_not_found=True)
         if any(table is None for table in (products, projects, tasks, sources)):
-            raise RuntimeError("Company deletion tables are unavailable")
+            raise CompanyDeletionUnavailableError("Company deletion tables are unavailable")
         with self.Session() as sess, sess.begin():
             return purge_product(
                 sess, products, projects, tasks, sources, product_id, user_id, expected_tasks, verified_routine_ids
@@ -8548,7 +8549,7 @@ class SqliteDb(BaseDb):
         products = self._get_table(table_type="products", create_table_if_not_found=True)
         tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
         if any(table is None for table in (products, projects, tasks)):
-            raise RuntimeError("Company deletion tables are unavailable")
+            raise CompanyDeletionUnavailableError("Company deletion tables are unavailable")
         with self.Session() as sess, sess.begin():
             return purge_project(sess, products, projects, tasks, project_id, user_id, expected_tasks)
 
@@ -8812,6 +8813,26 @@ class SqliteDb(BaseDb):
             result = sess.execute(stmt.values(deleted_at=now, updated_at=now).returning(table.c.id)).fetchone()
             return result is not None
 
+    def acquire_task_execution(self, session_id: str, token: str) -> List[str]:
+        """Protect all Tasks using this session, including archived records."""
+        from agno.db.sql.company import acquire_task_execution
+
+        tasks = self._get_table(table_type="tasks")
+        if tasks is None:
+            raise CompanyDeletionUnavailableError("Company execution table is unavailable")
+        with self.Session() as sess, sess.begin():
+            return acquire_task_execution(sess, tasks, session_id, token)
+
+    def release_task_execution(self, session_id: str, token: str) -> None:
+        """Release only this execution token without changing Task activity."""
+        from agno.db.sql.company import release_task_execution
+
+        tasks = self._get_table(table_type="tasks")
+        if tasks is None:
+            raise CompanyDeletionUnavailableError("Company execution table is unavailable")
+        with self.Session() as sess, sess.begin():
+            release_task_execution(sess, tasks, session_id, token)
+
     def purge_task(
         self,
         task_id: str,
@@ -8828,7 +8849,7 @@ class SqliteDb(BaseDb):
         products = self._get_table(table_type="products", create_table_if_not_found=True)
         projects = self._get_table(table_type="projects", create_table_if_not_found=True)
         if any(table is None for table in (products, projects, tasks)):
-            raise RuntimeError("Company deletion tables are unavailable")
+            raise CompanyDeletionUnavailableError("Company deletion tables are unavailable")
         with self.Session() as sess, sess.begin():
             return purge_task(sess, products, projects, tasks, task_id, user_id, expected_tasks)
 
@@ -8905,13 +8926,16 @@ class SqliteDb(BaseDb):
         with self.Session() as sess, sess.begin():
             row = (
                 sess.execute(
-                    select(table).where(
+                    table.update()
+                    .where(
                         table.c.id == task_id,
                         table.c.job_id == job_id,
                         table.c.deleted_at.is_(None),
                         table.c.status == "in_progress",
                         or_(table.c.result.is_(None), table.c.result == JSON.NULL),
                     )
+                    .values(updated_at=table.c.updated_at)
+                    .returning(table)
                 )
             ).fetchone()
             if row is None:

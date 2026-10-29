@@ -12,6 +12,7 @@ from agno.db.base import (
     DELETED_CONFIG_STAGE,
     PIN_LINK_KINDS,
     BaseDb,
+    CompanyDeletionUnavailableError,
     ComponentArchivedError,
     ComponentCycleError,
     ComponentDependencyError,
@@ -48,6 +49,7 @@ from agno.db.schemas.authz import (
     AUTHZ_USERS,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
+from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TOKEN
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.mcp_oauth import (
     MCP_OAUTH_CLIENTS,
@@ -8350,14 +8352,18 @@ class PostgresDb(BaseDb):
                 raise
             return [], 0
 
-    def requeue_job(self, job_id: str) -> bool:
+    def requeue_job(self, job_id: str, *, acceptance_token: Optional[str] = None) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
-        exactly one more execution by raising max_attempts to attempt + 1."""
+        exactly one more execution by raising max_attempts to attempt + 1.
+        A supplied acceptance token replaces the old owner and makes storage errors propagate.
+        """
         from agno.job_queue.session import is_serialized, with_session_seq
 
         try:
             table = self._get_table(table_type="jobs")
             if table is None:
+                if acceptance_token is not None:
+                    raise RuntimeError("Job queue table not found")
                 return False
             now = _db_epoch()
             with self.Session() as sess, sess.begin():
@@ -8386,13 +8392,22 @@ class PostgresDb(BaseDb):
                 if is_serialized(job):
                     # A requeued ticket rejoins its session behind every live turn.
                     values["payload"] = with_session_seq(job, self._q_next_session_seq(sess, table, job))["payload"]
+                if acceptance_token is not None:
+                    values["payload"] = {
+                        **(values.get("payload", job.get("payload")) or {}),
+                        QUEUE_ACCEPTANCE_TOKEN: acceptance_token,
+                    }
                 sess.execute(update(table).where(table.c.id == job_id).values(**values))
                 return True
         except Exception as e:
             log_error(f"Job queue store: requeue failed for job {job_id}: {e}")
+            if acceptance_token is not None:
+                raise
             return False
 
-    def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
+    def continue_job(
+        self, job_id: str, continue_payload: Dict[str, Any], *, acceptance_token: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Continuation CAS: flip the EXISTING paused ticket back to queued,
         mirroring requeue_job's transition (row-locked read + conditional
         update in one transaction). No new rows, ever - id == run_id is
@@ -8405,6 +8420,7 @@ class PostgresDb(BaseDb):
         queued = CAS won; attach = ticket already queued/running (double-click
         idempotency - the caller attaches, this click's inputs are discarded);
         conflict = terminal ticket or no ticket (job is the row or None).
+        A supplied acceptance token fills only a missing owner on a winning CAS.
 
         Exceptions propagate (like enqueue_job, unlike the ops-surface
         requeue_job): this CAS is the durable acceptance of the continue, and
@@ -8425,6 +8441,8 @@ class PostgresDb(BaseDb):
                 return {"outcome": "attach", "job": job}
             payload = dict(job.get("payload") or {})
             payload["continue"] = dict(continue_payload)
+            if acceptance_token is not None:
+                payload.setdefault(QUEUE_ACCEPTANCE_TOKEN, acceptance_token)
             values: Dict[str, Any] = {
                 "status": "queued",
                 "payload": payload,
@@ -9443,7 +9461,7 @@ class PostgresDb(BaseDb):
         user_id: Optional[str] = None,
         *,
         expected_tasks: Optional[List[Dict[str, Any]]] = None,
-        verified_routine_ids: Sequence[str] = (),
+        verified_routine_ids: Optional[Sequence[str]] = None,
     ) -> bool:
         """Permanently remove a Product after verifying its Task snapshot."""
         from agno.db.sql.company import purge_product
@@ -9455,7 +9473,7 @@ class PostgresDb(BaseDb):
         tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
         sources = self._get_table(table_type="sources", create_table_if_not_found=True)
         if any(table is None for table in (products, projects, tasks, sources)):
-            raise RuntimeError("Company deletion tables are unavailable")
+            raise CompanyDeletionUnavailableError("Company deletion tables are unavailable")
         with self.Session() as sess, sess.begin():
             return purge_product(
                 sess, products, projects, tasks, sources, product_id, user_id, expected_tasks, verified_routine_ids
@@ -9612,7 +9630,7 @@ class PostgresDb(BaseDb):
         products = self._get_table(table_type="products", create_table_if_not_found=True)
         tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
         if any(table is None for table in (products, projects, tasks)):
-            raise RuntimeError("Company deletion tables are unavailable")
+            raise CompanyDeletionUnavailableError("Company deletion tables are unavailable")
         with self.Session() as sess, sess.begin():
             return purge_project(sess, products, projects, tasks, project_id, user_id, expected_tasks)
 
@@ -9876,6 +9894,26 @@ class PostgresDb(BaseDb):
             result = sess.execute(stmt.values(deleted_at=now, updated_at=now).returning(table.c.id)).fetchone()
             return result is not None
 
+    def acquire_task_execution(self, session_id: str, token: str) -> List[str]:
+        """Protect all Tasks using this session, including archived records."""
+        from agno.db.sql.company import acquire_task_execution
+
+        tasks = self._get_table(table_type="tasks")
+        if tasks is None:
+            raise CompanyDeletionUnavailableError("Company execution table is unavailable")
+        with self.Session() as sess, sess.begin():
+            return acquire_task_execution(sess, tasks, session_id, token)
+
+    def release_task_execution(self, session_id: str, token: str) -> None:
+        """Release only this execution token without changing Task activity."""
+        from agno.db.sql.company import release_task_execution
+
+        tasks = self._get_table(table_type="tasks")
+        if tasks is None:
+            raise CompanyDeletionUnavailableError("Company execution table is unavailable")
+        with self.Session() as sess, sess.begin():
+            release_task_execution(sess, tasks, session_id, token)
+
     def purge_task(
         self,
         task_id: str,
@@ -9892,7 +9930,7 @@ class PostgresDb(BaseDb):
         products = self._get_table(table_type="products", create_table_if_not_found=True)
         projects = self._get_table(table_type="projects", create_table_if_not_found=True)
         if any(table is None for table in (products, projects, tasks)):
-            raise RuntimeError("Company deletion tables are unavailable")
+            raise CompanyDeletionUnavailableError("Company deletion tables are unavailable")
         with self.Session() as sess, sess.begin():
             return purge_task(sess, products, projects, tasks, task_id, user_id, expected_tasks)
 
@@ -9969,13 +10007,16 @@ class PostgresDb(BaseDb):
         with self.Session() as sess, sess.begin():
             row = (
                 sess.execute(
-                    select(table).where(
+                    table.update()
+                    .where(
                         table.c.id == task_id,
                         table.c.job_id == job_id,
                         table.c.deleted_at.is_(None),
                         table.c.status == "in_progress",
                         or_(table.c.result.is_(None), table.c.result == JSON.NULL),
                     )
+                    .values(updated_at=table.c.updated_at)
+                    .returning(table)
                 )
             ).fetchone()
             if row is None:

@@ -789,6 +789,7 @@ async def test_purge_owned_rows_and_preserve_unrelated_data(db, target, archived
     from agno.run.base import RunStatus
     from agno.session.agent import AgentSession
 
+    await call(db._get_table, table_type="schedules", create_table_if_not_found=True)
     m = manager(db)
     product = await call(m.create, name="Delete", user_id="owner")
     other = await call(m.create, name="Keep")
@@ -826,6 +827,7 @@ async def test_purge_owned_rows_and_preserve_unrelated_data(db, target, archived
 @pytest.mark.asyncio
 @pytest.mark.parametrize("change", ["edit", "new_task", "move"])
 async def test_purge_rejects_changed_task_snapshot(db, change):
+    await call(db._get_table, table_type="schedules", create_table_if_not_found=True)
     m = manager(db)
     product = await call(m.create, name="Snapshot")
     project = await call(m.create_project, product_id=product["id"], name="Original")
@@ -902,6 +904,7 @@ async def test_purge_requires_matching_verified_routine_links(db, archived):
 async def test_purge_child_delete_failure_rolls_back_every_row(db):
     from sqlalchemy import event
 
+    await call(db._get_table, table_type="schedules", create_table_if_not_found=True)
     m = manager(db)
     product = await call(m.create, name="Rollback")
     project = await call(m.create_project, product_id=product["id"], name="Child")
@@ -940,7 +943,74 @@ async def test_purge_base_run_reader_cannot_claim_strict_support(db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["reservation", "child_creation"])
+@pytest.mark.parametrize("resource", ["products", "projects", "tasks"])
+@pytest.mark.parametrize("fault,status", [("missing_table", 503), ("programming_error", 500)])
+async def test_purge_storage_error_mapping_preserves_rows(db, monkeypatch, resource, fault, status):
+    from sqlalchemy import event
+
+    await call(db._get_table, table_type="schedules", create_table_if_not_found=True)
+    m = manager(db)
+    product = await call(m.create, name="Storage failure")
+    project = await call(m.create_project, product_id=product["id"], name="Child")
+    task = await call(m.create_task, product_id=product["id"], project_id=project["id"], title="Child")
+    records = [(db.get_product, product), (db.get_project, project), (db.get_task, task)]
+    before = [await call(get, row["id"], include_deleted=True) for get, row in records]
+    target = dict(products=product, projects=project, tasks=task)[resource]
+    path = "/company/" + resource + "/" + target["id"]
+    app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
+    engine = db.db_engine.sync_engine if isinstance(db, AsyncBaseDb) else db.db_engine
+    lookup = db._get_table
+    unavailable = {"products": "sources", "projects": "tasks", "tasks": "projects"}[resource]
+    method = "purge_" + resource[:-1]
+    purge = getattr(db, method)
+
+    def missing_table(*args, **kwargs):
+        if kwargs.get("table_type") == unavailable and kwargs.get("create_table_if_not_found"):
+            return None
+        return lookup(*args, **kwargs)
+
+    async def async_missing_table(*args, **kwargs):
+        return await call(missing_table, *args, **kwargs)
+
+    def purge_with_missing_table(*args, **kwargs):
+        with monkeypatch.context() as patch:
+            patch.setattr(db, "_get_table", missing_table)
+            return purge(*args, **kwargs)
+
+    async def async_purge_with_missing_table(*args, **kwargs):
+        with monkeypatch.context() as patch:
+            patch.setattr(db, "_get_table", async_missing_table)
+            return await purge(*args, **kwargs)
+
+    def fail_after_delete(conn, cursor, statement, parameters, context, executemany):
+        stmt = context.compiled.statement if context.compiled is not None else None
+        if getattr(stmt, "is_delete", False) and stmt.table.name == db.tasks_table_name:
+            raise RuntimeError("failure after Task removal")
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
+    ) as client:
+        if fault == "missing_table":
+            monkeypatch.setattr(
+                db, method, async_purge_with_missing_table if isinstance(db, AsyncBaseDb) else purge_with_missing_table
+            )
+        else:
+            event.listen(engine, "after_cursor_execute", fail_after_delete)
+        try:
+            for _ in range(2):
+                response = await client.delete(path)
+                assert response.status_code == status, response.text
+                assert [await call(get, row["id"], include_deleted=True) for get, row in records] == before
+        finally:
+            monkeypatch.setattr(db, method, purge)
+            if fault == "programming_error":
+                event.remove(engine, "after_cursor_execute", fail_after_delete)
+        assert (await client.delete(path)).status_code == 204
+        assert (await client.delete(path)).status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["reservation", "child_creation", "execution"])
 @pytest.mark.parametrize("winner", ["purge", "other"])
 async def test_purge_serializes_with_reservation_and_child_creation(db, operation, winner):
     import asyncio
@@ -950,12 +1020,13 @@ async def test_purge_serializes_with_reservation_and_child_creation(db, operatio
     from sqlalchemy import event
     from sqlalchemy.util import await_only
 
+    await call(db._get_table, table_type="schedules", create_table_if_not_found=True)
     m = manager(db)
     product = await call(m.create, name="Purge race")
     await call(m.create_source, product_id=product["id"], type="markdown", reference="/tmp/race.md")
     project = await call(m.create_project, product_id=product["id"], name="Work")
     task = await call(m.create_task, product_id=product["id"], project_id=project["id"], title="Original")
-    if operation == "reservation":
+    if operation in {"reservation", "execution"}:
         task = await call(
             m.transition_task,
             task_id=task["id"],
@@ -964,6 +1035,10 @@ async def test_purge_serializes_with_reservation_and_child_creation(db, operatio
             executor_type="agent",
             executor_id="writer",
         )
+    if operation == "execution":
+        # Starting and finishing an attempt gives the Task its durable session identity.
+        reserved = await call(db.start_task_run, task["id"], 1, task["transitions"], run_db_id="original")
+        task = await call(db.complete_task_run, task["id"], reserved["job_id"], {"status": "ERROR"})
     snapshot = [await call(db.get_task, task["id"])]
     actor = ContextVar("purge_race_actor", default=None)
     winner_locked, loser_at_lock = Event(), Event()
@@ -976,7 +1051,7 @@ async def test_purge_serializes_with_reservation_and_child_creation(db, operatio
         table_name = db.products_table_name if operation == "child_creation" else db.tasks_table_name
         # SQLite's database-wide write lock stops the losing purge at its earlier Product UPDATE.
         if (
-            operation == "reservation"
+            operation in {"reservation", "execution"}
             and winner == "other"
             and actor.get() == "purge"
             and engine.dialect.name == "sqlite"
@@ -1001,11 +1076,13 @@ async def test_purge_serializes_with_reservation_and_child_creation(db, operatio
         token = actor.set(name)
         try:
             if name == "purge":
-                method = m.purge_task if operation == "reservation" else m.purge
+                method = m.purge_task if operation != "child_creation" else m.purge
                 args, kwargs = (
-                    (task["id"] if operation == "reservation" else product["id"],),
+                    (task["id"] if operation != "child_creation" else product["id"],),
                     {"expected_tasks": snapshot},
                 )
+            elif operation == "execution":
+                method, args, kwargs = db.acquire_task_execution, (task["session_id"], "racing-run"), {}
             elif operation == "reservation":
                 method, args, kwargs = (
                     db.start_task_run,
@@ -1041,14 +1118,339 @@ async def test_purge_serializes_with_reservation_and_child_creation(db, operatio
     assert winner_locked.is_set() and loser_at_lock.is_set()
     if winner == "purge":
         assert purged is True
-        assert changed is None if operation == "reservation" else isinstance(changed, (ValueError, LookupError))
+        if operation == "execution":
+            assert changed == []
+        else:
+            assert changed is None if operation == "reservation" else isinstance(changed, (ValueError, LookupError))
         assert await call(db.get_task, task["id"], include_deleted=True) is None
     else:
         assert isinstance(purged, ValueError) and "changed" in str(purged)
-        assert isinstance(changed, dict)
+        assert changed == [task["id"]] if operation == "execution" else isinstance(changed, dict)
         saved = await call(db.get_task, task["id"], include_deleted=True)
         assert saved is not None
-        if operation == "reservation":
+        if operation == "execution":
+            assert saved["metadata"]["_agno_execution_claims"] == ["racing-run"]
+        elif operation == "reservation":
             assert saved["status"] == "in_progress" and saved["job_id"] == changed["job_id"]
         else:
             assert (await call(db.get_tasks, product_id=product["id"]))[1] == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("archived", [False, True])
+async def test_sdk_purge_checks_unlinked_routine_catalog(db, archived):
+    from agno.scheduler import ScheduleManager
+
+    m = manager(db)
+    schedules = ScheduleManager(db)
+    for _ in range(2):
+        product = await call(m.create, name="Routine dependency")
+        schedule = await schedules.acreate(
+            name="Unlinked routine",
+            cron="",
+            endpoint="/agents/writer/runs",
+            enabled_on_create=False,
+            provenance={"managed_by": "company"},
+            payload={"metadata": {"product_id": product["id"], **({"deleted_at": 1} if archived else {})}},
+        )
+        before = await call(db.get_product, product["id"])
+        with pytest.raises(ValueError, match="Routine"):
+            await call(m.purge, product["id"])
+        assert await call(db.get_product, product["id"]) == before
+        assert await schedules.aget(schedule.id) is not None
+        assert await schedules.adelete(schedule.id)
+        assert await call(m.purge, product["id"])
+        assert not await call(m.purge, product["id"])
+
+
+@pytest.mark.asyncio
+async def test_sdk_purge_refuses_unavailable_schedule_catalog(db, monkeypatch):
+    m = manager(db)
+    product = await call(m.create, name="Unknown catalog", user_id="owner")
+    before = await call(db.get_product, product["id"])
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("Catalog read failed")
+
+    async def afail(*args, **kwargs):
+        return fail(*args, **kwargs)
+
+    monkeypatch.setattr(db, "get_schedules", afail if isinstance(db, AsyncBaseDb) else fail)
+    assert not await call(m.purge, product["id"], user_id="other")
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="Catalog read failed"):
+            await call(m.purge, product["id"])
+        assert await call(db.get_product, product["id"]) == before
+
+
+@pytest.mark.asyncio
+async def test_raw_product_purge_requires_explicit_catalog_verification(db):
+    product = await call(manager(db).create, name="Unverified")
+    for _ in range(2):
+        with pytest.raises(ValueError, match="Routine"):
+            await call(db.purge_product, product["id"])
+        assert await call(db.get_product, product["id"]) is not None
+    assert await call(db.purge_product, product["id"], verified_routine_ids=())
+
+
+@pytest.mark.asyncio
+async def test_sdk_purge_preserves_unrelated_routine(db):
+    from agno.scheduler import ScheduleManager
+
+    m = manager(db)
+    schedules = ScheduleManager(db)
+    other = await call(m.create, name="Keep")
+    routine = await schedules.acreate(
+        name="Other Product routine",
+        cron="",
+        endpoint="/agents/writer/runs",
+        enabled_on_create=False,
+        provenance={"managed_by": "company"},
+        payload={"metadata": {"product_id": other["id"]}},
+    )
+    for _ in range(2):
+        product = await call(m.create, name="Delete")
+        assert await call(m.purge, product["id"])
+        assert await call(db.get_product, other["id"]) is not None
+        assert await schedules.aget(routine.id) is not None
+
+
+async def execution_task(db, metadata=None):
+    m = manager(db)
+    product = await call(m.create, name="Execution guard")
+    project = await call(m.create_project, product_id=product["id"], name="Guarded project")
+    task = await call(
+        db.create_task,
+        dict(
+            id=uuid4().hex,
+            product_id=product["id"],
+            project_id=project["id"],
+            title="Guarded task",
+            status="backlog",
+            session_id=uuid4().hex,
+            created_at=1,
+            updated_at=2,
+            transitions=[],
+            metadata=metadata,
+        ),
+    )
+    return m, product, project, task
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("archived", [False, True])
+@pytest.mark.parametrize("metadata", [None, {"note": "preserve", "checkout": {"ref": "main"}}])
+async def test_execution_claims_preserve_rows_and_release_only_their_token(db, archived, metadata):
+    m, product, project, task = await execution_task(db, metadata)
+    if archived:
+        await call(m.delete, product["id"])
+    before = await call(db.get_task, task["id"], include_deleted=True)
+    session_id = task["session_id"]
+    for cycle in range(2):
+        first, second = f"first-{cycle}", f"second-{cycle}"
+        assert await call(db.acquire_task_execution, session_id, first) == [task["id"]]
+        assert await call(db.acquire_task_execution, session_id, first) == [task["id"]]
+        assert await call(db.acquire_task_execution, session_id, second) == [task["id"]]
+        claimed = await call(db.get_task, task["id"], include_deleted=True)
+        assert set(claimed["metadata"]["_agno_execution_claims"]) == {first, second}
+        assert claimed["metadata"]["_agno_execution_revision"] == (cycle + 1) * 2
+        assert {k: v for k, v in claimed.items() if k != "metadata"} == {
+            k: v for k, v in before.items() if k != "metadata"
+        }
+        assert {k: v for k, v in claimed["metadata"].items() if not k.startswith("_agno_execution_")} == (
+            metadata or {}
+        )
+        await call(db.release_task_execution, session_id, first)
+        await call(db.release_task_execution, session_id, first)
+        remaining = await call(db.get_task, task["id"], include_deleted=True)
+        assert remaining["metadata"]["_agno_execution_claims"] == [second]
+        await call(db.release_task_execution, session_id, second)
+        released = await call(db.get_task, task["id"], include_deleted=True)
+        assert "_agno_execution_claims" not in released["metadata"]
+        assert released["metadata"]["_agno_execution_revision"] == (cycle + 1) * 2
+    assert await call(db.acquire_task_execution, "unrelated-session", "unrelated") == []
+    await call(db.release_task_execution, "unrelated-session", "unrelated")
+    assert await call(db.get_task, task["id"], include_deleted=True) == released
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["product", "project", "task"])
+@pytest.mark.parametrize("archived", [False, True])
+async def test_purge_refuses_execution_claim_even_in_verified_snapshot(db, target, archived):
+    await call(db._get_table, table_type="schedules", create_table_if_not_found=True)
+    m, product, project, task = await execution_task(
+        db, {"_agno_execution_claims": ["live"], "_agno_execution_revision": 1}
+    )
+    if archived:
+        await call(m.delete, product["id"])
+    snapshot = [await call(db.get_task, task["id"], include_deleted=True)]
+    purge = getattr(m, "purge" if target == "product" else "purge_" + target)
+    record = {"product": product, "project": project, "task": task}[target]
+    for _ in range(2):
+        with pytest.raises(ValueError, match="execution"):
+            await call(purge, record["id"], expected_tasks=snapshot)
+        assert await call(db.get_task, task["id"], include_deleted=True) == snapshot[0]
+
+
+@pytest.mark.asyncio
+async def test_execution_revision_prevents_snapshot_aba_and_unverified_purge(db):
+    m, product, project, task = await execution_task(db)
+    snapshot = [await call(db.get_task, task["id"])]
+    for token in ("first", "second"):
+        await call(db.acquire_task_execution, task["session_id"], token)
+        await call(db.release_task_execution, task["session_id"], token)
+        with pytest.raises(ValueError, match="changed"):
+            await call(m.purge_task, task["id"], expected_tasks=snapshot)
+        with pytest.raises(ValueError, match="verification"):
+            await call(m.purge_task, task["id"])
+    current = await call(db.get_task, task["id"])
+    assert await call(m.purge_task, task["id"], expected_tasks=[current])
+    assert await call(db.acquire_task_execution, task["session_id"], "after-delete") == []
+    await call(db.release_task_execution, task["session_id"], "second")
+
+
+@pytest.mark.asyncio
+async def test_execution_claims_are_private_in_http_and_public_task(db):
+    from agno.db.schemas.tasks import public_task
+
+    metadata = {"note": "public", "_agno_execution_claims": ["private-token"], "_agno_execution_revision": 3}
+    m, product, project, task = await execution_task(db, metadata)
+    registry = Registry(agents=[Agent(id="writer", telemetry=False)])
+    app = AgentOS(db=db, registry=registry, company=CompanyConfig(), telemetry=False).get_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for _ in range(2):
+            response = await client.get("/company/tasks/" + task["id"])
+            assert response.status_code == 200
+            assert response.json()["metadata"] == {"note": "public"}
+            listed = await client.get("/company/tasks", params={"product_id": product["id"]})
+            assert listed.status_code == 200
+            assert listed.json()["data"][0]["metadata"] == {"note": "public"}
+    assert public_task(task)["metadata"] == {"note": "public"}
+    assert task["metadata"] == metadata
+    assert (await call(db.get_task, task["id"]))["metadata"] == metadata
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["acquire_task_execution", "release_task_execution"])
+async def test_execution_claims_fail_closed_when_task_table_is_unavailable(db, monkeypatch, operation):
+    from agno.db.base import CompanyDeletionUnavailableError
+
+    await execution_task(db)
+    original = db._get_table
+
+    def unavailable(*args, **kwargs):
+        return None if kwargs.get("table_type") == "tasks" else original(*args, **kwargs)
+
+    async def aunavailable(*args, **kwargs):
+        return None if kwargs.get("table_type") == "tasks" else await original(*args, **kwargs)
+
+    monkeypatch.setattr(db, "_get_table", aunavailable if isinstance(db, AsyncBaseDb) else unavailable)
+    for _ in range(2):
+        with pytest.raises(CompanyDeletionUnavailableError, match="execution"):
+            await call(getattr(db, operation), "session", "token")
+
+
+@pytest.mark.asyncio
+async def test_execution_claim_survives_concurrent_checkout_completion(db):
+    import asyncio
+    from contextvars import ContextVar
+    from threading import Event
+
+    from sqlalchemy import event
+    from sqlalchemy.util import await_only
+
+    for cycle in range(2):
+        m, product, project, task = await execution_task(db, {"note": "keep"})
+        task = await call(
+            m.transition_task,
+            task_id=task["id"],
+            target="ready",
+            reason="Accepted",
+            executor_type="agent",
+            executor_id="writer",
+        )
+        task = await call(db.start_task_run, task["id"], 1, task["transitions"], run_db_id="runs")
+        actor = ContextVar("checkout_claim_actor", default=None)
+        completion_read, claim_attempted, claim_finished = Event(), Event(), Event()
+        engine = db.db_engine.sync_engine if isinstance(db, AsyncBaseDb) else db.db_engine
+
+        def wait(signal):
+            ready = await_only(asyncio.to_thread(signal.wait, 10)) if isinstance(db, AsyncBaseDb) else signal.wait(10)
+            assert ready, "Both mutations must reach the metadata read/write boundary"
+
+        def before(conn, cursor, statement, parameters, context, executemany):
+            stmt = context.compiled.statement if context.compiled is not None else None
+            if actor.get() == "claim" and getattr(stmt, "is_update", False) and stmt.table.name == db.tasks_table_name:
+                claim_attempted.set()
+
+        def after(conn, cursor, statement, parameters, context, executemany):
+            stmt = context.compiled.statement if context.compiled is not None else None
+            if actor.get() != "complete" or completion_read.is_set() or stmt is None:
+                return
+            reads_task = getattr(stmt, "is_select", False) and any(
+                table.name == db.tasks_table_name for table in stmt.get_final_froms()
+            )
+            locks_task = getattr(stmt, "is_update", False) and stmt.table.name == db.tasks_table_name
+            if not (reads_task or locks_task):
+                return
+            completion_read.set()
+            # An unlocked read lets the claim commit first, exposing a stale JSON merge.
+            # A locking read instead makes the claimant wait until completion commits.
+            locked = locks_task or getattr(stmt, "_for_update_arg", None) is not None
+            wait(claim_attempted if locked else claim_finished)
+
+        async def mutate(name):
+            marker = actor.set(name)
+            try:
+                if name == "claim":
+                    method, args, kwargs = db.acquire_task_execution, (task["session_id"], f"run-{cycle}"), {}
+                else:
+                    method, args, kwargs = (
+                        db.complete_task_run,
+                        (task["id"], task["job_id"], {"status": "COMPLETED"}),
+                        {"checkout": {"ref": "completed"}},
+                    )
+                if isinstance(db, AsyncBaseDb):
+                    return await method(*args, **kwargs)
+                return await asyncio.to_thread(method, *args, **kwargs)
+            finally:
+                if name == "claim":
+                    claim_finished.set()
+                actor.reset(marker)
+
+        event.listen(engine, "before_cursor_execute", before)
+        event.listen(engine, "after_cursor_execute", after)
+        try:
+            completion = asyncio.create_task(mutate("complete"))
+            assert await asyncio.to_thread(completion_read.wait, 10)
+            acquisition = asyncio.create_task(mutate("claim"))
+            await asyncio.wait_for(asyncio.gather(completion, acquisition), 30)
+        finally:
+            event.remove(engine, "before_cursor_execute", before)
+            event.remove(engine, "after_cursor_execute", after)
+        saved = await call(db.get_task, task["id"])
+        assert saved["metadata"] == {
+            "note": "keep",
+            "checkout": {"ref": "completed"},
+            "_agno_execution_claims": [f"run-{cycle}"],
+            "_agno_execution_revision": 1,
+        }
+
+
+@pytest.mark.asyncio
+async def test_execution_claims_are_private_in_edit_tool_results(db):
+    import json
+
+    from agno.run import RunContext
+    from agno.tools.company import CompanyTools
+
+    metadata = {"note": "public", "_agno_execution_claims": ["private-token"], "_agno_execution_revision": 3}
+    m, product, project, task = await execution_task(db, metadata)
+    tools = CompanyTools(db)
+    edit = tools.aedit_company_task if isinstance(db, AsyncBaseDb) else tools.edit_company_task
+    context = RunContext(run_id="human-edit", session_id="chat", user_id="owner")
+    for title in ("Edited once", "Edited twice"):
+        result = json.loads(await call(edit, task["id"], title, "Updated brief", _agno_run_context=context))
+        assert result["title"] == title
+        assert result["metadata"] == {"note": "public"}
+        assert (await call(db.get_task, task["id"]))["metadata"] == metadata

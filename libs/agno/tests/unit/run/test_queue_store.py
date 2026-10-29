@@ -537,3 +537,84 @@ class TestDedupNamespaceContract:
         await store.enqueue_job(make_job("e1", idempotency_key=""))
         result = await store.enqueue_job(make_job("e2", idempotency_key=""))
         assert result["accepted"] is True, "empty string means no dedup key"
+
+
+class TestAcceptanceToken:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("serialized", [False, True])
+    async def test_requeue_replaces_acceptance_generation(self, store, serialized):
+        job = make_job()
+        job["payload"].update(serialize_session=serialized, _agno_company_acceptance_token="original")
+        await store.enqueue_job(job)
+        for token in ("second", "third"):
+            claimed = await store.claim_job("w1")
+            assert await store.complete_job("r1", "w1", claimed["attempt"], "failed")
+            previous = await store.get_job("r1")
+            previous_payload = previous["payload"]
+            previous_token = previous_payload["_agno_company_acceptance_token"]
+            assert await store.requeue_job("r1", acceptance_token=token)
+            queued = await store.get_job("r1")
+            assert queued["payload"]["_agno_company_acceptance_token"] == token
+            assert previous_payload["_agno_company_acceptance_token"] == previous_token
+            assert queued["payload"]["input"] == "hello"
+            assert queued["payload"]["serialize_session"] is serialized
+            assert queued["max_attempts"] == previous["attempt"] + 1
+            assert queued["locked_by"] is None and queued["locked_at"] is None
+        assert await store.cancel_job("r1")
+        assert await store.requeue_job("r1")
+        assert (await store.get_job("r1"))["payload"]["_agno_company_acceptance_token"] == "third"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("existing", [None, "original"])
+    async def test_continuation_preserves_acceptance_generation(self, store, existing):
+        job = make_job()
+        if existing is not None:
+            job["payload"]["_agno_company_acceptance_token"] = existing
+        await store.enqueue_job(job)
+        for token in ("second", "third"):
+            claimed = await store.claim_job("w1")
+            assert await store.complete_job("r1", "w1", claimed["attempt"], "paused")
+            result = await store.continue_job("r1", {"input": token}, acceptance_token=token)
+            assert result["outcome"] == "queued"
+            assert result["job"]["payload"]["_agno_company_acceptance_token"] == (existing or "second")
+            assert result["job"]["payload"]["continue"] == {"input": token}
+            assert result["job"]["payload"]["input"] == "hello"
+            before = await store.get_job("r1")
+            assert (await store.continue_job("r1", {}, acceptance_token="loser"))["outcome"] == "attach"
+            assert await store.get_job("r1") == before
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["queued", "running", "paused", "completed", "missing"])
+    async def test_refused_requeue_does_not_replace_acceptance(self, store, status):
+        if status != "missing":
+            job = make_job(status=status)
+            job["payload"]["_agno_company_acceptance_token"] = "original"
+            await store.enqueue_job(job)
+        before = await store.get_job("r1")
+        assert not await store.requeue_job("r1", acceptance_token="loser")
+        assert await store.get_job("r1") == before
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["queued", "running", "completed", "failed", "cancelled", "missing"])
+    async def test_refused_continue_does_not_replace_acceptance(self, store, status):
+        if status != "missing":
+            job = make_job(status=status)
+            job["payload"]["_agno_company_acceptance_token"] = "original"
+            await store.enqueue_job(job)
+        before = await store.get_job("r1")
+        result = await store.continue_job("r1", {"input": "loser"}, acceptance_token="loser")
+        assert result["outcome"] == ("attach" if status in ("queued", "running") else "conflict")
+        assert await store.get_job("r1") == before
+
+    @pytest.mark.asyncio
+    async def test_retry_preserves_acceptance_generation(self, store):
+        job = make_job(max_attempts=3)
+        job["payload"]["_agno_company_acceptance_token"] = "original"
+        await store.enqueue_job(job)
+        for _ in range(2):
+            claimed = await store.claim_job("w1")
+            assert (
+                await store.retry_or_fail_job("r1", "w1", claimed["attempt"], "retry", retry_delay_seconds=0)
+                == "queued"
+            )
+            assert (await store.get_job("r1"))["payload"]["_agno_company_acceptance_token"] == "original"

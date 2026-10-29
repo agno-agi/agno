@@ -314,6 +314,17 @@ does not cancel work. Refusal or a failed cascade leaves the Company rows unchan
 Direct SDK purge calls without runtime verification are limited to Tasks without
 execution history; the HTTP routes perform the runtime checks.
 
+SDK Product purge also checks the Routine catalog, including archived Routines.
+When schedules use a separate database, pass it as `schedule_db` to the Company
+manager. An unavailable catalog is not treated as empty. Raw database Product
+purge requires an explicitly verified Routine-link snapshot.
+
+Strict execution reads currently support SQLite, PostgreSQL and MongoDB, each in
+sync and async forms. An assigned Task still needs a verifiable executor session
+even without Company attempt history: ordinary Agent runs can use that session.
+Restore access to the original executor/run store before retrying; an unsupported
+reader or a failed read must not be treated as proof that no execution exists.
+
 Separate sessions, run and queue history, approvals, traces, knowledge, files and
 checkpoints remain under their existing retention. Product wiki and summary files
 are retained, and deleting Source rows does not delete remote documents. Generic

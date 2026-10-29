@@ -206,9 +206,26 @@ class CompanyManager:
         user_id: Optional[str] = None,
         *,
         expected_tasks: Optional[List[Dict[str, Any]]] = None,
-        verified_routine_ids: Sequence[str] = (),
+        verified_routine_ids: Optional[Sequence[str]] = None,
     ) -> bool:
-        """Permanently remove a Product after verifying its Task snapshot."""
+        """Verify the Routine catalog and permanently remove a Product with its checked Task snapshot."""
+        if verified_routine_ids is None:
+            from agno.scheduler import ScheduleManager
+
+            product = self.db.get_product(product_id, user_id=user_id, include_deleted=True)
+            if product is None:
+                return False
+            verified_routine_ids = (product.get("metadata") or {}).get("routine_ids") or []
+            schedules = ScheduleManager(self.schedule_db).list_all(user_id=None, raise_on_error=True)
+            if any(
+                schedule.id in verified_routine_ids
+                or (
+                    schedule.managed_by == "company"
+                    and (schedule.payload or {}).get("metadata", {}).get("product_id") == product_id
+                )
+                for schedule in schedules
+            ):
+                raise ValueError("Registered Routines must be deleted and their absence verified first")
         return self.db.purge_product(
             product_id, user_id=user_id, expected_tasks=expected_tasks, verified_routine_ids=verified_routine_ids
         )
@@ -1144,9 +1161,26 @@ class AsyncCompanyManager:
         user_id: Optional[str] = None,
         *,
         expected_tasks: Optional[List[Dict[str, Any]]] = None,
-        verified_routine_ids: Sequence[str] = (),
+        verified_routine_ids: Optional[Sequence[str]] = None,
     ) -> bool:
-        """Permanently remove a Product after verifying its Task snapshot."""
+        """Verify the Routine catalog and permanently remove a Product with its checked Task snapshot."""
+        if verified_routine_ids is None:
+            from agno.scheduler import ScheduleManager
+
+            product = await self.db.get_product(product_id, user_id=user_id, include_deleted=True)
+            if product is None:
+                return False
+            verified_routine_ids = (product.get("metadata") or {}).get("routine_ids") or []
+            schedules = await ScheduleManager(self.schedule_db).alist_all(user_id=None, raise_on_error=True)
+            if any(
+                schedule.id in verified_routine_ids
+                or (
+                    schedule.managed_by == "company"
+                    and (schedule.payload or {}).get("metadata", {}).get("product_id") == product_id
+                )
+                for schedule in schedules
+            ):
+                raise ValueError("Registered Routines must be deleted and their absence verified first")
         return await self.db.purge_product(
             product_id, user_id=user_id, expected_tasks=expected_tasks, verified_routine_ids=verified_routine_ids
         )

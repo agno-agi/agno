@@ -10,7 +10,7 @@ from sqlalchemy import and_, or_
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
-from agno.db.base import _UNSET_UPDATED_AT, AsyncBaseDb, SessionType
+from agno.db.base import _UNSET_UPDATED_AT, AsyncBaseDb, CompanyDeletionUnavailableError, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.authz import (
     AUTHZ_AUDIT,
@@ -5875,7 +5875,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         user_id: Optional[str] = None,
         *,
         expected_tasks: Optional[List[Dict[str, Any]]] = None,
-        verified_routine_ids: Sequence[str] = (),
+        verified_routine_ids: Optional[Sequence[str]] = None,
     ) -> bool:
         """Permanently remove a Product after verifying its Task snapshot."""
         from agno.db.sql.company import purge_product
@@ -5887,7 +5887,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         tasks = await self._get_table(table_type="tasks", create_table_if_not_found=True)
         sources = await self._get_table(table_type="sources", create_table_if_not_found=True)
         if any(table is None for table in (products, projects, tasks, sources)):
-            raise RuntimeError("Company deletion tables are unavailable")
+            raise CompanyDeletionUnavailableError("Company deletion tables are unavailable")
         async with self.async_session_factory() as sess, sess.begin():
             return await sess.run_sync(
                 purge_product,
@@ -6054,7 +6054,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         products = await self._get_table(table_type="products", create_table_if_not_found=True)
         tasks = await self._get_table(table_type="tasks", create_table_if_not_found=True)
         if any(table is None for table in (products, projects, tasks)):
-            raise RuntimeError("Company deletion tables are unavailable")
+            raise CompanyDeletionUnavailableError("Company deletion tables are unavailable")
         async with self.async_session_factory() as sess, sess.begin():
             return await sess.run_sync(purge_project, products, projects, tasks, project_id, user_id, expected_tasks)
 
@@ -6330,6 +6330,26 @@ class AsyncSqliteDb(AsyncBaseDb):
             result = (await sess.execute(stmt.values(deleted_at=now, updated_at=now).returning(table.c.id))).fetchone()
             return result is not None
 
+    async def acquire_task_execution(self, session_id: str, token: str) -> List[str]:
+        """Protect all Tasks using this session, including archived records."""
+        from agno.db.sql.company import acquire_task_execution
+
+        tasks = await self._get_table(table_type="tasks")
+        if tasks is None:
+            raise CompanyDeletionUnavailableError("Company execution table is unavailable")
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(acquire_task_execution, tasks, session_id, token)
+
+    async def release_task_execution(self, session_id: str, token: str) -> None:
+        """Release only this execution token without changing Task activity."""
+        from agno.db.sql.company import release_task_execution
+
+        tasks = await self._get_table(table_type="tasks")
+        if tasks is None:
+            raise CompanyDeletionUnavailableError("Company execution table is unavailable")
+        async with self.async_session_factory() as sess, sess.begin():
+            await sess.run_sync(release_task_execution, tasks, session_id, token)
+
     async def purge_task(
         self,
         task_id: str,
@@ -6346,7 +6366,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         products = await self._get_table(table_type="products", create_table_if_not_found=True)
         projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
         if any(table is None for table in (products, projects, tasks)):
-            raise RuntimeError("Company deletion tables are unavailable")
+            raise CompanyDeletionUnavailableError("Company deletion tables are unavailable")
         async with self.async_session_factory() as sess, sess.begin():
             return await sess.run_sync(purge_task, products, projects, tasks, task_id, user_id, expected_tasks)
 
@@ -6427,13 +6447,16 @@ class AsyncSqliteDb(AsyncBaseDb):
         async with self.async_session_factory() as sess, sess.begin():
             row = (
                 await sess.execute(
-                    select(table).where(
+                    table.update()
+                    .where(
                         table.c.id == task_id,
                         table.c.job_id == job_id,
                         table.c.deleted_at.is_(None),
                         table.c.status == "in_progress",
                         or_(table.c.result.is_(None), table.c.result == JSON.NULL),
                     )
+                    .values(updated_at=table.c.updated_at)
+                    .returning(table)
                 )
             ).fetchone()
             if row is None:

@@ -4,6 +4,8 @@ from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TOKEN
+
 
 class QueueJobSchema(BaseModel):
     """One durable queue job (a background run's queue ticket)."""
@@ -30,6 +32,7 @@ class QueueJobSchema(BaseModel):
     @field_validator("payload")
     @classmethod
     def _redact_factory_claims(cls, payload: Dict[str, Any]) -> Dict[str, Any]:
+        payload = {key: value for key, value in payload.items() if key != QUEUE_ACCEPTANCE_TOKEN}
         # Factory tickets carry the submitter's verified claims for the worker; the ops surface never shows them
         context = (payload.get("scope") or {}).get("context")
         if not isinstance(context, dict) or "claims" not in context:

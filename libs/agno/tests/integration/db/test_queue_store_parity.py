@@ -527,6 +527,112 @@ def make_turn(job_id: str, session_id: str = "s1", **kwargs) -> dict:
     return make_job(job_id, session_id=session_id, payload={"input": job_id, "serialize_session": True}, **kwargs)
 
 
+class TestAcceptanceTokenParity:
+    @pytest.mark.asyncio
+    async def test_terminal_requeue_replaces_each_acceptance(self, session_store):
+        key = "_agno_company_acceptance_token"
+        payload = {"input": "hello", key: "original", "auth": {"scopes": ["agent:run"]}}
+        await session_store.enqueue_job(make_job(payload=payload))
+        for status, token in (("failed", "second"), ("cancelled", "third")):
+            claimed = await session_store.claim_job("worker")
+            assert await session_store.complete_job("r1", "worker", claimed["attempt"], status)
+            assert await session_store.requeue_job("r1", acceptance_token=token)
+            job = await session_store.get_job("r1")
+            assert job["payload"] == {**payload, key: token}
+            assert job["attempt"] == claimed["attempt"]
+            assert job["max_attempts"] == claimed["attempt"] + 1
+            assert job["locked_by"] is None and job["locked_at"] is None and job["completed_at"] is None
+            assert not await session_store.requeue_job("r1", acceptance_token="loser")
+            assert await session_store.get_job("r1") == job
+        assert not await session_store.requeue_job("missing", acceptance_token="missing")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("existing", [None, "original"])
+    async def test_continuation_retains_first_acceptance_across_pauses(self, session_store, existing):
+        key = "_agno_company_acceptance_token"
+        payload = {"input": "hello", "auth": {"scopes": ["agent:run"]}}
+        if existing is not None:
+            payload[key] = existing
+        await session_store.enqueue_job(make_job(payload=payload))
+        for token in ("first", "second"):
+            claimed = await session_store.claim_job("worker")
+            assert await session_store.complete_job("r1", "worker", claimed["attempt"], "paused")
+            result = await session_store.continue_job("r1", {"input": token}, acceptance_token=token)
+            assert result["outcome"] == "queued"
+            job = await session_store.get_job("r1")
+            assert job["payload"] == {**payload, key: existing or "first", "continue": {"input": token}}
+            assert job["max_attempts"] == claimed["attempt"] + 1
+            assert job["locked_by"] is None and job["locked_at"] is None
+            attached = await session_store.continue_job("r1", {"input": "loser"}, acceptance_token="loser")
+            assert attached["outcome"] == "attach"
+            assert await session_store.get_job("r1") == job
+
+    @pytest.mark.asyncio
+    async def test_concurrent_continuations_keep_the_winning_token(self, session_store):
+        await session_store.enqueue_job(make_job())
+        claimed = await session_store.claim_job("worker")
+        assert await session_store.complete_job("r1", "worker", claimed["attempt"], "paused")
+        results = await asyncio.gather(
+            *(session_store.continue_job("r1", {"input": token}, acceptance_token=token) for token in ("a", "b"))
+        )
+        assert sorted(result["outcome"] for result in results) == ["attach", "queued"]
+        job = await session_store.get_job("r1")
+        assert job["payload"]["_agno_company_acceptance_token"] == job["payload"]["continue"]["input"]
+        assert all(result["job"]["payload"] == job["payload"] for result in results)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["running", "completed", "failed", "cancelled"])
+    async def test_refused_operations_leave_acceptance_unchanged(self, session_store, status):
+        await session_store.enqueue_job(make_job(payload={"_agno_company_acceptance_token": "original"}))
+        claimed = await session_store.claim_job("worker")
+        if status != "running":
+            assert await session_store.complete_job("r1", "worker", claimed["attempt"], status)
+        before = await session_store.get_job("r1")
+        result = await session_store.continue_job("r1", {}, acceptance_token="loser")
+        assert result["outcome"] == ("attach" if status == "running" else "conflict")
+        assert await session_store.get_job("r1") == before
+        assert (await session_store.continue_job("missing", {}, acceptance_token="loser"))["job"] is None
+        if status in ("running", "completed"):
+            assert not await session_store.requeue_job("r1", acceptance_token="loser")
+            assert await session_store.get_job("r1") == before
+
+
+@pytest.mark.skipif(not _PG_AVAILABLE, reason="Postgres not available on localhost:5532")
+@pytest.mark.parametrize("kind", ["pg", "pg_sync"])
+class TestPostgresGuardedRequeue:
+    @pytest.mark.asyncio
+    async def test_missing_table_raises_only_for_guarded_call(self, kind):
+        async with _open_store(kind) as store:
+            assert not await store.requeue_job("missing")
+            with pytest.raises(RuntimeError, match="Job queue table not found"):
+                await store.requeue_job("missing", acceptance_token="owner")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["before_cursor_execute", "commit"])
+    async def test_storage_failure_raises_only_for_guarded_call(self, kind, failure):
+        from sqlalchemy import event
+
+        async with _open_store(kind) as store:
+            await store.enqueue_job(make_job())
+            assert await store.cancel_job("r1")
+            before = await store.get_job("r1")
+            db = getattr(store, "_store", store)
+            engine = getattr(db.db_engine, "sync_engine", db.db_engine)
+
+            def fail_write(*args):
+                if failure == "commit" or args[2].startswith("UPDATE"):
+                    raise RuntimeError("write outcome unavailable")
+
+            event.listen(engine, failure, fail_write)
+            try:
+                assert not await store.requeue_job("r1")
+                with pytest.raises(RuntimeError, match="write outcome unavailable"):
+                    await store.requeue_job("r1", acceptance_token="owner")
+            finally:
+                event.remove(engine, failure, fail_write)
+            assert await store.get_job("r1") == before
+
+
 class TestSessionOrderParity:
     @pytest.mark.asyncio
     async def test_waiting_turn_keeps_its_attempt_budget_while_other_sessions_progress(self, session_store):
@@ -596,13 +702,14 @@ class TestSessionOrderParity:
         assert await session_store.claim_job("w3") is None
 
     @pytest.mark.asyncio
-    async def test_requeued_turn_rejoins_behind_live_turns(self, session_store):
+    @pytest.mark.parametrize("acceptance_token", [None, "new-owner"])
+    async def test_requeued_turn_rejoins_behind_live_turns(self, session_store, acceptance_token):
         # Its id sorts first, so only a fresh sequence keeps the newer live turn ahead of it
         await session_store.enqueue_job(make_turn("a", created_at=1))
         assert (await session_store.claim_job("one"))["id"] == "a"
         assert await session_store.complete_job("a", "one", 1, "failed")
         await session_store.enqueue_job(make_turn("z", created_at=2))
-        assert await session_store.requeue_job("a")
+        assert await session_store.requeue_job("a", acceptance_token=acceptance_token)
         assert (await session_store.claim_job("two"))["id"] == "z"
         assert await session_store.claim_job("three") is None
         assert await session_store.complete_job("z", "two", 1, "completed")

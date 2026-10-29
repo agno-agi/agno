@@ -3,6 +3,9 @@
 import time
 from typing import Any, Dict, Optional
 
+TASK_EXECUTION_CLAIMS = "_agno_execution_claims"
+TASK_EXECUTION_REVISION = "_agno_execution_revision"
+
 # In progress is entered only by starting a run; review and completion need an earlier attempt.
 TASK_TRANSITIONS = {
     "backlog": {"ready", "in_review", "done", "cancelled"},
@@ -88,15 +91,22 @@ def task_transition_fields(
 
 
 def public_task(task: Dict[str, Any]) -> Dict[str, Any]:
-    """Keep persisted caller claims out of API and tool results."""
+    """Keep internal authorization and execution metadata out of public results."""
     from agno.run.authorization import AUTHORIZATION_KEY
 
-    return {
+    result = {
         **task,
         "transitions": [
             {k: v for k, v in entry.items() if k != AUTHORIZATION_KEY} for entry in task.get("transitions", [])
         ],
     }
+    if task.get("metadata") is not None:
+        result["metadata"] = {
+            key: value
+            for key, value in task["metadata"].items()
+            if key not in {TASK_EXECUTION_CLAIMS, TASK_EXECUTION_REVISION}
+        }
+    return result
 
 
 def task_run_id(task_id: str, attempt: int) -> str:

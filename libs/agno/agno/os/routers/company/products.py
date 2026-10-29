@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from agno.company.execution import _call as _db_call
 from agno.company.execution import _TaskRunConflict, _verify_task_purge
 from agno.company.manager import AsyncCompanyManager, CompanyManager
-from agno.db.base import AsyncBaseDb, BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb, CompanyDeletionUnavailableError
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.company.schema import ProductCreate, ProductResponse, ProductUpdate
@@ -44,6 +44,8 @@ def get_products_router(
             if result is not None and method in {"create", "update", "restore"}:
                 result = await _call("get", result["id"], include_deleted=True)
             return result
+        except CompanyDeletionUnavailableError as exc:
+            raise HTTPException(status_code=503, detail="Company deletion tables are unavailable") from exc
         except NotImplementedError:
             raise HTTPException(status_code=503, detail="Company products not supported by the configured database")
         except ValueError as exc:

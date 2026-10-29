@@ -180,22 +180,62 @@ def _lock_purge_target(
     return dict(row) if row is not None else None
 
 
-def _purge_tasks(sess: Any, tasks: Any, condition: Any, expected_tasks: Optional[List[Dict[str, Any]]]) -> None:
-    # Reservation does not take the Product lock; lock these rows before checking its history.
-    rows = [
+def _lock_task_rows(sess: Any, tasks: Any, condition: Any) -> List[Dict[str, Any]]:
+    return [
         dict(row)
         for row in sess.execute(
             tasks.update().where(condition).values(updated_at=tasks.c.updated_at).returning(tasks)
         ).mappings()
     ]
+
+
+def acquire_task_execution(sess: Any, tasks: Any, session_id: str, token: str) -> List[str]:
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS, TASK_EXECUTION_REVISION
+
+    rows = _lock_task_rows(sess, tasks, tasks.c.session_id == session_id)
+    for row in rows:
+        metadata = dict(row.get("metadata") or {})
+        claims = list(metadata.get(TASK_EXECUTION_CLAIMS) or [])
+        if token not in claims:
+            metadata[TASK_EXECUTION_CLAIMS] = [*claims, token]
+            # Retain this revision after release so preflight cannot miss a completed execution.
+            metadata[TASK_EXECUTION_REVISION] = metadata.get(TASK_EXECUTION_REVISION, 0) + 1
+            sess.execute(tasks.update().where(tasks.c.id == row["id"]).values(metadata=metadata))
+    return [row["id"] for row in rows]
+
+
+def release_task_execution(sess: Any, tasks: Any, session_id: str, token: str) -> None:
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+
+    for row in _lock_task_rows(sess, tasks, tasks.c.session_id == session_id):
+        metadata = dict(row.get("metadata") or {})
+        claims = list(metadata.get(TASK_EXECUTION_CLAIMS) or [])
+        if token not in claims:
+            continue
+        claims.remove(token)
+        if claims:
+            metadata[TASK_EXECUTION_CLAIMS] = claims
+        else:
+            metadata.pop(TASK_EXECUTION_CLAIMS)
+        sess.execute(tasks.update().where(tasks.c.id == row["id"]).values(metadata=metadata))
+
+
+def _purge_tasks(sess: Any, tasks: Any, condition: Any, expected_tasks: Optional[List[Dict[str, Any]]]) -> None:
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS, TASK_EXECUTION_REVISION
+
+    # Reservation and admission share these row locks with permanent deletion.
+    rows = _lock_task_rows(sess, tasks, condition)
     if expected_tasks is not None:
         if {row["id"]: row for row in rows} != {row["id"]: row for row in expected_tasks}:
             raise ValueError("Tasks changed during deletion verification; retry the request")
     for row in rows:
+        if (row.get("metadata") or {}).get(TASK_EXECUTION_CLAIMS):
+            raise ValueError("Cannot permanently delete with active Task executions")
         if row["status"] == "in_progress" and row.get("result") is None:
             raise ValueError("Cannot permanently delete with an unfinished Task attempt")
         if expected_tasks is None and (
-            row.get("job_id")
+            (row.get("metadata") or {}).get(TASK_EXECUTION_REVISION)
+            or row.get("job_id")
             or row.get("result") is not None
             or any("attempt" in entry for entry in row.get("transitions") or [])
         ):
@@ -212,12 +252,14 @@ def purge_product(
     product_id: str,
     user_id: Optional[str],
     expected_tasks: Optional[List[Dict[str, Any]]],
-    verified_routine_ids: Sequence[str],
+    verified_routine_ids: Optional[Sequence[str]],
 ) -> bool:
     product = _lock_purge_target(sess, products, products, product_id, user_id)
     if product is None:
         return False
-    if set((product.get("metadata") or {}).get("routine_ids") or []) != set(verified_routine_ids):
+    if verified_routine_ids is None or set((product.get("metadata") or {}).get("routine_ids") or []) != set(
+        verified_routine_ids
+    ):
         raise ValueError("Registered Routines must be deleted and their absence verified first")
     _purge_tasks(sess, tasks, tasks.c.product_id == product_id, expected_tasks)
     sess.execute(projects.delete().where(projects.c.product_id == product_id))

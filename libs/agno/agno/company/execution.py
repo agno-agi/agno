@@ -118,7 +118,7 @@ def _pending_task_attempt(task: Dict[str, Any]) -> Optional[int]:
 
 def _task_run_database(os: Any, task: Dict[str, Any]) -> Any:
     """Resolve the original run store even if the executor's database has changed."""
-    store_ids = [entry.get("run_db_id") for entry in task["transitions"] if entry.get("attempt")]
+    store_ids = [entry.get("run_db_id") for entry in task.get("transitions") or [] if "attempt" in entry]
     if store_ids and store_ids[0]:
         stores = list({id(store): store for store in os.dbs.get(store_ids[0], [])}.values())
         if len(stores) == 1:
@@ -139,7 +139,7 @@ async def _verify_task_purge(os: Any, tasks: List[Dict[str, Any]], queue: Any = 
         if task.get("job_id")
         or task.get("result") is not None
         or task["status"] == "in_progress"
-        or any(entry.get("attempt") for entry in task.get("transitions", []))
+        or any("attempt" in entry for entry in task.get("transitions") or [])
     }
     if attempted and (os is None or queue is None):
         raise _TaskRunUnavailable("Cannot verify Task executions; the runtime is unavailable")

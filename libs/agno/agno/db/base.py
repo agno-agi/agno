@@ -135,6 +135,10 @@ def current_version_guard_clause(current_version_column: Any, expected: int) -> 
     return current_version_column == expected
 
 
+class CompanyDeletionUnavailableError(RuntimeError):
+    """Required Company deletion tables could not be resolved."""
+
+
 class ComponentArchivedError(ValueError):
     """The component is archived; its id is reserved and its rows immutable.
 
@@ -1959,7 +1963,7 @@ class BaseDb(ABC):
         user_id: Optional[str] = None,
         *,
         expected_tasks: Optional[List[Dict[str, Any]]] = None,
-        verified_routine_ids: Sequence[str] = (),
+        verified_routine_ids: Optional[Sequence[str]] = None,
     ) -> bool:
         """Permanently remove a Product after verifying its Task snapshot."""
         raise NotImplementedError("Company permanent deletion not supported by the configured database")
@@ -2083,6 +2087,14 @@ class BaseDb(ABC):
     def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
         """Soft-delete an active Task within the owner scope."""
         raise NotImplementedError("Company tasks not supported by the configured database")
+
+    def acquire_task_execution(self, session_id: str, token: str) -> List[str]:
+        """Protect matching Task records until this execution token is released."""
+        raise NotImplementedError("Company execution admission not supported by this database")
+
+    def release_task_execution(self, session_id: str, token: str) -> None:
+        """Release only this token, retaining the Task's execution revision."""
+        raise NotImplementedError("Company execution admission not supported by this database")
 
     def purge_task(
         self,
@@ -4038,7 +4050,7 @@ class AsyncBaseDb(ABC):
         user_id: Optional[str] = None,
         *,
         expected_tasks: Optional[List[Dict[str, Any]]] = None,
-        verified_routine_ids: Sequence[str] = (),
+        verified_routine_ids: Optional[Sequence[str]] = None,
     ) -> bool:
         """Permanently remove a Product after verifying its Task snapshot."""
         raise NotImplementedError("Company permanent deletion not supported by the configured database")
@@ -4164,6 +4176,14 @@ class AsyncBaseDb(ABC):
     ) -> bool:
         """Soft-delete an active Task within the owner scope."""
         raise NotImplementedError("Company tasks not supported by the configured database")
+
+    async def acquire_task_execution(self, session_id: str, token: str) -> List[str]:
+        """Protect matching Task records until this execution token is released."""
+        raise NotImplementedError("Company execution admission not supported by this database")
+
+    async def release_task_execution(self, session_id: str, token: str) -> None:
+        """Release only this token, retaining the Task's execution revision."""
+        raise NotImplementedError("Company execution admission not supported by this database")
 
     async def purge_task(
         self,

@@ -3862,3 +3862,82 @@ async def test_permanent_delete_checks_session_only_queue_ticket(system):
         session.execute(jobs.update().where(jobs.c.id == run_id).values(status="completed"))
     assert (await client.delete(path)).status_code == 204
     assert await worker.store.get_job(run_id) is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("assigned", [False, True])
+@pytest.mark.parametrize("queue_available", [False, True])
+async def test_permanent_delete_accepts_null_history(system, monkeypatch, assigned, queue_available):
+    from agno.company.execution import _call
+
+    client, db, worker, _, _ = system
+    await _call(db, "_create_all_tables")
+    if not queue_available:
+        monkeypatch.setattr(worker.authorization_app.state, "queue_worker", None)
+    for _ in range(2):
+        if assigned:
+            task = await accepted(client)
+        else:
+            product = (await client.post("/company/products", json={"name": "Legacy draft"})).json()
+            project = (
+                await client.post("/company/projects", json={"product_id": product["id"], "name": "Draft"})
+            ).json()
+            response = await client.post(
+                "/company/tasks", json={"product_id": product["id"], "project_id": project["id"], "title": "Draft"}
+            )
+            assert response.status_code == 201, response.text
+            task = response.json()
+        table = await _call(db, "_get_table", table_type="tasks")
+        statement = table.update().where(table.c.id == task["id"]).values(transitions=None)
+        if isinstance(db, AsyncBaseDb):
+            async with db.async_session_factory() as session, session.begin():
+                await session.execute(statement)
+        else:
+            with db.Session() as session, session.begin():
+                session.execute(statement)
+        assert (await _call(db, "get_task", task["id"]))["transitions"] is None
+        response = await client.delete("/company/tasks/" + task["id"])
+        assert response.status_code == 204, response.text
+        assert await _call(db, "get_task", task["id"], include_deleted=True) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["no_runtime", "original_store", "live_run", "terminal"])
+async def test_permanent_delete_verifies_legacy_zero_attempt(system, monkeypatch, state):
+    from agno.company.execution import _call
+    from agno.run.agent import RunOutput
+    from agno.session.agent import AgentSession
+
+    client, db, worker, _, components = system
+    await _call(db, "_create_all_tables")
+    task = await accepted(client)
+    table = await _call(db, "_get_table", table_type="tasks")
+    statement = table.update().where(table.c.id == task["id"]).values(transitions=[{"attempt": 0, "run_db_id": db.id}])
+    if isinstance(db, AsyncBaseDb):
+        async with db.async_session_factory() as session, session.begin():
+            await session.execute(statement)
+    else:
+        with db.Session() as session, session.begin():
+            session.execute(statement)
+    before = await _call(db, "get_task", task["id"])
+    await _call(db, "upsert_session", AgentSession(session_id=task["session_id"], created_at=1, updated_at=1))
+    if state == "no_runtime":
+        monkeypatch.setattr(worker.authorization_app.state, "queue_worker", None)
+    elif state == "original_store":
+        monkeypatch.setattr(components["writer"], "db", None)
+    elif state == "live_run":
+        await _call(
+            db, "upsert_run", RunOutput(run_id="legacy-live", status=RunStatus.running), session_id=task["session_id"]
+        )
+    else:
+        await _call(
+            db, "upsert_run", RunOutput(run_id="legacy-done", status=RunStatus.completed), session_id=task["session_id"]
+        )
+    response = await client.delete("/company/tasks/" + task["id"])
+    expected = {"no_runtime": 503, "original_store": 204, "live_run": 409, "terminal": 204}[state]
+    assert response.status_code == expected, response.text
+    if expected != 204:
+        assert await _call(db, "get_task", task["id"]) == before
+        assert (await client.delete("/company/tasks/" + task["id"])).status_code == expected
+    if state in {"live_run", "terminal"}:
+        assert (await _call(db, "get_runs", session_id=task["session_id"], deserialize=False))[1] == 1
