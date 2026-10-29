@@ -48,6 +48,34 @@ class RoutineResponse(ScheduleResponse):
     deleted_at: Optional[int] = None
 
 
+def sort_routines(rows: List[Dict[str, Any]], sort_by: str, sort_order: str) -> List[Dict[str, Any]]:
+    """Order stored Routine rows for listing, before paging."""
+    reverse = sort_order == "desc"
+    if sort_by == "next_run_at":
+        # A paused or on-demand Routine has no next run, whatever timestamp is stored; those go last either way.
+        due: List[Dict[str, Any]] = []
+        rest: List[Dict[str, Any]] = []
+        for row in rows:
+            has_next = row["enabled"] and row["cron_expr"] and row.get("next_run_at") is not None
+            (due if has_next else rest).append(row)
+        due.sort(key=lambda row: (row["next_run_at"], row["id"]), reverse=reverse)
+        rest.sort(key=lambda row: (row.get("created_at") or 0, row["id"]), reverse=reverse)
+        return due + rest
+    if sort_by == "schedule_type":
+        # Matches the response's schedule_type: "on_demand" sorts before "scheduled".
+        return sorted(
+            rows,
+            key=lambda row: ("scheduled" if row["cron_expr"] else "on_demand", row.get("created_at") or 0, row["id"]),
+            reverse=reverse,
+        )
+    if sort_by == "enabled":
+        return sorted(
+            rows, key=lambda row: (bool(row["enabled"]), row.get("created_at") or 0, row["id"]), reverse=reverse
+        )
+    # One reverse flag orders equal timestamps by id in the same direction as the timestamp.
+    return sorted(rows, key=lambda row: (get_sort_value(row, sort_by), row["id"]), reverse=reverse)
+
+
 class RoutineUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
@@ -211,7 +239,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         limit: int = Query(20, ge=1, le=1000),
         page: int = Query(1, ge=1),
         include_deleted: bool = False,
-        sort_by: Literal["created_at", "updated_at"] = Query("created_at"),
+        sort_by: Literal["created_at", "updated_at", "next_run_at", "schedule_type", "enabled"] = Query("created_at"),
         sort_order: Literal["asc", "desc"] = Query("desc"),
         _: bool = Depends(auth),
     ):
@@ -227,8 +255,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             and (product_id is None or (row.payload or {}).get("metadata", {}).get("product_id") == product_id)
             and (include_deleted or (row.payload or {}).get("metadata", {}).get("deleted_at") is None)
         ]
-        # One reverse flag orders equal timestamps by id in the same direction as the timestamp.
-        selected.sort(key=lambda row: (get_sort_value(row, sort_by), row["id"]), reverse=sort_order == "desc")
+        selected = sort_routines(selected, sort_by, sort_order)
         rows = await routine_responses(selected[(page - 1) * limit : page * limit])
         return page_response(rows, len(selected), limit, page)
 

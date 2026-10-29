@@ -563,18 +563,16 @@ async def test_release_and_update_still_stamp_ordinary_schedules(system, clock):
 
 
 async def seed_routines(client, db, rows):
-    """Store routines of one Product with fixed timestamps, as {id: (created_at, updated_at)}."""
+    """Store routines of one Product with fixed timestamps, as {id: (created_at, updated_at)} or {id: fields}."""
     template = await create_routine(client)
     stored = await _call(db, "get_schedule", template["id"])
     product_id = stored["payload"]["metadata"]["product_id"]
     assert await _call(db, "delete_schedule", template["id"])
-    for routine_id, (created_at, updated_at) in rows.items():
+    for routine_id, fields in rows.items():
+        if isinstance(fields, tuple):
+            fields = {"created_at": fields[0], "updated_at": fields[1]}
         name = product_id + "." + routine_id
-        await _call(
-            db,
-            "create_schedule",
-            {**stored, "id": routine_id, "name": name, "created_at": created_at, "updated_at": updated_at},
-        )
+        await _call(db, "create_schedule", {**stored, "id": routine_id, "name": name, **fields})
     return product_id
 
 
@@ -629,6 +627,37 @@ async def test_routine_sorting_precedes_paging(system):
     assert await listed_ids(client, product_id=other["payload"]["metadata"]["product_id"]) == ([other["id"]], 1)
     for bad in ({"sort_by": "name"}, {"sort_order": "sideways"}):
         assert (await client.get("/company/routines", params=bad)).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_routine_sorting_by_next_run_schedule_type_and_enabled(system):
+    client, db, _, _, _ = system
+    hourly = "0 * * * *"
+    product_id = await seed_routines(
+        client,
+        db,
+        {
+            "r-a": {"created_at": 100, "cron_expr": hourly, "enabled": True, "next_run_at": 3000},
+            "r-b": {"created_at": 200, "cron_expr": hourly, "enabled": True, "next_run_at": 1000},
+            # Paused: its stored next run doesn't count.
+            "r-c": {"created_at": 300, "cron_expr": hourly, "enabled": False, "next_run_at": 500},
+            "r-d": {"created_at": 400, "cron_expr": "", "enabled": True, "next_run_at": None},
+            "r-e": {"created_at": 500, "cron_expr": hourly, "enabled": True, "next_run_at": 2000},
+        },
+    )
+    expected = {
+        # Routines without a next run come last in both directions.
+        ("next_run_at", "asc"): ["r-b", "r-e", "r-a", "r-c", "r-d"],
+        ("next_run_at", "desc"): ["r-a", "r-e", "r-b", "r-d", "r-c"],
+        # Ties fall back to creation time in the same direction.
+        ("schedule_type", "asc"): ["r-d", "r-a", "r-b", "r-c", "r-e"],
+        ("schedule_type", "desc"): ["r-e", "r-c", "r-b", "r-a", "r-d"],
+        ("enabled", "asc"): ["r-c", "r-a", "r-b", "r-d", "r-e"],
+        ("enabled", "desc"): ["r-e", "r-d", "r-b", "r-a", "r-c"],
+    }
+    for (sort_by, sort_order), ids in expected.items():
+        found = await listed_ids(client, product_id=product_id, sort_by=sort_by, sort_order=sort_order)
+        assert found == (ids, 5), (sort_by, sort_order)
 
 
 @pytest.mark.asyncio
