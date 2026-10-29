@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict, Optional
 from unittest.mock import MagicMock
 
@@ -67,6 +68,14 @@ def _dummy_tool(x: str) -> str:
 
 def _another_tool(x: str) -> str:
     return f"other: {x}"
+
+
+class _FutureAwaitable:
+    def __init__(self, future: asyncio.Future[Any]):
+        self.future = future
+
+    def __await__(self):
+        return self.future.__await__()
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +198,24 @@ class TestInvokeCallableFactory:
         with pytest.raises(RuntimeError, match="cannot be used in sync mode"):
             invoke_callable_factory(async_factory, agent, rc)
 
+    @pytest.mark.asyncio
+    async def test_awaitable_factory_result_raises_in_sync_without_cancelling_future(self):
+        future = asyncio.get_running_loop().create_future()
+        awaitable = _FutureAwaitable(future)
+
+        def factory():
+            return awaitable
+
+        agent = Agent(name="test", tools=factory)
+        rc = _make_run_context()
+        with pytest.raises(RuntimeError, match="returned an awaitable in sync mode"):
+            invoke_callable_factory(factory, agent, rc)
+
+        assert not future.cancelled()
+        assert not future.done()
+        future.set_result([_dummy_tool])
+        assert future.result() == [_dummy_tool]
+
 
 # ---------------------------------------------------------------------------
 # ainvoke_callable_factory
@@ -214,6 +241,20 @@ class TestAinvokeCallableFactory:
         agent = Agent(name="test")
         rc = _make_run_context()
         result = await ainvoke_callable_factory(factory, agent, rc)
+        assert result == [_dummy_tool]
+
+    @pytest.mark.asyncio
+    async def test_custom_awaitable_factory_result_is_awaited(self):
+        future = asyncio.get_running_loop().create_future()
+        future.set_result([_dummy_tool])
+
+        def factory():
+            return _FutureAwaitable(future)
+
+        agent = Agent(name="test")
+        rc = _make_run_context()
+        result = await ainvoke_callable_factory(factory, agent, rc)
+
         assert result == [_dummy_tool]
 
 
@@ -415,6 +456,23 @@ class TestResolveCallableTools:
         resolve_callable_tools(agent, rc2)
         assert call_count == 1  # Cached under custom key
 
+    @pytest.mark.asyncio
+    async def test_sync_cache_key_awaitable_raises_without_cancelling_future(self):
+        future = asyncio.get_running_loop().create_future()
+
+        def cache_key():
+            return future
+
+        agent = Agent(name="test", tools=lambda: [_dummy_tool], callable_tools_cache_key=cache_key)
+
+        with pytest.raises(RuntimeError, match="returned an awaitable in sync mode"):
+            resolve_callable_tools(agent, _make_run_context())
+
+        assert not future.cancelled()
+        assert not future.done()
+        future.set_result("shared-key")
+        assert future.result() == "shared-key"
+
     def test_cache_key_falls_back_to_session_id(self):
         call_count = 0
 
@@ -460,6 +518,57 @@ class TestAresolveCallableTools:
         rc = _make_run_context(user_id="u1")
         await aresolve_callable_tools(agent, rc)
         assert rc.tools == [_dummy_tool]
+
+    @pytest.mark.asyncio
+    async def test_task_factory_result_is_awaited(self):
+        tasks = []
+
+        async def load_tools():
+            await asyncio.sleep(0)
+            return [_dummy_tool]
+
+        def factory():
+            task = asyncio.create_task(load_tools())
+            tasks.append(task)
+            return task
+
+        agent = Agent(name="test", tools=factory)
+        rc = _make_run_context(user_id="u1")
+        try:
+            await aresolve_callable_tools(agent, rc)
+            assert rc.tools == [_dummy_tool]
+            assert tasks[0].done()
+        finally:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_future_custom_cache_key_is_awaited_and_cached(self):
+        factory_calls = 0
+        cache_key_futures = []
+
+        def factory():
+            nonlocal factory_calls
+            factory_calls += 1
+            return [_dummy_tool]
+
+        def cache_key():
+            future = asyncio.get_running_loop().create_future()
+            future.set_result("shared-key")
+            cache_key_futures.append(future)
+            return future
+
+        agent = Agent(name="test", tools=factory, callable_tools_cache_key=cache_key)
+        first_context = _make_run_context(user_id="first")
+        second_context = _make_run_context(user_id="second")
+
+        await aresolve_callable_tools(agent, first_context)
+        await aresolve_callable_tools(agent, second_context)
+
+        assert factory_calls == 1
+        assert first_context.tools == [_dummy_tool]
+        assert second_context.tools == [_dummy_tool]
+        assert len(cache_key_futures) == 2
+        assert all(future.result() == "shared-key" for future in cache_key_futures)
 
 
 # ---------------------------------------------------------------------------
