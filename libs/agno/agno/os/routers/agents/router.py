@@ -1608,8 +1608,11 @@ def get_agent_router(
         native_run = None
         if native_agent is not None:
             native_run = await native_agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)
-        if native_agent is not None and native_run is not None and (native_run.metadata or {}).get("native_hitl"):
-            from agno.agents._hitl import submit_decisions, tail_stored
+        from agno.agents._hitl import awaiting_decision, live_native_run
+
+        # A finished run keeps its HITL history and continues like any other run.
+        if native_agent is not None and live_native_run(native_run):
+            from agno.agents._hitl import read_run, submit_decisions, tail_stored
             from agno.models.response import ToolExecution
             from agno.os.event_streams import get_event_stream
             from agno.os.utils import amark_continue_stream_running
@@ -1625,19 +1628,29 @@ def get_agent_router(
             # Redis-backed stream always does; otherwise the continuation follows the stored run.
             tracked = await event_stream.get_run_status(run_id) is not None
             cursor = (await event_stream.get_event_count(run_id)) - 1 if tracked else -1
-            if tracked:
-                # Reopen before the decision lands, so the events it releases reach this client.
+            # Reopen only a stream that is paused on an unanswered request, before the decision lands, so the
+            # events it releases reach this client. A continuation that will be refused never touches it.
+            reopened = tracked and awaiting_decision(native_run)
+            if reopened:
                 await amark_continue_stream_running(
                     run_id, component=native_agent, session_id=session_id, user_id=user_id
                 )
             try:
                 parsed_tools = [ToolExecution.from_dict(t) for t in tools_data or []]
                 submitted = await submit_decisions(native_agent, run_id, session_id, user_id, parsed_tools)
-            except (ValueError, TypeError, KeyError) as error:
-                if tracked:
+            except Exception as error:
+                if reopened:
+                    # The stream follows whichever continuation won: park it again only if the run is still
+                    # paused, which is also the safe reading when the run cannot be read.
+                    current = None
                     with contextlib.suppress(Exception):
-                        await event_stream.complete_run(run_id, RunStatus.paused)
-                raise HTTPException(status_code=409, detail=str(error))
+                        current = await read_run(native_agent, run_id, session_id, user_id)
+                    if current is None or current.status == RunStatus.paused:
+                        with contextlib.suppress(Exception):
+                            await event_stream.complete_run(run_id, RunStatus.paused)
+                if isinstance(error, (ValueError, TypeError, KeyError)):
+                    raise HTTPException(status_code=409, detail=str(error))
+                raise
             if stream:
                 if not tracked:
 

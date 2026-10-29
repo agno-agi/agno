@@ -40,7 +40,7 @@ from agno.agents.base import (
     ExternalRunWarningEvent,
     run_coroutine_sync,
 )
-from agno.agents._hitl import KEY as NATIVE_HITL
+from agno.agents._hitl import live_native_run
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.exceptions import ModelProviderError, RunNotContinuableError
 from agno.metrics import BaseMetrics, ModelMetrics, RunMetrics
@@ -900,7 +900,7 @@ class ClaudeAgent(BaseExternalAgent):
         agents do, whatever fork is set to. Files the agent changed are not rewound.
         """
         source = run_response or self.get_run_output(run_id or "", session_id, user_id)
-        if source is not None and (source.metadata or {}).get(NATIVE_HITL):
+        if live_native_run(source):
             from agno.agents._hitl import continue_run, sync_events
 
             continuation = continue_run(
@@ -993,7 +993,7 @@ class ClaudeAgent(BaseExternalAgent):
                     return item
 
             return result()
-        if run_response is not None and (run_response.metadata or {}).get(NATIVE_HITL):
+        if live_native_run(run_response):
             from agno.agents._hitl import continue_run
 
             return continue_run(

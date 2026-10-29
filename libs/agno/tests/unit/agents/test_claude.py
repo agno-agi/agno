@@ -1967,3 +1967,122 @@ def test_strict_native_resume_never_reconstructs_history(fake_sdk, tmp_db, monke
         assert agent.run("second", session_id="s1").status == RunStatus.error
     assert resumes == ["sdk-1"]
     assert agent.read_or_create_session("s1").session_data["claude_sdk_session_id"] == "sdk-1"
+
+
+def _with_hitl_history(agent: ClaudeAgent, run_id: str) -> None:
+    """Stamp a finished run with the HITL state an answered native request leaves behind."""
+    from agno.agents._hitl import KEY
+
+    stored = agent.get_run_output(run_id, "s")
+    stored.metadata = {
+        **(stored.metadata or {}),
+        KEY: {
+            "owner": "owner",
+            "pending": [],
+            "requests": {"call-1": {"digest": "digest", "native": {}, "expires_at": 0}},
+            "decisions": {"call-1": {"confirmed": True, "digest": "digest", "owner": "owner"}},
+        },
+    }
+    asyncio.run(agent._apersist_run_in_session(agent.get_session("s"), stored, strict=True))
+
+
+def _fork_turn() -> List[Any]:
+    return [
+        SystemMessage("init", {"session_id": "fork-1"}),
+        _user("v-prompt", "next"),
+        _msg(AssistantMessage([TextBlock("continued")]), "v-final"),
+        ResultMessage("fork-1", "continued"),
+    ]
+
+
+def test_sync_continue_after_answered_hitl_is_a_transcript_continuation(scripted, tmp_db):
+    """HITL history on a finished run is not a live wait: continuing it forks the transcript as usual."""
+    turns, calls, forks = scripted
+    turns.append(_tool_turn("go"))
+    turns.append(_fork_turn())
+    agent = ClaudeAgent(db=tmp_db)
+    source = agent.run("go", session_id="s")
+    _with_hitl_history(agent, source.run_id)
+    continued = agent.continue_run(run_id=source.run_id, session_id="s", input="next")
+    assert continued.content == "continued"
+    assert continued.forked_from_run_id == source.run_id
+
+
+@pytest.mark.asyncio
+async def test_async_continue_after_answered_hitl_is_a_transcript_continuation(scripted, tmp_db):
+    turns, calls, forks = scripted
+    turns.append(_tool_turn("go"))
+    turns.append(_fork_turn())
+    agent = ClaudeAgent(db=tmp_db)
+    source = await agent.arun("go", session_id="s")
+    await asyncio.to_thread(_with_hitl_history, agent, source.run_id)
+    continued = await agent.acontinue_run(run_id=source.run_id, session_id="s", input="next")
+    assert continued.content == "continued"
+    assert continued.forked_from_run_id == source.run_id
+    turns.append(_fork_turn())
+    streamed = [
+        event
+        async for event in agent.acontinue_run(
+            run_id=source.run_id, session_id="s", input="next", fork=True, stream=True
+        )
+    ]
+    assert any(getattr(event, "event", None) == "RunCompleted" for event in streamed), streamed
+    assert len(calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_http_continue_after_answered_hitl_is_a_transcript_continuation(scripted, tmp_db):
+    """AgentOS routes a finished run with HITL history to the ordinary continuation, not to a decision."""
+    import httpx
+
+    from agno.os import AgentOS
+    from agno.run.background import await_background_runs
+
+    turns, calls, forks = scripted
+    turns.append(_tool_turn("go"))
+    turns.append(_fork_turn())
+    agent = ClaudeAgent(id="claude", db=tmp_db)
+    source = await agent.arun("go", session_id="s")
+    await asyncio.to_thread(_with_hitl_history, agent, source.run_id)
+    app = AgentOS(id="continue-test", db=tmp_db, agents=[agent], telemetry=False).get_app()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            f"/agents/claude/runs/{source.run_id}/continue",
+            data={"session_id": "s", "stream": "false", "input": "next"},
+        )
+        assert response.status_code in (200, 202), response.text
+        await await_background_runs(timeout=5)
+    assert len(calls) == 2 and calls[1]["prompt"] == "next"
+    runs = (await agent.aget_session("s")).runs
+    forked = [run for run in runs if run.forked_from_run_id == source.run_id]
+    assert forked and forked[0].content == "continued"
+
+
+@pytest.mark.asyncio
+async def test_a_stale_confirmation_on_a_finished_hitl_run_starts_no_turn(scripted, tmp_db):
+    """After the run finished, resending its confirmation is refused and never forks a new turn."""
+    import json
+
+    import httpx
+
+    from agno.models.response import ToolExecution
+    from agno.os import AgentOS
+    from agno.run.background import await_background_runs
+
+    turns, calls, forks = scripted
+    turns.append(_tool_turn("go"))
+    turns.append(_fork_turn())
+    agent = ClaudeAgent(id="claude", db=tmp_db)
+    source = await agent.arun("go", session_id="s")
+    await asyncio.to_thread(_with_hitl_history, agent, source.run_id)
+    stale = ToolExecution(tool_call_id="call-1", tool_name="Bash", tool_args={"command": "echo alpha"}, confirmed=True)
+    app = AgentOS(id="continue-test", db=tmp_db, agents=[agent], telemetry=False).get_app()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            f"/agents/claude/runs/{source.run_id}/continue",
+            data={"session_id": "s", "stream": "false", "tools": json.dumps([stale.to_dict()])},
+        )
+        await await_background_runs(timeout=5)
+    assert 400 <= response.status_code < 500, response.text
+    assert len(calls) == 1, "no new Claude turn"
+    assert len((await agent.aget_session("s")).runs) == 1

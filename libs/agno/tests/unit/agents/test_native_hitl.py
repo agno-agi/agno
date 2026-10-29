@@ -9,6 +9,7 @@ import asyncio
 import time
 from dataclasses import dataclass
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -401,12 +402,128 @@ async def test_agentos_chat_confirmation_reaches_the_live_harness(tmp_path):
         await await_background_runs(timeout=2)
         result = await agent.aget_run_output(run_id, session_id="session")
         assert result.status == RunStatus.completed and result.content == "allowed"
-        # The decision is delivered once; a repeated continuation finds the run no longer paused.
+        # The decision is delivered once. The run has finished, so a repeat is an ordinary continuation,
+        # which refuses decisions; nothing runs again.
         response = await client.post(
             f"/agents/test/runs/{run_id}/continue",
             data={"session_id": "session", "stream": "false", "tools": json.dumps(tools)},
         )
+        assert response.status_code == 400, response.text
+        assert agent.executions == 1 and agent.calls == 1
+
+
+@dataclass
+class Lingering(Harness):
+    """Keeps running after its confirmation until the test releases it."""
+
+    release: Any = None
+
+    async def _arun_adapter_stream(self, input, **kwargs):
+        self.calls += 1
+        allowed = await current_bridge().request("Bash", {"command": "write-marker"}, {"sdk": "fixture"})
+        await self.release.wait()
+        yield RunContentEvent(content="allowed" if allowed else "denied")
+
+
+async def paused_over_http(client, agent):
+    import re
+
+    response = await client.post(
+        "/agents/test/runs", data={"message": "work", "session_id": "session", "stream": "true"}
+    )
+    assert response.status_code == 200, response.text
+    run_id = re.search(r'"run_id":\s*"([^"]+)"', response.text).group(1)
+    return run_id, await pending(agent, run_id)
+
+
+@pytest.mark.asyncio
+async def test_a_refused_continuation_leaves_the_winning_stream_running(tmp_path):
+    """A repeated continuation is refused without re-parking the stream the first one reopened."""
+    import json
+
+    import httpx
+
+    from agno.os import AgentOS
+    from agno.os.event_streams import get_event_stream
+    from agno.run.background import await_background_runs
+
+    db = SqliteDb(db_file=str(tmp_path / "api.db"))
+    agent = Lingering(id="test", db=db, hitl_timeout=5, release=asyncio.Event())
+    app = AgentOS(id="stream-test", db=db, agents=[agent]).get_app()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        run_id, run = await paused_over_http(client, agent)
+        assert await get_event_stream().get_run_status(run_id) == RunStatus.paused
+        tools = json.dumps([tool.to_dict() for tool in answered(run, True)])
+        data = {"session_id": "session", "stream": "false", "tools": tools}
+        response = await client.post(f"/agents/test/runs/{run_id}/continue", data=data)
+        assert response.status_code == 202, response.text
+        assert await get_event_stream().get_run_status(run_id) == RunStatus.running
+        response = await client.post(f"/agents/test/runs/{run_id}/continue", data=data)
         assert response.status_code == 409, response.text
+        assert await get_event_stream().get_run_status(run_id) == RunStatus.running
+        agent.release.set()
+        await await_background_runs(timeout=2)
+        assert (await agent.aget_run_output(run_id, session_id="session")).status == RunStatus.completed
+
+
+@pytest.mark.asyncio
+async def test_racing_continuations_have_one_winner_and_a_running_stream(tmp_path):
+    import json
+
+    import httpx
+
+    from agno.os import AgentOS
+    from agno.os.event_streams import get_event_stream
+    from agno.run.background import await_background_runs
+
+    db = SqliteDb(db_file=str(tmp_path / "api.db"))
+    agent = Lingering(id="test", db=db, hitl_timeout=5, release=asyncio.Event())
+    app = AgentOS(id="stream-test", db=db, agents=[agent]).get_app()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        run_id, run = await paused_over_http(client, agent)
+        tools = json.dumps([tool.to_dict() for tool in answered(run, True)])
+        data = {"session_id": "session", "stream": "false", "tools": tools}
+        responses = await asyncio.gather(
+            *(client.post(f"/agents/test/runs/{run_id}/continue", data=data) for _ in range(4))
+        )
+        assert sorted(r.status_code for r in responses) == [202, 409, 409, 409], [r.text for r in responses]
+        assert await get_event_stream().get_run_status(run_id) == RunStatus.running
+        agent.release.set()
+        await await_background_runs(timeout=2)
+        assert agent.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failed_decision_write_keeps_the_stream_paused(tmp_path, monkeypatch):
+    """When recording the decision fails, the run is still paused, and so is its stream."""
+    import json
+
+    import httpx
+
+    from agno.agents import _hitl
+    from agno.os import AgentOS
+    from agno.os.event_streams import get_event_stream
+
+    db = SqliteDb(db_file=str(tmp_path / "api.db"))
+    agent = Lingering(id="test", db=db, hitl_timeout=5, release=asyncio.Event())
+    app = AgentOS(id="stream-test", db=db, agents=[agent]).get_app()
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        run_id, run = await paused_over_http(client, agent)
+
+        async def unavailable(*args, **kwargs):
+            raise RuntimeError("database unavailable")
+
+        monkeypatch.setattr(_hitl, "submit_decisions", unavailable)
+        tools = json.dumps([tool.to_dict() for tool in answered(run, True)])
+        response = await client.post(
+            f"/agents/test/runs/{run_id}/continue", data={"session_id": "session", "stream": "false", "tools": tools}
+        )
+        assert response.status_code >= 500, response.text
+        assert (await agent.aget_run_output(run_id, session_id="session")).status == RunStatus.paused
+        assert await get_event_stream().get_run_status(run_id) == RunStatus.paused
+        agent.release.set()
+        await agent.acancel_run(run_id)
 
 
 # ---------------------------------------------------------------------------
@@ -509,7 +626,8 @@ async def test_agentos_chat_answers_reach_the_live_harness(tmp_path):
             f"/agents/test/runs/{run_id}/continue",
             data={"session_id": "session", "stream": "false", "tools": json.dumps(tools)},
         )
-        assert response.status_code == 409, response.text
+        assert response.status_code == 400, response.text
+        assert agent.calls == 1
 
 
 @pytest.mark.asyncio

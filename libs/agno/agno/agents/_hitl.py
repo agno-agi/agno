@@ -73,6 +73,23 @@ def pending_ids(run: Any) -> List[str]:
     return list(hitl_state(run).get("pending") or [])
 
 
+def awaiting_decision(run: Any) -> bool:
+    """Whether the run is paused on a native request nobody has answered yet."""
+    return run is not None and run.status == RunStatus.paused and bool(pending_ids(run))
+
+
+def live_native_run(run: Any) -> bool:
+    """Whether the run's native execution may still be live and waiting on people.
+
+    A finished run keeps its HITL state as history; continuing it is an ordinary continuation.
+    """
+    return (
+        run is not None
+        and bool(hitl_state(run))
+        and run.status not in (RunStatus.completed, RunStatus.cancelled, RunStatus.error)
+    )
+
+
 def active_bridge() -> Optional["HITLBridge"]:
     return _current.get()
 
