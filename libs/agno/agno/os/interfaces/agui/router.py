@@ -126,6 +126,7 @@ async def run_entity(
             thread_id=run_input.thread_id,
             run_id=run_id,
             run_state=session_state,
+            suppress_member_run_content=isinstance(entity, Team) and entity.respond_directly,
         ):
             yield event
 
