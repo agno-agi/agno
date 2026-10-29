@@ -8,12 +8,12 @@ the SDK's thread/turn API, response router and serialized writes.
 import asyncio
 from typing import Any, Dict, Optional
 
-from agno.agents._approval import ApprovalBridge
+from agno.agents._confirmation import ConfirmationBridge
 
 
 def human_client(
     config: Any,
-    bridge: Optional[ApprovalBridge],
+    bridge: Optional[ConfirmationBridge],
     approval_policy: Optional[str] = None,
     reviewer: str = "user",
 ) -> Any:
@@ -24,7 +24,7 @@ def human_client(
     from openai_codex.client import CodexClient
 
     if version("openai-codex") != "0.163.0":
-        raise ValueError("Human approvals require the tested openai-codex==0.163.0 transport")
+        raise ValueError("Native confirmations require the tested openai-codex==0.163.0 transport")
     loop = asyncio.get_running_loop()
 
     class PermissionClient(CodexClient):
@@ -93,7 +93,7 @@ def human_client(
                     "request": params,
                 }
                 if bridge is None:
-                    raise ValueError("Native permission request requires an Agno run with an approval database")
+                    raise ValueError("A native permission request requires an Agno run with a database")
                 allowed = await bridge.request(method.split("/")[1], arguments, native)
                 if method == "item/permissions/requestApproval":
                     result = {"permissions": params.get("permissions", {}) if allowed else {}, "scope": "turn"}

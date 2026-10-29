@@ -49,11 +49,6 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _public_approval(approval: Dict[str, Any]) -> Dict[str, Any]:
-        if not (approval.get("context") or {}).get("native_approval"):
-            return approval
-        return {**approval, "resolution_data": None}
-
     async def _db_call(method_name: str, *args: Any, **kwargs: Any) -> Any:
         fn = getattr(os_db, method_name, None)
         if fn is None:
@@ -123,7 +118,7 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         )
         total_pages = (total_count + limit - 1) // limit if total_count > 0 else 0
         return PaginatedResponse(
-            data=[_public_approval(approval) for approval in approvals],
+            data=approvals,
             meta=PaginationInfo(
                 page=page,
                 limit=limit,
@@ -164,7 +159,7 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         approval_id: str,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
-        return _public_approval(await _load_approval_for_user(approval_id, request))
+        return await _load_approval_for_user(approval_id, request)
 
     @router.post("/approvals/{approval_id}/resolve", response_model=ApprovalResponse)
     async def resolve_approval(
@@ -181,13 +176,6 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         # existence of the approval to non-admin callers.
         if get_scoped_user_id(request) is not None:
             raise HTTPException(status_code=404, detail="Approval not found")
-
-        approval = await _load_approval_for_user(approval_id, request)
-        if (approval.get("context") or {}).get("native_approval"):
-            if body.resolution_data:
-                raise HTTPException(status_code=400, detail="Native permissions support approve-once or reject only")
-            if approval.get("expires_at", 0) <= time.time():
-                raise HTTPException(status_code=409, detail="Native permission request has expired")
 
         now = int(time.time())
         # Audit trail: ``resolved_by`` records the human who clicked resolve,
@@ -221,7 +209,7 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
                 detail=f"Approval is already '{existing.get('status')}' and cannot be resolved",
             )
 
-        return _public_approval(result)
+        return result
 
     @router.delete("/approvals/{approval_id}", status_code=204)
     async def delete_approval(

@@ -300,8 +300,9 @@ class RunCompletedEvent(BaseAgentRunEvent):
 
 @dataclass
 class RunPausedEvent(BaseAgentRunEvent):
-    # Native harness permission request, retained across sandbox transport.
-    approval: Optional[Dict[str, Any]] = None
+    # A harness's native permission request (owner, digest, native context), carried from a
+    # sandbox runtime to the host so the paused run can record it.
+    native_confirmation: Optional[Dict[str, Any]] = None
     content: Optional[Any] = None
     event: str = RunEvent.run_paused.value
     tools: Optional[List[ToolExecution]] = None
@@ -320,7 +321,8 @@ class RunPausedEvent(BaseAgentRunEvent):
 
 @dataclass
 class RunContinuedEvent(BaseAgentRunEvent):
-    approval_id: Optional[str] = None
+    # The native permission request this continuation answered.
+    native_confirmation_id: Optional[str] = None
     event: str = RunEvent.run_continued.value
 
 

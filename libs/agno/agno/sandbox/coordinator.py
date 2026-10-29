@@ -344,6 +344,53 @@ class SandboxCoordinator:
         finally:
             worker.join()
 
+    async def _deliver_native_decisions(
+        self,
+        lease: Any,
+        execution: Any,
+        run_id: str,
+        pending_requests: Dict[str, Dict[str, Any]],
+        delivered: set,
+    ) -> None:
+        """Hand the runtime each decision a continuation recorded on the run, exactly once.
+
+        A continuation, on any replica, writes the decision to the run row while the run is paused; the
+        runtime's native execution is waiting for it. A decision is delivered only for the exact
+        request it answers: the same owner and the same action digest.
+        """
+        from agno.agents._confirmation import KEY, db_call
+
+        row = await db_call(self.store.db, "get_run", run_id)
+        metadata = (row.get("metadata") if isinstance(row, dict) else getattr(row, "metadata", None)) or {}
+        decisions = (metadata.get(KEY) or {}).get("decisions") or {}
+        for tool_call_id, request in pending_requests.items():
+            decision = decisions.get(tool_call_id)
+            if tool_call_id in delivered or not decision:
+                continue
+            if decision.get("digest") != request["digest"] or decision.get("owner") != request["owner"]:
+                continue
+
+            async def deliver(
+                record: Dict[str, Any], tool_call_id: str = tool_call_id, decision: Dict[str, Any] = decision
+            ) -> Dict[str, Any]:
+                if record["execution_id"] != execution.execution_id:
+                    raise SandboxError("Native confirmation execution changed")
+                acknowledgement = await self.client.aresolve(
+                    execution,
+                    {
+                        "tool_call_id": tool_call_id,
+                        "confirmed": decision["confirmed"] is True,
+                        "digest": decision["digest"],
+                        "owner": decision["owner"],
+                    },
+                )
+                if acknowledgement.get("accepted") is not True:
+                    raise SandboxError("Runtime did not acknowledge the native decision")
+                return record
+
+            await self.store._aoperation(lease, deliver)
+            delivered.add(tool_call_id)
+
     async def astream(
         self,
         session_id: str,
@@ -575,7 +622,7 @@ class SandboxCoordinator:
                             lease,
                             status="ERROR",
                             reason="Sandbox execution computer was lost; recover from the previous completed turn",
-                            retryable=not config.get("_native_approvals", False),
+                            retryable=not config.get("_native_confirmations", False),
                         )
                         yield self._terminal(committed)
                         yield RunOutput.from_dict(committed)
@@ -603,8 +650,9 @@ class SandboxCoordinator:
                         yield RunOutput.from_dict(committed)
                         return
                     cursor = 0
-                    pending_approvals: Dict[str, Dict[str, Any]] = {}
-                    delivered_approvals: set[str] = set()
+                    # The runtime's native permission requests waiting for a decision, by tool call id.
+                    pending_requests: Dict[str, Dict[str, Any]] = {}
+                    delivered: set[str] = set()
                     while True:
                         if heartbeat_error:
                             raise heartbeat_error[0]
@@ -615,35 +663,12 @@ class SandboxCoordinator:
                             yield self._terminal(committed)
                             yield RunOutput.from_dict(committed)
                             return
-                        from agno.agents._approval import db_call
-
-                        for approval_id in list(pending_approvals):
-                            if approval_id in delivered_approvals:
-                                continue
-                            decision = await db_call(self.store.db, "get_approval", approval_id)
-                            if (
-                                decision
-                                and decision.get("status") in ("approved", "rejected")
-                                and (
-                                    (decision.get("resolution_data") or {}).get("native_approval")
-                                    == decision["context"].get("native_approval")
-                                )
-                            ):
-
-                                async def deliver(record: Dict[str, Any]) -> Dict[str, Any]:
-                                    if record["execution_id"] != execution.execution_id:
-                                        raise SandboxError("Native approval execution changed")
-                                    acknowledgement = await self.client.aresolve(execution, decision)
-                                    if acknowledgement.get("accepted") is not True:
-                                        raise SandboxError("Runtime did not acknowledge the native decision")
-                                    return record
-
-                                await self.store._aoperation(lease, deliver)
-                                delivered_approvals.add(approval_id)
+                        if any(key not in delivered for key in pending_requests):
+                            await self._deliver_native_decisions(lease, execution, run_id, pending_requests, delivered)
                         page = await self.client.apoll(
                             execution,
                             cursor=cursor,
-                            wait=min(self.poll_wait, 0.2) if pending_approvals else self.poll_wait,
+                            wait=min(self.poll_wait, 1.0) if pending_requests else self.poll_wait,
                         )
                         cursor = page.cursor
                         # One lease check per page, before its events are published; the heartbeat
@@ -651,12 +676,13 @@ class SandboxCoordinator:
                         # again; queue/event transport supplies its own attempt fencing.
                         await self.store.aget(lease)
                         for event in page.events:
-                            if event.get("event") == "RunPaused" and event.get("approval"):
-                                await self.store._anative_approval_event(lease, event)
-                                pending_approvals[event["approval"]["id"]] = event["approval"]
-                            elif event.get("event") == "RunContinued" and event.get("approval_id"):
-                                await self.store._anative_approval_event(lease, event)
-                                pending_approvals.pop(event["approval_id"], None)
+                            if event.get("event") == "RunPaused" and event.get("native_confirmation"):
+                                await self.store._anative_confirmation_event(lease, event)
+                                request = event["native_confirmation"]
+                                pending_requests[request["tool_call_id"]] = request
+                            elif event.get("event") == "RunContinued" and event.get("native_confirmation_id"):
+                                await self.store._anative_confirmation_event(lease, event)
+                                pending_requests.pop(event["native_confirmation_id"], None)
                             yield run_output_event_from_dict(event)
                         if page.result is not None:
                             if page.result["type"] != "execution_finished":
@@ -698,7 +724,7 @@ class SandboxCoordinator:
                         lease,
                         status=result["status"],
                         reason=str(result.get("content", "Execution failed"))[:8192],
-                        retryable=not config.get("_native_approvals", False)
+                        retryable=not config.get("_native_confirmations", False)
                         and (result.get("metadata") or {}).get("retryable") is not False,
                     )
                 else:
@@ -728,7 +754,7 @@ class SandboxCoordinator:
                         lease,
                         status="ERROR" if cause == "timeout" else "CANCELLED",
                         reason="Run timed out" if cause == "timeout" else "Run cancelled",
-                        retryable=cause == "timeout" and not config.get("_native_approvals", False),
+                        retryable=cause == "timeout" and not config.get("_native_confirmations", False),
                     )
             # Shutdown/disconnect alone detaches; the queue's next attempt uses
             # this generation's execution journal instead of rerunning tools.

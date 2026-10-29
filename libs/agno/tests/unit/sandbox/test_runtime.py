@@ -53,49 +53,62 @@ def test_runtime_writer_lock_is_exclusive(tmp_path):
                 pytest.fail("two writers")
 
 
-@pytest.mark.parametrize("status", ["approved", "rejected"])
-def test_native_decision_is_bound_to_live_execution(dispatch, monkeypatch, status):
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_native_decision_is_bound_to_live_execution(dispatch, monkeypatch, confirmed):
     import time
 
+    from agno.agents._confirmation import KEY
     from agno.db.sqlite import SqliteDb
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+    from agno.run.requirement import RunRequirement
+    from agno.session import AgentSession
 
     root, calls, request = dispatch
     runtime._start(root, request)
     directory = runtime._job(root, "e")
     (root / "native").mkdir(exist_ok=True)
     db = SqliteDb(db_file=str(root / "native" / "history.db"))
-    native = {"owner": "owner", "digest": "digest"}
-    db.create_approval(
-        {
-            "id": "approval",
-            "run_id": "r",
-            "session_id": "s",
-            "agent_id": "a",
-            "status": "pending",
-            "approval_type": "required",
-            "source_type": "agent",
-            "pause_type": "confirmation",
-            "context": {"native_approval": native},
-            "expires_at": int(time.time()) + 60,
-        }
+    # The runtime's paused run, as its waiting native execution persisted it.
+    tool = ToolExecution(tool_call_id="tool", tool_name="Bash", tool_args={"command": "x"}, requires_confirmation=True)
+    paused = RunOutput(
+        run_id="r",
+        session_id="s",
+        agent_id="a",
+        status=RunStatus.paused,
+        requirements=[RunRequirement(tool_execution=tool)],
+        metadata={
+            KEY: {
+                "owner": "owner",
+                "pending": ["tool"],
+                "requests": {"tool": {"digest": "digest", "native": {}, "expires_at": int(time.time()) + 60}},
+                "decisions": {},
+            }
+        },
     )
+    db.upsert_session(AgentSession(session_id="s", agent_id="a", runs=[paused]))
+    db.upsert_run(paused, session_id="s", run_index=0)
     runtime._atomic(directory / "status.json", runtime._encode({"phase": "running", "pid": 123, "start": "start"}))
-    decision = {**request, "approval_id": "approval", "status": status, "native": native}
+    decision = {**request, "tool_call_id": "tool", "confirmed": confirmed, "digest": "digest", "owner": "owner"}
     for field in ("run_id", "session_id", "agent_id"):
         with pytest.raises(SandboxError, match="identity"):
             runtime._resolve(root, {**decision, field: "other"})
-    with pytest.raises(SandboxError, match="does not match"):
-        runtime._resolve(root, {**decision, "native": {"owner": "other"}})
+    monkeypatch.setattr(runtime, "_process_start", lambda pid: "start")
+    with pytest.raises(SandboxError, match="does not answer"):
+        runtime._resolve(root, {**decision, "digest": "other"})
     monkeypatch.setattr(runtime, "_process_start", lambda pid: "different-process")
     with pytest.raises(SandboxError, match="no longer available"):
         runtime._resolve(root, decision)
-    assert db.get_approval("approval")["status"] == "pending"
+    assert db.get_run("r").status == RunStatus.paused
     monkeypatch.setattr(runtime, "_process_start", lambda pid: "start")
     assert runtime._resolve(root, decision)["accepted"]
-    assert runtime._resolve(root, decision)["accepted"]
-    with pytest.raises(SandboxError, match="already been resolved"):
-        runtime._resolve(root, {**decision, "status": "rejected" if status == "approved" else "approved"})
-    assert db.get_approval("approval")["status"] == status
+    assert runtime._resolve(root, decision)["accepted"], "A repeated delivery of the same decision is accepted"
+    with pytest.raises(SandboxError, match="decided differently"):
+        runtime._resolve(root, {**decision, "confirmed": not confirmed})
+    stored = db.get_run("r")
+    assert stored.status == RunStatus.running
+    assert stored.metadata[KEY]["decisions"]["tool"]["confirmed"] is confirmed
     assert len(calls) == 1, "Decision delivery must never spawn a replacement process"
     db.db_engine.dispose()
 
@@ -193,12 +206,12 @@ class Provider:
 
 
 @pytest.mark.asyncio
-async def test_old_runtime_is_refused_before_starting_human_harness():
+async def test_old_runtime_is_refused_before_starting_a_confirming_harness():
     provider = Provider()
     client = SandboxRuntimeClient(provider)
     with pytest.raises(SandboxError, match="Rebuild the sandbox image"):
         await client.astart(
-            HANDLE, execution_id="e", run_id="r", sdk="claude", input="work", config={"_native_approvals": True}
+            HANDLE, execution_id="e", run_id="r", sdk="claude", input="work", config={"_native_confirmations": True}
         )
     assert len(provider.requests) == 1
     assert "input" not in provider.requests[0], "Old runtime received a start request"

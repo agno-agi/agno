@@ -179,8 +179,9 @@ class CodexAgent(BaseExternalAgent):
         sandbox_mode: "read-only", "workspace-write" or "full-access". Defaults to the Codex default.
         approval_mode: Native SDK "auto_review" or "deny_all" behavior, when explicitly selected.
         approval_policy: Native Codex policy: "on-request", "untrusted", or "never".
-            With a database, requests for user review automatically reach AgentOS Approvals.
-        approval_timeout: Seconds per permission decision and continuation client wait (default 900).
+            With a database, a request for user review pauses the run for confirmation in the chat.
+        confirmation_timeout: Seconds a permission request waits for confirmation in the chat, and a
+            continuation client waits (default 900).
             Also bounds cumulative human waiting within a queued or sandboxed run.
         reasoning_effort: "minimal", "low", "medium", "high" or "xhigh".
         cwd: Working directory for the agent.
@@ -314,7 +315,7 @@ class CodexAgent(BaseExternalAgent):
         return policy, reviewer
 
     @property
-    def _uses_native_approvals(self) -> bool:
+    def _uses_native_confirmations(self) -> bool:
         if self.db is None:
             return False
         policy, reviewer = self._native_approval_settings()
@@ -341,15 +342,15 @@ class CodexAgent(BaseExternalAgent):
 
     def acontinue_run(self, run_response: Any = None, **kwargs: Any) -> Any:
         """Deliver reviewed native permissions to the existing execution."""
-        from agno.agents._approval import continue_run
+        from agno.agents._confirmation import continue_run
 
-        if not self._uses_native_approvals:
-            raise ValueError("Codex continuation requires a pending native approval")
+        if not self._uses_native_confirmations:
+            raise ValueError("Codex continuation requires a pending native confirmation")
         return continue_run(self, run_response, **kwargs)
 
     def continue_run(self, run_response: Any = None, **kwargs: Any) -> Any:
         """Synchronous native permission continuation."""
-        from agno.agents._approval import sync_events
+        from agno.agents._confirmation import sync_events
 
         continuation = self.acontinue_run(run_response, **kwargs)
         return sync_events(continuation) if kwargs.get("stream") else run_coroutine_sync(continuation)
@@ -508,9 +509,9 @@ class CodexAgent(BaseExternalAgent):
         thread = self.thread_options if self.thread_options is not None else self.thread_kwargs
         native_config = self.config if self.config is not None else thread.get("config") or {}
         policy = self.approval_policy or native_config.get("approval_policy")
-        if self._uses_native_approvals or (policy is not None and policy != "never"):
-            from agno.agents._approval import active_bridge
-            from agno.agents.codex._approval import human_client
+        if self._uses_native_confirmations or (policy is not None and policy != "never"):
+            from agno.agents._confirmation import active_bridge
+            from agno.agents.codex._confirmation import human_client
 
             client = human_client(
                 config, active_bridge(), approval_policy=policy, reviewer=self._native_approval_settings()[1]

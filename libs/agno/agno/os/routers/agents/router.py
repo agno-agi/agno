@@ -878,7 +878,7 @@ def get_agent_router(
         if isinstance(agent, BaseExternalAgent) and agent.sandbox is not None:
             from agno.os.routers.agents.sandbox import sandbox_run_response
 
-            if getattr(agent, "_uses_native_approvals", False):
+            if getattr(agent, "_uses_native_confirmations", False):
                 background = True
             return await sandbox_run_response(
                 agent,
@@ -896,8 +896,8 @@ def get_agent_router(
                 unsupported_media=bool(base64_audios or base64_videos),
             )
 
-        # Human permission waits outlive the browser connection.
-        if getattr(agent, "_uses_native_approvals", False):
+        # A native permission request waits for its confirmation longer than a browser connection lives.
+        if getattr(agent, "_uses_native_confirmations", False):
             background = True
 
         # Background execution
@@ -1599,38 +1599,52 @@ def get_agent_router(
         # core supports. Teams are equally ungated; workflows still refuse
         # non-paused continues because their core requires PAUSED.
 
-        # A live native callback owns this continuation: never requeue its turn.
+        # A native permission request is answered here: the live native execution, still waiting for it,
+        # receives the chat's confirm or reject. Never requeue its turn.
         from agno.agents.base import BaseExternalAgent
 
         native_run = None
-        if isinstance(agent, BaseExternalAgent) and agent._uses_native_approvals:
+        if isinstance(agent, BaseExternalAgent) and agent._uses_native_confirmations:
             native_run = await agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)
-        if native_run is not None and (native_run.metadata or {}).get("native_approval"):
-            from agno.agents._approval import submit_decisions, tail_stored
+        if native_run is not None and (native_run.metadata or {}).get("native_confirmation"):
+            from agno.agents._confirmation import submit_decisions, tail_stored
             from agno.models.response import ToolExecution
             from agno.os.event_streams import get_event_stream
+            from agno.os.utils import amark_continue_stream_running
 
             if fork or regenerate or input is not None or continue_from != "end" or additional_instructions:
-                raise HTTPException(status_code=400, detail="Native approval continuation only delivers a decision")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Continuing a native confirmation only delivers the confirm or reject decision",
+                )
             assert session_id
             event_stream = get_event_stream()
-            cursor = (await event_stream.get_event_count(run_id)) - 1
+            # The live stream is shared only when this replica's event stream knows the run, which a
+            # Redis-backed stream always does; otherwise the continuation follows the stored run.
+            tracked = await event_stream.get_run_status(run_id) is not None
+            cursor = (await event_stream.get_event_count(run_id)) - 1 if tracked else -1
+            if tracked:
+                # Reopen before the decision lands, so the events it releases reach this client.
+                await amark_continue_stream_running(run_id, component=agent, session_id=session_id, user_id=user_id)
             try:
                 parsed_tools = [ToolExecution.from_dict(t) for t in tools_data or []]
                 submitted = await submit_decisions(agent, run_id, session_id, user_id, parsed_tools)
             except (ValueError, TypeError, KeyError) as error:
+                if tracked:
+                    with contextlib.suppress(Exception):
+                        await event_stream.complete_run(run_id, RunStatus.paused)
                 raise HTTPException(status_code=409, detail=str(error))
             if stream:
-                if await event_stream.get_run_status(run_id) is None:
+                if not tracked:
 
                     async def stored_native_events():
                         from agno.run.agent import RunOutput
 
-                        submitted_ids = set(
-                            (submitted.metadata or {}).get("native_approval", {}).get("approval_ids", [])
-                        )
+                        from agno.agents._confirmation import confirmation_state
+
+                        answered = set(confirmation_state(submitted).get("decisions") or {})
                         async for event in tail_stored(
-                            agent, run_id, session_id, user_id, len(submitted.events or []), submitted_ids
+                            agent, run_id, session_id, user_id, len(submitted.events or []), answered
                         ):
                             if not isinstance(event, RunOutput):
                                 yield f"event: {event.event}\ndata: {event.to_json()}\n\n"
@@ -1641,7 +1655,7 @@ def get_agent_router(
                     media_type="text/event-stream",
                 )
             return JSONResponse(
-                status_code=202, content={"run_id": run_id, "session_id": session_id, "status": "PAUSED"}
+                status_code=202, content={"run_id": run_id, "session_id": session_id, "status": "RUNNING"}
             )
 
         # Convert tools dict to RunRequirement and ToolExecution objects if provided

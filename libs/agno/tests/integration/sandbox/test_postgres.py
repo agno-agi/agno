@@ -138,118 +138,97 @@ async def rows(store):
     )
 
 
-async def test_native_approval_pause_is_fenced_and_retired_on_stop(store):
-    from agno.agents._approval import db_call
+async def test_native_confirmation_pause_is_fenced_and_retired_on_stop(store):
+    from agno.agents._confirmation import KEY
 
     await seed(store)
     state = await claim(store)
     await store.aset_computer(state.lease, computer(state))
-    approval_id = str(uuid4())
     tool = {
         "tool_call_id": "tool",
         "tool_name": "Bash",
         "tool_args": {"command": "write-marker"},
         "requires_confirmation": True,
-        "approval_id": approval_id,
     }
     event = {
         "event": "RunPaused",
         "content": "I will request permission for this command.",
         "tools": [{"tool_call_id": "earlier", "tool_name": "Read", "result": "done"}, tool],
-        "approval": {
-            "id": approval_id,
-            "run_id": "run",
-            "session_id": "session",
-            "agent_id": "agent",
-            "user_id": "user",
-            "status": "pending",
-            "run_status": "PAUSED",
-            "approval_type": "required",
-            "source_type": "agent",
-            "pause_type": "confirmation",
-            "tool_name": "Bash",
-            "tool_args": tool["tool_args"],
-            "requirements": [{"tool_execution": tool}],
-            "context": {"native_approval": {"owner": "owner", "digest": "digest"}},
+        "native_confirmation": {
+            "tool_call_id": "tool",
+            "owner": "owner",
+            "digest": "digest",
+            "native": {},
             "expires_at": int(time.time()) + 60,
+            "requirement": {"tool_execution": tool},
         },
     }
-    await store._anative_approval_event(state.lease, event)
-    await store._anative_approval_event(state.lease, event)
+    await store._anative_confirmation_event(state.lease, event)
+    await store._anative_confirmation_event(state.lease, event)
     run, _, _ = await rows(store)
     assert run["status"] == "PAUSED"
     assert run["run_data"]["content"] == event["content"]
     assert run["run_data"]["tools"] == event["tools"]
     assert len(run["run_data"]["requirements"]) == 1
-    approval = await db_call(store.db, "get_approval", approval_id)
-    assert approval["context"]["sandbox"]["execution_id"] == state.record["execution_id"]
+    native = run["run_data"]["metadata"][KEY]
+    assert native["pending"] == ["tool"]
+    assert native["requests"]["tool"]["execution_id"] == state.record["execution_id"]
     await store.arelinquish(state.lease)
     successor = await claim(store, owner="successor")
     assert successor.record["execution_id"] == state.record["execution_id"]
     with pytest.raises(SandboxLeaseLost):
-        await store._anative_approval_event(state.lease, event)
+        await store._anative_confirmation_event(state.lease, event)
     await store.abegin_stop(successor.lease, status="ERROR", reason="runtime lost")
     await store.aconfirm_stopped(successor.lease, "ref")
     stopped = await store.afinish_stop(successor.lease)
     assert stopped["requirements"] == []
-    assert stopped["metadata"]["native_approval"]["approval_ids"] == []
-    assert (await db_call(store.db, "get_approval", approval_id))["status"] == "cancelled"
+    assert stopped["metadata"][KEY]["pending"] == []
 
 
 @pytest.mark.parametrize("stream", [False, True, "http"])
-async def test_native_continuation_observes_second_pause_without_retained_events(store, stream, monkeypatch):
-    from agno.agents._approval import action_digest, db_call
+async def test_native_continuation_hands_over_on_the_run_and_sees_the_next_pause(store, stream, monkeypatch):
+    """A continuation records its decision on the sandbox's run with a conditional PAUSED -> RUNNING write;
+    the coordinator delivers it, and the continuation then sees the runtime's next request."""
+    import json
+
+    from agno.agents._confirmation import KEY, action_digest, db_call
+    from agno.models.response import ToolExecution
     from agno.run.agent import RunOutput, RunPausedEvent
     from agno.run.base import RunStatus
-    from tests.unit.agents.test_human_approval import Harness
+    from tests.unit.agents.test_native_confirmation import Harness
 
     await seed(store)
     state = await claim(store)
     await store.aset_computer(state.lease, computer(state))
-    agent = Harness(id="agent", db=store.db, approval_timeout=5)
+    agent = Harness(id="agent", db=store.db, confirmation_timeout=5)
 
     async def pause():
-        approval_id = str(uuid4())
+        tool_call_id = str(uuid4())
+        arguments = {"command": "echo test"}
         tool = {
-            "tool_call_id": approval_id,
+            "tool_call_id": tool_call_id,
             "tool_name": "Bash",
-            "tool_args": {"command": "echo test"},
+            "tool_args": arguments,
             "requires_confirmation": True,
-            "approval_id": approval_id,
         }
-        context = {
-            "version": 1,
-            "owner": "owner",
-            "native": {},
-            "digest": action_digest({"tool_name": "Bash", "tool_args": tool["tool_args"], "native": {}}),
-        }
-        await store._anative_approval_event(
+        await store._anative_confirmation_event(
             state.lease,
             {
                 "event": "RunPaused",
-                "approval": {
-                    "id": approval_id,
-                    "run_id": "run",
-                    "session_id": "session",
-                    "agent_id": "agent",
-                    "user_id": "user",
-                    "status": "pending",
-                    "run_status": "PAUSED",
-                    "approval_type": "required",
-                    "source_type": "agent",
-                    "pause_type": "confirmation",
-                    "tool_name": "Bash",
-                    "tool_args": tool["tool_args"],
-                    "requirements": [{"tool_execution": tool}],
-                    "context": {"native_approval": context},
+                "native_confirmation": {
+                    "tool_call_id": tool_call_id,
+                    "owner": "owner",
+                    "digest": action_digest({"tool_name": "Bash", "tool_args": arguments, "native": {}}),
+                    "native": {},
                     "expires_at": int(time.time()) + 60,
+                    "requirement": {"tool_execution": tool},
                 },
             },
         )
-        return approval_id
+        return tool_call_id, tool
 
-    first = await pause()
-    await db_call(store.db, "update_approval", first, status="approved")
+    first, first_tool = await pause()
+    confirmed = ToolExecution.from_dict({**first_tool, "confirmed": True})
 
     async def continue_run():
         if stream == "http":
@@ -262,31 +241,42 @@ async def test_native_continuation_observes_second_pause_without_retained_events
 
             # Simulate a replacement API worker with no retained live stream.
             monkeypatch.setattr(get_event_stream(), "get_run_status", AsyncMock(return_value=None))
-            app = AgentOS(id="review-approval-test", agents=[agent], db=store.db).get_app()
+            app = AgentOS(id="confirmation-test", agents=[agent], db=store.db).get_app()
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
                 return await client.post(
                     "/agents/agent/runs/run/continue",
-                    data={"session_id": "session", "user_id": "user", "stream": "true"},
+                    data={
+                        "session_id": "session",
+                        "user_id": "user",
+                        "stream": "true",
+                        "tools": json.dumps([confirmed.to_dict()]),
+                    },
                 )
+        options = dict(run_id="run", session_id="session", user_id="user", updated_tools=[confirmed])
         if stream:
-            return [
-                item
-                async for item in agent.acontinue_run(run_id="run", session_id="session", user_id="user", stream=True)
-            ]
-        return [await agent.acontinue_run(run_id="run", session_id="session", user_id="user")]
+            return [item async for item in agent.acontinue_run(stream=True, **options)]
+        return [await agent.acontinue_run(**options)]
 
     task = asyncio.create_task(continue_run())
     try:
-        for _ in range(100):
-            record = await db_call(store.db, "get_approval", first)
-            if record.get("resolution_data"):
+        for _ in range(200):
+            row = await db_call(store.db, "get_run", "run")
+            decisions = ((row.metadata or {}).get(KEY) or {}).get("decisions") or {}
+            if first in decisions:
                 break
             await asyncio.sleep(0.01)
         else:
-            pytest.fail("Continuation did not deliver the first decision")
-        await store._anative_approval_event(state.lease, {"event": "RunContinued", "approval_id": first})
-        second = await pause()
-        items = await asyncio.wait_for(task, 3)
+            pytest.fail("The continuation did not record the first decision")
+        assert row.status == RunStatus.running
+        assert decisions[first] == {
+            "confirmed": True,
+            "digest": action_digest({"tool_name": "Bash", "tool_args": {"command": "echo test"}, "native": {}}),
+            "owner": "owner",
+        }
+        # The coordinator delivered it; the runtime continued, then asked again.
+        await store._anative_confirmation_event(state.lease, {"event": "RunContinued", "native_confirmation_id": first})
+        second, _ = await pause()
+        items = await asyncio.wait_for(task, 5)
         if stream == "http":
             assert items.status_code == 200, items.text
             assert "event: RunPaused" in items.text
@@ -295,15 +285,59 @@ async def test_native_continuation_observes_second_pause_without_retained_events
         run = items[-1]
         assert isinstance(run, RunOutput)
         assert run.status == RunStatus.paused
-        assert not run.events
-        assert run.requirements[0].tool_execution.approval_id == second
+        assert run.requirements[0].tool_execution.tool_call_id == second
         if stream:
-            pauses = [item for item in items if isinstance(item, RunPausedEvent)]
-            assert len(pauses) == 1
-            assert pauses[0].approval["id"] == second
+            assert len([item for item in items if isinstance(item, RunPausedEvent)]) == 1
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_a_stale_continuation_cannot_overwrite_a_run_that_moved_on(store):
+    """The decision write is conditional on the pending request: once the run continued and paused again
+    for a new request, a stale continuation for the earlier one changes nothing."""
+    from agno.agents._confirmation import KEY
+
+    await seed(store)
+    state = await claim(store)
+    await store.aset_computer(state.lease, computer(state))
+
+    async def pause(tool_call_id):
+        tool = {"tool_call_id": tool_call_id, "tool_name": "Bash", "tool_args": {}, "requires_confirmation": True}
+        confirmation = {
+            "tool_call_id": tool_call_id,
+            "owner": "owner",
+            "digest": "digest",
+            "native": {},
+            "expires_at": int(time.time()) + 60,
+            "requirement": {"tool_execution": tool},
+        }
+        await store._anative_confirmation_event(
+            state.lease, {"event": "RunPaused", "native_confirmation": confirmation}
+        )
+
+    async def hand_over(pending, marker):
+        fields = {"status": "RUNNING", "metadata": {KEY: {"pending": [], "marker": marker}}}
+        updated = store.db.update_run_if_matches(
+            "run", "session", {"status": "PAUSED", f"metadata.{KEY}.pending": pending}, fields, user_id="user"
+        )
+        return await updated if asyncio.iscoroutine(updated) else updated
+
+    await pause("first")
+    assert await hand_over(["first"], "first")
+    assert not await hand_over(["first"], "repeated")
+    await store._anative_confirmation_event(state.lease, {"event": "RunContinued", "native_confirmation_id": "first"})
+    await pause("second")
+    run, _, _ = await rows(store)
+    assert run["status"] == "PAUSED"
+    assert not await hand_over(["first"], "stale")
+    run, _, _ = await rows(store)
+    assert run["status"] == "PAUSED"
+    assert run["run_data"]["metadata"][KEY]["pending"] == ["second"]
+    assert await hand_over(["second"], "second")
+    run, _, _ = await rows(store)
+    assert run["status"] == "RUNNING"
+    assert run["run_data"]["metadata"][KEY]["marker"] == "second"
 
 
 async def test_independent_instances_have_one_owner(store):

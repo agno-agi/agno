@@ -212,8 +212,8 @@ def _agent(request: Dict[str, Any], native: Path) -> Any:
     # database. It has no network credentials and is checkpointed after SDK drain.
     db = SqliteDb(db_file=str(native / "history.db"))
     config = dict(request.get("config", {}))
-    config.pop("_native_approvals", None)
-    nested_approvals = config.pop("_nested_native_approvals", False)
+    config.pop("_native_confirmations", None)
+    nested_confirmations = config.pop("_nested_native_confirmations", False)
     repository = config.pop("repository", None)
     config.update(
         id=request["agent_id"],
@@ -233,7 +233,7 @@ def _agent(request: Dict[str, Any], native: Path) -> Any:
         from agno.agents.codex import CodexAgent
 
         agent = CodexAgent(**config)
-    agent._nested_native_approvals = nested_approvals
+    agent._nested_native_confirmations = nested_confirmations
     return agent
 
 
@@ -341,10 +341,10 @@ async def _execute_harness(directory: Path, request: Dict[str, Any], waits: Opti
                 run = event
             elif event.event not in _TERMINAL_EVENTS:
                 if waits is not None:
-                    if event.event == "RunPaused" and getattr(event, "approval", None):
-                        waits.add(event.approval["id"])
+                    if event.event == "RunPaused" and getattr(event, "native_confirmation", None):
+                        waits.add(event.native_confirmation["tool_call_id"])
                     elif event.event == "RunContinued":
-                        waits.discard(getattr(event, "approval_id", None))
+                        waits.discard(getattr(event, "native_confirmation_id", None))
                 _append(directory, event.to_dict())
         if run is None:
             raise SandboxError("SDK runtime did not produce an execution result")
@@ -374,9 +374,9 @@ def _worker(directory: Path) -> None:
             )
 
             async def bounded_execute() -> Dict[str, Any]:
-                if not request.get("config", {}).get("_native_approvals", False):
+                if not request.get("config", {}).get("_native_confirmations", False):
                     return await asyncio.wait_for(_execute(directory, request), request.get("execution_timeout", 900))
-                from agno.agents._approval import wait_for_execution
+                from agno.agents._confirmation import wait_for_execution
 
                 waits: set = set()
                 task = asyncio.create_task(_execute(directory, request, waits))
@@ -384,11 +384,11 @@ def _worker(directory: Path) -> None:
                     finished = await wait_for_execution(
                         task,
                         request.get("execution_timeout", 900),
-                        request["config"].get("approval_timeout", 900),
+                        request["config"].get("confirmation_timeout", 900),
                         lambda: bool(waits),
                     )
                     if not finished:
-                        raise TimeoutError("Runtime active or approval-wait budget exceeded")
+                        raise TimeoutError("Runtime active or confirmation-wait budget exceeded")
                     return task.result()
                 finally:
                     task.cancel()
@@ -413,53 +413,61 @@ def _worker(directory: Path) -> None:
 
 
 def _capabilities(request: Dict[str, Any]) -> Dict[str, Any]:
-    return {"version": _VERSION, "execution_id": request.get("execution_id"), "capabilities": ["human_approvals_v1"]}
+    return {
+        "version": _VERSION,
+        "execution_id": request.get("execution_id"),
+        "capabilities": ["native_confirmations_v1"],
+    }
 
 
 def _resolve(root: Path, request: Dict[str, Any]) -> Dict[str, Any]:
-    from agno.db.sqlite import SqliteDb
+    """Deliver one confirm or reject to the native request waiting in this runtime's execution.
+
+    The decision is recorded on the runtime's paused run, which the waiting execution reads.
+    """
+    from agno.agents._confirmation import record_decision
+    from agno.agents.base import run_coroutine_sync
 
     directory = _job(root, request["execution_id"])
     original = json.loads((directory / "request.json").read_bytes())
     if any(request.get(key) != original.get(key) for key in ("run_id", "session_id", "agent_id", "execution_id")):
-        raise SandboxError("Native approval execution identity mismatch")
-    if request.get("status") not in ("approved", "rejected"):
-        raise ValueError("Native approval decision must approve or reject")
-    approval_id = request.get("approval_id")
-    if not isinstance(approval_id, str) or len(approval_id) > 256:
-        raise ValueError("Invalid native approval identity")
-    db = SqliteDb(db_file=str(root / "native" / "history.db"))
-    try:
-        with _lock(directory / "approval.lock"):
-            row = db.get_approval(approval_id)
-            if not row or any(row.get(key) != original.get(key) for key in ("run_id", "session_id", "agent_id")):
-                raise SandboxError("Unknown native approval")
-            context = (row.get("context") or {}).get("native_approval")
-            if not context or context != request.get("native"):
-                raise SandboxError("Native approval action does not match")
-            decision = {"native_approval": context}
-            if row.get("status") == request["status"] and row.get("resolution_data") == decision:
-                return {"version": _VERSION, "execution_id": request["execution_id"], "accepted": True}
-            state = json.loads((directory / "status.json").read_bytes())
-            if (
-                (directory / "result.json").exists()
-                or state.get("phase") != "running"
-                or _process_start(state["pid"]) != state.get("start")
-                or row.get("expires_at", 0) <= time.time()
-            ):
-                raise SandboxError("Native approval execution is no longer available")
-            if row.get("status") != "pending":
-                raise SandboxError("Native approval has already been resolved")
-            if (
-                db.update_approval(
-                    approval_id, expected_status="pending", status=request["status"], resolution_data=decision
+        raise SandboxError("Native confirmation execution identity mismatch")
+    tool_call_id = request.get("tool_call_id")
+    if not isinstance(tool_call_id, str) or not tool_call_id or len(tool_call_id) > 256:
+        raise ValueError("Invalid native confirmation identity")
+    if not isinstance(request.get("confirmed"), bool):
+        raise ValueError("A native confirmation decision must confirm or reject")
+    if not isinstance(request.get("digest"), str) or not isinstance(request.get("owner"), str):
+        raise ValueError("A native confirmation decision must name the request it answers")
+    with _lock(directory / "confirmation.lock"):
+        state = json.loads((directory / "status.json").read_bytes())
+        if (
+            (directory / "result.json").exists()
+            or state.get("phase") != "running"
+            or _process_start(state["pid"]) != state.get("start")
+        ):
+            raise SandboxError("Native confirmation execution is no longer available")
+        agent = _agent(original, root / "native")
+        try:
+            accepted = run_coroutine_sync(
+                record_decision(
+                    agent,
+                    original["run_id"],
+                    original["session_id"],
+                    original.get("user_id"),
+                    tool_call_id=tool_call_id,
+                    confirmed=request["confirmed"],
+                    digest=request["digest"],
+                    owner=request["owner"],
                 )
-                is None
-            ):
-                raise SandboxError("Native approval changed before delivery")
-            return {"version": _VERSION, "execution_id": request["execution_id"], "accepted": True}
-    finally:
-        db.db_engine.dispose()
+            )
+        except ValueError as error:
+            raise SandboxError(str(error)) from error
+        finally:
+            agent.db.db_engine.dispose()
+        if not accepted:
+            raise SandboxError("Native confirmation was already decided differently")
+        return {"version": _VERSION, "execution_id": request["execution_id"], "accepted": True}
 
 
 def _dispatch(root: Path, operation: str, request: Dict[str, Any]) -> Dict[str, Any]:

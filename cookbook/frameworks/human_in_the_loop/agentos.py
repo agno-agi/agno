@@ -1,14 +1,22 @@
-"""Test Claude and Codex approvals in AgentOS with Docker and local Postgres.
+"""
+Harness Permission Requests in the AgentOS Chat
+===============================================
+Claude Code and Codex ask before running a tool their native permission policy does not
+allow. Each request pauses the run in the chat with a confirmation card, like an Agno
+agent's confirmation tool. Confirm or reject it right there; the same Claude or Codex
+process, still waiting, continues with that answer. Nothing is replayed.
+
+Both agents run in a Docker sandbox, through a durable queue on local Postgres.
 
 Build the image and start Postgres (once):
-    .venv/bin/python cookbook/frameworks/sandbox/build_image.py --tag agno-sandbox:human-approvals
+    .venv/bin/python cookbook/frameworks/sandbox/build_image.py --tag agno-sandbox:human-in-the-loop
     ./cookbook/scripts/run_pgvector.sh
 
 With your model credentials available, start AgentOS:
-    .venv/bin/python cookbook/frameworks/human_approvals/agentos.py
+    .venv/bin/python cookbook/frameworks/human_in_the_loop/agentos.py
 
 Connect http://localhost:7777 in the AgentOS UI. Ask either agent to create
-approval-test.txt, then approve or reject the request and choose Continue Run.
+confirm-test.txt, then confirm or reject the request in the chat.
 """
 
 from pathlib import Path
@@ -24,42 +32,45 @@ from agno.sandbox.docker import DockerSandbox
 # ---------------------------------------------------------------------------
 # Configure local Postgres and the Docker sandbox
 # ---------------------------------------------------------------------------
-db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+db = PostgresDb(
+    id="human-in-the-loop-db", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
+)
 sandbox = DockerSandbox(
-    image="agno-sandbox:human-approvals",
-    namespace="human-approvals",
+    image="agno-sandbox:human-in-the-loop",
+    namespace="human-in-the-loop",
     network="isolated",
-    checkpoints=FileCheckpointStore(Path("tmp/native-approval-checkpoints")),
+    checkpoints=FileCheckpointStore(Path("tmp/native-confirmation-checkpoints")),
 )
 
 # ---------------------------------------------------------------------------
 # Create the agents
 # ---------------------------------------------------------------------------
+# A native policy that can ask, plus a database, pauses the run for confirmation in the chat.
 claude = ClaudeAgent(
-    id="claude-approvals",
-    name="Claude Approvals",
+    id="claude-confirm",
+    name="Claude",
     model="claude-sonnet-4-6",
     db=db,
     sandbox=sandbox,
     permission_mode="default",
-    approval_timeout=900,
+    confirmation_timeout=900,
 )
 codex = CodexAgent(
-    id="codex-approvals",
-    name="Codex Approvals",
+    id="codex-confirm",
+    name="Codex",
     model="gpt-5.6-luna",
     db=db,
     sandbox=sandbox,
     sandbox_mode="read-only",
     approval_policy="on-request",
-    approval_timeout=900,
+    confirmation_timeout=900,
 )
 
 # ---------------------------------------------------------------------------
 # Create AgentOS with a Postgres-backed queue
 # ---------------------------------------------------------------------------
 agent_os = AgentOS(
-    id="native-approvals",
+    id="harness-human-in-the-loop",
     agents=[claude, codex],
     db=db,
     queue=QueueConfig(durable=True, db=db),
@@ -68,7 +79,7 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 # ---------------------------------------------------------------------------
-# Run the server and connect the AgentOS UI
+# Run AgentOS
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     agent_os.serve(app=app, host="127.0.0.1", port=7777, reload=False)

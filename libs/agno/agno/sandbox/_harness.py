@@ -242,8 +242,8 @@ def _config(agent: "BaseExternalAgent", output_schema: Any) -> Dict[str, Any]:
         )
     if output_schema is not None:
         config["output_schema"] = output_schema
-    if agent._uses_native_approvals:
-        config["_native_approvals"] = True
+    if agent._uses_native_confirmations:
+        config["_native_confirmations"] = True
     return config
 
 
@@ -335,7 +335,7 @@ def _execution(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -
     options = submission(agent, input, kwargs)
     config = _config(agent, options.get("output_schema"))
     if session_metadata and (session_metadata.get("team_id") or session_metadata.get("workflow_id")):
-        config["_nested_native_approvals"] = True
+        config["_nested_native_confirmations"] = True
     run_id = kwargs.get("run_id") or str(uuid4())
     owner = get_worker_ownership(run_id)
     return dict(

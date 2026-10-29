@@ -189,9 +189,9 @@ def fake_sdk(monkeypatch) -> FakeState:
     module.JsonRpcError = JsonRpcError  # type: ignore[attr-defined]
     module.types = SimpleNamespace(ReasoningEffort=ReasoningEffort)  # type: ignore[attr-defined]
     monkeypatch.setattr(codex_module, "_sdk", lambda: module)
-    from agno.agents.codex import _approval
+    from agno.agents.codex import _confirmation
 
-    monkeypatch.setattr(_approval, "human_client", lambda config, bridge, **kwargs: FakeAsyncCodex(config))
+    monkeypatch.setattr(_confirmation, "human_client", lambda config, bridge, **kwargs: FakeAsyncCodex(config))
     return state
 
 

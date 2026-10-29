@@ -107,8 +107,9 @@ directory; otherwise it is `tmp/harnesses/<provider>/` under your launch directo
 Stop the server before removing its disposable local state. That does not
 remove SDK-native session files.
 
-For standalone agents that need a person to approve native permissions, see
-[human approvals](human_approvals/README.md). It covers AgentOS and sandbox execution.
+When Claude Code or Codex asks for a native permission, the run pauses for a confirm or reject in the
+chat, like an Agno agent's confirmation tool. See [human in the loop](human_in_the_loop/README.md); it
+covers AgentOS and sandbox execution.
 
 ## Harness agents in a team
 

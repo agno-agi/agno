@@ -238,9 +238,9 @@ class BaseExternalAgent:
     description: Optional[str] = None
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     markdown: bool = True
-    # Seconds per native permission decision and continuation client wait.
+    # Seconds a native permission request waits for its confirmation, and a continuation client waits.
     # Queue/sandbox execution also uses this as its cumulative human-wait budget.
-    approval_timeout: float = 900
+    confirmation_timeout: float = 900
     # Fail closed when native context is missing; sandbox restoration requires exact continuity.
     require_native_resume: bool = False
     # Propagate local persistence failures before acknowledging a runtime result.
@@ -288,10 +288,10 @@ class BaseExternalAgent:
         if self.events_to_skip is None:
             self.events_to_skip = [RunEvent.run_content]
         self._check_output_schema(self.output_schema)
-        if self._uses_native_approvals:
-            from agno.agents._approval import validate_human_mode
+        if self._uses_native_confirmations:
+            from agno.agents._confirmation import validate_native_confirmations
 
-            validate_human_mode(self)
+            validate_native_confirmations(self)
             self.store_events = True
         if self.repository is not None:
             from agno.sandbox.repository import Repository
@@ -304,8 +304,8 @@ class BaseExternalAgent:
             _sandbox_harness().validate(self)
 
     @property
-    def _uses_native_approvals(self) -> bool:
-        """Whether native policy can ask and an approval database is available."""
+    def _uses_native_confirmations(self) -> bool:
+        """Whether native policy can ask for permission and a database can hold the paused run."""
         return False
 
     @property
@@ -1152,7 +1152,9 @@ class BaseExternalAgent:
                 row = RunOutput.from_dict(row)
             if not isinstance(row, RunOutput) or row.agent_id != self.get_id() or row.session_id is None:
                 return
-            native = (row.metadata or {}).get("native_approval")
+            from agno.agents._confirmation import KEY as native_key
+
+            native = (row.metadata or {}).get(native_key)
             statuses = [RunStatus.pending.value, RunStatus.running.value]
             if native:
                 statuses.extend([RunStatus.paused.value, RunStatus.cancelled.value])
@@ -1164,16 +1166,13 @@ class BaseExternalAgent:
                 row.content = "Run cancelled"
                 extra_fields["content"] = row.content
             if native:
+                # The waiting native execution reads the cancelled run and stops; no request stays pending.
                 row.requirements = []
-                row.metadata = {**(row.metadata or {}), "native_approval": {**native, "approval_ids": []}}
+                row.metadata = {**(row.metadata or {}), native_key: {**native, "pending": []}}
                 extra_fields.update(requirements=[], metadata=row.metadata)
             await apersist_run_transition(
                 self, "agent", row.session_id, row, user_id=row.user_id, extra_fields=extra_fields
             )
-            if native:
-                from agno.agents._approval import _retire_direct_approvals
-
-                await _retire_direct_approvals(self, run_id, RunStatus.cancelled.value)
         except Exception as error:
             log_warning(
                 f"Could not mark unowned run {run_id} cancelled for {self.framework} agent '{self.id}': {error}"
@@ -1464,7 +1463,11 @@ class BaseExternalAgent:
         self._assert_session_free(await self.aread_or_create_session(session_id, user_id), session_id, run_id)
         run = await self._aprepare_pending_run(run_id, session_id, user_id, input)
         await aregister_run(run_id)
-        transport = _BackgroundStream(run, yield_run_output=yield_run_output) if stream else None
+        transport = (
+            _BackgroundStream(run, yield_run_output=yield_run_output, end_at_pause=self._uses_native_confirmations)
+            if stream
+            else None
+        )
         if transport is not None:
             await transport.register()
 
@@ -2001,7 +2004,7 @@ class BaseExternalAgent:
     # ---------------------------------------------------------------------------
 
     async def _arun_non_stream(self, input: Any, **kwargs: Any) -> RunOutput:
-        if self._uses_native_approvals:
+        if self._uses_native_confirmations:
             events = self._arun_stream(input, **{**kwargs, "yield_run_output": True, "_native_non_stream": True})
             try:
                 async for item in events:
@@ -2009,7 +2012,7 @@ class BaseExternalAgent:
                         return item
             finally:
                 await events.aclose()  # type: ignore[attr-defined]
-            raise RuntimeError("Native approval run produced no result")
+            raise RuntimeError("Native confirmation run produced no result")
         team_id, workflow_id = self._pop_run_parent(kwargs)
         parent_id = self._parent_id(team_id, workflow_id)
         if self.sandbox is not None:
@@ -2212,7 +2215,7 @@ class BaseExternalAgent:
             history = (
                 self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
             )
-            stored_events: Optional[List[Any]] = [] if self.store_events or self._uses_native_approvals else None
+            stored_events: Optional[List[Any]] = [] if self.store_events or self._uses_native_confirmations else None
             skipped = {event.value for event in self.events_to_skip or []}
 
             def keep(event: Any) -> Any:
@@ -2229,14 +2232,13 @@ class BaseExternalAgent:
             accumulated_content = ""
             warnings: List[Dict[str, Any]] = []
             tools: Dict[str, ToolExecution] = {}
-            approval_ids: List[str] = []
             bridge = None
-            if self._uses_native_approvals:
-                from agno.agents._approval import ApprovalBridge, validate_human_mode
+            if self._uses_native_confirmations:
+                from agno.agents._confirmation import ConfirmationBridge, validate_native_confirmations
 
-                validate_human_mode(self)
-                allow_requests = parent_id is None and not getattr(self, "_nested_native_approvals", False)
-                bridge = ApprovalBridge(self, run_id, session_id, user_id, allow_requests=allow_requests)
+                validate_native_confirmations(self)
+                allow_requests = parent_id is None and not getattr(self, "_nested_native_confirmations", False)
+                bridge = ConfirmationBridge(self, run_id, session_id, user_id, allow_requests=allow_requests)
             status = RunStatus.completed
             run_error: Optional[Exception] = None
             attempts_made = 0
@@ -2262,7 +2264,7 @@ class BaseExternalAgent:
                             )
                             if bridge is not None:
                                 if bridge.closed:
-                                    bridge = ApprovalBridge(
+                                    bridge = ConfirmationBridge(
                                         self, run_id, session_id, user_id, allow_requests=allow_requests
                                     )
                                 source = bridge.events(source)
@@ -2293,30 +2295,21 @@ class BaseExternalAgent:
                                         if isinstance(event, RunPausedEvent):
                                             for tool in event.tools or []:
                                                 tools[tool.tool_call_id or ""] = tool
-                                        approval_ids = [
-                                            key
-                                            for key, record in bridge.requests.items()
-                                            if not (record.get("resolution_data") or {}).get("native_approval")
-                                        ]
+                                        from agno.agents._confirmation import KEY as native_key
+
+                                        # The paused run is the shared state: its requirements are what the
+                                        # chat confirms, and its metadata is how the continuation finds them.
                                         snapshot = self._build_run_output(
                                             run_id,
                                             session_id,
                                             user_id,
                                             input,
                                             accumulated_content,
-                                            RunStatus.paused if approval_ids else RunStatus.running,
+                                            RunStatus.paused if bridge.pending else RunStatus.running,
                                             list(tools.values()) or None,
                                         )
-                                        from agno.run.requirement import RunRequirement
-
-                                        snapshot.requirements = [
-                                            RunRequirement.from_dict(requirement)
-                                            for approval_id in approval_ids
-                                            for requirement in bridge.requests[approval_id].get("requirements", [])
-                                        ]
-                                        snapshot.metadata = {
-                                            "native_approval": {"owner": bridge.owner, "approval_ids": approval_ids}
-                                        }
+                                        snapshot.requirements = bridge.pending_requirements()
+                                        snapshot.metadata = {native_key: bridge.state()}
                                         if isinstance(event, RunPausedEvent):
                                             event.content = accumulated_content
                                             event.tools = list(tools.values())
@@ -2370,7 +2363,9 @@ class BaseExternalAgent:
             if attempts_made > 1:
                 run.metadata = {**(run.metadata or {}), "attempts": attempts_made}
             if bridge is not None and bridge.requests:
-                run.metadata = {**(run.metadata or {}), "native_approval": {"owner": bridge.owner, "approval_ids": []}}
+                from agno.agents._confirmation import KEY as native_key
+
+                run.metadata = {**(run.metadata or {}), native_key: {**bridge.state(), "pending": []}}
                 if run_error is not None:
                     run.metadata["retryable"] = False
             self._apply_output_schema(run, output_schema, structured_output)
@@ -2400,11 +2395,6 @@ class BaseExternalAgent:
                 await self._apersist_member_state(session)
             elif session is not None:
                 await self._apersist_run_in_session(session, run, strict=bridge is not None)
-            if bridge is not None:
-                from agno.agents._approval import db_call
-
-                for approval_id in bridge.requests:
-                    await db_call(self.db, "update_approval", approval_id, run_status=run.status.value)
             yield terminal
             if (
                 stored_events is not None

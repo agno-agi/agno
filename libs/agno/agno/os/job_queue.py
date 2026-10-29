@@ -1213,7 +1213,7 @@ class QueueWorker:
                     "settled before the sweep (only the ticket write was lost)"
                 )
             return settled
-        if status_value == "PAUSED" and (getattr(run_output, "metadata", None) or {}).get("native_approval"):
+        if status_value == "PAUSED" and (getattr(run_output, "metadata", None) or {}).get("native_confirmation"):
             # A native process was still executing, not a replayable HITL leg.
             # The normal owner-loss path fences/stops compute; never park this
             # as a ticket whose continuation would launch the prompt again.
@@ -1453,12 +1453,19 @@ class QueueWorker:
                 # Workflow acontinue_run is an async def returning the stream
                 # iterator; agent/team dispatchers return it directly
                 event_iterator = await event_iterator
+            native_confirmations = getattr(component, "_uses_native_confirmations", False)
             async for event in event_iterator:
                 if hasattr(event, "status") and hasattr(event, "run_id") and not hasattr(event, "event"):
                     final_output = event  # the terminal RunOutput
                     continue
                 with contextlib.suppress(Exception):
                     await event_stream.add_event(job_id, event, generation=stream_generation)
+                if native_confirmations and getattr(event, "event", None) == "RunPaused":
+                    # A harness's native permission request: the chat's stream ends at the pause, as for
+                    # an Agno agent, while the native execution keeps waiting for the decision. The
+                    # continuation reopens the stream before it delivers that decision.
+                    with contextlib.suppress(Exception):
+                        await event_stream.complete_run(job_id, RunStatus.paused, generation=stream_generation)
             if final_output is None and is_workflow:
                 with contextlib.suppress(Exception):
                     final_output = await component.aget_run_output(
@@ -1590,7 +1597,7 @@ class QueueWorker:
         fields: Dict[str, Any] = {
             "status": RunStatus.cancelled.value if status == "cancelled" else RunStatus.error.value,
         }
-        if getattr(component, "_uses_native_approvals", False):
+        if getattr(component, "_uses_native_confirmations", False):
             fields["requirements"] = []
         if cancellation_stage is not None:
             # Rides the same fenced patch as the status: the adapters apply
@@ -1606,10 +1613,6 @@ class QueueWorker:
             user_id=job.get("user_id"),
             expected_attempt=job.get("attempt"),
         )
-        if result == RunPersistOutcome.UPDATED and getattr(component, "_uses_native_approvals", False):
-            from agno.agents._approval import _retire_direct_approvals
-
-            await _retire_direct_approvals(component, job["id"], fields["status"])
         if not fallback_allowed(result):
             # UPDATED, STALE_ATTEMPT (a newer attempt owns the row) or
             # TERMINAL_REFUSED (completed/cancelled wins) - all final; the
@@ -1734,18 +1737,18 @@ class QueueWorker:
         raw = getattr(run, "status", None)
         status = raw.value if isinstance(raw, RunStatus) else raw
         if (
-            getattr(component, "_uses_native_approvals", False)
+            getattr(component, "_uses_native_confirmations", False)
             and getattr(component, "sandbox", None) is None
             and run is not None
             and status not in (RunStatus.completed.value, RunStatus.cancelled.value)
             and (
                 status in (RunStatus.running.value, RunStatus.paused.value)
-                or (run.metadata or {}).get("native_approval")
+                or (run.metadata or {}).get("native_confirmation")
             )
         ):
             # A direct native process belonged to the lost worker. Re-entering
             # arun would repeat its tools, not reconnect to that process.
-            error = "Native approval execution owner was lost; the turn cannot be replayed"
+            error = "The native execution waiting for confirmation was lost; the turn cannot be replayed"
             if not await self._persist_run_error(job, error):
                 return True
             await self._asettle_ticket(job["id"], job["attempt"], "failed", error)
@@ -2116,8 +2119,8 @@ class QueueWorker:
         not."""
         exec_task = asyncio.ensure_future(execution)
         try:
-            if getattr(component, "_uses_native_approvals", False) and job is not None:
-                from agno.agents._approval import read_approval_run, wait_for_execution
+            if getattr(component, "_uses_native_confirmations", False) and job is not None:
+                from agno.agents._confirmation import pending_ids, read_run, wait_for_execution
 
                 last_waiting = False
                 next_read = 0.0
@@ -2130,18 +2133,18 @@ class QueueWorker:
                         return last_waiting
                     next_read = monotonic() + 1
                     try:
-                        run = await read_approval_run(component, job["id"], job.get("session_id"), job.get("user_id"))
+                        run = await read_run(component, job["id"], job.get("session_id"), job.get("user_id"))
                         if run is not None:
-                            last_waiting = bool((run.metadata or {}).get("native_approval", {}).get("approval_ids"))
+                            last_waiting = bool(pending_ids(run))
                     except Exception as error:
                         log_warning(
-                            f"Could not refresh approval wait for run {job['id']}; retaining last state: {error}"
+                            f"Could not refresh the confirmation wait for run {job['id']}; retaining last state: {error}"
                         )
                     return last_waiting
 
                 assert self.config.timeout_seconds is not None
                 finished = await wait_for_execution(
-                    exec_task, self.config.timeout_seconds, component.approval_timeout, waiting
+                    exec_task, self.config.timeout_seconds, component.confirmation_timeout, waiting
                 )
                 done = {exec_task} if finished else set()
             else:

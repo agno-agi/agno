@@ -40,6 +40,7 @@ from agno.agents.base import (
     ExternalRunWarningEvent,
     run_coroutine_sync,
 )
+from agno.agents._confirmation import KEY as NATIVE_CONFIRMATION
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.exceptions import ModelProviderError, RunNotContinuableError
 from agno.metrics import BaseMetrics, ModelMetrics, RunMetrics
@@ -224,7 +225,7 @@ class ClaudeAgent(BaseExternalAgent):
     _sdk_session_ids: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     @property
-    def _uses_native_approvals(self) -> bool:
+    def _uses_native_confirmations(self) -> bool:
         opts = self._option_values()
         mode = self.permission_mode if self.permission_mode is not None else opts.get("permission_mode")
         mode = self.options_kwargs.get("permission_mode", mode)
@@ -383,15 +384,15 @@ class ClaudeAgent(BaseExternalAgent):
         store = session_store if session_store is not None else self._transcript_store(agno_session_id)
         if store is not None:
             opts["session_store"] = store
-        if self._uses_native_approvals:
-            from agno.agents._approval import current_bridge
+        if self._uses_native_confirmations:
+            from agno.agents._confirmation import current_bridge
 
             async def can_use_tool(name: str, arguments: Dict[str, Any], context: Any) -> Any:
                 native = {"sdk": "claude", "tool_call_id": getattr(context, "tool_use_id", None)}
                 allowed = await current_bridge().request(name, arguments, native)
                 if allowed:
                     return sdk.PermissionResultAllow(updated_input=arguments)
-                return sdk.PermissionResultDeny(message="Rejected by the AgentOS reviewer")
+                return sdk.PermissionResultDeny(message="The user rejected this action")
 
             opts["can_use_tool"] = can_use_tool
         return sdk.ClaudeAgentOptions(**opts)
@@ -862,8 +863,8 @@ class ClaudeAgent(BaseExternalAgent):
         agents do, whatever fork is set to. Files the agent changed are not rewound.
         """
         source = run_response or self.get_run_output(run_id or "", session_id, user_id)
-        if source is not None and (source.metadata or {}).get("native_approval"):
-            from agno.agents._approval import continue_run, sync_events
+        if source is not None and (source.metadata or {}).get(NATIVE_CONFIRMATION):
+            from agno.agents._confirmation import continue_run, sync_events
 
             continuation = continue_run(
                 self,
@@ -919,8 +920,8 @@ class ClaudeAgent(BaseExternalAgent):
         """Async continue_run: returns a coroutine, or an async iterator when stream=True."""
         if regenerate:
             raise ValueError("Claude continuation does not support regenerate")
-        resolved = kwargs.pop("_approval_resolved", False)
-        if self._uses_native_approvals and run_response is None and not resolved:
+        resolved = kwargs.pop("_confirmation_resolved", False)
+        if self._uses_native_confirmations and run_response is None and not resolved:
 
             async def dispatch():
                 source = await self.aget_run_output(run_id or "", session_id, user_id)
@@ -938,7 +939,7 @@ class ClaudeAgent(BaseExternalAgent):
                     replace_original=replace_original,
                     additional_instructions=additional_instructions,
                     stream=stream,
-                    _approval_resolved=True,
+                    _confirmation_resolved=True,
                     **kwargs,
                 )
                 if stream:
@@ -955,8 +956,8 @@ class ClaudeAgent(BaseExternalAgent):
                     return item
 
             return result()
-        if run_response is not None and (run_response.metadata or {}).get("native_approval"):
-            from agno.agents._approval import continue_run
+        if run_response is not None and (run_response.metadata or {}).get(NATIVE_CONFIRMATION):
+            from agno.agents._confirmation import continue_run
 
             return continue_run(
                 self,

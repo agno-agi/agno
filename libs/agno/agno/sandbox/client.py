@@ -82,10 +82,10 @@ class SandboxRuntimeClient:
         committed for this session, Claude's session id or Codex's thread id, when it has one:
         the runtime refuses to run, without calling the model, unless the sandbox holds exactly
         that conversation. Leave it None for a session's first turn."""
-        if (config or {}).get("_native_approvals", False):
+        if (config or {}).get("_native_confirmations", False):
             capabilities = await self._rpc(computer, "capabilities", {"execution_id": execution_id})
-            if "human_approvals_v1" not in capabilities.get("capabilities", []):
-                raise SandboxError("Rebuild the sandbox image: native human approvals are unsupported")
+            if "native_confirmations_v1" not in capabilities.get("capabilities", []):
+                raise SandboxError("Rebuild the sandbox image: native confirmations are unsupported")
         response = await self._rpc(
             computer,
             "start",
@@ -140,8 +140,8 @@ class SandboxRuntimeClient:
             )
         )
 
-    async def aresolve(self, execution: RuntimeExecution, approval: Dict[str, Any]) -> Dict[str, Any]:
-        """Deliver one reviewed decision to the exact waiting native request."""
+    async def aresolve(self, execution: RuntimeExecution, decision: Dict[str, Any]) -> Dict[str, Any]:
+        """Deliver one confirm or reject to the exact native request waiting in the runtime."""
         return await self._rpc(
             execution.computer,
             "resolve",
@@ -150,15 +150,16 @@ class SandboxRuntimeClient:
                 "run_id": execution.run_id,
                 "agent_id": execution.computer.agent_id,
                 "session_id": execution.computer.session_id,
-                "approval_id": approval["id"],
-                "status": approval["status"],
-                "native": approval["context"]["native_approval"],
+                "tool_call_id": decision["tool_call_id"],
+                "confirmed": decision["confirmed"] is True,
+                "digest": decision["digest"],
+                "owner": decision["owner"],
             },
         )
 
-    def resolve(self, execution: RuntimeExecution, approval: Dict[str, Any]) -> Dict[str, Any]:
+    def resolve(self, execution: RuntimeExecution, decision: Dict[str, Any]) -> Dict[str, Any]:
         """Synchronous decision delivery."""
-        return _sync(self.aresolve(execution, approval))
+        return _sync(self.aresolve(execution, decision))
 
     async def apoll(self, execution: RuntimeExecution, *, cursor: int = 0, wait: float = 0.0) -> RuntimePage:
         """One page from the journal. ``wait`` long-polls inside the container for up to that
