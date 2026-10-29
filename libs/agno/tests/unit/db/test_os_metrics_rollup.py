@@ -18,6 +18,7 @@ from agno.db.utils import (
     OS_METRICS_FIELDS,
     OS_METRICS_KEY_COLUMNS,
     OS_METRICS_TOKEN_FIELDS,
+    add_month_os_metrics,
     add_os_metrics_totals,
     build_os_metrics_totals_row,
     calculate_date_os_metrics,
@@ -710,7 +711,10 @@ def test_month_rows_total_the_days_of_the_month():
         ),
     ]
 
-    month_rows = calculate_month_os_metrics(date(2026, 1, 1), stored_rows)
+    per_owner = {}
+    add_month_os_metrics(per_owner, stored_rows[:1])
+    add_month_os_metrics(per_owner, stored_rows[1:])
+    month_rows = calculate_month_os_metrics(date(2026, 1, 1), per_owner)
 
     assert [
         (row["aggregation_period"], row["user_id"], row["component_type"], row["component_id"]) for row in month_rows
@@ -732,7 +736,7 @@ def test_month_rows_total_the_days_of_the_month():
 
 
 def test_month_without_rows_gets_no_month_rows():
-    assert calculate_month_os_metrics(date(2026, 1, 1), []) == []
+    assert calculate_month_os_metrics(date(2026, 1, 1), {}) == []
 
 
 def test_month_is_calculated_once_its_last_day_is_completed():
@@ -759,6 +763,7 @@ def test_month_end():
     assert os_metrics_month_end(date(2026, 1, 1)) == date(2026, 1, 31)
     assert os_metrics_month_end(date(2024, 2, 1)) == date(2024, 2, 29)
     assert os_metrics_month_end(date(2025, 12, 1)) == date(2025, 12, 31)
+    assert os_metrics_month_end(date(9999, 12, 1)) == date(9999, 12, 31)
 
 
 def test_full_months_are_the_months_wholly_inside_the_range():
@@ -769,6 +774,7 @@ def test_full_months_are_the_months_wholly_inside_the_range():
     ]
     assert os_metrics_full_months(date(2026, 1, 2), date(2026, 3, 30)) == [date(2026, 2, 1)]
     assert os_metrics_full_months(date(2026, 1, 10), date(2026, 2, 20)) == []
+    assert os_metrics_full_months(date(9999, 12, 1), date(9999, 12, 31)) == [date(9999, 12, 1)]
 
 
 # ---------------------------------------------------------------------------

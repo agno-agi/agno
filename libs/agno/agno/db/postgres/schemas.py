@@ -151,7 +151,6 @@ METRICS_TABLE_SCHEMA = {
 OS_METRICS_TABLE_SCHEMA = {
     "aggregation_period": {"type": String, "primary_key": True, "nullable": False},
     "date": {"type": Date, "primary_key": True, "nullable": False},
-    # Owner of this row. Empty string for no owner, since a primary key column cannot be NULL.
     "user_id": {"type": String, "primary_key": True, "nullable": False, "default": ""},
     "component_type": {"type": String, "primary_key": True, "nullable": False},
     "component_id": {"type": String, "primary_key": True, "nullable": False},
@@ -181,7 +180,6 @@ OS_METRICS_TABLE_SCHEMA = {
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
     "__composite_indexes__": [
-        # Covers one user's reads, WHERE user_id = :uid AND aggregation_period = :period AND date BETWEEN ...
         {"name": "ix_os_metrics_user_period", "columns": ["user_id", "aggregation_period", "date"]},
     ],
 }
