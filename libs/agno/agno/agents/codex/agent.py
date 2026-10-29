@@ -180,7 +180,8 @@ class CodexAgent(BaseExternalAgent):
         approval_mode: Native SDK "auto_review" or "deny_all" behavior, when explicitly selected.
         approval_policy: Native Codex policy: "on-request", "untrusted", or "never".
             With a database, requests for user review automatically reach AgentOS Approvals.
-        approval_timeout: Maximum seconds to wait for a human permission decision (default 900).
+        approval_timeout: Seconds per permission decision and continuation client wait (default 900).
+            Also bounds cumulative human waiting within a queued or sandboxed run.
         reasoning_effort: "minimal", "low", "medium", "high" or "xhigh".
         cwd: Working directory for the agent.
         keep_uploads: Keep files attached to a run under cwd/.agno/uploads/<run_id>/ after the run.

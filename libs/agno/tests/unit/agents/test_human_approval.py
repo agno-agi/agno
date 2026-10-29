@@ -449,6 +449,8 @@ async def test_agentos_approval_api_to_live_harness(tmp_path):
         assert response.status_code == 400, response.text
         response = await client.post(f"/approvals/{approval_id}/resolve", json={"status": "approved"})
         assert response.status_code == 200, response.text
+        response = await client.post(f"/agents/test/runs/{run_id}/continue", data={"stream": "false"})
+        assert response.status_code == 400, response.text
         response = await client.post(
             f"/agents/test/runs/{run_id}/continue", data={"session_id": "session", "stream": "true"}
         )

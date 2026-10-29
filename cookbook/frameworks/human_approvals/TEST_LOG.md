@@ -80,6 +80,29 @@ Team/workflow agents still execute operations permitted by native policy. An
 actual nested permission request fails explicitly before the requested action,
 because nested approval delivery is not supported yet.
 
+### Approval lifecycle review regressions (29 October 2026)
+
+**Status:** PASS
+
+**Description:** Reproduced and corrected orphaned direct pauses that could not
+be cancelled, successive sandbox approvals missed by stored-event continuation,
+and transient queue budget reads that cancelled native execution. Added coverage
+for parallel acknowledgements, excluded lifecycle events, nested-loop synchronous
+continuation, Codex transport closure, scoped polling, and decision audit history.
+
+**Result:** Broad deterministic and real PostgreSQL regression: 1,593 passed,
+12 adapter-specific skips. The real database cases exercise both PostgreSQL
+adapters and streaming/nonstreaming continuation, including the HTTP fallback
+after loss of the live event stream. Cancellation covers both SQLite adapters
+and pending or resolved-but-undelivered decisions. Polling reads one run at a
+one-second cadence and moves synchronous PostgreSQL calls off the event loop.
+
+Never-started queued work remains retryable. A related terminal reclaim check
+also preserves completed/cancelled runs and settles their tickets without running
+the native process again. The final queue/approval suite and mandatory format and
+validation scripts passed. These lifecycle changes were tested without new model
+calls; the earlier live/UI evidence applies to the previously recorded heads.
+
 ### Validation limits
 
 Hosted AgentCore was not deployed or exercised. Its operation forwarding and the

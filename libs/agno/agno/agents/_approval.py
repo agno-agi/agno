@@ -8,7 +8,7 @@ import math
 import time
 from contextlib import suppress
 from contextvars import ContextVar
-from typing import Any, AsyncIterator, Dict, Iterator, Optional
+from typing import Any, AsyncIterator, Dict, Iterator, Optional, Set
 from uuid import uuid4
 
 from agno.models.response import ToolExecution
@@ -22,9 +22,30 @@ _MARKER = "native_approval"
 
 
 async def db_call(db: Any, method: str, *args: Any, **kwargs: Any) -> Any:
+    fn = getattr(db, method)
+    if inspect.iscoroutinefunction(fn):
+        return await fn(*args, **kwargs)
+    if getattr(getattr(getattr(db, "db_engine", None), "dialect", None), "name", None) == "postgresql":
+        return await asyncio.to_thread(fn, *args, **kwargs)
     # Keep synchronous SQLite connections on their owning thread (including :memory:).
-    result = getattr(db, method)(*args, **kwargs)
+    result = fn(*args, **kwargs)
     return await result if inspect.isawaitable(result) else result
+
+
+async def read_approval_run(agent: Any, run_id: str, session_id: Optional[str], user_id: Optional[str]) -> Any:
+    """Read only the requested run, preserving agent/session/user isolation."""
+    from agno.run.agent import RunOutput
+
+    if getattr(agent, "db", None) is None:
+        return await agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)
+    run = await db_call(agent.db, "get_run", run_id)
+    if isinstance(run, dict):
+        run = RunOutput.from_dict(run)
+    if run is None or run.agent_id != agent.get_id() or run.session_id != session_id:
+        return None
+    if user_id is not None and run.user_id != user_id:
+        return None
+    return run
 
 
 def active_bridge() -> Optional["ApprovalBridge"]:
@@ -176,7 +197,7 @@ class ApprovalBridge:
                     if accepted is None:
                         raise RuntimeError("Native approval changed before acknowledgement")
                     return allowed
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(min(1.0, max(0.001, expires - time.time())))
         except BaseException as error:
             await self._retire(approval_id, "cancelled")
             if not isinstance(error, asyncio.CancelledError):
@@ -223,7 +244,7 @@ class ApprovalBridge:
 
 
 async def submit_decisions(agent: Any, run_id: str, session_id: str, user_id: Optional[str], tools: Any = None) -> Any:
-    run = await agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)
+    run = await read_approval_run(agent, run_id, session_id, user_id)
     if run is None or run.agent_id != agent.get_id() or run.session_id != session_id:
         raise ValueError("Native approval run not found")
     if run.status not in (RunStatus.paused, RunStatus.running):
@@ -279,32 +300,51 @@ async def submit_decisions(agent: Any, run_id: str, session_id: str, user_id: Op
 async def continue_stream(
     agent: Any, run_id: str, session_id: str, user_id: Optional[str], tools: Any
 ) -> AsyncIterator[Any]:
-    before = await agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)
-    cursor = len(before.events or []) if before else 0
-    await submit_decisions(agent, run_id, session_id, user_id, tools)
-    async for event in tail_stored(agent, run_id, session_id, user_id, cursor):
+    before = await submit_decisions(agent, run_id, session_id, user_id, tools)
+    cursor = len(before.events or [])
+    submitted_ids = set((before.metadata or {}).get(_MARKER, {}).get("approval_ids", []))
+    async for event in tail_stored(agent, run_id, session_id, user_id, cursor, submitted_ids):
         yield event
 
 
 async def tail_stored(
-    agent: Any, run_id: str, session_id: str, user_id: Optional[str], cursor: int
+    agent: Any,
+    run_id: str,
+    session_id: str,
+    user_id: Optional[str],
+    cursor: int,
+    submitted_ids: Optional[Set[str]] = None,
 ) -> AsyncIterator[Any]:
     deadline = time.monotonic() + agent.approval_timeout
     while time.monotonic() < deadline:
-        run = await agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)
+        run = await read_approval_run(agent, run_id, session_id, user_id)
         if run is None:
             raise ValueError("Native approval run is no longer available")
         events = run.events or []
         for event in events[cursor:]:
             yield event
-        progressed = len(events) > cursor
+        ids = set((run.metadata or {}).get(_MARKER, {}).get("approval_ids", []))
+        if submitted_ids is None:
+            submitted_ids = ids
+        new_pause = run.status == RunStatus.paused and bool(ids - submitted_ids)
+        if new_pause and not any(getattr(event, "event", None) == "RunPaused" for event in events[cursor:]):
+            # Sandbox snapshots can advance before their events are retained.
+            for approval_id in sorted(ids - submitted_ids):
+                approval = await db_call(agent.db, "get_approval", approval_id) if getattr(agent, "db", None) else None
+                yield RunPausedEvent(
+                    run_id=run_id,
+                    session_id=session_id,
+                    agent_id=run.agent_id,
+                    content=run.content,
+                    tools=run.tools,
+                    requirements=run.requirements,
+                    approval=approval,
+                )
         cursor = len(events)
-        if run.status in (RunStatus.completed, RunStatus.cancelled, RunStatus.error) or (
-            progressed and run.status == RunStatus.paused
-        ):
+        if run.status in (RunStatus.completed, RunStatus.cancelled, RunStatus.error) or new_pause:
             yield run
             return
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(min(1.0, max(0.001, agent.approval_timeout / 10)))
     raise TimeoutError("Native approval continuation timed out; inspect the persisted run")
 
 
@@ -352,17 +392,33 @@ def sync_events(events: AsyncIterator[Any]) -> Iterator[Any]:
     """Consume a continuation with one loop for the whole iterator's lifetime."""
     # Continuation tails only read persisted state; closing this iterator must not
     # cancel the independently owned native run.
+    from concurrent.futures import ThreadPoolExecutor
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pool = None
+    else:
+        pool = ThreadPoolExecutor(max_workers=1)
     loop = asyncio.new_event_loop()
+
+    def drive(coro: Any) -> Any:
+        return pool.submit(loop.run_until_complete, coro).result() if pool else loop.run_until_complete(coro)
+
     try:
         while True:
             try:
-                yield loop.run_until_complete(events.__anext__())
+                yield drive(events.__anext__())
             except StopAsyncIteration:
                 break
     finally:
-        loop.run_until_complete(events.aclose())  # type: ignore[attr-defined]
-        loop.run_until_complete(loop.shutdown_asyncgens())
-        loop.close()
+        try:
+            drive(events.aclose())  # type: ignore[attr-defined]
+            drive(loop.shutdown_asyncgens())
+        finally:
+            loop.close()
+            if pool:
+                pool.shutdown()
 
 
 async def wait_for_execution(task: Any, active_timeout: float, approval_timeout: float, is_waiting: Any) -> bool:

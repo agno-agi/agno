@@ -238,7 +238,8 @@ class BaseExternalAgent:
     description: Optional[str] = None
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     markdown: bool = True
-    # Maximum wait for a native permission request forwarded to AgentOS.
+    # Seconds per native permission decision and continuation client wait.
+    # Queue/sandbox execution also uses this as its cumulative human-wait budget.
     approval_timeout: float = 900
     # Fail closed when native context is missing; sandbox restoration requires exact continuity.
     require_native_resume: bool = False
@@ -1126,7 +1127,7 @@ class BaseExternalAgent:
         return registered
 
     async def _acancel_unowned_row(self, run_id: str) -> None:
-        """Mark this agent's pending or running row cancelled when this process holds no handle for it.
+        """Cancel an unfinished row, including an orphaned native permission wait, without a live handle.
 
         A row left pending or running by a process that stopped mid-run keeps its session busy,
         and nothing else finishes it, so cancelling it is how the session is freed. The
@@ -1151,16 +1152,28 @@ class BaseExternalAgent:
                 row = RunOutput.from_dict(row)
             if not isinstance(row, RunOutput) or row.agent_id != self.get_id() or row.session_id is None:
                 return
-            if getattr(row.status, "value", row.status) not in (RunStatus.pending.value, RunStatus.running.value):
+            native = (row.metadata or {}).get("native_approval")
+            statuses = [RunStatus.pending.value, RunStatus.running.value]
+            if native:
+                statuses.extend([RunStatus.paused.value, RunStatus.cancelled.value])
+            if getattr(row.status, "value", row.status) not in statuses:
                 return
             row.status = RunStatus.cancelled
-            extra_fields = None
+            extra_fields: Dict[str, Any] = {}
             if not row.content:
                 row.content = "Run cancelled"
-                extra_fields = {"content": row.content}
+                extra_fields["content"] = row.content
+            if native:
+                row.requirements = []
+                row.metadata = {**(row.metadata or {}), "native_approval": {**native, "approval_ids": []}}
+                extra_fields.update(requirements=[], metadata=row.metadata)
             await apersist_run_transition(
                 self, "agent", row.session_id, row, user_id=row.user_id, extra_fields=extra_fields
             )
+            if native:
+                from agno.agents._approval import _retire_direct_approvals
+
+                await _retire_direct_approvals(self, run_id, RunStatus.cancelled.value)
         except Exception as error:
             log_warning(
                 f"Could not mark unowned run {run_id} cancelled for {self.framework} agent '{self.id}': {error}"

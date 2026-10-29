@@ -101,7 +101,11 @@ def human_client(
                     result = {"decision": "accept" if allowed else "decline"}
                 self._write_message({"id": request_id, "result": result})
             except Exception as error:
-                self._write_message({"id": request_id, "error": {"code": -32603, "message": str(error)}})
+                try:
+                    self._write_message({"id": request_id, "error": {"code": -32603, "message": str(error)}})
+                except Exception as transport_error:
+                    # The process may close while its permission callback is finishing.
+                    self._router.fail_all(transport_error)
 
         def _reader_loop(self) -> None:
             try:

@@ -1737,6 +1737,7 @@ class QueueWorker:
             getattr(component, "_uses_native_approvals", False)
             and getattr(component, "sandbox", None) is None
             and run is not None
+            and status not in (RunStatus.completed.value, RunStatus.cancelled.value)
             and (
                 status in (RunStatus.running.value, RunStatus.paused.value)
                 or (run.metadata or {}).get("native_approval")
@@ -2116,13 +2117,27 @@ class QueueWorker:
         exec_task = asyncio.ensure_future(execution)
         try:
             if getattr(component, "_uses_native_approvals", False) and job is not None:
-                from agno.agents._approval import wait_for_execution
+                from agno.agents._approval import read_approval_run, wait_for_execution
+
+                last_waiting = False
+                next_read = 0.0
 
                 async def waiting() -> bool:
-                    run = await component.aget_run_output(
-                        job["id"], session_id=job.get("session_id"), user_id=job.get("user_id")
-                    )
-                    return run is not None and bool((run.metadata or {}).get("native_approval", {}).get("approval_ids"))
+                    nonlocal last_waiting, next_read
+                    from time import monotonic
+
+                    if monotonic() < next_read:
+                        return last_waiting
+                    next_read = monotonic() + 1
+                    try:
+                        run = await read_approval_run(component, job["id"], job.get("session_id"), job.get("user_id"))
+                        if run is not None:
+                            last_waiting = bool((run.metadata or {}).get("native_approval", {}).get("approval_ids"))
+                    except Exception as error:
+                        log_warning(
+                            f"Could not refresh approval wait for run {job['id']}; retaining last state: {error}"
+                        )
+                    return last_waiting
 
                 assert self.config.timeout_seconds is not None
                 finished = await wait_for_execution(

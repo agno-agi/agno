@@ -1626,7 +1626,12 @@ def get_agent_router(
                     async def stored_native_events():
                         from agno.run.agent import RunOutput
 
-                        async for event in tail_stored(agent, run_id, session_id, user_id, len(submitted.events or [])):
+                        submitted_ids = set(
+                            (submitted.metadata or {}).get("native_approval", {}).get("approval_ids", [])
+                        )
+                        async for event in tail_stored(
+                            agent, run_id, session_id, user_id, len(submitted.events or []), submitted_ids
+                        ):
                             if not isinstance(event, RunOutput):
                                 yield f"event: {event.event}\ndata: {event.to_json()}\n\n"
 

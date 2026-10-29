@@ -196,6 +196,116 @@ async def test_native_approval_pause_is_fenced_and_retired_on_stop(store):
     assert (await db_call(store.db, "get_approval", approval_id))["status"] == "cancelled"
 
 
+@pytest.mark.parametrize("stream", [False, True, "http"])
+async def test_native_continuation_observes_second_pause_without_retained_events(store, stream, monkeypatch):
+    from agno.agents._approval import action_digest, db_call
+    from agno.run.agent import RunOutput, RunPausedEvent
+    from agno.run.base import RunStatus
+    from tests.unit.agents.test_human_approval import Harness
+
+    await seed(store)
+    state = await claim(store)
+    await store.aset_computer(state.lease, computer(state))
+    agent = Harness(id="agent", db=store.db, approval_timeout=5)
+
+    async def pause():
+        approval_id = str(uuid4())
+        tool = {
+            "tool_call_id": approval_id,
+            "tool_name": "Bash",
+            "tool_args": {"command": "echo test"},
+            "requires_confirmation": True,
+            "approval_id": approval_id,
+        }
+        context = {
+            "version": 1,
+            "owner": "owner",
+            "native": {},
+            "digest": action_digest({"tool_name": "Bash", "tool_args": tool["tool_args"], "native": {}}),
+        }
+        await store._anative_approval_event(
+            state.lease,
+            {
+                "event": "RunPaused",
+                "approval": {
+                    "id": approval_id,
+                    "run_id": "run",
+                    "session_id": "session",
+                    "agent_id": "agent",
+                    "user_id": "user",
+                    "status": "pending",
+                    "run_status": "PAUSED",
+                    "approval_type": "required",
+                    "source_type": "agent",
+                    "pause_type": "confirmation",
+                    "tool_name": "Bash",
+                    "tool_args": tool["tool_args"],
+                    "requirements": [{"tool_execution": tool}],
+                    "context": {"native_approval": context},
+                    "expires_at": int(time.time()) + 60,
+                },
+            },
+        )
+        return approval_id
+
+    first = await pause()
+    await db_call(store.db, "update_approval", first, status="approved")
+
+    async def continue_run():
+        if stream == "http":
+            from unittest.mock import AsyncMock
+
+            import httpx
+
+            from agno.os import AgentOS
+            from agno.os.event_streams import get_event_stream
+
+            # Simulate a replacement API worker with no retained live stream.
+            monkeypatch.setattr(get_event_stream(), "get_run_status", AsyncMock(return_value=None))
+            app = AgentOS(id="review-approval-test", agents=[agent], db=store.db).get_app()
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                return await client.post(
+                    "/agents/agent/runs/run/continue",
+                    data={"session_id": "session", "user_id": "user", "stream": "true"},
+                )
+        if stream:
+            return [
+                item
+                async for item in agent.acontinue_run(run_id="run", session_id="session", user_id="user", stream=True)
+            ]
+        return [await agent.acontinue_run(run_id="run", session_id="session", user_id="user")]
+
+    task = asyncio.create_task(continue_run())
+    try:
+        for _ in range(100):
+            record = await db_call(store.db, "get_approval", first)
+            if record.get("resolution_data"):
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("Continuation did not deliver the first decision")
+        await store._anative_approval_event(state.lease, {"event": "RunContinued", "approval_id": first})
+        second = await pause()
+        items = await asyncio.wait_for(task, 3)
+        if stream == "http":
+            assert items.status_code == 200, items.text
+            assert "event: RunPaused" in items.text
+            assert second in items.text
+            return
+        run = items[-1]
+        assert isinstance(run, RunOutput)
+        assert run.status == RunStatus.paused
+        assert not run.events
+        assert run.requirements[0].tool_execution.approval_id == second
+        if stream:
+            pauses = [item for item in items if isinstance(item, RunPausedEvent)]
+            assert len(pauses) == 1
+            assert pauses[0].approval["id"] == second
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 async def test_independent_instances_have_one_owner(store):
     await seed(store)
     other_db = new_db(type(store.db), store.db.session_table_name.removeprefix("sb_sessions_"))
