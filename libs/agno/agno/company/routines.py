@@ -153,7 +153,12 @@ def _failed_routines(db: Any, products: Any) -> int:
     for product in products:
         for routine_id in (product.get("metadata") or {}).get("routine_ids", []):
             schedule = schedules.get(routine_id)
-            if schedule is None or schedule.managed_by != "company":
+            # Archived Routines are hidden from counts.
+            if (
+                schedule is None
+                or schedule.managed_by != "company"
+                or (schedule.payload or {}).get("metadata", {}).get("deleted_at") is not None
+            ):
                 continue
             runs = schedules.get_runs(routine_id, limit=1)
             failed += bool(runs and runs[0].status == "failed")
@@ -168,7 +173,12 @@ async def _afailed_routines(db: Any, products: Any) -> int:
     for product in products:
         for routine_id in (product.get("metadata") or {}).get("routine_ids", []):
             schedule = await schedules.aget(routine_id)
-            if schedule is None or schedule.managed_by != "company":
+            # Archived Routines are hidden from counts.
+            if (
+                schedule is None
+                or schedule.managed_by != "company"
+                or (schedule.payload or {}).get("metadata", {}).get("deleted_at") is not None
+            ):
                 continue
             runs = await schedules.aget_runs(routine_id, limit=1)
             failed += bool(runs and runs[0].status == "failed")
@@ -723,6 +733,7 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                 policy = metadata.get("auto_accept")
                 if (
                     metadata.get("template") != "refresh"
+                    or metadata.get("deleted_at") is not None
                     or not isinstance(policy, dict)
                     or not policy.get("complete_projects")
                 ):
@@ -755,7 +766,9 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
         from agno.company.refresh import _completion_proposal, _records
 
         tasks = await _records(manager, "list_tasks", project_id=project["id"], include_deleted=True)
-        if not tasks or any(task["status"] not in {"done", "cancelled"} for task in tasks):
+        if not tasks or any(
+            task["status"] not in {"done", "cancelled"} for task in tasks if task.get("deleted_at") is None
+        ):
             return None
         path, content = _completion_proposal(project, tasks)
         wiki = await _manager_call(manager, "get_wiki", project["product_id"])

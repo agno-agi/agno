@@ -51,9 +51,9 @@ async def arehydrate_product(
             row = await _call(db, "get_product", product_id, include_deleted=True)
     if row is None:
         raise RuntimeError("Product rehydration failed")
-    from agno.company.playbook import _require_owner
+    from agno.company.playbook import _require_product_scope
 
-    _require_owner(row, scoped_user_id)
+    _require_product_scope(row)
     if row.get("deleted_at") is not None:
         return row
     # An existing owner remains authoritative; declarations never reassign ownership.
@@ -126,7 +126,9 @@ async def arehydrate_product(
             or (schedule.payload or {}).get("metadata", {}).get("product_id") != product_id
         ):
             raise ValueError("Routine name is already used by another schedule")
-        row = await _call(db, "add_product_routine", product_id, schedule.id)
+        # An archived Routine stays out of the Product's routine_ids until it is restored.
+        if (schedule.payload or {}).get("metadata", {}).get("deleted_at") is None:
+            row = await _call(db, "add_product_routine", product_id, schedule.id)
     return row
 
 

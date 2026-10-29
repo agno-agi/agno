@@ -588,11 +588,13 @@ class StepOutput:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         # Handle the unified content field
-        content_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
+        content_dict: Optional[Union[str, int, float, bool, Dict[str, Any], List[Any]]] = None
         if self.content is not None:
             if isinstance(self.content, BaseModel):
                 content_dict = self.content.model_dump(exclude_none=True, mode="json")
-            elif isinstance(self.content, (dict, list)):
+            elif isinstance(self.content, (dict, list, str, int, float, bool)):
+                # JSON carries these as themselves. Stringifying made a restored
+                # 0 or False truthy, flipping decisions taken on step content.
                 content_dict = self.content
             else:
                 content_dict = str(self.content)

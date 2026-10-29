@@ -87,6 +87,25 @@ def _require_human_creation(run_context):
         raise PermissionError("Only a calling human may create Company Products and Routines from chat")
 
 
+def _automated_edit_stage(row, run_context):
+    """Return "backlog" for automated callers, raising if the Task has left it; None for humans."""
+    from agno.company.execution import _automatic_task, _ExecutorAuthorization
+
+    if not (isinstance(_authority(run_context), _ExecutorAuthorization) or _automatic_task.get() is not None):
+        return None
+    if row["status"] != "backlog":
+        raise PermissionError("Automated runs may edit Task content only in Backlog")
+    return "backlog"
+
+
+def _require_edited(edited, stage):
+    if edited is None and stage is not None:
+        raise PermissionError(
+            "Task changed before the automated edit; automated runs edit Task content only in Backlog"
+        )
+    return edited
+
+
 def _chat_sources(sources, agent, team, run_context):
     from agno.company.manager import _validate_agent_source
 
@@ -637,7 +656,7 @@ class CompanyTools(Toolkit):
 
     @requires_permission()
     def edit_company_task(self, task_id: str, title: str, brief: str, _agno_run_context: Optional[Any] = None) -> str:
-        """Edit the title and brief of Backlog work; never change lifecycle or ownership."""
+        """Edit a Task's title and brief; automated runs only in Backlog. Never changes lifecycle, executor or ownership."""
         _permission("tasks", "write", _agno_run_context)
         manager = self._sync()
         row = manager.get_task(task_id)
@@ -645,7 +664,9 @@ class CompanyTools(Toolkit):
             raise LookupError("Task not found")
         self._scoped_user(_agno_run_context)
         _require_routine_product(row["product_id"])
-        return _public_json(manager.update_task(task_id, user_id=None, title=title, brief=brief))
+        stage = _automated_edit_stage(row, _agno_run_context)
+        edited = manager.update_task(task_id, user_id=None, expected_status=stage, title=title, brief=brief)
+        return _public_json(_require_edited(edited, stage))
 
     @requires_permission()
     def list_company_wiki(
@@ -931,7 +952,7 @@ class CompanyTools(Toolkit):
     async def aedit_company_task(
         self, task_id: str, title: str, brief: str, _agno_run_context: Optional[Any] = None
     ) -> str:
-        """Edit the title and brief of Backlog work; never change lifecycle or ownership."""
+        """Edit a Task's title and brief; automated runs only in Backlog. Never changes lifecycle, executor or ownership."""
         await _apermission("tasks", "write", _agno_run_context)
         manager = self._async()
         row = await manager.get_task(task_id)
@@ -939,7 +960,9 @@ class CompanyTools(Toolkit):
             raise LookupError("Task not found")
         self._scoped_user(_agno_run_context)
         _require_routine_product(row["product_id"])
-        return _public_json(await manager.update_task(task_id, user_id=None, title=title, brief=brief))
+        stage = _automated_edit_stage(row, _agno_run_context)
+        edited = await manager.update_task(task_id, user_id=None, expected_status=stage, title=title, brief=brief)
+        return _public_json(_require_edited(edited, stage))
 
     @requires_permission()
     async def alist_company_wiki(

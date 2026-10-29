@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb
 from agno.db.schemas.tasks import task_run_id
+from agno.exceptions import InputCheckError
 from agno.registry._reserved import RESERVED_MANAGER_IDS
 from agno.run.authorization import RunAuthorization
 
@@ -30,6 +31,10 @@ class _TaskRunConflict(ValueError):
 
 class _TaskRunUnavailable(ValueError):
     """The original execution store or component is unavailable for recovery."""
+
+
+class _TaskRunRefused(InputCheckError):
+    """A claimed Company run (a Task or a routine) may no longer start; the queue fails it without retrying."""
 
 
 def _executor(registry: Any, executor_type: Optional[str], executor_id: Optional[str], accepting: bool = False) -> Any:
@@ -404,28 +409,30 @@ async def _check_task(worker: Any, job: Dict[str, Any]) -> None:
         or task["executor_id"] != job["component_id"]
         or task["executor_type"] != job["component_type"]
     ):
-        from agno.exceptions import InputCheckError
-
-        raise InputCheckError("Task acceptance was changed or revoked")
+        raise _TaskRunRefused("Task acceptance was changed or revoked")
     from agno.company.routines import _check_automatic_policy
 
     try:
         await _check_automatic_policy(getattr(worker, "_company_schedule_db", None), task)
     except ValueError as exc:
-        from agno.exceptions import InputCheckError
-
-        raise InputCheckError(str(exc)) from exc
+        raise _TaskRunRefused(str(exc)) from exc
     from agno.run.authorization import current_authorization
 
     authority = current_authorization()
     if authority is not None:
-        await authority.arequire(
-            {"agent": "agents", "team": "teams", "workflow": "workflows"}[job["component_type"]],
-            "run",
-            job["component_id"],
-        )
+        try:
+            await authority.arequire(
+                {"agent": "agents", "team": "teams", "workflow": "workflows"}[job["component_type"]],
+                "run",
+                job["component_id"],
+            )
+        except PermissionError as exc:
+            raise _TaskRunRefused(str(exc)) from exc
     component = await worker._aresolve_job_component(job)
-    _validate_executor_tools(component)
+    try:
+        _validate_executor_tools(component)
+    except ValueError as exc:
+        raise _TaskRunRefused(str(exc)) from exc
 
 
 async def _project_run(worker: Any, job: Dict[str, Any], status: str, error: Optional[str] = None) -> None:
@@ -465,6 +472,44 @@ async def _project_run(worker: Any, job: Dict[str, Any], status: str, error: Opt
         expected_transitions=task["transitions"],
         **({"checkout": checkout} if checkout is not None else {}),
     )
+
+
+async def _project_run_before_settle(
+    worker: Any, job: Dict[str, Any], status: str, error: Optional[str] = None
+) -> None:
+    """Save the Task result before its ticket finishes, unless the run row can rebuild it."""
+    try:
+        await _project_run(worker, job, status, error)
+    except Exception as exc:
+        if not await _run_row_settled(worker, job) or not await _reservation_recorded(worker, job):
+            raise
+        from agno.utils.log import log_error
+
+        log_error(
+            f"Failed to save the Task result for run {job['id']}; finishing its queue ticket so Company "
+            f"recovery rebuilds the Task from the run row: {exc}"
+        )
+
+
+async def _run_row_settled(worker: Any, job: Dict[str, Any]) -> bool:
+    try:
+        component = await worker._aresolve_job_component(job)
+        if component is None:
+            return False
+        output = await component.aget_run_output(job["id"], job["session_id"], user_id=job.get("user_id"))
+    except Exception:
+        return False
+    status = getattr(output, "status", None)
+    return str(getattr(status, "value", status)).upper() in {"COMPLETED", "ERROR", "CANCELLED"}
+
+
+async def _reservation_recorded(worker: Any, job: Dict[str, Any]) -> bool:
+    """Company recovery finds a Task only through the run id its reservation recorded."""
+    try:
+        task = await _call(worker._company_db, "get_task", job["payload"]["company_task_id"])
+    except Exception:
+        return False
+    return task is not None and task.get("job_id") == job["id"]
 
 
 async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution: bool = False) -> str:

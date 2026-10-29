@@ -667,7 +667,6 @@ class AgentOSClient:
             agent_id: ID of the agent
             run_id: ID of the run to continue
             tools: List of ToolExecution objects with tool results
-            stream: Whether to stream the response
             session_id: Optional session ID
             user_id: Optional user ID
             headers: HTTP headers to include in the request (optional)
@@ -1714,6 +1713,64 @@ class AgentOSClient:
             return WorkflowSessionDetailSchema.model_validate(data)
         else:
             raise ValueError(f"Invalid session type: {session_type}")
+
+    def search_sessions(
+        self,
+        filter_expr: Optional[Dict[str, Any]] = None,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        page: int = 1,
+        limit: int = 20,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> PaginatedResponse[SessionSchema]:
+        """Search sessions using the filter DSL, preserving database and user scope."""
+        if user_id is not None:
+            user_filter = {"op": "EQ", "key": "user_id", "value": user_id}
+            filter_expr = {"op": "AND", "conditions": [user_filter, filter_expr]} if filter_expr else user_filter
+        body = {
+            "filter": filter_expr,
+            "session_type": session_type.value if session_type else None,
+            "page": page,
+            "limit": limit,
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+        }
+        params = {key: value for key, value in {"db_id": db_id, "table": table}.items() if value is not None}
+        data = self._request("POST", "/sessions/search", data=body, params=params, headers=headers)
+        return PaginatedResponse[SessionSchema].model_validate(data)
+
+    async def asearch_sessions(
+        self,
+        filter_expr: Optional[Dict[str, Any]] = None,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        page: int = 1,
+        limit: int = 20,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> PaginatedResponse[SessionSchema]:
+        """Search sessions using the filter DSL, preserving database and user scope."""
+        if user_id is not None:
+            user_filter = {"op": "EQ", "key": "user_id", "value": user_id}
+            filter_expr = {"op": "AND", "conditions": [user_filter, filter_expr]} if filter_expr else user_filter
+        body = {
+            "filter": filter_expr,
+            "session_type": session_type.value if session_type else None,
+            "page": page,
+            "limit": limit,
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+        }
+        params = {key: value for key, value in {"db_id": db_id, "table": table}.items() if value is not None}
+        data = await self._apost("/sessions/search", data=body, params=params, headers=headers)
+        return PaginatedResponse[SessionSchema].model_validate(data)
 
     async def get_sessions(
         self,
