@@ -1,5 +1,6 @@
 """Framework-owned Routine executors use normal routes and caller authority."""
 
+import asyncio
 import json
 import time
 from contextlib import asynccontextmanager
@@ -945,5 +946,49 @@ async def test_completed_disabled_routine_cannot_be_recovered_as_pending(tmp_pat
             response = await client.post("/company/routines/" + row["id"] + "/resume")
             assert response.status_code == 200, response.text
             assert response.json()["enabled"] is True
+    finally:
+        await _call(db, "close")
+
+
+@pytest.mark.parametrize("async_db", [False, True])
+@pytest.mark.parametrize("on_demand", [False, True])
+async def test_pending_disabled_routine_rejects_overlapping_activation(tmp_path, monkeypatch, async_db, on_demand):
+    db = (AsyncSqliteDb if async_db else SqliteDb)(db_file=str(tmp_path / "overlapping-creation.db"))
+    os = make_os(db)
+    routine = declaration(enabled=False)
+    if on_demand:
+        routine.cron_expr = None
+    linked = asyncio.Event()
+    finish = asyncio.Event()
+    original = db.add_product_routine
+
+    async def pause_after_link(*args, **kwargs):
+        row = await original(*args, **kwargs) if async_db else await asyncio.to_thread(original, *args, **kwargs)
+        if not linked.is_set():
+            linked.set()
+            await asyncio.wait_for(finish.wait(), 10)
+        return row
+
+    monkeypatch.setattr(db, "add_product_routine", pause_after_link)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=os.get_app()), base_url="http://test") as client:
+            product = await client.post("/company/products", json={"name": "Docs"})
+            assert product.status_code == 201, product.text
+            body = {"product_id": product.json()["id"], **routine.model_dump()}
+            first = asyncio.create_task(client.post("/company/routines", json=body))
+            try:
+                await asyncio.wait_for(linked.wait(), 10)
+                duplicate = await client.post("/company/routines", json={**body, "enabled": True})
+                assert duplicate.status_code == 409, duplicate.text
+            finally:
+                finish.set()
+                created = await first
+            assert created.status_code == 201, created.text
+            row = created.json()
+            assert row["enabled"] is False
+            assert (await _call(db, "get_schedule", row["id"]))["enabled"] is False
+            duplicate = await client.post("/company/routines", json={**body, "enabled": True})
+            assert duplicate.status_code == 409, duplicate.text
+            assert (await _call(db, "get_schedule", row["id"]))["enabled"] is False
     finally:
         await _call(db, "close")
