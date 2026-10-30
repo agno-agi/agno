@@ -320,12 +320,39 @@ class TestBackgroundContinueCompatFallthrough:
         from agno.agent import Agent
         from agno.db.sqlite import SqliteDb
         from agno.os import AgentOS
+        from agno.run.agent import RunOutput
+        from agno.run.base import RunStatus
+        from agno.run.team import TeamRunOutput
+        from agno.session.agent import AgentSession
+        from agno.session.team import TeamSession
         from agno.team import Team
         from agno.workflow import Workflow
 
         db = SqliteDb(db_file=str(tmp_path / "t.db"))
         agent = Agent(id="qa-agent", name="QA Agent", db=db)
         team = Team(id="qa-team", name="QA Team", members=[], db=db)
+        db.upsert_session(AgentSession(session_id="s1", agent_id=agent.id))
+        db.upsert_run(
+            RunOutput(
+                run_id="r-inline-agent",
+                agent_id=agent.id,
+                session_id="s1",
+                status=RunStatus.paused,
+                execution_origin="inline",
+            ),
+            session_id="s1",
+        )
+        db.upsert_session(TeamSession(session_id="s2", team_id=team.id))
+        db.upsert_run(
+            TeamRunOutput(
+                run_id="r-inline-team",
+                team_id=team.id,
+                session_id="s2",
+                status=RunStatus.paused,
+                execution_origin="inline",
+            ),
+            session_id="s2",
+        )
         workflow = Workflow(id="qa-wf", name="QA Workflow", db=db, steps=[])
         app = AgentOS(agents=[agent], teams=[team], workflows=[workflow], telemetry=False).get_app()
         return TestClient(app, raise_server_exceptions=False)
@@ -335,7 +362,7 @@ class TestBackgroundContinueCompatFallthrough:
 
         with caplog.at_level(logging.WARNING, logger="agno"):
             resp = continue_harness.post(
-                "/agents/qa-agent/runs/r-nope/continue",
+                "/agents/qa-agent/runs/r-inline-agent/continue",
                 data={"background": "true", "stream": "false", "session_id": "s1"},
             )
         assert resp.status_code != 409, (
@@ -350,8 +377,8 @@ class TestBackgroundContinueCompatFallthrough:
 
         with caplog.at_level(logging.WARNING, logger="agno"):
             resp = continue_harness.post(
-                "/teams/qa-team/runs/r-nope/continue",
-                data={"background": "true", "stream": "false", "session_id": "s1"},
+                "/teams/qa-team/runs/r-inline-team/continue",
+                data={"background": "true", "stream": "false", "session_id": "s2"},
             )
         assert resp.status_code != 409
         assert any("INLINE-BLOCKING" in r.message for r in caplog.records)
@@ -371,18 +398,18 @@ class TestBackgroundContinueCompatFallthrough:
         runs_table = seed_db._get_table(table_type="runs", create_table_if_not_found=True)
         with seed_db.Session() as sess, sess.begin():
             sess.execute(
-                sessions_table.insert().values(session_id="s1", session_type="workflow", created_at=int(_time.time()))
+                sessions_table.insert().values(session_id="s3", session_type="workflow", created_at=int(_time.time()))
             )
             sess.execute(
                 runs_table.insert().values(
                     run_id="r-paused",
-                    session_id="s1",
+                    session_id="s3",
                     run_type="workflow",
                     workflow_id="qa-wf",
                     status="PAUSED",
                     run_index=0,
                     run_data=_json.dumps(
-                        {"run_id": "r-paused", "session_id": "s1", "workflow_id": "qa-wf", "status": "PAUSED"}
+                        {"run_id": "r-paused", "session_id": "s3", "workflow_id": "qa-wf", "status": "PAUSED"}
                     ),
                     created_at=int(_time.time()),
                 )
@@ -390,7 +417,7 @@ class TestBackgroundContinueCompatFallthrough:
 
         resp = continue_harness.post(
             "/workflows/qa-wf/runs/r-paused/continue",
-            data={"background": "true", "stream": "false", "session_id": "s1"},
+            data={"background": "true", "stream": "false", "session_id": "s3"},
         )
         assert resp.status_code == 409, f"got {resp.status_code}: {resp.json()}"
         assert "durably-submitted" in resp.json()["detail"]

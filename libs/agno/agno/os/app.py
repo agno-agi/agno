@@ -1892,6 +1892,16 @@ class AgentOS:
         setup_tracing_for_os(db=db)
 
     def get_app(self) -> FastAPI:
+        if (
+            not self._base_app_prepared
+            and self._task_execution_provider is not None
+            and self._task_execution_provider._closed
+        ):
+            from agno.run.concurrency import _TaskExecutionProvider
+
+            self._task_execution_provider = _TaskExecutionProvider(
+                self._company_db, auto_provision=self.auto_provision_dbs
+            )
         if self.public is not None:
             from agno.os.public import PublicSurface
 
