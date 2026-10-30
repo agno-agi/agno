@@ -1424,7 +1424,7 @@ class TestDispatchDepthCap:
 class TestDiscovery:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("use_async", [False, True])
-    @pytest.mark.parametrize("description", [None, "", "Stored description."])
+    @pytest.mark.parametrize("description", [None, "", "   ", "Stored description."])
     async def test_description_fallback_does_not_change_stored_components(self, registry, db, use_async, description):
         from agno.agent import Agent
 
@@ -1439,11 +1439,32 @@ class TestDiscovery:
         )
         listing = await runner.alist_agents() if use_async else runner.list_agents()
         rows = {row["id"]: row for row in _loads(listing)["agents"]}
-        assert rows["code"]["description"] == rows["radar"]["description"] == (description or "Manifest description.")
+        expected = (description or "").strip() or "Manifest description."
+        assert rows["code"]["description"] == rows["radar"]["description"] == expected
         assert rows["radar"]["status"] == "draft"
         assert agent.description == description
         # A standalone runner still sees the original persisted metadata.
         assert _loads(StudioRunnerTools(db=db).list_agents())["agents"][0] == original
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("use_async", [False, True])
+    @pytest.mark.parametrize("with_db", [False, True])
+    async def test_failing_description_fallback_keeps_the_listing(self, registry, db, use_async, with_db):
+        from agno.agent import Agent
+
+        def fallback(component_id: str) -> str:
+            raise RuntimeError("manifest unavailable")
+
+        if with_db:
+            StudioTools(registry=registry, db=db).create_agent(name="Radar", instructions="i", model_id="gpt-5.4")
+        runner = StudioRunnerTools(
+            db=db if with_db else None, include_agents=[Agent(id="code")], description_fallback=fallback
+        )
+        listing = _loads(await runner.alist_agents() if use_async else runner.list_agents())
+        assert "error" not in listing
+        assert {row["id"]: row["description"] for row in listing["agents"]} == (
+            {"code": None, "radar": None} if with_db else {"code": None}
+        )
 
     def test_list_agents_reports_what_dispatch_admits(self, registry, db):
         # The instructions tell the caller to list first and run by id, so a

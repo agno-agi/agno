@@ -1,5 +1,23 @@
 # Test log
 
+## PR #11394 review, 2026-10-30
+
+### manager_discovery.py
+
+**Status:** PASS
+
+**Description:** Re-ran `cookbook/05_agent_os/29_manager/manager_discovery.py`
+at commit `285aacbb5` using `.venvs/demo/bin/python`.
+
+**Result:** Sync and async listings matched the manifest description, and the
+agent description remained unset. No model calls or hosted deployment tests.
+The manager/runner unit suites returned 655 passed and one warning-capture
+failure in `test_the_ignored_child_version_pin_is_said_out_loud`. The same
+failure reproduced alone on both the PR and base commit `9153aacd83` using
+the same environment. Ruff lint and formatting checks passed for changed Python files.
+
+---
+
 ## Manifest discovery descriptions, 2026-10-30
 
 ### manager_discovery.py

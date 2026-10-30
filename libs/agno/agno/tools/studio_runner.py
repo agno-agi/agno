@@ -289,7 +289,7 @@ class StudioRunnerTools(Toolkit):
     """Discover and run admitted components.
 
     ``description_fallback`` optionally resolves a component id to discovery
-    text when its description is absent or empty. It never changes the
+    text when its description is absent or blank. It never changes the
     component or its stored configuration. OS Manager uses this to read its
     current manifest without copying UI text into component system prompts.
     """
@@ -2443,10 +2443,15 @@ class StudioRunnerTools(Toolkit):
         return {"other_components": counts} if counts else {}
 
     def _listing_description(self, component_id: str, description: Optional[str]) -> Optional[str]:
-        """Keep component descriptions; consult the fallback only when one is absent or empty."""
-        if description or self.description_fallback is None:
+        """Keep component descriptions; consult the fallback only when one is absent or blank."""
+        if (description and description.strip()) or self.description_fallback is None:
             return description
-        return self.description_fallback(component_id)
+        try:
+            return self.description_fallback(component_id)
+        except Exception:
+            # Missing discovery metadata must not fail the whole listing.
+            logger.warning("Description fallback failed for %s", component_id, exc_info=True)
+            return description
 
     def _admitted_code_components(self, component_type: str) -> List[Dict[str, Any]]:
         """The code-defined components this runner will dispatch, as list rows.
