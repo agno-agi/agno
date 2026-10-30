@@ -78,6 +78,22 @@ except ImportError:
     ToolParallelAiSearch = None
 
 
+def _api_error_message(error: Exception) -> str:
+    """Return the message of a google-genai API error.
+
+    The raw body is used when the response carries it as text. google-genai's aiohttp
+    client hands back a response whose ``text`` is a coroutine method, so that path
+    falls back to the message the SDK already parsed out of the error body.
+    """
+    text = getattr(getattr(error, "response", None), "text", None)
+    if isinstance(text, str):
+        return text
+    message = getattr(error, "message", None)
+    if message:
+        return str(message)
+    return str(error)
+
+
 @dataclass
 class Gemini(Model):
     """
@@ -583,14 +599,8 @@ class Gemini(Model):
 
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {str(e)}")
-            error_message = str(e)
-            if hasattr(e, "response"):
-                if hasattr(e.response, "text"):
-                    error_message = e.response.text
-                else:
-                    error_message = str(e.response)
             raise ModelProviderError(
-                message=error_message,
+                message=_api_error_message(e),
                 status_code=e.code if hasattr(e, "code") and e.code is not None else 502,
                 model_name=self.name,
                 model_id=self.id,
@@ -638,14 +648,8 @@ class Gemini(Model):
 
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {str(e)}")
-            error_message = str(e)
-            if hasattr(e, "response"):
-                if hasattr(e.response, "text"):
-                    error_message = e.response.text
-                else:
-                    error_message = str(e.response)
             raise ModelProviderError(
-                message=error_message,
+                message=_api_error_message(e),
                 status_code=e.code if hasattr(e, "code") and e.code is not None else 502,
                 model_name=self.name,
                 model_id=self.id,
@@ -698,14 +702,8 @@ class Gemini(Model):
 
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {str(e)}")
-            error_message = str(e)
-            if hasattr(e, "response"):
-                if hasattr(e.response, "text"):
-                    error_message = e.response.text
-                else:
-                    error_message = str(e.response)
             raise ModelProviderError(
-                message=error_message,
+                message=_api_error_message(e),
                 status_code=e.code if hasattr(e, "code") and e.code is not None else 502,
                 model_name=self.name,
                 model_id=self.id,
@@ -756,14 +754,8 @@ class Gemini(Model):
 
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {str(e)}")
-            error_message = str(e)
-            if hasattr(e, "response"):
-                if hasattr(e.response, "text"):
-                    error_message = e.response.text
-                else:
-                    error_message = str(e.response)
             raise ModelProviderError(
-                message=error_message,
+                message=_api_error_message(e),
                 status_code=e.code if hasattr(e, "code") and e.code is not None else 502,
                 model_name=self.name,
                 model_id=self.id,
