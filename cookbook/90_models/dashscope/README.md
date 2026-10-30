@@ -55,5 +55,13 @@ python cookbook/90_models/dashscope/image_agent.py
 python cookbook/90_models/dashscope/image_agent_bytes.py
 ```
 
+### 8. Run Agent with built-in web search
+
+Web search support depends on the model and region. See the [web search docs](https://help.aliyun.com/zh/model-studio/web-search).
+
+```shell
+python cookbook/90_models/dashscope/web_search.py
+```
+
 For more information about Qwen models and capabilities, visit:
 - [Model Studio Console](https://modelstudio.console.alibabacloud.com/)

@@ -21,6 +21,9 @@ class DashScope(OpenAILike):
         base_url (str): The base URL. Defaults to "https://dashscope-intl.aliyuncs.com/compatible-mode/v1".
         enable_thinking (bool): Enable thinking process (DashScope native parameter). Defaults to False.
         include_thoughts (Optional[bool]): Include thinking process in response (alternative parameter). Defaults to None.
+        enable_search (Optional[bool]): Enable DashScope built-in web search. Not sent when None. Defaults to None.
+        search_options (Optional[Dict[str, Any]]): Web search options such as forced_search or search_strategy.
+            Not sent when None. Defaults to None.
     """
 
     id: str = "qwen-plus"
@@ -34,6 +37,10 @@ class DashScope(OpenAILike):
     enable_thinking: bool = False
     include_thoughts: Optional[bool] = None
     thinking_budget: Optional[int] = None
+
+    # Built-in web search parameters
+    enable_search: Optional[bool] = None
+    search_options: Optional[Dict[str, Any]] = None
 
     # DashScope supports structured outputs
     supports_native_structured_outputs: bool = True
@@ -79,12 +86,23 @@ class DashScope(OpenAILike):
         if self.include_thoughts is not None:
             self.enable_thinking = self.include_thoughts
 
+        # Merge into a copy of any user-supplied extra_body (from extra_body or request_params) and
+        # never overwrite a key set there, so a raw extra_body override still takes precedence.
+        extra_body: Dict[str, Any] = dict(params.get("extra_body") or {})
+
         if self.enable_thinking is not None:
-            params["extra_body"] = {
-                "enable_thinking": self.enable_thinking,
-            }
+            extra_body.setdefault("enable_thinking", self.enable_thinking)
 
             if self.thinking_budget is not None:
-                params["extra_body"]["thinking_budget"] = self.thinking_budget
+                extra_body.setdefault("thinking_budget", self.thinking_budget)
+
+        if self.enable_search is not None:
+            extra_body.setdefault("enable_search", self.enable_search)
+
+        if self.search_options is not None:
+            extra_body.setdefault("search_options", self.search_options)
+
+        if extra_body:
+            params["extra_body"] = extra_body
 
         return params
