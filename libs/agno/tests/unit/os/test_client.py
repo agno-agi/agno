@@ -889,20 +889,21 @@ async def test_get_session_runs_without_limit_returns_list():
 
 
 @pytest.mark.asyncio
-async def test_get_session_runs_with_limit_returns_cursor_page():
-    from agno.os.schema import CursorPaginatedResponse
+async def test_get_session_runs_with_limit_returns_runs_page():
+    from agno.os.schema import RunsPage
 
     client = AgentOSClient(base_url="http://localhost:7777")
     with patch.object(client, "_aget", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = {
             "data": [{"run_id": "run-3", "run_index": 3, "team_id": "team-1"}],
-            "meta": {"limit": 1, "total_count": 5, "has_more": True},
+            "meta": {"limit": 1, "total_count": 5, "has_more": True, "oldest_run_index": 3, "newest_run_index": 3},
         }
         result = await client.get_session_runs("session-1", limit=1, before_run_index=4)
 
-        assert isinstance(result, CursorPaginatedResponse)
+        assert isinstance(result, RunsPage)
         assert result.data[0].run_index == 3
         assert result.meta.has_more is True
+        assert result.meta.oldest_run_index == 3
         params = mock_get.call_args.kwargs["params"]
         assert params["limit"] == 1
         assert params["before_run_index"] == 4

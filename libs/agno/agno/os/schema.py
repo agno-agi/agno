@@ -1078,19 +1078,23 @@ class PaginatedResponse(BaseModel, Generic[T]):
     meta: PaginationInfo = Field(..., description="Pagination metadata")
 
 
-class CursorPaginationInfo(BaseModel):
+class RunsPageInfo(BaseModel):
     limit: int = Field(..., description="Maximum number of items in this page", ge=1)
     total_count: int = Field(..., description="Total count of items matching the filters", ge=0)
     has_more: bool = Field(..., description="Whether more items exist beyond this page in the paging direction")
-    before_run_index: Optional[int] = Field(None, description="Pass as before_run_index to get the older page")
-    after_run_index: Optional[int] = Field(None, description="Pass as after_run_index to get the newer page")
+    oldest_run_index: Optional[int] = Field(
+        None, description="Oldest top-level run_index on this page; pass it as before_run_index for the older page"
+    )
+    newest_run_index: Optional[int] = Field(
+        None, description="Newest top-level run_index on this page; pass it as after_run_index for the newer page"
+    )
 
 
-class CursorPaginatedResponse(BaseModel, Generic[T]):
+class RunsPage(BaseModel, Generic[T]):
     """Wrapper for cursor-paginated responses; callers page with a boundary taken from ``data``."""
 
     data: List[T] = Field(..., description="List of items for the current page")
-    meta: CursorPaginationInfo = Field(..., description="Pagination metadata")
+    meta: RunsPageInfo = Field(..., description="Pagination metadata")
 
 
 class ComponentType(str, Enum):

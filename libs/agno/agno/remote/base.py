@@ -38,9 +38,9 @@ if TYPE_CHECKING:
     from agno.os.schema import (
         AgentSessionDetailSchema,
         ConfigResponse,
-        CursorPaginatedResponse,
         PaginatedResponse,
         RunSchema,
+        RunsPage,
         SessionSchema,
         TeamRunSchema,
         TeamSessionDetailSchema,
@@ -145,7 +145,7 @@ class RemoteDb:
         self, session_id: str, **kwargs: Any
     ) -> Union[
         "List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]",
-        "CursorPaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]",
+        "RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]",
     ]:
         return await self.client.get_session_runs(session_id, **kwargs)
 

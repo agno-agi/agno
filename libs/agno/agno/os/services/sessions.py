@@ -335,12 +335,12 @@ async def get_session_runs(
     ]
 
 
-class SessionRunsPage(NamedTuple):
+class SessionRunsWindow(NamedTuple):
     runs: List[AnyRunSchema]
     total_count: int
     has_more: bool
-    before_run_index: Optional[int]
-    after_run_index: Optional[int]
+    oldest_run_index: Optional[int]
+    newest_run_index: Optional[int]
 
 
 async def get_session_runs_window(
@@ -355,7 +355,7 @@ async def get_session_runs_window(
     created_after: Optional[int] = None,
     created_before: Optional[int] = None,
     statuses: Optional[Set[str]] = None,
-) -> SessionRunsPage:
+) -> SessionRunsWindow:
     """One cursor page of a session's runs, in chronological order.
 
     Pages count top-level runs: runs with no parent in the session. Member and
@@ -363,8 +363,9 @@ async def get_session_runs_window(
     the limit. Filters (timestamps, upper-cased ``statuses``) select top-level
     runs. With ``after_run_index`` the page is the oldest ``limit`` top-level
     runs after it; otherwise it is the newest ``limit``, before
-    ``before_run_index`` when given. The returned cursors are the page's first
-    and last top-level run_index, to pass back for the older or newer page.
+    ``before_run_index`` when given. The page's oldest and newest top-level
+    run_index are returned, to pass back as before/after_run_index for the
+    older or newer page.
 
     Raises :class:`SessionNotFoundError` when the session does not exist and
     :class:`InvalidRunCursorError` when both cursors are given.
@@ -403,12 +404,12 @@ async def get_session_runs_window(
                 selected_ids.add(child_id)
                 pending.append(child_id)
 
-    return SessionRunsPage(
+    return SessionRunsWindow(
         runs=[
             indexed.render(indexed_run) for indexed_run in indexed.runs if indexed_run[1].get("run_id") in selected_ids
         ],
         total_count=len(top_level),
         has_more=len(candidates) > limit,
-        before_run_index=window[0][0] if window else None,
-        after_run_index=window[-1][0] if window else None,
+        oldest_run_index=window[0][0] if window else None,
+        newest_run_index=window[-1][0] if window else None,
     )

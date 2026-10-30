@@ -592,8 +592,8 @@ class TestSessionRunsPagination:
             "limit": 2,
             "total_count": 5,
             "has_more": True,
-            "before_run_index": 3,
-            "after_run_index": 4,
+            "oldest_run_index": 3,
+            "newest_run_index": 4,
         }
 
     def test_before_run_index_pages_back_to_the_start(self, client):
@@ -656,8 +656,8 @@ class TestSessionRunsPagination:
             "limit": 2,
             "total_count": 3,
             "has_more": True,
-            "before_run_index": 2,
-            "after_run_index": 4,
+            "oldest_run_index": 2,
+            "newest_run_index": 4,
         }
 
     def test_invalid_status_rejected_when_paging(self, client):
@@ -714,7 +714,7 @@ class TestSessionRunsPaginationGroups:
         assert body["meta"]["has_more"] is True
 
         older = client.get(
-            f"/sessions/team-groups/runs?type=team&user_id=user-1&limit=2&before_run_index={body['meta']['before_run_index']}"
+            f"/sessions/team-groups/runs?type=team&user_id=user-1&limit=2&before_run_index={body['meta']['oldest_run_index']}"
         ).json()
         assert [r["run_id"] for r in older["data"]] == ["m1a", "m1b", "p1", "m2a", "m2b", "p2"]
 
@@ -729,10 +729,10 @@ class TestSessionRunsPaginationGroups:
 
         page = client.get("/sessions/interleaved/runs?type=team&user_id=user-1&limit=1").json()
         assert [r["run_id"] for r in page["data"]] == ["B-member", "B"]
-        assert page["meta"]["before_run_index"] == 3
+        assert page["meta"]["oldest_run_index"] == 3
 
         older = client.get(
-            f"/sessions/interleaved/runs?type=team&user_id=user-1&limit=1&before_run_index={page['meta']['before_run_index']}"
+            f"/sessions/interleaved/runs?type=team&user_id=user-1&limit=1&before_run_index={page['meta']['oldest_run_index']}"
         ).json()
         assert [r["run_id"] for r in older["data"]] == ["C"]
 
@@ -812,8 +812,8 @@ class TestSessionRunsPaginationGroups:
 
         body = client.get("/sessions/empty-page/runs?user_id=user-1&limit=2&before_run_index=0").json()
         assert body["data"] == []
-        assert "before_run_index" not in body["meta"]
-        assert "after_run_index" not in body["meta"]
+        assert "oldest_run_index" not in body["meta"]
+        assert "newest_run_index" not in body["meta"]
 
 
 class TestSessionRunPreviewsRunIndex:

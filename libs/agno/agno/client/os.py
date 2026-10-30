@@ -54,12 +54,12 @@ from agno.os.schema import (
     AgentSummaryResponse,
     ConfigResponse,
     CreateSessionRequest,
-    CursorPaginatedResponse,
-    CursorPaginationInfo,
     DeleteSessionRequest,
     PaginatedResponse,
     PaginationInfo,
     RunSchema,
+    RunsPage,
+    RunsPageInfo,
     SessionRunPreviewSchema,
     SessionSchema,
     TeamRunSchema,
@@ -1905,7 +1905,7 @@ class AgentOSClient:
         limit: int,
         before_run_index: Optional[int] = None,
         after_run_index: Optional[int] = None,
-    ) -> CursorPaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]: ...
+    ) -> RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]: ...
 
     async def get_session_runs(
         self,
@@ -1923,15 +1923,16 @@ class AgentOSClient:
         after_run_index: Optional[int] = None,
     ) -> Union[
         List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
-        CursorPaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+        RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
     ]:
         """Get the runs for a specific session.
 
         Pagination is opt-in: without ``limit`` the server returns every run as a list. With
-        ``limit`` it returns a :class:`CursorPaginatedResponse` holding the newest ``limit`` runs,
+        ``limit`` it returns a :class:`RunsPage` holding the newest ``limit`` runs,
         or those before ``before_run_index`` / after ``after_run_index``. Pages count top-level
         runs; member and step runs come with their parent. Take the next cursor from
-        ``meta.before_run_index`` / ``meta.after_run_index``. Runs are always in chronological
+        ``meta.oldest_run_index`` (as ``before_run_index``) / ``meta.newest_run_index``
+        (as ``after_run_index``). Runs are always in chronological
         order and carry their ``run_index``.
 
         Args:
@@ -1949,7 +1950,7 @@ class AgentOSClient:
             after_run_index: Return the oldest runs with a higher run_index (requires limit)
 
         Returns:
-            A list of runs, or a CursorPaginatedResponse of runs when limit is provided.
+            A list of runs, or a RunsPage of runs when limit is provided.
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -1985,9 +1986,9 @@ class AgentOSClient:
         if not isinstance(response, dict):
             return runs
 
-        return CursorPaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]](
+        return RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]](
             data=runs,
-            meta=CursorPaginationInfo.model_validate(response["meta"]),
+            meta=RunsPageInfo.model_validate(response["meta"]),
         )
 
     @staticmethod

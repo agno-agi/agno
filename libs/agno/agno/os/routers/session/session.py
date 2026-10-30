@@ -22,14 +22,14 @@ from agno.os.schema import (
     AgentSessionDetailSchema,
     BadRequestResponse,
     CreateSessionRequest,
-    CursorPaginatedResponse,
-    CursorPaginationInfo,
     DeleteSessionRequest,
     InternalServerErrorResponse,
     NotFoundResponse,
     PaginatedResponse,
     PaginationInfo,
     RunSchema,
+    RunsPage,
+    RunsPageInfo,
     SessionRunPreviewSchema,
     SessionSchema,
     SortOrder,
@@ -724,7 +724,7 @@ def attach_routes(
     @router.get(
         "/sessions/{session_id}/runs",
         response_model=Union[
-            CursorPaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+            RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
             List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
         ],
         status_code=200,
@@ -737,8 +737,8 @@ def attach_routes(
             "By default all runs are returned as a list. Pass 'limit' to receive a cursor-paginated "
             "response instead: the newest 'limit' runs, or those before 'before_run_index' or after "
             "'after_run_index'. Pages count top-level runs; member and step runs come with their parent "
-            "and filters select the top-level runs. Take the next cursor from meta.before_run_index or "
-            "meta.after_run_index. Runs are always in chronological order and carry their 'run_index'. "
+            "and filters select the top-level runs. For the older page pass meta.oldest_run_index as "
+            "before_run_index; for the newer page pass meta.newest_run_index as after_run_index. Runs are always in chronological order and carry their 'run_index'. "
             "Response schema varies based on session type. For lightweight entries, use "
             "GET /sessions/{session_id}/run-previews."
         ),
@@ -895,7 +895,7 @@ def attach_routes(
         db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),
         table: Optional[str] = Query(default=None, description="Table to query runs from"),
     ) -> Union[
-        CursorPaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+        RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
         List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
     ]:
         if limit is None and (before_run_index is not None or after_run_index is not None):
@@ -946,14 +946,14 @@ def attach_routes(
         except InvalidRunCursorError as e:
             raise HTTPException(status_code=422, detail=str(e))
 
-        return CursorPaginatedResponse(
+        return RunsPage(
             data=page.runs,
-            meta=CursorPaginationInfo(
+            meta=RunsPageInfo(
                 limit=limit,
                 total_count=page.total_count,
                 has_more=page.has_more,
-                before_run_index=page.before_run_index,
-                after_run_index=page.after_run_index,
+                oldest_run_index=page.oldest_run_index,
+                newest_run_index=page.newest_run_index,
             ),
         )
 
