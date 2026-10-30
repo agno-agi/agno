@@ -413,7 +413,7 @@ def _determine_tools_for_model(
                 if strict and _func.strict is None:
                     _func.strict = True
                 if team.tool_hooks:
-                    _func.tool_hooks = team.tool_hooks
+                    _func.tool_hooks = [*team.tool_hooks, *(_func.tool_hooks or [])]
                 _functions.append(_func)
                 log_debug(f"Added tool {_func.name} from {tool.name}")
 
@@ -445,7 +445,7 @@ def _determine_tools_for_model(
             if strict and tool.strict is None:
                 tool.strict = True
             if team.tool_hooks:
-                tool.tool_hooks = team.tool_hooks
+                tool.tool_hooks = [*team.tool_hooks, *(tool.tool_hooks or [])]
             _functions.append(tool)
             log_debug(f"Added tool {tool.name}")
 
@@ -479,7 +479,7 @@ def _determine_tools_for_model(
                 if strict:
                     _func.strict = True
                 if team.tool_hooks:
-                    _func.tool_hooks = team.tool_hooks
+                    _func.tool_hooks = [*team.tool_hooks, *(_func.tool_hooks or [])]
                 _functions.append(_func)
                 log_debug(f"Added tool {_func.name}")
             except Exception as e:
