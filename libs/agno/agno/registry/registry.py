@@ -91,7 +91,7 @@ def _tool_resource_name(tool: Any) -> Optional[str]:
 class Registry:
     """
     Registry is used to manage non serializable objects like tools, models, databases, vector databases,
-    agents, teams, and workflows.
+    sandboxes, agents, teams, and workflows.
     """
 
     name: Optional[str] = None
@@ -129,6 +129,15 @@ class Registry:
     _ambiguous_learning_names: Set[str] = field(default_factory=set, init=False, repr=False)
     memory_managers: List[Any] = field(default_factory=list)
     session_summary_managers: List[Any] = field(default_factory=list)
+    # Sandboxes a stored external agent can run in. A sandbox holds a daemon
+    # or cloud client, a checkpoint store and credentials, so a component
+    # config names one by id and the registry supplies the live object.
+    sandboxes: List[Any] = field(default_factory=list)
+    # Let a stored ClaudeAgent or CodexAgent config run on this host rather than only in a
+    # registered sandbox. A stored config names a working directory, MCP server commands,
+    # plugins and permission modes, so whoever can write components could start programs
+    # here; off by default, the deployer opts in.
+    allow_host_external_agents: bool = False
     # Code-defined agents, teams, and workflows (for rehydration)
     agents: List[Union[Agent, BaseExternalAgent]] = field(default_factory=list)
     teams: List[Team] = field(default_factory=list)
@@ -667,6 +676,43 @@ class Registry:
         elif any(v is vector_db for v in self.vector_dbs):
             return
         self.vector_dbs.append(vector_db)
+
+    def add_sandbox(self, sandbox: Any) -> None:
+        """Add a sandbox unless one with the same id (or the same instance) is already present.
+
+        Only a sandbox with an id is registrable: a stored component refers to
+        it by that id, and nothing else can name it. The first instance under an
+        id wins; a distinct same-id instance is reported, since it would be
+        shadowed.
+        """
+        from agno.sandbox.base import Sandbox
+
+        if not isinstance(sandbox, Sandbox):
+            return
+        sandbox_id = getattr(sandbox, "id", None)
+        if not isinstance(sandbox_id, str) or not sandbox_id:
+            return
+        existing = self.get_sandbox(sandbox_id)
+        if existing is not None:
+            if existing is not sandbox:
+                log_warning(
+                    f"Registry: multiple distinct sandboxes share id '{sandbox_id}'; keeping the first. "
+                    "Give them distinct ids to avoid one shadowing the other."
+                )
+            return
+        self.sandboxes.append(sandbox)
+
+    def get_sandbox(self, sandbox_id: str) -> Optional[Any]:
+        """Get a sandbox by id from the registry."""
+        if self.sandboxes:
+            return next((s for s in self.sandboxes if getattr(s, "id", None) == sandbox_id), None)
+        return None
+
+    def get_sandbox_ids(self) -> Set[str]:
+        """Get the set of all sandbox ids in this registry."""
+        if self.sandboxes:
+            return {sid for s in self.sandboxes if isinstance((sid := getattr(s, "id", None)), str) and sid}
+        return set()
 
     def add_function(self, func: Any) -> None:
         """Add a plain callable unless one with the same name is already present.

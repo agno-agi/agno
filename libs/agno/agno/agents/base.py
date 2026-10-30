@@ -61,6 +61,7 @@ from agno.utils.serialize import json_serializer
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
 
 if TYPE_CHECKING:
+    from agno.registry import Registry
     from agno.sandbox import Sandbox
     from agno.sandbox.checkpoint import CheckpointRef, CheckpointStore
     from agno.sandbox.repository import Repository
@@ -73,6 +74,11 @@ if TYPE_CHECKING:
 _HISTORY_TOOL_RESULT_MAX_CHARS = 2000
 _HISTORY_TOOL_RESULT_TAIL_CHARS = 400
 _HISTORY_MAX_CHARS = 24000
+
+# Turns in flight per agent id and session store: session_id -> run_id. Shared by every instance
+# carrying that id on that store, so an adapter rebuilt from its stored config for each request
+# guards its sessions like a registered one, while same-id agents on other stores stay apart.
+_SESSIONS_IN_FLIGHT: Dict[Tuple[str, Optional[str], Optional[str]], Dict[str, str]] = {}
 
 
 @dataclass
@@ -272,19 +278,26 @@ class BaseExternalAgent:
     # Shown to a team leader next to the name and description when this agent is a team member.
     role: Optional[str] = None
 
+    # Set by the db listing (get_agents) from the component row, as on Agent.
+    _version: Optional[int] = field(default=None, init=False, repr=False)
+    _stage: Optional[str] = field(default=None, init=False, repr=False)
+
     # Adapters that pass output_schema to their framework set this; others reject the option.
     _supports_output_schema: ClassVar[bool] = False
     # A second concurrent turn on a session is refused, so the durable queue always serializes these.
     one_turn_per_session: ClassVar[bool] = True
+    # Adapters whose settings are plain data can be stored as component configs (to_dict / save).
+    _storable: ClassVar[bool] = False
+    # Fields a stored config refuses when set, with the reason: callables, host paths, credentials.
+    _unstorable_fields: ClassVar[Dict[str, str]] = {}
+    # Fields written under another key in a stored config, e.g. a deprecated alias under its successor.
+    _stored_as: ClassVar[Dict[str, str]] = {}
 
     def __post_init__(self) -> None:
         from agno.utils.string import generate_id_from_name
 
         if self.id is None:
             self.id = generate_id_from_name(self.name)
-        # session_id -> run_id of the turn this process is running on it. A session accepts
-        # one turn at a time: the harness keeps one conversation per session on its side.
-        self._sessions_in_flight: Dict[str, str] = {}
         if self.events_to_skip is None:
             self.events_to_skip = [RunEvent.run_content]
         self._check_output_schema(self.output_schema)
@@ -326,6 +339,139 @@ class BaseExternalAgent:
     def get_id(self) -> str:
         """Return the agent ID, guaranteed non-None after construction."""
         return self.id or ""
+
+    @property
+    def _sessions_in_flight(self) -> Dict[str, str]:
+        """session_id -> run_id of the turns this process is running on this agent's sessions.
+
+        A session accepts one turn at a time: the harness keeps one conversation per session
+        on its side. The map is keyed by agent id and session store rather than held per
+        instance, so a second instance of the same stored agent sees the claim too, and a
+        same-id agent on another store does not.
+        """
+        key = (self.get_id(), getattr(self.db, "id", None), getattr(self.db, "session_table_name", None))
+        return _SESSIONS_IN_FLIGHT.setdefault(key, {})
+
+    # ---------------------------------------------------------------------------
+    # Component persistence (see agno.agents._storage)
+    # ---------------------------------------------------------------------------
+
+    def to_dict(self) -> Dict[str, Any]:
+        """The adapter's settings as a component config; references name the db, sandbox and schema."""
+        from agno.agents import _storage
+
+        return _storage.to_dict(self)
+
+    @classmethod
+    def from_dict(
+        cls, data: Dict[str, Any], registry: Optional["Registry"] = None, strict: bool = False
+    ) -> "BaseExternalAgent":
+        """Rebuild an adapter from a stored config; on the base class the config's sdk picks the adapter."""
+        from agno.agents import _storage
+
+        return _storage.from_dict(cls, data=data, registry=registry, strict=strict)
+
+    def save(
+        self,
+        *,
+        db: Optional[BaseDb] = None,
+        stage: str = "published",
+        label: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Optional[int]:
+        """Save the adapter as an agent component; returns the new config version."""
+        from agno.agents import _storage
+
+        return _storage.save(self, db=db, stage=stage, label=label, notes=notes)
+
+    async def asave(
+        self,
+        *,
+        db: Optional[BaseDb] = None,
+        stage: str = "published",
+        label: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Optional[int]:
+        """Async variant of save."""
+        from agno.agents import _storage
+
+        return await _storage.asave(self, db=db, stage=stage, label=label, notes=notes)
+
+    @classmethod
+    def load(
+        cls,
+        id: str,
+        *,
+        db: BaseDb,
+        registry: Optional["Registry"] = None,
+        label: Optional[str] = None,
+        version: Optional[int] = None,
+        strict: bool = False,
+        published_only: bool = False,
+    ) -> Optional["BaseExternalAgent"]:
+        """Load a stored adapter by id, resolving its db, sandbox and schema from the registry."""
+        from agno.agents import _storage
+
+        return _storage.load(
+            cls,
+            id=id,
+            db=db,
+            registry=registry,
+            label=label,
+            version=version,
+            strict=strict,
+            published_only=published_only,
+        )
+
+    @classmethod
+    async def aload(
+        cls,
+        id: str,
+        *,
+        db: BaseDb,
+        registry: Optional["Registry"] = None,
+        label: Optional[str] = None,
+        version: Optional[int] = None,
+        strict: bool = False,
+        published_only: bool = False,
+    ) -> Optional["BaseExternalAgent"]:
+        """Async variant of load."""
+        from agno.agents import _storage
+
+        return await _storage.aload(
+            cls,
+            id=id,
+            db=db,
+            registry=registry,
+            label=label,
+            version=version,
+            strict=strict,
+            published_only=published_only,
+        )
+
+    def delete(
+        self,
+        *,
+        db: Optional[BaseDb] = None,
+        hard_delete: bool = False,
+        require_no_dependents: bool = True,
+    ) -> bool:
+        """Delete the adapter's component; soft by default."""
+        from agno.agents import _storage
+
+        return _storage.delete(self, db=db, hard_delete=hard_delete, require_no_dependents=require_no_dependents)
+
+    async def adelete(
+        self,
+        *,
+        db: Optional[BaseDb] = None,
+        hard_delete: bool = False,
+        require_no_dependents: bool = True,
+    ) -> bool:
+        """Async variant of delete."""
+        from agno.agents import _storage
+
+        return await _storage.adelete(self, db=db, hard_delete=hard_delete, require_no_dependents=require_no_dependents)
 
     def as_tool(
         self,
@@ -1725,9 +1871,16 @@ class BaseExternalAgent:
         tools: Optional[List[ToolExecution]] = None,
         metrics: Optional[RunMetrics] = None,
         media: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> RunOutput:
-        """Build a RunOutput with properly populated messages for chat history."""
+        """Build a RunOutput with properly populated messages for chat history.
+
+        ``metadata`` is the caller's run metadata, kept on the output the way Agent keeps
+        it; AgentOS records the pinned component version there so a continuation reloads
+        the same version.
+        """
         now = int(time())
+        run_metadata = dict(metadata) if isinstance(metadata, dict) and metadata else None
         messages: List[Message] = []
         # Skip synthetic user messages for replay/fork (input is None)
         if input_text is not None:
@@ -1790,6 +1943,7 @@ class BaseExternalAgent:
             tools=tools,
             status=status,
             metrics=metrics,
+            metadata=run_metadata,
             created_at=now,
         )
 
@@ -2091,9 +2245,10 @@ class BaseExternalAgent:
                         timer, content.metrics if isinstance(content, ExternalRunResult) else None
                     ),
                     media=kwargs.get("media"),
+                    metadata=kwargs.get("metadata"),
                 )
                 if isinstance(content, ExternalRunResult) and content.warnings:
-                    run_output.metadata = {"warnings": content.warnings}
+                    run_output.metadata = {**(run_output.metadata or {}), "warnings": content.warnings}
                 self._apply_output_schema(
                     run_output,
                     output_schema,
@@ -2112,6 +2267,7 @@ class BaseExternalAgent:
                     RunStatus.cancelled,
                     tools=list(carried_tools.values()) or None,
                     media=kwargs.get("media"),
+                    metadata=kwargs.get("metadata"),
                 )
             except Exception as error:
                 log_exception(f"Error in {self.sdk} agent '{self.id}': {error}")
@@ -2124,8 +2280,9 @@ class BaseExternalAgent:
                     RunStatus.error,
                     tools=list(carried_tools.values()) or None,
                     media=kwargs.get("media"),
+                    metadata=kwargs.get("metadata"),
                 )
-                run_output.metadata = self._failure_metadata(error)
+                run_output.metadata = {**(run_output.metadata or {}), **self._failure_metadata(error)}
             if attempts_made > 1:
                 run_output.metadata = {**(run_output.metadata or {}), "attempts": attempts_made}
             self._finish_run_output(run_output, run_state, continuation)
@@ -2355,9 +2512,10 @@ class BaseExternalAgent:
                 list(tools.values()) or None,
                 metrics=self._finish_metrics(timer, adapter_metrics) if status == RunStatus.completed else None,
                 media=kwargs.get("media"),
+                metadata=kwargs.get("metadata"),
             )
             if warnings:
-                run.metadata = {"warnings": warnings}
+                run.metadata = {**(run.metadata or {}), "warnings": warnings}
             if run_error is not None:
                 run.metadata = {**(run.metadata or {}), **self._failure_metadata(run_error)}
             if attempts_made > 1:

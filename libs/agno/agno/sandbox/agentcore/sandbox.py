@@ -130,6 +130,7 @@ class AgentCoreSandbox(Sandbox):
         self,
         runtime_arn: str,
         *,
+        id: Optional[str] = None,
         namespace: str = "default",
         qualifier: str = "DEFAULT",
         lifetime: int = 3600,
@@ -159,6 +160,9 @@ class AgentCoreSandbox(Sandbox):
             execution_timeout = min(900.0, lifetime / 2)
         if not math.isfinite(execution_timeout) or not 0 < execution_timeout < lifetime:
             raise ValueError("AgentCore execution timeout must be positive and shorter than the lifetime")
+        if id is not None and (not isinstance(id, str) or not id):
+            raise ValueError("Sandbox id must be None or a nonempty string")
+        self.id = id
         self.checkpoints = checkpoints
         self.env = dict(env) if env is not None else None
         self.execution_timeout = execution_timeout

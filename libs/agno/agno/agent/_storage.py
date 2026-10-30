@@ -1246,9 +1246,18 @@ def from_dict(
     Raises:
         ComponentRehydrationError: If strict and a registry reference cannot be resolved.
     """
+    from agno.agents._storage import is_external_agent_config
     from agno.models.utils import resolve_model
 
     component_label = f"Agent '{data.get('id') or data.get('name') or '<unknown>'}'"
+
+    if is_external_agent_config(data):
+        # An external adapter's config is not an Agent's: rebuilding it here would
+        # silently produce a native agent with the harness settings dropped.
+        raise ComponentRehydrationError(
+            f"{component_label} is stored as a {data['sdk']!r} external agent and cannot be loaded as an Agent. "
+            "Load it with get_agent_by_id, or with the adapter's own load()."
+        )
 
     config = data.copy()
 
@@ -1603,6 +1612,9 @@ def save(
 
     if agent.id is None:
         agent.id = generate_id_from_name(agent.name)
+    from agno.agents._storage import require_same_agent_kind
+
+    require_same_agent_kind(db_, agent.id, None)
 
     try:
         # Create or update component

@@ -466,7 +466,7 @@ async def test_outdated_bindings_table_refuses_submissions_and_fails_claimed_tic
     client, agent, app, handles = service
     worker = app.state.queue_worker
     _earlier_build_bindings_table(agent.db)
-    for _, built in _harness._coordinators.get(agent.sandbox, []):
+    for built in _harness._coordinators.get(agent.sandbox, {}).values():
         built.store._tables_ready = False
 
     # A submission is refused before any ticket exists, with the remedy in the response.

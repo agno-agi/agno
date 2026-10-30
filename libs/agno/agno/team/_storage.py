@@ -910,6 +910,23 @@ def _team_type() -> type:
     return Team
 
 
+def _refuse_external_member(agent: Any, label: str, strict: bool) -> Any:
+    """None in place of an external adapter resolved as a member; strict loads raise.
+
+    Teams delegate to Agents: an external harness agent has no member protocol,
+    so a stored reference to one can never be honoured.
+    """
+    from agno.agents.base import BaseExternalAgent
+
+    if not isinstance(agent, BaseExternalAgent):
+        return agent
+    message = f"{label} is a {agent.sdk!r} external agent; external agents cannot be team members."
+    if strict:
+        raise ComponentRehydrationError(message)
+    log_warning(message)
+    return None
+
+
 def _registry_copy(component: Any, label: str, strict: bool, expected_type: type) -> Any:
     """An isolated copy of a code-defined registry component.
 
@@ -1060,13 +1077,16 @@ def from_dict(
                         agent = get_agent_by_id(
                             id=agent_id, db=db, registry=registry, strict=False, user_id=owner_user_id
                         )
+                agent = _refuse_external_member(agent, f"{component_label} member agent '{agent_id}'", strict)
                 # Fall back to a code-defined agent registered in the registry.
                 # These are legitimately not persisted as DB components (e.g. agents
                 # passed to AgentOS(agents=[...])), so a DB lookup returns nothing.
                 # Deep copy so the shared registry singleton isn't mutated when the
                 # owning team runs (initialize_team sets team_id/_team on members).
                 if agent is None and registry is not None:
-                    registered_agent = registry.get_agent(agent_id)
+                    registered_agent = _refuse_external_member(
+                        registry.get_agent(agent_id), f"{component_label} member agent '{agent_id}'", strict
+                    )
                     agent = (
                         _registry_copy(registered_agent, f"{component_label} member agent '{agent_id}'", strict, Agent)
                         if registered_agent is not None

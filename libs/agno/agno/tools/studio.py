@@ -104,6 +104,17 @@ TeamMember = Union["Agent", "Team"]
 
 _SCHEDULE_TARGET_TYPES = ("agent", "team", "workflow")
 
+
+def _refuse_external_agent(component: Any, label: str) -> None:
+    """Teams and workflows delegate to Agents; a stored external adapter runs only on its own."""
+    from agno.agents.base import BaseExternalAgent
+
+    if isinstance(component, BaseExternalAgent):
+        raise ValueError(
+            f"{label} is a {component.sdk!r} external agent; external agents cannot be team members or workflow steps."
+        )
+
+
 # How many same-name rows a display-name lookup pulls before calling it
 # ambiguous. One display name can match several owners now that published
 # components are platform-visible, so the window has to be wider than the old
@@ -1083,7 +1094,8 @@ class StudioTools(Toolkit):
         return ("component_not_found", f"{noun.capitalize()} not found: {component_id}")
 
     def _load_agent_from_db(self, agent_id: str, version: Optional[int] = None) -> Optional["Agent"]:
-        return self._runner_tools._load_agent_from_db(agent_id, version=version)
+        # A non-dispatch load never yields an external adapter (see StudioRunnerTools._load_agent_from_db).
+        return cast(Optional["Agent"], self._runner_tools._load_agent_from_db(agent_id, version=version))
 
     def _load_team_from_db(self, team_id: str, version: Optional[int] = None) -> Optional["Team"]:
         return self._runner_tools._load_team_from_db(team_id, version=version)
@@ -4956,6 +4968,7 @@ class StudioTools(Toolkit):
             raise ValueError(f"{noun} '{child_id}' in db '{db_label}' cannot be rebuilt: {e}") from e
         if rebound is None:
             raise ValueError(f"{noun} '{child_id}' could not be loaded from db '{db_label}'.")
+        _refuse_external_agent(rebound, f"{noun} '{child_id}'")
         return rebound, (resolved_version if isinstance(resolved_version, int) else None)
 
     def _bind_members_to_target_db(
@@ -5036,9 +5049,11 @@ class StudioTools(Toolkit):
             return None
         loader = get_agent_by_id if agent_row is not None else get_team_by_id
         try:
-            return loader(db=target_db, id=identifier, registry=self.registry, strict=True)
+            member = loader(db=target_db, id=identifier, registry=self.registry, strict=True)
         except ComponentRehydrationError as e:
             raise ValueError(f"Member '{identifier}' in the target db cannot be rebuilt: {e}") from e
+        _refuse_external_agent(member, f"Member '{identifier}'")
+        return member
 
     def _resolve_members(
         self, member_ids: List[str], target_db: Optional["BaseDb"] = None, actor: Optional[str] = None
@@ -5112,6 +5127,7 @@ class StudioTools(Toolkit):
 
                 # Exact ids in the selected target db outrank catalog name tiers.
                 found = get_agent_by_id(db=fallback_db, id=identifier, registry=self.registry, user_id=actor)
+                _refuse_external_agent(found, f"Step agent '{identifier}'")
             return found if found is not None else self._find_agent(identifier, actor=actor)
 
         def find_team(identifier: str) -> Optional[Any]:

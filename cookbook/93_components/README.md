@@ -32,6 +32,7 @@ The Agent-as-Config feature allows you to:
 | `save_workflow.py` | Save a multi-step workflow to the database |
 | `get_workflow.py` | Load a workflow and execute its steps |
 | `registry.py` | Use a registry for non-serializable components |
+| `external_agents.py` | Save and load ClaudeAgent and CodexAgent components, with a registry sandbox |
 | `auto_populate_registry.py` | Inspect how AgentOS auto-discovers components from teams and workflows |
 | `auto_populate_registry_os.py` | Serve an AgentOS and see the auto-discovered components over the API |
 | `user_isolation_os.py` | Serve an AgentOS with per-user component isolation |
@@ -95,6 +96,47 @@ agent.delete()
 # Hard delete (permanently removes from database)
 agent.delete(hard_delete=True)
 ```
+
+### External Agents
+
+`ClaudeAgent` and `CodexAgent` save and load like `Agent`. The stored config
+names the adapter under `sdk`, so `get_agent_by_id` rebuilds the right class.
+The db, a Pydantic `output_schema` and the sandbox are stored as references
+and resolved from the registry; a sandbox needs an `id` to be referenced.
+Native option objects (`options`, `client_options`), the Codex process `env`
+and `codex_bin` are refused on save, since a stored config cannot carry
+callables, host paths or credentials. External agents can be run on their own
+but not used as team members or workflow steps.
+
+```python
+from agno.agent import get_agent_by_id
+from agno.agents.claude import ClaudeAgent
+from agno.registry import Registry
+from agno.sandbox.docker import DockerSandbox
+
+sandbox = DockerSandbox("agno-sandbox:local", id="docker-local", network="isolated")
+registry = Registry(dbs=[db], sandboxes=[sandbox])
+
+ClaudeAgent(id="coder", permission_mode="acceptEdits", db=db, sandbox=sandbox).save()
+
+coder = get_agent_by_id(db=db, id="coder", registry=registry, strict=True)
+```
+
+Through the components API, a stored external agent is an `agent` component
+whose config carries `"sdk": "claude-agent-sdk"` or `"sdk": "codex"`. A stored
+config names the working directory, MCP servers, plugins and permission mode
+the harness runs with, so AgentOS serves a stored agent without a sandbox only
+when the deployer opts in with `Registry(allow_host_external_agents=True)`;
+until then it is listed but answers 422. A stored sandboxed agent needs no
+opt-in: `POST /agents/{id}/runs` submits it to the durable sandbox queue like a
+registered one, as long as the sandbox is in the registry the AgentOS was given
+(`Registry(sandboxes=[...])`, or a code-defined agent that uses it). The ticket
+carries the version the request loaded, and the queue worker rebuilds that
+version from the database before running it on the registry sandbox; an
+explicit `version` form field pins one. The same requirements as for a
+registered sandboxed agent apply: a durable queue, a PostgresDb, and a sandbox
+with a shared `checkpoints=` store. Saving an `Agent` over a stored external
+agent, or the reverse, is refused so an id never changes kind.
 
 ---
 

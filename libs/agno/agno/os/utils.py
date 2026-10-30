@@ -1547,6 +1547,23 @@ def allow_draft_preview(
     return bool(isinstance(component, dict) and component.get("user_id") == actor)
 
 
+def _serve_stored_agent(agent: Any, registry: Optional[Registry]) -> Any:
+    """What AgentOS applies to a stored external agent before serving it.
+
+    A registered adapter gets store_events at AgentOS init so the built-in
+    routes can replay its runs; a stored adapter is rebuilt per request and
+    never passes through that init. Running on the host is the deployer's
+    call, made on the registry, since the stored config decides what runs.
+    """
+    from agno.agents._storage import require_host_execution_allowed
+    from agno.agents.base import BaseExternalAgent
+
+    if isinstance(agent, BaseExternalAgent):
+        require_host_execution_allowed(agent, registry)
+        agent.store_events = True
+    return agent
+
+
 def get_agent_by_id(
     agent_id: str,
     agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]] = None,
@@ -1626,7 +1643,7 @@ def get_agent_by_id(
                 strict=strict,
                 published_only=published_only,
             )
-            return db_agent
+            return _serve_stored_agent(db_agent, registry)
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
             raise
@@ -1691,7 +1708,7 @@ async def get_agent_by_id_async(
                 strict=strict,
                 published_only=published_only,
             )
-            return db_agent
+            return _serve_stored_agent(db_agent, registry)
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
             raise
@@ -2640,9 +2657,21 @@ def collect_components_from_os(
     rather than failing the whole walk. Remote and factory components are skipped
     because they expose no locally-walkable instances.
     """
+    from agno.agents.base import BaseExternalAgent
+
     visited: Set[int] = set()
 
     for agent in agents or []:
+        if isinstance(agent, BaseExternalAgent):
+            # What a stored external agent refers to by reference: its sandbox (by id), its
+            # db (by id) and a Pydantic output schema (by class name).
+            if agent.sandbox is not None:
+                registry.add_sandbox(agent.sandbox)
+            if agent.db is not None:
+                registry.add_db(agent.db)
+            if isinstance(agent.output_schema, type):
+                registry.add_schema(agent.output_schema)
+            continue
         if not isinstance(agent, Agent):
             continue
         try:

@@ -646,6 +646,26 @@ async def _resume_stream_generator(
             await pump_task
 
 
+def _external_agent_response(agent: Any, is_component: bool = False) -> AgentResponse:
+    """The listing entry for an external framework adapter, code-registered or stored."""
+    agent_db = getattr(agent, "db", None)
+    session_table = agent_db.session_table_name if agent_db and hasattr(agent_db, "session_table_name") else None
+    sessions = {"session_table": session_table} if session_table else None
+    summary = AgentSummaryResponse.from_agent(agent)
+    return AgentResponse(
+        id=agent.id,
+        name=agent.name,
+        description=getattr(agent, "description", None),
+        db_id=agent_db.id if agent_db else None,
+        sessions=sessions,
+        metadata=summary.metadata or {"sdk": "external"},
+        sandboxed=summary.sandboxed,
+        is_component=is_component,
+        current_version=getattr(agent, "_version", None) if is_component else None,
+        stage=getattr(agent, "_stage", None) if is_component else None,
+    )
+
+
 def get_agent_router(
     os: "AgentOS",
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -891,6 +911,7 @@ def get_agent_router(
                 kwargs=kwargs,
                 stream=stream,
                 background=background,
+                scope=resolve_queue_scope(agent_id, os.agents, os.db, scoped_user_id, version),
                 version=version,
                 images=base64_images,
                 files=input_files,
@@ -2179,22 +2200,7 @@ def get_agent_router(
                     agents.append(await agent.get_agent_config())
                 else:
                     # External framework adapter: build a minimal response
-                    agent_db = getattr(agent, "db", None)
-                    session_table = (
-                        agent_db.session_table_name if agent_db and hasattr(agent_db, "session_table_name") else None
-                    )
-                    sessions = {"session_table": session_table} if session_table else None
-                    agents.append(
-                        AgentResponse(
-                            id=agent.id,
-                            name=agent.name,
-                            description=getattr(agent, "description", None),
-                            db_id=agent_db.id if agent_db else None,
-                            sessions=sessions,
-                            metadata=AgentSummaryResponse.from_agent(agent).metadata or {"sdk": "external"},
-                            sandboxed=AgentSummaryResponse.from_agent(agent).sandboxed,
-                        )
-                    )
+                    agents.append(_external_agent_response(agent))
 
         if os.db and isinstance(os.db, BaseDb):
             from agno.agent.agent import get_agents
@@ -2215,7 +2221,10 @@ def get_agent_router(
                 if getattr(request.state, "authorization_enabled", False):
                     db_agents = await afilter_resources_by_access(request, db_agents, "agents")
                 for db_agent in db_agents:
-                    agent_response = await AgentResponse.from_agent(agent=db_agent, is_component=True)
+                    if isinstance(db_agent, Agent):
+                        agent_response = await AgentResponse.from_agent(agent=db_agent, is_component=True)
+                    else:
+                        agent_response = _external_agent_response(db_agent, is_component=True)
                     agents.append(agent_response)
 
         return agents

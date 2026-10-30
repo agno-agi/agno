@@ -64,7 +64,10 @@ _HARNESS_ENV_KEYS = {"claude": ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"),
 _CLAUDE_CLOUD_FLAGS = ("CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX")
 _DEFAULT_CHECKPOINTS = Path.home() / ".agno" / "sandbox" / "checkpoints"
 
-_coordinators: "weakref.WeakKeyDictionary[Sandbox, List[Tuple[Any, SandboxCoordinator]]]" = weakref.WeakKeyDictionary()
+# Coordinators per sandbox, keyed by the database they coordinate on (see _db_key).
+_coordinators: "weakref.WeakKeyDictionary[Sandbox, Dict[Tuple[Any, ...], SandboxCoordinator]]" = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def _is_default(item: Any, value: Any) -> bool:
@@ -86,6 +89,39 @@ def _check_db(agent: "BaseExternalAgent") -> None:
 
     if not isinstance(agent.db, (PostgresDb, AsyncPostgresDb)):
         raise ValueError("A sandboxed agent requires a PostgresDb or AsyncPostgresDb, on the agent or its AgentOS")
+
+
+def _db_key(db: Any) -> Tuple[Any, ...]:
+    """What identifies the database a coordinator runs on: its adapter, id, connection and table names.
+
+    A stored agent is rebuilt for every request, and a config with table-name overrides
+    gives each rebuild its own db instance over the registry db's engine, so the instance
+    cannot be the key: every rebuild would otherwise get a coordinator of its own.
+    """
+    serialized = dict(db.to_dict())
+    # An engine-only db serializes no connection, and the async adapter does not serialize the
+    # bindings table; the engine and the attribute always know them.
+    engine = getattr(db, "db_engine", None)
+    if engine is not None:
+        serialized["db_url"] = engine.url.render_as_string(hide_password=True)
+    serialized["sandbox_table"] = getattr(db, "sandbox_table_name", None)
+    return (type(db), *sorted((key, str(value)) for key, value in serialized.items()))
+
+
+def _existing_coordinator(agent: "BaseExternalAgent") -> Optional["SandboxCoordinator"]:
+    if agent.db is None:
+        return None
+    return _coordinators.get(_sandbox(agent), {}).get(_db_key(agent.db))
+
+
+def _register_on_db(db: Any, result: "SandboxCoordinator") -> None:
+    """The db's session delete asks every coordinator registered on it what the cascade would orphan."""
+    registered = getattr(db, "sandbox_coordinators", None)
+    if registered is None:
+        registered = []
+        db.sandbox_coordinators = registered
+    if result not in registered:
+        registered.append(result)
 
 
 async def acheck_tables(agent: "BaseExternalAgent", create: bool = True) -> None:
@@ -141,9 +177,9 @@ def store(agent: "BaseExternalAgent") -> "CheckpointStore":
     reader opens exactly the store its turns commit to.
     """
     sandbox = _sandbox(agent)
-    for db, existing in _coordinators.get(sandbox, []):
-        if db is agent.db:
-            return existing.transfer.store
+    existing = _existing_coordinator(agent)
+    if existing is not None:
+        return existing.transfer.store
     if sandbox.checkpoints is not None:
         return sandbox.checkpoints
     from agno.os.job_queue import get_active_queue_worker
@@ -164,25 +200,19 @@ def coordinator(agent: "BaseExternalAgent") -> "SandboxCoordinator":
 
     sandbox = _sandbox(agent)
     _check_db(agent)
-    built = _coordinators.setdefault(sandbox, [])
-    for db, existing in built:
-        if db is agent.db:
-            existing.agent_ids.add(agent.get_id())
-            return existing
-    result = SandboxCoordinator(
-        agent.db,  # type: ignore[arg-type]
-        sandbox,
-        sandbox.checkpoint_transfer(store(agent)),
-        retain_checkpoints=sandbox.retain_checkpoints,
-    )
+    built = _coordinators.setdefault(sandbox, {})
+    key = _db_key(agent.db)
+    result = built.get(key)
+    if result is None:
+        result = SandboxCoordinator(
+            agent.db,  # type: ignore[arg-type]
+            sandbox,
+            sandbox.checkpoint_transfer(store(agent)),
+            retain_checkpoints=sandbox.retain_checkpoints,
+        )
+        built[key] = result
     result.agent_ids.add(agent.get_id())
-    built.append((agent.db, result))
-    # The db's session delete asks every coordinator registered on it what the cascade would orphan.
-    registered = getattr(agent.db, "sandbox_coordinators", None)
-    if registered is None:
-        registered = []
-        agent.db.sandbox_coordinators = registered  # type: ignore[union-attr]
-    registered.append(result)
+    _register_on_db(agent.db, result)
     return result
 
 
