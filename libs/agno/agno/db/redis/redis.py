@@ -170,8 +170,8 @@ class RedisDb(BaseDb):
 
         # Zero means never refreshed; get_os_metrics uses this to refresh lazily, at most once per minute
         self._os_metrics_refreshed_at: float = 0.0
-        # The OS metrics lock scripts register lazily. A server without scripting (fakeredis without lupa) holds the
-        # lock with WATCH transactions instead
+        # The OS metrics lock scripts register lazily; a server without scripting (fakeredis, restricted managed
+        # Redis) holds the lock with WATCH transactions instead
         self._extend_os_metrics_lock_script: Optional[Any] = None
         self._unlock_os_metrics_script: Optional[Any] = None
         self._os_metrics_scripting_unavailable = False
@@ -1708,11 +1708,11 @@ class RedisDb(BaseDb):
             return None
         lock_key = self._os_metrics_lock_key()
         try:
-            if self._extend_os_metrics_lock_script is None or self._unlock_os_metrics_script is None:
+            if self._extend_os_metrics_lock_script is None:
                 self._extend_os_metrics_lock_script = self.redis_client.register_script(_EXTEND_OS_METRICS_LOCK_LUA)
                 self._unlock_os_metrics_script = self.redis_client.register_script(_UNLOCK_OS_METRICS_LUA)
             if unlock:
-                return int(self._unlock_os_metrics_script(keys=[lock_key], args=[token]))
+                return int(self._unlock_os_metrics_script(keys=[lock_key], args=[token]))  # type: ignore[misc]
             return int(self._extend_os_metrics_lock_script(keys=[lock_key], args=[token, OS_METRICS_LOCK_MILLISECONDS]))
         except ResponseError as e:
             message = str(e).lower()
@@ -2045,6 +2045,8 @@ class RedisDb(BaseDb):
             record_ids = self._get_os_metrics_record_ids_of_days(month_days)
             per_owner: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
             for batch_start in range(0, len(record_ids), OS_METRICS_BATCH_SIZE):
+                # Renewed after each batch read, so a month that takes longer than OS_METRICS_LOCK_MILLISECONDS to
+                # read keeps the lock
                 if not self._extend_os_metrics_lock(lock_token):
                     return results
                 add_month_os_metrics(
@@ -2134,7 +2136,7 @@ class RedisDb(BaseDb):
             # A rebuild that lost the lock stops: the process that holds it calculates the days left
             if sessions_by_day is None or runs_by_day is None:
                 log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
-                return [], []
+                return None
 
             # Runs not yet migrated out of the legacy runs field, by the day they were created on, as the v3.0.0
             # migration dates them. A legacy run the runs table also holds is counted from the runs read from there

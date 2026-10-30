@@ -15,7 +15,7 @@ try:
     from google.cloud.firestore import FieldFilter, Increment
 
     from agno.db.firestore import FirestoreDb
-    from agno.db.firestore.utils import bulk_upsert_os_metrics, deserialize_os_metrics_record
+    from agno.db.firestore.utils import bulk_upsert_os_metrics, deserialize_os_metrics_record, lock_os_metrics
 except ImportError:
     FirestoreDb = None  # type: ignore[misc,assignment]
 
@@ -314,8 +314,7 @@ def test_calculate_os_metrics_keeps_the_lock_through_a_day_longer_than_it(
     """Ensure the lock is renewed between the reads of a day, so a day that reads for longer than the lock is
     written and another rebuild cannot take the lock meanwhile"""
     clock = [time.time()]
-    monkeypatch.setattr("agno.db.firestore.firestore.time", SimpleNamespace(time=lambda: clock[0], sleep=time.sleep))
-    monkeypatch.setattr("agno.db.firestore.utils.time", SimpleNamespace(time=lambda: clock[0]))
+    monkeypatch.setattr("agno.db.firestore.utils.time", SimpleNamespace(time=lambda: clock[0], sleep=time.sleep))
     totals_collection_ref = firestore_db.db_client.collection("test_os_metrics_totals")
     taken_over: List[bool] = []
 
@@ -323,7 +322,7 @@ def test_calculate_os_metrics_keeps_the_lock_through_a_day_longer_than_it(
         def call(*args):
             clock[0] += 40
             if take_over:
-                taken_over.append(firestore_db._lock_os_metrics(totals_collection_ref, False) is not None)
+                taken_over.append(lock_os_metrics(totals_collection_ref, False) is not None)
             return function(*args)
 
         return call

@@ -185,6 +185,11 @@ def _unique_os_dbs(
     return unique_dbs
 
 
+def _os_metrics_user_rows_lag(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> bool:
+    """True when the database reads one owner's OS metrics rows from an index that follows a write a moment later."""
+    return getattr(db, "os_metrics_user_rows_lag", False) is True
+
+
 def get_metrics_router(
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -849,11 +854,8 @@ def attach_routes(
         """Keep the answer of a read route under its key, when no database changed while it was read."""
         if key is None or os_metrics_response.window_days > _MAX_OS_METRICS_KEPT_WINDOW_DAYS:
             return
-        # One owner's rows that follow a write a moment later could be kept from before a rebuild under the versions
-        # after it, so their answers are read again every time
-        if effective_user_id and any(
-            getattr(db, "os_metrics_user_rows_lag", False) is True for db_list in os_dbs.values() for db in db_list
-        ):
+        # One owner's rows that lag a write could be kept from before a rebuild, so their answers are never kept
+        if effective_user_id and any(_os_metrics_user_rows_lag(db) for db_list in os_dbs.values() for db in db_list):
             return
         # A database that timed out or failed may answer the next request, so an answer without it is not kept
         if any(reason != "unsupported" for reason in os_metrics_response.skipped_db_ids.values()):

@@ -86,8 +86,13 @@ class _FakeGlideClient:
         self.sets: Dict[str, set] = {}
         self.zsets: Dict[str, Dict[str, float]] = {}
         self.hashes: Dict[str, Dict[str, bytes]] = {}
+        # When each key with an expiry expires, by the clock the server reads
+        self.expires_at: Dict[str, float] = {}
+        self.clock = time.time
 
     def _kind(self, key: str) -> Optional[str]:
+        if key in self.expires_at and self.expires_at[key] <= self.clock():
+            self.delete([key])
         if key in self.strings:
             return "string"
         if key in self.sets:
@@ -109,6 +114,8 @@ class _FakeGlideClient:
         if conditional_set is not None and self._kind(key) is not None:
             return None
         self.strings[key] = value.encode() if isinstance(value, str) else value
+        if expiry is not None:
+            self.expires_at[key] = self.clock() + expiry.value
         return "OK"
 
     def delete(self, keys):
@@ -118,6 +125,7 @@ class _FakeGlideClient:
                 if key in store:
                     del store[key]
                     deleted += 1
+            self.expires_at.pop(key, None)
         return deleted
 
     def scan(self, cursor="0", match=None, count=None):
@@ -169,6 +177,9 @@ class _FakeGlideClient:
         return [entries.get(field) for field in fields]
 
     def expire(self, key, seconds, option=None):
+        if self._kind(key) is None:
+            return False
+        self.expires_at[key] = self.clock() + seconds
         return True
 
     # -- transactions --
@@ -206,6 +217,8 @@ class _FakeGlideClient:
                     results.append(self.hincrby(command[1], command[2], command[3]))
                 elif op == "hmget":
                     results.append(self.hmget(command[1], command[2]))
+                elif op == "expire":
+                    results.append(self.expire(command[1], command[2]))
                 else:
                     results.append(True)
             except _RequestError as exc:
@@ -421,3 +434,64 @@ def test_first_build_reads_sessions_in_batches(valkey_db):
 
     totals = {record["date"]: record for record in valkey_db._get_all_os_metrics_totals_records()}
     assert totals[_utc_date(2)]["sessions_count"] == 200
+
+
+def _slow_day_reads(valkey_db, monkeypatch) -> List[bool]:
+    """Make the nested run lookup and the rollup of a day take 40 s each, together longer than the lock, and let
+    another rebuild try to take the lock during the rollup. Returns whether each try took it"""
+    import agno.db.valkey.valkey as valkey_module
+
+    clock = [time.time()]
+    valkey_db.valkey_client.clock = lambda: clock[0]
+    taken_over: List[bool] = []
+
+    def slow(function, take_over: bool = False):
+        def call(*args):
+            clock[0] += 40
+            if take_over:
+                taken_over.append(valkey_db._lock_os_metrics(wait_for_rebuild=False) is not None)
+            return function(*args)
+
+        return call
+
+    monkeypatch.setattr(valkey_module, "os_metrics_nested_run_ids", slow(valkey_module.os_metrics_nested_run_ids))
+    monkeypatch.setattr(
+        valkey_module, "calculate_date_os_metrics", slow(valkey_module.calculate_date_os_metrics, take_over=True)
+    )
+    return taken_over
+
+
+def test_a_day_that_reads_for_longer_than_the_lock_keeps_it(valkey_db, monkeypatch):
+    """The lock is renewed between the reads of a day, so a day that reads for longer than the lock is written"""
+    # A parent run created before the days rebuilt, so each day reads it from the runs table, which renews the lock
+    parent_run = RunOutput(run_id="parent_run", agent_id="agent-1", user_id="alice", created_at=_noon_utc(_utc_date(9)))
+    valkey_db.upsert_run(parent_run, session_id="parent_session", user_id="alice", run_index=0)
+    for days_ago in (1, 0):
+        session_id = f"alice_session_{days_ago}"
+        valkey_db.upsert_session(
+            AgentSession(
+                session_id=session_id,
+                agent_id="agent-1",
+                user_id="alice",
+                created_at=_noon_utc(_utc_date(days_ago)),
+                updated_at=_noon_utc(_utc_date(days_ago)),
+            )
+        )
+        member_run = RunOutput(
+            run_id=f"member_run_{days_ago}",
+            agent_id="agent-1",
+            user_id="alice",
+            parent_run_id="parent_run",
+            created_at=_noon_utc(_utc_date(days_ago)),
+        )
+        valkey_db.upsert_run(member_run, session_id=session_id, user_id="alice", run_index=0)
+    taken_over = _slow_day_reads(valkey_db, monkeypatch)
+
+    valkey_db.calculate_os_metrics()
+
+    assert taken_over == [False, False]
+    totals = valkey_db._get_all_os_metrics_totals_records()
+    assert sorted(record["date"] for record in totals if record["aggregation_period"] == "daily") == [
+        _utc_date(1),
+        _utc_date(0),
+    ]

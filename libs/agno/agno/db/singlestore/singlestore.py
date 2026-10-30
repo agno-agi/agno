@@ -2415,7 +2415,15 @@ class SingleStoreDb(BaseDb):
             unlock_os_metrics(session=sess, table=table, held_until=held_until)
 
     def _extend_os_metrics_lock(self, table: Table, held_until: int) -> Optional[int]:
-        """Extend the lock row of the OS metrics totals table taken until the given time."""
+        """Extend the lock row of the OS metrics totals table taken until the given time.
+
+        Args:
+            table (Table): The OS metrics totals table.
+            held_until (int): The time the lock was taken or last extended until.
+
+        Returns:
+            Optional[int]: The time the lock is now held until. None when another process holds it.
+        """
         # A session of its own, not the scoped one, so it commits while a day's or month's transaction is still open
         with self.Session.session_factory() as sess, sess.begin():
             return extend_os_metrics_lock(session=sess, table=table, held_until=held_until)

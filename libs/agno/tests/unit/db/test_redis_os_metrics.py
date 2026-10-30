@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import time
 from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Dict, List
 
 import pytest
@@ -201,23 +202,41 @@ def test_month_rows_of_a_completed_month(db):
     assert totals == {"input_tokens": 150}
 
 
-def test_lock_renewed_while_a_day_is_read(db, monkeypatch: pytest.MonkeyPatch):
-    """A day whose reads outlast the lock is still written, as every read batch renews the lock."""
+def _slow_day_reads(db, monkeypatch: pytest.MonkeyPatch) -> List[bool]:
+    """Make the nested run lookup and the rollup of a day take 40 s each, together longer than the lock, and let
+    another rebuild try to take the lock during the rollup. Returns whether each try took it"""
     import agno.db.redis.redis as redis_module
 
-    _persist(db, "alice_session", "alice", _utc_date(2), [100])
-    monkeypatch.setattr(redis_module, "OS_METRICS_LOCK_MILLISECONDS", 300)
-    monkeypatch.setattr(redis_module, "OS_METRICS_BATCH_SIZE", 1)
-    # Four slow lookups of nested runs, 0.6 s in all, twice the lock
-    monkeypatch.setattr(redis_module, "os_metrics_nested_run_ids", lambda runs: {f"nested_{i}" for i in range(4)})
-    generate_redis_key = redis_module.generate_redis_key
+    clock = [time.time()]
+    monkeypatch.setattr("fakeredis._basefakesocket.time", SimpleNamespace(time=lambda: clock[0], sleep=time.sleep))
+    taken_over: List[bool] = []
 
-    def slow_generate_redis_key(prefix: str, table_type: str, key_id: str) -> str:
-        if key_id.startswith("nested_"):
-            time.sleep(0.15)
-        return generate_redis_key(prefix=prefix, table_type=table_type, key_id=key_id)
+    def slow(function, take_over: bool = False):
+        def call(*args):
+            clock[0] += 40
+            if take_over:
+                taken_over.append(db._lock_os_metrics(wait_for_rebuild=False) is not None)
+            return function(*args)
 
-    monkeypatch.setattr(redis_module, "generate_redis_key", slow_generate_redis_key)
+        return call
 
-    _, written_totals_rows = db._calculate_os_metrics(wait_for_rebuild=False)
-    assert [record["date"] for record in written_totals_rows] == [_utc_date(2), _utc_date(1), _utc_date(0)]
+    # One nested run per day, so its lookup renews the lock between the reads of the day
+    monkeypatch.setattr(redis_module, "os_metrics_nested_run_ids", slow(lambda runs: {"nested_run"}))
+    monkeypatch.setattr(
+        redis_module, "calculate_date_os_metrics", slow(redis_module.calculate_date_os_metrics, take_over=True)
+    )
+    return taken_over
+
+
+def test_a_day_that_reads_for_longer_than_the_lock_keeps_it(db, monkeypatch: pytest.MonkeyPatch):
+    """The lock is renewed between the reads of a day, so a day that reads for longer than the lock is written"""
+    _persist(db, "alice_session", "alice", _utc_date(1), [100])
+    taken_over = _slow_day_reads(db, monkeypatch)
+
+    db.calculate_os_metrics()
+
+    assert taken_over == [False, False]
+    assert [record["date"] for record in _totals_records(db) if record["aggregation_period"] == "daily"] == [
+        _utc_date(1),
+        _utc_date(0),
+    ]

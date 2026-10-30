@@ -11,9 +11,6 @@ from agno.db.base import BaseDb, SessionType
 from agno.db.firestore.utils import (
     OS_METRICS_BATCH_SIZE,
     OS_METRICS_IN_LIST_LIMIT,
-    OS_METRICS_LOCK_ID,
-    OS_METRICS_LOCK_RETRY_SECONDS,
-    OS_METRICS_LOCK_SECONDS,
     apply_pagination,
     apply_sorting,
     bulk_upsert_metrics,
@@ -24,8 +21,10 @@ from agno.db.firestore.utils import (
     extend_os_metrics_lock,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    lock_os_metrics,
     os_metrics_record_id,
     os_metrics_totals_record_id,
+    unlock_os_metrics,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -1864,57 +1863,6 @@ class FirestoreDb(BaseDb):
 
         return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
 
-    def _lock_os_metrics(self, totals_collection_ref, wait_for_rebuild: bool) -> Optional[str]:
-        """Take the lock one rebuild of the OS metrics holds at a time: a lock document created only when absent.
-
-        The lock document expires, so a process that stopped mid-rebuild never holds it for good.
-
-        Args:
-            totals_collection_ref: The OS metrics totals collection, which holds the lock document.
-            wait_for_rebuild (bool): Wait for a rebuild another process is running. When False, skip instead.
-
-        Returns:
-            Optional[str]: The token the lock is held under. ``None`` when another process holds it and
-                wait_for_rebuild is False.
-        """
-        from google.api_core.exceptions import AlreadyExists, FailedPrecondition, NotFound
-
-        lock_ref = totals_collection_ref.document(OS_METRICS_LOCK_ID)
-        token = str(uuid4())
-
-        while True:
-            try:
-                lock_ref.create({"token": token, "expires_at": time.time() + OS_METRICS_LOCK_SECONDS})
-                return token
-            except AlreadyExists:
-                snapshot = lock_ref.get()
-                if snapshot.exists and (snapshot.to_dict() or {}).get("expires_at", 0) <= time.time():
-                    try:
-                        lock_ref.delete(option=self.db_client.write_option(last_update_time=snapshot.update_time))
-                    except (FailedPrecondition, NotFound):
-                        pass
-                    continue
-            if not wait_for_rebuild:
-                return None
-            time.sleep(OS_METRICS_LOCK_RETRY_SECONDS)
-
-    def _unlock_os_metrics(self, totals_collection_ref, token: str) -> None:
-        """Release the lock taken by _lock_os_metrics, unless it expired and another process took it.
-
-        Args:
-            totals_collection_ref: The OS metrics totals collection, which holds the lock document.
-            token (str): The token the lock is held under.
-        """
-        from google.api_core.exceptions import FailedPrecondition, NotFound
-
-        lock_ref = totals_collection_ref.document(OS_METRICS_LOCK_ID)
-        snapshot = lock_ref.get()
-        if snapshot.exists and (snapshot.to_dict() or {}).get("token") == token:
-            try:
-                lock_ref.delete(option=self.db_client.write_option(last_update_time=snapshot.update_time))
-            except (FailedPrecondition, NotFound):
-                pass
-
     def _calculate_month_os_metrics(
         self, collection_ref, totals_collection_ref, wait_for_rebuild: bool
     ) -> List[Dict[str, Any]]:
@@ -1933,7 +1881,7 @@ class FirestoreDb(BaseDb):
         """
         results: List[Dict[str, Any]] = []
         # Under the days' lock, so a month is written by one rebuild only
-        token = self._lock_os_metrics(totals_collection_ref, wait_for_rebuild)
+        token = lock_os_metrics(totals_collection_ref, wait_for_rebuild)
         if token is None:
             return results
 
@@ -1996,7 +1944,7 @@ class FirestoreDb(BaseDb):
                 results.append(totals_row)
 
         finally:
-            self._unlock_os_metrics(totals_collection_ref, token)
+            unlock_os_metrics(totals_collection_ref, token)
 
         return results
 
@@ -2119,7 +2067,7 @@ class FirestoreDb(BaseDb):
         for date_to_process in dates_to_process:
             # One rebuild of this collection at a time: a second one waits here, or skips when told not to wait.
             # The lock is released once the day is written, so a day that fails never holds back the days before it
-            token = self._lock_os_metrics(totals_collection_ref, wait_for_rebuild)
+            token = lock_os_metrics(totals_collection_ref, wait_for_rebuild)
             if token is None:
                 # Reset the throttle so the next read tries again
                 self._os_metrics_refreshed_at = 0.0
@@ -2275,7 +2223,7 @@ class FirestoreDb(BaseDb):
                 results.extend(records)
 
             finally:
-                self._unlock_os_metrics(totals_collection_ref, token)
+                unlock_os_metrics(totals_collection_ref, token)
 
         written_totals_rows.extend(
             self._calculate_month_os_metrics(collection_ref, totals_collection_ref, wait_for_rebuild)

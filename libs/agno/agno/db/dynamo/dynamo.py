@@ -99,7 +99,6 @@ OS_METRICS_LOCK_RETRY_SECONDS = 0.1
 
 
 class DynamoDb(BaseDb):
-    # One owner's OS metrics rows come from a global index, which follows a write a moment later
     os_metrics_user_rows_lag: bool = True
 
     def __init__(

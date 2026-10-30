@@ -2390,8 +2390,8 @@ class ValkeyDb(BaseDb):
             lock_token (str): The token the OS metrics lock is held with.
 
         Returns:
-            Optional[date]: The starting date for which OS metrics calculation is needed. None too when the lock was
-                lost.
+            Optional[date]: The starting date for which OS metrics calculation is needed. None when the OS metrics
+                lock was lost.
         """
         # resume at the earliest incomplete day after the latest completed one, otherwise the
         # day after that one
@@ -2410,14 +2410,10 @@ class ValkeyDb(BaseDb):
         if starting_date is not None:
             return starting_date
 
-        # 2. No total records. Return the date of the first recorded session, read a batch at a time as the rebuild
-        # reads them, so a large table never runs past the request timeout and a failed read raises
+        # 2. No total records. Return the date of the first recorded session, or None when there is none.
+        # Sessions have no index by date, so every session is read, a batch at a time
         sessions_read = self._get_records_for_os_metrics_calculation("sessions", 0, lock_token)
-        if sessions_read is not None and sessions_read[0]:
-            return min(sessions_read[0])
-
-        # 3. No total records and no sessions records. Return None.
-        return None
+        return min(sessions_read[0] if sessions_read is not None else {}, default=None)
 
     def _calculate_month_os_metrics(self, lock_token: str) -> List[Dict[str, Any]]:
         """Calculate the month records of every completed month that has none.
@@ -2455,6 +2451,8 @@ class ValkeyDb(BaseDb):
             ]
             per_owner: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
             for batch_start in range(0, len(record_ids), OS_METRICS_BATCH_SIZE):
+                # Renewed after each batch read, so a month that takes longer than OS_METRICS_LOCK_SECONDS to read
+                # keeps the lock
                 if not self._extend_os_metrics_lock(lock_token):
                     return results
                 add_month_os_metrics(

@@ -5,6 +5,7 @@ import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
+from uuid import uuid4
 
 from agno.db.firestore.schemas import get_collection_indexes
 from agno.db.utils import get_sort_value, metric_record_day
@@ -409,9 +410,45 @@ def deserialize_os_metrics_record(record: Dict[str, Any]) -> Dict[str, Any]:
     return {**record, "date": metric_record_day(record)}
 
 
+def lock_os_metrics(totals_collection_ref, wait_for_rebuild: bool) -> Optional[str]:
+    """Take the lock one rebuild of the OS metrics holds at a time: a lock document created only when absent.
+
+    The lock document expires, so a process that stopped mid-rebuild never holds it for good.
+
+    Args:
+        totals_collection_ref: The OS metrics totals collection, which holds the lock document.
+        wait_for_rebuild (bool): Wait for a rebuild another process is running. When False, skip instead.
+
+    Returns:
+        Optional[str]: The token the lock is held under. ``None`` when another process holds it and
+            wait_for_rebuild is False.
+    """
+    from google.api_core.exceptions import AlreadyExists, FailedPrecondition, NotFound
+
+    lock_ref = totals_collection_ref.document(OS_METRICS_LOCK_ID)
+    token = str(uuid4())
+
+    while True:
+        try:
+            lock_ref.create({"token": token, "expires_at": time.time() + OS_METRICS_LOCK_SECONDS})
+            return token
+        except AlreadyExists:
+            snapshot = lock_ref.get()
+            if snapshot.exists and (snapshot.to_dict() or {}).get("expires_at", 0) <= time.time():
+                try:
+                    lock_ref.delete(
+                        option=totals_collection_ref._client.write_option(last_update_time=snapshot.update_time)
+                    )
+                except (FailedPrecondition, NotFound):
+                    pass
+                continue
+        if not wait_for_rebuild:
+            return None
+        time.sleep(OS_METRICS_LOCK_RETRY_SECONDS)
+
+
 def extend_os_metrics_lock(totals_collection_ref, token: str) -> bool:
-    """Hold the lock taken by FirestoreDb._lock_os_metrics for OS_METRICS_LOCK_SECONDS more, unless another process
-    took it.
+    """Hold the OS metrics lock for OS_METRICS_LOCK_SECONDS more, unless another process took it.
 
     Args:
         totals_collection_ref: The OS metrics totals collection, which holds the lock document.
@@ -434,6 +471,24 @@ def extend_os_metrics_lock(totals_collection_ref, token: str) -> bool:
         except (FailedPrecondition, NotFound):
             pass
     return False
+
+
+def unlock_os_metrics(totals_collection_ref, token: str) -> None:
+    """Release the OS metrics lock, unless it expired and another process took it.
+
+    Args:
+        totals_collection_ref: The OS metrics totals collection, which holds the lock document.
+        token (str): The token the lock is held under.
+    """
+    from google.api_core.exceptions import FailedPrecondition, NotFound
+
+    lock_ref = totals_collection_ref.document(OS_METRICS_LOCK_ID)
+    snapshot = lock_ref.get()
+    if snapshot.exists and (snapshot.to_dict() or {}).get("token") == token:
+        try:
+            lock_ref.delete(option=totals_collection_ref._client.write_option(last_update_time=snapshot.update_time))
+        except (FailedPrecondition, NotFound):
+            pass
 
 
 def bulk_upsert_os_metrics(
