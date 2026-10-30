@@ -1,0 +1,91 @@
+[
+  {
+    "name": "wrong_tool_expectation",
+    "agent_id": "math-tutor",
+    "input": "Use only add to calculate 2 + 2. Do not call subtract.",
+    "tags": [
+      "sample",
+      "negative"
+    ],
+    "timeout_seconds": 90,
+    "expected_tool_calls": [
+      "subtract"
+    ],
+    "allow_additional_tool_calls": false
+  },
+  {
+    "name": "missing_second_tool",
+    "input": "Use only add to calculate 6 + 4. Do not call multiply.",
+    "expected_tool_calls": [
+      "add",
+      "multiply"
+    ],
+    "allow_additional_tool_calls": true,
+    "agent_id": "math-tutor",
+    "tags": [
+      "sample",
+      "negative"
+    ],
+    "timeout_seconds": 90
+  },
+  {
+    "name": "wrong_answer_expectation",
+    "agent_id": "math-tutor",
+    "input": "Use add to calculate 2 + 2. State only the actual result returned by the tool.",
+    "tags": [
+      "sample",
+      "negative"
+    ],
+    "timeout_seconds": 90,
+    "expected_tool_calls": [
+      "add"
+    ],
+    "allow_additional_tool_calls": true,
+    "criteria": "The response explicitly states that the result of 2 + 2 is 5."
+  },
+  {
+    "name": "numeric_score_below_threshold",
+    "input": "Use multiply to calculate 3 times 3. State only the actual result returned by the tool.",
+    "expected_tool_calls": [
+      "multiply"
+    ],
+    "criteria": "The response explicitly states that 3 times 3 equals 12. Score 1 if it instead gives 9; score 10 only if it explicitly gives 12.",
+    "judge_mode": "numeric",
+    "judge_threshold": 8,
+    "agent_id": "math-tutor",
+    "tags": [
+      "sample",
+      "negative"
+    ],
+    "timeout_seconds": 90
+  },
+  {
+    "name": "additional_tools_forbidden",
+    "agent_id": "math-tutor",
+    "input": "Call add to calculate 2 + 3, then call multiply to multiply the result by 4. State the final result.",
+    "tags": [
+      "sample",
+      "negative"
+    ],
+    "timeout_seconds": 90,
+    "expected_tool_calls": [
+      "add"
+    ],
+    "allow_additional_tool_calls": false
+  },
+  {
+    "name": "judge_and_tool_failure",
+    "input": "Use only subtract to calculate 10 - 3. State only the actual result returned by the tool.",
+    "expected_tool_calls": [
+      "add"
+    ],
+    "allow_additional_tool_calls": false,
+    "criteria": "The response explicitly states that the result is 99.",
+    "agent_id": "math-tutor",
+    "tags": [
+      "sample",
+      "negative"
+    ],
+    "timeout_seconds": 90
+  }
+]
