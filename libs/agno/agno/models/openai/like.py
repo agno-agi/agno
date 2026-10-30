@@ -29,3 +29,7 @@ class OpenAILike(OpenAIChat):
 
     def get_provider(self) -> str:
         return Model.get_provider(self)
+
+    def _has_fixed_sampling_params(self) -> bool:
+        # A compatible provider's model ids say nothing about OpenAI's sampling rules.
+        return False
