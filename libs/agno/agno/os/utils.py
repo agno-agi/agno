@@ -317,6 +317,12 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
     return kwargs
 
 
+def public_scheme(request: Request) -> str:
+    """Request scheme, upgraded to https when a TLS-terminating proxy reports it in ``X-Forwarded-Proto``."""
+    forwarded = {proto.strip().lower() for proto in request.headers.get("x-forwarded-proto", "").split(",")}
+    return "https" if "https" in forwarded else request.url.scheme
+
+
 async def is_form_field_omitted(request: Request, name: str) -> bool:
     """Whether the client left the form field ``name`` out of the request.
 

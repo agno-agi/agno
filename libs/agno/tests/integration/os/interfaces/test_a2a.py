@@ -1243,3 +1243,32 @@ def test_a2a_streaming_workflow(test_workflow: Workflow, test_workflow_client: T
         final_task = events[-1]
         assert final_task["result"]["kind"] == "task"
         assert final_task["result"]["status"]["state"] in ["completed", "failed"]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/a2a/agents/card-agent/.well-known/agent-card.json",
+        "/a2a/teams/card-team/.well-known/agent-card.json",
+        "/a2a/workflows/card-workflow/.well-known/agent-card.json",
+    ],
+)
+def test_agent_card_url_follows_forwarded_proto(path: str):
+    """Behind a TLS-terminating proxy the card must advertise https, not the proxy-to-app http."""
+
+    async def echo_step(input: str) -> str:
+        return input
+
+    agent = Agent(id="card-agent", name="Card Agent")
+    team = Team(id="card-team", name="Card Team", members=[Agent(id="card-member")])
+    workflow = Workflow(id="card-workflow", name="Card Workflow", steps=[echo_step])
+    client = TestClient(
+        AgentOS(agents=[agent], teams=[team], workflows=[workflow], a2a_interface=True).get_app(),
+        base_url="http://agentos.onrender.com",
+    )
+
+    plain = client.get(path).json()["url"]
+    proxied = client.get(path, headers={"X-Forwarded-Proto": "https"}).json()["url"]
+
+    assert plain.startswith("http://agentos.onrender.com/a2a/")
+    assert proxied == plain.replace("http://", "https://", 1)
