@@ -43,6 +43,17 @@ def nested_model_dump(value):
     return value
 
 
+def restore_integers(value: Any) -> Any:
+    """Turn the whole-number floats of data read back from JSON numbers into integers"""
+    if isinstance(value, float) and value.is_integer() and abs(value) < 2**53:
+        return int(value)
+    if isinstance(value, dict):
+        return {key: restore_integers(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [restore_integers(item) for item in value]
+    return value
+
+
 def is_typed_dict(cls: Type[Any]) -> bool:
     """Check if a class is a TypedDict"""
     return (

@@ -44,7 +44,7 @@ class RemoteTeam(BaseRemote):
             team_id: ID of remote team on the remote server
             timeout: Request timeout in seconds (default: 300)
             protocol: Communication protocol - "agentos" (default) or "a2a"
-            a2a_protocol: For A2A protocol only - Whether to use JSON-RPC or REST protocol.
+            a2a_protocol: Deprecated. For A2A protocol, the protocol is negotiated from the Agent Card.
             config_ttl: Time-to-live for cached config in seconds (default: 300)
         """
         super().__init__(base_url, timeout, protocol, a2a_protocol, config_ttl)
@@ -447,6 +447,12 @@ class RemoteTeam(BaseRemote):
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
         headers = self._get_auth_headers(auth_token)
+        if self.a2a_client:
+            try:
+                task_result = await self.a2a_client.cancel_task(run_id, headers=headers)
+                return task_result.is_canceled
+            except Exception:
+                return False
         try:
             await self.agentos_client.cancel_team_run(  # type: ignore
                 team_id=self.team_id,
@@ -510,6 +516,17 @@ class RemoteTeam(BaseRemote):
         """
         headers = self._get_auth_headers(auth_token)
 
+        # A2A protocol path
+        if self.a2a_client:
+            return self._acontinue_run_a2a(  # type: ignore[return-value]
+                run_id=run_id,
+                requirements=requirements,
+                stream=stream or False,
+                user_id=user_id,
+                context_id=session_id,  # Map session_id → context_id for A2A
+                headers=headers,
+            )
+
         if self.agentos_client:
             if stream:
                 # Handle streaming response
@@ -533,4 +550,81 @@ class RemoteTeam(BaseRemote):
                     **kwargs,
                 )
         else:
-            raise ValueError("No client available for continue_run. A2A protocol does not support continue_run.")
+            raise ValueError("No client available")
+
+    def _acontinue_run_a2a(
+        self,
+        run_id: str,
+        requirements: List[Any],
+        stream: bool,
+        user_id: Optional[str],
+        context_id: Optional[str],
+        headers: Optional[Dict[str, str]],
+    ) -> Union[TeamRunOutput, AsyncIterator[TeamRunOutputEvent]]:
+        """Continue a paused run via A2A protocol.
+
+        Args:
+            run_id: The run_id to continue (maps to the A2A task id)
+            requirements: Resolved requirements of the paused run
+            stream: Whether to stream the response
+            user_id: User identifier
+            context_id: Session/context ID (maps to session_id)
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            TeamRunOutput for non-streaming, AsyncIterator[TeamRunOutputEvent] for streaming
+        """
+        from agno.client.a2a.utils import map_stream_events_to_team_run_events
+
+        if not self.a2a_client:
+            raise ValueError("A2A client not available")
+
+        data = {
+            "requirements": [
+                requirement.to_dict() if hasattr(requirement, "to_dict") else requirement
+                for requirement in requirements or []
+            ]
+        }
+        if stream:
+            # Return async generator for streaming
+            event_stream = self.a2a_client.stream_message(
+                message="",
+                context_id=context_id,
+                user_id=user_id,
+                headers=headers,
+                task_id=run_id,
+                data=data,
+            )
+            return map_stream_events_to_team_run_events(event_stream, team_id=self.team_id)
+        else:
+            # Return coroutine for non-streaming
+            return self._acontinue_run_a2a_send(  # type: ignore[return-value]
+                run_id=run_id,
+                data=data,
+                user_id=user_id,
+                context_id=context_id,
+                headers=headers,
+            )
+
+    async def _acontinue_run_a2a_send(
+        self,
+        run_id: str,
+        data: Dict[str, Any],
+        user_id: Optional[str],
+        context_id: Optional[str],
+        headers: Optional[Dict[str, str]],
+    ) -> TeamRunOutput:
+        """Send a non-streaming A2A continue message and convert response to TeamRunOutput."""
+        if not self.a2a_client:
+            raise ValueError("A2A client not available")
+        from agno.client.a2a.utils import map_task_result_to_team_run_output
+
+        task_result = await self.a2a_client.send_message(
+            message="",
+            context_id=context_id,
+            user_id=user_id,
+            headers=headers,
+            task_id=run_id,
+            data=data,
+        )
+        return map_task_result_to_team_run_output(task_result, team_id=self.team_id, user_id=user_id)

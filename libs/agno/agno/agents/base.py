@@ -57,7 +57,7 @@ from agno.run.base import RunStatus
 from agno.session.agent import AgentSession
 from agno.utils.events import error_type_of
 from agno.utils.log import log_exception, log_warning
-from agno.utils.serialize import json_serializer
+from agno.utils.serialize import to_json_types
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
 
 if TYPE_CHECKING:
@@ -844,7 +844,7 @@ class BaseExternalAgent:
         if forwarded.get("metadata") is not None:
             # The sandbox takes metadata as JSON. Values such as datetimes become text, as Agno stores them
             # elsewhere; a value JSON cannot hold fails the member's run instead of the team's tool call.
-            forwarded["metadata"] = json.loads(json.dumps(forwarded["metadata"], default=json_serializer))
+            forwarded["metadata"] = to_json_types(forwarded["metadata"])
         forwarded["session_id"] = self._state_session_id(team_session_id, self._parent_id(team_id, workflow_id))
         # The sandbox creates this session; this links it back to its team or workflow, as for other agents.
         forwarded["_session_metadata"] = self._parent_metadata(team_id, workflow_id)

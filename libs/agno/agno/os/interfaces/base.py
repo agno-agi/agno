@@ -38,3 +38,7 @@ class BaseInterface(ABC):
         so entries reflect the interface's *actual* mount prefix.
         """
         return {}
+
+    async def aclose(self) -> None:
+        """Release the running work this interface holds (e.g. A2A tasks) on AgentOS shutdown. The default holds none."""
+        pass
