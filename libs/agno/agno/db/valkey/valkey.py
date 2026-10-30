@@ -2373,7 +2373,9 @@ class ValkeyDb(BaseDb):
                     return True
         return False
 
-    def _get_os_metrics_calculation_starting_date(self, totals_records: List[Dict[str, Any]]) -> Optional[date]:
+    def _get_os_metrics_calculation_starting_date(
+        self, totals_records: List[Dict[str, Any]], lock_token: str
+    ) -> Optional[date]:
         """Get the first date for which OS metrics calculation is needed:
 
         1. If there are total records of days, return the earliest day not completed after the latest completed one,
@@ -2383,9 +2385,11 @@ class ValkeyDb(BaseDb):
 
         Args:
             totals_records (List[Dict[str, Any]]): Every OS metrics totals record.
+            lock_token (str): The token the OS metrics lock is held with.
 
         Returns:
-            Optional[date]: The starting date for which OS metrics calculation is needed.
+            Optional[date]: The starting date for which OS metrics calculation is needed. None too when the lock was
+                lost.
         """
         # resume at the earliest incomplete day after the latest completed one, otherwise the
         # day after that one
@@ -2404,11 +2408,11 @@ class ValkeyDb(BaseDb):
         if starting_date is not None:
             return starting_date
 
-        # 2. No total records. Return the date of the first recorded session.
-        sessions_raw, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
-        if sessions_raw:
-            first_session_date = sessions_raw[0]["created_at"]  # type: ignore
-            return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
+        # 2. No total records. Return the date of the first recorded session, read a batch at a time as the rebuild
+        # reads them, so a large table never runs past the request timeout and a failed read raises
+        sessions_read = self._get_records_for_os_metrics_calculation("sessions", 0, lock_token)
+        if sessions_read is not None and sessions_read[0]:
+            return min(sessions_read[0])
 
         # 3. No total records and no sessions records. Return None.
         return None
@@ -2517,7 +2521,9 @@ class ValkeyDb(BaseDb):
             return None
 
         try:
-            starting_date = self._get_os_metrics_calculation_starting_date(self._get_all_os_metrics_totals_records())
+            starting_date = self._get_os_metrics_calculation_starting_date(
+                self._get_all_os_metrics_totals_records(), lock_token
+            )
 
             if starting_date is None:
                 log_info("No session data found. Won't calculate OS metrics.")

@@ -402,3 +402,22 @@ def test_month_rows_of_a_completed_month(valkey_db):
     assert totals == {"runs_count": 3, "input_tokens": 170}
     totals, _ = valkey_db.get_os_metrics_totals(month_start, _utc_date(0), user_id="alice", fields=["input_tokens"])
     assert totals == {"input_tokens": 150}
+
+
+def test_first_build_reads_sessions_in_batches(valkey_db):
+    for index in range(200):
+        _persist(valkey_db, f"session_{index}", "alice", _utc_date(2), [10])
+    # A request of more than 150 commands times out, as one read of every session of a large table does
+    client = valkey_db.valkey_client
+
+    def exec_pipeline(pipeline):
+        if len(pipeline.commands) > 150:
+            raise TimeoutError("timed out")
+        return client.exec(pipeline)
+
+    valkey_db._exec_pipeline = exec_pipeline  # type: ignore[method-assign]
+
+    valkey_db.calculate_os_metrics()
+
+    totals = {record["date"]: record for record in valkey_db._get_all_os_metrics_totals_records()}
+    assert totals[_utc_date(2)]["sessions_count"] == 200
