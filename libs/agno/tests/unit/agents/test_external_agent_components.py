@@ -714,6 +714,19 @@ class TestRegistrySandboxes:
 
         assert registry.sandboxes == [sandbox]
 
+    def test_agentos_walk_collects_external_agents_schema_and_db(self, db):
+        registry = Registry()
+        served = ClaudeAgent(id="coder", db=db, output_schema=Answer)
+
+        collect_components_from_os([served], [], [], registry)
+
+        assert registry.get_schema("Answer") is Answer
+        assert registry.get_db(db.id) is db
+        # Another stored agent naming the same schema and db now resolves them strictly.
+        stored = ClaudeAgent(id="other", db=db, output_schema=Answer).to_dict()
+        rebuilt = ClaudeAgent.from_dict(stored, registry=registry, strict=True)
+        assert rebuilt.output_schema is Answer and rebuilt.db is db
+
     def test_agentos_registers_the_sandbox_of_a_served_external_agent(self):
         from agno.db.postgres import PostgresDb
 

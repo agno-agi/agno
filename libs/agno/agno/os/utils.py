@@ -2657,9 +2657,14 @@ def collect_components_from_os(
 
     for agent in agents or []:
         if isinstance(agent, BaseExternalAgent):
-            # A sandbox with an id is what a stored external agent refers to.
+            # What a stored external agent refers to by reference: its sandbox (by id), its
+            # db (by id) and a Pydantic output schema (by class name).
             if agent.sandbox is not None:
                 registry.add_sandbox(agent.sandbox)
+            if agent.db is not None:
+                registry.add_db(agent.db)
+            if isinstance(agent.output_schema, type):
+                registry.add_schema(agent.output_schema)
             continue
         if not isinstance(agent, Agent):
             continue
