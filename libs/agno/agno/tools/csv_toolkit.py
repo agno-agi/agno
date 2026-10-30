@@ -1,5 +1,6 @@
 import csv
 import json
+from io import StringIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -129,7 +130,7 @@ class CsvTools(Toolkit):
             sql_query (str): The SQL Query to run on the csv file.
 
         Returns:
-            str: The query results if successful, otherwise returns an error message.
+            str: The query results as CSV if successful, otherwise returns an error message.
         """
         try:
             import duckdb
@@ -170,15 +171,11 @@ class CsvTools(Toolkit):
             if query_result is not None:
                 try:
                     results_as_python_objects = query_result.fetchall()
-                    result_rows = []
-                    for row in results_as_python_objects:
-                        if len(row) == 1:
-                            result_rows.append(str(row[0]))
-                        else:
-                            result_rows.append(",".join(str(x) for x in row))
-
-                    result_data = "\n".join(result_rows)
-                    result_output = ",".join(query_result.columns) + "\n" + result_data
+                    output = StringIO(newline="")
+                    writer = csv.writer(output)
+                    writer.writerow(query_result.columns)
+                    writer.writerows([str(value) for value in row] for row in results_as_python_objects)
+                    result_output = output.getvalue().rstrip("\r\n")
                 except AttributeError:
                     result_output = str(query_result)
 
