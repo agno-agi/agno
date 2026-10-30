@@ -1815,6 +1815,19 @@ async def test_forwarded_proto_is_honoured_without_a_forwarded_host(monkeypatch)
     assert card["remotes"][0]["url"] == "https://agentos.onrender.com/mcp"
 
 
+@pytest.mark.parametrize("proto", ["http, https", "https, http", "HTTPS"])
+async def test_any_https_in_a_forwarded_proto_chain_upgrades_the_card(monkeypatch, proto):
+    """Proxies may append to the header, so https anywhere in the chain means the client used TLS."""
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: False)
+    os = AgentOS(name="Docs AgentOS", agents=[_agent()], mcp=MCPConfig(default_tools=True, name="Agno Docs"))
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app, base_url="http://agentos.onrender.com") as client:
+        card = (await client.get("/mcp/server-card", headers={"x-forwarded-proto": proto})).json()
+
+    assert card["remotes"][0]["url"] == "https://agentos.onrender.com/mcp"
+
+
 async def test_the_card_varies_on_the_headers_that_shape_it(monkeypatch):
     monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
     app = get_mcp_server(_docs_os())

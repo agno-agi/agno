@@ -46,6 +46,7 @@ from agno.os.services import sessions as session_service
 from agno.os.utils import (
     find_factory_by_id,
     get_db,
+    public_scheme,
     resolve_agent,
     resolve_team,
     resolve_workflow,
@@ -2174,9 +2175,9 @@ async def _server_card(
 
     ``X-Forwarded-Proto`` is read without that check. A proxy that terminates TLS often sends it
     with no ``X-Forwarded-Host`` at all, and gating the two together published ``http://`` for an
-    endpoint its clients only ever reach over TLS. It is safe unvalidated because only ``http``
-    and ``https`` are accepted: a caller can pick between the two schemes the endpoint already
-    speaks, which is not a host they control.
+    endpoint its clients only ever reach over TLS. It is safe unvalidated because it can only
+    upgrade the scheme to ``https`` (any ``https`` in a proxy chain wins), never name a host or
+    another scheme.
     """
     from urllib.parse import urlparse
 
@@ -2184,9 +2185,7 @@ async def _server_card(
         host = urlparse(card_url).netloc or request.headers.get("host") or request.url.netloc
         url = card_url
     else:
-        # Only the two transport schemes; anything else here would be published as the endpoint's URL.
-        forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
-        scheme = forwarded_proto if forwarded_proto in ("http", "https") else request.url.scheme
+        scheme = public_scheme(request)
         host = request.headers.get("host") or request.url.netloc
         forwarded_host = request.headers.get("x-forwarded-host", "").split(",")[0].strip()
         if forwarded_host and allowed_hosts:
