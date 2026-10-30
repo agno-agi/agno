@@ -2,6 +2,7 @@
 
 import json
 import time
+from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 from uuid import UUID
@@ -1112,8 +1113,14 @@ def _os_metrics_parent_component_id(run: Dict[str, Any], components: Dict[str, T
 
 
 def _os_metrics_nested_runs(run_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """The runs nested inside a stored run: its workflow steps' runs and its team members' runs."""
-    return (run_data.get("step_executor_runs") or []) + (run_data.get("member_responses") or [])
+    """The runs nested inside a stored run: its workflow steps' runs, its team members' runs and its workflow
+    agent's run."""
+    workflow_agent_run = run_data.get("workflow_agent_run")
+    return (
+        (run_data.get("step_executor_runs") or [])
+        + (run_data.get("member_responses") or [])
+        + ([workflow_agent_run] if workflow_agent_run else [])
+    )
 
 
 def _add_os_metrics_nested_run_ids(run_data: Dict[str, Any], nested_run_ids: Set[str]) -> None:
@@ -1152,11 +1159,12 @@ def _os_metrics_model_calls(run_data: Dict[str, Any], seen_run_ids: Set[str]) ->
 def _os_metrics_call_durations(call: Dict[str, Any]) -> List[float]:
     """How long each request of a model call took, in seconds.
 
-    Messages carried over from an earlier run are skipped.
+    Messages carried over from an earlier run are skipped: those from history, and those a forked run copied from
+    the run it was forked from.
     """
     return [
         message["metrics"]["duration"]
-        for message in call.get("messages") or []
+        for message in (call.get("messages") or [])[call.get("forked_from_message_index") or 0 :]
         if message.get("role") == "assistant"
         and not message.get("from_history")
         and (message.get("metrics") or {}).get("duration") is not None
@@ -1189,6 +1197,7 @@ def calculate_date_os_metrics(
     sessions: List[Dict[str, Any]],
     runs: List[Dict[str, Any]],
     stored_run_ids: Set[str],
+    parent_runs: Sequence[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """Calculate OS metrics for the given single date, one row per user and agent, team or workflow.
 
@@ -1202,6 +1211,8 @@ def calculate_date_os_metrics(
         runs (List[Dict[str, Any]]): The runs created on that date, as stored.
         stored_run_ids (Set[str]): The ids of the nested runs of that date that are stored as
             runs of their own, on any date. Those are counted where they are stored.
+        parent_runs (Sequence[Dict[str, Any]]): The runs of another date that started runs of
+            that date, such as a team run started before midnight. Only their ids are read.
 
     Returns:
         List[Dict[str, Any]]: The calculated rows of agno_os_metrics, one per user, agent, team
@@ -1220,10 +1231,13 @@ def calculate_date_os_metrics(
     seen_run_ids = {run["run_id"] for run in runs if run.get("run_id")} | stored_run_ids
     components = {
         run["run_id"]: component
-        for run in runs
+        for run in list(runs) + list(parent_runs)
         if run.get("run_id") and (component := _os_metrics_component(run)) is not None
     }
     for run in runs:
+        # A run copied into a forked session repeats a run counted in the session it was made in
+        if (run.get("run_data") or {}).get("forked_from_session_id"):
+            continue
         component = components.get(run["run_id"]) if run.get("run_id") else _os_metrics_component(run)
         if component is None:
             continue
@@ -1409,7 +1423,7 @@ def os_metrics_totals_row_to_write(
 
 def os_metrics_month_end(month_start: date) -> date:
     """The last day of the calendar month that starts on the given day."""
-    return (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    return month_start.replace(day=monthrange(month_start.year, month_start.month)[1])
 
 
 def os_metrics_full_months(starting_date: date, ending_date: date) -> List[date]:
@@ -1417,9 +1431,12 @@ def os_metrics_full_months(starting_date: date, ending_date: date) -> List[date]
     month_starts = []
     month_start = starting_date.replace(day=1)
     while month_start <= ending_date:
-        if month_start >= starting_date and os_metrics_month_end(month_start) <= ending_date:
+        month_end = os_metrics_month_end(month_start)
+        if month_start >= starting_date and month_end <= ending_date:
             month_starts.append(month_start)
-        month_start = os_metrics_month_end(month_start) + timedelta(days=1)
+        if month_end == date.max:
+            break
+        month_start = month_end + timedelta(days=1)
     return month_starts
 
 

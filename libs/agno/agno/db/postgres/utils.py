@@ -24,10 +24,12 @@ from agno.utils.log import log_debug, log_error, log_warning
 try:
     from sqlalchemy import (
         BigInteger,
+        Integer,
         Numeric,
         Table,
         Text,
         and_,
+        case,
         cast,
         column,
         func,
@@ -57,9 +59,10 @@ OS_METRICS_STALE_KEYS_LIMIT = 1000
 # Rows a rebuild reads at a time, so a day or a month of many rows is never held or decoded in one step
 OS_METRICS_BATCH_SIZE = 1000
 
-# Every assistant message's request duration, skipping messages carried over from an earlier run
+# Every assistant message's request duration, skipping messages carried over from an earlier run: those from
+# history, and the first $skip a forked run copied from the run it was forked from
 _OS_METRICS_CALL_DURATIONS_PATH: Any = literal_column(
-    """'$.messages[*] ? (@.role == "assistant" && (!exists(@.from_history) || @.from_history == false))"""
+    """'$.messages[$skip to last] ? (@.role == "assistant" && (!exists(@.from_history) || @.from_history == false))"""
     """.metrics.duration'::jsonpath"""
 )
 
@@ -67,9 +70,9 @@ _OS_METRICS_CALL_DURATIONS_PATH: Any = literal_column(
 _OS_METRICS_EMPTY_DETAILS = ("{}", "[]", '""', "0", "false")
 
 # The keys of a stored run that hold the runs nested inside it, in the order the rollup walks them
-_OS_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses")
+_OS_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses", "workflow_agent_run")
 
-# Every run of one of those lists. A list stored as null holds none
+# Every run of one of those lists, or the one run a key holds on its own. A key stored as null holds none
 _OS_METRICS_NESTED_RUNS_PATH: Any = literal_column("""'$[*] ? (@.type() == "object")'::jsonpath""")
 
 
@@ -633,6 +636,12 @@ def _os_metrics_run_metrics(run_data: Any, keys: Sequence[str] = ()) -> Any:
     return func.jsonb_strip_nulls(func.jsonb_build_object(*pairs))
 
 
+def _os_metrics_call_durations(run_data: Any) -> Any:
+    """Build each request duration of a stored run, skipping the messages a forked run copied."""
+    skip = func.coalesce(cast(run_data["forked_from_message_index"].astext, Integer), 0)
+    return func.jsonb_path_query_array(run_data, _OS_METRICS_CALL_DURATIONS_PATH, func.jsonb_build_object("skip", skip))
+
+
 def build_os_metrics_runs_query(table: Table, start_timestamp: int, end_timestamp: int) -> Any:
     """Build the query that reads the runs created in the given time range, with only what OS metrics count.
 
@@ -699,7 +708,7 @@ def build_os_metrics_runs_query(table: Table, start_timestamp: int, end_timestam
                     "model_provider",
                     nested.c.run_data["model_provider"],
                     "call_durations",
-                    func.jsonb_path_query_array(nested.c.run_data, _OS_METRICS_CALL_DURATIONS_PATH),
+                    _os_metrics_call_durations(nested.c.run_data),
                 ),
                 nested.c.path,
             )
@@ -717,9 +726,76 @@ def build_os_metrics_runs_query(table: Table, start_timestamp: int, end_timestam
         _os_metrics_run_metrics(table.c.run_data, ["duration", "time_to_first_token"]).label("metrics"),
         table.c.run_data["model"].astext.label("model"),
         table.c.run_data["model_provider"].astext.label("model_provider"),
-        func.jsonb_path_query_array(table.c.run_data, _OS_METRICS_CALL_DURATIONS_PATH).label("call_durations"),
+        _os_metrics_call_durations(table.c.run_data).label("call_durations"),
         nested_runs.label("nested_runs"),
-    ).where(table.c.created_at >= start_timestamp, table.c.created_at < end_timestamp)
+        table.c.created_at,
+    ).where(
+        table.c.created_at >= start_timestamp,
+        table.c.created_at < end_timestamp,
+        # A run copied into a forked session repeats a run counted in the session it was made in
+        table.c.run_data["forked_from_session_id"].astext.is_(None),
+    )
+
+
+def build_os_metrics_legacy_runs_table(
+    sessions_table: Table, runs_table: Optional[Table], start_timestamp: int, end_timestamp: int
+) -> Optional[Any]:
+    """Build the runs not yet migrated out of the sessions table's legacy runs column, in the runs table's shape.
+
+    Args:
+        sessions_table (Table): The sessions table.
+        runs_table (Optional[Table]): The runs table. A run it also holds is read from there.
+        start_timestamp (int): The start of the range the legacy runs are read for, included.
+        end_timestamp (int): The end of that range, not included.
+
+    Returns:
+        Optional[Any]: The legacy runs, for build_os_metrics_runs_query. None when there is no legacy runs column.
+    """
+    if "runs" not in sessions_table.c:
+        return None
+
+    # Extracted in the database instead of loading the column, as calculate_metrics does
+    legacy_runs = cast(sessions_table.c.runs, postgresql.JSONB)
+    legacy_run = func.jsonb_array_elements(
+        case(
+            (func.jsonb_typeof(legacy_runs) == "array", legacy_runs),
+            else_=func.jsonb_build_array(),
+        ),
+        type_=postgresql.JSONB,
+    ).column_valued("legacy_run", joins_implicitly=True)
+    # A legacy run is dated and typed the way the v3.0.0 migration writes it to the runs table
+    legacy_runs_stmt = select(
+        legacy_run["run_id"].astext.label("run_id"),
+        case(
+            (func.coalesce(legacy_run["agent_id"].astext, "") != "", "agent"),
+            (func.coalesce(legacy_run["team_id"].astext, "") != "", "team"),
+            else_="workflow",
+        ).label("run_type"),
+        legacy_run["agent_id"].astext.label("agent_id"),
+        legacy_run["team_id"].astext.label("team_id"),
+        legacy_run["workflow_id"].astext.label("workflow_id"),
+        sessions_table.c.user_id,
+        legacy_run["parent_run_id"].astext.label("parent_run_id"),
+        legacy_run["status"].astext.label("status"),
+        legacy_run.label("run_data"),
+        func.coalesce(cast(legacy_run["created_at"].astext, BigInteger), sessions_table.c.created_at).label(
+            "created_at"
+        ),
+    ).select_from(sessions_table)
+    legacy_runs_stmt = legacy_runs_stmt.where(
+        # A session holds runs created after it started and before it was last written
+        sessions_table.c.created_at < end_timestamp,
+        func.coalesce(sessions_table.c.updated_at, sessions_table.c.created_at) >= start_timestamp,
+        # The migration skips what is no run
+        func.jsonb_typeof(legacy_run) == "object",
+        legacy_run["run_id"].astext.isnot(None),
+    )
+    if runs_table is not None:
+        # The runs table wins on a run in both, as merge_runs_table_with_legacy_blob does
+        legacy_runs_stmt = legacy_runs_stmt.where(
+            ~select(runs_table.c.run_id).where(runs_table.c.run_id == legacy_run["run_id"].astext).exists()
+        )
+    return legacy_runs_stmt.subquery("legacy_runs")
 
 
 def build_os_metrics_run(row: Any) -> Dict[str, Any]:
@@ -749,7 +825,12 @@ def build_os_metrics_run(row: Any) -> Dict[str, Any]:
             {"role": "assistant", "metrics": {"duration": duration}}
             for duration in nested_run.pop("call_durations") or []
         ]
-        parents[depth - 1].setdefault(nested_run.pop("key"), []).append(nested_run)
+        key = nested_run.pop("key")
+        # A workflow agent's run is stored as the run itself, the other nested runs in lists
+        if key == "workflow_agent_run":
+            parents[depth - 1][key] = nested_run
+        else:
+            parents[depth - 1].setdefault(key, []).append(nested_run)
         parents[depth:] = [nested_run]
     return run
 

@@ -1,5 +1,6 @@
 """Integration tests for the OS Metrics related methods of the PostgresDb class"""
 
+import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Union
@@ -516,6 +517,86 @@ def test_calculate_os_metrics_skips_messages_carried_over_from_history(postgres_
     assert row["model_calls_count"] == 1
     assert row["total_model_call_ms"] == 1200
     assert row["model_call_buckets"] == {"le_1200": 1}
+
+
+def test_calculate_os_metrics_skips_messages_a_forked_run_copied(postgres_db_real: PostgresDb):
+    """Ensure the messages a forked run copied from the run it was forked from are not counted again"""
+    session = _session_on(_utc_date(2), "fork_session", "alice")
+    original = session.runs[0]
+    forked = RunOutput(
+        run_id="forked_run",
+        agent_id="agent-1",
+        user_id="alice",
+        status=RunStatus.completed,
+        model="gpt-5",
+        model_provider="OpenAI",
+        metrics=_run_metrics(20, 5, duration=2.0),
+        messages=[_assistant_message(1.5), _assistant_message(0.5)],
+        forked_from_run_id=original.run_id,
+        forked_from_message_index=1,
+        created_at=original.created_at,
+    )
+    session.runs.append(forked)
+    _persist(postgres_db_real, session)
+
+    postgres_db_real.calculate_os_metrics()
+
+    row = _stored_rows(postgres_db_real)[(_utc_date(2), "alice", "agent", "agent-1")]
+    assert (row["runs_count"], row["total_tokens"]) == (2, 40)
+    assert (row["model_calls_count"], row["total_model_call_ms"]) == (2, 2000)
+
+
+def test_calculate_os_metrics_skips_runs_a_forked_session_copied(postgres_db_real: PostgresDb):
+    """Ensure a run copied into a forked session is not counted again, while the forked session is"""
+    _persist(postgres_db_real, _session_on(_utc_date(2), "fork_session", "alice"))
+    copied_session = _session_on(_utc_date(2), "copied_session", "alice")
+    copied_session.runs[0].forked_from_session_id = "fork_session"
+    _persist(postgres_db_real, copied_session)
+
+    postgres_db_real.calculate_os_metrics()
+
+    row = _stored_rows(postgres_db_real)[(_utc_date(2), "alice", "agent", "agent-1")]
+    assert (row["sessions_count"], row["runs_count"], row["total_tokens"]) == (2, 1, 15)
+
+
+def test_calculate_os_metrics_counts_runs_kept_in_the_legacy_runs_column(postgres_db_real: PostgresDb):
+    """Ensure a run not yet migrated out of the sessions table's legacy runs column is counted once, on its session's
+    day"""
+    session = _session_on(_utc_date(2), "legacy_session", "alice")
+    session.runs.append(
+        RunOutput(
+            run_id="legacy_only_run",
+            agent_id="agent-1",
+            status=RunStatus.completed,
+            model="gpt-5",
+            model_provider="OpenAI",
+            metrics=_run_metrics(30, 5),
+            messages=[_assistant_message(0.5)],
+            created_at=_noon_utc(2),
+        )
+    )
+    # The first run is in the runs table and the legacy column, the second in the legacy column only
+    postgres_db_real.upsert_session(session)
+    postgres_db_real.upsert_run(session.runs[0], session_id=session.session_id, user_id="alice", run_index=0)
+    with postgres_db_real.Session() as sess, sess.begin():
+        sess.execute(text("ALTER TABLE test_schema.test_sessions ADD COLUMN runs JSONB"))
+        sess.execute(
+            text("UPDATE test_schema.test_sessions SET runs = CAST(:runs AS JSONB)"),
+            {"runs": json.dumps([run.to_dict() for run in session.runs])},
+        )
+    try:
+        # A new instance, so the sessions table is read with its legacy column
+        legacy_db = PostgresDb(
+            db_engine=postgres_db_real.db_engine, db_schema="test_schema", session_table="test_sessions"
+        )
+        legacy_db.calculate_os_metrics()
+
+        row = _stored_rows(legacy_db)[(_utc_date(2), "alice", "agent", "agent-1")]
+        assert (row["sessions_count"], row["runs_count"], row["total_tokens"]) == (1, 2, 50)
+        assert (row["model_calls_count"], row["total_model_call_ms"]) == (2, 2000)
+    finally:
+        with postgres_db_real.Session() as sess, sess.begin():
+            sess.execute(text("ALTER TABLE test_schema.test_sessions DROP COLUMN runs"))
 
 
 def test_calculate_os_metrics(postgres_db_real: PostgresDb, sample_sessions_for_os_metrics):
@@ -1349,6 +1430,44 @@ def test_calculate_os_metrics_reads_nested_run_ids_in_chunks(postgres_db_real: P
     assert stored_rows[(past_day, "bob", "agent", "agent-2")]["runs_count"] == 5
     assert stored_rows[(past_day, "bob", "agent", "agent-2")]["input_tokens"] == 50
     assert _stored_totals_rows(postgres_db_real)[("daily", past_day)]["input_tokens"] == 50
+
+
+def test_calculate_os_metrics_names_a_parent_run_of_the_day_before(postgres_db_real: PostgresDb):
+    """Ensure a member run started after midnight by a team run of the day before names that team as its parent"""
+    midnight = _noon_utc(2) - 12 * 3600
+    member_run = RunOutput(
+        run_id="member_run",
+        agent_id="agent-2",
+        user_id="bob",
+        parent_run_id="team_run",
+        status=RunStatus.completed,
+        model="gpt-5",
+        model_provider="OpenAI",
+        metrics=_run_metrics(10, 0),
+        messages=[],
+        created_at=midnight + 60,
+    )
+    team_session = TeamSession(
+        session_id="team_session",
+        team_id="team-1",
+        user_id="bob",
+        runs=[
+            TeamRunOutput(
+                run_id="team_run",
+                team_id="team-1",
+                user_id="bob",
+                status=RunStatus.completed,
+                created_at=midnight - 60,
+            ),
+            member_run,
+        ],
+        created_at=midnight - 60,
+        updated_at=midnight + 60,
+    )
+    _persist(postgres_db_real, team_session)
+    postgres_db_real.calculate_os_metrics()
+
+    assert _stored_rows(postgres_db_real)[(_utc_date(2), "bob", "agent", "agent-2")]["parent_component_id"] == "team-1"
 
 
 def test_calculate_os_metrics_stores_each_day_as_it_is_calculated(postgres_db_real: PostgresDb, monkeypatch):

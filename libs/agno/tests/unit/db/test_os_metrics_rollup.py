@@ -128,7 +128,7 @@ def _rows(sessions=(), runs=(), stored_run_ids=frozenset()):
     """Build the day's rows keyed by (user_id, component_type, component_id)."""
     return {
         (row["user_id"], row["component_type"], row["component_id"]): row
-        for row in calculate_date_os_metrics(TARGET_DATE, list(sessions), list(runs), set(stored_run_ids))
+        for row in calculate_date_os_metrics(TARGET_DATE, list(sessions), list(runs), set(stored_run_ids), [])
     }
 
 
@@ -143,7 +143,7 @@ def _stable(row):
 
 
 def _day_rows(runs, sessions=(), day=TARGET_DATE):
-    return calculate_date_os_metrics(day, list(sessions), list(runs), set())
+    return calculate_date_os_metrics(day, list(sessions), list(runs), set(), [])
 
 
 class _Row:
@@ -254,6 +254,19 @@ def test_team_member_run_counts_under_the_member_agent():
     assert rows[("alice", "team", "team-1")]["runs_count"] == 1
     assert rows[("alice", "agent", "member-1")]["runs_count"] == 1
     assert rows[("alice", "agent", "member-1")]["parent_component_id"] == "team-1"
+
+
+def test_member_run_names_a_team_run_of_another_day_as_its_parent():
+    """A member run started after midnight by a team run of the day before names that team as its parent."""
+    rows = calculate_date_os_metrics(
+        TARGET_DATE,
+        [],
+        [_run("member-run", component_id="member-1", parent_run_id="team-run")],
+        set(),
+        [{"run_id": "team-run", "run_type": "team", "team_id": "team-1"}],
+    )
+
+    assert [(row["component_id"], row["parent_component_id"]) for row in rows] == [("member-1", "team-1")]
 
 
 def test_member_run_and_the_same_agent_alone_are_two_rows():
@@ -368,6 +381,25 @@ def test_history_messages_are_not_model_calls():
 
     assert row["model_calls_count"] == 2
     assert row["total_model_call_ms"] == 500
+
+
+def test_messages_a_forked_run_copied_are_not_model_calls():
+    """A forked run's first messages are copies of the run it was forked from, which counts them."""
+    run = _run(call_durations=(0.9, 0.2, 0.3))
+    run["run_data"]["forked_from_message_index"] = 1
+    row = _only_row(runs=[run])
+
+    assert row["model_calls_count"] == 2
+    assert row["total_model_call_ms"] == 500
+
+
+def test_run_copied_into_a_forked_session_is_not_counted():
+    """A run copied into a forked session repeats the run it was copied from, so only the session counts."""
+    run = _run(call_durations=(0.2,), tokens={"total_tokens": 10})
+    run["run_data"]["forked_from_session_id"] = "source-session"
+    row = _only_row(sessions=[_session("alice")], runs=[run])
+
+    assert (row["sessions_count"], row["runs_count"], row["total_tokens"], row["model_calls_count"]) == (1, 0, 0, 0)
 
 
 def test_status_metrics_keyed_by_status():
@@ -510,6 +542,15 @@ def test_workflow_step_models_count_on_the_workflow_row():
     ]
 
 
+def test_workflow_agent_run_counts_on_the_workflow_row():
+    """A workflow agent's run is nested inside the workflow's run as the run itself, and its calls count there."""
+    run = _run(run_type="workflow", component_id="wf-1", model=None)
+    run["run_data"]["workflow_agent_run"] = _model_call(tokens={"total_tokens": 7}, call_durations=(0.4,))
+    row = _only_row(runs=[run])
+
+    assert (row["total_tokens"], row["model_calls_count"], row["total_model_call_ms"]) == (7, 1, 400)
+
+
 def test_model_call_without_details_is_not_a_model_entry():
     """A model that failed before answering reports no details and is not counted as serving the run."""
     row = _only_row(runs=[_run(details=False, tokens={"input_tokens": 3})])
@@ -542,8 +583,8 @@ def test_model_metrics_sorted_deterministically():
 def test_rebuild_yields_identical_rows():
     """Two builds of the same inputs differ only in their timestamps."""
     runs = [_run("run-1", duration=1.0, call_durations=(0.2,)), _run("run-2", status=ERROR)]
-    first = calculate_date_os_metrics(TARGET_DATE, [_session()], runs, set())
-    second = calculate_date_os_metrics(TARGET_DATE, [_session()], runs, set())
+    first = calculate_date_os_metrics(TARGET_DATE, [_session()], runs, set(), [])
+    second = calculate_date_os_metrics(TARGET_DATE, [_session()], runs, set(), [])
 
     assert [_stable(row) for row in first] == [_stable(row) for row in second]
 
@@ -551,8 +592,8 @@ def test_rebuild_yields_identical_rows():
 def test_unchanged_rebuild_writes_nothing():
     """A rebuild equal to the stored rows returns no rows to write and no stale keys."""
     runs = [_run("run-1", duration=1.0, call_durations=(0.2,))]
-    stored = calculate_date_os_metrics(TARGET_DATE, [_session()], runs, set())
-    rebuilt = calculate_date_os_metrics(TARGET_DATE, [_session()], runs, set())
+    stored = calculate_date_os_metrics(TARGET_DATE, [_session()], runs, set(), [])
+    rebuilt = calculate_date_os_metrics(TARGET_DATE, [_session()], runs, set(), [])
 
     assert os_metrics_rows_to_write(rebuilt, stored) == ([], [])
 
@@ -650,7 +691,7 @@ def test_total_row_totals_every_owner():
 
 def test_day_without_rows_gets_a_total_row_of_zeros():
     """A day without traffic has no rows but still a total row, so it is never rebuilt again once completed."""
-    assert calculate_date_os_metrics(TARGET_DATE, [], [], set()) == []
+    assert calculate_date_os_metrics(TARGET_DATE, [], [], set(), []) == []
 
     day = build_os_metrics_totals_row([], "daily", TARGET_DATE, completed=True)
 
@@ -765,6 +806,7 @@ def test_month_end():
     assert os_metrics_month_end(date(2026, 1, 1)) == date(2026, 1, 31)
     assert os_metrics_month_end(date(2024, 2, 1)) == date(2024, 2, 29)
     assert os_metrics_month_end(date(2025, 12, 1)) == date(2025, 12, 31)
+    assert os_metrics_month_end(date(9999, 12, 1)) == date(9999, 12, 31)
 
 
 def test_full_months_are_the_months_wholly_inside_the_range():
@@ -775,6 +817,7 @@ def test_full_months_are_the_months_wholly_inside_the_range():
     ]
     assert os_metrics_full_months(date(2026, 1, 2), date(2026, 3, 30)) == [date(2026, 2, 1)]
     assert os_metrics_full_months(date(2026, 1, 10), date(2026, 2, 20)) == []
+    assert os_metrics_full_months(date(9999, 12, 1), date(9999, 12, 31)) == [date(9999, 12, 1)]
 
 
 # ---------------------------------------------------------------------------
