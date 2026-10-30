@@ -3,19 +3,13 @@
 import asyncio
 import contextlib
 import json
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.db.schemas.jobs import QueuedJob
-from agno.os.job_queue import (
-    _new_queued_run_id,
-    aenqueue_ticket,
-    aprepare_accepted_or_abort,
-    normalize_idempotency_key,
-    resolve_queue_scope,
-)
+from agno.os.job_queue import _new_queued_run_id, aenqueue_ticket, aprepare_accepted_or_abort, normalize_idempotency_key
 from agno.sandbox.base import SandboxError
 
 
@@ -183,9 +177,7 @@ async def sandbox_run_response(
     kwargs: Dict[str, Any],
     stream: bool,
     background: bool,
-    agents: Optional[Sequence[Any]],
-    db: Any,
-    scoped_user_id: Optional[str],
+    scope: Dict[str, Any],
     version: Any = None,
     images: Optional[List[Any]] = None,
     files: Optional[List[Any]] = None,
@@ -193,12 +185,10 @@ async def sandbox_run_response(
 ) -> Any:
     """Submit a sandboxed turn and answer in the request's mode: stream, background or wait.
 
-    ``agents`` and ``db`` are the AgentOS registry and db the route resolved the agent from;
-    an agent off the registry was rebuilt from a stored component owned under ``scoped_user_id``.
+    ``scope`` is the queue scope the route resolved for the agent. A stored agent's ticket
+    carries it, so the worker rebuilds the version this request executes; a registered agent
+    is resolved by id and has no versions.
     """
-    # A stored agent's ticket carries the db scope the worker rebuilds it from, with the
-    # version this request executes; a registered agent is resolved by id and has no versions.
-    scope = resolve_queue_scope(agent.get_id(), agents, db, scoped_user_id, version)
     stored = scope.get("source") == "db"
     if version is not None and not stored:
         raise HTTPException(

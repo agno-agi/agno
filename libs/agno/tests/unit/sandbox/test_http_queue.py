@@ -295,10 +295,15 @@ async def test_version_pinning_is_accepted_for_stored_agents_only(accepted, db, 
     StoredComponent(db, ClaudeAgent(id="coder", db=db, sandbox=registry_sandbox).to_dict(), version=2)
     agent = await stored_agent(db, registry, version=2)
     request = SimpleNamespace(headers={})
-    common = dict(input="hello", session_id="s1", user_id=None, kwargs={}, stream=False, background=True, db=db)
+    common = dict(input="hello", session_id="s1", user_id=None, kwargs={}, stream=False, background=True)
 
     response = await sandbox.sandbox_run_response(
-        agent, FakeWorker(db, registry, []), request, agents=[], scoped_user_id=None, version=2, **common
+        agent,
+        FakeWorker(db, registry, []),
+        request,
+        scope=resolve_queue_scope("coder", [], db, None, 2),
+        version=2,
+        **common,
     )
 
     assert response.status_code == 202
@@ -310,8 +315,7 @@ async def test_version_pinning_is_accepted_for_stored_agents_only(accepted, db, 
             registered,
             FakeWorker(None, None, [registered]),
             request,
-            agents=[registered],
-            scoped_user_id=None,
+            scope=resolve_queue_scope("coder", [registered], db, None, 2),
             version=2,
             **common,
         )
@@ -375,9 +379,7 @@ async def test_idempotent_retry_after_a_publish_reads_the_result_through_the_tic
         kwargs={},
         stream=False,
         background=False,
-        agents=[],
-        db=db,
-        scoped_user_id=None,
+        scope=scope,
     )
 
     assert response.status_code == 200 and b"done" in response.body
