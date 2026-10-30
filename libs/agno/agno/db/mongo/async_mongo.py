@@ -903,6 +903,7 @@ class AsyncMongoDb(AsyncBaseDb):
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
         runs_limit: Optional[int] = None,
+        run_preview: bool = False,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from the database.
 

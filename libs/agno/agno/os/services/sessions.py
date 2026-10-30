@@ -9,6 +9,7 @@ Sync ``BaseDb`` calls are offloaded to a threadpool so an async surface (MCP or
 REST) never blocks its event loop on database I/O.
 """
 
+import inspect
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, NamedTuple, Optional, Set, Tuple, Type, Union
 
@@ -16,7 +17,7 @@ from starlette.concurrency import run_in_threadpool
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.utils import detect_session_type
-from agno.os.schema import RunSchema, TeamRunSchema, WorkflowRunSchema
+from agno.os.schema import RunSchema, SessionRunPreviewSchema, TeamRunSchema, WorkflowRunSchema
 from agno.utils.log import log_warning
 
 AnyRunSchema = Union[RunSchema, TeamRunSchema, WorkflowRunSchema]
@@ -176,25 +177,21 @@ async def _get_session_dict(
     session_id: str,
     session_type: Optional[SessionType],
     user_id: Optional[str],
+    run_preview: bool = False,
 ) -> Tuple[Dict[str, Any], SessionType]:
     """Fetch a session as a raw dict, auto-detecting its type when not given.
 
     Auto-detection matters: local ``get_session`` does not filter by type in SQL,
     so a wrong caller-supplied default silently misparses rather than 404s.
     """
+    kwargs: Dict[str, Any] = dict(session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False)
+    if run_preview and _accepts_run_preview(db):
+        # A custom adapter whose get_session predates the keyword serves the full read instead.
+        kwargs["run_preview"] = True
     if isinstance(db, AsyncBaseDb):
-        session = await db.get_session(
-            session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
-        )
+        session = await db.get_session(**kwargs)
     else:
-        session = await run_in_threadpool(
-            lambda: db.get_session(
-                session_id=session_id,
-                session_type=session_type,
-                user_id=user_id,
-                deserialize=False,
-            )
-        )
+        session = await run_in_threadpool(lambda: db.get_session(**kwargs))
     if not session:
         raise SessionNotFoundError(session_id)
     if session_type is None:
@@ -296,6 +293,7 @@ async def _get_indexed_session_runs(
     session_id: str,
     session_type: Optional[SessionType],
     user_id: Optional[str],
+    run_preview: bool = False,
 ) -> _IndexedSessionRuns:
     """The session's listed runs in chronological order, unfiltered.
 
@@ -303,7 +301,7 @@ async def _get_indexed_session_runs(
     before any filter so it stays stable across filters and across endpoints.
     """
     session, resolved_type = await _get_session_dict(
-        db, session_id=session_id, session_type=session_type, user_id=user_id
+        db, session_id=session_id, session_type=session_type, user_id=user_id, run_preview=run_preview
     )
 
     indexed: List[_IndexedRun] = []
@@ -413,3 +411,35 @@ async def get_session_runs_window(
         oldest_run_index=window[0][0] if window else None,
         newest_run_index=window[-1][0] if window else None,
     )
+
+
+async def get_session_run_previews(
+    db: Union[BaseDb, AsyncBaseDb],
+    *,
+    session_id: str,
+    session_type: Optional[SessionType] = None,
+    user_id: Optional[str] = None,
+    created_after: Optional[int] = None,
+    created_before: Optional[int] = None,
+) -> List[SessionRunPreviewSchema]:
+    """Run previews of a session: same runs, order, classification and ``run_index`` as
+    :func:`get_session_runs`, read with ``get_session(run_preview=True)``.
+
+    Raises :class:`SessionNotFoundError` when the session does not exist.
+    """
+    indexed = await _get_indexed_session_runs(
+        db, session_id=session_id, session_type=session_type, user_id=user_id, run_preview=True
+    )
+    return [
+        SessionRunPreviewSchema.from_run(indexed.render(indexed_run))
+        for indexed_run in indexed.runs
+        if _run_matches_filters(indexed_run[1], created_after, created_before, None)
+    ]
+
+
+def _accepts_run_preview(db: Union[BaseDb, AsyncBaseDb]) -> bool:
+    try:
+        parameters = inspect.signature(db.get_session).parameters
+    except (TypeError, ValueError):
+        return False
+    return "run_preview" in parameters or any(p.kind is p.VAR_KEYWORD for p in parameters.values())

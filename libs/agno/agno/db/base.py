@@ -575,10 +575,13 @@ class BaseDb(ABC):
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
         runs_limit: Optional[int] = None,
+        run_preview: bool = False,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         # runs_limit: attach only the most recent N context-relevant runs. Adapters
         # that don't optimize this MUST still accept it and load the full history
         # (a safe, unbounded superset); adapters that can push it to the DB do so.
+        # run_preview: with deserialize=False, runs may carry only RUN_PREVIEW_FIELDS (see db.utils).
+        # Same contract: adapters MUST accept it and may return full runs instead.
         raise NotImplementedError
 
     @abstractmethod
@@ -2955,8 +2958,9 @@ class AsyncBaseDb(ABC):
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
         runs_limit: Optional[int] = None,
+        run_preview: bool = False,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
-        # See BaseDb.get_session for the runs_limit contract.
+        # See BaseDb.get_session for the runs_limit and run_preview contracts.
         raise NotImplementedError
 
     @abstractmethod

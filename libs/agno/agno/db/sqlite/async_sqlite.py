@@ -29,6 +29,7 @@ from agno.db.schemas.service_accounts import (
     validate_service_account_update,
 )
 from agno.db.sql import authz as authz_sql
+from agno.db.sql.run_preview import run_preview_columns, run_preview_from_row
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
     abulk_upsert_metrics,
@@ -811,7 +812,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         ]
 
     async def _get_session_runs_data(
-        self, sess, runs_table: Table, session_id: str, limit: Optional[int] = None
+        self, sess, runs_table: Table, session_id: str, limit: Optional[int] = None, run_preview: bool = False
     ) -> List[Dict[str, Any]]:
         """Get the raw run_data dicts for the given session, in insertion order.
 
@@ -839,8 +840,9 @@ class AsyncSqliteDb(AsyncBaseDb):
             rows = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in result.fetchall()]
             rows.reverse()
             return rows
+        columns = run_preview_columns(runs_table) if run_preview else [runs_table.c.run_data]
         stmt = (
-            select(runs_table.c.run_data)
+            select(*columns)
             .where(runs_table.c.session_id == session_id)
             .order_by(
                 runs_table.c.run_index.asc(),
@@ -848,8 +850,10 @@ class AsyncSqliteDb(AsyncBaseDb):
                 runs_table.c.run_id.asc(),
             )
         )
-        result = await sess.execute(stmt)
-        return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in result.fetchall()]
+        rows = (await sess.execute(stmt)).fetchall()
+        if run_preview:
+            return [run_preview_from_row(row) for row in rows]
+        return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in rows]
 
     async def _get_sessions_runs_data(
         self, sess, runs_table: Table, session_ids: List[str]
@@ -1489,6 +1493,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
         runs_limit: Optional[int] = None,
+        run_preview: bool = False,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Read a session from the database.
@@ -1562,7 +1567,11 @@ class AsyncSqliteDb(AsyncBaseDb):
                         # holds the whole history in one column, so "last N" can't be pushed
                         # to SQL — load all, merge, then filter+slice to match the migrated path.
                         runs_data = await self._get_session_runs_data(
-                            sess=sess, runs_table=runs_table, session_id=session_id
+                            sess=sess,
+                            runs_table=runs_table,
+                            session_id=session_id,
+                            # Only raw dicts may carry partial runs: a deserialized session could be saved back.
+                            run_preview=run_preview and not deserialize,
                         )
                         merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
                         if runs_limit is not None:
