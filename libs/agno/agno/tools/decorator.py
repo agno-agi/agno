@@ -1,9 +1,7 @@
 from functools import update_wrapper, wraps
 from typing import Any, Callable, Dict, List, Optional, TypeVar, Union, overload
 
-from agno.exceptions import RunCancelledException
 from agno.tools.function import Function, get_entrypoint_docstring
-from agno.utils.log import log_error
 
 # Type variable for better type hints
 F = TypeVar("F", bound=Callable[..., Any])
@@ -178,41 +176,19 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
     def decorator(func: F) -> Function:
         from inspect import isasyncgenfunction
 
+        # No logging here: FunctionCall.execute/aexecute log a failed tool call once, and treat
+        # RetryAgentRun / StopAgentRun as control flow rather than errors.
         @wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-            try:
-                return func(*args, **kwargs)
-            except RunCancelledException:
-                raise
-            except Exception as e:
-                log_error(
-                    f"Error in tool {func.__name__!r}: {e!r}",
-                )
-                raise
+            return func(*args, **kwargs)
 
         @wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            try:
-                return await func(*args, **kwargs)
-            except RunCancelledException:
-                raise
-            except Exception as e:
-                log_error(
-                    f"Error in async tool {func.__name__!r}: {e!r}",
-                )
-                raise
+            return await func(*args, **kwargs)
 
         @wraps(func)
         async def async_gen_wrapper(*args: Any, **kwargs: Any) -> Any:
-            try:
-                return func(*args, **kwargs)
-            except RunCancelledException:
-                raise
-            except Exception as e:
-                log_error(
-                    f"Error in async generator tool {func.__name__!r}: {e!r}",
-                )
-                raise
+            return func(*args, **kwargs)
 
         # Choose appropriate wrapper based on function type
         if isasyncgenfunction(func):

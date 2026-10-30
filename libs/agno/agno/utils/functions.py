@@ -2,7 +2,7 @@ import json
 from typing import Any, Callable, Dict, Optional, TypeVar
 
 from agno.tools.function import Function, FunctionCall
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, log_error, log_warning
 
 T = TypeVar("T")
 
@@ -20,7 +20,7 @@ def get_function_call(
     if name in functions:
         function_to_call = functions[name]
     if function_to_call is None:
-        log_error(f"Function {name} not found")
+        log_warning(f"Function {name} not found")
         return None
 
     function_call = FunctionCall(function=function_to_call)
@@ -35,7 +35,7 @@ def get_function_call(
 
                 _arguments = ast.literal_eval(arguments)
         except Exception as e:
-            log_error(f"Unable to decode function arguments:\n{arguments}\nError: {str(e)}")
+            log_warning(f"Unable to decode function arguments:\n{arguments}\nError: {str(e)}")
             function_call.error = (
                 f"Error while decoding function arguments: {e}\n\n"
                 f"Please make sure we can json.loads() the arguments and retry."
@@ -47,7 +47,7 @@ def get_function_call(
             return function_call
 
         if not isinstance(_arguments, dict):
-            log_error(f"Function arguments are not a valid JSON object: {arguments}")
+            log_warning(f"Function arguments are not a valid JSON object: {arguments}")
             function_call.error = "Function arguments are not a valid JSON object.\n\n Please fix and retry."
             return function_call
 
