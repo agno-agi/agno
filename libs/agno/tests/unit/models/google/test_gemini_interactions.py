@@ -2576,10 +2576,8 @@ class TestStructuredOutput:
         model = GeminiInteractions(api_key="test-key")
         messages = [Message(role="user", content="Review The Matrix")]
         kwargs = model._get_request_kwargs(messages, response_format=MovieReview)
-        assert kwargs["response_format"]["type"] == "text"
-        assert kwargs["response_format"]["mime_type"] == "application/json"
-        assert "schema" in kwargs["response_format"]
-        schema = kwargs["response_format"]["schema"]
+        assert kwargs["response_mime_type"] == "application/json"
+        schema = kwargs["response_format"]
         assert "title" in schema["properties"]
         assert "rating" in schema["properties"]
         assert "summary" in schema["properties"]
