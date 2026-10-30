@@ -45,21 +45,25 @@ class TestFlushInFlightMessagesOnError:
         assert rr.messages is not None
         assert len(rr.messages) == 1
 
-    def test_does_not_overwrite_existing_messages(self):
-        """If a mid-run checkpoint hook already populated run_response.messages,
-        we must not stomp on it — that population may be more complete than
-        the current run_messages snapshot."""
-        existing = [Message(role="user", content="from-checkpoint")]
-        rr = RunOutput(run_id="r1", messages=existing)
+    def test_updates_the_earlier_pause_snapshot_with_completed_exchanges(self):
+        user = Message(role="user", content="prepare")
+        rr = RunOutput(run_id="r1", messages=[user])
         rm = RunMessages()
         rm.messages = [
-            Message(role="system", content="sys"),
-            Message(role="user", content="from-rm"),
+            user,
+            Message(role="tool", content="completed work", tool_call_id="tool-1"),
         ]
         flush_in_flight_messages_on_error(rr, rm)
-        # Unchanged
-        assert rr.messages is existing
-        assert rr.messages[0].content == "from-checkpoint"
+        assert rr.messages == rm.messages
+        assert rr.messages[-1].tool_call_id == "tool-1"
+
+    def test_preserves_saved_snapshot_without_current_context(self):
+        saved = [Message(role="user", content="saved")]
+        rr = RunOutput(run_id="r1", messages=saved)
+        flush_in_flight_messages_on_error(rr, None)
+        assert rr.messages is saved
+        flush_in_flight_messages_on_error(rr, RunMessages(messages=[]))
+        assert rr.messages is saved
 
     def test_filters_messages_by_add_to_agent_memory(self):
         """Matches the filter the per-batch checkpoint hook uses, so the
