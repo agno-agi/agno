@@ -886,12 +886,13 @@ def _get_task_management_tools(
         save_task_list(run_context.session_state, task_list)
 
         def _run_single_task(task_obj, member_agent):
-            """Run a single task in a thread. Returns (task_id, member_run_response, session_state_copy, error)."""
+            """Run a single task in a thread."""
             member_task_description = task_obj.description or task_obj.title
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
 
             use_agent_logger()
             member_session_state_copy = deepcopy(run_context.session_state)
+            member_events: List[Union[RunOutputEvent, TeamRunOutputEvent]] = []
 
             # Copy media lists per-thread to avoid concurrent mutation
             thread_images = list(_images)
@@ -903,30 +904,90 @@ def _get_task_management_tools(
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     register_member_run(run_response.run_id, member_run_id)
-                member_run_response = member_agent.run(
-                    input=member_agent_task if not history else history,
-                    user_id=user_id,
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,
-                    images=thread_images,
-                    videos=thread_videos,
-                    audio=thread_audio,
-                    files=thread_files,
-                    stream=False,
-                    debug_mode=debug_mode,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    metadata=run_context.metadata,
-                    knowledge_filters=member_knowledge_filters(member_agent, run_context),
-                    run_id=member_run_id,
-                    **_member_run_kwargs(team, member_agent),
+                if stream:
+                    member_stream = member_agent.run(
+                        input=member_agent_task if not history else history,
+                        user_id=user_id,
+                        session_id=session.session_id,
+                        session_state=member_session_state_copy,
+                        images=thread_images,
+                        videos=thread_videos,
+                        audio=thread_audio,
+                        files=thread_files,
+                        stream=True,
+                        stream_events=stream_events or team.stream_member_events,
+                        debug_mode=debug_mode,
+                        dependencies=run_context.dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_session_state_to_context=add_session_state_to_context,
+                        metadata=run_context.metadata,
+                        knowledge_filters=member_knowledge_filters(member_agent, run_context),
+                        run_id=member_run_id,
+                        yield_run_output=True,
+                        **_member_run_kwargs(team, member_agent),
+                    )
+                    member_run_response = None
+                    draining_after_cancel = False
+                    for event in member_stream:
+                        if isinstance(event, (TeamRunOutput, RunOutput)):
+                            member_run_response = event
+                            continue
+                        if isinstance(event, _MEMBER_TERMINAL_EVENT_TYPES):
+                            event.parent_run_id = event.parent_run_id or run_response.run_id
+                            member_events.append(event)
+                            if event.is_cancelled:
+                                draining_after_cancel = True
+                            continue
+                        if draining_after_cancel:
+                            continue
+                        try:
+                            if run_response.run_id is not None:
+                                raise_if_cancelled(run_response.run_id)
+                        except RunCancelledException:
+                            if member_run_id:
+                                _cascading_cancel_run(member_run_id)
+                            draining_after_cancel = True
+                            continue
+                        event.parent_run_id = event.parent_run_id or run_response.run_id
+                        member_events.append(event)
+                    if draining_after_cancel:
+                        raise RunCancelledException("")
+                else:
+                    member_run_response = member_agent.run(
+                        input=member_agent_task if not history else history,
+                        user_id=user_id,
+                        session_id=session.session_id,
+                        session_state=member_session_state_copy,
+                        images=thread_images,
+                        videos=thread_videos,
+                        audio=thread_audio,
+                        files=thread_files,
+                        stream=False,
+                        debug_mode=debug_mode,
+                        dependencies=run_context.dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_session_state_to_context=add_session_state_to_context,
+                        metadata=run_context.metadata,
+                        knowledge_filters=member_knowledge_filters(member_agent, run_context),
+                        run_id=member_run_id,
+                        **_member_run_kwargs(team, member_agent),
+                    )
+                if member_run_response is not None:
+                    check_if_run_cancelled(member_run_response)
+                if run_response.run_id is not None:
+                    raise_if_cancelled(run_response.run_id)
+                return (
+                    task_obj.id,
+                    member_run_response,
+                    member_session_state_copy,
+                    member_task_description,
+                    None,
+                    member_events,
                 )
-                return (task_obj.id, member_run_response, member_session_state_copy, member_task_description, None)
             except RunCancelledException:
                 raise
             except Exception as e:
-                return (task_obj.id, None, member_session_state_copy, member_task_description, e)
+                return (task_obj.id, None, member_session_state_copy, member_task_description, e, member_events)
 
         results_text: List[str] = []
         modified_states: List[Dict[str, Any]] = []
@@ -940,9 +1001,12 @@ def _get_task_management_tools(
             for future in as_completed(futures):
                 task_obj, member_agent = futures[future]
                 try:
-                    tid, member_run, state_copy, member_task, error = future.result()
+                    tid, member_run, state_copy, member_task, error, member_events = future.result()
                     if state_copy is not None:
                         modified_states.append(state_copy)
+
+                    for event in member_events:
+                        yield event
 
                     if error is not None:
                         task_obj.status = TaskStatus.failed
@@ -1096,6 +1160,7 @@ def _get_task_management_tools(
 
             use_agent_logger()
             member_session_state_copy = deepcopy(run_context.session_state)
+            member_events: List[Union[RunOutputEvent, TeamRunOutputEvent]] = []
 
             # Copy media lists to avoid concurrent mutation across coroutines
             task_images = list(_images)
@@ -1107,30 +1172,90 @@ def _get_task_management_tools(
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     await aregister_member_run(run_response.run_id, member_run_id)
-                member_run_response = await member_agent.arun(
-                    input=member_agent_task if not history else history,
-                    user_id=user_id,
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,
-                    images=task_images,
-                    videos=task_videos,
-                    audio=task_audio,
-                    files=task_files,
-                    stream=False,
-                    debug_mode=debug_mode,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    metadata=run_context.metadata,
-                    knowledge_filters=member_knowledge_filters(member_agent, run_context),
-                    run_id=member_run_id,
-                    **_member_run_kwargs(team, member_agent),
+                if stream:
+                    member_stream = member_agent.arun(
+                        input=member_agent_task if not history else history,
+                        user_id=user_id,
+                        session_id=session.session_id,
+                        session_state=member_session_state_copy,
+                        images=task_images,
+                        videos=task_videos,
+                        audio=task_audio,
+                        files=task_files,
+                        stream=True,
+                        stream_events=stream_events or team.stream_member_events,
+                        debug_mode=debug_mode,
+                        dependencies=run_context.dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_session_state_to_context=add_session_state_to_context,
+                        metadata=run_context.metadata,
+                        knowledge_filters=member_knowledge_filters(member_agent, run_context),
+                        run_id=member_run_id,
+                        yield_run_output=True,
+                        **_member_run_kwargs(team, member_agent),
+                    )
+                    member_run_response = None
+                    draining_after_cancel = False
+                    async for event in member_stream:
+                        if isinstance(event, (TeamRunOutput, RunOutput)):
+                            member_run_response = event
+                            continue
+                        if isinstance(event, _MEMBER_TERMINAL_EVENT_TYPES):
+                            event.parent_run_id = event.parent_run_id or run_response.run_id
+                            member_events.append(event)
+                            if event.is_cancelled:
+                                draining_after_cancel = True
+                            continue
+                        if draining_after_cancel:
+                            continue
+                        try:
+                            if run_response.run_id is not None:
+                                await araise_if_cancelled(run_response.run_id)
+                        except RunCancelledException:
+                            if member_run_id:
+                                await _acascading_cancel_run(member_run_id)
+                            draining_after_cancel = True
+                            continue
+                        event.parent_run_id = event.parent_run_id or run_response.run_id
+                        member_events.append(event)
+                    if draining_after_cancel:
+                        raise RunCancelledException("")
+                else:
+                    member_run_response = await member_agent.arun(
+                        input=member_agent_task if not history else history,
+                        user_id=user_id,
+                        session_id=session.session_id,
+                        session_state=member_session_state_copy,
+                        images=task_images,
+                        videos=task_videos,
+                        audio=task_audio,
+                        files=task_files,
+                        stream=False,
+                        debug_mode=debug_mode,
+                        dependencies=run_context.dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_session_state_to_context=add_session_state_to_context,
+                        metadata=run_context.metadata,
+                        knowledge_filters=member_knowledge_filters(member_agent, run_context),
+                        run_id=member_run_id,
+                        **_member_run_kwargs(team, member_agent),
+                    )
+                if member_run_response is not None:
+                    check_if_run_cancelled(member_run_response)
+                if run_response.run_id is not None:
+                    await araise_if_cancelled(run_response.run_id)
+                return (
+                    task_obj.id,
+                    member_run_response,
+                    member_session_state_copy,
+                    member_task_description,
+                    None,
+                    member_events,
                 )
-                return (task_obj.id, member_run_response, member_session_state_copy, member_task_description, None)
             except RunCancelledException:
                 raise
             except Exception as e:
-                return (task_obj.id, None, member_session_state_copy, member_task_description, e)
+                return (task_obj.id, None, member_session_state_copy, member_task_description, e, member_events)
 
         # Run all tasks concurrently
         gather_results = await asyncio.gather(
@@ -1158,9 +1283,12 @@ def _get_task_management_tools(
                 results_text.append(f"Task [{task_obj.id}] failed unexpectedly: {gather_result}")
                 continue
 
-            tid, member_run, state_copy, member_task, error = gather_result
+            tid, member_run, state_copy, member_task, error, member_events = gather_result
             if state_copy is not None:
                 modified_states.append(state_copy)
+
+            for event in member_events:
+                yield event
 
             if error is not None:
                 task_obj.status = TaskStatus.failed
