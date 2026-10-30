@@ -614,7 +614,7 @@ def lock_os_metrics(
     while True:
         try:
             # One block is one transaction: an expired lock is removed and the new one created together
-            client.query(
+            response = client.query(
                 dedent(f"""
                     {{
                         DELETE $lock WHERE expires_at < time::now();
@@ -623,6 +623,9 @@ def lock_os_metrics(
                 """),
                 {"lock": RecordID(table, "lock"), "lock_token": token},
             )
+            # SDK 1.x returns a failed statement's error message instead of raising it
+            if isinstance(response, str):
+                raise RuntimeError(response)
             return token
         except Exception as e:
             # Another process holds the lock, or took it at the same moment

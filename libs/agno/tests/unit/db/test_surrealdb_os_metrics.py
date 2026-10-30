@@ -8,7 +8,7 @@ import pytest
 from surrealdb import RecordID, Surreal
 
 from agno.db.surrealdb import SurrealDb
-from agno.db.surrealdb.metrics import desurrealize_os_metric
+from agno.db.surrealdb.metrics import desurrealize_os_metric, lock_os_metrics, unlock_os_metrics
 from agno.metrics import ModelMetrics, RunMetrics
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -191,6 +191,16 @@ def test_lazy_refresh_skipped_when_nothing_new(surreal_db: SurrealDb, sample_ses
 
     assert surreal_db._calculate_os_metrics(wait_for_rebuild=False) is None
     assert surreal_db._calculate_os_metrics(wait_for_rebuild=True) is not None
+
+
+def test_lock_os_metrics_refuses_a_second_holder(surreal_db: SurrealDb):
+    table = surreal_db._get_table("os_metrics")
+    token = lock_os_metrics(surreal_db.client, table, False)
+    assert token is not None
+    assert lock_os_metrics(surreal_db.client, table, False) is None
+
+    unlock_os_metrics(surreal_db.client, table, token)
+    assert lock_os_metrics(surreal_db.client, table, False) is not None
 
 
 def test_get_os_metrics_versions_incomplete(surreal_db: SurrealDb, sample_sessions):
