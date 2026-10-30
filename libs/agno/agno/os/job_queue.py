@@ -247,45 +247,81 @@ def ticket_status_to_api(ticket_status: str) -> Optional[str]:
     return _TICKET_STATUS_TO_API.get(ticket_status)
 
 
-def ensure_duplicate_matches_component(
-    existing: Dict[str, Any], component_type: str, component_id: Any, version: Optional[int] = None
-) -> None:
-    """Refuse an Idempotency-Key duplicate that belongs to a different component.
+# Payload keys the door derives rather than the client submitting: ``scope``
+# re-resolves the effective version and request context on every call, and
+# ``stream`` is the response shape, which the stream seam checks itself.
+_IDEMPOTENCY_UNCOMPARED_PAYLOAD_KEYS = frozenset({"scope", "stream"})
 
-    The dedup namespace is (idempotency_key, user_id) only, so a key reused on
-    another component's submit route - or with another explicitly pinned
-    VERSION of the same component - would otherwise be answered with the
-    ORIGINAL run - a 202 (or live stream attach) whose ids then 404 through
-    this route's poll endpoint, because the ticket poll fallback does enforce
-    component identity. Idempotency keys retry the same submission; they never
-    alias a different one.
+
+def ensure_duplicate_matches_submission(
+    existing: Dict[str, Any], job: Dict[str, Any], *, version: Optional[int], session_id: Optional[str]
+) -> None:
+    """Refuse an Idempotency-Key duplicate that is not a retry of the original submission.
+
+    The dedup namespace is (idempotency_key, user_id) only, so without this
+    check a key reused with another component, pinned version, session or
+    input would be answered with the ORIGINAL run. A key retries the identical
+    submission; any other reuse is a client bug and is refused with 422, as
+    the IETF Idempotency-Key draft specifies for a request fingerprint
+    mismatch.
 
     ``version`` is the caller's explicit pin, compared against the pin the
     original submission made - not the effective version the ticket executes.
-    An unpinned retry after a publish is still the identical submission and
-    must return the original run.
+    An unpinned retry after a publish is still the identical submission.
+
+    ``session_id`` is the session the client submitted, or None when the door
+    generated one: a retry that omits it gets a fresh id and must still match.
+
+    Only the payload keys this submission carries are compared, so fields the
+    store stamps onto its copy (such as ``session_seq``) never fail a retry.
 
     The response deliberately omits the original ticket's identity: in
     unauthenticated deployments the key namespace is shared across clients,
     and the mismatch detail belongs in server logs, not on the wire.
     """
-    existing_pin = ((existing.get("payload") or {}).get("scope") or {}).get("pinned")
-    if (
-        existing.get("component_type") == component_type
-        and existing.get("component_id") == component_id
-        and existing_pin == version
-    ):
-        return
+    import json
+
     from fastapi import HTTPException
 
+    stored = existing.get("payload") or {}
+    existing_pin = (stored.get("scope") or {}).get("pinned")
+    if not (
+        existing.get("component_type") == job.get("component_type")
+        and existing.get("component_id") == job.get("component_id")
+        and existing_pin == version
+    ):
+        log_warning(
+            f"Idempotency-Key reuse across components: key on ticket "
+            f"{existing.get('component_type')}/{existing.get('component_id')} (version {existing_pin}) was replayed "
+            f"against {job.get('component_type')}/{job.get('component_id')} (version {version}); refusing with 422"
+        )
+        raise HTTPException(
+            status_code=422,
+            detail="Idempotency-Key was already used by a different component; "
+            "reuse a key only to retry the identical submission",
+        )
+    # Compare in the stored (JSON) form: the store round-trips tuples to lists.
+    submitted = json.loads(
+        json.dumps(
+            {
+                key: value
+                for key, value in (job.get("payload") or {}).items()
+                if key not in _IDEMPOTENCY_UNCOMPARED_PAYLOAD_KEYS
+            }
+        )
+    )
+    mismatched = sorted(key for key, value in submitted.items() if stored.get(key) != value)
+    if session_id is not None and existing.get("session_id") != session_id:
+        mismatched.append("session_id")
+    if not mismatched:
+        return
     log_warning(
-        f"Idempotency-Key reuse across components: key on ticket "
-        f"{existing.get('component_type')}/{existing.get('component_id')} (version {existing_pin}) was replayed "
-        f"against {component_type}/{component_id} (version {version}); refusing with 409"
+        f"Idempotency-Key reuse with a different request on ticket {existing.get('id')}: "
+        f"{', '.join(mismatched)} differ; refusing with 422"
     )
     raise HTTPException(
-        status_code=409,
-        detail="Idempotency-Key was already used by a different component; "
+        status_code=422,
+        detail="Idempotency-Key was already used with a different request; "
         "reuse a key only to retry the identical submission",
     )
 
