@@ -32,6 +32,7 @@ from agno.db.postgres.utils import (
     OS_METRICS_IN_LIST_LIMIT,
     OS_METRICS_STALE_KEYS_LIMIT,
     apply_sorting,
+    build_os_metrics_legacy_runs_table,
     build_os_metrics_runs,
     build_os_metrics_runs_query,
     build_os_metrics_totals,
@@ -3447,6 +3448,32 @@ class PostgresDb(BaseDb):
         if not wait_for_rebuild and fingerprint is not None and fingerprint == self._os_metrics_fingerprint:
             return None
 
+        start_timestamp = int(
+            datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+        )
+        end_timestamp = int(
+            datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+            .replace(tzinfo=timezone.utc)
+            .timestamp()
+        )
+
+        # Runs not yet migrated out of the legacy column are read once for every day, as calculate_metrics reads
+        # its sessions: no index finds the sessions that hold a day's legacy runs. Nothing writes the column since
+        # runs moved to the runs table, so a read before the days misses nothing
+        legacy_run_rows_by_day: Dict[date, List[Any]] = {}
+        legacy_runs_table = build_os_metrics_legacy_runs_table(
+            sessions_table, runs_table, start_timestamp, end_timestamp
+        )
+        if legacy_runs_table is not None:
+            with self.Session() as sess, sess.begin():
+                sess.execute(text("SET LOCAL jit = off"))
+                result = sess.execute(
+                    build_os_metrics_runs_query(legacy_runs_table, start_timestamp, end_timestamp)
+                ).fetchall()
+            for record in result:
+                legacy_run_day = datetime.fromtimestamp(record.created_at, tz=timezone.utc).date()
+                legacy_run_rows_by_day.setdefault(legacy_run_day, []).append(record)
+
         results = []
         written_totals_rows: List[Dict[str, Any]] = []
 
@@ -3489,17 +3516,18 @@ class PostgresDb(BaseDb):
                 result = sess.execute(sessions_stmt).fetchall()
                 sessions = [dict(record._mapping) for record in result]
 
-                runs: List[Dict[str, Any]] = []
+                run_rows: List[Any] = []
                 stored_run_ids: Set[str] = set()
                 if runs_table is not None:
                     # Compiling this query takes longer than a day of few runs takes to read,
                     # and saves nothing on a day of many
                     sess.execute(text("SET LOCAL jit = off"))
-                    result = sess.execute(
-                        build_os_metrics_runs_query(runs_table, start_timestamp, end_timestamp)
-                    ).fetchall()
-                    runs, nested_run_ids = build_os_metrics_runs(result)
+                    run_rows = list(
+                        sess.execute(build_os_metrics_runs_query(runs_table, start_timestamp, end_timestamp)).fetchall()
+                    )
+                runs, nested_run_ids = build_os_metrics_runs(run_rows + legacy_run_rows_by_day.get(date_to_process, []))
 
+                if runs_table is not None:
                     # A nested run also stored as a run of its own is counted from that row, whatever day it is on
                     run_ids = sorted(nested_run_ids)
                     for start in range(0, len(run_ids), OS_METRICS_IN_LIST_LIMIT):
