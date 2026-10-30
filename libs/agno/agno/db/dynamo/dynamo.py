@@ -40,6 +40,8 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    OS_METRICS_COUNT_MAP_COLUMNS,
+    OS_METRICS_SUM_COLUMNS,
     add_month_os_metrics,
     build_os_metrics_totals,
     build_os_metrics_totals_row,
@@ -2862,12 +2864,9 @@ class DynamoDb(BaseDb):
                     aggregation_period,
                     days[0],
                     days[-1],
-                    attributes=["date", "sessions_count", "runs_count", "total_tokens", "model_calls_count"],
+                    attributes=["date"] + list(OS_METRICS_SUM_COLUMNS) + list(OS_METRICS_COUNT_MAP_COLUMNS),
                 )
-                if row.get("sessions_count")
-                or row.get("runs_count")
-                or row.get("total_tokens")
-                or row.get("model_calls_count")
+                if any(row.get(column) for column in list(OS_METRICS_SUM_COLUMNS) + list(OS_METRICS_COUNT_MAP_COLUMNS))
             }
             items = []
             for day in days:
