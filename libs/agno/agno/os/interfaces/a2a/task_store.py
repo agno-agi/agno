@@ -166,6 +166,8 @@ class A2ATaskStore(TaskStore):
 
     async def _cancel_paused_run(self, task_id: str) -> None:
         """Mark the stored run of a paused task as cancelled, so every replica reads the task as canceled."""
+        if self.db is None or isinstance(self.db, RemoteDb):
+            return
         # A paused run is not running anywhere, so nothing else acts on the cancellation intent
         run_output = await self._get_run(task_id)
         if run_output is None or run_output.status != RunStatus.paused:
@@ -173,7 +175,7 @@ class A2ATaskStore(TaskStore):
         run_output.status = RunStatus.cancelled
         if isinstance(self.db, AsyncBaseDb):
             await self.db.upsert_run(run_output, session_id=run_output.session_id, user_id=run_output.user_id)
-        elif isinstance(self.db, BaseDb):
+        else:
             self.db.upsert_run(run_output, session_id=run_output.session_id, user_id=run_output.user_id)
 
     async def _get_runs(self, scoped_user_id: Optional[str], session_id: Optional[str]) -> List[Any]:

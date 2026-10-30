@@ -5,13 +5,15 @@ agent server, enabling cross-framework agent communication.
 
 """
 
+import asyncio
 import json
-from typing import Any, AsyncIterator, Dict, List, Literal, Optional, Set
+from typing import Any, AsyncIterator, Dict, List, Literal, NoReturn, Optional, Set
 from uuid import uuid4
 
 from agno.client.a2a.schemas import AgentCard, Artifact, StreamEvent, TaskResult
 from agno.exceptions import RemoteServerUnavailableError
 from agno.media import Audio, File, Image, Video
+from agno.utils.common import restore_integers
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_warning
 
@@ -46,16 +48,6 @@ except ImportError as e:
 __all__ = ["A2AClient"]
 
 _AGENT_CARD_PATH = "/.well-known/agent-card.json"
-_TASK_STATES = {
-    TaskState.TASK_STATE_SUBMITTED: "submitted",
-    TaskState.TASK_STATE_WORKING: "working",
-    TaskState.TASK_STATE_COMPLETED: "completed",
-    TaskState.TASK_STATE_FAILED: "failed",
-    TaskState.TASK_STATE_CANCELED: "canceled",
-    TaskState.TASK_STATE_INPUT_REQUIRED: "input-required",
-    TaskState.TASK_STATE_REJECTED: "rejected",
-    TaskState.TASK_STATE_AUTH_REQUIRED: "auth-required",
-}
 _FINAL_TASK_STATES = ("completed", "failed", "canceled", "rejected", "input-required", "auth-required")
 
 
@@ -108,25 +100,6 @@ class A2AClient:
         path_clean = path.lstrip("/")
         return f"{base}/{path_clean}" if path_clean else base
 
-    def _restore_integers(self, value: Any) -> Any:
-        """Restore the integers of data read from an A2A response.
-
-        A2A carries structured data as JSON numbers, which are read back as floats.
-
-        Args:
-            value: The data read from the A2A response
-
-        Returns:
-            The data with whole numbers turned back into integers
-        """
-        if isinstance(value, float) and value.is_integer() and abs(value) < 2**53:
-            return int(value)
-        if isinstance(value, dict):
-            return {key: self._restore_integers(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [self._restore_integers(item) for item in value]
-        return value
-
     def _get_data(self, parts: Any) -> Optional[Any]:
         """Get the structured data of the first data part, if any.
 
@@ -137,7 +110,7 @@ class A2AClient:
             The structured data, or None when no part carries data
         """
         data_parts = get_data_parts(parts)
-        return self._restore_integers(data_parts[0]) if data_parts else None
+        return restore_integers(data_parts[0]) if data_parts else None
 
     def _get_metadata(self, metadata: Any) -> Optional[Dict[str, Any]]:
         """Get A2A metadata as a dict.
@@ -148,7 +121,28 @@ class A2AClient:
         Returns:
             The metadata as a dict, or None when there is none
         """
-        return self._restore_integers(MessageToDict(metadata)) or None
+        return restore_integers(MessageToDict(metadata)) or None
+
+    def _map_task_state(self, state: TaskState) -> str:
+        """Map the state of an A2A task to its status name.
+
+        Args:
+            state: The TaskState of an A2A task or status update
+
+        Returns:
+            The status name, e.g. "completed", or "unknown" for a state with no name
+        """
+        _mapping = {
+            TaskState.TASK_STATE_SUBMITTED: "submitted",
+            TaskState.TASK_STATE_WORKING: "working",
+            TaskState.TASK_STATE_COMPLETED: "completed",
+            TaskState.TASK_STATE_FAILED: "failed",
+            TaskState.TASK_STATE_CANCELED: "canceled",
+            TaskState.TASK_STATE_INPUT_REQUIRED: "input-required",
+            TaskState.TASK_STATE_REJECTED: "rejected",
+            TaskState.TASK_STATE_AUTH_REQUIRED: "auth-required",
+        }
+        return _mapping.get(state, "unknown")
 
     def _build_message(
         self,
@@ -287,7 +281,7 @@ class A2AClient:
             )
 
         task = response.task
-        status = _TASK_STATES.get(task.status.state, "unknown")
+        status = self._map_task_state(task.status.state)
 
         # The response lives in the task artifacts. Reasoning is kept out of it.
         content = ""
@@ -361,7 +355,7 @@ class A2AClient:
             task_id = status_update.task_id
             context_id = status_update.context_id
             metadata = self._get_metadata(status_update.metadata)
-            status = _TASK_STATES.get(status_update.status.state, "unknown")
+            status = self._map_task_state(status_update.status.state)
             is_final = status in _FINAL_TASK_STATES
 
             # Tool calls ride working status updates, named in the metadata
@@ -369,7 +363,7 @@ class A2AClient:
             if status == "working" and agno_event_type in ("tool_call_started", "tool_call_completed"):
                 event_type = agno_event_type
             else:
-                event_type = status if status in {"working", "completed", "failed", "canceled"} else "status"
+                event_type = status if status in ("working", "completed", "failed", "canceled") else "status"
             if status_update.status.HasField("message"):
                 content = "".join(get_text_parts(status_update.status.message.parts)) or None
                 data = self._get_data(status_update.status.message.parts)
@@ -438,10 +432,40 @@ class A2AClient:
 
         The host a card advertises can be unreachable from here (a container hostname, a
         server behind a proxy), so requests go to the base URL the caller was given.
+
+        Args:
+            a2a_card: The Agent Card as the A2A server serves it
+
+        Returns:
+            The same Agent Card, with every interface on the base URL
         """
         for interface in a2a_card.supported_interfaces:
             interface.url = self.base_url
         return a2a_card
+
+    def _get_a2a_card(self, headers: Optional[Dict[str, str]] = None) -> A2AAgentCard:
+        """Get the Agent Card the protocol is negotiated from, fetching it on first use.
+
+        A server without an Agent Card is assumed to serve A2A v1.0 over JSON-RPC on the base URL.
+
+        Args:
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            The Agent Card of the A2A server
+        """
+        if self._agent_card is None:
+            self.get_agent_card(headers=headers)
+        if self._agent_card is not None:
+            return self._agent_card
+
+        # Not kept: the card is fetched again on the next call, in case it was only unavailable
+        return A2AAgentCard(
+            supported_interfaces=[
+                AgentInterface(url=self.base_url, protocol_binding="JSONRPC", protocol_version="1.0")
+            ],
+            capabilities=AgentCapabilities(streaming=True),
+        )
 
     async def _aget_a2a_card(self, headers: Optional[Dict[str, str]] = None) -> A2AAgentCard:
         """Get the Agent Card the protocol is negotiated from, fetching it on first use.
@@ -454,13 +478,9 @@ class A2AClient:
         Returns:
             The Agent Card of the A2A server
         """
+        if self._agent_card is None:
+            await self.aget_agent_card(headers=headers)
         if self._agent_card is not None:
-            return self._agent_card
-
-        client = get_default_async_client()
-        response = await client.get(self._get_endpoint(path=_AGENT_CARD_PATH), timeout=self.timeout, headers=headers)
-        if response.status_code == 200:
-            self._agent_card = self._use_base_url(parse_agent_card(response.json()))
             return self._agent_card
 
         # Not kept: the card is fetched again on the next call, in case it was only unavailable
@@ -470,6 +490,40 @@ class A2AClient:
             ],
             capabilities=AgentCapabilities(streaming=True),
         )
+
+    def _handle_request_error(self, e: Exception) -> NoReturn:
+        """Raise the error a failed A2A request maps to.
+
+        Args:
+            e: The error the request raised
+
+        Raises:
+            HTTPStatusError: If the server returns an HTTP error (4xx, 5xx)
+            RemoteServerUnavailableError: If connection fails or times out
+            A2AClientError: For any other error of the A2A client
+        """
+        if isinstance(e, (ConnectError, ConnectTimeout)):
+            raise RemoteServerUnavailableError(
+                message=f"Failed to connect to A2A server at {self.base_url}",
+                base_url=self.base_url,
+                original_error=e,
+            ) from e
+        if isinstance(e, (TimeoutException, A2AClientTimeoutError)):
+            raise RemoteServerUnavailableError(
+                message=f"Request to A2A server at {self.base_url} timed out",
+                base_url=self.base_url,
+                original_error=e,
+            ) from e
+        # The A2A client wraps http errors, re-raise the original
+        if isinstance(e.__cause__, HTTPStatusError):
+            raise e.__cause__
+        if isinstance(e.__cause__, RequestError):
+            raise RemoteServerUnavailableError(
+                message=f"Failed to connect to A2A server at {self.base_url}",
+                base_url=self.base_url,
+                original_error=e.__cause__,
+            ) from e
+        raise e
 
     async def send_message(
         self,
@@ -531,29 +585,8 @@ class A2AClient:
 
             raise A2AClientError("The A2A server returned no response")
 
-        except (ConnectError, ConnectTimeout) as e:
-            raise RemoteServerUnavailableError(
-                message=f"Failed to connect to A2A server at {self.base_url}",
-                base_url=self.base_url,
-                original_error=e,
-            ) from e
-        except (TimeoutException, A2AClientTimeoutError) as e:
-            raise RemoteServerUnavailableError(
-                message=f"Request to A2A server at {self.base_url} timed out",
-                base_url=self.base_url,
-                original_error=e,
-            ) from e
-        except A2AClientError as e:
-            # The A2A client wraps http errors, re-raise the original
-            if isinstance(e.__cause__, HTTPStatusError):
-                raise e.__cause__
-            if isinstance(e.__cause__, RequestError):
-                raise RemoteServerUnavailableError(
-                    message=f"Failed to connect to A2A server at {self.base_url}",
-                    base_url=self.base_url,
-                    original_error=e.__cause__,
-                ) from e
-            raise
+        except (ConnectError, ConnectTimeout, TimeoutException, A2AClientError) as e:
+            self._handle_request_error(e)
 
     async def stream_message(
         self,
@@ -639,31 +672,52 @@ class A2AClient:
 
                     yield event
 
-        except (ConnectError, ConnectTimeout) as e:
-            raise RemoteServerUnavailableError(
-                message=f"Failed to connect to A2A server at {self.base_url}",
-                base_url=self.base_url,
-                original_error=e,
-            ) from e
-        except (TimeoutException, A2AClientTimeoutError) as e:
-            raise RemoteServerUnavailableError(
-                message=f"Request to A2A server at {self.base_url} timed out",
-                base_url=self.base_url,
-                original_error=e,
-            ) from e
-        except A2AClientError as e:
-            # The A2A client wraps http errors, re-raise the original
-            if isinstance(e.__cause__, HTTPStatusError):
-                raise e.__cause__
-            if isinstance(e.__cause__, RequestError):
-                raise RemoteServerUnavailableError(
-                    message=f"Failed to connect to A2A server at {self.base_url}",
-                    base_url=self.base_url,
-                    original_error=e.__cause__,
-                ) from e
-            raise
+        except (ConnectError, ConnectTimeout, TimeoutException, A2AClientError) as e:
+            self._handle_request_error(e)
 
-    async def get_task(self, task_id: str, *, headers: Optional[Dict[str, str]] = None) -> TaskResult:
+    async def _aget_task(
+        self, agent_card: A2AAgentCard, task_id: str, headers: Optional[Dict[str, str]] = None
+    ) -> TaskResult:
+        """Get a task from the A2A server the Agent Card points to.
+
+        Args:
+            agent_card: The Agent Card of the A2A server
+            task_id: Task identifier
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            TaskResult containing the task's current status and response
+        """
+        # The A2A client owns and closes the http client it is given, so it gets its own
+        async with AsyncClient(timeout=self.timeout, headers=headers, follow_redirects=True) as http_client:
+            client = ClientFactory(ClientConfig(httpx_client=http_client, streaming=False)).create(agent_card)
+            task = await client.get_task(GetTaskRequest(id=task_id))
+            return self._parse_task_result(StreamResponse(task=task))
+
+    def get_task(self, task_id: str, headers: Optional[Dict[str, str]] = None) -> TaskResult:
+        """Get the current state of a task, e.g. to follow a run the server is still working on.
+
+        Args:
+            task_id: Task identifier, as returned by send_message() or a stream event
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            TaskResult containing the task's current status and response
+
+        Raises:
+            HTTPStatusError: If the server returns an HTTP error (4xx, 5xx)
+            RemoteServerUnavailableError: If connection fails or times out
+            A2AError: If the server answers with an A2A error, e.g. TaskNotFoundError (from a2a.utils.errors)
+        """
+        try:
+            agent_card = self._get_a2a_card(headers=headers)
+            # The A2A client is async only; the card is fetched first so the shared async client never runs on this loop
+            return asyncio.run(self._aget_task(agent_card, task_id, headers=headers))
+
+        except (ConnectError, ConnectTimeout, TimeoutException, A2AClientError) as e:
+            self._handle_request_error(e)
+
+    async def aget_task(self, task_id: str, headers: Optional[Dict[str, str]] = None) -> TaskResult:
         """Get the current state of a task, e.g. to follow a run the server is still working on.
 
         Args:
@@ -680,38 +734,12 @@ class A2AClient:
         """
         try:
             agent_card = await self._aget_a2a_card(headers=headers)
+            return await self._aget_task(agent_card, task_id, headers=headers)
 
-            # The A2A client owns and closes the http client it is given, so it gets its own
-            async with AsyncClient(timeout=self.timeout, headers=headers, follow_redirects=True) as http_client:
-                client = ClientFactory(ClientConfig(httpx_client=http_client, streaming=False)).create(agent_card)
-                task = await client.get_task(GetTaskRequest(id=task_id))
-                return self._parse_task_result(StreamResponse(task=task))
+        except (ConnectError, ConnectTimeout, TimeoutException, A2AClientError) as e:
+            self._handle_request_error(e)
 
-        except (ConnectError, ConnectTimeout) as e:
-            raise RemoteServerUnavailableError(
-                message=f"Failed to connect to A2A server at {self.base_url}",
-                base_url=self.base_url,
-                original_error=e,
-            ) from e
-        except (TimeoutException, A2AClientTimeoutError) as e:
-            raise RemoteServerUnavailableError(
-                message=f"Request to A2A server at {self.base_url} timed out",
-                base_url=self.base_url,
-                original_error=e,
-            ) from e
-        except A2AClientError as e:
-            # The A2A client wraps http errors, re-raise the original
-            if isinstance(e.__cause__, HTTPStatusError):
-                raise e.__cause__
-            if isinstance(e.__cause__, RequestError):
-                raise RemoteServerUnavailableError(
-                    message=f"Failed to connect to A2A server at {self.base_url}",
-                    base_url=self.base_url,
-                    original_error=e.__cause__,
-                ) from e
-            raise
-
-    async def cancel_task(self, task_id: str, *, headers: Optional[Dict[str, str]] = None) -> TaskResult:
+    async def cancel_task(self, task_id: str, headers: Optional[Dict[str, str]] = None) -> TaskResult:
         """Cancel a task the server is still working on.
 
         Args:
@@ -735,29 +763,8 @@ class A2AClient:
                 task = await client.cancel_task(CancelTaskRequest(id=task_id))
                 return self._parse_task_result(StreamResponse(task=task))
 
-        except (ConnectError, ConnectTimeout) as e:
-            raise RemoteServerUnavailableError(
-                message=f"Failed to connect to A2A server at {self.base_url}",
-                base_url=self.base_url,
-                original_error=e,
-            ) from e
-        except (TimeoutException, A2AClientTimeoutError) as e:
-            raise RemoteServerUnavailableError(
-                message=f"Request to A2A server at {self.base_url} timed out",
-                base_url=self.base_url,
-                original_error=e,
-            ) from e
-        except A2AClientError as e:
-            # The A2A client wraps http errors, re-raise the original
-            if isinstance(e.__cause__, HTTPStatusError):
-                raise e.__cause__
-            if isinstance(e.__cause__, RequestError):
-                raise RemoteServerUnavailableError(
-                    message=f"Failed to connect to A2A server at {self.base_url}",
-                    base_url=self.base_url,
-                    original_error=e.__cause__,
-                ) from e
-            raise
+        except (ConnectError, ConnectTimeout, TimeoutException, A2AClientError) as e:
+            self._handle_request_error(e)
 
     def get_agent_card(self, headers: Optional[Dict[str, str]] = None) -> Optional[AgentCard]:
         """Get agent card for capability discovery.

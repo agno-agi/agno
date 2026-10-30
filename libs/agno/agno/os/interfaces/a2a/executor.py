@@ -21,11 +21,11 @@ from agno.os.interfaces.a2a.task_store import A2ATaskStore
 from agno.os.interfaces.a2a.utils import (
     map_a2a_message_to_run_input,
     map_paused_run_to_parts,
-    restore_integers,
     send_run_output_to_task,
 )
 from agno.os.utils import get_agent_by_id, get_team_by_id, get_workflow_by_id
 from agno.team import RemoteTeam, Team
+from agno.utils.common import restore_integers
 from agno.utils.log import log_error
 from agno.workflow import RemoteWorkflow, Workflow
 
@@ -199,12 +199,12 @@ class A2AExecutor(AgentExecutor):
                 await updater.update_status(
                     TaskState.TASK_STATE_INPUT_REQUIRED,
                     message=updater.new_agent_message(parts=map_paused_run_to_parts(paused_run or paused_event)),
-                    metadata={"agno_event_type": "run_paused"},
+                    metadata={"agno_event_type": "workflow_paused" if self.entity_type == "workflow" else "run_paused"},
                 )
 
         # Handle any critical error
         except Exception as e:
-            log_error(f"Error running {self.entity_type} {self.entity_id} over A2A: {str(e)}")
+            log_error(f"Error running entity: {str(e)}")
             # A fresh updater: the failed update may have marked this one terminal before its event went out
             failed_updater = TaskUpdater(event_queue, context.task_id, context.context_id)
             await failed_updater.failed(
@@ -220,6 +220,7 @@ class A2AExecutor(AgentExecutor):
         # must not be started a second time under the same run id.
         if current_task.status.state != TaskState.TASK_STATE_INPUT_REQUIRED:
             return
+        paused_event_type = "workflow_paused" if self.entity_type == "workflow" else "run_paused"
 
         # The client sends the requirements back the way the pause sent them
         requirements = None
@@ -233,7 +234,7 @@ class A2AExecutor(AgentExecutor):
             await updater.update_status(
                 TaskState.TASK_STATE_INPUT_REQUIRED,
                 message=current_task.status.message if current_task.status.HasField("message") else None,
-                metadata={"agno_event_type": "run_paused"},
+                metadata={"agno_event_type": paused_event_type},
             )
             return
 
@@ -248,7 +249,7 @@ class A2AExecutor(AgentExecutor):
             await updater.update_status(
                 TaskState.TASK_STATE_INPUT_REQUIRED,
                 message=updater.new_agent_message(parts=parts),
-                metadata={"agno_event_type": "run_paused"},
+                metadata={"agno_event_type": paused_event_type},
             )
             return
 
@@ -266,7 +267,7 @@ class A2AExecutor(AgentExecutor):
 
         # A continue that is refused leaves the run paused, so the task keeps waiting
         except Exception as e:
-            log_error(f"Error continuing {self.entity_type} {self.entity_id} over A2A: {str(e)}")
+            log_error(f"Error continuing entity: {str(e)}")
             # A run of an entity without a database is not stored, so it cannot be continued anywhere:
             # the task ends instead of waiting for good
             if isinstance(e, RunNotFoundError) and getattr(entity, "db", None) is None:
@@ -278,7 +279,7 @@ class A2AExecutor(AgentExecutor):
             await updater.update_status(
                 TaskState.TASK_STATE_INPUT_REQUIRED,
                 message=updater.new_agent_message(parts=parts),
-                metadata={"agno_event_type": "run_paused"},
+                metadata={"agno_event_type": paused_event_type},
             )
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:

@@ -100,6 +100,7 @@ def client(gateway_url: str, test_user_id: str) -> httpx.Client:
     )
 
 
+# Requests below mix A2A v1.0 and v0.3 bodies, so both versions are covered
 # =============================================================================
 # A2A Interface Tests - Local Agent (Non-Streaming)
 # =============================================================================

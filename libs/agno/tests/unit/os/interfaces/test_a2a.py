@@ -11,6 +11,9 @@ from typing import AsyncIterator, List, Union
 from unittest.mock import patch
 
 import pytest
+
+pytest.importorskip("a2a", reason="a2a-sdk not installed")
+
 from a2a.server.context import ServerCallContext
 from a2a.server.tasks import TaskUpdater
 from a2a.types import (
@@ -90,6 +93,25 @@ class TestStreamRunEventsToTaskMetadata:
         final = _final_status_update(event_queue.events)
         assert final.status.state == TaskState.TASK_STATE_COMPLETED
         assert MessageToDict(final.metadata) == {"sources": {"llm_sources": []}, "refetch_model": True}
+
+    @pytest.mark.asyncio
+    async def test_completion_metadata_that_is_not_json_still_completes_the_task(self):
+        stream = _agent_stream(
+            RunStartedEvent(run_id="run-1", session_id="ctx-1"),
+            RunCompletedEvent(
+                content="Hi",
+                run_id="run-1",
+                session_id="ctx-1",
+                metadata={"requested_at": datetime(2026, 1, 1)},
+            ),
+        )
+
+        event_queue = _RecordingEventQueue()
+        await stream_run_events_to_task(stream, TaskUpdater(event_queue, "run-1", "ctx-1"))
+
+        final = _final_status_update(event_queue.events)
+        assert final.status.state == TaskState.TASK_STATE_COMPLETED
+        assert MessageToDict(final.metadata) == {"requested_at": "2026-01-01T00:00:00"}
 
     @pytest.mark.asyncio
     async def test_run_completed_without_metadata_omits_status_metadata_field(self):
@@ -223,25 +245,6 @@ class TestA2ATaskStore:
 
 
 class TestRunMetadataOnTask:
-    @pytest.mark.asyncio
-    async def test_completion_metadata_that_is_not_json_still_completes_the_task(self):
-        stream = _agent_stream(
-            RunStartedEvent(run_id="run-1", session_id="ctx-1"),
-            RunCompletedEvent(
-                content="Hi",
-                run_id="run-1",
-                session_id="ctx-1",
-                metadata={"requested_at": datetime(2026, 1, 1)},
-            ),
-        )
-
-        event_queue = _RecordingEventQueue()
-        await stream_run_events_to_task(stream, TaskUpdater(event_queue, "run-1", "ctx-1"))
-
-        final = _final_status_update(event_queue.events)
-        assert final.status.state == TaskState.TASK_STATE_COMPLETED
-        assert MessageToDict(final.metadata) == {"requested_at": "2026-01-01T00:00:00"}
-
     def test_stored_run_metadata_does_not_override_the_run_user(self):
         run_output = RunOutput(
             run_id="run-1",

@@ -35,7 +35,7 @@ codex_assistant = CodexAgent(
     name="Codex Assistant",
     description="A Codex-powered coding assistant served through A2A.",
     model="gpt-5.6-luna",
-    sandbox="read-only",
+    sandbox_mode="read-only",
     cwd=".",
 )
 
@@ -71,7 +71,7 @@ async def run_demo() -> None:
     print(f"Task ID: {result.task_id}")
     print(f"Response: {result.content}")
 
-    stored_task = await client.get_task(result.task_id)
+    stored_task = await client.aget_task(result.task_id)
     print(f"Stored task status: {stored_task.status}")
 
 

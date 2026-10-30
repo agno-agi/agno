@@ -1,6 +1,7 @@
 import json
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple, Union
 
+from agno.run.team import CustomEvent as TeamCustomEvent
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
@@ -37,6 +38,7 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
     WorkflowStartedEvent,
 )
+from agno.run.workflow import CustomEvent as WorkflowCustomEvent
 from agno.run.workflow import StepCompletedEvent as WorkflowStepCompletedEvent
 from agno.run.workflow import StepErrorEvent as WorkflowStepErrorEvent
 from agno.run.workflow import StepPausedEvent as WorkflowStepPausedEvent
@@ -55,9 +57,9 @@ from agno.os.interfaces.a2a.utils import (
     RESPONSE_ARTIFACT_NAME,
     map_content_to_part,
     map_media_to_artifacts,
-    to_json_safe,
 )
 from agno.run.agent import (
+    CustomEvent,
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
     ReasoningCompletedEvent,
@@ -75,6 +77,7 @@ from agno.run.agent import (
     ToolCallStartedEvent,
 )
 from agno.run.base import RunStatus
+from agno.utils.serialize import to_json_types
 
 # Workflow events sent as progress: the event type sent to the client, and the event fields sent with it.
 # A field marked True is sent whenever it is set, the others only when they hold a value.
@@ -150,6 +153,17 @@ def _get_progress_metadata(event: Any) -> Optional[Dict[str, Any]]:
     if isinstance(event, (MemoryUpdateCompletedEvent, TeamMemoryUpdateCompletedEvent)):
         return {"agno_event_type": "memory_update_completed"}
 
+    # Custom events
+    # Rebuilt from a background run, a custom event holds its own fields as attributes,
+    # which to_dict() leaves out
+    if isinstance(event, (CustomEvent, TeamCustomEvent, WorkflowCustomEvent)):
+        custom_event = {key: value for key, value in event.__dict__.items() if value is not None}
+        # A value JSON cannot hold (a dict with tuple keys, a cycle) drops the event, never the run
+        try:
+            return {"agno_event_type": "custom_event", "custom_event": to_json_types(custom_event)}
+        except (TypeError, ValueError):
+            return None
+
     # Workflow events
     for event_class, (event_type, fields) in _WORKFLOW_PROGRESS_EVENTS.items():
         if isinstance(event, event_class):
@@ -192,6 +206,7 @@ async def map_background_stream_to_run_events(
                 continue
             event = team_run_output_event_from_dict(json.loads(data_line[len("data: ") :]))
         elif isinstance(event, (RunOutput, TeamRunOutput)):
+            # Terminal RunOutput is not an SSE event; skip it like the background producer does
             continue
         if getattr(event, "run_id", None) == run_id and isinstance(
             event,
@@ -213,16 +228,33 @@ async def map_background_stream_to_run_events(
         return
     run_output = await entity.aget_run_output(run_id=run_id, session_id=session_id)
     if run_output is not None and run_output.status == RunStatus.cancelled:
-        yield RunCancelledEvent(run_id=run_id, session_id=session_id, reason="Run was cancelled")
+        if isinstance(run_output, TeamRunOutput):
+            yield TeamRunCancelledEvent(run_id=run_id, session_id=session_id)
+        else:
+            yield RunCancelledEvent(run_id=run_id, session_id=session_id)
     elif run_output is not None and run_output.status == RunStatus.error:
-        yield RunErrorEvent(run_id=run_id, session_id=session_id, content=str(run_output.content or "Run failed"))
+        if isinstance(run_output, TeamRunOutput):
+            yield TeamRunErrorEvent(
+                run_id=run_id, session_id=session_id, content=str(run_output.content or "Run failed")
+            )
+        else:
+            yield RunErrorEvent(run_id=run_id, session_id=session_id, content=str(run_output.content or "Run failed"))
 
 
 async def stream_run_events_to_task(
     event_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent, RunOutput]],
     updater: TaskUpdater,
     user_id: Optional[str] = None,
-) -> Optional[Any]:
+) -> Optional[
+    Union[
+        RunPausedEvent,
+        TeamRunPausedEvent,
+        WorkflowPausedEvent,
+        WorkflowStepPausedEvent,
+        StepExecutorPausedEvent,
+        RouterPausedEvent,
+    ]
+]:
     """Stream the given event stream into the A2A Task behind the given TaskUpdater.
 
     1. Send initial event
@@ -245,6 +277,7 @@ async def stream_run_events_to_task(
     content_started = False
     reasoning_started = False
     root_run_id: Optional[str] = None
+    is_team_run = False
     completion_event = None
     cancelled_event = None
     error_event = None
@@ -260,12 +293,18 @@ async def stream_run_events_to_task(
         if isinstance(event, (RunStartedEvent, TeamRunStartedEvent, WorkflowStartedEvent)):
             if root_run_id is None:
                 root_run_id = getattr(event, "run_id", None)
+                is_team_run = isinstance(event, TeamRunStartedEvent)
                 await updater.start_work()
 
         # 2. Send all content and secondary events
 
         # Send content events
-        elif isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content:
+        # The leader writes a team's response: a member's text is only its part of the work
+        elif (
+            isinstance(event, (RunContentEvent, TeamRunContentEvent))
+            and event.content
+            and (is_root_event or not is_team_run)
+        ):
             # Structured content (from output_schema) is sent as a data part, so it is
             # never str-concatenated into the accumulated text.
             raw_content = event.content
@@ -325,7 +364,7 @@ async def stream_run_events_to_task(
             if is_root_event:
                 paused_event = event
 
-        # Send tool call, reasoning, memory and workflow events as progress
+        # Send tool call, reasoning, memory, custom and workflow events as progress
         else:
             progress_metadata = _get_progress_metadata(event)
             if progress_metadata is not None:
@@ -371,7 +410,7 @@ async def stream_run_events_to_task(
     # If the run failed, send failed status with the error
     if error_event:
         error_content = getattr(error_event, "content", None) or getattr(error_event, "error", None) or "Run failed"
-        metadata = {"agno_event_type": "run_error"}
+        metadata = {"agno_event_type": "workflow_error" if isinstance(error_event, WorkflowErrorEvent) else "run_error"}
         if hasattr(error_event, "error_type") and error_event.error_type:
             metadata["error_type"] = error_event.error_type
         await updater.update_status(
@@ -390,9 +429,9 @@ async def stream_run_events_to_task(
     if completion_event:
         completion_metadata = getattr(completion_event, "metadata", None)
         if completion_metadata:
-            status_metadata.update(to_json_safe(completion_metadata))
+            status_metadata.update(to_json_types(completion_metadata))
         if hasattr(completion_event, "metrics") and completion_event.metrics:  # type: ignore
-            status_metadata["metrics"] = to_json_safe(completion_event.metrics.to_dict())  # type: ignore
+            status_metadata["metrics"] = to_json_types(completion_event.metrics.to_dict())  # type: ignore
     if user_id:
         status_metadata["userId"] = user_id
 

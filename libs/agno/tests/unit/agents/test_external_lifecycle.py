@@ -350,9 +350,8 @@ async def test_a2a_poll_and_cancel_scoped_external(agent, monkeypatch):
         for method in ("GetTask", "CancelTask"):
             body = {"jsonrpc": "2.0", "id": "request", "method": method, "params": {"id": run.run_id}}
             response = await client.post("/agents/external", json=body, headers={**headers, "test-user": "other"})
+            assert response.status_code == 200, response.text
             assert response.json()["error"]["code"] == -32001
-        for method in ("GetTask", "CancelTask"):
-            body = {"jsonrpc": "2.0", "id": "request", "method": method, "params": {"id": run.run_id}}
             response = await client.post("/agents/external", json=body, headers={**headers, "test-user": "owner"})
             assert response.status_code == 200, response.text
             assert "result" in response.json(), response.text

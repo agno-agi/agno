@@ -1,15 +1,9 @@
 """Main class for the A2A app, used to expose an Agno Agent, Team, or Workflow in an A2A compatible format."""
 
-from typing import Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
 from fastapi.routing import APIRouter
 from typing_extensions import List
-
-try:
-    from a2a.types import AgentProvider, SecurityScheme
-except ImportError as e:
-    raise ImportError("`a2a-sdk` 1.x not installed. Please install it with `pip install -U 'agno[a2a]'`") from e
-
 
 from agno.agent import Agent
 from agno.agent.protocol import AgentProtocol
@@ -18,6 +12,9 @@ from agno.os.interfaces.a2a.router import attach_routes
 from agno.os.interfaces.base import BaseInterface
 from agno.team import RemoteTeam, Team
 from agno.workflow import RemoteWorkflow, Workflow
+
+if TYPE_CHECKING:
+    from a2a.types import AgentProvider, SecurityScheme
 
 
 class A2A(BaseInterface):
@@ -33,9 +30,9 @@ class A2A(BaseInterface):
         prefix: str = "/a2a",
         tags: Optional[List[str]] = None,
         base_url: Optional[str] = None,
-        security_schemes: Optional[Dict[str, SecurityScheme]] = None,
+        security_schemes: Optional[Dict[str, "SecurityScheme"]] = None,
         enable_v0_3_compat: bool = True,
-        provider: Optional[AgentProvider] = None,
+        provider: Optional["AgentProvider"] = None,
         documentation_url: Optional[str] = None,
         icon_url: Optional[str] = None,
     ):
@@ -79,5 +76,10 @@ class A2A(BaseInterface):
             await request_handler.aclose()
 
     def get_scope_mappings(self) -> dict:
-        # A2A routes are authorized in the route, per entity and per A2A method
-        return {}
+        # The A2A endpoint is authorized in the route, per A2A method: all methods share one route
+        p = self.prefix.rstrip("/")
+        return {
+            f"GET {p}/agents/*/.well-known/agent-card.json": ["agents:read"],
+            f"GET {p}/teams/*/.well-known/agent-card.json": ["teams:read"],
+            f"GET {p}/workflows/*/.well-known/agent-card.json": ["workflows:read"],
+        }

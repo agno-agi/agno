@@ -1,5 +1,6 @@
 """JSON serialization utilities for handling datetime and enum objects."""
 
+import json
 from datetime import date, datetime, time
 from enum import Enum
 from typing import Any
@@ -30,3 +31,8 @@ def json_serializer(obj: Any) -> Any:
 
     # Fallback to string
     return str(obj)
+
+
+def to_json_types(value: Any) -> Any:
+    """Convert a value to plain JSON types, serializing what JSON cannot hold with json_serializer."""
+    return json.loads(json.dumps(value, default=json_serializer))

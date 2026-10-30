@@ -4,6 +4,9 @@ from typing import AsyncIterator, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+pytest.importorskip("a2a", reason="a2a-sdk not installed")
+
 from a2a.client import A2AClientError, A2AClientTimeoutError
 from a2a.types import (
     AgentCapabilities,
@@ -80,8 +83,10 @@ def _task(state, text=None) -> StreamResponse:
     )
 
 
-def _patch_sdk_client(responses: Optional[List[StreamResponse]] = None, error: Optional[Exception] = None):
-    """Patch the A2A SDK client the A2AClient builds, to yield the given responses or raise the given error."""
+def _patch_sdk_client(
+    responses: Optional[List[StreamResponse]] = None, error: Optional[Exception] = None, task: Optional[Task] = None
+):
+    """Patch the A2A SDK client the A2AClient builds, to yield the responses, return the task or raise the error."""
 
     async def send_message(request):
         if error is not None:
@@ -91,6 +96,8 @@ def _patch_sdk_client(responses: Optional[List[StreamResponse]] = None, error: O
 
     sdk_client = MagicMock()
     sdk_client.send_message = send_message
+    sdk_client.get_task = AsyncMock(return_value=task)
+    sdk_client.cancel_task = AsyncMock(return_value=task)
     factory = MagicMock()
     factory.create.return_value = sdk_client
     return patch("agno.client.a2a.client.ClientFactory", return_value=factory)
@@ -357,6 +364,7 @@ class TestSendMessage:
                     message="Hello",
                 )
             assert "Failed to connect" in str(exc_info.value)
+            assert exc_info.value.base_url == "http://localhost:7777"
 
     @pytest.mark.asyncio
     async def test_send_message_timeout(self):
@@ -375,44 +383,47 @@ class TestSendMessage:
         with _patch_sdk_client([_task(TaskState.TASK_STATE_FAILED)]):
             client = _client()
             result = await client.send_message(
-                message="Hello",
+                message="Do something",
             )
 
             assert result.is_failed
 
 
 class TestTaskMethods:
-    """Test get_task and cancel_task methods."""
+    """Test get_task, aget_task and cancel_task methods."""
 
-    @pytest.mark.asyncio
-    async def test_get_task_success(self):
-        """Test reading a task by its id."""
-        sdk_client = MagicMock()
-        sdk_client.get_task = AsyncMock(return_value=_task(TaskState.TASK_STATE_WORKING).task)
-        factory = MagicMock()
-        factory.create.return_value = sdk_client
-
-        with patch("agno.client.a2a.client.ClientFactory", return_value=factory):
+    def test_get_task_success(self):
+        """Test reading a task by its id, synchronously."""
+        with _patch_sdk_client(task=_task(TaskState.TASK_STATE_WORKING).task) as mock_factory:
             client = _client()
-            result = await client.get_task("task-123")
+            result = client.get_task("task-123")
 
             assert result.task_id == "task-123"
             assert result.status == "working"
+            sdk_client = mock_factory.return_value.create.return_value
+            assert sdk_client.get_task.call_args.args[0].id == "task-123"
+
+    @pytest.mark.asyncio
+    async def test_aget_task_success(self):
+        """Test reading a task by its id."""
+        with _patch_sdk_client(task=_task(TaskState.TASK_STATE_WORKING).task) as mock_factory:
+            client = _client()
+            result = await client.aget_task("task-123")
+
+            assert result.task_id == "task-123"
+            assert result.status == "working"
+            sdk_client = mock_factory.return_value.create.return_value
             assert sdk_client.get_task.call_args.args[0].id == "task-123"
 
     @pytest.mark.asyncio
     async def test_cancel_task_success(self):
         """Test cancelling a task by its id."""
-        sdk_client = MagicMock()
-        sdk_client.cancel_task = AsyncMock(return_value=_task(TaskState.TASK_STATE_CANCELED).task)
-        factory = MagicMock()
-        factory.create.return_value = sdk_client
-
-        with patch("agno.client.a2a.client.ClientFactory", return_value=factory):
+        with _patch_sdk_client(task=_task(TaskState.TASK_STATE_CANCELED).task) as mock_factory:
             client = _client()
             result = await client.cancel_task("task-123")
 
             assert result.is_canceled
+            sdk_client = mock_factory.return_value.create.return_value
             assert sdk_client.cancel_task.call_args.args[0].id == "task-123"
 
 

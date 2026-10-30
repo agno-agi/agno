@@ -4,7 +4,7 @@ import hashlib
 import json
 from typing import Any, Callable, Dict, Optional, Sequence, Union
 
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.routing import APIRouter
 from starlette.routing import BaseRoute, Route
@@ -20,8 +20,9 @@ except ImportError as e:
 
 from agno.agent import Agent, RemoteAgent
 from agno.agent.protocol import AgentProtocol
+from agno.os.auth import require_resource_access
 from agno.os.interfaces.a2a.agent_card import build_agent_card
-from agno.os.interfaces.a2a.auth import authorize_a2a_access, authorize_a2a_request
+from agno.os.interfaces.a2a.auth import authorize_a2a_request
 from agno.os.interfaces.a2a.context import A2ACallContextBuilder, A2ARequestContextBuilder, A2ARequestHandler
 from agno.os.interfaces.a2a.executor import A2AExecutor
 from agno.os.interfaces.a2a.task_store import A2ATaskStore
@@ -74,6 +75,7 @@ def _attach_a2a_endpoint(
                 description="Send an A2A request to an Agno Agent, Team or Workflow. The A2A method is carried in the JSON-RPC body. "
                 "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata.",
                 responses={
+                    400: {"description": "Invalid request"},
                     403: {"description": "Access denied"},
                     404: {"description": "Session not found"},
                 },
@@ -103,9 +105,14 @@ def attach_routes(
     request_handlers = request_handlers if request_handlers is not None else {}
 
     # ============= AGENTS =============
-    @router.get("/agents/{id}/.well-known/agent-card.json")
+    @router.get(
+        "/agents/{id}/.well-known/agent-card.json",
+        operation_id="get_agent_card",
+        name="get_agent_card",
+        responses={404: {"description": "Agent not found"}},
+        dependencies=[Depends(require_resource_access("agents", "read", "id"))],
+    )
     async def get_agent_card(request: Request, id: str):
-        await authorize_a2a_access(request, "agents", id, "read")
         agent = get_agent_by_id(id, agents)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -158,9 +165,14 @@ def attach_routes(
         )
 
     # ============= TEAMS =============
-    @router.get("/teams/{id}/.well-known/agent-card.json")
+    @router.get(
+        "/teams/{id}/.well-known/agent-card.json",
+        operation_id="get_team_card",
+        name="get_team_card",
+        responses={404: {"description": "Team not found"}},
+        dependencies=[Depends(require_resource_access("teams", "read", "id"))],
+    )
     async def get_team_card(request: Request, id: str):
-        await authorize_a2a_access(request, "teams", id, "read")
         team = get_team_by_id(id, teams)
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -213,9 +225,14 @@ def attach_routes(
         )
 
     # ============= WORKFLOWS =============
-    @router.get("/workflows/{id}/.well-known/agent-card.json")
+    @router.get(
+        "/workflows/{id}/.well-known/agent-card.json",
+        operation_id="get_workflow_card",
+        name="get_workflow_card",
+        responses={404: {"description": "Workflow not found"}},
+        dependencies=[Depends(require_resource_access("workflows", "read", "id"))],
+    )
     async def get_workflow_card(request: Request, id: str):
-        await authorize_a2a_access(request, "workflows", id, "read")
         workflow = get_workflow_by_id(id, workflows)
         if not workflow:
             raise HTTPException(status_code=404, detail="Workflow not found")

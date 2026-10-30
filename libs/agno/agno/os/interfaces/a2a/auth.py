@@ -10,8 +10,12 @@ except ImportError as e:
     raise ImportError("`a2a-sdk` 1.x not installed. Please install it with `pip install -U 'agno[a2a]'`") from e
 
 
-from agno.os.auth import acheck_resource_access, resolve_authorization_provider, run_continuation_blocked_reason
-from agno.os.authz.provider import AuthorizationContext
+from agno.os.auth import (
+    _authorization_context,
+    _provider_for,
+    acheck_resource_access,
+    run_continuation_blocked_reason,
+)
 from agno.os.middleware.user_scope import assert_session_writable, caller_is_admin, resolve_run_user_id
 from agno.remote.base import BaseRemote
 from agno.utils.log import log_warning
@@ -67,37 +71,28 @@ def resolve_a2a_user_id(request: Request, client_uid: Optional[str]) -> Optional
     return resolve_run_user_id(request, request.headers.get("X-User-ID") or client_uid)
 
 
-async def _authorize_a2a_route(request: Request, resource_type: str, resource_id: str, action: str) -> bool:
+async def _authorize_a2a_route(
+    request: Request, resource_type: str, resource_id: str, action: str
+) -> Tuple[bool, Optional[str]]:
     """Ask the authorization provider for its route decision on an A2A method.
 
-    A2A routes are not in the scope map, so the route-level scope gate does not ask
-    the provider about them. This asks with the scope the method requires, the way the gate
+    The A2A endpoint is not in the scope map, so the route-level scope gate does not ask
+    the provider about it. This asks with the scope the method requires, the way the gate
     asks for a mapped route. A provider that raises is a denial.
-    """
-    from agno.os.auth import _default_authorization_provider
 
-    state = request.state
-    # A service-account PAT and the internal service token carry their scopes as their ACL
-    # and have no subject in a managed store, so the scope provider decides for them
-    is_scope_caller = getattr(state, "service_account_name", None) is not None or getattr(
-        state, "is_internal_service", False
-    )
-    provider = _default_authorization_provider() if is_scope_caller else resolve_authorization_provider(request)
-    admin_scope = getattr(state, "admin_scope", None)
-    ctx = AuthorizationContext(
-        principal_id=getattr(state, "user_id", None),
-        scopes=list(getattr(state, "scopes", None) or []),
-        claims=getattr(state, "claims", None) or {},
-        resource_type=resource_type,
-        resource_id=resource_id,
-        action=action,
-        admin_scope=admin_scope if isinstance(admin_scope, str) else None,
-    )
+    Returns:
+        Tuple[bool, Optional[str]]: Whether the route is allowed, and the denial reason when the provider raised
+    """
+    # The internal service token holds every entity read and run scope and has no subject in a managed store
+    if getattr(request.state, "is_internal_service", False):
+        return True, None
+
+    ctx = _authorization_context(request, resource_type=resource_type, resource_id=resource_id, action=action)
     try:
-        return await provider.aauthorize_route(ctx, [f"{resource_type}:{action}"])
+        return await _provider_for(request).aauthorize_route(ctx, [f"{resource_type}:{action}"]), None
     except Exception as e:
         log_warning(f"authorization provider raised during route authorization; denying: {e}")
-        return False
+        return False, "provider_error"
 
 
 async def authorize_a2a_access(request: Request, resource_type: str, resource_id: str, action: str) -> None:
@@ -113,7 +108,7 @@ async def authorize_a2a_access(request: Request, resource_type: str, resource_id
     if not getattr(request.state, "authorization_enabled", False):
         return
 
-    allowed = await _authorize_a2a_route(request, resource_type, resource_id, action)
+    allowed, reason = await _authorize_a2a_route(request, resource_type, resource_id, action)
     if allowed:
         allowed = await acheck_resource_access(request, resource_id, resource_type, action)
 
@@ -129,10 +124,16 @@ async def authorize_a2a_access(request: Request, resource_type: str, resource_id
         required_scopes=[f"{resource_type}:{resource_id}:{action}"],
         scopes=list(getattr(request.state, "scopes", None) or []),
         claims=getattr(request.state, "claims", None),
-        reason=None if allowed else "resource_access_denied",
+        reason=None if allowed else reason or "resource_access_denied",
     )
     if not allowed:
-        raise HTTPException(status_code=403, detail=f"Access denied to {action} this {resource_type[:-1]}")
+        # Map resource_type to singular form for error messages
+        resource_singular = {
+            "agents": "agent",
+            "teams": "team",
+            "workflows": "workflow",
+        }.get(resource_type, resource_type.rstrip("s"))
+        raise HTTPException(status_code=403, detail=f"Access denied to {action} this {resource_singular}")
 
 
 async def authorize_a2a_request(request: Request, resource_type: str, entity: Any) -> None:
@@ -173,7 +174,7 @@ async def authorize_a2a_request(request: Request, resource_type: str, entity: An
 
     # A remote entity runs on another server, which owns the run and its cancellation
     if isinstance(entity, BaseRemote) and method in _CANCEL_METHODS:
-        raise HTTPException(status_code=400, detail="Task cancellation is not supported for remote agents")
+        raise HTTPException(status_code=400, detail=f"Task cancellation is not supported for remote {resource_type}")
 
     if method not in _SEND_METHODS:
         return

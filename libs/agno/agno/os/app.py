@@ -214,9 +214,7 @@ async def interface_lifespan(_, agent_os: "AgentOS"):
     yield
 
     for interface in agent_os.interfaces:
-        aclose = getattr(interface, "aclose", None)
-        if aclose is not None:
-            await aclose()
+        await interface.aclose()
 
 
 @asynccontextmanager

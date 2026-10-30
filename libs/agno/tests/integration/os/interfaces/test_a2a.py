@@ -11,6 +11,7 @@ from agno.models.response import ToolExecution
 from agno.os.app import AgentOS
 from agno.os.interfaces.a2a import A2A
 from agno.run.agent import (
+    CustomEvent,
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
     ReasoningCompletedEvent,
@@ -29,6 +30,15 @@ from agno.run.agent import (
     ToolCallStartedEvent,
 )
 from agno.run.requirement import RunRequirement
+from agno.run.team import (
+    RunCompletedEvent as TeamRunCompletedEvent,
+)
+from agno.run.team import (
+    RunContentEvent as TeamRunContentEvent,
+)
+from agno.run.team import (
+    RunStartedEvent as TeamRunStartedEvent,
+)
 from agno.run.workflow import (
     StepCompletedEvent as WorkflowStepCompletedEvent,
 )
@@ -115,28 +125,6 @@ def test_a2a_interface_in_interfaces_parameter():
     paths = [route.path for route in agent_os.get_routes() if hasattr(route, "path")]
     assert "/a2a/agents/{id}/.well-known/agent-card.json" in paths
     assert f"/a2a/agents/{interface_agent.id}" in paths
-
-
-def test_a2a_agent_card(test_agent: Agent, test_client: TestClient):
-    """Test the Agent Card describes the agent and the endpoint it is served on."""
-    response = test_client.get(f"/a2a/agents/{test_agent.id}/.well-known/agent-card.json")
-
-    assert response.status_code == 200
-    card = response.json()
-
-    assert card["name"] == "test-a2a-agent"
-    assert card["capabilities"]["streaming"] is True
-    assert card["skills"][0]["id"] == test_agent.id
-    assert "examples" not in card["skills"][0]
-
-    endpoint = f"http://testserver/a2a/agents/{test_agent.id}"
-    assert card["supportedInterfaces"] == [
-        {"url": endpoint, "protocolBinding": "JSONRPC", "protocolVersion": "1.0"},
-        {"url": endpoint, "protocolBinding": "JSONRPC", "protocolVersion": "0.3"},
-    ]
-    # The fields A2A v0.3 clients read
-    assert card["url"] == endpoint
-    assert card["preferredTransport"] == "JSONRPC"
 
 
 def test_a2a_request_with_a_malformed_method_is_a_json_rpc_error(test_agent: Agent, test_client: TestClient):
@@ -403,7 +391,7 @@ def test_a2a_streaming_with_tools(test_agent: Agent, test_client: TestClient):
     with patch.object(test_agent, "arun") as mock_arun:
         mock_arun.return_value = mock_event_stream()
 
-        request_body = _message_body("message/stream", "What's the weather in Shanghai?")
+        request_body = _message_body("message/stream", "What's the weather in SF?")
 
         response = test_client.post(f"/a2a/agents/{test_agent.id}", json=request_body)
 
@@ -429,7 +417,10 @@ def test_a2a_streaming_with_tools(test_agent: Agent, test_client: TestClient):
         assert tool_completed[0]["result"]["kind"] == "status-update"
         assert tool_completed[0]["result"]["metadata"]["tool_name"] == "get_weather"
 
-        content_chunks = [e for e in events if e["result"].get("kind") == "artifact-update"]
+        content_chunks = [
+            e for e in events if e["result"].get("kind") == "artifact-update" and not e["result"].get("lastChunk")
+        ]
+        assert len(content_chunks) == 1
         assert (
             content_chunks[0]["result"]["artifact"]["parts"][0]["text"] == "The weather in Shanghai is 72°F and sunny."
         )
@@ -441,8 +432,57 @@ def test_a2a_streaming_with_tools(test_agent: Agent, test_client: TestClient):
         assert final_status["result"]["final"] is True
 
 
+def test_a2a_streaming_with_custom_event(test_agent: Agent, test_client: TestClient):
+    """Test A2A streaming flow with a custom event."""
+
+    async def mock_event_stream() -> AsyncIterator[RunOutputEvent]:
+        """Mock event stream with a custom event."""
+        yield RunStartedEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+        )
+
+        yield CustomEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+            order_id="order-77",
+        )
+
+        yield RunCompletedEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+            content="Order order-77 found.",
+        )
+
+    with patch.object(test_agent, "arun") as mock_arun:
+        mock_arun.return_value = mock_event_stream()
+
+        request_body = _message_body("message/stream", "Look up order 77.")
+
+        response = test_client.post(f"/a2a/agents/{test_agent.id}", json=request_body)
+
+        assert response.status_code == 200
+
+        events = _parse_sse_events(response.text)
+
+        custom_events = [e for e in events if e["result"].get("metadata", {}).get("agno_event_type") == "custom_event"]
+        assert len(custom_events) == 1
+        assert custom_events[0]["result"]["kind"] == "status-update"
+        assert custom_events[0]["result"]["status"]["state"] == "working"
+        assert custom_events[0]["result"]["metadata"]["custom_event"]["order_id"] == "order-77"
+
+        final_status = events[-1]
+        assert final_status["result"]["status"]["state"] == "completed"
+
+
 def test_a2a_streaming_with_reasoning(test_agent: Agent, test_client: TestClient):
-    """Test A2A streaming flow with reasoning events."""
+    """Test A2A streaming with reasoning events."""
 
     async def mock_event_stream() -> AsyncIterator[RunOutputEvent]:
         """Mock event stream with reasoning."""
@@ -550,8 +590,10 @@ def test_a2a_streaming_with_reasoning(test_agent: Agent, test_client: TestClient
             e
             for e in events
             if e["result"].get("kind") == "artifact-update"
+            and not e["result"].get("lastChunk")
             and e["result"]["artifact"].get("metadata", {}).get("agno_content_category") == "content"
         ]
+        assert len(content_chunks) == 1
         assert content_chunks[0]["result"]["artifact"]["parts"][0]["text"] == "Based on my analysis, here's the answer."
 
         final_status = events[-1]
@@ -560,7 +602,7 @@ def test_a2a_streaming_with_reasoning(test_agent: Agent, test_client: TestClient
 
 
 def test_a2a_streaming_with_memory(test_agent: Agent, test_client: TestClient):
-    """Test A2A streaming flow with memory update events."""
+    """Test A2A streaming with memory update events."""
 
     async def mock_event_stream() -> AsyncIterator[RunOutputEvent]:
         yield RunStartedEvent(
@@ -603,7 +645,7 @@ def test_a2a_streaming_with_memory(test_agent: Agent, test_client: TestClient):
     with patch.object(test_agent, "arun") as mock_arun:
         mock_arun.return_value = mock_event_stream()
 
-        request_body = _message_body("message/stream", "Remember that I like Python.")
+        request_body = _message_body("message/stream", "Remember this for later.")
 
         response = test_client.post(f"/a2a/agents/{test_agent.id}", json=request_body)
 
@@ -625,7 +667,10 @@ def test_a2a_streaming_with_memory(test_agent: Agent, test_client: TestClient):
         assert len(memory_completed) == 1
         assert memory_completed[0]["result"]["kind"] == "status-update"
 
-        content_chunks = [e for e in events if e["result"].get("kind") == "artifact-update"]
+        content_chunks = [
+            e for e in events if e["result"].get("kind") == "artifact-update" and not e["result"].get("lastChunk")
+        ]
+        assert len(content_chunks) == 1
         assert (
             content_chunks[0]["result"]["artifact"]["parts"][0]["text"]
             == "I've updated my memory with this information."
@@ -740,7 +785,7 @@ def test_a2a_streaming_team(test_team: Team, test_team_client: TestClient):
             agent_id=test_team.id,
             agent_name=test_team.name,
             run_id="test-run-123",
-            content="Hello! This is a streaming response from the team.",
+            content="Hello! this is a streaming response from the team.",
         )
 
     with patch.object(test_team, "arun") as mock_arun:
@@ -787,8 +832,64 @@ def test_a2a_streaming_team(test_team: Team, test_team_client: TestClient):
         assert call_kwargs["stream_events"] is True
 
 
+def test_a2a_streaming_team_without_member_content(test_team: Team, test_team_client: TestClient):
+    """Test that A2A streaming of a Team sends the leader's content, not its members'."""
+
+    async def mock_event_stream() -> AsyncIterator[RunOutputEvent]:
+        yield TeamRunStartedEvent(
+            session_id="context-789",
+            team_id=test_team.id,
+            team_name=test_team.name,
+            run_id="test-run-123",
+        )
+
+        yield RunContentEvent(
+            session_id="context-789",
+            agent_id="agent1",
+            agent_name="agent1",
+            run_id="member-run-456",
+            content="Member answer.",
+        )
+
+        yield TeamRunContentEvent(
+            session_id="context-789",
+            team_id=test_team.id,
+            team_name=test_team.name,
+            run_id="test-run-123",
+            content="Team answer.",
+        )
+
+        yield TeamRunCompletedEvent(
+            session_id="context-789",
+            team_id=test_team.id,
+            team_name=test_team.name,
+            run_id="test-run-123",
+            content="Team answer.",
+        )
+
+    with patch.object(test_team, "arun") as mock_arun:
+        mock_arun.return_value = mock_event_stream()
+
+        request_body = _message_body("message/stream", "Hello, team!")
+
+        response = test_team_client.post(f"/a2a/teams/{test_team.id}", json=request_body)
+
+        assert response.status_code == 200
+
+        events = _parse_sse_events(response.text)
+
+        content_chunks = [
+            e for e in events if e["result"].get("kind") == "artifact-update" and not e["result"].get("lastChunk")
+        ]
+        assert len(content_chunks) == 1
+        assert content_chunks[0]["result"]["artifact"]["parts"][0]["text"] == "Team answer."
+
+        final_status = events[-1]
+        assert final_status["result"]["status"]["state"] == "completed"
+
+
 def test_a2a_user_id_from_header(test_agent: Agent, test_client: TestClient):
-    """Test that user_id is extracted from X-User-ID header and passed to arun."""
+    """Test that user_id is extracted from X-User-ID header and passed to arun()."""
 
     async def mock_event_stream() -> AsyncIterator[RunOutputEvent]:
         yield RunCompletedEvent(
@@ -840,7 +941,7 @@ def test_a2a_user_id_from_metadata(test_agent: Agent, test_client: TestClient):
 
 
 def test_a2a_error_handling_non_streaming(test_agent: Agent, test_client: TestClient):
-    """Test that errors during agent execution return a failed Task."""
+    """Test that errors during agent run return Task with failed status."""
 
     with patch.object(test_agent, "arun") as mock_arun:
         mock_arun.side_effect = Exception("Agent execution failed")
@@ -1018,7 +1119,7 @@ def test_a2a_streaming_with_media_artifacts(test_agent: Agent, test_client: Test
     with patch.object(test_agent, "arun") as mock_arun:
         mock_arun.return_value = mock_event_stream()
 
-        request_body = _message_body("message/stream", "Generate an image")
+        request_body = _message_body("message/stream", "Generate media")
 
         response = test_client.post(f"/a2a/agents/{test_agent.id}", json=request_body)
 
@@ -1096,8 +1197,10 @@ def test_a2a_streaming_with_cancellation(test_agent: Agent, test_client: TestCli
             e
             for e in events
             if e["result"].get("kind") == "artifact-update"
+            and not e["result"].get("lastChunk")
             and e["result"]["artifact"].get("metadata", {}).get("agno_content_category") == "content"
         ]
+        assert len(content_chunks) == 1
         assert content_chunks[0]["result"]["artifact"]["parts"][0]["text"] == "Starting to process..."
 
         final_status_events = [
@@ -1265,6 +1368,28 @@ def test_a2a_streaming_workflow(test_workflow: Workflow, test_workflow_client: T
         final_status = events[-1]
         assert final_status["result"]["kind"] == "status-update"
         assert final_status["result"]["status"]["state"] == "completed"
+
+
+def test_a2a_agent_card(test_agent: Agent, test_client: TestClient):
+    """Test the Agent Card describes the agent and the endpoint it is served on."""
+    response = test_client.get(f"/a2a/agents/{test_agent.id}/.well-known/agent-card.json")
+
+    assert response.status_code == 200
+    card = response.json()
+
+    assert card["name"] == "test-a2a-agent"
+    assert card["capabilities"]["streaming"] is True
+    assert card["skills"][0]["id"] == test_agent.id
+    assert "examples" not in card["skills"][0]
+
+    endpoint = f"http://testserver/a2a/agents/{test_agent.id}"
+    assert card["supportedInterfaces"] == [
+        {"url": endpoint, "protocolBinding": "JSONRPC", "protocolVersion": "1.0"},
+        {"url": endpoint, "protocolBinding": "JSONRPC", "protocolVersion": "0.3"},
+    ]
+    # The fields A2A v0.3 clients read
+    assert card["url"] == endpoint
+    assert card["preferredTransport"] == "JSONRPC"
 
 
 @pytest.mark.parametrize(

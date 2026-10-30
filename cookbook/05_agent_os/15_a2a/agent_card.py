@@ -4,7 +4,8 @@ Discover an A2A Agent Card
 
 Read the Agent card from the entity-scoped discovery route with both the
 synchronous and asynchronous first-party client methods. The example prints
-stable identity and endpoint fields from the running server.
+stable identity and endpoint fields, the protocol versions the card advertises,
+and its skill IDs from the running server.
 
 Prerequisites: Start basic.py on port 7779
 Run: .venvs/demo/bin/python cookbook/05_agent_os/15_a2a/agent_card.py
@@ -41,14 +42,16 @@ async def read_card_async(client: A2AClient) -> AgentCard:
 
 def show_card(card: AgentCard, label: str) -> None:
     """Print stable discovery fields."""
+    protocol_versions = [
+        interface.get("protocolVersion") for interface in card.interfaces
+    ]
+    skill_ids = [skill.get("id") for skill in card.skills]
     print(f"{label} name: {card.name}")
     print(f"{label} description: {card.description}")
     print(f"{label} version: {card.version}")
     print(f"{label} endpoint: {card.url}")
-    print(
-        f"{label} protocol versions: {[interface.get('protocolVersion') for interface in card.interfaces]}"
-    )
-    print(f"{label} skills: {[skill.get('id') for skill in card.skills]}")
+    print(f"{label} protocol versions: {protocol_versions}")
+    print(f"{label} skills: {skill_ids}")
 
 
 # ---------------------------------------------------------------------------

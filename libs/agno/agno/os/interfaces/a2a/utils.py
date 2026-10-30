@@ -6,7 +6,7 @@ from typing_extensions import List, Union
 
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
-from agno.utils.serialize import json_serializer
+from agno.utils.serialize import to_json_types
 
 try:
     from a2a.helpers import new_data_part, new_raw_part, new_text_part, new_url_part
@@ -170,33 +170,12 @@ def map_paused_run_to_parts(paused_run: Any) -> List[Part]:
     return parts
 
 
-def to_json_safe(value: Any) -> Any:
-    """Convert run metadata or content to plain JSON types, which A2A structured data requires."""
-    return json.loads(json.dumps(value, default=json_serializer))
-
-
-def restore_integers(value: Any) -> Any:
-    """Restore the integers of data read from an A2A data part.
-
-    A2A carries structured data as JSON numbers, which are read back as floats. Whole
-    numbers a float holds exactly are turned back into integers, so tool arguments keep the
-    type they were sent with.
-    """
-    if isinstance(value, float) and value.is_integer() and abs(value) < 2**53:
-        return int(value)
-    if isinstance(value, dict):
-        return {key: restore_integers(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [restore_integers(item) for item in value]
-    return value
-
-
 def map_content_to_part(content: Any) -> Part:
     """Map run content to an A2A Part: structured output becomes a data part, anything else text."""
     if hasattr(content, "model_dump"):
         return new_data_part(content.model_dump(mode="json"), media_type="application/json")
     if isinstance(content, (dict, list)):
-        return new_data_part(to_json_safe(content), media_type="application/json")
+        return new_data_part(to_json_types(content), media_type="application/json")
     return new_text_part(content if isinstance(content, str) else str(content))
 
 
@@ -314,9 +293,9 @@ def map_run_output_to_a2a_task(run_output: Union[RunOutput, TeamRunOutput, Workf
     # The run's own metadata goes first, so it cannot override the user or metrics
     metadata: Dict[str, Any] = {}
     if hasattr(run_output, "metadata") and run_output.metadata:
-        metadata.update(to_json_safe(run_output.metadata))
+        metadata.update(to_json_types(run_output.metadata))
     if hasattr(run_output, "metrics") and run_output.metrics:
-        metadata["metrics"] = to_json_safe(run_output.metrics.to_dict())
+        metadata["metrics"] = to_json_types(run_output.metrics.to_dict())
     if hasattr(run_output, "user_id") and run_output.user_id:
         metadata["userId"] = run_output.user_id
 
@@ -390,11 +369,15 @@ async def send_run_output_to_task(
         )
 
     # 2. Send final status event
-    status_metadata = MessageToDict(task.metadata)
-    if user_id:
-        status_metadata["userId"] = user_id
+    status_metadata: Dict[str, Any]
     if task.status.state == TaskState.TASK_STATE_INPUT_REQUIRED:
-        status_metadata = {"agno_event_type": "run_paused"}
+        status_metadata = {
+            "agno_event_type": "workflow_paused" if isinstance(run_output, WorkflowRunOutput) else "run_paused"
+        }
+    else:
+        status_metadata = MessageToDict(task.metadata)
+        if user_id:
+            status_metadata["userId"] = user_id
     await updater.update_status(
         task.status.state,
         message=task.status.message if task.status.HasField("message") else None,

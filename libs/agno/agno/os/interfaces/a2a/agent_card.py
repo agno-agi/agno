@@ -16,7 +16,7 @@ except ImportError as e:
     raise ImportError("`a2a-sdk` 1.x not installed. Please install it with `pip install -U 'agno[a2a]'`") from e
 
 
-_DEFAULT_CARD_VERSION = "0.0.1"
+_DEFAULT_CARD_VERSION = "1.0.0"
 _PROTOCOL_BINDING = "JSONRPC"
 _INPUT_MODES = ["text/plain", "application/json", "image/*", "audio/*", "video/*", "application/octet-stream"]
 

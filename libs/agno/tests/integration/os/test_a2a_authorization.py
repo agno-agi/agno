@@ -120,6 +120,16 @@ class TestA2AAuthorization:
         )
         assert resp.status_code == 403, resp.text
 
+    def test_message_send_blocked_without_run_scope_v1(self, authz_client):
+        body = _message_body("SendMessage")
+        body["params"]["message"] = {"messageId": "msg-123", "role": "ROLE_USER", "parts": [{"text": "Hello!"}]}
+        resp = authz_client.post(
+            f"/a2a/agents/{AGENT_ID}",
+            json=body,
+            headers={"Authorization": f"Bearer {_token(['agents:read'])}", "A2A-Version": "1.0"},
+        )
+        assert resp.status_code == 403, resp.text
+
     def test_message_stream_blocked_without_run_scope(self, authz_client):
         resp = authz_client.post(
             f"/a2a/agents/{AGENT_ID}",
@@ -166,16 +176,6 @@ class TestA2AAuthorization:
             f"/a2a/agents/{AGENT_ID}",
             json=_task_body("GetTask"),
             headers={"Authorization": f"Bearer {_token(['agents:run'])}", "A2A-Version": "1.0"},
-        )
-        assert resp.status_code == 403, resp.text
-
-    def test_message_send_blocked_without_run_scope_v1(self, authz_client):
-        body = _message_body("SendMessage")
-        body["params"]["message"] = {"messageId": "msg-123", "role": "ROLE_USER", "parts": [{"text": "Hello!"}]}
-        resp = authz_client.post(
-            f"/a2a/agents/{AGENT_ID}",
-            json=body,
-            headers={"Authorization": f"Bearer {_token(['agents:read'])}", "A2A-Version": "1.0"},
         )
         assert resp.status_code == 403, resp.text
 
@@ -276,9 +276,8 @@ def test_every_a2a_route_is_gated():
     """Regression guard for the root cause of B1: the unmapped-route default is *allow*,
     so any A2A route added without a gate would silently ship ungated.
 
-    A2A routes are not in a scope map: they are authorized in the route, so the gate holds
-    under any prefix. Every A2A route must either be an Agent Card route, gated by
-    authorize_a2a_access, or an entity's A2A endpoint -- gated per A2A method by
+    Every A2A route must either be an Agent Card route, gated by its scope mapping and
+    require_resource_access, or an entity's A2A endpoint -- gated per A2A method by
     authorize_a2a_request, because all A2A methods share that one route.
     """
     agent = Agent(id=AGENT_ID, name="Authz Agent", db=InMemoryDb())
@@ -418,6 +417,7 @@ class TestA2ATasksGetScoping:
     """A task this process no longer holds is read back from the run the entity stored.
     The read is pinned to the caller and to the entity the request targets."""
 
+    # Both A2A versions are covered: tasks/get (v0.3) and GetTask (v1.0)
     @staticmethod
     def _stored_run(user_id="user-1", agent_id=AGENT_ID):
         return RunOutput(run_id="task-1", session_id="ctx-1", agent_id=agent_id, user_id=user_id, content="x")

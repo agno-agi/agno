@@ -94,7 +94,11 @@ def map_task_result_to_run_output(
 
     return RunOutput(
         content=task_result.content,
-        requirements=_map_paused_requirements(task_result.data) if task_result.is_input_required else None,
+        requirements=(
+            _map_paused_requirements(task_result.data)
+            if task_result.status in ("input-required", "auth-required")
+            else None
+        ),
         run_id=task_result.task_id,
         session_id=task_result.context_id,
         agent_id=agent_id,
@@ -363,7 +367,11 @@ def map_task_result_to_team_run_output(
 
     return TeamRunOutput(
         content=task_result.content,
-        requirements=_map_paused_requirements(task_result.data) if task_result.is_input_required else None,
+        requirements=(
+            _map_paused_requirements(task_result.data)
+            if task_result.status in ("input-required", "auth-required")
+            else None
+        ),
         run_id=task_result.task_id,
         session_id=task_result.context_id,
         team_id=team_id,
@@ -551,7 +559,11 @@ def map_task_result_to_workflow_run_output(
 
     return WorkflowRunOutput(
         content=task_result.content,
-        step_requirements=_map_paused_step_requirements(task_result.data) if task_result.is_input_required else None,
+        step_requirements=(
+            _map_paused_step_requirements(task_result.data)
+            if task_result.status in ("input-required", "auth-required")
+            else None
+        ),
         run_id=task_result.task_id,
         session_id=task_result.context_id,
         workflow_id=workflow_id,
@@ -603,6 +615,23 @@ async def map_stream_events_to_workflow_run_events(
                     session_id=session_id,
                     workflow_id=workflow_id,
                 )
+
+        elif event.event_type == "tool_call_started":
+            # The tool call is made by an agent or team of the workflow, so the workflow_id is used as the agent_id.
+            yield ToolCallStartedEvent(
+                tool=_map_tool_execution(event.metadata),
+                run_id=run_id,
+                session_id=session_id,
+                agent_id=workflow_id,
+            )
+
+        elif event.event_type == "tool_call_completed":
+            yield ToolCallCompletedEvent(
+                tool=_map_tool_execution(event.metadata),
+                run_id=run_id,
+                session_id=session_id,
+                agent_id=workflow_id,
+            )
 
         elif event.event_type == "artifact" or (event.event_type == "content" and not event.content):
             # The complete response, sent once the agent is done writing it. Structured

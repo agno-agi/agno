@@ -28,9 +28,10 @@ Install the demo environment and export an OpenAI key:
 export OPENAI_API_KEY=...
 ```
 
-The demo environment includes the `agno[a2a]` extra. The multi-agent example
-has two additional requirements:
+The demo environment includes the `agno[a2a]` extra. The external Agent and
+multi-agent examples have additional requirements:
 
+- `external_agent.py` needs the Codex CLI and the `openai-codex` package.
 - `weather_agent.py` needs `OPENWEATHER_API_KEY`.
 - `airbnb_agent.py` needs Node.js, `npx`, and internet access so it can run
   `@openbnb/mcp-server-airbnb`.
@@ -88,49 +89,13 @@ operation:
 | Send | `SendMessage` | `message/send` |
 | Stream | `SendStreamingMessage` | `message/stream` |
 | Get task | `GetTask` | `tasks/get` |
+| List tasks | `ListTasks` | none |
 | Cancel task | `CancelTask` | `tasks/cancel` |
 
 A2A v1.0 methods must carry the `A2A-Version: 1.0` header. A2A v0.3 methods
 need no header, so standard A2A v0.3 clients (for example ones built on
 `a2a-sdk` 0.3) keep working. The Agent card lists both versions under
 `supportedInterfaces`.
-
-### Upgrading from the A2A v0.3 interface
-
-- The `/v1/message:send`, `/v1/message:stream`, `/v1/tasks:get` and
-  `/v1/tasks:cancel` routes are gone. Every operation is sent to the entity's
-  A2A endpoint, `POST /a2a/agents/{id}`.
-- Upgrade the server and `A2AClient` together. An `A2AClient` from an earlier
-  Agno release calls the removed routes, and this `A2AClient` does not talk to
-  an earlier Agno A2A server.
-- The `a2a` extra now requires `a2a-sdk>=1.2.2`.
-- Responses carry the answer in the task `artifacts`. Streams send
-  `artifact-update` events instead of `message` events, and end the answer
-  with one event that carries the full response.
-- An Agent, Team or external agent with a database runs every message as a
-  background run: the run is stored before it starts, so any replica can read
-  the task, and it does not depend on the request that started it. A message
-  sent without waiting for the result returns the submitted task with status
-  200; read it with `GetTask`. Subscribing to a task, and cancelling it without
-  a shared cancellation manager, work on the replica running it. A run
-  interrupted by a crash stays `working`. Background runs share one limit per
-  process (`AGNO_BACKGROUND_MAX_CONCURRENCY`, 32 by default); a message over
-  the limit waits as `submitted`. `ListTasks` lists every stored run of the
-  entity for the caller, including runs started outside A2A.
-- A Workflow, or an entity without a database, runs in the server process. Its
-  run is stored when it ends, and a run that is still going when the server
-  restarts is lost. A paused run can be continued only when the entity has a
-  database: without one, a continue sent to an Agent or Team task ends it
-  `failed`.
-- `A2AClient` sends requests to its `base_url`, whatever URL the Agent card
-  advertises. If a server's endpoint is not at the URL its card is served
-  from, pass the endpoint as `base_url`; the client then assumes A2A v1.0.
-- `AgentCard.capabilities` returned by `A2AClient.get_agent_card()` is a dict
-  instead of a list.
-- An unknown task is reported as a JSON-RPC error (`TaskNotFound`) instead of
-  an HTTP 404.
-- `RemoteAgent(a2a_protocol=...)` and `A2AClient(protocol=...)` are deprecated.
-  The protocol is negotiated from the Agent card.
 
 For the first-party client, pass the entity root as `base_url`, for example:
 
@@ -145,6 +110,8 @@ client = A2AClient(
 unwrapping is needed. Pass a returned `.context_id` to the next call to keep
 the same AgentOS session. Card discovery has both a synchronous
 `get_agent_card()` method and an asynchronous `aget_agent_card()` method.
+The client sends every request to its `base_url`, whatever URL the Agent card
+advertises.
 
 ## Serve and call a Team
 
@@ -168,8 +135,8 @@ Teams use the same protocol shape under their own namespace:
 
 ## Serve and call an external Agent
 
-`external_agent.py` needs the Codex CLI and the `openai-codex` package. Start
-the server:
+Stop `team.py`, because standalone A2A examples share port 7779, then start
+the external Agent:
 
 ```bash
 .venvs/demo/bin/python cookbook/05_agent_os/15_a2a/external_agent.py
@@ -183,7 +150,7 @@ In another terminal:
 
 External agents such as `CodexAgent` and `ClaudeAgent` are served on the same
 routes as native Agents. The AgentOS database stores each run before it
-starts, so the demo reads the finished task back with `get_task`.
+starts, so the demo reads the finished task back with `aget_task`.
 
 ## Run the multi-agent topology
 
@@ -219,6 +186,52 @@ With all three servers running, call the planner from a fourth terminal:
 The planner's two async tools use `A2AClient`, check the downstream task
 status, and consume `TaskResult.content`. The weather and Airbnb Agents remain
 independently discoverable and callable.
+
+## How tasks run
+
+- An Agent, Team or external Agent with a database runs every message in the
+  background, so any replica can read its task. A message sent without waiting
+  for the result returns the task as `submitted` with status 200.
+- Background runs share one limit per process,
+  `AGNO_BACKGROUND_MAX_CONCURRENCY` (32 by default). A message over the limit
+  waits as `submitted`.
+- A run interrupted by a crash stays `working`.
+- Subscribing to a task works on the replica running it. So does cancelling
+  it, unless the replicas share a cancellation manager.
+- A Workflow, or an entity without a database, runs in the server process. A
+  run still going when the server restarts is lost.
+- A paused run can be continued only when the entity has a database. Without
+  one, a continue ends the task `failed`.
+- `ListTasks` lists the newest 1000 tasks of an entity, and its `totalSize`
+  stops at 1000. Read an older task by its ID with `GetTask`.
+
+## Migrating from the A2A v0.3 interface
+
+The `/v1/message:send`, `/v1/message:stream`, `/v1/tasks:get` and
+`/v1/tasks:cancel` routes are gone. Every operation is a JSON-RPC request to
+the entity's one A2A endpoint. Upgrade the server and `A2AClient` together: an
+`A2AClient` from an earlier Agno release calls the removed routes, and this
+`A2AClient` does not talk to an earlier Agno A2A server. The `a2a` extra now
+requires `a2a-sdk>=1.2.2,<2`.
+
+```python
+# Before: one route per operation, such as
+# POST http://127.0.0.1:7779/a2a/agents/a2a-assistant/v1/message:send
+# Now: every operation goes to the entity root.
+AGENT_URL = "http://127.0.0.1:7779/a2a/agents/a2a-assistant"
+client = A2AClient(AGENT_URL)
+
+# AgentCard.capabilities is a dict instead of a list.
+card = client.get_agent_card()
+streaming = card.capabilities.get("streaming")
+
+# The protocol is negotiated from the Agent card; drop protocol= and a2a_protocol=.
+remote = RemoteAgent(base_url=AGENT_URL, agent_id="a2a-assistant", protocol="a2a")
+```
+
+An unknown task is reported as a JSON-RPC error (`TaskNotFound`) instead of an
+HTTP 404. `A2AClient(protocol=...)` and `RemoteAgent(a2a_protocol=...)` are
+deprecated and emit a warning.
 
 ## Choosing an A2A entry point
 
