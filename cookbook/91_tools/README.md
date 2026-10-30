@@ -57,6 +57,7 @@ Agno WAV audio artifact. Incompatible audio formats fail explicitly.
 
 - `finance/` - FinanceTools: one finance toolkit, swappable data providers (yfinance, financialdatasets.ai)
 - `mcp/` - MCP server examples
+- `sprites_tools/` - Run commands in a persistent Fly.io Sprite; includes a check without an LLM
 - `tool_decorator/` - Custom tool patterns
 - `tool_hooks/` - Pre/post processing
 - `async/` - Async execution
