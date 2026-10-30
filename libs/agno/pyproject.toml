@@ -41,6 +41,7 @@ dependencies = [
 
 [project.optional-dependencies]
 agentcore-sandbox = ["boto3>=1.43.113"]
+modal-sandbox = ["modal>=1.6.2"]
 dev = [
   "mypy==2.1.0",
   "ruff==0.15.20",
@@ -640,6 +641,7 @@ module = [
   "memory_profiler.*",
   "mistralai.*",
   "mlx_whisper.*",
+  "modal.*",
   "neo4j.*",
   "nest_asyncio.*",
   "newspaper.*",

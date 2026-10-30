@@ -289,6 +289,22 @@ def test_agentcore_sandbox_carries_harness_settings():
         AgentCoreSandbox(arn, lifetime=600, execution_timeout=600)
 
 
+def test_modal_sandbox_carries_harness_settings(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    monkeypatch.setitem(sys.modules, "modal", SimpleNamespace(Image=type("Image", (), {})))
+    from agno.sandbox.modal import ModalSandbox
+
+    store = MagicMock()
+    sandbox = ModalSandbox("agno-sandbox:claude", checkpoints=store, env={"A": "1"}, execution_timeout=60)
+    assert (sandbox.checkpoints, sandbox.env, sandbox.execution_timeout) == (store, {"A": "1"}, 60)
+    assert type(sandbox.checkpoint_transfer(store)).__name__ == "ModalCheckpointTransfer"
+    assert ClaudeAgent(id="coder", sandbox=sandbox).sandbox is sandbox
+    with pytest.raises(ValueError, match="shorter than the lifetime"):
+        ModalSandbox("agno-sandbox:claude", lifetime=600, execution_timeout=600)
+
+
 @pytest.mark.asyncio
 async def test_unsupported_run_options_are_rejected(coordinator, sandbox):
     agent = ClaudeAgent(id="coder", sandbox=sandbox)

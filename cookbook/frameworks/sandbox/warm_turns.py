@@ -1,10 +1,11 @@
-"""Warm and cold turns, on Docker or AgentCore: see which path each turn takes and what it costs.
+"""Warm and cold turns, on Docker, AgentCore or Modal: see which path each turn takes and what it costs.
 
 Credential-free: the fixture runtime stands in for Claude or Codex. Run Postgres and build the
 runtime image, then:
 
     .venv/bin/python cookbook/frameworks/sandbox/warm_turns.py                       # Docker
     .venv/bin/python cookbook/frameworks/sandbox/warm_turns.py --provider agentcore  # needs AGENTCORE_RUNTIME_ARN
+    .venv/bin/python cookbook/frameworks/sandbox/warm_turns.py --provider modal      # needs a Modal token
 
 Four turns of one session. Turn 1 is cold: a new computer. Turn 2 resumes the computer turn 1
 left warm, with nothing restored. Before turn 3 the warm window is shortened to a few seconds,
@@ -28,7 +29,9 @@ from agno.sandbox.checkpoint import CheckpointRef, FileCheckpointStore
 from agno.sandbox.coordinator import SandboxCoordinator
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--provider", choices=["docker", "agentcore"], default="docker")
+parser.add_argument(
+    "--provider", choices=["docker", "agentcore", "modal"], default="docker"
+)
 args = parser.parse_args()
 
 db = PostgresDb(
@@ -44,13 +47,22 @@ if args.provider == "docker":
         namespace="warm-turns",
         memory_mb=512,
     )
-else:
+elif args.provider == "agentcore":
     from agno.sandbox.agentcore import AgentCoreSandbox
 
     # The turn budget below must fit inside this lifetime for a computer to be resumed.
     sandbox = AgentCoreSandbox(
         os.environ["AGENTCORE_RUNTIME_ARN"], namespace="warm-turns", lifetime=1800
     )
+else:
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).parent / "modal"))
+    from agno.sandbox.modal import ModalSandbox
+    from modal_image import runtime_image
+
+    # The turn budget below must fit inside this lifetime for a sandbox to be resumed.
+    sandbox = ModalSandbox(runtime_image(), namespace="warm-turns", lifetime=1800)
 
 session_id = "warm-turns-" + uuid4().hex[:8]
 turn = dict(
