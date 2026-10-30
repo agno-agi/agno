@@ -908,6 +908,7 @@ def get_agent_router(
                 kwargs=kwargs,
                 stream=stream,
                 background=background,
+                scope=resolve_queue_scope(agent_id, os.agents, os.db, scoped_user_id, version),
                 version=version,
                 images=base64_images,
                 files=input_files,

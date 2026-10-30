@@ -127,10 +127,16 @@ whose config carries `"sdk": "claude-agent-sdk"` or `"sdk": "codex"`. A stored
 config names the working directory, MCP servers, plugins and permission mode
 the harness runs with, so AgentOS serves a stored agent without a sandbox only
 when the deployer opts in with `Registry(allow_host_external_agents=True)`;
-until then it is listed but answers 422. A sandboxed run through AgentOS still
-needs the agent registered with `AgentOS(agents=[...])`; a stored sandboxed
-agent runs locally with `agent.run()`. Saving an `Agent` over a stored
-external agent, or the reverse, is refused so an id never changes kind.
+until then it is listed but answers 422. A stored sandboxed agent needs no
+opt-in: `POST /agents/{id}/runs` submits it to the durable sandbox queue like a
+registered one, as long as the sandbox is in the registry the AgentOS was given
+(`Registry(sandboxes=[...])`, or a code-defined agent that uses it). The ticket
+carries the version the request loaded, and the queue worker rebuilds that
+version from the database before running it on the registry sandbox; an
+explicit `version` form field pins one. The same requirements as for a
+registered sandboxed agent apply: a durable queue, a PostgresDb, and a sandbox
+with a shared `checkpoints=` store. Saving an `Agent` over a stored external
+agent, or the reverse, is refused so an id never changes kind.
 
 ---
 

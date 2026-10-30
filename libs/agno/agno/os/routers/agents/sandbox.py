@@ -23,27 +23,32 @@ async def enqueue_sandbox_run(
     kwargs: Dict[str, Any],
     run_id: Optional[str] = None,
     idempotency_key: Optional[str] = None,
+    scope: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    """Accept one sandboxed turn onto the durable queue.
+
+    ``scope`` is the db queue scope of an agent the request rebuilt from a stored component;
+    the worker replays that rebuild, so the ticket carries it. Without one the agent must be
+    the instance registered with AgentOS, whose sandbox the worker runs on.
+    """
     if (
         worker is None
         or worker.config.durable is not True
         or getattr(worker.store, "serializes_sessions", False) is not True
     ):
         raise ValueError("Sandbox API execution requires a durable queue with shared session admission")
-    registered = await worker._aresolve_job_component({"component_type": "agent", "component_id": agent.get_id()})
-    if registered is None:
-        # The worker re-resolves the ticket's agent from AgentOS(agents=[...]) and runs on that
-        # instance's sandbox; a stored component is rebuilt per request and has no such instance.
-        raise ValueError(
-            "Sandboxed runs through AgentOS require the agent to be registered with AgentOS(agents=[...]); "
-            "a stored agent component cannot be submitted to the sandbox queue"
-        )
-    if registered is not agent:
-        raise ValueError("Sandbox submissions must use the registered agent instance")
     from agno.sandbox import _harness
 
+    ticket = {"component_type": "agent", "component_id": agent.get_id(), "payload": {"scope": scope} if scope else {}}
+    resolved = await worker._aresolve_job_component(ticket)
+    if scope is not None and scope.get("source") == "db":
+        _check_rebuild(agent, resolved)
+    elif resolved is not agent:
+        raise ValueError("Sandbox submissions must use the registered agent instance")
     options = _harness.submission(agent, input, kwargs)
     payload = {"input": input, "kwargs": options, "stream": True, "serialize_session": True}
+    if scope is not None:
+        payload["scope"] = scope
     if len(json.dumps(payload, allow_nan=False).encode()) > 1024 * 1024:
         raise ValueError("Sandbox submission exceeds 1 MiB")
     # Before the ticket exists: a bindings table from another build would otherwise fail only inside the worker.
@@ -75,8 +80,11 @@ async def enqueue_sandbox_run(
         ):
             raise HTTPException(status_code=409, detail="Idempotency-Key belongs to a different submission scope")
         # The store stamps its own fields (such as session_seq) onto the payload; compare what was submitted.
+        # The scope's effective version moves with publishes, so only the caller's explicit pin is compared.
         stored = existing.get("payload") or {}
-        if {key: stored.get(key) for key in payload} != payload:
+        if {key: stored.get(key) for key in payload if key != "scope"} != {
+            key: value for key, value in payload.items() if key != "scope"
+        } or (stored.get("scope") or {}).get("pinned") != (scope or {}).get("pinned"):
             raise HTTPException(status_code=409, detail="Idempotency-Key already has different input or options")
         return existing
     from agno.os.event_streams import get_event_stream
@@ -91,6 +99,39 @@ async def enqueue_sandbox_run(
         worker, agent, "agent", job["id"], session_id, user_id, input, **({"media": media} if media else {})
     )
     return job
+
+
+def _check_rebuild(agent: Any, rebuilt: Any) -> None:
+    """Refuse a stored agent the worker would rebuild differently from what this request loaded.
+
+    The rebuild must be the same adapter with the same id and config, on the registry sandbox
+    this request holds, and must reach the coordinator this request's checks ran against.
+    """
+    from agno.sandbox import _harness
+
+    if rebuilt is None:
+        raise ValueError(
+            f"The queue worker cannot rebuild stored agent '{agent.get_id()}' from the database; "
+            "its sandbox and db must be registered in the AgentOS registry"
+        )
+    if (
+        type(rebuilt) is not type(agent)
+        or rebuilt.get_id() != agent.get_id()
+        or getattr(rebuilt, "sandbox", None) is not agent.sandbox
+    ):
+        raise ValueError(
+            f"The queue worker would run stored agent '{agent.get_id()}' as a different agent or on a different "
+            "sandbox than this request loaded; register one sandbox under that id"
+        )
+    if _harness.coordinator(rebuilt) is not _harness.coordinator(agent):
+        raise ValueError(
+            f"The queue worker would run stored agent '{agent.get_id()}' on a different database than this request "
+            "loaded; register that db in the AgentOS registry"
+        )
+    if rebuilt.to_dict() != agent.to_dict():
+        raise ValueError(
+            f"Stored agent '{agent.get_id()}' changed while this request was being accepted; retry the submission"
+        )
 
 
 async def _session_owner(agent: Any, session_id: str) -> Optional[Tuple[Optional[str], Optional[str]]]:
@@ -136,12 +177,20 @@ async def sandbox_run_response(
     kwargs: Dict[str, Any],
     stream: bool,
     background: bool,
+    scope: Dict[str, Any],
     version: Any = None,
     images: Optional[List[Any]] = None,
     files: Optional[List[Any]] = None,
     unsupported_media: bool = False,
 ) -> Any:
-    if version is not None:
+    """Submit a sandboxed turn and answer in the request's mode: stream, background or wait.
+
+    ``scope`` is the queue scope the route resolved for the agent. A stored agent's ticket
+    carries it, so the worker rebuilds the version this request executes; a registered agent
+    is resolved by id and has no versions.
+    """
+    stored = scope.get("source") == "db"
+    if version is not None and not stored:
         raise HTTPException(
             status_code=400, detail="Sandboxed runs use the registered agent; version pinning is not supported"
         )
@@ -160,11 +209,18 @@ async def sandbox_run_response(
             user_id=user_id,
             kwargs=kwargs,
             idempotency_key=request.headers.get("idempotency-key"),
+            scope=scope if stored else None,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except SandboxError as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
+    reader = agent
+    ticket_scope = (job.get("payload") or {}).get("scope") or {}
+    if stored and ticket_scope.get("version") != scope.get("version"):
+        # An idempotent retry answered with a ticket accepted under an earlier version: its run
+        # was written through that version's db, so it is read back through that version's agent.
+        reader = await worker._aresolve_job_component(job) or agent
     if stream:
         # Existing resume machinery chooses retained events or database replay,
         # including for an idempotent submission whose live keys have expired.
@@ -172,7 +228,7 @@ async def sandbox_run_response(
         from agno.os.utils import queued_run_tail_streamer
 
         if job.get("status") in ("completed", "failed", "cancelled"):
-            iterator = _resume_stream_generator(agent, job["id"], None, job["session_id"], user_id)
+            iterator = _resume_stream_generator(reader, job["id"], None, job["session_id"], user_id)
         else:
             iterator = queued_run_tail_streamer(job["id"])
         return StreamingResponse(iterator, media_type="text/event-stream")
@@ -195,7 +251,7 @@ async def sandbox_run_response(
                 status_code=503, detail="Accepted sandbox job is temporarily unavailable; reconnect using its run ID"
             )
         if current["status"] in ("completed", "failed", "cancelled"):
-            result = await agent.aget_run_output(job["id"], job["session_id"], user_id=user_id)
+            result = await reader.aget_run_output(job["id"], job["session_id"], user_id=user_id)
             if result is None and current["status"] == "failed" and current.get("error"):
                 # The job failed before its run row could be written; the ticket's error is all there is.
                 raise HTTPException(status_code=500, detail=current["error"])
