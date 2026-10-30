@@ -1113,8 +1113,14 @@ def _os_metrics_parent_component_id(run: Dict[str, Any], components: Dict[str, T
 
 
 def _os_metrics_nested_runs(run_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """The runs nested inside a stored run: its workflow steps' runs and its team members' runs."""
-    return (run_data.get("step_executor_runs") or []) + (run_data.get("member_responses") or [])
+    """The runs nested inside a stored run: its workflow steps' runs, its team members' runs and its workflow
+    agent's run."""
+    workflow_agent_run = run_data.get("workflow_agent_run")
+    return (
+        (run_data.get("step_executor_runs") or [])
+        + (run_data.get("member_responses") or [])
+        + ([workflow_agent_run] if workflow_agent_run else [])
+    )
 
 
 def _add_os_metrics_nested_run_ids(run_data: Dict[str, Any], nested_run_ids: Set[str]) -> None:
@@ -1226,6 +1232,9 @@ def calculate_date_os_metrics(
         if run.get("run_id") and (component := _os_metrics_component(run)) is not None
     }
     for run in runs:
+        # A run copied into a forked session repeats a run counted in the session it was made in
+        if (run.get("run_data") or {}).get("forked_from_session_id"):
+            continue
         component = components.get(run["run_id"]) if run.get("run_id") else _os_metrics_component(run)
         if component is None:
             continue

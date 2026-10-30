@@ -70,9 +70,9 @@ _OS_METRICS_CALL_DURATIONS_PATH: Any = literal_column(
 _OS_METRICS_EMPTY_DETAILS = ("{}", "[]", '""', "0", "false")
 
 # The keys of a stored run that hold the runs nested inside it, in the order the rollup walks them
-_OS_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses")
+_OS_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses", "workflow_agent_run")
 
-# Every run of one of those lists. A list stored as null holds none
+# Every run of one of those lists, or the one run a key holds on its own. A key stored as null holds none
 _OS_METRICS_NESTED_RUNS_PATH: Any = literal_column("""'$[*] ? (@.type() == "object")'::jsonpath""")
 
 
@@ -729,7 +729,12 @@ def build_os_metrics_runs_query(table: Table, start_timestamp: int, end_timestam
         _os_metrics_call_durations(table.c.run_data).label("call_durations"),
         nested_runs.label("nested_runs"),
         table.c.created_at,
-    ).where(table.c.created_at >= start_timestamp, table.c.created_at < end_timestamp)
+    ).where(
+        table.c.created_at >= start_timestamp,
+        table.c.created_at < end_timestamp,
+        # A run copied into a forked session repeats a run counted in the session it was made in
+        table.c.run_data["forked_from_session_id"].astext.is_(None),
+    )
 
 
 def build_os_metrics_legacy_runs_table(
@@ -820,7 +825,12 @@ def build_os_metrics_run(row: Any) -> Dict[str, Any]:
             {"role": "assistant", "metrics": {"duration": duration}}
             for duration in nested_run.pop("call_durations") or []
         ]
-        parents[depth - 1].setdefault(nested_run.pop("key"), []).append(nested_run)
+        key = nested_run.pop("key")
+        # A workflow agent's run is stored as the run itself, the other nested runs in lists
+        if key == "workflow_agent_run":
+            parents[depth - 1][key] = nested_run
+        else:
+            parents[depth - 1].setdefault(key, []).append(nested_run)
         parents[depth:] = [nested_run]
     return run
 

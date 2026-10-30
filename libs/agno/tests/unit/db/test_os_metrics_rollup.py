@@ -380,6 +380,15 @@ def test_messages_a_forked_run_copied_are_not_model_calls():
     assert row["total_model_call_ms"] == 500
 
 
+def test_run_copied_into_a_forked_session_is_not_counted():
+    """A run copied into a forked session repeats the run it was copied from, so only the session counts."""
+    run = _run(call_durations=(0.2,), tokens={"total_tokens": 10})
+    run["run_data"]["forked_from_session_id"] = "source-session"
+    row = _only_row(sessions=[_session("alice")], runs=[run])
+
+    assert (row["sessions_count"], row["runs_count"], row["total_tokens"], row["model_calls_count"]) == (1, 0, 0, 0)
+
+
 def test_status_metrics_keyed_by_status():
     """status_metrics counts runs by their stored status."""
     row = _only_row(runs=[_run("run-1"), _run("run-2"), _run("run-3", status=ERROR)])
@@ -518,6 +527,15 @@ def test_workflow_step_models_count_on_the_workflow_row():
         {"model_id": "gpt-5", "model_provider": "OpenAI", "count": 1},
         {"model_id": "gpt-5-mini", "model_provider": "OpenAI", "count": 1},
     ]
+
+
+def test_workflow_agent_run_counts_on_the_workflow_row():
+    """A workflow agent's run is nested inside the workflow's run as the run itself, and its calls count there."""
+    run = _run(run_type="workflow", component_id="wf-1", model=None)
+    run["run_data"]["workflow_agent_run"] = _model_call(tokens={"total_tokens": 7}, call_durations=(0.4,))
+    row = _only_row(runs=[run])
+
+    assert (row["total_tokens"], row["model_calls_count"], row["total_model_call_ms"]) == (7, 1, 400)
 
 
 def test_model_call_without_details_is_not_a_model_entry():

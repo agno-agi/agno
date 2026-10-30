@@ -546,6 +546,19 @@ def test_calculate_os_metrics_skips_messages_a_forked_run_copied(postgres_db_rea
     assert (row["model_calls_count"], row["total_model_call_ms"]) == (2, 2000)
 
 
+def test_calculate_os_metrics_skips_runs_a_forked_session_copied(postgres_db_real: PostgresDb):
+    """Ensure a run copied into a forked session is not counted again, while the forked session is"""
+    _persist(postgres_db_real, _session_on(_utc_date(2), "fork_session", "alice"))
+    copied_session = _session_on(_utc_date(2), "copied_session", "alice")
+    copied_session.runs[0].forked_from_session_id = "fork_session"
+    _persist(postgres_db_real, copied_session)
+
+    postgres_db_real.calculate_os_metrics()
+
+    row = _stored_rows(postgres_db_real)[(_utc_date(2), "alice", "agent", "agent-1")]
+    assert (row["sessions_count"], row["runs_count"], row["total_tokens"]) == (2, 1, 15)
+
+
 def test_calculate_os_metrics_counts_runs_kept_in_the_legacy_runs_column(postgres_db_real: PostgresDb):
     """Ensure a run not yet migrated out of the sessions table's legacy runs column is counted once, on its session's
     day"""
