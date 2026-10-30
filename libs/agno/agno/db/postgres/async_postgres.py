@@ -3022,10 +3022,16 @@ class AsyncPostgresDb(AsyncBaseDb):
                         if not batch:
                             break
                         run_rows.extend(batch)
+                # A legacy run migrated to the runs table since the legacy runs were read is among the day's runs, and
+                # is counted from there
+                day_run_ids = {record.run_id for record in run_rows}
+                legacy_run_rows = [
+                    record
+                    for record in legacy_run_rows_by_day.get(date_to_process, [])
+                    if record.run_id not in day_run_ids
+                ]
                 # Calculation steps run in a thread so they never block the event loop
-                runs, nested_run_ids = await asyncio.to_thread(
-                    build_os_metrics_runs, run_rows + legacy_run_rows_by_day.get(date_to_process, [])
-                )
+                runs, nested_run_ids = await asyncio.to_thread(build_os_metrics_runs, run_rows + legacy_run_rows)
 
                 # A run started by a run of another day, such as a member run after midnight, names that run's
                 # agent, team or workflow as its parent, read from the legacy runs of the rebuild or the runs table

@@ -3527,7 +3527,15 @@ class PostgresDb(BaseDb):
                     run_rows = list(
                         sess.execute(build_os_metrics_runs_query(runs_table, start_timestamp, end_timestamp)).fetchall()
                     )
-                runs, nested_run_ids = build_os_metrics_runs(run_rows + legacy_run_rows_by_day.get(date_to_process, []))
+                # A legacy run migrated to the runs table since the legacy runs were read is among the day's runs, and
+                # is counted from there
+                day_run_ids = {record.run_id for record in run_rows}
+                legacy_run_rows = [
+                    record
+                    for record in legacy_run_rows_by_day.get(date_to_process, [])
+                    if record.run_id not in day_run_ids
+                ]
+                runs, nested_run_ids = build_os_metrics_runs(run_rows + legacy_run_rows)
 
                 # A run started by a run of another day, such as a member run after midnight, names that run's
                 # agent, team or workflow as its parent, read from the legacy runs of the rebuild or the runs table
