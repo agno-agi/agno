@@ -2229,6 +2229,18 @@ class Model(ABC):
             tool_call_error=True,
         )
 
+    def create_tool_call_skipped_result(self, function_call: FunctionCall) -> Message:
+        return Message(
+            role=self.tool_message_role,
+            content=(
+                f"Tool call {function_call.function.name} skipped: "
+                "a prior tool call in the batch requested to stop."
+            ),
+            tool_call_id=function_call.call_id,
+            tool_name=function_call.function.name,
+            tool_args=function_call.arguments,
+        )
+
     def run_function_call(
         self,
         function_call: FunctionCall,
@@ -2428,7 +2440,7 @@ class Model(ABC):
         if additional_input is None:
             additional_input = []
 
-        for fc in function_calls:
+        for i, fc in enumerate(function_calls):
             # The read-back tools exist only because offloading replaced a result
             # the model was told to go and read. Counting them against the limit
             # can refuse the very read the run needs to answer.
@@ -2574,6 +2586,16 @@ class Model(ABC):
                 result_store=result_store,
             )
 
+            # Check if we should stop after this tool call
+            if any(m.stop_after_tool_call for m in function_call_results) or any(
+                m.stop_after_tool_call for m in additional_input
+            ):
+                answered_ids = {m.tool_call_id for m in function_call_results if m.tool_call_id}
+                for remaining_fc in function_calls[i + 1 :]:
+                    if remaining_fc.call_id not in answered_ids:
+                        function_call_results.append(self.create_tool_call_skipped_result(remaining_fc))
+                break
+
         # Add any additional messages at the end
         if additional_input:
             function_call_results.extend(additional_input)
@@ -2636,8 +2658,10 @@ class Model(ABC):
 
         from agno.offload.types import NEVER_OFFLOADED_TOOLS
 
+        stopped_due_to_stop_after_tool_call = False
+        stopped_at_index = -1
         function_calls_to_run = []
-        for fc in function_calls:
+        for i, fc in enumerate(function_calls):
             # The read-back tools exist only because offloading replaced a result
             # the model was told to go and read. Counting them against the limit
             # can refuse the very read the run needs to answer.
@@ -2654,6 +2678,10 @@ class Model(ABC):
                     # Skip this function call
                     continue
             function_calls_to_run.append(fc)
+            if fc.function.stop_after_tool_call:
+                stopped_due_to_stop_after_tool_call = True
+                stopped_at_index = i
+                break
 
         # Yield tool_call_started events for all function calls or pause them
         for fc in function_calls_to_run:
@@ -3111,6 +3139,13 @@ class Model(ABC):
 
             # Add function call result to function call results
             function_call_results.append(function_call_result)
+
+        # Append stub results for any function calls in the batch that were not executed
+        if stopped_due_to_stop_after_tool_call and stopped_at_index >= 0:
+            answered_ids = {m.tool_call_id for m in function_call_results if m.tool_call_id}
+            for remaining_fc in function_calls[stopped_at_index + 1 :]:
+                if remaining_fc.call_id not in answered_ids:
+                    function_call_results.append(self.create_tool_call_skipped_result(remaining_fc))
 
         # Add any additional messages at the end
         if additional_input:
