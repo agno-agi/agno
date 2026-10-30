@@ -6,6 +6,7 @@ import re
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from itertools import groupby
 from os import getenv
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Type, Union, cast
@@ -935,6 +936,17 @@ class Gemini(Model):
             else:
                 merged.append(msg)
 
+        if self._supports_multimodal_function_responses():
+            separated: List[Content] = []
+            for msg in merged:
+                if msg.role == "user" and msg.parts:
+                    # Gemini 3 accepts consecutive user contents, but rejects media beside a function response.
+                    for _, parts in groupby(msg.parts, key=lambda part: part.function_response is not None):
+                        separated.append(Content(role="user", parts=list(parts)))
+                else:
+                    separated.append(msg)
+            return separated, system_message
+
         return merged, system_message
 
     def _to_function_response_part(self, part: Part) -> Optional[FunctionResponsePart]:
@@ -1221,6 +1233,20 @@ class Gemini(Model):
         """
         if len(function_call_results) > 0:
             messages.extend(function_call_results)
+
+    def _handle_function_call_media(
+        self, messages: List[Message], function_call_results: List[Message], send_media_to_model: bool = True
+    ) -> None:
+        if (
+            send_media_to_model
+            and self._supports_multimodal_function_responses()
+            and all(
+                result.role == "tool" and result.tool_call_id is not None and result.tool_name is not None
+                for result in function_call_results
+            )
+        ):
+            return
+        super()._handle_function_call_media(messages, function_call_results, send_media_to_model)
 
     def _parse_provider_response(self, response: GenerateContentResponse, **kwargs) -> ModelResponse:
         """
