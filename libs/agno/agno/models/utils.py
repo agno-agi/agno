@@ -34,6 +34,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "dashscope": ("agno.models.dashscope", "DashScope", "Qwen", "dashscope"),
     "deepinfra": ("agno.models.deepinfra", "DeepInfra", "DeepInfra", "deepinfra"),
     "deepseek": ("agno.models.deepseek", "DeepSeek", "DeepSeek", "deepseek"),
+    "edenai": ("agno.models.edenai", "EdenAI", "EdenAI", "edenai"),
     "fireworks": ("agno.models.fireworks", "Fireworks", "Fireworks", "fireworks"),
     "flexai": ("agno.models.flexai", "FlexAI", "FlexAI", "flexai"),
     "google": ("agno.models.google", "Gemini", "Gemini", "google"),
