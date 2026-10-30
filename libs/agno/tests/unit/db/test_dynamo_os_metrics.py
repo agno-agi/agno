@@ -462,3 +462,31 @@ def test_month_step_reads_only_the_days_after_the_latest_month(monkeypatch):
     db._calculate_month_os_metrics("test_os_metrics", "test_os_metrics_totals", "lock-1", True)
 
     assert day_rows_read[0] == (_day(1) - latest_month).days + 1
+
+
+def test_a_day_that_reads_for_longer_than_the_lock_keeps_it(monkeypatch):
+    db = _new_db()
+    _store(db, "s1", 1)
+    lock_key = ("lock", "test_os_metrics")
+    query_os_metrics_sources = db._query_os_metrics_sources
+    other_rebuild_locked: List[bool] = []
+
+    def slow_read(*args, **kwargs):
+        records = query_os_metrics_sources(*args, **kwargs)
+        lock = db.client._tables["test_os_metrics_totals"].get(lock_key)
+        if "user_id" in args[4] and lock and not other_rebuild_locked:
+            if args[1] == "session_type-created_at-index":
+                # The sessions read outlasts the lock
+                lock["expires_at"] = {"N": "0"}
+            else:
+                other_rebuild_locked.append(
+                    db._lock_os_metrics("test_os_metrics_totals", "test_os_metrics", "other-rebuild", False)
+                )
+        return records
+
+    monkeypatch.setattr(db, "_query_os_metrics_sources", slow_read)
+    db._calculate_os_metrics(wait_for_rebuild=True)
+
+    assert other_rebuild_locked == [False]
+    totals = db._get_os_metrics_totals_rows("test_os_metrics_totals", "daily")
+    assert (_day(1), 1) in [(row["date"], row["sessions_count"]) for row in totals]

@@ -199,3 +199,25 @@ def test_month_rows_of_a_completed_month(db):
     assert totals == {"runs_count": 3, "input_tokens": 170}
     totals, _ = db.get_os_metrics_totals(month_start, _utc_date(0), user_id="alice", fields=["input_tokens"])
     assert totals == {"input_tokens": 150}
+
+
+def test_lock_renewed_while_a_day_is_read(db, monkeypatch: pytest.MonkeyPatch):
+    """A day whose reads outlast the lock is still written, as every read batch renews the lock."""
+    import agno.db.redis.redis as redis_module
+
+    _persist(db, "alice_session", "alice", _utc_date(2), [100])
+    monkeypatch.setattr(redis_module, "OS_METRICS_LOCK_MILLISECONDS", 300)
+    monkeypatch.setattr(redis_module, "OS_METRICS_BATCH_SIZE", 1)
+    # Four slow lookups of nested runs, 0.6 s in all, twice the lock
+    monkeypatch.setattr(redis_module, "os_metrics_nested_run_ids", lambda runs: {f"nested_{i}" for i in range(4)})
+    generate_redis_key = redis_module.generate_redis_key
+
+    def slow_generate_redis_key(prefix: str, table_type: str, key_id: str) -> str:
+        if key_id.startswith("nested_"):
+            time.sleep(0.15)
+        return generate_redis_key(prefix=prefix, table_type=table_type, key_id=key_id)
+
+    monkeypatch.setattr(redis_module, "generate_redis_key", slow_generate_redis_key)
+
+    _, written_totals_rows = db._calculate_os_metrics(wait_for_rebuild=False)
+    assert [record["date"] for record in written_totals_rows] == [_utc_date(2), _utc_date(1), _utc_date(0)]

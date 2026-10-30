@@ -2513,6 +2513,10 @@ class DynamoDb(BaseDb):
                         add_month_os_metrics(
                             per_owner, [deserialize_os_metrics_row(item) for item in response.get("Items", [])]
                         )
+                    # Renewed after each day read, so a month that takes longer than OS_METRICS_LOCK_SECONDS to read
+                    # keeps the lock
+                    if not self._extend_os_metrics_lock(totals_table_name, table_name, lock_id):
+                        return results
                     day += timedelta(days=1)
 
                 records = calculate_month_os_metrics(month_start, per_owner)
@@ -2678,6 +2682,11 @@ class DynamoDb(BaseDb):
                     start_timestamp,
                     end_timestamp,
                 )
+                # Renewed after each read and write, so a day that takes longer than OS_METRICS_LOCK_SECONDS keeps the
+                # lock. A rebuild that lost it stops: the process that holds it calculates the days left
+                if not self._extend_os_metrics_lock(totals_table_name, table_name, lock_id):
+                    log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                    return results, written_totals_rows
                 runs = self._query_os_metrics_sources(
                     runs_table_name,
                     "status-created_at-index",
@@ -2704,6 +2713,9 @@ class DynamoDb(BaseDb):
                 runs.extend(
                     run for run in legacy_runs_by_day.get(date_to_process, []) if run["run_id"] not in day_run_ids
                 )
+                if not self._extend_os_metrics_lock(totals_table_name, table_name, lock_id):
+                    log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                    return results, written_totals_rows
 
                 # A nested run also stored as a run of its own is counted from that row, whatever day it is on
                 stored_run_ids: Set[str] = set()
@@ -2718,6 +2730,9 @@ class DynamoDb(BaseDb):
                     }
                     for item in batch_get_with_retry(self.client, request_items).get(runs_table_name, []):
                         stored_run_ids.add(item["run_id"]["S"])
+                if not self._extend_os_metrics_lock(totals_table_name, table_name, lock_id):
+                    log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                    return results, written_totals_rows
 
                 # A run started by a run of another day, such as a member run after midnight, names that run's
                 # agent, team or workflow as its parent, read from the legacy runs of the rebuild or the runs table
@@ -2739,6 +2754,9 @@ class DynamoDb(BaseDb):
                         deserialize_from_dynamodb_item(item)
                         for item in batch_get_with_retry(self.client, request_items).get(runs_table_name, [])
                     )
+                if not self._extend_os_metrics_lock(totals_table_name, table_name, lock_id):
+                    log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                    return results, written_totals_rows
 
                 records = calculate_date_os_metrics(date_to_process, sessions, runs, stored_run_ids, parent_runs)
                 stored_rows = self._get_os_metrics_rows(table_name, "daily", date_to_process)

@@ -26,6 +26,7 @@ from agno.db.singlestore.utils import (
     bulk_upsert_os_metrics,
     calculate_date_metrics,
     create_schema,
+    extend_os_metrics_lock,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     is_table_available,
@@ -2413,6 +2414,12 @@ class SingleStoreDb(BaseDb):
         with self.Session() as sess, sess.begin():
             unlock_os_metrics(session=sess, table=table, held_until=held_until)
 
+    def _extend_os_metrics_lock(self, table: Table, held_until: int) -> Optional[int]:
+        """Extend the lock row of the OS metrics totals table taken until the given time."""
+        # A session of its own, not the scoped one, so it commits while a day's or month's transaction is still open
+        with self.Session.session_factory() as sess, sess.begin():
+            return extend_os_metrics_lock(session=sess, table=table, held_until=held_until)
+
     def _calculate_month_os_metrics(
         self, table: Table, totals_table: Table, wait_for_rebuild: bool
     ) -> List[Dict[str, Any]]:
@@ -2435,19 +2442,19 @@ class SingleStoreDb(BaseDb):
         if held_until is None:
             return results
         try:
-            with self.Session() as sess, sess.begin():
+            with self.Session() as sess:
                 total_rows = sess.execute(
                     select(totals_table.c.aggregation_period, totals_table.c.date, totals_table.c.completed)
                 ).fetchall()
-                day_starts = [record.date for record in total_rows if record.aggregation_period == "daily"]
-                calculated_months = [record.date for record in total_rows if record.aggregation_period == "monthly"]
-                latest_completed = max(
-                    (record.date for record in total_rows if record.aggregation_period == "daily" and record.completed),
-                    default=None,
-                )
-                for month_start in get_months_to_calculate_os_metrics_for(
-                    day_starts, calculated_months, latest_completed
-                ):
+            day_starts = [record.date for record in total_rows if record.aggregation_period == "daily"]
+            calculated_months = [record.date for record in total_rows if record.aggregation_period == "monthly"]
+            latest_completed = max(
+                (record.date for record in total_rows if record.aggregation_period == "daily" and record.completed),
+                default=None,
+            )
+            for month_start in get_months_to_calculate_os_metrics_for(day_starts, calculated_months, latest_completed):
+                # Each month is its own transaction, so a rebuild that lost the lock never commits a month it wrote
+                with self.Session() as sess, sess.begin():
                     # Server-side cursor, so a month of many rows is added up a batch at a time instead of held whole
                     result = sess.execute(
                         select(table).where(
@@ -2463,8 +2470,19 @@ class SingleStoreDb(BaseDb):
                         if not batch:
                             break
                         add_month_os_metrics(per_owner, [dict(record._mapping) for record in batch])
+                        # Renewed after each batch read, so a month that takes longer than OS_METRICS_LOCK_SECONDS to
+                        # read keeps the lock
+                        extended_until = self._extend_os_metrics_lock(totals_table, held_until)
+                        if extended_until is None:
+                            return results
+                        held_until = extended_until
 
                     month_rows = calculate_month_os_metrics(month_start, per_owner)
+                    # A rebuild that lost the lock stops, so a month is written by one rebuild only
+                    extended_until = self._extend_os_metrics_lock(totals_table, held_until)
+                    if extended_until is None:
+                        return results
+                    held_until = extended_until
                     bulk_upsert_os_metrics(session=sess, table=table, os_metrics_records=month_rows)
                     # Written last: a read takes a month from its rows only once the month has a total row
                     totals_row = build_os_metrics_totals_row(month_rows, "monthly", month_start, completed=True)
@@ -2572,7 +2590,7 @@ class SingleStoreDb(BaseDb):
             legacy_runs_by_day = get_os_metrics_records_by_day(legacy_runs, start_timestamp, end_timestamp)
             legacy_runs_by_id = {run["run_id"]: run for run in legacy_runs}
 
-        results = []
+        results: List[Dict[str, Any]] = []
         written_totals_rows: List[Dict[str, Any]] = []
 
         for date_to_process in dates_to_process:
@@ -2615,6 +2633,13 @@ class SingleStoreDb(BaseDb):
                     ).where(sessions_table.c.created_at >= start_timestamp, sessions_table.c.created_at < end_timestamp)
                     result = sess.execute(sessions_stmt).fetchall()
                     sessions = [dict(record._mapping) for record in result]
+                    # Renewed after each read, so a day that takes longer than OS_METRICS_LOCK_SECONDS keeps the lock. A
+                    # rebuild that lost it stops: the process that holds it calculates the days left
+                    extended_until = self._extend_os_metrics_lock(totals_table, held_until)
+                    if extended_until is None:
+                        log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                        return results, written_totals_rows
+                    held_until = extended_until
 
                     runs: List[Dict[str, Any]] = []
                     stored_run_ids: Set[str] = set()
@@ -2624,6 +2649,11 @@ class SingleStoreDb(BaseDb):
                             build_os_metrics_runs_query(runs_table, start_timestamp, end_timestamp)
                         ).fetchall()
                         runs, nested_run_ids = build_os_metrics_runs(result)
+                        extended_until = self._extend_os_metrics_lock(totals_table, held_until)
+                        if extended_until is None:
+                            log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                            return results, written_totals_rows
+                        held_until = extended_until
 
                         # A nested run also stored as a run of its own is counted from that row, whatever day it is on.
                         # A legacy run the runs table also holds is counted from there
@@ -2638,6 +2668,11 @@ class SingleStoreDb(BaseDb):
                             )
                             stored_run_ids.update(record.run_id for record in sess.execute(stored_stmt).fetchall())
                         legacy_runs = [run for run in legacy_runs if run["run_id"] not in stored_run_ids]
+                        extended_until = self._extend_os_metrics_lock(totals_table, held_until)
+                        if extended_until is None:
+                            log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                            return results, written_totals_rows
+                        held_until = extended_until
                     runs.extend(legacy_runs)
 
                     # A run started by a run of another day, such as a member run after midnight, names that run's
@@ -2663,6 +2698,11 @@ class SingleStoreDb(BaseDb):
                                 dict(record._mapping) for record in sess.execute(parents_stmt).fetchall()
                             )
 
+                    extended_until = self._extend_os_metrics_lock(totals_table, held_until)
+                    if extended_until is None:
+                        log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                        return results, written_totals_rows
+                    held_until = extended_until
                     records = calculate_date_os_metrics(date_to_process, sessions, runs, stored_run_ids, parent_runs)
                     result = sess.execute(
                         select(table).where(table.c.aggregation_period == "daily", table.c.date == date_to_process)
@@ -2670,6 +2710,12 @@ class SingleStoreDb(BaseDb):
                     stored_rows = [dict(record._mapping) for record in result]
 
                     changed_rows, stale_keys = os_metrics_rows_to_write(records, stored_rows)
+                    # A rebuild that lost the lock stops: the process that holds it calculates the days left
+                    extended_until = self._extend_os_metrics_lock(totals_table, held_until)
+                    if extended_until is None:
+                        log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                        return results, written_totals_rows
+                    held_until = extended_until
                     for start in range(0, len(stale_keys), OS_METRICS_STALE_KEYS_LIMIT):
                         sess.execute(
                             table.delete().where(

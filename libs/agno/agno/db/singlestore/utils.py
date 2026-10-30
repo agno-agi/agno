@@ -475,6 +475,28 @@ def lock_os_metrics(session: Session, table: Table) -> Optional[int]:
     return held_until if result.rowcount == 1 else None  # type: ignore
 
 
+def extend_os_metrics_lock(session: Session, table: Table, held_until: int) -> Optional[int]:
+    """Hold the lock row of the OS metrics totals table for OS_METRICS_LOCK_SECONDS more, unless it expired and
+    another process holds it.
+
+    Args:
+        session (Session): The session to extend it with.
+        table (Table): The OS metrics totals table.
+        held_until (int): The time it was taken or last extended until.
+
+    Returns:
+        Optional[int]: The time it is now held until by the server's clock. None when another process holds it.
+    """
+    held_until_now = session.execute(select(func.UNIX_TIMESTAMP())).scalar_one() + OS_METRICS_LOCK_SECONDS
+    result = session.execute(
+        update(table)
+        .where(*[table.c[column] == value for column, value in _OS_METRICS_LOCK_ROW_KEY.items()])
+        .where(table.c.updated_at == held_until)
+        .values(updated_at=held_until_now)
+    )
+    return held_until_now if result.rowcount == 1 else None  # type: ignore
+
+
 def unlock_os_metrics(session: Session, table: Table, held_until: int) -> None:
     """Release the lock row of the OS metrics totals table, unless it expired and another process holds it.
 

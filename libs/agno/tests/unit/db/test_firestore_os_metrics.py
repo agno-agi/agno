@@ -15,11 +15,16 @@ try:
     from google.cloud.firestore import FieldFilter, Increment
 
     from agno.db.firestore import FirestoreDb
-    from agno.db.firestore.utils import deserialize_os_metrics_record
+    from agno.db.firestore.utils import bulk_upsert_os_metrics, deserialize_os_metrics_record
 except ImportError:
     FirestoreDb = None  # type: ignore[misc,assignment]
 
-from agno.db.utils import os_metrics_month_end
+from agno.db.utils import (
+    build_os_metrics_totals_row,
+    calculate_date_os_metrics,
+    os_metrics_month_end,
+    os_metrics_nested_run_ids,
+)
 from agno.metrics import ModelMetrics, RunMetrics
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -301,6 +306,54 @@ def test_calculate_os_metrics_skips_a_refresh_with_nothing_new(firestore_db: Fir
     assert firestore_db._calculate_os_metrics(wait_for_rebuild=False) is not None
     metrics, _ = firestore_db.get_os_metrics(_utc_date(0), _utc_date(0), fields=["sessions_count"])
     assert metrics == [{"date": _utc_date(0), "sessions_count": 2}]
+
+
+def test_calculate_os_metrics_keeps_the_lock_through_a_day_longer_than_it(
+    firestore_db: FirestoreDb, sample_sessions_for_os_metrics, monkeypatch
+):
+    """Ensure the lock is renewed between the reads of a day, so a day that reads for longer than the lock is
+    written and another rebuild cannot take the lock meanwhile"""
+    clock = [time.time()]
+    monkeypatch.setattr("agno.db.firestore.firestore.time", SimpleNamespace(time=lambda: clock[0], sleep=time.sleep))
+    monkeypatch.setattr("agno.db.firestore.utils.time", SimpleNamespace(time=lambda: clock[0]))
+    totals_collection_ref = firestore_db.db_client.collection("test_os_metrics_totals")
+    taken_over: List[bool] = []
+
+    def slow(function, take_over: bool = False):
+        def call(*args):
+            clock[0] += 40
+            if take_over:
+                taken_over.append(firestore_db._lock_os_metrics(totals_collection_ref, False) is not None)
+            return function(*args)
+
+        return call
+
+    monkeypatch.setattr("agno.db.firestore.firestore.os_metrics_nested_run_ids", slow(os_metrics_nested_run_ids))
+    monkeypatch.setattr(
+        "agno.db.firestore.firestore.calculate_date_os_metrics", slow(calculate_date_os_metrics, take_over=True)
+    )
+
+    firestore_db.calculate_os_metrics()
+
+    assert taken_over == [False, False]
+    assert {row["date"] for row in _stored_rows(firestore_db, "test_os_metrics_totals")} == {_utc_date(1), _utc_date(0)}
+
+
+def test_bulk_upsert_os_metrics_stops_between_commits_once_the_lock_is_lost(firestore_db: FirestoreDb):
+    """Ensure a write of more than one commit renews the lock between commits, and stops before the totals row once
+    the lock is lost"""
+    sessions = [{"session_type": "agent", "agent_id": "agent-1", "user_id": f"user-{i}"} for i in range(600)]
+    rows = calculate_date_os_metrics(_utc_date(0), sessions, [], set(), [])
+
+    # No lock document holds the token, as when another process took the lock
+    assert not bulk_upsert_os_metrics(
+        firestore_db.db_client.collection("test_os_metrics"),
+        rows,
+        totals_collection_ref=firestore_db.db_client.collection("test_os_metrics_totals"),
+        totals_row=build_os_metrics_totals_row(rows, "daily", _utc_date(0), False),
+        lock_token="lost-token",
+    )
+    assert _stored_rows(firestore_db, "test_os_metrics_totals") == []
 
 
 def test_get_os_metrics_versions_is_none_while_today_is_unbuilt(firestore_db: FirestoreDb):

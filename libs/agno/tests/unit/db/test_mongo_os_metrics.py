@@ -2,6 +2,7 @@ import copy
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock
 
@@ -14,9 +15,15 @@ from agno.db.mongo import AsyncMongoDb, MongoDb
 from agno.db.mongo.utils import (
     OS_METRICS_LOCK_ID,
     bulk_upsert_os_metrics,
+    lock_os_metrics,
     upsert_os_metrics_totals_row,
 )
-from agno.db.utils import build_os_metrics_totals_row, build_single_run_row, calculate_date_os_metrics
+from agno.db.utils import (
+    build_os_metrics_totals_row,
+    build_single_run_row,
+    calculate_date_os_metrics,
+    os_metrics_nested_run_ids,
+)
 from agno.metrics import ModelMetrics, RunMetrics
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -388,6 +395,38 @@ def test_lazy_refresh_skips_while_another_rebuild_holds_the_lock(db, collections
     assert collections["os_metrics"].docs[0]["locked_by"] is None
 
 
+def _slow_day_reads(collections, monkeypatch: pytest.MonkeyPatch, module: str) -> List[bool]:
+    """Make the nested run lookup and the rollup of a day take 40 s each, together longer than the lock, and let
+    another rebuild try to take the lock during the rollup. Returns whether each try took it"""
+    clock = [time.time()]
+    monkeypatch.setattr("agno.db.mongo.utils.time", SimpleNamespace(time=lambda: clock[0], sleep=time.sleep))
+    taken_over: List[bool] = []
+
+    def slow(function, take_over: bool = False):
+        def call(*args):
+            clock[0] += 40
+            if take_over:
+                taken_over.append(lock_os_metrics(collections["os_metrics"], "another-rebuild", False))
+            return function(*args)
+
+        return call
+
+    monkeypatch.setattr(f"{module}.os_metrics_nested_run_ids", slow(os_metrics_nested_run_ids))
+    monkeypatch.setattr(f"{module}.calculate_date_os_metrics", slow(calculate_date_os_metrics, take_over=True))
+    return taken_over
+
+
+def test_a_day_that_reads_for_longer_than_the_lock_keeps_it(db, collections, monkeypatch: pytest.MonkeyPatch):
+    """The lock is renewed between the reads of a day, so a day that reads for longer than the lock is written"""
+    taken_over = _slow_day_reads(collections, monkeypatch, "agno.db.mongo.mongo")
+
+    db.calculate_os_metrics()
+
+    today = datetime.now(timezone.utc).date()
+    assert taken_over == [False, False]
+    assert set(_totals_by_date(collections)) == {(today - timedelta(days=1)).isoformat(), today.isoformat()}
+
+
 def test_get_os_metrics_versions(db):
     """Every totals row of the date range, keyed by its aggregation period and date"""
     today = datetime.now(timezone.utc).date()
@@ -497,3 +536,17 @@ async def test_async_month_rows_are_written_once_a_month_completes(
     assert [(row["date"], row["user_id"], row["sessions_count"]) for row in month_rows] == [
         (month_start.isoformat(), "alice", 2)
     ]
+
+
+@pytest.mark.asyncio
+async def test_async_a_day_that_reads_for_longer_than_the_lock_keeps_it(
+    async_db, collections, monkeypatch: pytest.MonkeyPatch
+):
+    """The async class renews the lock between the reads of a day, as the sync one does"""
+    taken_over = _slow_day_reads(collections, monkeypatch, "agno.db.mongo.async_mongo")
+
+    await async_db.calculate_os_metrics()
+
+    today = datetime.now(timezone.utc).date()
+    assert taken_over == [False, False]
+    assert set(_totals_by_date(collections)) == {(today - timedelta(days=1)).isoformat(), today.isoformat()}

@@ -409,6 +409,33 @@ def deserialize_os_metrics_record(record: Dict[str, Any]) -> Dict[str, Any]:
     return {**record, "date": metric_record_day(record)}
 
 
+def extend_os_metrics_lock(totals_collection_ref, token: str) -> bool:
+    """Hold the lock taken by FirestoreDb._lock_os_metrics for OS_METRICS_LOCK_SECONDS more, unless another process
+    took it.
+
+    Args:
+        totals_collection_ref: The OS metrics totals collection, which holds the lock document.
+        token (str): The token the lock is held under.
+
+    Returns:
+        bool: Whether the lock is still held under the token.
+    """
+    from google.api_core.exceptions import FailedPrecondition, NotFound
+
+    lock_ref = totals_collection_ref.document(OS_METRICS_LOCK_ID)
+    snapshot = lock_ref.get()
+    if snapshot.exists and (snapshot.to_dict() or {}).get("token") == token:
+        try:
+            lock_ref.update(
+                {"expires_at": time.time() + OS_METRICS_LOCK_SECONDS},
+                option=totals_collection_ref._client.write_option(last_update_time=snapshot.update_time),
+            )
+            return True
+        except (FailedPrecondition, NotFound):
+            pass
+    return False
+
+
 def bulk_upsert_os_metrics(
     collection_ref,
     os_metrics_records: List[Dict[str, Any]],
@@ -416,7 +443,8 @@ def bulk_upsert_os_metrics(
     totals_collection_ref=None,
     totals_row: Optional[Dict[str, Any]] = None,
     totals_row_stored: bool = False,
-) -> None:
+    lock_token: Optional[str] = None,
+) -> bool:
     """Bulk upsert OS metrics into the database, delete the stale ones and write the totals row last.
 
     A new totals row starts at version 1, and every write of a stored one moves its version by one in the same
@@ -429,6 +457,10 @@ def bulk_upsert_os_metrics(
         totals_collection_ref: The OS metrics totals collection.
         totals_row (Optional[Dict[str, Any]]): The totals row, from build_os_metrics_totals_row.
         totals_row_stored (bool): Whether the totals row is already stored.
+        lock_token (Optional[str]): The token the OS metrics lock is held under, extended with every commit.
+
+    Returns:
+        bool: Whether every write was committed. False when the OS metrics lock was lost.
     """
     batch = collection_ref._client.batch()
 
@@ -455,6 +487,9 @@ def bulk_upsert_os_metrics(
         # Firestore batch limit is 500 operations
         if batch_count % 500 == 0:
             batch.commit()
+            # A rebuild that lost the lock stops before its next commit
+            if lock_token is not None and not extend_os_metrics_lock(totals_collection_ref, lock_token):
+                return False
             batch = collection_ref._client.batch()
 
     for record in os_metrics_records:
@@ -465,6 +500,8 @@ def bulk_upsert_os_metrics(
         # Firestore batch limit is 500 operations
         if batch_count % 500 == 0:
             batch.commit()
+            if lock_token is not None and not extend_os_metrics_lock(totals_collection_ref, lock_token):
+                return False
             batch = collection_ref._client.batch()
 
     if totals_collection_ref is not None and totals_row is not None:
@@ -486,3 +523,4 @@ def bulk_upsert_os_metrics(
     # Commit remaining operations
     if batch_count % 500 != 0:
         batch.commit()
+    return True

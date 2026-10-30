@@ -2309,7 +2309,7 @@ class ValkeyDb(BaseDb):
 
     def _get_records_for_os_metrics_calculation(
         self, table_type: str, start_timestamp: int, lock_token: str
-    ) -> Tuple[Dict[date, List[Dict[str, Any]]], Set[str]]:
+    ) -> Optional[Tuple[Dict[date, List[Dict[str, Any]]], Set[str]]]:
         """Get the sessions or runs created from the given time on, with only what OS metrics count.
 
         Every record of the table is read: a record's created_at is only known once it is read. A session created
@@ -2323,16 +2323,18 @@ class ValkeyDb(BaseDb):
             lock_token (str): The token the OS metrics lock is held with.
 
         Returns:
-            Tuple[Dict[date, List[Dict[str, Any]]], Set[str]]: The records, trimmed to what OS metrics count, by the
-                UTC day they were created on, and the IDs of every record of the table.
+            Optional[Tuple[Dict[date, List[Dict[str, Any]]], Set[str]]]: The records, trimmed to what OS metrics
+                count, by the UTC day they were created on, and the IDs of every record of the table. None when the
+                lock was lost.
         """
         keys = get_all_keys_for_table(valkey_client=self.valkey_client, prefix=self.db_prefix, table_type=table_type)
         key_prefix = generate_valkey_key(prefix=self.db_prefix, table_type=table_type, key_id="")
 
         records_by_day: Dict[date, List[Dict[str, Any]]] = {}
         for batch_start in range(0, len(keys), OS_METRICS_BATCH_SIZE):
-            # Extend the lock with every batch, so a long read keeps it
-            self._extend_os_metrics_lock(lock_token)
+            # Extend the lock with every batch, so a long read keeps it. A rebuild that lost it stops reading
+            if not self._extend_os_metrics_lock(lock_token):
+                return None
             pipeline = self._create_pipeline()
             for key in keys[batch_start : batch_start + OS_METRICS_BATCH_SIZE]:
                 pipeline.get(key)
@@ -2453,6 +2455,8 @@ class ValkeyDb(BaseDb):
             ]
             per_owner: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
             for batch_start in range(0, len(record_ids), OS_METRICS_BATCH_SIZE):
+                if not self._extend_os_metrics_lock(lock_token):
+                    return results
                 add_month_os_metrics(
                     per_owner,
                     self._get_os_metrics_records(record_ids[batch_start : batch_start + OS_METRICS_BATCH_SIZE]),
@@ -2524,6 +2528,10 @@ class ValkeyDb(BaseDb):
             starting_date = self._get_os_metrics_calculation_starting_date(
                 self._get_all_os_metrics_totals_records(), lock_token
             )
+            # A rebuild that lost the lock stops: the process that holds it calculates the days left
+            if not self._extend_os_metrics_lock(lock_token):
+                log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                return None
 
             if starting_date is None:
                 log_info("No session data found. Won't calculate OS metrics.")
@@ -2541,8 +2549,18 @@ class ValkeyDb(BaseDb):
             start_timestamp = int(
                 datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
             )
-            sessions_by_day, _ = self._get_records_for_os_metrics_calculation("sessions", start_timestamp, lock_token)
-            runs_by_day, run_ids = self._get_records_for_os_metrics_calculation("runs", start_timestamp, lock_token)
+            sessions_read = self._get_records_for_os_metrics_calculation("sessions", start_timestamp, lock_token)
+            runs_read = (
+                self._get_records_for_os_metrics_calculation("runs", start_timestamp, lock_token)
+                if sessions_read is not None
+                else None
+            )
+            # A rebuild that lost the lock stops: the process that holds it calculates the days left
+            if sessions_read is None or runs_read is None:
+                log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                return None
+            sessions_by_day, _ = sessions_read
+            runs_by_day, run_ids = runs_read
 
             fingerprint = self._get_os_metrics_fingerprint(sessions_by_day, runs_by_day, dates_to_process)
             if not wait_for_rebuild and fingerprint is not None and fingerprint == self._os_metrics_fingerprint:
@@ -2583,6 +2601,9 @@ class ValkeyDb(BaseDb):
                 parent_runs = [runs_by_id[run_id] for run_id in parent_run_ids if run_id in runs_by_id]
                 parent_run_ids = [run_id for run_id in parent_run_ids if run_id not in runs_by_id and run_id in run_ids]
                 for batch_start in range(0, len(parent_run_ids), OS_METRICS_BATCH_SIZE):
+                    if not self._extend_os_metrics_lock(lock_token):
+                        log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                        return results, written_totals_rows
                     pipeline = self._create_pipeline()
                     for run_id in parent_run_ids[batch_start : batch_start + OS_METRICS_BATCH_SIZE]:
                         pipeline.get(generate_valkey_key(prefix=self.db_prefix, table_type="runs", key_id=run_id))

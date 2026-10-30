@@ -1772,7 +1772,7 @@ class RedisDb(BaseDb):
         start_timestamp: int,
         end_timestamp: Optional[int] = None,
         lock_token: Optional[str] = None,
-    ) -> Dict[date, List[Dict[str, Any]]]:
+    ) -> Optional[Dict[date, List[Dict[str, Any]]]]:
         """Get the sessions or runs created in the given time range, with only what OS metrics count.
 
         Sessions and runs have no index by date, so every record of the table is read and filtered by created_at.
@@ -1787,8 +1787,8 @@ class RedisDb(BaseDb):
             lock_token (Optional[str]): The token the OS metrics lock is held with, extended with every batch.
 
         Returns:
-            Dict[date, List[Dict[str, Any]]]: The records, trimmed to what OS metrics count, by the UTC day they
-                were created on.
+            Optional[Dict[date, List[Dict[str, Any]]]]: The records, trimmed to what OS metrics count, by the UTC day
+                they were created on. None when the OS metrics lock was lost.
         """
         keys = get_all_keys_for_table(
             redis_client=self.redis_client, prefix=self.db_prefix, table_type=table_type, count=OS_METRICS_SCAN_COUNT
@@ -1796,8 +1796,8 @@ class RedisDb(BaseDb):
 
         records_by_day: Dict[date, List[Dict[str, Any]]] = {}
         for batch_start in range(0, len(keys), OS_METRICS_BATCH_SIZE):
-            if lock_token is not None:
-                self._extend_os_metrics_lock(lock_token)
+            if lock_token is not None and not self._extend_os_metrics_lock(lock_token):
+                return None
             pipeline = self.redis_client.pipeline(transaction=False)
             for key in keys[batch_start : batch_start + OS_METRICS_BATCH_SIZE]:
                 pipeline.get(key)
@@ -2010,7 +2010,7 @@ class RedisDb(BaseDb):
 
             # 2. No total records. Return the date of the first recorded session, or None when there is none.
             # Sessions have no index by date, so every session is read
-            return min(self._get_records_for_os_metrics_calculation("sessions", start_timestamp=0), default=None)
+            return min(self._get_records_for_os_metrics_calculation("sessions", start_timestamp=0) or {}, default=None)
 
         except Exception as e:
             log_error(f"Error getting OS metrics starting date: {str(e)}")
@@ -2045,6 +2045,8 @@ class RedisDb(BaseDb):
             record_ids = self._get_os_metrics_record_ids_of_days(month_days)
             per_owner: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
             for batch_start in range(0, len(record_ids), OS_METRICS_BATCH_SIZE):
+                if not self._extend_os_metrics_lock(lock_token):
+                    return results
                 add_month_os_metrics(
                     per_owner,
                     self._get_os_metrics_records(record_ids[batch_start : batch_start + OS_METRICS_BATCH_SIZE]),
@@ -2124,9 +2126,15 @@ class RedisDb(BaseDb):
             sessions_by_day = self._get_records_for_os_metrics_calculation(
                 "sessions", start_timestamp, end_timestamp, lock_token
             )
-            runs_by_day = self._get_records_for_os_metrics_calculation(
-                "runs", start_timestamp, end_timestamp, lock_token
+            runs_by_day = (
+                self._get_records_for_os_metrics_calculation("runs", start_timestamp, end_timestamp, lock_token)
+                if sessions_by_day is not None
+                else None
             )
+            # A rebuild that lost the lock stops: the process that holds it calculates the days left
+            if sessions_by_day is None or runs_by_day is None:
+                log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                return [], []
 
             # Runs not yet migrated out of the legacy runs field, by the day they were created on, as the v3.0.0
             # migration dates them. A legacy run the runs table also holds is counted from the runs read from there
@@ -2160,6 +2168,9 @@ class RedisDb(BaseDb):
                 stored_run_ids: Set[str] = set()
                 run_ids = sorted(os_metrics_nested_run_ids(runs))
                 for batch_start in range(0, len(run_ids), OS_METRICS_BATCH_SIZE):
+                    if not self._extend_os_metrics_lock(lock_token):
+                        log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                        return results, written_totals_rows
                     batch_run_ids = run_ids[batch_start : batch_start + OS_METRICS_BATCH_SIZE]
                     pipeline = self.redis_client.pipeline(transaction=False)
                     for run_id in batch_run_ids:
@@ -2175,6 +2186,9 @@ class RedisDb(BaseDb):
                 parent_runs = [runs_by_id[run_id] for run_id in parent_run_ids if run_id in runs_by_id]
                 parent_run_ids = [run_id for run_id in parent_run_ids if run_id not in runs_by_id]
                 for batch_start in range(0, len(parent_run_ids), OS_METRICS_BATCH_SIZE):
+                    if not self._extend_os_metrics_lock(lock_token):
+                        log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                        return results, written_totals_rows
                     pipeline = self.redis_client.pipeline(transaction=False)
                     for run_id in parent_run_ids[batch_start : batch_start + OS_METRICS_BATCH_SIZE]:
                         pipeline.get(generate_redis_key(prefix=self.db_prefix, table_type="runs", key_id=run_id))

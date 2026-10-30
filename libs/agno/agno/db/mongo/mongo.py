@@ -2049,6 +2049,10 @@ class MongoDb(BaseDb):
                     if len(batch) >= OS_METRICS_BATCH_SIZE:
                         add_month_os_metrics(per_owner, batch)
                         batch = []
+                        # Renewed after each batch read, so a month that takes longer than OS_METRICS_LOCK_SECONDS to
+                        # read keeps the lock
+                        if not extend_os_metrics_lock(collection, rebuild_id):
+                            return results
                 if batch:
                     add_month_os_metrics(per_owner, batch)
 
@@ -2242,6 +2246,11 @@ class MongoDb(BaseDb):
                         {"session_type": 1, "user_id": 1, "agent_id": 1, "team_id": 1, "workflow_id": 1},
                     )
                 )
+                # Renewed after each read and write, so a day that takes longer than OS_METRICS_LOCK_SECONDS keeps the
+                # lock. A rebuild that lost it stops: the process that holds it calculates the days left
+                if not extend_os_metrics_lock(collection, rebuild_id):
+                    log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                    return results, written_totals_rows
 
                 runs: List[Dict[str, Any]] = []
                 stored_run_ids: Set[str] = set()
@@ -2253,6 +2262,9 @@ class MongoDb(BaseDb):
                             build_os_metrics_runs_projection(),
                         )
                     )
+                    if not extend_os_metrics_lock(collection, rebuild_id):
+                        log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                        return results, written_totals_rows
 
                     # A nested run also stored as a run of its own is counted from that document, whatever day it is on
                     run_ids = sorted(os_metrics_nested_run_ids(runs + legacy_runs))
@@ -2265,6 +2277,9 @@ class MongoDb(BaseDb):
                                 {"run_id": 1, "_id": False},
                             )
                         )
+                    if not extend_os_metrics_lock(collection, rebuild_id):
+                        log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                        return results, written_totals_rows
                     # A legacy run migrated since the legacy runs were read is counted from the runs read above
                     collection_run_ids = {run["run_id"] for run in runs}
                     legacy_runs = [run for run in legacy_runs if run["run_id"] not in collection_run_ids]
@@ -2295,6 +2310,9 @@ class MongoDb(BaseDb):
                             )
                         )
 
+                if not extend_os_metrics_lock(collection, rebuild_id):
+                    log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                    return results, written_totals_rows
                 records = calculate_date_os_metrics(date_to_process, sessions, runs, stored_run_ids, parent_runs)
                 stored_rows = [
                     deserialize_os_metrics_row(document)
@@ -2320,6 +2338,9 @@ class MongoDb(BaseDb):
                     collection.delete_many({"_id": {"$in": stale_ids[start : start + OS_METRICS_IN_LIST_LIMIT]}})
                 bulk_upsert_os_metrics(collection, changed_rows)
 
+                if not extend_os_metrics_lock(collection, rebuild_id):
+                    log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                    return results, written_totals_rows
                 # Written last, so its version never moves before the rows it tells of
                 stored_totals_row = totals_collection.find_one(
                     {"aggregation_period": "daily", "date": date_key}, {"_id": False}

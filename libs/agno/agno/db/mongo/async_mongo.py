@@ -2253,6 +2253,10 @@ class AsyncMongoDb(AsyncBaseDb):
                     await asyncio.to_thread(
                         add_month_os_metrics, per_owner, [deserialize_os_metrics_row(document) for document in batch]
                     )
+                    # Renewed after each batch read, so a month that takes longer than OS_METRICS_LOCK_SECONDS to
+                    # read keeps the lock
+                    if not await aextend_os_metrics_lock(collection, rebuild_id):
+                        return results
 
                 month_rows = await asyncio.to_thread(calculate_month_os_metrics, month_start, per_owner)
                 # A rebuild that lost the lock stops, so a month is written by one rebuild only
@@ -2446,6 +2450,11 @@ class AsyncMongoDb(AsyncBaseDb):
                     {"created_at": {"$gte": start_timestamp, "$lt": end_timestamp}},
                     {"session_type": 1, "user_id": 1, "agent_id": 1, "team_id": 1, "workflow_id": 1},
                 ).to_list(length=None)
+                # Renewed after each read and write, so a day that takes longer than OS_METRICS_LOCK_SECONDS keeps the
+                # lock. A rebuild that lost it stops: the process that holds it calculates the days left
+                if not await aextend_os_metrics_lock(collection, rebuild_id):
+                    log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                    return results, written_totals_rows
 
                 runs: List[Dict[str, Any]] = []
                 stored_run_ids: Set[str] = set()
@@ -2461,6 +2470,9 @@ class AsyncMongoDb(AsyncBaseDb):
                         .batch_size(OS_METRICS_BATCH_SIZE)
                         .to_list(length=None)
                     )
+                    if not await aextend_os_metrics_lock(collection, rebuild_id):
+                        log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                        return results, written_totals_rows
 
                     # A nested run also stored as a run of its own is counted from that document, whatever day it is on
                     # Calculation steps run in a thread so they never block the event loop
@@ -2474,6 +2486,9 @@ class AsyncMongoDb(AsyncBaseDb):
                                 {"run_id": 1, "_id": False},
                             ).to_list(length=None)
                         )
+                    if not await aextend_os_metrics_lock(collection, rebuild_id):
+                        log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                        return results, written_totals_rows
                     # A legacy run migrated since the legacy runs were read is counted from the runs read above
                     collection_run_ids = {run["run_id"] for run in runs}
                     legacy_runs = [run for run in legacy_runs if run["run_id"] not in collection_run_ids]
@@ -2504,6 +2519,9 @@ class AsyncMongoDb(AsyncBaseDb):
                             ).to_list(length=None)
                         )
 
+                if not await aextend_os_metrics_lock(collection, rebuild_id):
+                    log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                    return results, written_totals_rows
                 records = await asyncio.to_thread(
                     calculate_date_os_metrics, date_to_process, sessions, runs, stored_run_ids, parent_runs
                 )
@@ -2533,6 +2551,9 @@ class AsyncMongoDb(AsyncBaseDb):
                     await collection.delete_many({"_id": {"$in": stale_ids[start : start + OS_METRICS_IN_LIST_LIMIT]}})
                 await abulk_upsert_os_metrics(collection, changed_rows)
 
+                if not await aextend_os_metrics_lock(collection, rebuild_id):
+                    log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                    return results, written_totals_rows
                 # Written last, so its version never moves before the rows it tells of
                 stored_totals_row = await totals_collection.find_one(
                     {"aggregation_period": "daily", "date": date_key}, {"_id": False}

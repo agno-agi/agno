@@ -147,6 +147,7 @@ def test_calculate_os_metrics_writes_each_day_and_its_totals_row_last(singlestor
     singlestore_db._get_os_metrics_fingerprint = Mock(return_value=("fingerprint",))
     singlestore_db._lock_os_metrics = Mock(return_value=123)
     singlestore_db._unlock_os_metrics = Mock()
+    singlestore_db._extend_os_metrics_lock = Mock(return_value=123)
     singlestore_db._calculate_month_os_metrics = Mock(return_value=[])
 
     results, written_totals_rows = singlestore_db._calculate_os_metrics(wait_for_rebuild=True)
@@ -189,6 +190,7 @@ def test_calculate_os_metrics_skips_a_lazy_refresh_with_nothing_new(singlestore_
     singlestore_db._os_metrics_fingerprint = ("fingerprint",)
     singlestore_db._lock_os_metrics = Mock(return_value=123)
     singlestore_db._unlock_os_metrics = Mock()
+    singlestore_db._extend_os_metrics_lock = Mock(return_value=123)
     singlestore_db._calculate_month_os_metrics = Mock(return_value=[])
 
     assert singlestore_db._calculate_os_metrics(wait_for_rebuild=False) is None
@@ -211,11 +213,22 @@ def test_calculate_os_metrics_skips_while_another_process_rebuilds(singlestore_d
     assert singlestore_db._os_metrics_refreshed_at == 0.0
 
 
-def test_calculate_month_os_metrics_writes_month_rows_then_its_totals_row(singlestore_db, writes, monkeypatch):
-    """A completed month without month rows gets them from its days' rows, added up a batch at a time, then a
-    completed month totals row."""
-    monkeypatch.setattr(singlestore_module, "OS_METRICS_BATCH_SIZE", 1)
-    month_start = date(2026, 9, 1)
+def test_calculate_os_metrics_stops_once_the_lock_is_lost(singlestore_db, writes):
+    """A rebuild whose lock expired and was taken by another process writes no day."""
+    singlestore_db.Session = _session_factory(_rebuild_handler)
+    singlestore_db._get_os_metrics_calculation_starting_date = Mock(return_value=YESTERDAY)
+    singlestore_db._get_os_metrics_fingerprint = Mock(return_value=("fingerprint",))
+    singlestore_db._lock_os_metrics = Mock(return_value=123)
+    singlestore_db._unlock_os_metrics = Mock()
+    singlestore_db._extend_os_metrics_lock = Mock(return_value=None)
+    singlestore_db._calculate_month_os_metrics = Mock(return_value=[])
+
+    assert singlestore_db._calculate_os_metrics(wait_for_rebuild=True) == ([], [])
+    assert writes == []
+
+
+def _month_handler(sql: str, params: dict) -> _Result:
+    """September 2026 has completed days of alice, and no month rows yet"""
     daily_row = {
         "aggregation_period": "daily",
         "user_id": "alice",
@@ -225,21 +238,26 @@ def test_calculate_month_os_metrics_writes_month_rows_then_its_totals_row(single
         "sessions_count": 1,
         "runs_count": 2,
     }
+    if "FROM test_os_metrics_totals" in sql:
+        return _Result(
+            [
+                _row(aggregation_period="daily", date=date(2026, 9, 1), completed=True),
+                _row(aggregation_period="daily", date=date(2026, 9, 30), completed=True),
+                _row(aggregation_period="daily", date=date(2026, 10, 1), completed=True),
+            ]
+        )
+    return _Result([_row(**daily_row, date=date(2026, 9, 1)), _row(**daily_row, date=date(2026, 9, 30))])
 
-    def handler(sql: str, params: dict) -> _Result:
-        if "FROM test_os_metrics_totals" in sql:
-            return _Result(
-                [
-                    _row(aggregation_period="daily", date=date(2026, 9, 1), completed=True),
-                    _row(aggregation_period="daily", date=date(2026, 9, 30), completed=True),
-                    _row(aggregation_period="daily", date=date(2026, 10, 1), completed=True),
-                ]
-            )
-        return _Result([_row(**daily_row, date=date(2026, 9, 1)), _row(**daily_row, date=date(2026, 9, 30))])
 
-    singlestore_db.Session = _session_factory(handler)
+def test_calculate_month_os_metrics_writes_month_rows_then_its_totals_row(singlestore_db, writes, monkeypatch):
+    """A completed month without month rows gets them from its days' rows, added up a batch at a time, then a
+    completed month totals row."""
+    monkeypatch.setattr(singlestore_module, "OS_METRICS_BATCH_SIZE", 1)
+    month_start = date(2026, 9, 1)
+    singlestore_db.Session = _session_factory(_month_handler)
     singlestore_db._lock_os_metrics = Mock(return_value=123)
     singlestore_db._unlock_os_metrics = Mock()
+    singlestore_db._extend_os_metrics_lock = Mock(return_value=456)
 
     results = singlestore_db._calculate_month_os_metrics(
         singlestore_db._get_table("os_metrics"), singlestore_db._get_table("os_metrics_totals"), True
@@ -252,7 +270,25 @@ def test_calculate_month_os_metrics_writes_month_rows_then_its_totals_row(single
     assert (writes[0][1]["sessions_count"], writes[0][1]["runs_count"]) == (2, 4)
     assert writes[1][1]["completed"] is True
     assert results == [writes[1][1]]
-    singlestore_db._unlock_os_metrics.assert_called_once()
+    # The lock is renewed after each batch read and before the month is written, and released with the time it was
+    # renewed until
+    assert singlestore_db._extend_os_metrics_lock.call_count == 3
+    singlestore_db._extend_os_metrics_lock.assert_any_call(singlestore_db._get_table("os_metrics_totals"), 123)
+    singlestore_db._unlock_os_metrics.assert_called_once_with(singlestore_db._get_table("os_metrics_totals"), 456)
+
+
+def test_calculate_month_os_metrics_stops_once_the_lock_is_lost(singlestore_db, writes):
+    """A rebuild whose lock expired and was taken by another process writes no month."""
+    singlestore_db.Session = _session_factory(_month_handler)
+    singlestore_db._lock_os_metrics = Mock(return_value=123)
+    singlestore_db._unlock_os_metrics = Mock()
+    singlestore_db._extend_os_metrics_lock = Mock(return_value=None)
+
+    results = singlestore_db._calculate_month_os_metrics(
+        singlestore_db._get_table("os_metrics"), singlestore_db._get_table("os_metrics_totals"), True
+    )
+
+    assert (results, writes) == ([], [])
 
 
 def test_get_os_metrics_reads_every_owner_from_the_totals_rows(singlestore_db):

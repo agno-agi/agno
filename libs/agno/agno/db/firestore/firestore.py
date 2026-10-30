@@ -21,6 +21,7 @@ from agno.db.firestore.utils import (
     calculate_date_metrics,
     create_collection_indexes,
     deserialize_os_metrics_record,
+    extend_os_metrics_lock,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     os_metrics_record_id,
@@ -1914,31 +1915,6 @@ class FirestoreDb(BaseDb):
             except (FailedPrecondition, NotFound):
                 pass
 
-    def _extend_os_metrics_lock(self, totals_collection_ref, token: str) -> bool:
-        """Hold the lock taken by _lock_os_metrics for OS_METRICS_LOCK_SECONDS more, unless another process took it.
-
-        Args:
-            totals_collection_ref: The OS metrics totals collection, which holds the lock document.
-            token (str): The token the lock is held under.
-
-        Returns:
-            bool: Whether the lock is still held under the token.
-        """
-        from google.api_core.exceptions import FailedPrecondition, NotFound
-
-        lock_ref = totals_collection_ref.document(OS_METRICS_LOCK_ID)
-        snapshot = lock_ref.get()
-        if snapshot.exists and (snapshot.to_dict() or {}).get("token") == token:
-            try:
-                lock_ref.update(
-                    {"expires_at": time.time() + OS_METRICS_LOCK_SECONDS},
-                    option=self.db_client.write_option(last_update_time=snapshot.update_time),
-                )
-                return True
-            except (FailedPrecondition, NotFound):
-                pass
-        return False
-
     def _calculate_month_os_metrics(
         self, collection_ref, totals_collection_ref, wait_for_rebuild: bool
     ) -> List[Dict[str, Any]]:
@@ -1996,6 +1972,10 @@ class FirestoreDb(BaseDb):
                     if len(stored_rows) >= OS_METRICS_BATCH_SIZE:
                         add_month_os_metrics(per_owner, stored_rows)
                         stored_rows = []
+                        # Renewed after each batch read, so a month that takes longer than OS_METRICS_LOCK_SECONDS to
+                        # read keeps the lock
+                        if not extend_os_metrics_lock(totals_collection_ref, token):
+                            return results
                 if stored_rows:
                     add_month_os_metrics(per_owner, stored_rows)
 
@@ -2003,11 +1983,16 @@ class FirestoreDb(BaseDb):
                 # Written last: a read takes a month from its rows only once the month has a total row
                 totals_row = build_os_metrics_totals_row(month_rows, "monthly", month_start, completed=True)
                 # A rebuild that lost the lock stops, so a month is written by one rebuild only
-                if not self._extend_os_metrics_lock(totals_collection_ref, token):
+                if not extend_os_metrics_lock(totals_collection_ref, token):
                     return results
-                bulk_upsert_os_metrics(
-                    collection_ref, month_rows, totals_collection_ref=totals_collection_ref, totals_row=totals_row
-                )
+                if not bulk_upsert_os_metrics(
+                    collection_ref,
+                    month_rows,
+                    totals_collection_ref=totals_collection_ref,
+                    totals_row=totals_row,
+                    lock_token=token,
+                ):
+                    return results
                 results.append(totals_row)
 
         finally:
@@ -2163,6 +2148,11 @@ class FirestoreDb(BaseDb):
                     .select(["session_id", "session_type", "user_id", "agent_id", "team_id", "workflow_id"])
                 )
                 sessions = [doc.to_dict() for doc in sessions_query.stream()]
+                # Renewed after each read and write, so a day that takes longer than OS_METRICS_LOCK_SECONDS keeps the
+                # lock. A rebuild that lost it stops: the process that holds it calculates the days left
+                if not extend_os_metrics_lock(totals_collection_ref, token):
+                    log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                    return results, written_totals_rows
 
                 runs: List[Dict[str, Any]] = []
                 stored_run_ids: Set[str] = set()
@@ -2195,6 +2185,9 @@ class FirestoreDb(BaseDb):
                         )
                     )
                     runs = [doc.to_dict() for doc in runs_query.stream()]
+                    if not extend_os_metrics_lock(totals_collection_ref, token):
+                        log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                        return results, written_totals_rows
 
                 # A legacy run migrated to the runs collection since the legacy runs were read is among the day's
                 # runs, and is counted from there
@@ -2211,6 +2204,9 @@ class FirestoreDb(BaseDb):
                             filter=FieldFilter("run_id", "in", run_ids[start : start + OS_METRICS_IN_LIST_LIMIT])
                         ).select(["run_id"])
                         stored_run_ids.update(doc.to_dict()["run_id"] for doc in stored_query.stream())
+                    if not extend_os_metrics_lock(totals_collection_ref, token):
+                        log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                        return results, written_totals_rows
 
                 # A run started by a run of another day, such as a member run after midnight, names that run's
                 # agent, team or workflow as its parent, read from the legacy runs of the rebuild or the runs table
@@ -2227,6 +2223,9 @@ class FirestoreDb(BaseDb):
                         ).select(["run_id", "run_type", "agent_id", "team_id", "workflow_id"])
                         parent_runs.extend(doc.to_dict() for doc in parents_query.stream())
 
+                if not extend_os_metrics_lock(totals_collection_ref, token):
+                    log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                    return results, written_totals_rows
                 records = calculate_date_os_metrics(date_to_process, sessions, runs, stored_run_ids, parent_runs)
                 docs = (
                     collection_ref.where(filter=FieldFilter("aggregation_period", "==", "daily"))
@@ -2257,17 +2256,20 @@ class FirestoreDb(BaseDb):
                 if totals_row is not None and stored_totals_row is not None:
                     totals_row["created_at"] = stored_totals_row["created_at"]
                 # A rebuild that lost the lock stops: the process that holds it calculates the days left
-                if not self._extend_os_metrics_lock(totals_collection_ref, token):
+                if not extend_os_metrics_lock(totals_collection_ref, token):
                     log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
                     return results, written_totals_rows
-                bulk_upsert_os_metrics(
+                if not bulk_upsert_os_metrics(
                     collection_ref,
                     changed_rows,
                     stale_doc_ids=[stored_ids_by_key[key] for key in stale_keys],
                     totals_collection_ref=totals_collection_ref,
                     totals_row=totals_row,
                     totals_row_stored=stored_totals_row is not None,
-                )
+                    lock_token=token,
+                ):
+                    log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                    return results, written_totals_rows
                 if totals_row is not None:
                     written_totals_rows.append(totals_row)
                 results.extend(records)
