@@ -25,14 +25,14 @@ from agno.os.interfaces.a2a.auth import authorize_a2a_access, authorize_a2a_requ
 from agno.os.interfaces.a2a.context import A2ACallContextBuilder, A2ARequestContextBuilder, A2ARequestHandler
 from agno.os.interfaces.a2a.executor import A2AExecutor
 from agno.os.interfaces.a2a.task_store import A2ATaskStore
-from agno.os.utils import get_agent_by_id, get_team_by_id, get_workflow_by_id
+from agno.os.utils import get_agent_by_id, get_team_by_id, get_workflow_by_id, public_scheme
 from agno.team import RemoteTeam, Team
 from agno.workflow import RemoteWorkflow, Workflow
 
 
 def _get_card_url(request: Request, router: APIRouter, base_url: Optional[str], path: str) -> str:
     """Get the public URL of an entity's A2A endpoint: the configured base URL, else the one the request came in on."""
-    resolved_base_url = (base_url or str(request.base_url)).rstrip("/")
+    resolved_base_url = (base_url or str(request.base_url.replace(scheme=public_scheme(request)))).rstrip("/")
     return f"{resolved_base_url}{router.prefix}{path}"
 
 
