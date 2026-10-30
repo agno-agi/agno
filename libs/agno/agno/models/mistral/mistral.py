@@ -127,7 +127,10 @@ class MistralChat(Model):
         return {k: v for k, v in client_params.items() if v is not None}
 
     def get_request_params(
-        self, tools: Optional[List[Dict[str, Any]]] = None, tool_choice: Optional[Union[str, Dict[str, Any]]] = None
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Get the API kwargs for the Mistral model.
@@ -152,6 +155,8 @@ class MistralChat(Model):
             _request_params["stop"] = self.stop
         if self.safe_prompt or self.safe_mode:
             _request_params["safe_prompt"] = True
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            _request_params["response_format"] = response_format_from_pydantic_model(response_format)
         if tools:
             _request_params["tools"] = tools
             if tool_choice is None:
@@ -205,26 +210,12 @@ class MistralChat(Model):
         mistral_messages = format_messages(messages, compress_tool_results)
         try:
             response: Union[ChatCompletionResponse, ParsedChatCompletionResponse]
-            if (
-                response_format is not None
-                and isinstance(response_format, type)
-                and issubclass(response_format, BaseModel)
-            ):
-                assistant_message.metrics.start_timer()
-
-                response = self.get_client().chat.complete(
-                    model=self.id,
-                    messages=mistral_messages,
-                    response_format=response_format_from_pydantic_model(response_format),
-                    **self.get_request_params(tools=tools, tool_choice=tool_choice),
-                )
-            else:
-                assistant_message.metrics.start_timer()
-                response = self.get_client().chat.complete(
-                    model=self.id,
-                    messages=mistral_messages,
-                    **self.get_request_params(tools=tools, tool_choice=tool_choice),
-                )
+            assistant_message.metrics.start_timer()
+            response = self.get_client().chat.complete(
+                model=self.id,
+                messages=mistral_messages,
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
+            )
 
             assistant_message.metrics.stop_timer()
 
@@ -260,7 +251,7 @@ class MistralChat(Model):
             for chunk in self.get_client().chat.stream(
                 model=self.id,
                 messages=mistral_messages,
-                **self.get_request_params(tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             ):
                 yield self._parse_provider_response_delta(chunk)
 
@@ -289,25 +280,12 @@ class MistralChat(Model):
         mistral_messages = format_messages(messages, compress_tool_results)
         try:
             response: Union[ChatCompletionResponse, ParsedChatCompletionResponse]
-            if (
-                response_format is not None
-                and isinstance(response_format, type)
-                and issubclass(response_format, BaseModel)
-            ):
-                assistant_message.metrics.start_timer()
-                response = await self.get_client().chat.complete_async(
-                    model=self.id,
-                    messages=mistral_messages,
-                    response_format=response_format_from_pydantic_model(response_format),
-                    **self.get_request_params(tools=tools, tool_choice=tool_choice),
-                )
-            else:
-                assistant_message.metrics.start_timer()
-                response = await self.get_client().chat.complete_async(
-                    model=self.id,
-                    messages=mistral_messages,
-                    **self.get_request_params(tools=tools, tool_choice=tool_choice),
-                )
+            assistant_message.metrics.start_timer()
+            response = await self.get_client().chat.complete_async(
+                model=self.id,
+                messages=mistral_messages,
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
+            )
 
             assistant_message.metrics.stop_timer()
 
@@ -341,7 +319,7 @@ class MistralChat(Model):
             async for chunk in await self.get_client().chat.stream_async(
                 model=self.id,
                 messages=mistral_messages,
-                **self.get_request_params(tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             ):
                 yield self._parse_provider_response_delta(chunk)
 

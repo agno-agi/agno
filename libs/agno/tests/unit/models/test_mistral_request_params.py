@@ -4,15 +4,19 @@ dropped, and client/request kwargs are ones the mistralai SDK accepts."""
 
 import inspect
 import warnings
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import BaseModel
 
 pytest.importorskip("mistralai")
 
 from mistralai.client import Mistral as MistralClient
 from mistralai.client.utils.retries import BackoffStrategy, RetryConfig
+from mistralai.extra import response_format_from_pydantic_model
 
 from agno.knowledge.embedder.mistral import MistralEmbedder
+from agno.models.message import Message
 from agno.models.mistral.mistral import MistralChat
 
 
@@ -217,6 +221,86 @@ def test_mistral_request_params_accepted_by_sdk_chat_methods():
 
     for method in (client.chat.complete, client.chat.stream, client.chat.complete_async, client.chat.stream_async):
         inspect.signature(method).bind(model=model.id, messages=[], **params)
+
+
+# =============================================================================
+# response_format: a Pydantic output schema reaches streaming and non-streaming calls
+# =============================================================================
+
+
+class MovieScript(BaseModel):
+    title: str
+    genre: str
+
+
+async def _no_chunks():
+    return
+    yield
+
+
+def _model_with_mock_client() -> MistralChat:
+    client = MagicMock()
+    client.chat.stream.return_value = iter([])
+    client.chat.stream_async = AsyncMock(return_value=_no_chunks())
+    client.chat.complete_async = AsyncMock()
+    model = MistralChat(id="mistral-small-latest", mistral_client=client)
+    model._parse_provider_response = MagicMock()  # type: ignore[method-assign]
+    return model
+
+
+def _invoke_kwargs(response_format=None):
+    return {
+        "messages": [Message(role="user", content="hi")],
+        "assistant_message": Message(role="assistant"),
+        "response_format": response_format,
+    }
+
+
+def test_mistral_invoke_stream_sends_pydantic_response_format():
+    model = _model_with_mock_client()
+
+    list(model.invoke_stream(**_invoke_kwargs(MovieScript)))
+
+    sent = model.mistral_client.chat.stream.call_args.kwargs  # type: ignore[union-attr]
+    assert sent["response_format"] == response_format_from_pydantic_model(MovieScript)
+
+
+@pytest.mark.asyncio
+async def test_mistral_ainvoke_stream_sends_pydantic_response_format():
+    model = _model_with_mock_client()
+
+    async for _ in model.ainvoke_stream(**_invoke_kwargs(MovieScript)):
+        pass
+
+    sent = model.mistral_client.chat.stream_async.call_args.kwargs  # type: ignore[union-attr]
+    assert sent["response_format"] == response_format_from_pydantic_model(MovieScript)
+
+
+def test_mistral_invoke_sends_pydantic_response_format():
+    model = _model_with_mock_client()
+
+    model.invoke(**_invoke_kwargs(MovieScript))
+
+    sent = model.mistral_client.chat.complete.call_args.kwargs  # type: ignore[union-attr]
+    assert sent["response_format"] == response_format_from_pydantic_model(MovieScript)
+
+
+@pytest.mark.asyncio
+async def test_mistral_ainvoke_sends_pydantic_response_format():
+    model = _model_with_mock_client()
+
+    await model.ainvoke(**_invoke_kwargs(MovieScript))
+
+    sent = model.mistral_client.chat.complete_async.call_args.kwargs  # type: ignore[union-attr]
+    assert sent["response_format"] == response_format_from_pydantic_model(MovieScript)
+
+
+def test_mistral_stream_without_output_schema_omits_response_format():
+    model = _model_with_mock_client()
+
+    list(model.invoke_stream(**_invoke_kwargs()))
+
+    assert "response_format" not in model.mistral_client.chat.stream.call_args.kwargs  # type: ignore[union-attr]
 
 
 # =============================================================================
