@@ -78,6 +78,22 @@ try:
 except ImportError:
     raise ImportError("`redis` not installed. Please install it using `pip install redis`")
 
+# The OS metrics lock is renewed or released only by the process holding it. The holder check and the change run as
+# one script, so the lock needs no WATCH transaction, which a cluster runs only from redis-py 6.1
+_EXTEND_OS_METRICS_LOCK_LUA = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[2]))
+end
+return 0
+"""
+
+_UNLOCK_OS_METRICS_LUA = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
+
 
 class RedisDb(BaseDb):
     serializes_sessions: bool = True
@@ -154,6 +170,11 @@ class RedisDb(BaseDb):
 
         # Zero means never refreshed; get_os_metrics uses this to refresh lazily, at most once per minute
         self._os_metrics_refreshed_at: float = 0.0
+        # The OS metrics lock scripts register lazily. A server without scripting (fakeredis without lupa) holds the
+        # lock with WATCH transactions instead
+        self._extend_os_metrics_lock_script: Optional[Any] = None
+        self._unlock_os_metrics_script: Optional[Any] = None
+        self._os_metrics_scripting_unavailable = False
 
         if redis_client is not None:
             self.redis_client = redis_client
@@ -1671,9 +1692,43 @@ class RedisDb(BaseDb):
             time.sleep(0.1)
         return token
 
+    def _run_os_metrics_lock_script(self, unlock: bool, token: str) -> Optional[int]:
+        """Renew or release the OS metrics lock with its script, if it is held with the token.
+
+        Args:
+            unlock (bool): Release the lock. When False, hold it for OS_METRICS_LOCK_MILLISECONDS more.
+            token (str): The token the lock is held with.
+
+        Returns:
+            Optional[int]: 1 when the lock was held with the token, otherwise 0. None when the server has no scripting.
+        """
+        from redis.exceptions import ResponseError
+
+        if self._os_metrics_scripting_unavailable:
+            return None
+        lock_key = self._os_metrics_lock_key()
+        try:
+            if self._extend_os_metrics_lock_script is None or self._unlock_os_metrics_script is None:
+                self._extend_os_metrics_lock_script = self.redis_client.register_script(_EXTEND_OS_METRICS_LOCK_LUA)
+                self._unlock_os_metrics_script = self.redis_client.register_script(_UNLOCK_OS_METRICS_LUA)
+            if unlock:
+                return int(self._unlock_os_metrics_script(keys=[lock_key], args=[token]))
+            return int(self._extend_os_metrics_lock_script(keys=[lock_key], args=[token, OS_METRICS_LOCK_MILLISECONDS]))
+        except ResponseError as e:
+            message = str(e).lower()
+            if "unknown command" in message or "not supported" in message or "unsupported" in message:
+                self._os_metrics_scripting_unavailable = True
+                log_warning("Redis server does not support scripting. The OS metrics lock uses WATCH transactions.")
+                return None
+            raise
+
     def _extend_os_metrics_lock(self, token: str) -> bool:
         """Hold the OS metrics lock for OS_METRICS_LOCK_MILLISECONDS more. False when it is no longer held with the token."""
         from redis.exceptions import WatchError
+
+        extended = self._run_os_metrics_lock_script(unlock=False, token=token)
+        if extended is not None:
+            return extended == 1
 
         lock_key = self._os_metrics_lock_key()
         try:
@@ -1693,6 +1748,9 @@ class RedisDb(BaseDb):
     def _unlock_os_metrics(self, token: str) -> None:
         """Release the OS metrics lock, unless it expired and another process holds it."""
         from redis.exceptions import WatchError
+
+        if self._run_os_metrics_lock_script(unlock=True, token=token) is not None:
+            return
 
         lock_key = self._os_metrics_lock_key()
         try:
@@ -2200,6 +2258,9 @@ class RedisDb(BaseDb):
             generate_index_key(self.db_prefix, "os_metrics_totals", "completed", str(completed))
             for completed in [True, False]
         ]
+        # A cluster spreads these keys over its nodes, which no transaction can watch, so there they are read without
+        # one, as a rebuild writes them
+        is_cluster = isinstance(self.redis_client, RedisCluster)
 
         records: List[Dict[str, Any]] = []
         if user_id is None:
@@ -2210,11 +2271,13 @@ class RedisDb(BaseDb):
                     with self.redis_client.pipeline() as pipe:
                         # A totals record added or completed after this read began fails the transaction, which is
                         # then read again, so a rebuild writing between the months and the days is never half seen
-                        pipe.watch(*totals_index_keys)
+                        reader = self.redis_client if is_cluster else pipe
+                        if not is_cluster:
+                            pipe.watch(*totals_index_keys)
                         totals_days = [
                             os_metrics_record_day(record_id)
                             for index_key in totals_index_keys
-                            for record_id in pipe.smembers(index_key)
+                            for record_id in reader.smembers(index_key)
                         ]
                         # A month's totals record is written after its records, so a month that has one is read
                         # from it
@@ -2231,7 +2294,8 @@ class RedisDb(BaseDb):
                             )
                             or (aggregation_period == "monthly" and day in month_starts)
                         )
-                        pipe.multi()
+                        if not is_cluster:
+                            pipe.multi()
                         for aggregation_period, day in record_keys:
                             pipe.hmget(
                                 generate_redis_key(
@@ -2258,15 +2322,17 @@ class RedisDb(BaseDb):
                     with self.redis_client.pipeline() as pipe:
                         # A record added or deleted, or a month calculated, after this read began fails the
                         # transaction, which is then read again
-                        pipe.watch(index_key, *totals_index_keys)
+                        reader = self.redis_client if is_cluster else pipe
+                        if not is_cluster:
+                            pipe.watch(index_key, *totals_index_keys)
                         month_starts = {
                             day
                             for totals_index_key in totals_index_keys
-                            for day, aggregation_period in map(os_metrics_record_day, pipe.smembers(totals_index_key))
+                            for day, aggregation_period in map(os_metrics_record_day, reader.smembers(totals_index_key))
                             if aggregation_period == "monthly"
                         } & full_months
                         record_ids = []
-                        for record_id in pipe.smembers(index_key):
+                        for record_id in reader.smembers(index_key):
                             record_id = record_id.decode() if isinstance(record_id, bytes) else str(record_id)
                             day, aggregation_period = os_metrics_record_day(record_id)
                             if (
@@ -2275,7 +2341,8 @@ class RedisDb(BaseDb):
                                 and day.replace(day=1) not in month_starts
                             ) or (aggregation_period == "monthly" and day in month_starts):
                                 record_ids.append(record_id)
-                        pipe.multi()
+                        if not is_cluster:
+                            pipe.multi()
                         for record_id in record_ids:
                             pipe.get(
                                 generate_redis_key(prefix=self.db_prefix, table_type="os_metrics", key_id=record_id)
