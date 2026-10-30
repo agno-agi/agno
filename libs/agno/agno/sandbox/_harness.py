@@ -99,10 +99,12 @@ def _db_key(db: Any) -> Tuple[Any, ...]:
     cannot be the key: every rebuild would otherwise get a coordinator of its own.
     """
     serialized = dict(db.to_dict())
-    # An engine-only db serializes no connection; the engine itself always knows it.
+    # An engine-only db serializes no connection, and the async adapter does not serialize the
+    # bindings table; the engine and the attribute always know them.
     engine = getattr(db, "db_engine", None)
     if engine is not None:
         serialized["db_url"] = engine.url.render_as_string(hide_password=True)
+    serialized["sandbox_table"] = getattr(db, "sandbox_table_name", None)
     return (type(db), *sorted((key, str(value)) for key, value in serialized.items()))
 
 

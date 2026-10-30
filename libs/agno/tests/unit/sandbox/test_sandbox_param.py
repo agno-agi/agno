@@ -392,6 +392,19 @@ def test_coordinator_is_built_once_per_sandbox_and_database(tmp_path, monkeypatc
         )
     ]
     assert engine_only[0] is not engine_only[1] and engine_only[0] is engine_only[2]
+    # The async adapter does not serialize its bindings table; a different table is a different store.
+    from agno.db.postgres import AsyncPostgresDb
+
+    async_url = "postgresql+psycopg://ai:ai@localhost:1/ai"
+    by_bindings = [
+        _harness.coordinator(
+            ClaudeAgent(
+                id="seventh", db=AsyncPostgresDb(db_url=async_url, id="main", sandbox_table=table), sandbox=shared
+            )
+        )
+        for table in ("bindings_a", "bindings_b", "bindings_a")
+    ]
+    assert by_bindings[0] is not by_bindings[1] and by_bindings[0] is by_bindings[2]
     unset = ClaudeAgent(id="fourth", db=db, sandbox=DockerSandbox("agno-sandbox:claude", network="isolated"))
     assert _harness.coordinator(unset).transfer.store.root == tmp_path / "default"
 
