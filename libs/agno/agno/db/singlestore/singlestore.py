@@ -20,6 +20,7 @@ from agno.db.singlestore.utils import (
     create_schema,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    get_legacy_run_models_stmt,
     is_table_available,
     is_valid_table,
 )
@@ -2072,51 +2073,60 @@ class SingleStoreDb(BaseDb):
                 return []
             runs_table = self._get_table(table_type="runs")
 
-            columns = [
+            filters = []
+            if start_timestamp is not None:
+                filters.append(table.c.created_at >= start_timestamp)
+            if end_timestamp is not None:
+                filters.append(table.c.created_at <= end_timestamp)
+
+            stmt = select(
                 table.c.session_id,
                 table.c.user_id,
                 table.c.session_data,
                 table.c.created_at,
                 table.c.session_type,
-            ]
-            if "runs" in table.c:
-                columns.append(table.c.runs)
-
-            stmt = select(*columns)
-
-            if start_timestamp is not None:
-                stmt = stmt.where(table.c.created_at >= start_timestamp)
-            if end_timestamp is not None:
-                stmt = stmt.where(table.c.created_at <= end_timestamp)
+            ).where(*filters)
 
             with self.Session() as sess:
                 result = sess.execute(stmt).fetchall()
                 sessions = [dict(record._mapping) for record in result]
+                if not sessions:
+                    return sessions
 
-                if runs_table is not None and sessions:
-                    session_ids = [s["session_id"] for s in sessions]
-                    runs_stmt = select(
-                        runs_table.c.session_id,
-                        func.JSON_EXTRACT_STRING(runs_table.c.run_data, "model").label("model"),
-                        func.JSON_EXTRACT_STRING(runs_table.c.run_data, "model_provider").label("model_provider"),
-                    ).where(runs_table.c.session_id.in_(session_ids))
+                # Only each run's model and provider are read, never whole runs
+                runs_stmts: List[Any] = []
+                if runs_table is not None:
+                    # Subquery, not a list of ids: the query stays the same size however many sessions there are
+                    runs_stmts.append(
+                        select(
+                            runs_table.c.session_id,
+                            func.JSON_EXTRACT_STRING(runs_table.c.run_data, "model").label("model"),
+                            func.JSON_EXTRACT_STRING(runs_table.c.run_data, "model_provider").label("model_provider"),
+                        ).where(runs_table.c.session_id.in_(select(table.c.session_id).where(*filters)))
+                    )
+                # Runs not yet migrated out of the legacy column, extracted in the database instead of loading the column
+                if "runs" in table.c:
+                    runs_stmts.append(
+                        get_legacy_run_models_stmt(
+                            self.db_engine.dialect, table, runs_table, start_timestamp, end_timestamp
+                        )
+                    )
 
-                    runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+                runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+                for runs_stmt in runs_stmts:
                     for session_id, model, model_provider in sess.execute(runs_stmt).fetchall():
                         runs_by_session.setdefault(session_id, []).append(
                             {"model": model, "model_provider": model_provider}
                         )
 
-                    for s in sessions:
-                        runs_data = runs_by_session.get(s["session_id"], [])
-                        if runs_data or not s.get("runs"):
-                            s["runs"] = runs_data
+                for s in sessions:
+                    s["runs"] = runs_by_session.get(s["session_id"], [])
 
                 return sessions
 
         except Exception as e:
             log_error(f"Exception reading from sessions table: {str(e)}")
-            return []
+            raise e
 
     def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
         """Get the first date for which metrics calculation is needed:

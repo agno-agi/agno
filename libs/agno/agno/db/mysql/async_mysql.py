@@ -20,6 +20,7 @@ from agno.db.mysql.utils import (
     calculate_date_metrics,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    get_legacy_run_models_stmt,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -2068,55 +2069,64 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return []
             runs_table = await self._get_table(table_type="runs")
 
-            columns = [
+            filters = []
+            if start_timestamp is not None:
+                filters.append(table.c.created_at >= start_timestamp)
+            if end_timestamp is not None:
+                filters.append(table.c.created_at <= end_timestamp)
+
+            stmt = select(
                 table.c.session_id,
                 table.c.user_id,
                 table.c.session_data,
                 table.c.created_at,
                 table.c.session_type,
-            ]
-            if "runs" in table.c:
-                columns.append(table.c.runs)
-
-            stmt = select(*columns)
-
-            if start_timestamp is not None:
-                stmt = stmt.where(table.c.created_at >= start_timestamp)
-            if end_timestamp is not None:
-                stmt = stmt.where(table.c.created_at <= end_timestamp)
+            ).where(*filters)
 
             async with self.async_session_factory() as sess:
                 result = await sess.execute(stmt)
                 records = result.fetchall()
                 sessions = [dict(record._mapping) for record in records]
+                if not sessions:
+                    return sessions
 
-                if runs_table is not None and sessions:
-                    session_ids = [s["session_id"] for s in sessions]
-                    runs_stmt = select(
-                        runs_table.c.session_id,
-                        func.json_unquote(func.json_extract(runs_table.c.run_data, "$.model")).label("model"),
-                        func.json_unquote(func.json_extract(runs_table.c.run_data, "$.model_provider")).label(
-                            "model_provider"
-                        ),
-                    ).where(runs_table.c.session_id.in_(session_ids))
+                # Only each run's model and provider are read, never whole runs
+                runs_stmts: List[Any] = []
+                if runs_table is not None:
+                    # Subquery, not a list of ids: the query stays the same size however many sessions there are
+                    runs_stmts.append(
+                        select(
+                            runs_table.c.session_id,
+                            func.json_unquote(func.json_extract(runs_table.c.run_data, "$.model")).label("model"),
+                            func.json_unquote(func.json_extract(runs_table.c.run_data, "$.model_provider")).label(
+                                "model_provider"
+                            ),
+                        ).where(runs_table.c.session_id.in_(select(table.c.session_id).where(*filters)))
+                    )
+                # Runs not yet migrated out of the legacy column, extracted in the database instead of loading the column
+                if "runs" in table.c:
+                    runs_stmts.append(
+                        get_legacy_run_models_stmt(
+                            self.db_engine.dialect, table, runs_table, start_timestamp, end_timestamp
+                        )
+                    )
 
+                runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+                for runs_stmt in runs_stmts:
                     runs_result = await sess.execute(runs_stmt)
-                    runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
                     for session_id, model, model_provider in runs_result.fetchall():
                         runs_by_session.setdefault(typing_cast(str, session_id), []).append(
                             {"model": model, "model_provider": model_provider}
                         )
 
-                    for s in sessions:
-                        runs_data = runs_by_session.get(s["session_id"], [])
-                        if runs_data or not s.get("runs"):
-                            s["runs"] = runs_data
+                for s in sessions:
+                    s["runs"] = runs_by_session.get(s["session_id"], [])
 
                 return sessions
 
         except Exception as e:
             log_error(f"Exception reading from sessions table: {str(e)}")
-            return []
+            raise e
 
     async def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
         """Get the first date for which metrics calculation is needed:
@@ -2150,9 +2160,12 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return starting_date
 
         # 2. No metrics records. Return the date of the first recorded session.
-        first_session, _ = await self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
-
-        first_session_date = first_session[0]["created_at"] if first_session else None  # type: ignore[index]
+        # Queried directly rather than through get_sessions, which hides read errors behind an empty result
+        sessions_table = await self._get_table(table_type="sessions")
+        if sessions_table is None:
+            return None
+        async with self.async_session_factory() as sess:
+            first_session_date = (await sess.execute(select(func.min(sessions_table.c.created_at)))).scalar()
 
         # 3. No metrics records and no sessions records. Return None.
         if first_session_date is None:

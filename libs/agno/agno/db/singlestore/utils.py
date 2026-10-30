@@ -408,3 +408,41 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
     if days_diff <= 0:
         return []
     return [starting_date + timedelta(days=x) for x in range(days_diff)]
+
+
+def get_legacy_run_models_stmt(
+    dialect: Any,
+    sessions_table: Table,
+    runs_table: Optional[Table],
+    start_timestamp: Optional[int] = None,
+    end_timestamp: Optional[int] = None,
+):
+    """Select (session_id, model, model_provider) for each run still in the legacy sessions ``runs`` column.
+
+    Only sessions with no rows in the runs table are read, and only each run's model and provider
+    leave the database, so the legacy column is never loaded into memory.
+    """
+    preparer = dialect.identifier_preparer
+    conditions = []
+    params: Dict[str, Any] = {}
+    if start_timestamp is not None:
+        conditions.append("s.created_at >= :start_timestamp")
+        params["start_timestamp"] = start_timestamp
+    if end_timestamp is not None:
+        conditions.append("s.created_at <= :end_timestamp")
+        params["end_timestamp"] = end_timestamp
+    if runs_table is not None:
+        conditions.append(
+            f"NOT EXISTS (SELECT 1 FROM {preparer.format_table(runs_table)} AS r WHERE r.session_id = s.session_id)"
+        )
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    # A missing provider counts as "", as it did when legacy runs were read in Python
+    return text(
+        "SELECT s.session_id, "
+        "JSON_EXTRACT_STRING(legacy_run.table_col, 'model') AS model, "
+        "COALESCE(JSON_EXTRACT_STRING(legacy_run.table_col, 'model_provider'), '') AS model_provider "
+        f"FROM {preparer.format_table(sessions_table)} AS s "
+        "JOIN TABLE(JSON_TO_ARRAY("
+        "CASE WHEN JSON_GET_TYPE(s.runs) = 'array' THEN s.runs ELSE '[]' END"
+        f")) AS legacy_run {where}"
+    ).bindparams(**params)

@@ -22,6 +22,36 @@ if TYPE_CHECKING:
 
 LEGACY_METRICS_INDEX = "date_1_aggregation_period_1"
 INDEX_NOT_FOUND = 27  # MongoDB's IndexNotFound error code
+# Session ids per runs query in a metrics refresh: one $in over every id can overflow the 16 MB query document
+METRICS_SESSION_ID_BATCH_SIZE = 5_000
+
+
+def get_metrics_sessions_pipeline(query: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Aggregation reading the sessions a metrics refresh needs.
+
+    Legacy ``runs`` are reduced to each run's model and provider in the database, so the
+    legacy field is never loaded into memory.
+    """
+    return [
+        {"$match": query},
+        {
+            "$project": {
+                "session_id": 1,
+                "user_id": 1,
+                "session_data": 1,
+                "created_at": 1,
+                "session_type": 1,
+                "legacy_runs": {
+                    "$map": {
+                        "input": {"$cond": [{"$isArray": "$runs"}, "$runs", []]},
+                        "as": "run",
+                        # A missing provider counts as "", as it did when legacy runs were read in Python
+                        "in": {"model": "$$run.model", "model_provider": {"$ifNull": ["$$run.model_provider", ""]}},
+                    }
+                },
+            }
+        },
+    ]
 
 
 # -- DB util methods --

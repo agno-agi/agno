@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.mongo.utils import (
+    METRICS_SESSION_ID_BATCH_SIZE,
     apply_pagination,
     apply_sorting,
     bulk_upsert_metrics,
@@ -22,6 +23,7 @@ from agno.db.mongo.utils import (
     create_collection_indexes,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    get_metrics_sessions_pipeline,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -1693,41 +1695,33 @@ class MongoDb(BaseDb):
                 else:
                     query["created_at"] = {"$lte": end_timestamp}
 
-            projection = {
-                "session_id": 1,
-                "user_id": 1,
-                "session_data": 1,
-                "runs": 1,  # the legacy field — for un-migrated sessions
-                "created_at": 1,
-                "session_type": 1,
-            }
-
-            sessions = list(collection.find(query, projection))
+            sessions = list(collection.aggregate(get_metrics_sessions_pipeline(query)))
 
             # Attach lightweight run info (model + provider) from the runs collection.
             # calculate_date_metrics only needs len(runs) and run["model"] / run["model_provider"].
+            runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
             if runs_collection is not None and sessions:
                 session_ids = [s["session_id"] for s in sessions]
-                runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
-                for doc in runs_collection.find(
-                    {"session_id": {"$in": session_ids}},
-                    {"session_id": 1, "run_data.model": 1, "run_data.model_provider": 1},
-                ):
-                    run_data = doc.get("run_data") or {}
-                    runs_by_session.setdefault(doc["session_id"], []).append(
-                        {"model": run_data.get("model"), "model_provider": run_data.get("model_provider")}
-                    )
+                for start in range(0, len(session_ids), METRICS_SESSION_ID_BATCH_SIZE):
+                    for doc in runs_collection.find(
+                        {"session_id": {"$in": session_ids[start : start + METRICS_SESSION_ID_BATCH_SIZE]}},
+                        {"session_id": 1, "run_data.model": 1, "run_data.model_provider": 1},
+                    ):
+                        run_data = doc.get("run_data") or {}
+                        runs_by_session.setdefault(doc["session_id"], []).append(
+                            {"model": run_data.get("model"), "model_provider": run_data.get("model_provider")}
+                        )
 
-                for s in sessions:
-                    rb = runs_by_session.get(s["session_id"], [])
-                    if rb or not s.get("runs"):
-                        s["runs"] = rb
+            # Runs not yet migrated count from the legacy field, already reduced to model and provider
+            for s in sessions:
+                legacy_runs = s.pop("legacy_runs", [])
+                s["runs"] = runs_by_session.get(s["session_id"]) or legacy_runs
 
             return sessions
 
         except Exception as e:
             log_error(f"Exception reading from sessions collection: {str(e)}")
-            return []
+            raise e
 
     def _get_metrics_calculation_starting_date(self, collection: Collection) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
@@ -1763,7 +1757,7 @@ class MongoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting metrics calculation starting date: {str(e)}")
-            return None
+            raise e
 
     def calculate_metrics(self) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics."""
