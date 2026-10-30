@@ -129,10 +129,21 @@ METRICS_TABLE_SCHEMA = {
 OS_METRICS_TABLE_SCHEMA = {
     "aggregation_period": {"type": lambda: String(20), "primary_key": True, "nullable": False},
     "date": {"type": Date, "primary_key": True, "nullable": False},
-    "user_id": {"type": lambda: String(128), "primary_key": True, "nullable": False, "default": ""},
+    # Binary collation keeps ids case-sensitive, so "Alice" and "alice" stay separate rows.
+    "user_id": {
+        "type": lambda: String(128, collation="utf8mb4_bin"),
+        "primary_key": True,
+        "nullable": False,
+        "default": "",
+    },
     "component_type": {"type": lambda: String(20), "primary_key": True, "nullable": False},
-    "component_id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
-    "parent_component_id": {"type": lambda: String(128), "primary_key": True, "nullable": False, "default": ""},
+    "component_id": {"type": lambda: String(128, collation="utf8mb4_bin"), "primary_key": True, "nullable": False},
+    "parent_component_id": {
+        "type": lambda: String(128, collation="utf8mb4_bin"),
+        "primary_key": True,
+        "nullable": False,
+        "default": "",
+    },
     "sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
     "runs_count": {"type": BigInteger, "nullable": False, "default": 0},
     "input_tokens": {"type": BigInteger, "nullable": False, "default": 0},
