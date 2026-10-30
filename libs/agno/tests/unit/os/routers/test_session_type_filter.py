@@ -1380,3 +1380,47 @@ class TestSessionRunsAutoDetectType:
         data = resp.json()
         assert len(data) == 1
         assert data[0]["workflow_id"] == "w1"
+
+
+class TestSessionRunsRemoteWithoutPagination:
+    """A remote AgentOS that predates pagination ignores limit and answers with a plain list."""
+
+    @staticmethod
+    def _remote_returning_list():
+        from unittest.mock import AsyncMock, MagicMock
+
+        from agno.os.schema import RunSchema
+        from agno.remote.base import RemoteDb
+
+        remote = MagicMock(spec=RemoteDb)
+        remote.session_table_name = "sessions"
+        remote.get_session_runs = AsyncMock(
+            return_value=[RunSchema(run_id="run-0", agent_id="agent-1", status="COMPLETED")]
+        )
+        return remote
+
+    def test_paged_request_fails_clearly(self):
+        resp = _build_client(self._remote_returning_list()).get("/sessions/s1/runs?limit=2")
+        assert resp.status_code == 502
+        assert "does not support paginated session runs" in resp.json()["detail"]
+
+    def test_unpaged_request_passes_the_list_through(self):
+        remote = self._remote_returning_list()
+        resp = _build_client(remote).get("/sessions/s1/runs")
+        assert resp.status_code == 200
+        assert [r["run_id"] for r in resp.json()] == ["run-0"]
+        assert "limit" not in remote.get_session_runs.call_args.kwargs
+
+    def test_paged_request_through_the_real_client_fails_clearly(self):
+        from unittest.mock import AsyncMock, patch
+
+        from agno.client import AgentOSClient
+        from agno.remote.base import RemoteDb
+
+        client = AgentOSClient(base_url="http://remote:7777")
+        remote = RemoteDb(id="remote", client=client, session_table_name="sessions")
+        with patch.object(client, "_aget", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = [{"run_id": "run-0", "agent_id": "agent-1"}]
+            resp = _build_client(remote).get("/sessions/s1/runs?limit=2")
+        assert resp.status_code == 502
+        assert "does not support paginated session runs" in resp.json()["detail"]

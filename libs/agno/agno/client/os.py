@@ -7,7 +7,7 @@ from httpx import ConnectError, ConnectTimeout, TimeoutException
 
 from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalFilterType, EvalType
-from agno.exceptions import RemoteServerUnavailableError
+from agno.exceptions import RemoteServerUnavailableError, RemoteServerUnsupportedError
 from agno.media import Audio, File, Image, Video
 from agno.media import File as MediaFile
 from agno.models.response import ToolExecution
@@ -1954,6 +1954,7 @@ class AgentOSClient:
 
         Raises:
             HTTPStatusError: On HTTP errors
+            RemoteServerUnsupportedError: If limit is passed and the server predates pagination
         """
         params: Dict[str, Any] = {
             "type": session_type.value if session_type else None,
@@ -1970,6 +1971,10 @@ class AgentOSClient:
         params = {k: v for k, v in params.items() if v is not None}
 
         response = await self._aget(f"/sessions/{session_id}/runs", params=params, headers=headers)
+        if limit is not None and not isinstance(response, dict):
+            raise RemoteServerUnsupportedError(
+                "The remote AgentOS does not support paginated session runs; upgrade it or omit limit."
+            )
 
         # The server returns a bare list unless limit was passed, in which case it
         # returns a {"data": [...], "meta": {...}} envelope.

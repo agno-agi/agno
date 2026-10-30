@@ -451,6 +451,15 @@ class RemoteServerUnavailableError(AgnoError):
         self.error_id = "remote_server_unavailable_error"
 
 
+class RemoteServerUnsupportedError(AgnoError):
+    """Raised when a remote AgentOS is too old to honour a request, e.g. it ignores a query param it predates."""
+
+    def __init__(self, message: str):
+        super().__init__(message, status_code=502)
+        self.type = "remote_server_unsupported_error"
+        self.error_id = "remote_server_unsupported_error"
+
+
 class PathSecurityError(AgnoError):
     """Exception raised when path validation rejects user-supplied input."""
 

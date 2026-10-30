@@ -8,7 +8,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Reques
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import deserialize_session_by_type, resolve_session_type
-from agno.exceptions import AgnoError
+from agno.exceptions import AgnoError, RemoteServerUnsupportedError
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import (
@@ -23,6 +23,7 @@ from agno.os.schema import (
     BadRequestResponse,
     CreateSessionRequest,
     DeleteSessionRequest,
+    ErrorResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
     PaginatedResponse,
@@ -853,6 +854,7 @@ def attach_routes(
             },
             404: {"description": "Session not found", "model": NotFoundResponse},
             422: {"description": "Invalid session type or pagination parameters", "model": ValidationErrorResponse},
+            502: {"description": "Remote AgentOS does not support pagination", "model": ErrorResponse},
         },
     )
     async def get_session_runs(
@@ -913,20 +915,30 @@ def attach_routes(
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
-            return await db.get_session_runs(
-                session_id=session_id,
-                session_type=session_type,
-                user_id=effective_user_id,
-                created_after=created_after,
-                created_before=created_before,
-                db_id=db_id,
-                table=table,
-                headers=headers,
-                status=status,
-                limit=limit,
-                before_run_index=before_run_index,
-                after_run_index=after_run_index,
-            )
+            try:
+                remote_page = await db.get_session_runs(
+                    session_id=session_id,
+                    session_type=session_type,
+                    user_id=effective_user_id,
+                    created_after=created_after,
+                    created_before=created_before,
+                    db_id=db_id,
+                    table=table,
+                    headers=headers,
+                    status=status,
+                    limit=limit,
+                    before_run_index=before_run_index,
+                    after_run_index=after_run_index,
+                )
+            except RemoteServerUnsupportedError as e:
+                raise AgnoHTTPException(e)
+            if not isinstance(remote_page, RunsPage):
+                raise AgnoHTTPException(
+                    RemoteServerUnsupportedError(
+                        "The remote AgentOS does not support paginated session runs; upgrade it or omit limit."
+                    )
+                )
+            return remote_page
 
         try:
             page = await get_session_runs_window(

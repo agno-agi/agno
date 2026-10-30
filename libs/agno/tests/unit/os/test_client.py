@@ -920,3 +920,15 @@ async def test_get_session_runs_keeps_positional_arguments():
         params = mock_get.call_args.kwargs["params"]
         assert params == {"db_id": "db-1", "table": "table-1"}
         assert mock_get.call_args.kwargs["headers"] == {"X-Test": "1"}
+
+
+@pytest.mark.asyncio
+async def test_get_session_runs_with_limit_rejects_list_from_older_server():
+    """An older server ignores limit and returns every run as a list; that is not the RunsPage the caller asked for."""
+    from agno.exceptions import RemoteServerUnsupportedError
+
+    client = AgentOSClient(base_url="http://localhost:7777")
+    with patch.object(client, "_aget", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = [{"run_id": "run-0", "agent_id": "agent-1"}]
+        with pytest.raises(RemoteServerUnsupportedError, match="does not support paginated session runs"):
+            await client.get_session_runs("session-1", limit=2)
