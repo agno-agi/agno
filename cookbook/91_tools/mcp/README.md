@@ -57,6 +57,10 @@ This example shows how to choose which MCP protocol era `MCPTools` negotiates. T
 
 This example connects to Magic Hour's hosted MCP server to create images and videos. It shows bearer authentication, long-running render handling, reuse of project IDs after timeouts, and exact output URL retrieval.
 
+14. Server Instructions (`server_instructions/`)
+
+This example runs a local FastMCP server that declares `instructions=` and shows `MCPTools` adopting them from the MCP handshake as toolkit instructions, so the agent learns how the server's tools fit together. `load_server_instructions=False` opts out, and explicit `instructions=` on the toolkit always win.
+
 ## Getting Started
 
 ### Prerequisites

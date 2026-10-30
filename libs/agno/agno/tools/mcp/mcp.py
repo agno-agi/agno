@@ -269,6 +269,7 @@ class MCPTools(Toolkit):
         headers: Optional[dict[str, Any]] = None,
         header_provider: Optional[Callable[..., dict[str, Any]]] = None,
         protocol_mode: Literal["legacy", "auto"] = "legacy",
+        load_server_instructions: bool = True,
         **kwargs,
     ):
         """
@@ -306,6 +307,11 @@ class MCPTools(Toolkit):
                 long-lived and liveness checks work. "auto" negotiates the newest era both
                 sides support; the 2026-07-28 era is sessionless, so a server that gates on
                 initialize, keeps per-session state, or elicits mid-tool needs "legacy".
+            load_server_instructions: If True (the default), the ``instructions`` an MCP
+                server returns during the handshake are adopted as this toolkit's
+                ``instructions`` and added to the agent's system prompt. Instructions
+                passed explicitly to this constructor always take precedence. Set to
+                False to ignore server-provided instructions.
         """
         # Extract these before super().__init__() to bypass early validation
         # (tools aren't available until build_tools() is called)
@@ -345,6 +351,7 @@ class MCPTools(Toolkit):
         self.refresh_connection = refresh_connection
         self.tool_name_prefix = tool_name_prefix
         self.protocol_mode = protocol_mode
+        self.load_server_instructions = load_server_instructions
 
         if session is None and server_params is None:
             if transport == "sse" and url is None:
@@ -967,6 +974,24 @@ class MCPTools(Toolkit):
             log_error(f"Failed to get tools for {str(self)}")
             raise
 
+    def _load_server_instructions(self) -> None:
+        """Adopt the server's handshake ``instructions`` as the toolkit's instructions.
+
+        Both session kinds expose the negotiated instructions as ``session.instructions``
+        once the handshake is done: a fastmcp Client forwards to its inner session, and a
+        caller-supplied ClientSession stores them when ``initialize()`` returns. Explicit
+        ``instructions`` passed to the constructor are never overwritten.
+        """
+        if not self.load_server_instructions or self.instructions is not None:
+            return
+
+        server_instructions = getattr(self.session, "instructions", None)
+        if not isinstance(server_instructions, str) or not server_instructions.strip():
+            return
+
+        self.instructions = server_instructions
+        self.add_instructions = True
+
     async def initialize(self) -> None:
         """Initialize the MCP toolkit by getting available tools from the MCP server"""
         if self._initialized:
@@ -982,6 +1007,8 @@ class MCPTools(Toolkit):
             # needs the explicit call.
             if not _is_fastmcp_client(self.session):
                 await self.session.initialize()
+
+            self._load_server_instructions()
 
             await self.build_tools()
 
