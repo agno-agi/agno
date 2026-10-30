@@ -849,6 +849,12 @@ def attach_routes(
         """Keep the answer of a read route under its key, when no database changed while it was read."""
         if key is None or os_metrics_response.window_days > _MAX_OS_METRICS_KEPT_WINDOW_DAYS:
             return
+        # One owner's rows that follow a write a moment later could be kept from before a rebuild under the versions
+        # after it, so their answers are read again every time
+        if effective_user_id and any(
+            getattr(db, "os_metrics_user_rows_lag", False) is True for db_list in os_dbs.values() for db in db_list
+        ):
+            return
         # A database that timed out or failed may answer the next request, so an answer without it is not kept
         if any(reason != "unsupported" for reason in os_metrics_response.skipped_db_ids.values()):
             return

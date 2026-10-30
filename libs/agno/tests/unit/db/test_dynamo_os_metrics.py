@@ -433,29 +433,6 @@ def test_reads_every_owner_from_totals_rows_and_one_owner_from_their_rows():
     assert [(day["date"], day["total_tokens"]) for day in no_owner] == [(_day(0), 6)]
 
 
-def test_one_owner_is_read_strongly_consistent_from_the_rows_of_each_day(monkeypatch):
-    db = _new_db()
-    _store(db, "s1", 0, user_id="alice")
-    db.calculate_os_metrics()
-    db._os_metrics_refreshed_at = time.time()
-    queries: List[Dict[str, Any]] = []
-    query = db.client.query
-    monkeypatch.setattr(db.client, "query", lambda **kwargs: queries.append(kwargs) or query(**kwargs))
-
-    alice, _ = db.get_os_metrics(_day(0), _day(0), user_id="alice", fields=["total_tokens"])
-
-    assert [day["total_tokens"] for day in alice] == [20]
-    rows_queries = [kwargs for kwargs in queries if kwargs["TableName"] == "test_os_metrics"]
-    assert rows_queries and all(
-        kwargs["IndexName"] == "date-user_id-index"
-        and kwargs["KeyConditionExpression"] == "#date = :date AND #user_id = :user_id"
-        and kwargs["ExpressionAttributeValues"][":user_id"] == {"S": "alice"}
-        and kwargs.get("ConsistentRead")
-        and "FilterExpression" not in kwargs
-        for kwargs in rows_queries
-    )
-
-
 def test_month_step_reads_only_the_days_after_the_latest_month(monkeypatch):
     db = _new_db()
     for days_ago in range(1, 120):
