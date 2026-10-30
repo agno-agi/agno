@@ -2,6 +2,7 @@
 
 import json
 import time
+from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 from uuid import UUID
@@ -1409,7 +1410,7 @@ def os_metrics_totals_row_to_write(
 
 def os_metrics_month_end(month_start: date) -> date:
     """The last day of the calendar month that starts on the given day."""
-    return (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    return month_start.replace(day=monthrange(month_start.year, month_start.month)[1])
 
 
 def os_metrics_full_months(starting_date: date, ending_date: date) -> List[date]:
@@ -1417,9 +1418,12 @@ def os_metrics_full_months(starting_date: date, ending_date: date) -> List[date]
     month_starts = []
     month_start = starting_date.replace(day=1)
     while month_start <= ending_date:
-        if month_start >= starting_date and os_metrics_month_end(month_start) <= ending_date:
+        month_end = os_metrics_month_end(month_start)
+        if month_start >= starting_date and month_end <= ending_date:
             month_starts.append(month_start)
-        month_start = os_metrics_month_end(month_start) + timedelta(days=1)
+        if month_end == date.max:
+            break
+        month_start = month_end + timedelta(days=1)
     return month_starts
 
 

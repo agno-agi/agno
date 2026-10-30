@@ -765,6 +765,7 @@ def test_month_end():
     assert os_metrics_month_end(date(2026, 1, 1)) == date(2026, 1, 31)
     assert os_metrics_month_end(date(2024, 2, 1)) == date(2024, 2, 29)
     assert os_metrics_month_end(date(2025, 12, 1)) == date(2025, 12, 31)
+    assert os_metrics_month_end(date(9999, 12, 1)) == date(9999, 12, 31)
 
 
 def test_full_months_are_the_months_wholly_inside_the_range():
@@ -775,6 +776,7 @@ def test_full_months_are_the_months_wholly_inside_the_range():
     ]
     assert os_metrics_full_months(date(2026, 1, 2), date(2026, 3, 30)) == [date(2026, 2, 1)]
     assert os_metrics_full_months(date(2026, 1, 10), date(2026, 2, 20)) == []
+    assert os_metrics_full_months(date(9999, 12, 1), date(9999, 12, 31)) == [date(9999, 12, 1)]
 
 
 # ---------------------------------------------------------------------------
