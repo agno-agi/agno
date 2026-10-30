@@ -250,6 +250,14 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     instructions: List[str] = [MANAGER_INSTRUCTIONS, FOCUSED_EXECUTION_INSTRUCTIONS, EXPLANATION_INSTRUCTIONS]
     if config.instructions:
         instructions.append(config.instructions)
+
+    def manifest_description(component_id: str) -> Optional[str]:
+        # Read live configuration: manager defaults are merged after this team is built,
+        # and run copies must see the same descriptions as the served OS.
+        manifest = agent_os.config.manifest if agent_os.config is not None else None
+        entry = manifest.get(component_id) if manifest else None
+        return entry.description if entry is not None else None
+
     team = Team(
         id=config.id,
         metadata={"_agno": {"internal": True, "id": config.id}},
@@ -275,6 +283,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
                 include_workflows=LiveSequence(lambda: agent_os._workflows),
                 include_all_components=True,
                 self_dispatch="once",
+                description_fallback=manifest_description,
             ),
         ],
         members=members,
