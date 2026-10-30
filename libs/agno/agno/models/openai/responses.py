@@ -933,7 +933,7 @@ class OpenAIResponses(Model):
             return model_response
 
         except RateLimitError as exc:
-            log_error(f"Rate limit error from OpenAI API: {exc}")
+            log_warning(f"Rate limit error from OpenAI API: {exc}")
             try:
                 error_message = exc.response.json().get("error", {})
             except Exception:
@@ -950,10 +950,10 @@ class OpenAIResponses(Model):
                 model_id=self.id,
             ) from exc
         except APIConnectionError as exc:
-            log_error(f"API connection error from OpenAI API: {exc}")
+            log_warning(f"API connection error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
-            log_error(f"API status error from OpenAI API: {exc}")
+            log_warning(f"API status error from OpenAI API: {exc}")
             try:
                 error_body = exc.response.json().get("error", {})
             except Exception:
@@ -976,10 +976,10 @@ class OpenAIResponses(Model):
                 model_id=self.id,
             ) from exc
         except ModelAuthenticationError as exc:
-            log_error(f"Model authentication error from OpenAI API: {exc}")
+            log_warning(f"Model authentication error from OpenAI API: {exc}")
             raise exc
         except Exception as exc:
-            log_error(f"Error from OpenAI API: {exc}")
+            log_warning(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
 
     async def ainvoke(
@@ -1054,7 +1054,7 @@ class OpenAIResponses(Model):
             return model_response
 
         except RateLimitError as exc:
-            log_error(f"Rate limit error from OpenAI API: {exc}")
+            log_warning(f"Rate limit error from OpenAI API: {exc}")
             try:
                 error_message = exc.response.json().get("error", {})
             except Exception:
@@ -1071,10 +1071,10 @@ class OpenAIResponses(Model):
                 model_id=self.id,
             ) from exc
         except APIConnectionError as exc:
-            log_error(f"API connection error from OpenAI API: {exc}")
+            log_warning(f"API connection error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
-            log_error(f"API status error from OpenAI API: {exc}")
+            log_warning(f"API status error from OpenAI API: {exc}")
             try:
                 error_body = exc.response.json().get("error", {})
             except Exception:
@@ -1097,10 +1097,10 @@ class OpenAIResponses(Model):
                 model_id=self.id,
             ) from exc
         except ModelAuthenticationError as exc:
-            log_error(f"Model authentication error from OpenAI API: {exc}")
+            log_warning(f"Model authentication error from OpenAI API: {exc}")
             raise exc
         except Exception as exc:
-            log_error(f"Error from OpenAI API: {exc}")
+            log_warning(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
 
     def invoke_stream(
@@ -1163,7 +1163,7 @@ class OpenAIResponses(Model):
             assistant_message.metrics.stop_timer()
 
         except RateLimitError as exc:
-            log_error(f"Rate limit error from OpenAI API: {exc}")
+            log_warning(f"Rate limit error from OpenAI API: {exc}")
             try:
                 error_message = exc.response.json().get("error", {})
             except Exception:
@@ -1180,10 +1180,10 @@ class OpenAIResponses(Model):
                 model_id=self.id,
             ) from exc
         except APIConnectionError as exc:
-            log_error(f"API connection error from OpenAI API: {exc}")
+            log_warning(f"API connection error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
-            log_error(f"API status error from OpenAI API: {exc}")
+            log_warning(f"API status error from OpenAI API: {exc}")
             try:
                 error_body = exc.response.json().get("error", {})
             except Exception:
@@ -1206,10 +1206,10 @@ class OpenAIResponses(Model):
                 model_id=self.id,
             ) from exc
         except ModelAuthenticationError as exc:
-            log_error(f"Model authentication error from OpenAI API: {exc}")
+            log_warning(f"Model authentication error from OpenAI API: {exc}")
             raise exc
         except Exception as exc:
-            log_error(f"Error from OpenAI API: {exc}")
+            log_warning(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
 
     async def ainvoke_stream(
@@ -1267,7 +1267,7 @@ class OpenAIResponses(Model):
             assistant_message.metrics.stop_timer()
 
         except RateLimitError as exc:
-            log_error(f"Rate limit error from OpenAI API: {exc}")
+            log_warning(f"Rate limit error from OpenAI API: {exc}")
             try:
                 error_message = exc.response.json().get("error", {})
             except Exception:
@@ -1284,10 +1284,10 @@ class OpenAIResponses(Model):
                 model_id=self.id,
             ) from exc
         except APIConnectionError as exc:
-            log_error(f"API connection error from OpenAI API: {exc}")
+            log_warning(f"API connection error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
-            log_error(f"API status error from OpenAI API: {exc}")
+            log_warning(f"API status error from OpenAI API: {exc}")
             try:
                 error_body = exc.response.json().get("error", {})
             except Exception:
@@ -1310,10 +1310,10 @@ class OpenAIResponses(Model):
                 model_id=self.id,
             ) from exc
         except ModelAuthenticationError as exc:
-            log_error(f"Model authentication error from OpenAI API: {exc}")
+            log_warning(f"Model authentication error from OpenAI API: {exc}")
             raise exc
         except Exception as exc:
-            log_error(f"Error from OpenAI API: {exc}")
+            log_warning(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
 
     def format_function_call_results(
