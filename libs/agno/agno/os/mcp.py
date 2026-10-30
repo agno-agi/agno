@@ -2178,17 +2178,15 @@ async def _server_card(
         host = urlparse(card_url).netloc or request.headers.get("host") or request.url.netloc
         url = card_url
     else:
-        scheme = request.url.scheme
+        # Read on its own: a TLS-terminating proxy rarely sends X-Forwarded-Host, and only http(s) is accepted
+        forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+        scheme = forwarded_proto if forwarded_proto in ("http", "https") else request.url.scheme
         host = request.headers.get("host") or request.url.netloc
         forwarded_host = request.headers.get("x-forwarded-host", "").split(",")[0].strip()
         if forwarded_host and allowed_hosts:
             host_set = {_mcp_request_hostname(h) for h in list(allowed_hosts) + list(_MCP_LOCALHOST_HOSTS)}
             if _mcp_host_allowed(_mcp_request_hostname(forwarded_host), host_set):
                 host = forwarded_host
-                # Only the two transport schemes; the header is caller-supplied, and anything
-                # else here would be published as the endpoint's URL.
-                forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
-                scheme = forwarded_proto if forwarded_proto in ("http", "https") else scheme
         endpoint = request.scope.get("_agno_mcp_public_endpoint", _MCP_PATH)
         url = f"{scheme}://{host}{endpoint}"
     remote: Dict[str, Any] = {"type": "streamable-http", "url": url}
