@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from pydantic import BaseModel
@@ -42,6 +42,9 @@ class WorkflowSession:
     created_at: Optional[int] = None
     # The unix timestamp when this session was last updated
     updated_at: Optional[int] = None
+
+    # Runtime-only: a private copy loaded for a temporary run (store_run=False), never written back.
+    transient: bool = field(default=False, repr=False, compare=False)
 
     def to_dict(self, include_runs: bool = True) -> Dict[str, Any]:
         """Convert to dictionary for storage, serializing runs to dicts"""

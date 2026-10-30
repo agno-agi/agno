@@ -355,6 +355,7 @@ class AgentOS:
         tracing: bool = False,
         auto_provision_dbs: bool = True,
         run_hooks_in_background: bool = False,
+        allow_temporary_runs: bool = True,
         queue: Optional[QueueConfig] = None,
         event_stream: Optional[BaseEventStream] = None,
         telemetry: bool = True,
@@ -436,6 +437,8 @@ class AgentOS:
                 one configured on an agent, team or workflow.
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
+            allow_temporary_runs: If False, the run routes refuse ``store_run=false`` (a run that is answered
+                but not saved) with a 400, so every run on this OS is persisted.
             queue: Configuration for the AgentOS job queue (QueueConfig). Background runs
                 execute through it today; it is not a message-broker integration.
                 background=True runs are accepted immediately as PENDING and execute under
@@ -626,6 +629,9 @@ class AgentOS:
 
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
+
+        # If False, the run routes refuse store_run=false so every run on this OS is persisted
+        self.allow_temporary_runs = allow_temporary_runs
 
         # Queue configuration. None keeps the process defaults (env var or
         # library default for the concurrency cap, in-memory transports).

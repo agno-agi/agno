@@ -752,6 +752,7 @@ def _get_delegate_task_function(
                     add_session_state_to_context=add_session_state_to_context,
                     knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
+                    store_run=run_context.store_run,
                     yield_run_output=True,
                     **_member_run_kwargs(team, member_agent),
                 )
@@ -811,6 +812,7 @@ def _get_delegate_task_function(
                     metadata=run_context.metadata,
                     knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
+                    store_run=run_context.store_run,
                     **_member_run_kwargs(team, member_agent),
                 )
 
@@ -936,6 +938,7 @@ def _get_delegate_task_function(
                     metadata=run_context.metadata,
                     knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
+                    store_run=run_context.store_run,
                     yield_run_output=True,
                     **_member_run_kwargs(team, member_agent),
                 )
@@ -995,6 +998,7 @@ def _get_delegate_task_function(
                     metadata=run_context.metadata,
                     knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
+                    store_run=run_context.store_run,
                     **_member_run_kwargs(team, member_agent),
                 )
                 check_if_run_cancelled(member_agent_run_response)  # type: ignore
@@ -1104,6 +1108,7 @@ def _get_delegate_task_function(
                         add_session_state_to_context=add_session_state_to_context,
                         metadata=run_context.metadata,
                         run_id=member_run_id,
+                        store_run=run_context.store_run,
                         yield_run_output=True,
                         **_member_run_kwargs(team, member_agent),
                     )
@@ -1166,6 +1171,7 @@ def _get_delegate_task_function(
                         add_session_state_to_context=add_session_state_to_context,
                         metadata=run_context.metadata,
                         run_id=member_run_id,
+                        store_run=run_context.store_run,
                         **_member_run_kwargs(team, member_agent),
                     )
 
@@ -1276,6 +1282,7 @@ def _get_delegate_task_function(
                     add_session_state_to_context=add_session_state_to_context,
                     metadata=run_context.metadata,
                     run_id=member_run_id,
+                    store_run=run_context.store_run,
                     yield_run_output=True,
                     **_member_run_kwargs(team, agent),
                 )
@@ -1410,6 +1417,7 @@ def _get_delegate_task_function(
                             add_session_state_to_context=add_session_state_to_context,
                             metadata=run_context.metadata,
                             run_id=member_run_id,
+                            store_run=run_context.store_run,
                             **_member_run_kwargs(team, member_agent),
                         )
                         check_if_run_cancelled(member_agent_run_response)

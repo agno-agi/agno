@@ -118,7 +118,8 @@ Guidelines:
             """
             # Reload session to get latest data from database
             # This ensures we don't overwrite any updates made after the tool was created
-            session_from_db = workflow.get_session(session_id=session.session_id)
+            # A temporary run (store_run=False) keeps its private copy: a reload would swap in a stored one.
+            session_from_db = session if session.transient else workflow.get_session(session_id=session.session_id)
             if session_from_db is None:
                 session_from_db = session  # Fallback to closure session if reload fails
                 log_debug(f"Fallback to closure session: {len(session_from_db.runs or [])} runs")
@@ -237,7 +238,10 @@ Guidelines:
             # Reload session to get latest data from database
             # This ensures we don't overwrite any updates made after the tool was created
             # Use async or sync method based on database type
-            if workflow._has_async_db():
+            # A temporary run (store_run=False) keeps its private copy: a reload would swap in a stored one.
+            if session.transient:
+                session_from_db = session
+            elif workflow._has_async_db():
                 session_from_db = await workflow.aget_session(session_id=session.session_id)
             else:
                 session_from_db = workflow.get_session(session_id=session.session_id)
@@ -295,6 +299,10 @@ Guidelines:
                     if isinstance(event, WorkflowCompletedEvent):
                         final_content = str(event.content) if event.content else ""
 
+                # The async execution loads its own session copy; a temporary run's copy is never
+                # stored, so hand the executed run back to the caller's copy where it will be looked up.
+                if session.transient:
+                    session.upsert_run(run=workflow_run_response)
                 yield final_content
             else:
                 result = await workflow._aexecute(
@@ -304,6 +312,8 @@ Guidelines:
                     workflow_run_response=workflow_run_response,
                     run_context=run_context,
                 )
+                if session.transient:
+                    session.upsert_run(run=result)
 
                 if isinstance(result.content, str):
                     yield result.content

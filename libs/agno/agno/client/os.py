@@ -554,6 +554,7 @@ class AgentOSClient:
                 - metadata: Dict for metadata
                 - knowledge_filters: Filters for knowledge search
                 - output_schema: JSON schema for structured output
+                - store_run: False for a temporary run that is returned but not saved
 
         Returns:
             RunOutput: The run response

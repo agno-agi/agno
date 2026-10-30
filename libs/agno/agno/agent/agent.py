@@ -1488,6 +1488,7 @@ class Agent:
         metadata: Optional[Dict[str, Any]] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         debug_mode: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunOutput: ...
 
@@ -1516,6 +1517,7 @@ class Agent:
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         yield_run_output: bool = False,
         debug_mode: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, RunOutput]]: ...
 
@@ -1543,6 +1545,7 @@ class Agent:
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
         return _run.run_dispatch(
@@ -1568,6 +1571,7 @@ class Agent:
             output_schema=output_schema,
             yield_run_output=yield_run_output,
             debug_mode=debug_mode,
+            store_run=store_run,
             **kwargs,
         )
 
@@ -1595,6 +1599,7 @@ class Agent:
         metadata: Optional[Dict[str, Any]] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         debug_mode: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         background: bool = False,
         **kwargs: Any,
     ) -> Coroutine[Any, Any, RunOutput]: ...
@@ -1623,6 +1628,7 @@ class Agent:
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
 
@@ -1650,6 +1656,7 @@ class Agent:
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         background: bool = False,
         **kwargs: Any,
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
@@ -1676,6 +1683,7 @@ class Agent:
             output_schema=output_schema,
             yield_run_output=yield_run_output,
             debug_mode=debug_mode,
+            store_run=store_run,
             background=background,
             **kwargs,
         )

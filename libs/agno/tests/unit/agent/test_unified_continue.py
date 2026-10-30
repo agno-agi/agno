@@ -50,7 +50,9 @@ def _patch_sync_dispatch_dependencies(
     monkeypatch.setattr(
         _storage,
         "read_or_create_session",
-        lambda agent, session_id=None, user_id=None: AgentSession(session_id=session_id, user_id=user_id, runs=runs),
+        lambda agent, session_id=None, user_id=None, **kwargs: AgentSession(
+            session_id=session_id, user_id=user_id, runs=runs
+        ),
     )
 
 
@@ -432,7 +434,7 @@ def _patch_async_dispatch_dependencies(
     """Mirror of _patch_sync_dispatch_dependencies for the async dispatch path."""
     from agno.agent import _storage as storage_mod
 
-    async def fake_aread_or_create_session(agent, session_id=None, user_id=None):
+    async def fake_aread_or_create_session(agent, session_id=None, user_id=None, store_run=True):
         return AgentSession(session_id=session_id, user_id=user_id, runs=runs)
 
     monkeypatch.setattr(_init, "has_async_db", lambda agent: False)
@@ -1718,7 +1720,7 @@ class TestForkSession:
         monkeypatch.setattr(
             _storage,
             "read_or_create_session",
-            lambda agent, session_id=None, user_id=None: source,
+            lambda agent, session_id=None, user_id=None, **kwargs: source,
         )
         saved: list = []
         from agno.agent import _session
@@ -1868,7 +1870,7 @@ class TestStreamingParity:
     ) -> Agent:
         """Wire async dispatch dependencies and capture what reaches _acontinue_run_stream."""
 
-        async def fake_aread_or_create_session(agent, session_id=None, user_id=None):
+        async def fake_aread_or_create_session(agent, session_id=None, user_id=None, store_run=True):
             return AgentSession(session_id=session_id, user_id=user_id, runs=runs)
 
         monkeypatch.setattr(_init, "has_async_db", lambda agent: False)

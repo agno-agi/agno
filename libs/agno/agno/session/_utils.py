@@ -14,6 +14,25 @@ if TYPE_CHECKING:
     from agno.session.workflow import WorkflowSession
 
 HistorySessionT = TypeVar("HistorySessionT", "AgentSession", "TeamSession")
+SessionT = TypeVar("SessionT", "AgentSession", "TeamSession", "WorkflowSession")
+
+
+def is_transient(session: Any) -> bool:
+    """Whether ``session`` is a temporary run's private copy, which is never written or offloaded."""
+    return bool(getattr(session, "transient", False))
+
+
+def transient_copy(session: SessionT) -> SessionT:
+    """Return a private, never-persisted copy of a cached session for a temporary run.
+
+    The copy carries the history the run needs, while the shared cached object stays
+    untouched by the run that is not stored.
+    """
+    from copy import deepcopy
+
+    detached = deepcopy(session)
+    detached.transient = True
+    return detached
 
 
 def resolve_run_index(

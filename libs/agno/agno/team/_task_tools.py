@@ -537,6 +537,7 @@ def _get_task_management_tools(
                     add_session_state_to_context=add_session_state_to_context,
                     knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
+                    store_run=run_context.store_run,
                     yield_run_output=True,
                     **_member_run_kwargs(team, member_agent),
                 )
@@ -587,6 +588,7 @@ def _get_task_management_tools(
                     metadata=run_context.metadata,
                     knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
+                    store_run=run_context.store_run,
                     **_member_run_kwargs(team, member_agent),
                 )
                 check_if_run_cancelled(member_run_response)
@@ -718,6 +720,7 @@ def _get_task_management_tools(
                     add_session_state_to_context=add_session_state_to_context,
                     knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
+                    store_run=run_context.store_run,
                     yield_run_output=True,
                     **_member_run_kwargs(team, member_agent),
                 )
@@ -768,6 +771,7 @@ def _get_task_management_tools(
                     metadata=run_context.metadata,
                     knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
+                    store_run=run_context.store_run,
                     **_member_run_kwargs(team, member_agent),
                 )
                 check_if_run_cancelled(member_run_response)
@@ -920,6 +924,7 @@ def _get_task_management_tools(
                     metadata=run_context.metadata,
                     knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
+                    store_run=run_context.store_run,
                     **_member_run_kwargs(team, member_agent),
                 )
                 return (task_obj.id, member_run_response, member_session_state_copy, member_task_description, None)
@@ -1124,6 +1129,7 @@ def _get_task_management_tools(
                     metadata=run_context.metadata,
                     knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
+                    store_run=run_context.store_run,
                     **_member_run_kwargs(team, member_agent),
                 )
                 return (task_obj.id, member_run_response, member_session_state_copy, member_task_description, None)

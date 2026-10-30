@@ -90,6 +90,7 @@ from agno.os.utils import (
     find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
+    is_temporary_run,
     get_workflow_by_id,
     get_workflow_by_id_async,
     is_form_field_omitted,
@@ -1812,6 +1813,13 @@ def get_workflow_router(
             False,
             description="Run workflow in background (survives client disconnect). Requires database. Use /resume to reconnect.",
         ),
+        # A string, not ``bool = Form(True)``: recent FastAPI resolves an absent bool form field to
+        # False whatever its default, which would turn every run into a temporary one.
+        store_run: Optional[str] = Form(
+            None,
+            description="Set to false for a temporary run: the response is returned but neither the run nor "
+            "its session is saved to the database. Defaults to true. Cannot be combined with background=true",
+        ),
         session_id: Optional[str] = Form(
             None, description="Session ID for conversation continuity. If not provided, a new session is created"
         ),
@@ -1825,6 +1833,16 @@ def get_workflow_router(
         kwargs = await get_request_kwargs(request, create_workflow_run)
         if await is_form_field_omitted(request, "stream"):
             stream = True
+        if is_temporary_run(store_run):
+            if not os.allow_temporary_runs:
+                raise HTTPException(status_code=400, detail="Temporary runs (store_run=false) are disabled on this OS")
+            if background:
+                raise HTTPException(
+                    status_code=400,
+                    detail="A temporary run (store_run=false) cannot run in the background: "
+                    "background runs are polled from the stored run row",
+                )
+            kwargs["store_run"] = False
 
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.

@@ -85,6 +85,7 @@ from agno.os.utils import (
     find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
+    is_temporary_run,
     get_team_by_id,
     is_form_field_omitted,
     parse_files_metadata,
@@ -635,6 +636,13 @@ def get_team_router(
         background: bool = Form(
             False, description="Run in background and return immediately with run metadata (requires database)"
         ),
+        # A string, not ``bool = Form(True)``: recent FastAPI resolves an absent bool form field to
+        # False whatever its default, which would turn every run into a temporary one.
+        store_run: Optional[str] = Form(
+            None,
+            description="Set to false for a temporary run: the response is returned but neither the run nor "
+            "its session is saved to the database. Defaults to true. Cannot be combined with background=true",
+        ),
         factory_input: Optional[str] = Form(
             None,
             description="JSON object with factory-specific parameters for dynamic team construction",
@@ -645,6 +653,16 @@ def get_team_router(
             stream = True
         if await is_form_field_omitted(request, "monitor"):
             monitor = True
+        if is_temporary_run(store_run):
+            if not os.allow_temporary_runs:
+                raise HTTPException(status_code=400, detail="Temporary runs (store_run=false) are disabled on this OS")
+            if background:
+                raise HTTPException(
+                    status_code=400,
+                    detail="A temporary run (store_run=false) cannot run in the background: "
+                    "background runs are polled from the stored run row",
+                )
+            kwargs["store_run"] = False
 
         files_metadata_list = parse_files_metadata(files_metadata)
 

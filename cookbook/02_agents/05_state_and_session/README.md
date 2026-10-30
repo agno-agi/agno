@@ -16,6 +16,7 @@ Examples for session state management, chat history, and session persistence.
 - `session_state_multiple_users.py` - Session state with multiple users.
 - `search_past_sessions.py` - Search and read previous sessions (two-step pattern).
 - `session_summary.py` - Enable session summaries for context compression.
+- `temporary_run.py` - Run with `store_run=False` so the run is answered but not saved.
 
 ## Prerequisites
 - Load environment variables with `direnv allow` (including `OPENAI_API_KEY`).
