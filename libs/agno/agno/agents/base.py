@@ -42,11 +42,13 @@ from agno.run.agent import (
     RunCancelledEvent,
     RunCompletedEvent,
     RunContentEvent,
+    RunContinuedEvent,
     RunErrorEvent,
     RunEvent,
     RunInput,
     RunOutput,
     RunOutputEvent,
+    RunPausedEvent,
     RunStartedEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
@@ -236,6 +238,9 @@ class BaseExternalAgent:
     description: Optional[str] = None
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     markdown: bool = True
+    # Seconds a native permission request or question waits for the person's decision, and a continuation client waits.
+    # Queue/sandbox execution also uses this as its cumulative human-wait budget.
+    hitl_timeout: float = 900
     # Fail closed when native context is missing; sandbox restoration requires exact continuity.
     require_native_resume: bool = False
     # Propagate local persistence failures before acknowledging a runtime result.
@@ -283,6 +288,11 @@ class BaseExternalAgent:
         if self.events_to_skip is None:
             self.events_to_skip = [RunEvent.run_content]
         self._check_output_schema(self.output_schema)
+        if self._uses_native_hitl:
+            from agno.agents._hitl import validate_native_hitl
+
+            validate_native_hitl(self)
+            self.store_events = True
         if self.repository is not None:
             from agno.sandbox.repository import Repository
 
@@ -292,6 +302,11 @@ class BaseExternalAgent:
                 raise ValueError("agent.repository requires sandbox=")
         if self.sandbox is not None:
             _sandbox_harness().validate(self)
+
+    @property
+    def _uses_native_hitl(self) -> bool:
+        """Whether native policy can ask for permission and a database can hold the paused run."""
+        return False
 
     @property
     def sdk(self) -> str:
@@ -1112,7 +1127,7 @@ class BaseExternalAgent:
         return registered
 
     async def _acancel_unowned_row(self, run_id: str) -> None:
-        """Mark this agent's pending or running row cancelled when this process holds no handle for it.
+        """Cancel an unfinished row, including an orphaned native permission wait, without a live handle.
 
         A row left pending or running by a process that stopped mid-run keeps its session busy,
         and nothing else finishes it, so cancelling it is how the session is freed. The
@@ -1137,13 +1152,24 @@ class BaseExternalAgent:
                 row = RunOutput.from_dict(row)
             if not isinstance(row, RunOutput) or row.agent_id != self.get_id() or row.session_id is None:
                 return
-            if getattr(row.status, "value", row.status) not in (RunStatus.pending.value, RunStatus.running.value):
+            from agno.agents._hitl import KEY as native_key
+
+            native = (row.metadata or {}).get(native_key)
+            statuses = [RunStatus.pending.value, RunStatus.running.value]
+            if native:
+                statuses.extend([RunStatus.paused.value, RunStatus.cancelled.value])
+            if getattr(row.status, "value", row.status) not in statuses:
                 return
             row.status = RunStatus.cancelled
-            extra_fields = None
+            extra_fields: Dict[str, Any] = {}
             if not row.content:
                 row.content = "Run cancelled"
-                extra_fields = {"content": row.content}
+                extra_fields["content"] = row.content
+            if native:
+                # The waiting native execution reads the cancelled run and stops; no request stays pending.
+                row.requirements = []
+                row.metadata = {**(row.metadata or {}), native_key: {**native, "pending": []}}
+                extra_fields.update(requirements=[], metadata=row.metadata)
             await apersist_run_transition(
                 self, "agent", row.session_id, row, user_id=row.user_id, extra_fields=extra_fields
             )
@@ -1297,7 +1323,10 @@ class BaseExternalAgent:
         """Recorded on a run that ends in error. The durable job queue reads ``retryable`` so a
         failure that would repeat (a limit, authentication, billing, a bad request) fails the job
         at once instead of being re-driven for every remaining queue attempt."""
-        return {"retryable": self._is_retryable_error(error), "error_type": error_type_of(error)}
+        return {
+            "retryable": self._is_retryable_error(error),
+            "error_type": error_type_of(error),
+        }
 
     def _should_retry(self, error: Exception, attempt: int, num_attempts: int) -> bool:
         if attempt >= num_attempts - 1:
@@ -1434,7 +1463,11 @@ class BaseExternalAgent:
         self._assert_session_free(await self.aread_or_create_session(session_id, user_id), session_id, run_id)
         run = await self._aprepare_pending_run(run_id, session_id, user_id, input)
         await aregister_run(run_id)
-        transport = _BackgroundStream(run, yield_run_output=yield_run_output) if stream else None
+        transport = (
+            _BackgroundStream(run, yield_run_output=yield_run_output, end_at_pause=self._uses_native_hitl)
+            if stream
+            else None
+        )
         if transport is not None:
             await transport.register()
 
@@ -1611,7 +1644,11 @@ class BaseExternalAgent:
         """The session's unfinished run (pending or running), other than ``exclude_run_id``."""
         for run in getattr(session, "runs", None) or []:
             status = getattr(run.status, "value", run.status)
-            if run.run_id != exclude_run_id and status in (RunStatus.pending.value, RunStatus.running.value):
+            if run.run_id != exclude_run_id and status in (
+                RunStatus.pending.value,
+                RunStatus.running.value,
+                RunStatus.paused.value,
+            ):
                 return run
         return None
 
@@ -1637,7 +1674,7 @@ class BaseExternalAgent:
                 ahead = False
                 continue
             status = getattr(run.status, "value", run.status)
-            if status == RunStatus.running.value:
+            if status in (RunStatus.running.value, RunStatus.paused.value):
                 return run
             elected_ahead = queue_ordered and getattr(run, "queue_attempt", None) is not None
             if ahead and status == RunStatus.pending.value and not elected_ahead:
@@ -1967,6 +2004,15 @@ class BaseExternalAgent:
     # ---------------------------------------------------------------------------
 
     async def _arun_non_stream(self, input: Any, **kwargs: Any) -> RunOutput:
+        if self._uses_native_hitl:
+            events = self._arun_stream(input, **{**kwargs, "yield_run_output": True, "_native_non_stream": True})
+            try:
+                async for item in events:
+                    if isinstance(item, RunOutput):
+                        return item
+            finally:
+                await events.aclose()  # type: ignore[attr-defined]
+            raise RuntimeError("Paused native run produced no result")
         team_id, workflow_id = self._pop_run_parent(kwargs)
         parent_id = self._parent_id(team_id, workflow_id)
         if self.sandbox is not None:
@@ -2091,7 +2137,24 @@ class BaseExternalAgent:
         finally:
             self._release_session(state_session_id, run_id)
 
+    async def _native_non_stream_events(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        """Keep the adapter's nonstreaming result contract while multiplexing permission events."""
+        result = await self._arun_adapter(input, **kwargs)
+        if isinstance(result, ExternalRunResult):
+            for tool in result.tools or []:
+                yield ToolCallCompletedEvent(tool=tool)
+            for warning in result.warnings or []:
+                yield ExternalRunWarningEvent(warning=warning)
+            if result.metrics is not None:
+                yield ExternalRunMetricsEvent(metrics=result.metrics)
+            if result.structured_output is not None:
+                yield ExternalRunStructuredOutputEvent(structured_output=result.structured_output)
+            yield RunContentEvent(content=result.content)
+        else:
+            yield RunContentEvent(content=result)
+
     async def _arun_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        native_non_stream = kwargs.pop("_native_non_stream", False)
         team_id, workflow_id = self._pop_run_parent(kwargs)
         parent_id = self._parent_id(team_id, workflow_id)
         if self.sandbox is not None:
@@ -2152,7 +2215,7 @@ class BaseExternalAgent:
             history = (
                 self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
             )
-            stored_events: Optional[List[Any]] = [] if self.store_events else None
+            stored_events: Optional[List[Any]] = [] if self.store_events or self._uses_native_hitl else None
             skipped = {event.value for event in self.events_to_skip or []}
 
             def keep(event: Any) -> Any:
@@ -2169,6 +2232,13 @@ class BaseExternalAgent:
             accumulated_content = ""
             warnings: List[Dict[str, Any]] = []
             tools: Dict[str, ToolExecution] = {}
+            bridge = None
+            if self._uses_native_hitl:
+                from agno.agents._hitl import HITLBridge, validate_native_hitl
+
+                validate_native_hitl(self)
+                allow_requests = parent_id is None and not getattr(self, "_nested_native_hitl", False)
+                bridge = HITLBridge(self, run_id, session_id, user_id, allow_requests=allow_requests)
             status = RunStatus.completed
             run_error: Optional[Exception] = None
             attempts_made = 0
@@ -2186,34 +2256,82 @@ class BaseExternalAgent:
                         adapter_metrics = None
                         structured_output = None
                         try:
-                            async for event in self._arun_adapter_stream(
+                            adapter = self._arun_adapter_stream
+                            if native_non_stream and type(self)._arun_adapter is not BaseExternalAgent._arun_adapter:
+                                adapter = self._native_non_stream_events
+                            source = adapter(
                                 input, history=history, run_id=run_id, session=session, run_state=run_state, **kwargs
-                            ):
-                                if isinstance(event, ExternalRunMetricsEvent):
-                                    adapter_metrics = event.metrics
-                                    continue
-                                if isinstance(event, ExternalRunStructuredOutputEvent):
-                                    structured_output = event.structured_output
-                                    continue
-                                if isinstance(event, ExternalRunWarningEvent) and event.warning is not None:
-                                    warnings.append(event.warning)
-                                if isinstance(event, RunContentEvent):
-                                    if event.content:
-                                        timer.set_time_to_first_token()
-                                    accumulated_content += event.content or ""
-                                elif isinstance(event, (ToolCallStartedEvent, ToolCallCompletedEvent)) and event.tool:
-                                    key = event.tool.tool_call_id or str(uuid4())
-                                    if key not in tools:
-                                        tools[key] = copy(event.tool)
-                                    elif isinstance(event, ToolCallCompletedEvent):
-                                        tools[key].result = event.tool.result
-                                        tools[key].tool_call_error = event.tool.tool_call_error
-                                yield keep(event)
+                            )
+                            if bridge is not None:
+                                if bridge.closed:
+                                    bridge = HITLBridge(
+                                        self, run_id, session_id, user_id, allow_requests=allow_requests
+                                    )
+                                source = bridge.events(source)
+                            try:
+                                async for event in source:
+                                    if isinstance(event, ExternalRunMetricsEvent):
+                                        adapter_metrics = event.metrics
+                                        continue
+                                    if isinstance(event, ExternalRunStructuredOutputEvent):
+                                        structured_output = event.structured_output
+                                        continue
+                                    if isinstance(event, ExternalRunWarningEvent) and event.warning is not None:
+                                        warnings.append(event.warning)
+                                    if isinstance(event, RunContentEvent):
+                                        if event.content:
+                                            timer.set_time_to_first_token()
+                                        accumulated_content += event.content or ""
+                                    elif (
+                                        isinstance(event, (ToolCallStartedEvent, ToolCallCompletedEvent)) and event.tool
+                                    ):
+                                        key = event.tool.tool_call_id or str(uuid4())
+                                        if key not in tools:
+                                            tools[key] = copy(event.tool)
+                                        elif isinstance(event, ToolCallCompletedEvent):
+                                            tools[key].result = event.tool.result
+                                            tools[key].tool_call_error = event.tool.tool_call_error
+                                    if isinstance(event, (RunPausedEvent, RunContinuedEvent)) and bridge is not None:
+                                        if isinstance(event, RunPausedEvent):
+                                            for tool in event.tools or []:
+                                                tools[tool.tool_call_id or ""] = tool
+                                        from agno.agents._hitl import KEY as native_key
+
+                                        # The paused run is the shared state: its requirements are what the
+                                        # chat confirms, and its metadata is how the continuation finds them.
+                                        snapshot = self._build_run_output(
+                                            run_id,
+                                            session_id,
+                                            user_id,
+                                            input,
+                                            accumulated_content,
+                                            RunStatus.paused if bridge.pending else RunStatus.running,
+                                            list(tools.values()) or None,
+                                        )
+                                        snapshot.requirements = bridge.pending_requirements()
+                                        snapshot.metadata = {native_key: bridge.state()}
+                                        if isinstance(event, RunPausedEvent):
+                                            event.content = accumulated_content
+                                            event.tools = list(tools.values())
+                                        keep(event)
+                                        snapshot.events = list(stored_events or [])
+                                        if session is not None:
+                                            await self._apersist_run_in_session(session, snapshot, strict=True)
+                                        yield event
+                                    else:
+                                        yield keep(event)
+                            finally:
+                                if bridge is not None:
+                                    await source.aclose()  # type: ignore[attr-defined]
                             break
                         except RunCancelledException:
                             raise
                         except Exception as error:
-                            if not self._should_retry(error, attempt, num_attempts):
+                            if native_non_stream:
+                                self._collect_attempt_tools(run_state, tools)
+                            if (bridge is not None and bridge.requests) or not self._should_retry(
+                                error, attempt, num_attempts
+                            ):
                                 raise
                             # The failed attempt's events already reached the consumer. Say so before
                             # the retry streams a fresh answer, and keep it in the stored run's warnings.
@@ -2244,6 +2362,12 @@ class BaseExternalAgent:
                 run.metadata = {**(run.metadata or {}), **self._failure_metadata(run_error)}
             if attempts_made > 1:
                 run.metadata = {**(run.metadata or {}), "attempts": attempts_made}
+            if bridge is not None and bridge.requests:
+                from agno.agents._hitl import KEY as native_key
+
+                run.metadata = {**(run.metadata or {}), native_key: {**bridge.state(), "pending": []}}
+                if run_error is not None:
+                    run.metadata["retryable"] = False
             self._apply_output_schema(run, output_schema, structured_output)
             self._finish_run_output(run, run_state, continuation)
             fields: Dict[str, Any] = dict(
@@ -2270,7 +2394,7 @@ class BaseExternalAgent:
             if session is not None and parent_id is not None:
                 await self._apersist_member_state(session)
             elif session is not None:
-                await self._apersist_run_in_session(session, run)
+                await self._apersist_run_in_session(session, run, strict=bridge is not None)
             yield terminal
             if (
                 stored_events is not None

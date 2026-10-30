@@ -145,12 +145,39 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
                 return runs
             page += 1
 
+    def schedule_type(row):
+        return "on_demand" if is_on_demand(row["cron_expr"]) else "scheduled"
+
+    def sort_routines(rows, sort_by, sort_order):
+        reverse = sort_order == "desc"
+        if sort_by == "next_run_at":
+            # A paused or on-demand Routine has no next run, whatever timestamp is stored; those go last either way.
+            upcoming: List[Dict[str, Any]] = []
+            rest: List[Dict[str, Any]] = []
+            for row in rows:
+                has_next = row["enabled"] and schedule_type(row) == "scheduled" and row.get("next_run_at") is not None
+                (upcoming if has_next else rest).append(row)
+            upcoming.sort(key=lambda row: (row["next_run_at"], row.get("created_at") or 0, row["id"]), reverse=reverse)
+            rest.sort(key=lambda row: (row.get("created_at") or 0, row["id"]), reverse=reverse)
+            return upcoming + rest
+        if sort_by == "schedule_type":
+            # "on_demand" sorts before "scheduled".
+            return sorted(
+                rows, key=lambda row: (schedule_type(row), row.get("created_at") or 0, row["id"]), reverse=reverse
+            )
+        if sort_by == "enabled":
+            return sorted(
+                rows, key=lambda row: (bool(row["enabled"]), row.get("created_at") or 0, row["id"]), reverse=reverse
+            )
+        # One reverse flag orders equal timestamps by id in the same direction as the timestamp.
+        return sorted(rows, key=lambda row: (get_sort_value(row, sort_by), row["id"]), reverse=reverse)
+
     async def routine_responses(rows):
         latest = await call(schedule_db.get_latest_schedule_runs, [row["id"] for row in rows])
         return [
             {
                 **row,
-                "schedule_type": "scheduled" if row["cron_expr"] else "on_demand",
+                "schedule_type": schedule_type(row),
                 "last_run": latest.get(row["id"]),
                 "deleted_at": (row.get("payload") or {}).get("metadata", {}).get("deleted_at"),
             }
@@ -211,7 +238,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         limit: int = Query(20, ge=1, le=1000),
         page: int = Query(1, ge=1),
         include_deleted: bool = False,
-        sort_by: Literal["created_at", "updated_at"] = Query("created_at"),
+        sort_by: Literal["created_at", "updated_at", "next_run_at", "schedule_type", "enabled"] = Query("created_at"),
         sort_order: Literal["asc", "desc"] = Query("desc"),
         _: bool = Depends(auth),
     ):
@@ -227,8 +254,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             and (product_id is None or (row.payload or {}).get("metadata", {}).get("product_id") == product_id)
             and (include_deleted or (row.payload or {}).get("metadata", {}).get("deleted_at") is None)
         ]
-        # One reverse flag orders equal timestamps by id in the same direction as the timestamp.
-        selected.sort(key=lambda row: (get_sort_value(row, sort_by), row["id"]), reverse=sort_order == "desc")
+        selected = sort_routines(selected, sort_by, sort_order)
         rows = await routine_responses(selected[(page - 1) * limit : page * limit])
         return page_response(rows, len(selected), limit, page)
 
@@ -260,10 +286,18 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             policy = body.auto_accept.model_dump()
             await _authorize_auto_accept(request, policy, agent_os)
             fields["payload"]["metadata"]["auto_accept"] = policy
+        if not body.enabled:
+            # Retry matching must distinguish disabled creation from a request to enable it.
+            fields["payload"]["metadata"]["initial_enabled"] = False
         schedule = await call(ScheduleCreate, **fields)
         row = await call(handlers["create_schedule"], schedule, request)
         await call(db.add_product_routine, body.product_id, row["id"])
-        return await routine_response(await call(handlers["enable_schedule"], row["id"], request))
+        if body.enabled:
+            row = await call(handlers["enable_schedule"], row["id"], request)
+        else:
+            # Finish creation without activation so duplicate requests cannot recover this as pending.
+            row = await call(handlers["disable_schedule"], row["id"], request)
+        return await routine_response(row)
 
     @router.patch("/routines/{routine_id}", response_model=RoutineResponse)
     async def update_routine(routine_id: str, body: RoutineUpdate, request: Request, _: bool = Depends(auth)):

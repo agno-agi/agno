@@ -1,7 +1,7 @@
 """Atomic mutations shared by the SQL run stores."""
 
 import time
-from typing import Literal, Optional
+from typing import Any, Dict, Literal, Optional, Tuple
 
 from sqlalchemy import Table, Text, case, cast, func, literal, or_, text, update
 from sqlalchemy.sql.dml import Update
@@ -38,3 +38,36 @@ def cancel_pending_run_statement(
         )
         .returning(table.c.run_id)
     )
+
+
+def run_matches(run: Dict[str, Any], stored_status: Optional[str], expected: Dict[str, Any]) -> bool:
+    """Whether a stored run has every expected value.
+
+    ``expected`` maps "status" to the run's status, and any other dotted path into the run's data, such
+    as "metadata.native_hitl.pending", to the value it must hold.
+    """
+    from agno.db.utils import canonical_run_status
+
+    for path, value in expected.items():
+        if path == "status":
+            if canonical_run_status(stored_status or run.get("status")) != canonical_run_status(value):
+                return False
+            continue
+        node: Any = run
+        for part in path.split("."):
+            node = node.get(part) if isinstance(node, dict) else None
+        if node != value:
+            return False
+    return True
+
+
+def apply_run_fields(run: Dict[str, Any], fields: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[str]]:
+    """The run's data with ``fields`` applied, and its canonical status when ``fields`` sets one."""
+    from agno.db.utils import canonical_run_status
+
+    updated = {**run, **fields}
+    status = None
+    if fields.get("status") is not None:
+        status = canonical_run_status(fields["status"])
+        updated["status"] = status
+    return updated, status
