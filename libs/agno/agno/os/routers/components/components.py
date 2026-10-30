@@ -496,6 +496,53 @@ def _require_stored_agent_composable(db: BaseDb, child_id: str, role: str) -> No
         raise ValueError(f"External agents cannot be {role}: {child_id}")
 
 
+def _config_agent_sdk(config: Optional[Dict[str, Any]]) -> Optional[str]:
+    """The adapter a stored agent config names, or None for an Agent config."""
+    from agno.agents._storage import is_external_agent_config
+
+    if config is None or not is_external_agent_config(config):
+        return None
+    return str(config["sdk"])
+
+
+def _describe_agent_kind(sdk: Optional[str]) -> str:
+    return "an Agent" if sdk is None else f"a {sdk!r} external agent"
+
+
+def _require_agent_kind_kept(db: BaseDb, existing: Dict[str, Any], config: Optional[Dict[str, Any]]) -> None:
+    """Refuse a config version that would change what an agent component loads as.
+
+    The SDK save() refuses an Agent over a stored external agent and the
+    reverse; the config routes write versions of the same catalog and hold the
+    same rule, so an id never switches runtime through a config write.
+    """
+    if config is None or str(existing.get("component_type")) != ComponentType.AGENT.value:
+        return
+    from agno.agents._storage import require_same_agent_kind
+
+    require_same_agent_kind(db, str(existing["component_id"]), _config_agent_sdk(config))
+
+
+def _require_version_kind_kept(db: BaseDb, existing: Dict[str, Any], version: int) -> None:
+    """Refuse making current a version whose agent kind differs from the live one."""
+    if str(existing.get("component_type")) != ComponentType.AGENT.value:
+        return
+    live_version = existing.get("current_version")
+    if not isinstance(live_version, int) or live_version == version:
+        return
+    target = db.get_config(component_id=str(existing["component_id"]), version=version)
+    live = db.get_config(component_id=str(existing["component_id"]), version=live_version)
+    if not isinstance(target, dict) or not isinstance(live, dict):
+        return
+    target_sdk = _config_agent_sdk(target.get("config"))
+    live_sdk = _config_agent_sdk(live.get("config"))
+    if target_sdk != live_sdk:
+        raise ValueError(
+            f"Version {version} of {existing['component_id']!r} is stored as {_describe_agent_kind(target_sdk)} "
+            f"while the live version is {_describe_agent_kind(live_sdk)}; a component cannot change kind."
+        )
+
+
 def _resolve_member_links(
     config: Dict[str, Any],
     db: BaseDb,
@@ -1225,6 +1272,7 @@ def attach_routes(
             _require_write_ownership(existing, scoped_user_id)
             # Resolve db from config if present
             config_data = body.config or {}
+            _require_agent_kind_kept(db, existing, config_data)
             config_data = _resolve_db_in_config(config_data, db, registry)
 
             _validate_referenced_component_ownership(
@@ -1292,6 +1340,7 @@ def attach_routes(
             # Resolve db from config if present
             config_data = body.config
             if config_data is not None:
+                _require_agent_kind_kept(db, existing, config_data)
                 config_data = _resolve_db_in_config(config_data, db, registry)
 
             _validate_referenced_component_ownership(
@@ -1469,6 +1518,7 @@ def attach_routes(
             # Reads share on publish; writes stay owner-scoped.
             _require_write_ownership(existing, scoped_user_id)
             _reject_unsupported_guard(body.guard if body else None, "current_version")
+            _require_version_kind_kept(db, existing, version)
             success = db.set_current_version(
                 component_id,
                 version=version,

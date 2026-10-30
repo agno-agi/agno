@@ -652,6 +652,45 @@ class TestComposition:
         assert response.status_code == 400
         assert "External agents cannot be workflow steps: coder" in response.json()["detail"]
 
+    def test_components_api_keeps_an_agents_kind(self, db, components_client):
+        ClaudeAgent(id="coder").save(db=db)
+
+        as_native = components_client.post("/components/coder/configs", json={"config": {"id": "coder"}})
+        assert as_native.status_code == 400, as_native.text
+        assert "would change what it loads as" in as_native.json()["detail"]
+
+        as_codex = components_client.post("/components/coder/configs", json={"config": {"sdk": "codex", "id": "coder"}})
+        assert as_codex.status_code == 400, as_codex.text
+
+        same_kind = components_client.post(
+            "/components/coder/configs", json={"config": {"sdk": "claude-agent-sdk", "id": "coder"}, "stage": "draft"}
+        )
+        assert same_kind.status_code == 201, same_kind.text
+        draft_version = same_kind.json()["version"]
+
+        edited = components_client.patch(
+            f"/components/coder/configs/{draft_version}", json={"config": {"sdk": "codex", "id": "coder"}}
+        )
+        assert edited.status_code == 400, edited.text
+
+        Agent(id="native", name="Native", db=db).save()
+        as_external = components_client.post(
+            "/components/native/configs", json={"config": {"sdk": "claude-agent-sdk", "id": "native"}}
+        )
+        assert as_external.status_code == 400, as_external.text
+
+    def test_components_api_set_current_keeps_an_agents_kind(self, db, components_client):
+        ClaudeAgent(id="coder").save(db=db)
+        # A version of the other kind can only exist through a direct db write; publishing it makes it live.
+        db.upsert_config(component_id="coder", config={"id": "coder"}, stage="published")
+        assert db.get_component("coder")["current_version"] == 2
+
+        rollback = components_client.post("/components/coder/configs/1/set-current")
+
+        assert rollback.status_code == 400, rollback.text
+        assert "cannot change kind" in rollback.json()["detail"]
+        assert db.get_component("coder")["current_version"] == 2
+
     def test_components_api_stores_an_external_agent_config(self, db, components_client, registry):
         response = components_client.post(
             "/components",
