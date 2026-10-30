@@ -97,6 +97,7 @@ class Authorization:
         # --- token verification (carried into the AuthorizationConfig AgentOS builds) ---
         verification_keys: Optional[List[str]] = None,
         jwks_file: Optional[str] = None,
+        jwks_url: Optional[str] = None,
         algorithm: Optional[str] = None,
         verify_audience: Optional[bool] = None,
         audience: Optional[str] = None,
@@ -118,6 +119,10 @@ class Authorization:
             verification_keys, jwks_file, algorithm, verify_audience, audience, issuer,
                 admin_scope, excluded_route_paths: JWT verification settings. Used with or
                 without roles (verify-only / scope-based / isolation deployments set just these).
+            jwks_url: a JWKS endpoint to verify tokens against, such as an identity provider's or
+                os.agno.com's per-OS ``jwks.json``. Fetched on the first token and refetched when the
+                issuer rotates keys, so no PEM is copied into the deployment. Falls back to the
+                ``JWT_JWKS_URL`` env var.
             audit: ``True`` builds a ``DbAuditSink`` from the bound db (feeds both the change and
                 decision trails); pass an ``AuditSink`` to use your own; ``False`` disables it.
             trust_token_scopes: run a scope plane alongside managed roles, so operators authorized
@@ -146,8 +151,8 @@ class Authorization:
             )
         # Verification settings, splatted into the AuthorizationConfig at build time. Typed Any so
         # the per-key kwarg splat type-checks against AuthorizationConfig's specific field types.
-        # ``issuer`` is handed to AgentOS separately: the released AuthorizationConfig has no such
-        # field and stays frozen at its released shape.
+        # ``issuer`` and ``jwks_url`` are handed to AgentOS separately: the released
+        # AuthorizationConfig has no such fields and stays frozen at its released shape.
         self._verification: Dict[str, Any] = {
             "verification_keys": verification_keys,
             "jwks_file": jwks_file,
@@ -158,6 +163,7 @@ class Authorization:
             "excluded_route_paths": excluded_route_paths,
         }
         self._issuer = issuer
+        self._jwks_url = jwks_url
         self._audit_arg = audit
         self._trust_token_scopes = trust_token_scopes
         self._roles_claim = roles_claim
@@ -760,6 +766,11 @@ class Authorization:
     def issuer(self) -> Optional[str]:
         """The pinned token issuer (the ``iss`` claim), or None when not pinned."""
         return self._issuer
+
+    @property
+    def jwks_url(self) -> Optional[str]:
+        """The JWKS endpoint tokens are verified against, or None when not configured here."""
+        return self._jwks_url
 
     @property
     def uses_roles(self) -> bool:
