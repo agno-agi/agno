@@ -2865,55 +2865,40 @@ class DynamoDb(BaseDb):
             return []
         names = {f"#{name}": name for name in ["date", "user_id"] + attributes}
         projection = ", ".join(f"#{name}" for name in attributes)
-        if user_id:
-            items = query_all_items(
-                self.client,
-                {
-                    "TableName": table_name,
-                    "IndexName": "user_id-date-index",
-                    "KeyConditionExpression": "#user_id = :user_id AND #date BETWEEN :start_date AND :end_date",
-                    "ExpressionAttributeNames": names,
-                    "ExpressionAttributeValues": {
-                        ":user_id": {"S": user_id},
-                        ":start_date": {"S": days[0].isoformat()},
-                        ":end_date": {"S": days[-1].isoformat()},
-                    },
-                    "ProjectionExpression": projection,
-                },
+        # Each day is read from its rows, strongly consistent: only the days whose total row counts anything, as a
+        # day that counts nothing has no rows
+        counted_days = {
+            row["date"]
+            for aggregation_period in ["daily", "monthly"]
+            for row in self._get_os_metrics_totals_rows(
+                totals_table_name,
+                aggregation_period,
+                days[0],
+                days[-1],
+                attributes=["date"] + list(OS_METRICS_SUM_COLUMNS) + list(OS_METRICS_COUNT_MAP_COLUMNS),
             )
-        else:
-            # A row with no owner is not in the user index, so each day is read from its rows: only the days whose
-            # total row counts anything, as a day that counts nothing has no rows
-            counted_days = {
-                row["date"]
-                for aggregation_period in ["daily", "monthly"]
-                for row in self._get_os_metrics_totals_rows(
-                    totals_table_name,
-                    aggregation_period,
-                    days[0],
-                    days[-1],
-                    attributes=["date"] + list(OS_METRICS_SUM_COLUMNS) + list(OS_METRICS_COUNT_MAP_COLUMNS),
-                )
-                if any(row.get(column) for column in list(OS_METRICS_SUM_COLUMNS) + list(OS_METRICS_COUNT_MAP_COLUMNS))
+            if any(row.get(column) for column in list(OS_METRICS_SUM_COLUMNS) + list(OS_METRICS_COUNT_MAP_COLUMNS))
+        }
+        items = []
+        for day in days:
+            if day not in counted_days:
+                continue
+            query_kwargs: Dict[str, Any] = {
+                "TableName": table_name,
+                "KeyConditionExpression": "#date = :date",
+                "ExpressionAttributeNames": names,
+                "ExpressionAttributeValues": {":date": {"S": day.isoformat()}},
+                "ProjectionExpression": projection,
+                "ConsistentRead": True,
             }
-            items = []
-            for day in days:
-                if day not in counted_days:
-                    continue
-                items.extend(
-                    query_all_items(
-                        self.client,
-                        {
-                            "TableName": table_name,
-                            "KeyConditionExpression": "#date = :date",
-                            "FilterExpression": "attribute_not_exists(#user_id)",
-                            "ExpressionAttributeNames": names,
-                            "ExpressionAttributeValues": {":date": {"S": day.isoformat()}},
-                            "ProjectionExpression": projection,
-                            "ConsistentRead": True,
-                        },
-                    )
-                )
+            if user_id:
+                # A local index reads strongly consistent like its table, and holds only the rows that have an owner
+                query_kwargs["IndexName"] = "date-user_id-index"
+                query_kwargs["KeyConditionExpression"] += " AND #user_id = :user_id"
+                query_kwargs["ExpressionAttributeValues"][":user_id"] = {"S": user_id}
+            else:
+                query_kwargs["FilterExpression"] = "attribute_not_exists(#user_id)"
+            items.extend(query_all_items(self.client, query_kwargs))
         return [deserialize_os_metrics_row(item) for item in items]
 
     def _get_os_metrics_totals_by_date(
@@ -2955,7 +2940,7 @@ class DynamoDb(BaseDb):
         attributes = ["aggregation_period", "date", "updated_at"] + fields
 
         # Every owner is read from the total rows, one owner from that owner's rows. Each query reads strongly
-        # consistent rows, except the user index, which follows a write a moment later
+        # consistent rows
         if user_id is None:
             rows = []
             if days:

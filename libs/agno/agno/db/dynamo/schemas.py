@@ -265,15 +265,14 @@ OS_METRICS_TABLE_SCHEMA = {
         {"AttributeName": "id", "AttributeType": "S"},
         {"AttributeName": "user_id", "AttributeType": "S"},
     ],
-    "GlobalSecondaryIndexes": [
+    "LocalSecondaryIndexes": [
         {
-            "IndexName": "user_id-date-index",
+            "IndexName": "date-user_id-index",
             "KeySchema": [
-                {"AttributeName": "user_id", "KeyType": "HASH"},
-                {"AttributeName": "date", "KeyType": "RANGE"},
+                {"AttributeName": "date", "KeyType": "HASH"},
+                {"AttributeName": "user_id", "KeyType": "RANGE"},
             ],
             "Projection": {"ProjectionType": "ALL"},
-            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
         },
     ],
     "BillingMode": "PROVISIONED",
