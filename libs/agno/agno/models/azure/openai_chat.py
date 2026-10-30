@@ -97,7 +97,7 @@ class AzureOpenAI(OpenAILike):
 
         if not (self.api_key or self.azure_ad_token or self.azure_ad_token_provider):
             raise ModelAuthenticationError(
-                message="Azure OpenAI authentication not configured. Please provide one of:"
+                message="Azure OpenAI authentication not configured. Please provide one of: "
                 "AZURE_OPENAI_API_KEY environment variable, azure_ad_token, or azure_ad_token_provider",
                 model_name=self.name,
             )
