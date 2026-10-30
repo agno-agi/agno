@@ -1,6 +1,8 @@
 """Unit tests for Skills orchestrator class."""
 
 import json
+import threading
+import time
 from pathlib import Path
 from typing import List
 
@@ -71,6 +73,96 @@ def test_reload_clears_and_reloads(sample_skill: Skill) -> None:
     skills.reload()
     assert "new-skill" in skills._skills
     assert "test-skill" not in skills._skills
+
+
+class FlakyLoader(SkillLoader):
+    """Loads successfully once, then fails validation on every later load."""
+
+    def __init__(self, skills: List[Skill]) -> None:
+        self._skills = skills
+        self.calls = 0
+
+    def load(self) -> List[Skill]:
+        self.calls += 1
+        if self.calls > 1:
+            raise SkillValidationError("Skill validation failed", errors=["broken frontmatter"])
+        return self._skills
+
+
+def test_reload_does_not_mutate_previous_mapping(sample_skill: Skill, minimal_skill: Skill) -> None:
+    """A mapping reference taken before reload() stays intact afterwards.
+
+    Readers hold a reference to the mapping for the duration of a run, so
+    reload() must publish a new mapping rather than empty the shared one.
+    """
+    loader = MockSkillLoader([sample_skill])
+    skills = Skills(loaders=[loader])
+
+    in_flight = skills._skills
+    loader._skills = [minimal_skill]
+
+    skills.reload()
+
+    assert "test-skill" in in_flight
+    assert "test-skill" not in skills._skills
+    assert "minimal-skill" in skills._skills
+
+
+def test_reload_keeps_existing_skills_on_failure(sample_skill: Skill) -> None:
+    """A failed reload leaves the previously loaded skills in place."""
+    loader = FlakyLoader([sample_skill])
+    skills = Skills(loaders=[loader])
+    assert skills.get_skill_names() == ["test-skill"]
+
+    with pytest.raises(SkillValidationError):
+        skills.reload()
+
+    assert skills.get_skill_names() == ["test-skill"]
+
+
+def test_concurrent_reload_and_read() -> None:
+    """Readers must never observe an empty or partially populated catalog."""
+    many_skills = [
+        Skill(
+            name=f"skill-{i}",
+            description=f"Skill number {i}",
+            instructions=f"Instructions for skill {i}",
+            source_path=f"/path/to/skill-{i}",
+        )
+        for i in range(200)
+    ]
+    skills = Skills(loaders=[MockSkillLoader(many_skills)])
+
+    errors: List[str] = []
+    stop = threading.Event()
+
+    def reader() -> None:
+        while not stop.is_set():
+            try:
+                snippet = skills.get_system_prompt_snippet()
+                if "<name>skill-0</name>" not in snippet:
+                    errors.append("reader observed an incomplete catalog")
+                    stop.set()
+            except Exception as e:
+                errors.append(f"{type(e).__name__}: {e}")
+                stop.set()
+
+    def writer() -> None:
+        while not stop.is_set():
+            skills.reload()
+
+    threads = [threading.Thread(target=reader) for _ in range(4)]
+    threads += [threading.Thread(target=writer) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+
+    # Let the threads race for a fixed window, then wind them down.
+    time.sleep(0.3)
+    stop.set()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert errors == []
 
 
 # --- Retrieval Tests ---
