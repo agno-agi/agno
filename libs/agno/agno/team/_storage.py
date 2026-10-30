@@ -61,6 +61,7 @@ from agno.utils.log import (
     log_warning,
 )
 from agno.utils.merge_dict import merge_dictionaries
+from agno.utils.models.json_schema_model import rehydrate_inline_output_schema, serialize_output_schema
 from agno.utils.string import generate_id_from_name
 
 # ---------------------------------------------------------------------------
@@ -707,10 +708,9 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         elif isinstance(team.input_schema, dict):
             config["input_schema"] = team.input_schema
     if team.output_schema is not None:
-        if isinstance(team.output_schema, type) and issubclass(team.output_schema, BaseModel):
-            config["output_schema"] = team.output_schema.__name__
-        elif isinstance(team.output_schema, dict):
-            config["output_schema"] = team.output_schema
+        stored_schema = serialize_output_schema(team.output_schema)
+        if stored_schema is not None:
+            config["output_schema"] = stored_schema
 
     # --- Parser and output settings ---
     if team.parser_model is not None:
@@ -1252,6 +1252,8 @@ def from_dict(
             log_warning(f"Input schema {config['input_schema']} not found in registry, skipping.")
             del config["input_schema"]
 
+    if "output_schema" in config and isinstance(config["output_schema"], dict):
+        rehydrate_inline_output_schema(config, strict, component_label)
     if "output_schema" in config and isinstance(config["output_schema"], str):
         schema_cls = registry.get_schema(config["output_schema"]) if registry else None
         if schema_cls:

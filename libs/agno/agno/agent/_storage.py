@@ -44,6 +44,7 @@ from agno.utils.agent import (
 from agno.utils.db_fallback import require_db_fallback_matches
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.merge_dict import merge_dictionaries
+from agno.utils.models.json_schema_model import rehydrate_inline_output_schema, serialize_output_schema
 from agno.utils.string import generate_id_from_name
 
 # MemoryManager.__init__ (agno/memory/manager.py) auto-generates
@@ -1142,10 +1143,9 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         elif isinstance(agent.input_schema, dict):
             config["input_schema"] = agent.input_schema
     if agent.output_schema is not None:
-        if isinstance(agent.output_schema, type) and issubclass(agent.output_schema, BaseModel):
-            config["output_schema"] = agent.output_schema.__name__
-        elif isinstance(agent.output_schema, dict):
-            config["output_schema"] = agent.output_schema
+        stored_schema = serialize_output_schema(agent.output_schema)
+        if stored_schema is not None:
+            config["output_schema"] = stored_schema
 
     # --- Parser and output settings ---
     if agent.parser_model is not None:
@@ -1374,6 +1374,8 @@ def from_dict(
             log_warning(f"Input schema {config['input_schema']} not found in registry, skipping.")
             del config["input_schema"]
 
+    if "output_schema" in config and isinstance(config["output_schema"], dict):
+        rehydrate_inline_output_schema(config, strict, component_label)
     if "output_schema" in config and isinstance(config["output_schema"], str):
         schema_cls = registry.get_schema(config["output_schema"]) if registry else None
         if schema_cls:

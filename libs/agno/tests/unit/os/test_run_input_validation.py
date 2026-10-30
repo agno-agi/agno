@@ -106,6 +106,26 @@ def test_valid_object_schema_preserves_required_field(parser_client, raw_schema)
     assert response.json()["schema"]["required"] == ["answer"]
 
 
+def test_unsupported_schema_is_a_422_with_the_reason(parser_client):
+    schema = {"type": "object", "properties": {"s": {"type": "string", "pattern": "(?=a)a"}}, "required": ["s"]}
+    response = parser_client.post("/parse", data={"output_schema": json.dumps(schema)})
+    assert response.status_code == 422
+    assert "at properties/s: pattern" in response.json()["detail"]
+
+
+def test_converted_schema_keeps_enum_and_description(parser_client):
+    schema = {
+        "type": "object",
+        "properties": {"level": {"type": "string", "enum": ["low", "high"], "description": "How bad"}},
+        "required": ["level"],
+    }
+    response = parser_client.post("/parse", data={"output_schema": json.dumps(schema)})
+    assert response.status_code == 200
+    level = response.json()["schema"]["properties"]["level"]
+    assert level["enum"] == ["low", "high"]
+    assert level["description"] == "How bad"
+
+
 def test_bad_media_item_does_not_silently_disappear(parser_client):
     response = parser_client.post("/parse", data={"images": '[{"url":123}]'})
     assert response.status_code == 422

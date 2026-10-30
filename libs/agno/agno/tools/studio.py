@@ -87,6 +87,13 @@ from agno.tools.studio_schema import WorkflowStepSpec, error_result, ok_result
 from agno.tools.toolkit import Toolkit
 from agno.utils.live_sequence import LiveSequence
 from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.models.json_schema_model import UnsupportedJsonSchemaError, json_schema_to_model
+from agno.utils.models.schema_utils import (
+    is_object_schema,
+    json_schema_error,
+    json_schema_response_format,
+    unwrap_json_schema_response_format,
+)
 from agno.utils.string import generate_component_id_from_name, validate_component_id
 
 if TYPE_CHECKING:
@@ -1740,11 +1747,17 @@ class StudioTools(Toolkit):
                 view["learning"] = True
             schema = config.get("output_schema")
             # A registry-referenced schema is stored as its class name (a
-            # string); an inline JSON schema stays a dict and has no name.
+            # string). An inline one is shown as plain JSON Schema only when
+            # rewrapping reproduces the stored format, so passing the view back
+            # to an edit never drops its name or strict setting.
             if isinstance(schema, str) and schema:
                 view["output_schema_name"] = schema
-            elif isinstance(schema, dict) and schema.get("name"):
-                view["output_schema_name"] = schema.get("name")
+            elif isinstance(schema, dict):
+                inline = unwrap_json_schema_response_format(schema)
+                if inline is not None and json_schema_response_format(inline.schema) == schema:
+                    view["output_schema"] = inline.schema
+                else:
+                    view["output_schema"] = schema
             reasoning_model = config.get("reasoning_model")
             if isinstance(reasoning_model, dict) and reasoning_model.get("id"):
                 view["reasoning_model_id"] = reasoning_model.get("id")
@@ -2154,6 +2167,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: Optional[bool] = None,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        output_schema: Optional[dict] = None,
         reasoning_model_id: Optional[str] = None,
         learning_name: Optional[str] = None,
         enable_learning: Optional[bool] = None,
@@ -2223,6 +2237,17 @@ class StudioTools(Toolkit):
                 if err is not None:
                     return err
                 component.output_schema = schema
+            replaced_keys.add("output_schema")
+        if output_schema is not None:
+            if output_schema_name:
+                return error_result("invalid_request", "pass output_schema or output_schema_name, not both")
+            if not output_schema:
+                component.output_schema = None
+            else:
+                inline, schema_err = _inline_output_schema(output_schema)
+                if schema_err is not None:
+                    return schema_err
+                component.output_schema = inline
             replaced_keys.add("output_schema")
         if reasoning_model_id is not None:
             if reasoning_model_id == "":
@@ -2340,6 +2365,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: bool = True,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        output_schema: Optional[dict] = None,
         reasoning_model_id: Optional[str] = None,
         learning_name: Optional[str] = None,
         enable_learning: Optional[bool] = None,
@@ -2373,6 +2399,7 @@ class StudioTools(Toolkit):
             add_datetime_to_context (bool): Show the agent the current date and time. Default True.
             knowledge_name (Optional[str]): Exact name from list_knowledge.
             output_schema_name (Optional[str]): Exact name from list_schemas.
+            output_schema (Optional[Dict]): Inline JSON Schema, object root; not with output_schema_name.
             reasoning_model_id (Optional[str]): Exact model id used for reasoning.
             learning_name (Optional[str]): Exact name from list_learning; wires the
                 agent to that shared learning machine.
@@ -2424,6 +2451,7 @@ class StudioTools(Toolkit):
                 tool_call_limit=tool_call_limit,
                 knowledge_name=knowledge_name,
                 output_schema_name=output_schema_name,
+                output_schema=output_schema,
                 reasoning_model_id=reasoning_model_id,
                 learning_name=learning_name,
                 enable_learning=enable_learning,
@@ -2460,6 +2488,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: bool = True,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        output_schema: Optional[dict] = None,
         learning_name: Optional[str] = None,
         enable_learning: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -2491,6 +2520,7 @@ class StudioTools(Toolkit):
             add_datetime_to_context (bool): Show the current date and time. Default True.
             knowledge_name (Optional[str]): Exact name from list_knowledge.
             output_schema_name (Optional[str]): Exact name from list_schemas.
+            output_schema (Optional[Dict]): Inline JSON Schema, object root; not with output_schema_name.
             learning_name (Optional[str]): Exact name from list_learning; wires the
                 team to that shared learning machine.
             enable_learning (Optional[bool]): Give the team the default learning
@@ -2564,6 +2594,7 @@ class StudioTools(Toolkit):
                 additional_context=additional_context,
                 knowledge_name=knowledge_name,
                 output_schema_name=output_schema_name,
+                output_schema=output_schema,
                 learning_name=learning_name,
                 enable_learning=enable_learning,
                 metadata=metadata,
@@ -2959,6 +2990,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: Optional[bool] = None,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        output_schema: Optional[dict] = None,
         reasoning_model_id: Optional[str] = None,
         learning_name: Optional[str] = None,
         enable_learning: Optional[bool] = None,
@@ -2993,6 +3025,7 @@ class StudioTools(Toolkit):
             add_datetime_to_context (Optional[bool]): Date and time in context.
             knowledge_name (Optional[str]): Exact name from list_knowledge; "" detaches.
             output_schema_name (Optional[str]): Exact name from list_schemas; "" detaches.
+            output_schema (Optional[Dict]): Inline JSON Schema, object root; {} detaches.
             reasoning_model_id (Optional[str]): Reasoning model id; "" detaches.
             learning_name (Optional[str]): Exact name from list_learning; "" detaches.
             enable_learning (Optional[bool]): True gives the default learning machine
@@ -3034,6 +3067,7 @@ class StudioTools(Toolkit):
                 add_datetime_to_context=add_datetime_to_context,
                 knowledge_name=knowledge_name,
                 output_schema_name=output_schema_name,
+                output_schema=output_schema,
                 reasoning_model_id=reasoning_model_id,
                 learning_name=learning_name,
                 enable_learning=enable_learning,
@@ -3063,6 +3097,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: Optional[bool] = None,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        output_schema: Optional[dict] = None,
         learning_name: Optional[str] = None,
         enable_learning: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -3090,6 +3125,7 @@ class StudioTools(Toolkit):
             add_datetime_to_context (Optional[bool]): Date and time in context.
             knowledge_name (Optional[str]): Exact name from list_knowledge; "" detaches.
             output_schema_name (Optional[str]): Exact name from list_schemas; "" detaches.
+            output_schema (Optional[Dict]): Inline JSON Schema, object root; {} detaches.
             learning_name (Optional[str]): Exact name from list_learning; "" detaches.
             enable_learning (Optional[bool]): True gives the default learning machine
                 unless one is already wired (kept, with a warning); False turns
@@ -3160,6 +3196,7 @@ class StudioTools(Toolkit):
                 add_datetime_to_context=add_datetime_to_context,
                 knowledge_name=knowledge_name,
                 output_schema_name=output_schema_name,
+                output_schema=output_schema,
                 learning_name=learning_name,
                 enable_learning=enable_learning,
                 metadata=metadata,
@@ -4093,6 +4130,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: bool = True,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        output_schema: Optional[dict] = None,
         reasoning_model_id: Optional[str] = None,
         learning_name: Optional[str] = None,
         enable_learning: Optional[bool] = None,
@@ -4119,6 +4157,7 @@ class StudioTools(Toolkit):
             add_datetime_to_context=add_datetime_to_context,
             knowledge_name=knowledge_name,
             output_schema_name=output_schema_name,
+            output_schema=output_schema,
             reasoning_model_id=reasoning_model_id,
             learning_name=learning_name,
             enable_learning=enable_learning,
@@ -4145,6 +4184,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: bool = True,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        output_schema: Optional[dict] = None,
         learning_name: Optional[str] = None,
         enable_learning: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -4169,6 +4209,7 @@ class StudioTools(Toolkit):
             add_datetime_to_context=add_datetime_to_context,
             knowledge_name=knowledge_name,
             output_schema_name=output_schema_name,
+            output_schema=output_schema,
             learning_name=learning_name,
             enable_learning=enable_learning,
             metadata=metadata,
@@ -4217,6 +4258,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: Optional[bool] = None,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        output_schema: Optional[dict] = None,
         reasoning_model_id: Optional[str] = None,
         learning_name: Optional[str] = None,
         enable_learning: Optional[bool] = None,
@@ -4244,6 +4286,7 @@ class StudioTools(Toolkit):
             add_datetime_to_context=add_datetime_to_context,
             knowledge_name=knowledge_name,
             output_schema_name=output_schema_name,
+            output_schema=output_schema,
             reasoning_model_id=reasoning_model_id,
             learning_name=learning_name,
             enable_learning=enable_learning,
@@ -4271,6 +4314,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: Optional[bool] = None,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        output_schema: Optional[dict] = None,
         learning_name: Optional[str] = None,
         enable_learning: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -4296,6 +4340,7 @@ class StudioTools(Toolkit):
             add_datetime_to_context=add_datetime_to_context,
             knowledge_name=knowledge_name,
             output_schema_name=output_schema_name,
+            output_schema=output_schema,
             learning_name=learning_name,
             enable_learning=enable_learning,
             metadata=metadata,
@@ -5720,6 +5765,33 @@ def _component_type(component: Component) -> Any:
 # declaration it never touched -- and quietly lift the dispatch refusal that
 # declaration causes -- so edits carry them forward verbatim.
 _UNRECONSTRUCTED_KEYS = ("reasoning_model", "parser_model", "output_model")
+
+
+def _inline_output_schema(output_schema: Dict[str, Any]) -> tuple:
+    """(canonical output_schema dict, error) for an inline JSON Schema; an
+    already-wrapped response format is unwrapped and rewrapped canonically."""
+    wrapped = unwrap_json_schema_response_format(output_schema)
+    schema = wrapped.schema if wrapped is not None else output_schema
+    if not is_object_schema(schema):
+        return None, error_result(
+            "invalid_request",
+            f"output_schema must be a JSON Schema whose root type is object (got type {schema.get('type')!r})",
+        )
+    try:
+        schema_error = json_schema_error(schema)
+    except ImportError:
+        # jsonschema ships with the os extra; without it only the object root is checked
+        schema_error = None
+    if schema_error is not None:
+        return None, error_result("invalid_request", f"output_schema is not a valid JSON Schema: {schema_error}")
+    try:
+        # Stored agents load the schema as a Pydantic model; refuse one that cannot become one
+        json_schema_to_model(schema, name=wrapped.name if wrapped is not None else None)
+    except UnsupportedJsonSchemaError as e:
+        return None, error_result("invalid_request", f"output_schema is not supported: {e}")
+    if wrapped is None:
+        return json_schema_response_format(schema), None
+    return json_schema_response_format(schema, name=wrapped.name, strict=wrapped.strict), None
 
 
 def _shared_machine_disclosures(learning_name: str, machine: Any, component: Any) -> List[str]:

@@ -17,6 +17,7 @@ from importlib.util import find_spec
 from typing import Any, Dict
 
 import pytest
+from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.agent._tools import parse_tools
@@ -1976,6 +1977,234 @@ class TestCoverageFields:
 
         _data(studio_refs.edit_agent("shaped", output_schema_name=""))
         assert "output_schema_name" not in _data(studio_refs.get_component("shaped"))
+
+    INLINE_SCHEMA = {
+        "title": "Weather Report",
+        "type": "object",
+        "properties": {"city": {"type": "string"}, "temp_c": {"type": "number"}},
+        "required": ["city", "temp_c"],
+    }
+
+    def test_inline_output_schema_is_stored_canonically_and_read_back_plain(self, studio_refs, db):
+        _data(
+            studio_refs.create_agent(
+                name="inline", instructions="i", model_id="gpt-5.4", output_schema=self.INLINE_SCHEMA
+            )
+        )
+        stored = db.get_config(component_id="inline", version=1)["config"]["output_schema"]
+        assert stored == {
+            "type": "json_schema",
+            "json_schema": {"name": "Weather_Report", "schema": self.INLINE_SCHEMA},
+        }
+        got = _data(studio_refs.get_component("inline"))
+        assert got["output_schema"] == self.INLINE_SCHEMA
+        assert "output_schema_name" not in got
+
+    def test_inline_output_schema_rehydrates_without_registration(self, studio_refs, db, registry):
+        from agno.os.utils import get_agent_by_id
+
+        _data(
+            studio_refs.create_agent(
+                name="inline", instructions="i", model_id="gpt-5.4", output_schema=self.INLINE_SCHEMA, publish=True
+            )
+        )
+        agent = get_agent_by_id("inline", agents=None, db=db, registry=registry)
+        model = agent.output_schema
+        assert isinstance(model, type) and issubclass(model, BaseModel)
+        assert model.model_validate({"city": "Paris", "temp_c": 18.5}).city == "Paris"
+        assert model.model_json_schema()["title"] == "Weather Report"
+
+    def test_edit_round_trips_a_loaded_inline_schema_unchanged(self, studio_refs, db):
+        wrapped = {
+            "type": "json_schema",
+            "json_schema": {"name": "Weather", "schema": self.INLINE_SCHEMA, "strict": True},
+        }
+        _data(
+            studio_refs.create_agent(
+                name="kept", instructions="i", model_id="gpt-5.4", output_schema=wrapped, publish=True
+            )
+        )
+        _data(studio_refs.edit_agent("kept", description="edited", publish=True))
+        assert db.get_config(component_id="kept", version=2)["config"]["output_schema"] == wrapped
+
+    def test_team_inline_schema_loads_as_a_model(self, studio_refs, db, registry):
+        from agno.os.utils import get_team_by_id
+
+        _data(studio_refs.create_agent(name="member", instructions="i", model_id="gpt-5.4", publish=True))
+        _data(
+            studio_refs.create_team(
+                name="crew",
+                instructions="i",
+                member_ids=["member"],
+                model_id="gpt-5.4",
+                output_schema=self.INLINE_SCHEMA,
+                publish=True,
+            )
+        )
+        team = get_team_by_id("crew", teams=None, db=db, registry=registry)
+        assert issubclass(team.output_schema, BaseModel)
+
+    @pytest.mark.parametrize(
+        "schema, reason",
+        [
+            ({"type": "object", "properties": {"a": {"allOf": [{"type": "string"}, {"maxLength": 3}]}}}, "allOf"),
+            ({"type": "object", "properties": {"a": {"type": "string"}}, "required": ["b"]}, "required lists"),
+            ({"type": "object", "properties": {"_a": {"type": "string"}}}, "property names"),
+        ],
+        ids=["allOf", "required-missing", "underscore-name"],
+    )
+    def test_unrepresentable_schema_is_refused_and_nothing_is_stored(self, studio_refs, db, schema, reason):
+        error = _error(studio_refs.create_agent(name="bad", instructions="i", model_id="gpt-5.4", output_schema=schema))
+        assert error["code"] == "invalid_request"
+        assert reason in error["message"]
+        assert db.get_config(component_id="bad", version=1) is None
+
+    def test_inline_output_schema_replaces_and_detaches(self, studio_refs):
+        _data(
+            studio_refs.create_agent(name="inline", instructions="i", model_id="gpt-5.4", output_schema_name="Report")
+        )
+        _data(studio_refs.edit_agent("inline", output_schema=self.INLINE_SCHEMA))
+        got = _data(studio_refs.get_component("inline"))
+        assert got["output_schema"] == self.INLINE_SCHEMA
+        assert "output_schema_name" not in got
+
+        _data(studio_refs.edit_agent("inline", output_schema={}))
+        assert "output_schema" not in _data(studio_refs.get_component("inline"))
+
+    def test_output_schema_name_detach_clears_an_inline_schema(self, studio_refs):
+        _data(
+            studio_refs.create_agent(
+                name="inline", instructions="i", model_id="gpt-5.4", output_schema=self.INLINE_SCHEMA
+            )
+        )
+        _data(studio_refs.edit_agent("inline", output_schema_name=""))
+        assert "output_schema" not in _data(studio_refs.get_component("inline"))
+
+    def test_wrapped_inline_schema_is_normalized(self, studio_refs, db):
+        flat = {"type": "json_schema", "name": "Weather", "schema": self.INLINE_SCHEMA}
+        _data(studio_refs.create_agent(name="inline", instructions="i", model_id="gpt-5.4", output_schema=flat))
+        stored = db.get_config(component_id="inline", version=1)["config"]["output_schema"]
+        assert stored == {"type": "json_schema", "json_schema": {"name": "Weather", "schema": self.INLINE_SCHEMA}}
+
+    def test_wrapped_inline_schema_keeps_strict(self, studio_refs, db):
+        wrapped = {
+            "type": "json_schema",
+            "json_schema": {"name": "Weather", "schema": self.INLINE_SCHEMA, "strict": True},
+        }
+        _data(studio_refs.create_agent(name="strict", instructions="i", model_id="gpt-5.4", output_schema=wrapped))
+        stored = db.get_config(component_id="strict", version=1)["config"]["output_schema"]
+        assert stored == wrapped
+
+    @pytest.mark.parametrize(
+        "wrapper",
+        [
+            {"strict": True},
+            {"name": "Untitled"},
+        ],
+        ids=["strict", "name-without-title"],
+    )
+    def test_read_edit_round_trip_keeps_the_stored_format(self, studio_refs, db, wrapper):
+        schema = {k: v for k, v in self.INLINE_SCHEMA.items() if k != "title"}
+        wrapped = {"type": "json_schema", "json_schema": {"name": "Weather", "schema": schema, **wrapper}}
+        _data(studio_refs.create_agent(name="kept", instructions="i", model_id="gpt-5.4", output_schema=wrapped))
+        stored = db.get_config(component_id="kept", version=1)["config"]["output_schema"]
+
+        shown = _data(studio_refs.get_component("kept"))["output_schema"]
+        _data(studio_refs.edit_agent("kept", output_schema=shown))
+        assert db.get_config(component_id="kept", version=2)["config"]["output_schema"] == stored
+
+    def test_inline_output_schema_on_a_team(self, studio_refs, db):
+        _data(studio_refs.create_agent(name="member", instructions="i", model_id="gpt-5.4"))
+        _data(
+            studio_refs.create_team(
+                name="crew",
+                instructions="i",
+                member_ids=["member"],
+                model_id="gpt-5.4",
+                output_schema=self.INLINE_SCHEMA,
+            )
+        )
+        assert _data(studio_refs.get_component("crew"))["output_schema"] == self.INLINE_SCHEMA
+
+    def test_inline_output_schema_and_name_together_is_invalid(self, studio_refs):
+        error = _error(
+            studio_refs.create_agent(
+                name="x",
+                instructions="i",
+                model_id="gpt-5.4",
+                output_schema=self.INLINE_SCHEMA,
+                output_schema_name="Report",
+            )
+        )
+        assert error["code"] == "invalid_request"
+
+    def test_inline_output_schema_must_have_an_object_root(self, studio_refs):
+        error = _error(
+            studio_refs.create_agent(
+                name="x", instructions="i", model_id="gpt-5.4", output_schema={"type": "array", "items": {}}
+            )
+        )
+        assert error["code"] == "invalid_request"
+
+    @pytest.mark.parametrize(
+        "schema, location",
+        [
+            ({"type": "object", "properties": {"a": {"type": "strin"}}}, "properties/a/type"),
+            ({"type": "object", "properties": "nope"}, "properties"),
+        ],
+    )
+    def test_invalid_json_schema_is_refused_and_nothing_is_stored(self, studio_refs, db, schema, location):
+        pytest.importorskip("jsonschema")
+        error = _error(studio_refs.create_agent(name="bad", instructions="i", model_id="gpt-5.4", output_schema=schema))
+        assert error["code"] == "invalid_request"
+        assert location in error["message"]
+        assert db.get_config(component_id="bad", version=1) is None
+
+    def test_invalid_json_schema_edit_keeps_the_stored_version(self, studio_refs):
+        pytest.importorskip("jsonschema")
+        _data(
+            studio_refs.create_agent(
+                name="inline", instructions="i", model_id="gpt-5.4", output_schema=self.INLINE_SCHEMA
+            )
+        )
+        bad = {"type": "object", "properties": {"a": {"type": "strin"}}}
+        assert _error(studio_refs.edit_agent("inline", output_schema=bad))["code"] == "invalid_request"
+        assert _data(studio_refs.get_component("inline"))["output_schema"] == self.INLINE_SCHEMA
+
+    def test_nullable_type_list_is_valid(self, studio_refs):
+        schema = {"type": "object", "properties": {"nickname": {"type": ["string", "null"]}}}
+        _data(studio_refs.create_agent(name="nullable", instructions="i", model_id="gpt-5.4", output_schema=schema))
+        assert _data(studio_refs.get_component("nullable"))["output_schema"] == schema
+
+    def test_without_jsonschema_the_converter_still_refuses(self, studio_refs, monkeypatch):
+        import sys
+
+        monkeypatch.setitem(sys.modules, "jsonschema", None)
+        monkeypatch.setitem(sys.modules, "jsonschema.exceptions", None)
+        monkeypatch.setitem(sys.modules, "jsonschema.validators", None)
+        schema = {"type": "object", "properties": {"a": {"type": "strin"}}}
+        error = _error(
+            studio_refs.create_agent(name="unchecked", instructions="i", model_id="gpt-5.4", output_schema=schema)
+        )
+        assert "unknown type 'strin'" in error["message"]
+
+    def test_inline_output_schema_parameter_accepts_any_json_schema(self, studio_refs):
+        for name in ("create_agent", "edit_agent", "create_team", "edit_team"):
+            function = studio_refs.functions[name]
+            function.process_entrypoint()
+            parameter = function.to_dict()["parameters"]["properties"]["output_schema"]
+            assert parameter["type"] == "object"
+            assert parameter["additionalProperties"] is True
+
+    def test_async_create_forwards_inline_output_schema(self, studio_refs):
+        _data(
+            asyncio.run(
+                studio_refs.acreate_agent(
+                    name="inline", instructions="i", model_id="gpt-5.4", output_schema=self.INLINE_SCHEMA
+                )
+            )
+        )
+        assert _data(studio_refs.get_component("inline"))["output_schema"] == self.INLINE_SCHEMA
 
     def test_reasoning_model_attaches_and_detaches(self, studio_refs):
         _data(

@@ -3,7 +3,8 @@ Utility functions for handling JSON schemas across different model providers.
 This module provides model-agnostic schema transformations and validations.
 """
 
-from typing import Any, Dict, Type
+import re
+from typing import Any, Dict, NamedTuple, Optional, Type
 
 from pydantic import BaseModel
 
@@ -151,3 +152,74 @@ def get_response_schema_for_provider(output_schema: Type[BaseModel], provider: s
 
     # Normalize for the specific provider
     return normalize_schema_for_provider(base_schema, provider)
+
+
+class InlineJsonSchema(NamedTuple):
+    name: str
+    schema: Dict[str, Any]
+    strict: Optional[bool]
+
+
+def is_object_schema(schema: Dict[str, Any]) -> bool:
+    """True when a JSON Schema describes an object at its root, which every
+    structured-output provider requires."""
+    root_type = schema.get("type")
+    return root_type == "object" or (root_type is None and isinstance(schema.get("properties"), dict))
+
+
+def json_schema_error(schema: Dict[str, Any]) -> Optional[str]:
+    """Why ``schema`` fails the JSON Schema (2020-12) meta-schema, or None when it passes.
+
+    Raises ImportError when jsonschema is not installed; callers decide whether that is fatal.
+    """
+    from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+    from jsonschema.exceptions import SchemaError  # type: ignore[import-untyped]
+
+    try:
+        Draft202012Validator.check_schema(schema)
+    except SchemaError as e:
+        location = "/".join(str(part) for part in e.path)
+        return f"{e.message} (at {location})" if location else e.message
+    except RecursionError:
+        return "schema is nested too deeply"
+    return None
+
+
+def json_schema_response_format(
+    schema: Dict[str, Any], name: Optional[str] = None, strict: Optional[bool] = None
+) -> Dict[str, Any]:
+    """Wrap a plain JSON Schema in the canonical dict output_schema shape:
+    {"type": "json_schema", "json_schema": {"name": ..., "schema": ...[, "strict": ...]}}.
+
+    The name is the given one, else the schema's title, else "output", trimmed to
+    the characters and length OpenAI accepts for a response format name. strict is
+    included only when given.
+    """
+    raw_name = name or schema.get("title") or "output"
+    safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", str(raw_name))[:64] or "output"
+    json_schema: Dict[str, Any] = {"name": safe_name, "schema": schema}
+    if strict is not None:
+        json_schema["strict"] = strict
+    return {"type": "json_schema", "json_schema": json_schema}
+
+
+def unwrap_json_schema_response_format(response_format: Any) -> Optional[InlineJsonSchema]:
+    """Read a dict output_schema written as a JSON Schema response format.
+
+    Accepts the canonical nested shape ({"type": "json_schema", "json_schema": {...}})
+    and the flat one OpenAI Responses and Anthropic use ({"type": "json_schema",
+    "schema": {...}}). Returns None for any other dict, which providers pass through.
+    """
+    if not isinstance(response_format, dict) or response_format.get("type") != "json_schema":
+        return None
+    nested = response_format.get("json_schema")
+    source = nested if isinstance(nested, dict) else response_format
+    schema = source.get("schema")
+    if not isinstance(schema, dict):
+        return None
+    strict = source.get("strict")
+    return InlineJsonSchema(
+        name=str(source.get("name") or "output"),
+        schema=schema,
+        strict=strict if isinstance(strict, bool) else None,
+    )

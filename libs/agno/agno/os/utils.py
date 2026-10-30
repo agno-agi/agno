@@ -1,11 +1,11 @@
 import json
 from datetime import date, datetime, time, timezone
 from os import getenv
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.routing import APIRoute, APIRouter
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel
 from starlette.middleware.cors import CORSMiddleware
 
 from agno.agent import Agent, AgentFactory, RemoteAgent
@@ -34,6 +34,8 @@ from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import RemoteTeam, Team, TeamFactory
 from agno.tools import Function, Toolkit
 from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.models.json_schema_model import UnsupportedJsonSchemaError, json_schema_to_model
+from agno.utils.models.schema_utils import json_schema_error
 from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
 
 
@@ -126,16 +128,11 @@ def _check_object_json_schema(schema: Dict[str, Any]) -> None:
     if schema.get("type") != "object":
         raise HTTPException(status_code=422, detail='Invalid output_schema: root must declare "type": "object"')
     try:
-        from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
-        from jsonschema.exceptions import SchemaError  # type: ignore[import-untyped]
+        error = json_schema_error(schema)
     except ImportError:
         raise ImportError("`jsonschema` not installed. Please install using `pip install jsonschema`")
-    try:
-        Draft202012Validator.check_schema(schema)
-    except SchemaError as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid output_schema: {exc.message}") from exc
-    except RecursionError as exc:
-        raise HTTPException(status_code=422, detail="Invalid output_schema: schema is nested too deeply") from exc
+    if error is not None:
+        raise HTTPException(status_code=422, detail=f"Invalid output_schema: {error}")
 
 
 async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
@@ -301,7 +298,9 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
             if use_json_schema:
                 kwargs["output_schema"] = schema_dict
             else:
-                kwargs["output_schema"] = json_schema_to_pydantic_model(schema_dict)
+                kwargs["output_schema"] = json_schema_to_model(schema_dict)
+        except UnsupportedJsonSchemaError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid output_schema: {exc}") from exc
         except (TypeError, ValueError, AttributeError, RecursionError) as exc:
             raise HTTPException(
                 status_code=422, detail="Invalid output_schema: could not construct output model"
@@ -2667,120 +2666,8 @@ def collect_components_from_os(
             log_debug(f"Registry auto-population: skipped workflow due to error: {e}")
 
 
-def _get_python_type_from_json_schema(field_schema: Dict[str, Any], field_name: str = "NestedModel") -> Type:
-    """Map JSON schema type to Python type with recursive handling.
-
-    Args:
-        field_schema: JSON schema dictionary for a single field
-        field_name: Name of the field (used for nested model naming)
-
-    Returns:
-        Python type corresponding to the JSON schema type
-    """
-    if not isinstance(field_schema, dict):
-        return Any
-
-    json_type = field_schema.get("type")
-
-    # Handle basic types
-    if json_type == "string":
-        return str
-    elif json_type == "integer":
-        return int
-    elif json_type == "number":
-        return float
-    elif json_type == "boolean":
-        return bool
-    elif json_type == "null":
-        return type(None)
-    elif json_type == "array":
-        # Handle arrays with item type specification
-        items_schema = field_schema.get("items")
-        if items_schema and isinstance(items_schema, dict):
-            item_type = _get_python_type_from_json_schema(items_schema, f"{field_name}Item")
-            return List[item_type]  # type: ignore
-        else:
-            # No item type specified - use generic list
-            return List[Any]
-    elif json_type == "object":
-        # Recursively create nested Pydantic model
-        nested_properties = field_schema.get("properties", {})
-        nested_required = field_schema.get("required", [])
-        nested_title = field_schema.get("title", field_name)
-
-        # Build field definitions for nested model
-        nested_fields = {}
-        for nested_field_name, nested_field_schema in nested_properties.items():
-            nested_field_type = _get_python_type_from_json_schema(nested_field_schema, nested_field_name)
-
-            if nested_field_name in nested_required:
-                nested_fields[nested_field_name] = (nested_field_type, ...)
-            else:
-                nested_fields[nested_field_name] = (Optional[nested_field_type], None)  # type: ignore[assignment]
-
-        # Create nested model if it has fields
-        if nested_fields:
-            return create_model(nested_title, **nested_fields)  # type: ignore
-        else:
-            # Empty object schema - use generic dict
-            return Dict[str, Any]
-    else:
-        # Unknown or unspecified type - fallback to Any
-        if json_type:
-            logger.warning(f"Unknown JSON schema type '{json_type}' for field '{field_name}', using Any")
-        return Any  # type: ignore
-
-
-def json_schema_to_pydantic_model(schema: Dict[str, Any]) -> Type[BaseModel]:
-    """Convert a JSON schema dictionary to a Pydantic BaseModel class.
-
-    This function dynamically creates a Pydantic model from a JSON schema specification,
-    handling nested objects, arrays, and optional fields.
-
-    Args:
-        schema: JSON schema dictionary with 'properties', 'required', 'type', etc.
-
-    Returns:
-        Dynamically created Pydantic BaseModel class
-    """
-    import copy
-
-    # Deep copy to avoid modifying the original schema
-    schema = copy.deepcopy(schema)
-
-    # Extract schema components
-    model_name = schema.get("title", "DynamicModel")
-    properties = schema.get("properties", {})
-    required_fields = schema.get("required", [])
-
-    # Validate schema has properties
-    if not properties:
-        logger.warning(f"JSON schema '{model_name}' has no properties, creating empty model")
-
-    # Build field definitions for create_model
-    field_definitions = {}
-    for field_name, field_schema in properties.items():
-        try:
-            field_type = _get_python_type_from_json_schema(field_schema, field_name)
-
-            if field_name in required_fields:
-                # Required field: (type, ...)
-                field_definitions[field_name] = (field_type, ...)
-            else:
-                # Optional field: (Optional[type], None)
-                field_definitions[field_name] = (Optional[field_type], None)  # type: ignore[assignment]
-        except Exception as e:
-            log_warning(f"Failed to process field '{field_name}' in schema '{model_name}': {str(e)}")
-            # Skip problematic fields rather than failing entirely
-            continue
-
-    # Create and return the dynamic model
-    try:
-        return create_model(model_name, **field_definitions)  # type: ignore
-    except Exception:
-        logger.exception(f"Failed to create dynamic model '{model_name}'")
-        # Return a minimal model as fallback
-        return create_model(model_name)
+# Kept importable for callers of the previous converter
+json_schema_to_pydantic_model = json_schema_to_model
 
 
 def setup_tracing_for_os(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> None:
