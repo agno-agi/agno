@@ -262,3 +262,59 @@ def test_replayed_function_call_keeps_item_id_on_non_reasoning_model():
         ]
     )
     assert formatted[1]["id"] == "fc_1"
+
+
+_WEATHER_TOOL_CALL = {
+    "id": "fc_1",
+    "call_id": "call_1",
+    "type": "function",
+    "function": {"name": "get_weather", "arguments": "{}"},
+}
+
+
+def test_replayed_assistant_text_is_kept_ahead_of_its_function_call():
+    model = OpenAIResponses(id="gpt-4.1-mini")
+    formatted = model._format_messages(
+        messages=[
+            Message(role="user", content="weather?"),
+            Message(role="assistant", content="Let me check the weather.", tool_calls=[_WEATHER_TOOL_CALL]),
+            Message(role="tool", tool_call_id="call_1", content="18C"),
+        ]
+    )
+    assert formatted[1] == {"role": "assistant", "content": "Let me check the weather."}
+    assert formatted[2]["type"] == "function_call"
+    assert formatted[3] == {"type": "function_call_output", "call_id": "call_1", "output": "18C"}
+
+
+def test_replayed_function_call_without_assistant_text_adds_no_text_item():
+    model = OpenAIResponses(id="gpt-4.1-mini")
+    for content in (None, ""):
+        formatted = model._format_messages(
+            messages=[
+                Message(role="user", content="weather?"),
+                Message(role="assistant", content=content, tool_calls=[_WEATHER_TOOL_CALL]),
+                Message(role="tool", tool_call_id="call_1", content="18C"),
+            ]
+        )
+        assert [item.get("type") or item.get("role") for item in formatted] == [
+            "user",
+            "function_call",
+            "function_call_output",
+        ]
+
+
+def test_reasoning_previous_response_does_not_replay_assistant_text(monkeypatch):
+    """The stored response already holds the text; resending it would duplicate it."""
+    model = OpenAIResponses(id="gpt-5")
+    monkeypatch.setattr(model, "_using_reasoning_model", lambda: True)
+    prior_turn = Message(role="assistant", content="earlier reply", provider_data={"response_id": "resp_1"})
+    formatted = model._format_messages(
+        messages=[
+            Message(role="user", content="weather?"),
+            prior_turn,
+            Message(role="assistant", content="Let me check the weather.", tool_calls=[_WEATHER_TOOL_CALL]),
+            Message(role="tool", tool_call_id="call_1", content="18C"),
+        ]
+    )
+    assert all(item.get("role") != "assistant" for item in formatted)
+    assert all(item.get("type") != "function_call" for item in formatted)

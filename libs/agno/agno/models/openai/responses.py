@@ -786,6 +786,11 @@ class OpenAIResponses(Model):
                 if self._using_reasoning_model() and previous_response_id is not None:
                     continue
 
+                # Text the model wrote before calling tools. Emit it ahead of the calls, matching
+                # the order the Responses API produces, so later requests still see what was said.
+                if message.role == "assistant" and isinstance(message.content, str) and message.content:
+                    formatted_messages.append({"role": self.role_map[message.role], "content": message.content})
+
                 # A stored reasoning model binds each call to its reasoning item by id and rejects
                 # the call without it. Send the id only when that item is replayed alongside; the
                 # call_id is what pairs the call with its output, and always goes.
