@@ -1153,11 +1153,12 @@ def _os_metrics_model_calls(run_data: Dict[str, Any], seen_run_ids: Set[str]) ->
 def _os_metrics_call_durations(call: Dict[str, Any]) -> List[float]:
     """How long each request of a model call took, in seconds.
 
-    Messages carried over from an earlier run are skipped.
+    Messages carried over from an earlier run are skipped: those from history, and those a forked run copied from
+    the run it was forked from.
     """
     return [
         message["metrics"]["duration"]
-        for message in call.get("messages") or []
+        for message in (call.get("messages") or [])[call.get("forked_from_message_index") or 0 :]
         if message.get("role") == "assistant"
         and not message.get("from_history")
         and (message.get("metrics") or {}).get("duration") is not None

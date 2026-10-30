@@ -24,6 +24,7 @@ from agno.utils.log import log_debug, log_error, log_warning
 try:
     from sqlalchemy import (
         BigInteger,
+        Integer,
         Numeric,
         Table,
         Text,
@@ -57,9 +58,10 @@ OS_METRICS_STALE_KEYS_LIMIT = 1000
 # Rows a rebuild reads at a time, so a day or a month of many rows is never held or decoded in one step
 OS_METRICS_BATCH_SIZE = 1000
 
-# Every assistant message's request duration, skipping messages carried over from an earlier run
+# Every assistant message's request duration, skipping messages carried over from an earlier run: those from
+# history, and the first $skip a forked run copied from the run it was forked from
 _OS_METRICS_CALL_DURATIONS_PATH: Any = literal_column(
-    """'$.messages[*] ? (@.role == "assistant" && (!exists(@.from_history) || @.from_history == false))"""
+    """'$.messages[$skip to last] ? (@.role == "assistant" && (!exists(@.from_history) || @.from_history == false))"""
     """.metrics.duration'::jsonpath"""
 )
 
@@ -633,6 +635,12 @@ def _os_metrics_run_metrics(run_data: Any, keys: Sequence[str] = ()) -> Any:
     return func.jsonb_strip_nulls(func.jsonb_build_object(*pairs))
 
 
+def _os_metrics_call_durations(run_data: Any) -> Any:
+    """Build each request duration of a stored run, skipping the messages a forked run copied."""
+    skip = func.coalesce(cast(run_data["forked_from_message_index"].astext, Integer), 0)
+    return func.jsonb_path_query_array(run_data, _OS_METRICS_CALL_DURATIONS_PATH, func.jsonb_build_object("skip", skip))
+
+
 def build_os_metrics_runs_query(table: Table, start_timestamp: int, end_timestamp: int) -> Any:
     """Build the query that reads the runs created in the given time range, with only what OS metrics count.
 
@@ -699,7 +707,7 @@ def build_os_metrics_runs_query(table: Table, start_timestamp: int, end_timestam
                     "model_provider",
                     nested.c.run_data["model_provider"],
                     "call_durations",
-                    func.jsonb_path_query_array(nested.c.run_data, _OS_METRICS_CALL_DURATIONS_PATH),
+                    _os_metrics_call_durations(nested.c.run_data),
                 ),
                 nested.c.path,
             )
@@ -717,7 +725,7 @@ def build_os_metrics_runs_query(table: Table, start_timestamp: int, end_timestam
         _os_metrics_run_metrics(table.c.run_data, ["duration", "time_to_first_token"]).label("metrics"),
         table.c.run_data["model"].astext.label("model"),
         table.c.run_data["model_provider"].astext.label("model_provider"),
-        func.jsonb_path_query_array(table.c.run_data, _OS_METRICS_CALL_DURATIONS_PATH).label("call_durations"),
+        _os_metrics_call_durations(table.c.run_data).label("call_durations"),
         nested_runs.label("nested_runs"),
     ).where(table.c.created_at >= start_timestamp, table.c.created_at < end_timestamp)
 

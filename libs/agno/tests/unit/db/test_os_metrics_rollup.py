@@ -370,6 +370,16 @@ def test_history_messages_are_not_model_calls():
     assert row["total_model_call_ms"] == 500
 
 
+def test_messages_a_forked_run_copied_are_not_model_calls():
+    """A forked run's first messages are copies of the run it was forked from, which counts them."""
+    run = _run(call_durations=(0.9, 0.2, 0.3))
+    run["run_data"]["forked_from_message_index"] = 1
+    row = _only_row(runs=[run])
+
+    assert row["model_calls_count"] == 2
+    assert row["total_model_call_ms"] == 500
+
+
 def test_status_metrics_keyed_by_status():
     """status_metrics counts runs by their stored status."""
     row = _only_row(runs=[_run("run-1"), _run("run-2"), _run("run-3", status=ERROR)])

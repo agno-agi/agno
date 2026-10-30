@@ -518,6 +518,33 @@ def test_calculate_os_metrics_skips_messages_carried_over_from_history(postgres_
     assert row["model_call_buckets"] == {"le_1200": 1}
 
 
+def test_calculate_os_metrics_skips_messages_a_forked_run_copied(postgres_db_real: PostgresDb):
+    """Ensure the messages a forked run copied from the run it was forked from are not counted again"""
+    session = _session_on(_utc_date(2), "fork_session", "alice")
+    original = session.runs[0]
+    forked = RunOutput(
+        run_id="forked_run",
+        agent_id="agent-1",
+        user_id="alice",
+        status=RunStatus.completed,
+        model="gpt-5",
+        model_provider="OpenAI",
+        metrics=_run_metrics(20, 5, duration=2.0),
+        messages=[_assistant_message(1.5), _assistant_message(0.5)],
+        forked_from_run_id=original.run_id,
+        forked_from_message_index=1,
+        created_at=original.created_at,
+    )
+    session.runs.append(forked)
+    _persist(postgres_db_real, session)
+
+    postgres_db_real.calculate_os_metrics()
+
+    row = _stored_rows(postgres_db_real)[(_utc_date(2), "alice", "agent", "agent-1")]
+    assert (row["runs_count"], row["total_tokens"]) == (2, 40)
+    assert (row["model_calls_count"], row["total_model_call_ms"]) == (2, 2000)
+
+
 def test_calculate_os_metrics(postgres_db_real: PostgresDb, sample_sessions_for_os_metrics):
     """Ensure calculate_os_metrics writes one row per owner and component for each day"""
     for session in sample_sessions_for_os_metrics:
