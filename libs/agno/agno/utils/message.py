@@ -55,18 +55,35 @@ def safe_truncation_index(messages: Sequence[Message], requested_index: int) -> 
         if tool_call_id:
             result_at[tool_call_id] = idx
 
-    # Find the earliest assistant within messages[:requested_index] whose
-    # tool_calls are not all answered within messages[:requested_index].
-    for idx in range(requested_index):
+    # Snap inwards until the boundary is pair-safe: lowering it moves results out
+    # of the kept prefix, so an assistant that was answered at the wider boundary
+    # can become orphaned and has to be re-checked. Each pass strictly lowers the
+    # boundary, so this terminates.
+    boundary = requested_index
+    while True:
+        offender = _first_incomplete_exchange(messages, result_at, boundary)
+        if offender is None:
+            return boundary
+        boundary = offender
+
+
+def _first_incomplete_exchange(
+    messages: Sequence[Message],
+    result_at: Dict[str, int],
+    boundary: int,
+) -> Optional[int]:
+    """Index of the earliest assistant in ``messages[:boundary]`` holding a tool_call
+    whose result is missing or falls at/after ``boundary``, else ``None``."""
+    for idx in range(boundary):
         for tool_call in getattr(messages[idx], "tool_calls", None) or []:
             call_id = tool_call.get("id") if isinstance(tool_call, dict) else getattr(tool_call, "id", None)
             if not call_id:
                 continue
             result_index = result_at.get(call_id)
-            if result_index is None or result_index >= requested_index:
+            if result_index is None or result_index >= boundary:
                 # Drop this incomplete exchange (and everything after it).
                 return idx
-    return requested_index
+    return None
 
 
 def normalize_tool_messages(messages: List[Message]) -> List[Message]:
