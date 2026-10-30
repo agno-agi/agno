@@ -96,9 +96,11 @@ def _window(starting_date: Optional[date], ending_date: Optional[date], max_wind
     if ending_date is None:
         ending_date = datetime.now(timezone.utc).date()
     if starting_date is None:
-        if (ending_date - date.min).days < _DEFAULT_WINDOW_DAYS - 1:
+        # A limit shorter than the default window shortens the default window to it
+        window_days = min(_DEFAULT_WINDOW_DAYS, max_window_days)
+        if (ending_date - date.min).days < window_days - 1:
             raise HTTPException(status_code=422, detail="starting_date is required for an ending_date this early")
-        starting_date = ending_date - timedelta(days=_DEFAULT_WINDOW_DAYS - 1)
+        starting_date = ending_date - timedelta(days=window_days - 1)
     if starting_date > ending_date:
         raise HTTPException(status_code=422, detail="starting_date must be on or before ending_date")
     if (ending_date - starting_date).days + 1 > max_window_days:
