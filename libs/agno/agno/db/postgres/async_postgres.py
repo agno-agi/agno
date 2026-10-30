@@ -3165,7 +3165,9 @@ class AsyncPostgresDb(AsyncBaseDb):
                 # A month's total row is written after its rows, so a month that has one is read from its rows
                 month_starts_result = await sess.execute(
                     select(totals_table.c.date).where(
-                        totals_table.c.aggregation_period == "monthly", totals_table.c.date.in_(full_months)
+                        totals_table.c.aggregation_period == "monthly",
+                        # The full months follow each other, so a range finds them however long the window is
+                        totals_table.c.date.between(full_months[0], full_months[-1]),
                     )
                 )
                 month_starts = month_starts_result.scalars().all()
