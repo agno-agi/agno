@@ -162,6 +162,7 @@ class ValkeyDb(BaseDb):
                 use_tls=use_tls,
                 request_timeout=request_timeout,
                 client_name=client_name,
+                client_info_tag="agno",
             )
             self.valkey_client = GlideClient.create(config)
 

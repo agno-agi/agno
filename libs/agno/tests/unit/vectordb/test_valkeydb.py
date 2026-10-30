@@ -334,3 +334,21 @@ def test_scoped_doc_id_folds_the_owner_behind_a_digest(valkey_db):
     assert db._scoped_doc_id("doc-1", "alice") != db._scoped_doc_id("doc-1", "bob")
     # Joined raw, ("doc_1", "alice") and ("doc", "1_alice") would collide on one key
     assert db._scoped_doc_id("doc_1", "alice") != db._scoped_doc_id("doc", "1_alice")
+
+
+def test_glide_config_sets_client_info_tag(import_valkeydb, mock_embedder, monkeypatch):
+    # The tag makes CLIENT SETINFO LIB-NAME report GlidePySync(agno) on the server
+    from agno.vectordb.valkey import valkeydb as valkeydb_mod
+
+    ValkeyDb, _ft_mock = import_valkeydb
+    config_cls = MagicMock(name="GlideClientConfiguration")
+    create = MagicMock(name="GlideClient.create")
+    monkeypatch.setattr(valkeydb_mod, "GlideClientConfiguration", config_cls)
+    monkeypatch.setattr(valkeydb_mod.GlideClient, "create", create)
+
+    db = ValkeyDb(index_name="test_index", host="localhost", port=6379, embedder=mock_embedder)
+    client = db._get_client()
+
+    config_cls.assert_called_once()
+    assert config_cls.call_args.kwargs["client_info_tag"] == "agno"
+    assert client is create.return_value
