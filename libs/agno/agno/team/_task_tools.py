@@ -61,6 +61,7 @@ from agno.team._default_tools import (
     _cascading_cancel_run,
     _member_run_kwargs,
 )
+from agno.team._member_execution import run_member_sync, stream_member_sync
 from agno.team._members import member_knowledge_filters, member_storage
 from agno.team.task import TaskList, TaskStatus, save_task_list
 from agno.tools.function import Function
@@ -519,7 +520,8 @@ def _get_task_management_tools(
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     register_member_run(run_response.run_id, member_run_id)
-                member_stream = member_agent.run(
+                member_stream = stream_member_sync(
+                    member_agent,
                     input=member_agent_task if not history else history,
                     user_id=user_id,
                     session_id=session.session_id,
@@ -532,6 +534,7 @@ def _get_task_management_tools(
                     stream_events=stream_events or team.stream_member_events,
                     debug_mode=debug_mode,
                     dependencies=run_context.dependencies,
+                    run_context=run_context,
                     add_dependencies_to_context=add_dependencies_to_context,
                     metadata=run_context.metadata,
                     add_session_state_to_context=add_session_state_to_context,
@@ -570,7 +573,8 @@ def _get_task_management_tools(
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     register_member_run(run_response.run_id, member_run_id)
-                member_run_response = member_agent.run(
+                member_run_response = run_member_sync(
+                    member_agent,
                     input=member_agent_task if not history else history,
                     user_id=user_id,
                     session_id=session.session_id,
@@ -582,6 +586,7 @@ def _get_task_management_tools(
                     stream=False,
                     debug_mode=debug_mode,
                     dependencies=run_context.dependencies,
+                    run_context=run_context,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                     metadata=run_context.metadata,
@@ -763,6 +768,7 @@ def _get_task_management_tools(
                     stream=False,
                     debug_mode=debug_mode,
                     dependencies=run_context.dependencies,
+                    run_context=run_context,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                     metadata=run_context.metadata,
@@ -867,7 +873,7 @@ def _get_task_management_tools(
             if not task.assignee:
                 yield f"Task [{tid}] has no assignee. Assign a member_id first."
                 return
-            member_result = _find_member_by_id(team, task.assignee)
+            member_result = _find_member_by_id(team, task.assignee, run_context=run_context)
             if member_result is None:
                 yield f"Member '{task.assignee}' not found for task [{tid}]."
                 return
@@ -903,7 +909,8 @@ def _get_task_management_tools(
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     register_member_run(run_response.run_id, member_run_id)
-                member_run_response = member_agent.run(
+                member_run_response = run_member_sync(
+                    member_agent,
                     input=member_agent_task if not history else history,
                     user_id=user_id,
                     session_id=session.session_id,
@@ -915,6 +922,7 @@ def _get_task_management_tools(
                     stream=False,
                     debug_mode=debug_mode,
                     dependencies=run_context.dependencies,
+                    run_context=run_context,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                     metadata=run_context.metadata,
