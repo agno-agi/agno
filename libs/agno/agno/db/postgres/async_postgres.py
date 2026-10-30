@@ -2950,6 +2950,9 @@ class AsyncPostgresDb(AsyncBaseDb):
         if legacy_runs_table is not None:
             async with self.async_session_factory() as sess, sess.begin():
                 await sess.execute(text("SET LOCAL jit = off"))
+                # stream() reads through a cursor, which PostgreSQL plans for its first rows: here a nested loop that
+                # grows with the square of the sessions. Plan it for every row, as the sync class's plain read is
+                await sess.execute(text("SET LOCAL cursor_tuple_fraction = 1.0"))
                 legacy_runs_result = await sess.stream(
                     build_os_metrics_runs_query(legacy_runs_table, start_timestamp, end_timestamp)
                 )
