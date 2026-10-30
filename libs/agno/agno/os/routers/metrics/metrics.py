@@ -90,7 +90,7 @@ _LATENCY_FIELDS = [
 ]
 
 
-def _window(starting_date: Optional[date], ending_date: Optional[date]) -> tuple[date, date]:
+def _window(starting_date: Optional[date], ending_date: Optional[date], max_window_days: int) -> tuple[date, date]:
     """Resolve the UTC days a route covers, ending today and covering _DEFAULT_WINDOW_DAYS days by default."""
     if ending_date is None:
         ending_date = datetime.now(timezone.utc).date()
@@ -100,6 +100,8 @@ def _window(starting_date: Optional[date], ending_date: Optional[date]) -> tuple
         starting_date = ending_date - timedelta(days=_DEFAULT_WINDOW_DAYS - 1)
     if starting_date > ending_date:
         raise HTTPException(status_code=422, detail="starting_date must be on or before ending_date")
+    if (ending_date - starting_date).days + 1 > max_window_days:
+        raise HTTPException(status_code=422, detail=f"The window can cover at most {max_window_days} days")
     return starting_date, ending_date
 
 
@@ -141,12 +143,15 @@ def get_metrics_router(
             500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
         },
     )
-    return attach_routes(router=router, dbs=dbs, os_db=os_db, role_store=role_store, auth_enabled=auth_enabled)
+    return attach_routes(
+        router=router, dbs=dbs, settings=settings, os_db=os_db, role_store=role_store, auth_enabled=auth_enabled
+    )
 
 
 def attach_routes(
     router: APIRouter,
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+    settings: AgnoAPISettings = AgnoAPISettings(),
     os_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     role_store: "Optional[Authorization]" = None,
     auth_enabled: bool = True,
@@ -913,7 +918,7 @@ def attach_routes(
     ) -> Union[OSSessionMetricsResponse, Response]:
         try:
             os_dbs = _os_dbs(db_id)
-            starting_date, ending_date = _window(starting_date, ending_date)
+            starting_date, ending_date = _window(starting_date, ending_date, settings.os_metrics_max_window_days)
             effective_user_id = _owner(request, user_id)
             deadline = asyncio.get_running_loop().time() + timeout_seconds
             response_key, skipped_db_ids = await _os_metrics_response_key(
@@ -1026,7 +1031,7 @@ def attach_routes(
     ) -> Union[OSTokenMetricsResponse, Response]:
         try:
             os_dbs = _os_dbs(db_id)
-            starting_date, ending_date = _window(starting_date, ending_date)
+            starting_date, ending_date = _window(starting_date, ending_date, settings.os_metrics_max_window_days)
             effective_user_id = _owner(request, user_id)
             deadline = asyncio.get_running_loop().time() + timeout_seconds
             response_key, skipped_db_ids = await _os_metrics_response_key(
@@ -1141,7 +1146,7 @@ def attach_routes(
                         detail="User metrics not available: a security key adds no user to the user directory.",
                     )
 
-            starting_date, ending_date = _window(starting_date, ending_date)
+            starting_date, ending_date = _window(starting_date, ending_date, settings.os_metrics_max_window_days)
             starting_at = int(datetime.combine(starting_date, datetime.min.time(), tzinfo=timezone.utc).timestamp())
             ending_before = (
                 int(datetime.combine(ending_date, datetime.min.time(), tzinfo=timezone.utc).timestamp()) + 24 * 60 * 60
@@ -1240,7 +1245,7 @@ def attach_routes(
     ) -> Union[OSModelMetricsResponse, Response]:
         try:
             os_dbs = _os_dbs(db_id)
-            starting_date, ending_date = _window(starting_date, ending_date)
+            starting_date, ending_date = _window(starting_date, ending_date, settings.os_metrics_max_window_days)
             effective_user_id = _owner(request, user_id)
             deadline = asyncio.get_running_loop().time() + timeout_seconds
             response_key, skipped_db_ids = await _os_metrics_response_key(
@@ -1365,7 +1370,7 @@ def attach_routes(
     ) -> Union[OSRunMetricsResponse, Response]:
         try:
             os_dbs = _os_dbs(db_id)
-            starting_date, ending_date = _window(starting_date, ending_date)
+            starting_date, ending_date = _window(starting_date, ending_date, settings.os_metrics_max_window_days)
             effective_user_id = _owner(request, user_id)
             deadline = asyncio.get_running_loop().time() + timeout_seconds
             response_key, skipped_db_ids = await _os_metrics_response_key(
@@ -1526,7 +1531,7 @@ def attach_routes(
     ) -> Union[OSLatencyMetricsResponse, Response]:
         try:
             os_dbs = _os_dbs(db_id)
-            starting_date, ending_date = _window(starting_date, ending_date)
+            starting_date, ending_date = _window(starting_date, ending_date, settings.os_metrics_max_window_days)
             effective_user_id = _owner(request, user_id)
             deadline = asyncio.get_running_loop().time() + timeout_seconds
             response_key, skipped_db_ids = await _os_metrics_response_key(
@@ -1830,7 +1835,7 @@ def attach_routes(
     ) -> OSMetricsRefreshStatusResponse:
         try:
             os_dbs = _os_dbs(db_id)
-            starting_date, ending_date = _window(starting_date, ending_date)
+            starting_date, ending_date = _window(starting_date, ending_date, settings.os_metrics_max_window_days)
             # The cheapest total to read; only its updated_at is used
             _, databases = await _os_metrics(
                 os_dbs, _owner(request, user_id), starting_date, ending_date, ["sessions_count"], timeout_seconds, {}

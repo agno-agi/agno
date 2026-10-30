@@ -1057,6 +1057,15 @@ class TestWindow:
 
         assert response.status_code == 422
 
+    def test_window_longer_than_the_setting_is_a_422(self, mock_db):
+        client = _client(AgnoAPISettings(os_metrics_max_window_days=7), mock_db)
+        with _scope(None):
+            refused = client.get(f"/os/metrics/sessions?starting_date={_day(7).isoformat()}")
+            answered = client.get(f"/os/metrics/sessions?starting_date={_day(6).isoformat()}")
+
+        assert refused.status_code == 422
+        assert answered.status_code == 200
+
 
 # =============================================================================
 # Several databases, read at the same time and added up
