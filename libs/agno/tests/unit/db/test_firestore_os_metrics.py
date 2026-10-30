@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import operator
+import time
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
@@ -10,13 +11,15 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 try:
+    from google.api_core.exceptions import AlreadyExists
     from google.cloud.firestore import FieldFilter, Increment
 
     from agno.db.firestore import FirestoreDb
-    from agno.db.firestore.utils import OS_METRICS_STATE_ID, deserialize_os_metrics_record
+    from agno.db.firestore.utils import deserialize_os_metrics_record
 except ImportError:
     FirestoreDb = None  # type: ignore[misc,assignment]
 
+from agno.db.utils import os_metrics_month_end
 from agno.metrics import ModelMetrics, RunMetrics
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -24,42 +27,68 @@ from agno.session.agent import AgentSession
 
 pytestmark = pytest.mark.skipif(FirestoreDb is None, reason="google-cloud-firestore not installed")
 
-_OPERATORS = {"==": operator.eq, ">=": operator.ge, "<=": operator.le, "<": operator.lt, "in": lambda a, b: a in b}
+_OPERATORS = {
+    "==": operator.eq,
+    ">=": operator.ge,
+    "<=": operator.le,
+    ">": operator.gt,
+    "<": operator.lt,
+    "in": lambda a, b: a in b,
+}
 
 
 class _FakeDocument:
-    """A reference to one document of a collection"""
+    """A reference to one document of a collection."""
 
     def __init__(self, docs: Dict[str, Dict[str, Any]], doc_id: str):
         self.docs = docs
         self.id = doc_id
 
-    def get(self) -> SimpleNamespace:
+    def get(self, transaction=None) -> SimpleNamespace:
         data = self.docs.get(self.id)
-        to_dict = lambda: dict(data) if data is not None else None  # noqa: E731
-        return SimpleNamespace(id=self.id, reference=self, exists=data is not None, to_dict=to_dict)
+        return SimpleNamespace(
+            id=self.id,
+            reference=self,
+            exists=data is not None,
+            to_dict=lambda: dict(data) if data is not None else None,
+            update_time=None,
+        )
 
-    def set(self, data: Dict[str, Any], merge: bool = False) -> None:
+    def create(self, data: Dict[str, Any]) -> None:
+        if self.id in self.docs:
+            raise AlreadyExists(self.id)
+        self.docs[self.id] = dict(data)
+
+    def set(self, data: Dict[str, Any], merge: Any = False) -> None:
         stored = dict(self.docs.get(self.id, {})) if merge else {}
         for key, value in data.items():
             stored[key] = stored.get(key, 0) + value.value if isinstance(value, Increment) else value
         self.docs[self.id] = stored
 
+    def update(self, data: Dict[str, Any], option: Any = None) -> None:
+        self.docs[self.id] = {**self.docs[self.id], **data}
+
+    def delete(self, option: Any = None) -> None:
+        self.docs.pop(self.id, None)
+
 
 class _FakeQuery:
-    """A collection, or the documents of it that pass the filters given so far"""
+    """A collection, or the documents of it that pass the filters given so far."""
 
     def __init__(self, docs: Dict[str, Dict[str, Any]], filters=(), order=None, count: Optional[int] = None):
-        self.docs, self.filters, self.order, self.count = docs, filters, order, count
+        self.docs = docs
+        self.filters = filters
+        self.order = order
+        self.count_limit = count
 
     def document(self, doc_id: Optional[str] = None) -> _FakeDocument:
         return _FakeDocument(self.docs, doc_id or f"doc_{len(self.docs)}")
 
     def where(self, filter: FieldFilter) -> _FakeQuery:
-        return _FakeQuery(self.docs, (*self.filters, filter), self.order, self.count)
+        return _FakeQuery(self.docs, self.filters + (filter,), self.order, self.count_limit)
 
     def order_by(self, field_path: str, direction: str = "ASCENDING") -> _FakeQuery:
-        return _FakeQuery(self.docs, self.filters, (field_path, direction == "DESCENDING"), self.count)
+        return _FakeQuery(self.docs, self.filters, (field_path, direction == "DESCENDING"), self.count_limit)
 
     def limit(self, count: int) -> _FakeQuery:
         return _FakeQuery(self.docs, self.filters, self.order, count)
@@ -67,7 +96,7 @@ class _FakeQuery:
     def select(self, field_paths: List[str]) -> _FakeQuery:
         return self
 
-    def stream(self) -> List[SimpleNamespace]:
+    def stream(self, transaction=None) -> List[SimpleNamespace]:
         docs = self.docs
         for f in self.filters:
             docs = {
@@ -77,97 +106,119 @@ class _FakeQuery:
             }
         doc_ids = list(docs)
         if self.order is not None:
+            doc_ids = [doc_id for doc_id in doc_ids if docs[doc_id].get(self.order[0]) is not None]
             doc_ids.sort(key=lambda doc_id: docs[doc_id][self.order[0]], reverse=self.order[1])
-        return [self.document(doc_id).get() for doc_id in doc_ids[: self.count]]
+        return [self.document(doc_id).get() for doc_id in doc_ids[: self.count_limit]]
+
+    def count(self, alias: str) -> SimpleNamespace:
+        docs = [doc.to_dict() for doc in self.stream()]
+
+        def _sum(field_path: str, alias: str) -> SimpleNamespace:
+            total = sum(doc.get(field_path) or 0 for doc in docs)
+            results = [SimpleNamespace(alias="count", value=len(docs)), SimpleNamespace(alias=alias, value=total)]
+            return SimpleNamespace(get=lambda: [results])
+
+        return SimpleNamespace(sum=_sum)
 
 
 class _FakeClient:
-    """An in-memory Firestore client with the calls an OS metrics rebuild and read make"""
+    """An in-memory Firestore client with the calls an OS metrics rebuild and read make."""
 
     def __init__(self):
         self.collections: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
     def collection(self, collection_name: str) -> _FakeQuery:
-        return _FakeQuery(self.collections.setdefault(collection_name, {}))
+        collection = _FakeQuery(self.collections.setdefault(collection_name, {}))
+        # A batch is taken from the client of the collection it writes to
+        collection._client = self
+        return collection
 
     def batch(self) -> SimpleNamespace:
         # Each write is stored as the batch is given it
         return SimpleNamespace(
-            create=lambda reference, data: reference.set(data),
-            update=lambda reference, data: reference.set(data, merge=True),
             set=lambda reference, data, merge=False: reference.set(data, merge=merge),
+            delete=lambda reference: reference.delete(),
             commit=lambda: None,
         )
 
-    def get_all(self, references: List[_FakeDocument]) -> List[SimpleNamespace]:
+    def transaction(self, read_only: bool = False) -> SimpleNamespace:
+        return SimpleNamespace()
+
+    def write_option(self, **kwargs: Any) -> None:
+        return None
+
+    def get_all(self, references: List[_FakeDocument], field_paths=None, transaction=None) -> List[SimpleNamespace]:
         return [reference.get() for reference in references]
 
 
 @pytest.fixture
 def firestore_db(monkeypatch) -> FirestoreDb:
-    """Create a FirestoreDb on a fake client, without the index creation that goes to the Admin API"""
+    """Fixture returning a FirestoreDb on a fake client, without the index creation that goes to the Admin API"""
     monkeypatch.setattr("agno.db.firestore.firestore.create_collection_indexes", lambda *args, **kwargs: None)
+    # The fake transaction reads as the queries are given, so the function runs once
+    monkeypatch.setattr("agno.db.firestore.firestore.transactional", lambda function: function)
     return FirestoreDb(
         db_client=_FakeClient(),
         session_collection="test_sessions",
         runs_collection="test_runs",
         os_metrics_collection="test_os_metrics",
+        os_metrics_totals_collection="test_os_metrics_totals",
     )
 
 
 def _utc_date(days_ago: int) -> date:
-    """The UTC day ``days_ago`` days back, the day an OS metrics row is keyed by"""
+    """The UTC day ``days_ago`` days back, the day an OS metrics row is keyed by."""
     return datetime.now(timezone.utc).date() - timedelta(days=days_ago)
 
 
-def _persist(db: FirestoreDb, session) -> None:
-    """Store a session the way v3 does: the row, then each run in the runs collection"""
-    db.upsert_session(session)
-    for run_index, run in enumerate(session.runs or []):
-        db.upsert_run(run, session_id=session.session_id, user_id=session.user_id, run_index=run_index)
+def _month_start(months_ago: int) -> date:
+    """The first day of the calendar month ``months_ago`` months back."""
+    month_start = datetime.now(timezone.utc).date().replace(day=1)
+    for _ in range(months_ago):
+        month_start = (month_start - timedelta(days=1)).replace(day=1)
+    return month_start
 
 
-def _run_on(day: date, run_id: str, user_id: str, input_tokens: int) -> RunOutput:
-    """A completed run created at midday UTC of the given day, with 5 output tokens"""
+def _session_on(day: date, session_id: str, user_id: str, input_tokens: int = 10) -> AgentSession:
+    """An agent session created at midday UTC of the given day, with one completed run."""
+    created_at = int(datetime(day.year, day.month, day.day, 12, tzinfo=timezone.utc).timestamp())
     tokens = dict(input_tokens=input_tokens, output_tokens=5, total_tokens=input_tokens + 5)
-    return RunOutput(
-        run_id=run_id,
+    run = RunOutput(
+        run_id=f"{session_id}_run",
         agent_id="agent-1",
         user_id=user_id,
         status=RunStatus.completed,
         model="gpt-5",
         model_provider="OpenAI",
         metrics=RunMetrics(**tokens, details={"model": [ModelMetrics(id="gpt-5", provider="OpenAI", **tokens)]}),
-        created_at=int(datetime(day.year, day.month, day.day, 12, tzinfo=timezone.utc).timestamp()),
+        created_at=created_at,
     )
+    return AgentSession(session_id=session_id, agent_id="agent-1", user_id=user_id, runs=[run], created_at=created_at)
 
 
-def _session_on(day: date, session_id: str, user_id: str, input_tokens: int = 10) -> AgentSession:
-    """An agent session created at midday UTC of the given day, with one completed run"""
-    run = _run_on(day, f"{session_id}_run", user_id, input_tokens)
-    return AgentSession(
-        session_id=session_id,
-        agent_id="agent-1",
-        user_id=user_id,
-        runs=[run],
-        created_at=run.created_at,
-    )
+def _persist(db: FirestoreDb, session: AgentSession) -> None:
+    """Store a session the way v3 does: the document, then each run in the runs collection."""
+    db.upsert_session(session)
+    for run_index, run in enumerate(session.runs or []):
+        db.upsert_run(run, session_id=session.session_id, user_id=session.user_id, run_index=run_index)
 
 
-def _all_rows(db: FirestoreDb) -> List[Dict]:
-    """Every OS metrics row stored, in the shape calculate_date_os_metrics writes, without the state document"""
-    docs = db._get_collection(table_type="os_metrics").stream()
-    return [deserialize_os_metrics_record(doc.to_dict()) for doc in docs if doc.id != OS_METRICS_STATE_ID]
+def _age_writes(db: FirestoreDb) -> None:
+    """Move every session and run write a minute back, so no write shares the current second."""
+    for collection_name in ["test_sessions", "test_runs"]:
+        for doc in db.db_client.collections[collection_name].values():
+            doc["updated_at"] = int(time.time()) - 60
 
 
-def _stored_rows(db: FirestoreDb) -> Dict[tuple, Dict]:
-    """Every OS metrics row of an owner in the collection, keyed by (date, user_id)"""
-    return {(row["date"], row["user_id"]): row for row in _all_rows(db) if row["aggregation_period"] == "daily"}
+def _stored_rows(db: FirestoreDb, collection_name: str) -> List[Dict[str, Any]]:
+    """Every OS metrics row stored in the collection, with its day as a date."""
+    docs = db.db_client.collections.get(collection_name, {})
+    return [deserialize_os_metrics_record(doc) for doc in docs.values() if "aggregation_period" in doc]
 
 
 @pytest.fixture
 def sample_sessions_for_os_metrics(firestore_db: FirestoreDb) -> List[AgentSession]:
-    """Store one session each for alice and bob yesterday, and one for alice today"""
+    """Fixture storing one session each for alice and bob yesterday, and one for alice today"""
     sessions = [
         _session_on(_utc_date(1), "alice_session", "alice", input_tokens=10),
         _session_on(_utc_date(1), "bob_session", "bob", input_tokens=20),
@@ -178,74 +229,124 @@ def sample_sessions_for_os_metrics(firestore_db: FirestoreDb) -> List[AgentSessi
     return sessions
 
 
-class TestOsMetrics:
-    def test_calculate_os_metrics(self, firestore_db: FirestoreDb, sample_sessions_for_os_metrics):
-        """Ensure a rebuild stores the rows of each day with the numbers of each owner"""
-        assert firestore_db.calculate_os_metrics()
+def test_calculate_os_metrics(firestore_db: FirestoreDb, sample_sessions_for_os_metrics):
+    """Ensure a rebuild stores a row per day and owner, and a totals row per day at version 1"""
+    assert firestore_db.calculate_os_metrics()
 
-        rows = _stored_rows(firestore_db)
-        assert {key: (row["sessions_count"], row["runs_count"]) for key, row in rows.items()} == {
-            (_utc_date(1), "alice"): (1, 1),
-            (_utc_date(1), "bob"): (1, 1),
-            (_utc_date(0), "alice"): (1, 1),
-        }
-        alice_tokens = rows[(_utc_date(1), "alice")]["token_metrics"]
-        assert alice_tokens == {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
-        bob_tokens = rows[(_utc_date(1), "bob")]["token_metrics"]
-        assert bob_tokens == {"input_tokens": 20, "output_tokens": 5, "total_tokens": 25}
+    rows = {(row["date"], row["user_id"]): row for row in _stored_rows(firestore_db, "test_os_metrics")}
+    assert {key: (row["sessions_count"], row["runs_count"], row["input_tokens"]) for key, row in rows.items()} == {
+        (_utc_date(1), "alice"): (1, 1, 10),
+        (_utc_date(1), "bob"): (1, 1, 20),
+        (_utc_date(0), "alice"): (1, 1, 30),
+    }
+    assert rows[(_utc_date(1), "bob")]["model_metrics"] == [
+        {"model_id": "gpt-5", "model_provider": "OpenAI", "count": 1}
+    ]
 
-    def test_get_os_metrics_by_date(self, firestore_db: FirestoreDb, sample_sessions_for_os_metrics):
-        """Ensure get_os_metrics totals the rows of each day, with only the fields asked for"""
-        firestore_db.calculate_os_metrics()
-        yesterday, today = _utc_date(1), _utc_date(0)
+    totals_rows = {row["date"]: row for row in _stored_rows(firestore_db, "test_os_metrics_totals")}
+    assert set(totals_rows) == {_utc_date(1), _utc_date(0)}
+    assert (totals_rows[_utc_date(1)]["sessions_count"], totals_rows[_utc_date(1)]["total_tokens"]) == (2, 40)
+    assert {row["version"] for row in totals_rows.values()} == {1}
+    assert not any(row["completed"] for row in totals_rows.values())
 
-        metrics, latest_updated_at = firestore_db.get_os_metrics(starting_date=yesterday, ending_date=today)
-        assert latest_updated_at is not None
-        assert [m["date"] for m in metrics] == [yesterday, today]
-        assert (metrics[0]["sessions_count"], metrics[0]["runs_count"]) == (2, 2)
-        assert metrics[0]["token_metrics"] == {"input_tokens": 30, "output_tokens": 10, "total_tokens": 40}
-        assert metrics[1]["token_metrics"] == {"input_tokens": 30, "output_tokens": 5, "total_tokens": 35}
 
-        metrics, _ = firestore_db.get_os_metrics(yesterday, yesterday, fields=["sessions_count", "runs_count"])
-        assert metrics == [{"date": yesterday, "sessions_count": 2, "runs_count": 2}]
+def test_calculate_os_metrics_moves_only_the_version_of_a_changed_day(
+    firestore_db: FirestoreDb, sample_sessions_for_os_metrics
+):
+    """Ensure a rebuild with nothing new leaves every version, and a new run moves only its day's"""
+    firestore_db.calculate_os_metrics()
+    versions = firestore_db.get_os_metrics_versions(_utc_date(1), _utc_date(0))
 
-    def test_get_os_metrics_by_user(self, firestore_db: FirestoreDb, sample_sessions_for_os_metrics):
-        """Ensure get_os_metrics totals only the rows of the given owner"""
-        firestore_db.calculate_os_metrics()
+    firestore_db.calculate_os_metrics()
+    assert firestore_db.get_os_metrics_versions(_utc_date(1), _utc_date(0)) == versions
 
-        metrics, _ = firestore_db.get_os_metrics(starting_date=_utc_date(1), ending_date=_utc_date(0), user_id="bob")
-        assert [m["date"] for m in metrics] == [_utc_date(1)]
-        assert (metrics[0]["sessions_count"], metrics[0]["runs_count"]) == (1, 1)
-        assert metrics[0]["token_metrics"] == {"input_tokens": 20, "output_tokens": 5, "total_tokens": 25}
+    _persist(firestore_db, _session_on(_utc_date(1), "carol_session", "carol"))
+    firestore_db.calculate_os_metrics()
+    assert firestore_db.get_os_metrics_versions(_utc_date(1), _utc_date(0)) == {
+        f"daily {_utc_date(1).isoformat()}": 2,
+        f"daily {_utc_date(0).isoformat()}": 1,
+    }
 
-    def test_calculate_os_metrics_after_new_run(self, firestore_db: FirestoreDb, sample_sessions_for_os_metrics):
-        """Ensure a rebuild with nothing new changes no row, and one after a new run changes the numbers"""
-        firestore_db.calculate_os_metrics()
-        rows = _all_rows(firestore_db)
 
-        firestore_db.calculate_os_metrics()
-        assert _all_rows(firestore_db) == rows
+def test_get_os_metrics_by_date(firestore_db: FirestoreDb, sample_sessions_for_os_metrics):
+    """Ensure get_os_metrics totals each day for every owner, and only one owner's rows for that owner"""
+    firestore_db.calculate_os_metrics()
+    yesterday, today = _utc_date(1), _utc_date(0)
 
-        run = _run_on(_utc_date(1), "alice_run_2", "alice", input_tokens=40)
-        firestore_db.upsert_run(run, session_id="alice_session", user_id="alice", run_index=1)
-        firestore_db.calculate_os_metrics()
+    metrics, latest_updated_at = firestore_db.get_os_metrics(
+        starting_date=yesterday, ending_date=today, fields=["sessions_count", "total_tokens"]
+    )
+    assert latest_updated_at is not None
+    assert metrics == [
+        {"date": yesterday, "sessions_count": 2, "total_tokens": 40},
+        {"date": today, "sessions_count": 1, "total_tokens": 35},
+    ]
 
-        alice_row = _stored_rows(firestore_db)[(_utc_date(1), "alice")]
-        assert (alice_row["sessions_count"], alice_row["runs_count"]) == (1, 2)
-        assert alice_row["token_metrics"] == {"input_tokens": 50, "output_tokens": 10, "total_tokens": 60}
+    metrics, _ = firestore_db.get_os_metrics(
+        starting_date=yesterday, ending_date=today, user_id="bob", fields=["sessions_count", "total_tokens"]
+    )
+    assert metrics == [{"date": yesterday, "sessions_count": 1, "total_tokens": 25}]
 
-    def test_refresh_os_metrics(self, firestore_db: FirestoreDb, sample_sessions_for_os_metrics):
-        """Ensure refresh_os_metrics reports when the rows were updated before and after, and whether any changed"""
-        previous_updated_at, updated_at, changed = firestore_db.refresh_os_metrics()
-        assert previous_updated_at is None
-        assert updated_at is not None and changed is True
 
-        assert firestore_db.refresh_os_metrics() == (updated_at, updated_at, False)
+def test_calculate_os_metrics_skips_a_refresh_with_nothing_new(firestore_db: FirestoreDb):
+    """Ensure a refresh that does not wait skips the rebuild while no session or run changed, and runs after one did"""
+    _persist(firestore_db, _session_on(_utc_date(0), "skipped_session", "alice"))
+    _age_writes(firestore_db)
 
-    def test_get_os_metrics_state(self, firestore_db: FirestoreDb, sample_sessions_for_os_metrics):
-        """Ensure get_os_metrics_state returns when the rows were last written and the hash of the state"""
-        firestore_db.calculate_os_metrics()
+    assert firestore_db._calculate_os_metrics(wait_for_rebuild=False) is not None
+    assert firestore_db._calculate_os_metrics(wait_for_rebuild=False) is None
 
-        updated_at, state_hash = firestore_db.get_os_metrics_state()
-        assert updated_at == max(row["updated_at"] for row in _all_rows(firestore_db))
-        assert state_hash
+    _persist(firestore_db, _session_on(_utc_date(0), "new_session", "alice"))
+    _age_writes(firestore_db)
+    assert firestore_db._calculate_os_metrics(wait_for_rebuild=False) is not None
+    metrics, _ = firestore_db.get_os_metrics(_utc_date(0), _utc_date(0), fields=["sessions_count"])
+    assert metrics == [{"date": _utc_date(0), "sessions_count": 2}]
+
+
+def test_get_os_metrics_versions_is_none_while_today_is_unbuilt(firestore_db: FirestoreDb):
+    """Ensure a database with sessions today and no total row for today has no versions, so a read skips it"""
+    _persist(firestore_db, _session_on(_utc_date(0), "unbuilt_session", "alice"))
+    firestore_db.calculate_os_metrics()
+    firestore_db.db_client.collections["test_os_metrics_totals"].pop(f"{_utc_date(0).isoformat()}_daily")
+
+    # Inside the refresh throttle, as between a refresh and the rebuild of today
+    firestore_db._os_metrics_refreshed_at = time.time()
+    assert firestore_db.get_os_metrics_versions(_utc_date(1), _utc_date(0)) is None
+
+    firestore_db._os_metrics_refreshed_at = 0.0
+    assert f"daily {_utc_date(0).isoformat()}" in firestore_db.get_os_metrics_versions(_utc_date(1), _utc_date(0))
+
+
+def test_calculate_os_metrics_writes_month_rows_for_a_completed_month(firestore_db: FirestoreDb):
+    """Ensure a completed month gets a row per owner and a total row, and its total is read from them"""
+    month_start = _month_start(2)
+    _persist(firestore_db, _session_on(month_start, "alice_session", "alice", input_tokens=10))
+    _persist(firestore_db, _session_on(month_start + timedelta(days=3), "bob_session", "bob", input_tokens=20))
+    firestore_db.calculate_os_metrics()
+
+    month_rows = {
+        row["user_id"]: row
+        for row in _stored_rows(firestore_db, "test_os_metrics")
+        if row["aggregation_period"] == "monthly" and row["date"] == month_start
+    }
+    assert {user_id: row["sessions_count"] for user_id, row in month_rows.items()} == {"alice": 1, "bob": 1}
+    month_totals_row = next(
+        row
+        for row in _stored_rows(firestore_db, "test_os_metrics_totals")
+        if row["aggregation_period"] == "monthly" and row["date"] == month_start
+    )
+    assert (month_totals_row["sessions_count"], month_totals_row["completed"]) == (2, True)
+
+    # Without its daily total rows, the month is still read whole from its month rows
+    totals_docs = firestore_db.db_client.collections["test_os_metrics_totals"]
+    for doc_id in [doc_id for doc_id, doc in totals_docs.items() if doc.get("aggregation_period") == "daily"]:
+        totals_docs.pop(doc_id)
+    firestore_db._os_metrics_refreshed_at = time.time()
+    totals, _ = firestore_db.get_os_metrics_totals(
+        month_start, os_metrics_month_end(month_start), fields=["sessions_count", "total_tokens"]
+    )
+    assert totals == {"sessions_count": 2, "total_tokens": 40}
+    totals, _ = firestore_db.get_os_metrics_totals(
+        month_start, os_metrics_month_end(month_start), user_id="bob", fields=["sessions_count"]
+    )
+    assert totals == {"sessions_count": 1}

@@ -4,15 +4,14 @@ import hashlib
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from agno.db.firestore.schemas import get_collection_indexes
-from agno.db.utils import OS_METRICS_FIXED_KEYS, get_sort_value, metric_record_day
+from agno.db.utils import get_sort_value, metric_record_day
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.string import generate_id
 
 try:
-    from google.cloud.firestore import Client  # type: ignore[import-untyped]
+    from google.cloud.firestore import Client, Increment  # type: ignore[import-untyped]
     from google.cloud.firestore_admin_v1 import FirestoreAdminClient, Index  # type: ignore[import-untyped]
 except ImportError:
     raise ImportError(
@@ -374,103 +373,116 @@ def bulk_upsert_metrics(collection_ref, metrics_records: List[Dict[str, Any]]) -
 
 # -- OS metrics util methods --
 
-# The document holding when OS metrics records were last written or deleted, and their hash
-OS_METRICS_STATE_ID = "os_metrics_state"
+# The document of the OS metrics totals collection held by the one rebuild running
+OS_METRICS_LOCK_ID = "os_metrics_lock"
+
+# How long a rebuild holds the lock document at most, so a process stopped mid-rebuild never holds it for good
+OS_METRICS_LOCK_SECONDS = 60
+
+# How long a rebuild that waits for the lock sleeps before it tries again
+OS_METRICS_LOCK_RETRY_SECONDS = 0.1
 
 # Firestore takes 30 values at most in one `in` filter
 OS_METRICS_IN_LIST_LIMIT = 30
 
-_OS_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses")
+# Rows a rebuild reads at a time, so a day or a month of many rows is never held or decoded in one step
+OS_METRICS_BATCH_SIZE = 1000
 
 
 def os_metrics_record_id(record: Dict[str, Any]) -> str:
-    """The id an OS metrics record is stored under: one per day, period, owner, component and parent."""
-    day = record["date"]
-    return generate_id(
-        json.dumps(
-            [
-                day.isoformat() if isinstance(day, date) else day,
-                record["aggregation_period"],
-                record.get("user_id") or "",
-                record.get("agent_id") or "",
-                record.get("team_id") or "",
-                record.get("workflow_id") or "",
-                record.get("parent_id") or "",
-            ]
-        )
+    """The id of the document an OS metrics row is stored under, one per period, day, owner, component and parent."""
+    # Firestore document ids reject ``/``, ``.``, ``..`` and ``__..__``, so hash the owner, component and parent
+    key = json.dumps(
+        [record["user_id"], record["component_type"], record["component_id"], record["parent_component_id"]]
     )
+    key_segment = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return f"{record['date'].isoformat()}_{key_segment}_{record['aggregation_period']}"
 
 
-def _build_os_metrics_run_data(run_data: Dict[str, Any]) -> Dict[str, Any]:
-    """The run_data of a stored run, or of a run nested inside it, with only what OS metrics count."""
-    metrics = run_data.get("metrics") or {}
-    trimmed_metrics = {
-        key: metrics[key]
-        for key in (*OS_METRICS_FIXED_KEYS["token_metrics"], "duration", "time_to_first_token")
-        if metrics.get(key) is not None
-    }
-    # Only whether the model call reported details is counted
-    if metrics.get("details"):
-        trimmed_metrics["details"] = True
-    trimmed: Dict[str, Any] = {
-        "metrics": trimmed_metrics,
-        "model": run_data.get("model"),
-        "model_provider": run_data.get("model_provider"),
-        # Only each request's duration, skipping messages carried over from an earlier run
-        "messages": [
-            {"role": "assistant", "metrics": {"duration": message["metrics"]["duration"]}}
-            for message in run_data.get("messages") or []
-            if isinstance(message, dict)
-            and message.get("role") == "assistant"
-            and not message.get("from_history")
-            and (message.get("metrics") or {}).get("duration") is not None
-        ],
-    }
-    for key in _OS_METRICS_NESTED_RUN_KEYS:
-        nested_runs = [nested_run for nested_run in run_data.get(key) or [] if isinstance(nested_run, dict)]
-        if nested_runs:
-            trimmed[key] = [
-                {
-                    "run_id": nested_run.get("run_id"),
-                    "agent_id": nested_run.get("agent_id"),
-                    "team_id": nested_run.get("team_id"),
-                    **_build_os_metrics_run_data(nested_run),
-                }
-                for nested_run in nested_runs
-            ]
-    return trimmed
-
-
-def build_os_metrics_run(record: Dict[str, Any]) -> Dict[str, Any]:
-    """Build a run with only what OS metrics count from a document of the runs collection.
-
-    Args:
-        record (Dict[str, Any]): A document of the runs collection.
-
-    Returns:
-        Dict[str, Any]: The run, with the run_data calculate_date_os_metrics reads.
-    """
-    run_data = record.get("run_data")
-    return {
-        "run_id": record.get("run_id"),
-        "run_type": record.get("run_type"),
-        "agent_id": record.get("agent_id"),
-        "team_id": record.get("team_id"),
-        "workflow_id": record.get("workflow_id"),
-        "user_id": record.get("user_id"),
-        "parent_run_id": record.get("parent_run_id"),
-        "status": record.get("status"),
-        "run_data": _build_os_metrics_run_data(run_data if isinstance(run_data, dict) else {}),
-    }
+def os_metrics_totals_record_id(aggregation_period: str, row_date: date) -> str:
+    """The id of the document an OS metrics totals row is stored under, one per period and day."""
+    return f"{row_date.isoformat()}_{aggregation_period}"
 
 
 def deserialize_os_metrics_record(record: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a stored OS metrics record in the shape calculate_date_os_metrics writes.
+    """Return a stored OS metrics row with its day, stored as an ISO string, as a date."""
+    return {**record, "date": metric_record_day(record)}
+
+
+def bulk_upsert_os_metrics(
+    collection_ref,
+    os_metrics_records: List[Dict[str, Any]],
+    stale_doc_ids: Sequence[str] = (),
+    totals_collection_ref=None,
+    totals_row: Optional[Dict[str, Any]] = None,
+    totals_row_stored: bool = False,
+) -> None:
+    """Bulk upsert OS metrics into the database, delete the stale ones and write the totals row last.
+
+    A new totals row starts at version 1, and every write of a stored one moves its version by one in the same
+    write, so two writers never give it the same version.
 
     Args:
-        record (Dict[str, Any]): The stored record.
-
-    Returns:
-        Dict[str, Any]: The record, with its day, stored as an ISO string, as a date.
+        collection_ref: The OS metrics collection.
+        os_metrics_records (List[Dict[str, Any]]): The OS metrics records to upsert.
+        stale_doc_ids (Sequence[str]): The ids of the OS metrics records to delete.
+        totals_collection_ref: The OS metrics totals collection.
+        totals_row (Optional[Dict[str, Any]]): The totals row, from build_os_metrics_totals_row.
+        totals_row_stored (bool): Whether the totals row is already stored.
     """
-    return {**record, "date": metric_record_day(record)}
+    batch = collection_ref._client.batch()
+
+    batch_count = 0
+
+    # Firestore commits 500 writes at most at once, so a stored totals row whose rows need more commits moves its
+    # version in the first one: a later commit that fails never leaves rows changed under the version read before
+    if (
+        totals_collection_ref is not None
+        and totals_row is not None
+        and totals_row_stored
+        and len(stale_doc_ids) + len(os_metrics_records) >= 500
+    ):
+        doc_ref = totals_collection_ref.document(
+            os_metrics_totals_record_id(totals_row["aggregation_period"], totals_row["date"])
+        )
+        batch.update(doc_ref, {"version": Increment(1)})
+        batch_count += 1
+
+    for doc_id in stale_doc_ids:
+        batch.delete(collection_ref.document(doc_id))
+        batch_count += 1
+
+        # Firestore batch limit is 500 operations
+        if batch_count % 500 == 0:
+            batch.commit()
+            batch = collection_ref._client.batch()
+
+    for record in os_metrics_records:
+        doc_ref = collection_ref.document(os_metrics_record_id(record))
+        batch.set(doc_ref, {**record, "date": record["date"].isoformat()})
+        batch_count += 1
+
+        # Firestore batch limit is 500 operations
+        if batch_count % 500 == 0:
+            batch.commit()
+            batch = collection_ref._client.batch()
+
+    if totals_collection_ref is not None and totals_row is not None:
+        doc_ref = totals_collection_ref.document(
+            os_metrics_totals_record_id(totals_row["aggregation_period"], totals_row["date"])
+        )
+        batch.set(
+            doc_ref,
+            {**totals_row, "date": totals_row["date"].isoformat(), "version": Increment(1)},
+            merge=list(totals_row) + ["version"],
+        )
+        batch_count += 1
+
+        # Firestore batch limit is 500 operations
+        if batch_count % 500 == 0:
+            batch.commit()
+            batch = collection_ref._client.batch()
+
+    # Commit remaining operations
+    if batch_count % 500 != 0:
+        batch.commit()

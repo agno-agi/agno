@@ -170,15 +170,32 @@ METRICS_COLLECTION_SCHEMA = [
 ]
 
 OS_METRICS_COLLECTION_SCHEMA = [
-    {"key": "id", "unique": True},
-    {"key": "date"},
     {"key": "aggregation_period"},
-    # Rows with no owner use the empty-string sentinel, so one owner's rows are read by equality
+    {"key": "date"},
     {"key": "user_id"},
-    # The rows of one period by day, read newest first
-    {"key": [("aggregation_period", "ASCENDING"), ("date", "DESCENDING")], "collection_group": False},
-    # One owner's days: an equality on user_id with a range on date needs a composite index
-    {"key": [("user_id", "ASCENDING"), ("date", "ASCENDING")], "collection_group": False},
+    {"key": "component_type"},
+    {"key": "component_id"},
+    {"key": "parent_component_id"},
+    {"key": "created_at"},
+    {"key": "updated_at"},
+    {"key": [("aggregation_period", "ASCENDING"), ("date", "ASCENDING")], "collection_group": False},
+    {
+        "key": [("user_id", "ASCENDING"), ("aggregation_period", "ASCENDING"), ("date", "ASCENDING")],
+        "collection_group": False,
+    },
+]
+
+OS_METRICS_TOTALS_COLLECTION_SCHEMA = [
+    {"key": "aggregation_period"},
+    {"key": "date"},
+    {"key": "completed"},
+    {"key": "created_at"},
+    {"key": "updated_at"},
+    {"key": [("aggregation_period", "ASCENDING"), ("date", "ASCENDING")], "collection_group": False},
+    {
+        "key": [("aggregation_period", "ASCENDING"), ("completed", "ASCENDING"), ("date", "DESCENDING")],
+        "collection_group": False,
+    },
 ]
 
 TRACE_COLLECTION_SCHEMA = [
@@ -228,6 +245,7 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
         "memories": USER_MEMORY_COLLECTION_SCHEMA,
         "metrics": METRICS_COLLECTION_SCHEMA,
         "os_metrics": OS_METRICS_COLLECTION_SCHEMA,
+        "os_metrics_totals": OS_METRICS_TOTALS_COLLECTION_SCHEMA,
         "evals": EVAL_COLLECTION_SCHEMA,
         "knowledge": KNOWLEDGE_COLLECTION_SCHEMA,
         "traces": TRACE_COLLECTION_SCHEMA,

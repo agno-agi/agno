@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.db.utils import OS_METRICS_FIXED_KEYS, get_sort_value
+from agno.db.utils import get_sort_value
 from agno.session import Session
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -52,6 +52,43 @@ def batch_write_with_retry(
                 f"after {max_retries} retries: {remaining_counts}. "
                 "Data loss will occur if we don't propagate this."
             )
+
+
+def batch_get_with_retry(
+    client,
+    request_items: Dict[str, Any],
+    max_retries: int = 5,
+    initial_backoff_seconds: float = 0.1,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Wrap ``client.batch_get_item`` with exponential-backoff retries for ``UnprocessedKeys``, as
+    ``batch_write_with_retry`` does for ``UnprocessedItems``. Returns the items read, by table.
+    """
+    responses: Dict[str, List[Dict[str, Any]]] = {}
+    remaining = request_items
+    backoff = initial_backoff_seconds
+    for attempt in range(max_retries + 1):
+        response = client.batch_get_item(RequestItems=remaining)
+        for table_name, items in response.get("Responses", {}).items():
+            responses.setdefault(table_name, []).extend(items)
+        unprocessed = response.get("UnprocessedKeys") or {}
+        if not unprocessed:
+            break
+        # Some keys were not read — retry with just those.
+        remaining_counts = {t: len(v["Keys"]) for t, v in unprocessed.items()}
+        if attempt < max_retries:
+            log_warning(
+                f"Dynamo batch_get_item returned UnprocessedKeys "
+                f"{remaining_counts}; retry {attempt + 1}/{max_retries} "
+                f"after {backoff:.2f}s"
+            )
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 5.0)
+            remaining = unprocessed
+        else:
+            raise RuntimeError(
+                f"DynamoDB batch_get_item still had UnprocessedKeys after {max_retries} retries: {remaining_counts}"
+            )
+    return responses
 
 
 # -- Serialization utils --
@@ -600,130 +637,124 @@ def deserialize_metrics_date(value: Any) -> Any:
 
 # -- OS metrics utils --
 
-# The record holding when OS metrics records were last written or deleted, and their hash
-OS_METRICS_STATE_ID = "os_metrics_state"
 
-# batch_get_item reads 100 keys at most
-OS_METRICS_BATCH_SIZE = 100
-
-# The indexes OS metrics records are read from follow a write a moment later. A state younger than this is not
-# reported, so what is read from them is not taken as the records of that state
-OS_METRICS_INDEX_LAG_SECONDS = 10
-
-_OS_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses")
-
-
-def os_metrics_record_id(record: Dict[str, Any]) -> str:
-    """The id an OS metrics record is stored under: one per day, period, owner, component and parent."""
-    day = record["date"]
+def os_metrics_row_id(row: Dict[str, Any]) -> str:
+    """Return the id an OS metrics row is stored under beside its date, from its period, user, component and parent."""
     return generate_id(
         json.dumps(
             [
-                day.isoformat() if isinstance(day, date) else day,
-                record["aggregation_period"],
-                record.get("user_id") or "",
-                record.get("agent_id") or "",
-                record.get("team_id") or "",
-                record.get("workflow_id") or "",
-                record.get("parent_id") or "",
+                row["aggregation_period"],
+                row["user_id"],
+                row["component_type"],
+                row["component_id"],
+                row["parent_component_id"],
             ]
         )
     )
 
 
-def _build_os_metrics_run_data(run_data: Dict[str, Any]) -> Dict[str, Any]:
-    """The run_data of a stored run, or of a run nested inside it, with only what OS metrics count."""
-    metrics = run_data.get("metrics") or {}
-    trimmed_metrics = {
-        key: metrics[key]
-        for key in (*OS_METRICS_FIXED_KEYS["token_metrics"], "duration", "time_to_first_token")
-        if metrics.get(key) is not None
-    }
-    # Only whether the model call reported details is counted
-    if metrics.get("details"):
-        trimmed_metrics["details"] = True
-    trimmed: Dict[str, Any] = {
-        "metrics": trimmed_metrics,
-        "model": run_data.get("model"),
-        "model_provider": run_data.get("model_provider"),
-        # Only each request's duration, skipping messages carried over from an earlier run
-        "messages": [
-            {"role": "assistant", "metrics": {"duration": message["metrics"]["duration"]}}
-            for message in run_data.get("messages") or []
-            if isinstance(message, dict)
-            and message.get("role") == "assistant"
-            and not message.get("from_history")
-            and (message.get("metrics") or {}).get("duration") is not None
-        ],
-    }
-    for key in _OS_METRICS_NESTED_RUN_KEYS:
-        nested_runs = [nested_run for nested_run in run_data.get(key) or [] if isinstance(nested_run, dict)]
-        if nested_runs:
-            trimmed[key] = [
-                {
-                    "run_id": nested_run.get("run_id"),
-                    "agent_id": nested_run.get("agent_id"),
-                    "team_id": nested_run.get("team_id"),
-                    **_build_os_metrics_run_data(nested_run),
-                }
-                for nested_run in nested_runs
-            ]
-    return trimmed
-
-
-def build_os_metrics_run(record: Dict[str, Any]) -> Dict[str, Any]:
-    """Build a run with only what OS metrics count from a record of the runs table.
+def serialize_os_metrics_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Serialize an OS metrics row to a DynamoDB item.
 
     Args:
-        record (Dict[str, Any]): A record of the runs table.
+        row: The OS metrics row, as calculate_date_os_metrics builds it.
 
     Returns:
-        Dict[str, Any]: The run, with the run_data calculate_date_os_metrics reads.
+        A DynamoDB-ready dict. The day is written as an ISO string, and a row with no owner without user_id,
+        since a key attribute of an index cannot be an empty string.
     """
-    run_data = record.get("run_data")
-    return {
-        "run_id": record.get("run_id"),
-        "run_type": record.get("run_type"),
-        "agent_id": record.get("agent_id"),
-        "team_id": record.get("team_id"),
-        "workflow_id": record.get("workflow_id"),
-        "user_id": record.get("user_id"),
-        "parent_run_id": record.get("parent_run_id"),
-        "status": record.get("status"),
-        "run_data": _build_os_metrics_run_data(run_data if isinstance(run_data, dict) else {}),
-    }
-
-
-def serialize_os_metrics_record(record: Dict[str, Any]) -> Dict[str, Any]:
-    """Serialize an OS metrics record to a DynamoDB item.
-
-    Args:
-        record: The OS metrics record, as calculate_date_os_metrics writes it.
-
-    Returns:
-        A DynamoDB-ready dict. The day is written as an ISO string, and a record with no owner without
-        user_id, since a key attribute cannot be an empty string.
-    """
-    data = {key: value for key, value in record.items() if key != "user_id" or value}
-    data["date"] = record["date"].isoformat()
+    data = dict(row)
+    if not data.get("user_id"):
+        data.pop("user_id", None)
+    data["id"] = os_metrics_row_id(row)
+    data["date"] = row["date"].isoformat()
     return serialize_to_dynamo_item(data)
 
 
-def deserialize_os_metrics_record(item: Dict[str, Any]) -> Dict[str, Any]:
-    """Deserialize a DynamoDB item to an OS metrics record, in the shape calculate_date_os_metrics writes.
+def deserialize_os_metrics_row(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Deserialize a DynamoDB item to an OS metrics row, in the shape calculate_date_os_metrics builds.
 
     Args:
-        item (Dict[str, Any]): The DynamoDB item.
+        item: The DynamoDB item.
 
     Returns:
-        Dict[str, Any]: The record, with what the write left out put back: the day as a date, the user_id of
-            a record with no owner, and a metadata of None.
+        The row, with the day as a date and, for a row of agno_os_metrics, the empty user_id of a row with no
+        owner.
     """
-    record = deserialize_from_dynamodb_item(item)
-    record["date"] = deserialize_metrics_date(record.get("date"))
-    record.setdefault("user_id", "")
-    record.setdefault("metadata", None)
-    return record
+    row = deserialize_from_dynamodb_item(item)
+    row["date"] = deserialize_metrics_date(row.get("date"))
+    if "id" in row:
+        row.setdefault("user_id", "")
+    return row
+
+
+def build_os_metrics_totals_update(table_name: str, totals_row: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the update_item arguments that upsert an OS metrics totals row.
+
+    A new row starts at version 1, and every write of a stored one moves its version by one in the same
+    request, so two writers never give it the same version.
+
+    Args:
+        table_name: The OS metrics totals table.
+        totals_row: The row, from build_os_metrics_totals_row.
+
+    Returns:
+        The update_item arguments.
+    """
+    names: Dict[str, str] = {"#created_at": "created_at", "#version": "version"}
+    values: Dict[str, Any] = {":created_at": {"N": str(totals_row["created_at"])}, ":one": {"N": "1"}}
+    set_parts = ["#created_at = if_not_exists(#created_at, :created_at)"]
+    remove_parts = []
+    serialized = serialize_to_dynamo_item(totals_row)
+    for key, value in totals_row.items():
+        if key in ["aggregation_period", "date", "created_at", "version"]:
+            continue
+        names[f"#{key}"] = key
+        # A maximum of nothing is no attribute, as an unset column is NULL
+        if value is None:
+            remove_parts.append(f"#{key}")
+        else:
+            set_parts.append(f"#{key} = :{key}")
+            values[f":{key}"] = serialized[key]
+    names["#rows_pending"] = "rows_pending"
+    remove_parts.append("#rows_pending")
+    update_expression = "SET " + ", ".join(set_parts)
+    if remove_parts:
+        update_expression += " REMOVE " + ", ".join(remove_parts)
+    update_expression += " ADD #version :one"
+    return {
+        "TableName": table_name,
+        "Key": {
+            "aggregation_period": {"S": totals_row["aggregation_period"]},
+            "date": {"S": totals_row["date"].isoformat()},
+        },
+        "UpdateExpression": update_expression,
+        "ExpressionAttributeNames": names,
+        "ExpressionAttributeValues": values,
+    }
+
+
+def query_all_items(dynamodb_client, query_kwargs: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Run a DynamoDB query through every page of its results.
+
+    Args:
+        dynamodb_client: DynamoDB client
+        query_kwargs: The query arguments
+
+    Returns:
+        List of DynamoDB items
+    """
+    items = []
+    response = dynamodb_client.query(**query_kwargs)
+    items.extend(response.get("Items", []))
+
+    # Handle pagination
+    while "LastEvaluatedKey" in response:
+        query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        response = dynamodb_client.query(**query_kwargs)
+        items.extend(response.get("Items", []))
+
+    return items
 
 
 # -- Query utils --

@@ -1,244 +1,404 @@
-"""Unit tests for the OS Metrics related methods of the ValkeyDb class"""
+"""Tests for the OS metrics methods of ValkeyDb.
+
+Uses a tiny in-memory stub for the GLIDE client so no real Valkey instance is
+needed, as test_v3_valkey_migration_compat.py does.
+"""
 
 from __future__ import annotations
 
 import fnmatch
+import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List
+from types import SimpleNamespace
+from typing import Any, Dict, List, Optional
 
 import pytest
 
-glide_sync = pytest.importorskip("glide_sync")
+from agno.metrics import ModelMetrics, RunMetrics
+from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
+from agno.session import AgentSession
 
-from agno.db.valkey.utils import deserialize_os_metrics_record  # noqa: E402
-from agno.db.valkey.valkey import ValkeyDb  # noqa: E402
-from agno.metrics import ModelMetrics, RunMetrics  # noqa: E402
-from agno.run.agent import RunOutput  # noqa: E402
-from agno.run.base import RunStatus  # noqa: E402
-from agno.session.agent import AgentSession  # noqa: E402
+
+class _RequestError(Exception):
+    pass
+
+
+class _ExpirySet:
+    def __init__(self, expiry_type: Any = None, value: Any = None):
+        self.value = value
+
+
+class _ExpiryType:
+    SEC = "SEC"
+
+
+class _ConditionalChange:
+    ONLY_IF_DOES_NOT_EXIST = "NX"
 
 
 class _Batch:
     """Records commands; `_FakeGlideClient.exec` replays them."""
 
-    def __init__(self):
+    def __init__(self, is_atomic: bool = False):
         self.commands: List[tuple] = []
 
-    def __getattr__(self, name: str):
-        return lambda *args, **kwargs: self.commands.append((name, args))
+    def get(self, key):
+        self.commands.append(("get", key))
+
+    def set(self, key, value, expiry=None):
+        self.commands.append(("set", key, value))
+
+    def delete(self, keys):
+        self.commands.append(("delete", keys))
+
+    def sadd(self, key, members):
+        self.commands.append(("sadd", key, members))
+
+    def srem(self, key, members):
+        self.commands.append(("srem", key, members))
+
+    def smembers(self, key):
+        self.commands.append(("smembers", key))
+
+    def zadd(self, key, members_scores):
+        self.commands.append(("zadd", key, members_scores))
+
+    def zrange(self, key, range_query, reverse=False):
+        self.commands.append(("zrange", key, range_query, reverse))
+
+    def hset(self, key, field_value_map):
+        self.commands.append(("hset", key, field_value_map))
+
+    def hincrby(self, key, field, amount):
+        self.commands.append(("hincrby", key, field, amount))
+
+    def hmget(self, key, fields):
+        self.commands.append(("hmget", key, fields))
+
+    def expire(self, key, seconds):
+        self.commands.append(("expire", key, seconds))
 
 
 class _FakeGlideClient:
     def __init__(self):
-        self.data: Dict[str, Any] = {}
+        self.strings: Dict[str, bytes] = {}
+        self.sets: Dict[str, set] = {}
+        self.zsets: Dict[str, Dict[str, float]] = {}
+        self.hashes: Dict[str, Dict[str, bytes]] = {}
 
-    def get(self, key):
-        return self.data.get(key)
+    def _kind(self, key: str) -> Optional[str]:
+        if key in self.strings:
+            return "string"
+        if key in self.sets:
+            return "set"
+        if key in self.zsets:
+            return "zset"
+        if key in self.hashes:
+            return "hash"
+        return None
 
-    def set(self, key, value, conditional_set=None, expiry=None):
-        if conditional_set is not None and key in self.data:
+    # -- strings --
+
+    def get(self, key, buffer=None):
+        if self._kind(key) in ("set", "zset", "hash"):
+            raise _RequestError("WRONGTYPE Operation against a key holding the wrong kind of value")
+        return self.strings.get(key)
+
+    def set(self, key, value, conditional_set=None, expiry=None, **kwargs):
+        if conditional_set is not None and self._kind(key) is not None:
             return None
-        self.data[key] = value.encode() if isinstance(value, str) else value
+        self.strings[key] = value.encode() if isinstance(value, str) else value
         return "OK"
 
     def delete(self, keys):
-        return sum(self.data.pop(key, None) is not None for key in keys)
-
-    def expire(self, key, seconds):
-        return True
+        deleted = 0
+        for key in keys:
+            for store in (self.strings, self.sets, self.zsets, self.hashes):
+                if key in store:
+                    del store[key]
+                    deleted += 1
+        return deleted
 
     def scan(self, cursor="0", match=None, count=None):
-        return [b"0", [key.encode() for key in self.data if match is None or fnmatch.fnmatch(key, match)]]
+        keys = list(self.strings) + list(self.sets) + list(self.zsets) + list(self.hashes)
+        matched = [k.encode() for k in keys if match is None or fnmatch.fnmatch(k, match)]
+        return [b"0", matched]
+
+    # -- sets --
 
     def sadd(self, key, members):
-        self.data.setdefault(key, set()).update(members)
+        self.sets.setdefault(key, set()).update(members)
+        return len(members)
+
+    def srem(self, key, members):
+        entries = self.sets.get(key, set())
+        for member in members:
+            entries.discard(member)
         return len(members)
 
     def smembers(self, key):
-        return {member.encode() for member in self.data.get(key, set())}
+        return {m.encode() if isinstance(m, str) else m for m in self.sets.get(key, set())}
 
-    def zadd(self, key, members_scores):
-        self.data.setdefault(key, {}).update(members_scores)
+    # -- sorted sets --
+
+    def zadd(self, key, members_scores, **kwargs):
+        self.zsets.setdefault(key, {}).update(members_scores)
         return len(members_scores)
 
+    def zrange(self, key, range_query, reverse=False):
+        entries = self.zsets.get(key, {})
+        ordered = sorted(entries.items(), key=lambda kv: (kv[1], kv[0]), reverse=reverse)
+        return [m.encode() for m, _ in ordered]
+
+    # -- hashes --
+
+    def hset(self, key, field_value_map):
+        entries = self.hashes.setdefault(key, {})
+        for field, value in field_value_map.items():
+            entries[field] = value.encode() if isinstance(value, str) else value
+        return len(field_value_map)
+
+    def hincrby(self, key, field, amount):
+        entries = self.hashes.setdefault(key, {})
+        entries[field] = str(int(entries.get(field, b"0")) + amount).encode()
+        return int(entries[field])
+
+    def hmget(self, key, fields):
+        entries = self.hashes.get(key, {})
+        return [entries.get(field) for field in fields]
+
+    def expire(self, key, seconds, option=None):
+        return True
+
+    # -- transactions --
+
+    def watch(self, keys):
+        return "OK"
+
+    def unwatch(self):
+        return "OK"
+
     def exec(self, batch, raise_on_error=False):
-        return [getattr(self, name)(*args) for name, args in batch.commands]
+        results: List[Any] = []
+        for command in batch.commands:
+            op = command[0]
+            try:
+                if op == "get":
+                    results.append(self.get(command[1]))
+                elif op == "set":
+                    results.append(self.set(command[1], command[2]))
+                elif op == "delete":
+                    results.append(self.delete(command[1]))
+                elif op == "sadd":
+                    results.append(self.sadd(command[1], command[2]))
+                elif op == "srem":
+                    results.append(self.srem(command[1], command[2]))
+                elif op == "smembers":
+                    results.append(self.smembers(command[1]))
+                elif op == "zadd":
+                    results.append(self.zadd(command[1], command[2]))
+                elif op == "zrange":
+                    results.append(self.zrange(command[1], command[2], command[3]))
+                elif op == "hset":
+                    results.append(self.hset(command[1], command[2]))
+                elif op == "hincrby":
+                    results.append(self.hincrby(command[1], command[2], command[3]))
+                elif op == "hmget":
+                    results.append(self.hmget(command[1], command[2]))
+                else:
+                    results.append(True)
+            except _RequestError as exc:
+                # GLIDE surfaces per-command failures as values, not raises
+                results.append(exc)
+        return results
 
 
-def _new_db() -> ValkeyDb:
-    """Build a ValkeyDb on the stub, with its pipelines run by the stub."""
-    client: Any = _FakeGlideClient()
-    db = ValkeyDb(valkey_client=client, db_prefix="agno")
-    db._create_pipeline = lambda: _Batch()  # type: ignore[method-assign,assignment,return-value]
+@pytest.fixture()
+def valkey_db(monkeypatch):
+    """Create a ValkeyDb on the stub, with the GLIDE types patched to match."""
+    import agno.db.valkey.valkey as valkey_module
+    from agno.db.valkey.valkey import ValkeyDb
+
+    monkeypatch.setattr(valkey_module, "RequestError", _RequestError)
+    monkeypatch.setattr(valkey_module, "ExpirySet", _ExpirySet)
+    monkeypatch.setattr(valkey_module, "ExpiryType", _ExpiryType)
+    monkeypatch.setattr(valkey_module, "ConditionalChange", _ConditionalChange)
+    client = _FakeGlideClient()
+    db = ValkeyDb(valkey_client=client, db_prefix="agno")  # type: ignore[arg-type]
+    db._create_pipeline = lambda: _Batch()  # type: ignore[method-assign]
+    db._create_os_metrics_transaction = lambda: _Batch(is_atomic=True)  # type: ignore[method-assign]
+    db._create_os_metrics_lock_transaction = lambda: _Batch(is_atomic=True)  # type: ignore[method-assign]
     db._exec_pipeline = lambda pipeline: client.exec(pipeline)  # type: ignore[method-assign]
     return db
 
 
-def _noon_utc(days_ago: int) -> int:
-    """Midday UTC, ``days_ago`` days back"""
-    day = _utc_date(days_ago)
-    return int(datetime(day.year, day.month, day.day, 12, tzinfo=timezone.utc).timestamp())
-
-
 def _utc_date(days_ago: int) -> date:
-    """The UTC day ``days_ago`` days back, the day an OS metrics record is keyed by"""
+    """The UTC day ``days_ago`` days back, the day an OS metrics record is keyed by."""
     return datetime.now(timezone.utc).date() - timedelta(days=days_ago)
 
 
-def _persist(db: ValkeyDb, session) -> None:
-    """Store a session the way v3 does: the record, then each run in the runs table"""
+def _noon_utc(day: date) -> int:
+    """Midday UTC of the given day."""
+    return int(datetime(day.year, day.month, day.day, 12, tzinfo=timezone.utc).timestamp())
+
+
+def _persist(db, session_id: str, user_id: str, day: date, tokens: List[int]) -> None:
+    """Store a session the way v3 does: the record, then each run in the runs table."""
+    created_at = _noon_utc(day)
+    runs = [
+        RunOutput(
+            run_id=f"{session_id}_run_{run_index}",
+            agent_id="agent-1",
+            user_id=user_id,
+            status=RunStatus.completed,
+            model="gpt-5",
+            model_provider="OpenAI",
+            metrics=RunMetrics(
+                input_tokens=input_tokens,
+                total_tokens=input_tokens,
+                duration=1.5,
+                details={"model": [ModelMetrics(id="gpt-5", provider="OpenAI", input_tokens=input_tokens)]},
+            ),
+            created_at=created_at + run_index,
+        )
+        for run_index, input_tokens in enumerate(tokens)
+    ]
+    session = AgentSession(
+        session_id=session_id, agent_id="agent-1", user_id=user_id, created_at=created_at, updated_at=created_at
+    )
     db.upsert_session(session)
-    for run_index, run in enumerate(session.runs or []):
-        db.upsert_run(run, session_id=session.session_id, user_id=session.user_id, run_index=run_index)
+    for run_index, run in enumerate(runs):
+        db.upsert_run(run, session_id=session_id, user_id=user_id, run_index=run_index)
 
 
-def _run_metrics(input_tokens: int, output_tokens: int) -> RunMetrics:
-    """The metrics a finished run carries: tokens, and the model that served it"""
-    tokens: Dict[str, Any] = {
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "total_tokens": input_tokens + output_tokens,
-    }
-    return RunMetrics(**tokens, details={"model": [ModelMetrics(id="gpt-5", provider="OpenAI", **tokens)]})
+@pytest.fixture()
+def seeded_db(valkey_db):
+    """Two days back: one session of alice with two runs and one of bob with one run. Today: one of alice."""
+    _persist(valkey_db, "alice_session", "alice", _utc_date(2), [100, 10])
+    _persist(valkey_db, "bob_session", "bob", _utc_date(2), [200])
+    _persist(valkey_db, "alice_session_today", "alice", _utc_date(0), [30])
+    return valkey_db
 
 
-def _make_run(run_id: str, user_id: str, created_at: int, input_tokens: int, output_tokens: int) -> RunOutput:
-    return RunOutput(
-        run_id=run_id,
-        agent_id="agent-1",
-        user_id=user_id,
-        status=RunStatus.completed,
-        model="gpt-5",
-        model_provider="OpenAI",
-        metrics=_run_metrics(input_tokens, output_tokens),
-        created_at=created_at,
-    )
+def _later_clock(monkeypatch, seconds: int) -> None:
+    """Move the clock the adapter reads forward, past the second the records were written in."""
+    import agno.db.valkey.valkey as valkey_module
+
+    later = time.time() + seconds
+    monkeypatch.setattr(valkey_module, "time", SimpleNamespace(time=lambda: later, sleep=time.sleep))
 
 
-def _make_session(session_id: str, user_id: str, days_ago: int, runs: list) -> AgentSession:
-    return AgentSession(
-        session_id=session_id,
-        agent_id="agent-1",
-        user_id=user_id,
-        runs=runs,
-        created_at=_noon_utc(days_ago),
-        updated_at=_noon_utc(days_ago),
-    )
+def test_calculate_os_metrics_rows_and_totals(seeded_db):
+    results = seeded_db.calculate_os_metrics()
 
-
-def _stored_rows(db: ValkeyDb) -> Dict[tuple, Dict]:
-    """Every OS metrics record stored for one owner, keyed by (date, user_id), without the state key"""
-    rows = [
-        deserialize_os_metrics_record(record)
-        for record in db._get_all_records("os_metrics")
-        if record.get("aggregation_period") == "daily"
-    ]
-    return {(row["date"], row["user_id"]): row for row in rows}
-
-
-@pytest.fixture
-def sample_sessions_for_os_metrics() -> List[AgentSession]:
-    """Fixture returning the sessions of two days back, one of alice and one of bob, plus one of alice today"""
-    past_day, today = _noon_utc(2), _noon_utc(0)
-    alice_runs = [
-        _make_run("alice_run_1", "alice", past_day, 100, 50),
-        _make_run("alice_run_2", "alice", past_day + 60, 10, 5),
-    ]
-    return [
-        _make_session("alice_session", "alice", 2, alice_runs),
-        _make_session("bob_session", "bob", 2, [_make_run("bob_run_1", "bob", past_day, 200, 100)]),
-        _make_session("alice_session_today", "alice", 0, [_make_run("alice_run_today", "alice", today, 30, 20)]),
-    ]
-
-
-@pytest.fixture
-def db(sample_sessions_for_os_metrics) -> ValkeyDb:
-    """Fixture returning a database holding the sample sessions and their runs"""
-    db = _new_db()
-    for session in sample_sessions_for_os_metrics:
-        _persist(db, session)
-    return db
-
-
-def test_calculate_os_metrics(db):
-    """Ensure a rebuild stores the records of a day with the sessions, runs and tokens of each owner"""
-    assert db.calculate_os_metrics()
-
-    rows = _stored_rows(db)
+    rows = {(row["date"], row["user_id"]): row for row in results}
     assert set(rows) == {(_utc_date(2), "alice"), (_utc_date(2), "bob"), (_utc_date(0), "alice")}
+    assert rows[(_utc_date(2), "alice")]["sessions_count"] == 1
+    assert rows[(_utc_date(2), "alice")]["runs_count"] == 2
+    assert rows[(_utc_date(2), "alice")]["input_tokens"] == 110
+    assert rows[(_utc_date(2), "alice")]["model_metrics"] == [
+        {"model_id": "gpt-5", "model_provider": "OpenAI", "count": 2}
+    ]
 
-    alice_row = rows[(_utc_date(2), "alice")]
-    assert alice_row["sessions_count"] == 1
-    assert alice_row["runs_count"] == 2
-    assert alice_row["token_metrics"]["input_tokens"] == 110
-    assert alice_row["token_metrics"]["output_tokens"] == 55
-    assert alice_row["token_metrics"]["total_tokens"] == 165
+    totals = {record["date"]: record for record in seeded_db._get_all_os_metrics_totals_records()}
+    # The day without traffic has a totals record of zeros
+    assert sorted(totals) == [_utc_date(2), _utc_date(1), _utc_date(0)]
+    assert totals[_utc_date(2)]["runs_count"] == 3
+    assert totals[_utc_date(2)]["input_tokens"] == 310
+    assert totals[_utc_date(1)]["sessions_count"] == 0
+    # A day is completed one day after it ended
+    assert [totals[_utc_date(day)]["completed"] for day in [2, 1, 0]] == [True, False, False]
+    assert all(record["version"] == 1 for record in totals.values())
 
-    bob_row = rows[(_utc_date(2), "bob")]
-    assert bob_row["runs_count"] == 1
-    assert bob_row["token_metrics"]["total_tokens"] == 300
 
+def test_get_os_metrics_every_owner_and_one_user(seeded_db):
+    seeded_db.calculate_os_metrics()
 
-def test_get_os_metrics_by_date(db):
-    """Ensure a read returns the totals of each day of a date range, with only the fields asked for"""
-    db.calculate_os_metrics()
-
-    totals, latest_updated_at = db.get_os_metrics(_utc_date(2), _utc_date(0))
+    days, latest_updated_at = seeded_db.get_os_metrics(_utc_date(2), _utc_date(0), fields=["runs_count"])
     assert latest_updated_at is not None
-    assert [total["date"] for total in totals] == [_utc_date(2), _utc_date(0)]
-    assert [total["sessions_count"] for total in totals] == [2, 1]
-    assert [total["runs_count"] for total in totals] == [3, 1]
-    assert [total["token_metrics"]["total_tokens"] for total in totals] == [465, 50]
+    assert days == [
+        {"date": _utc_date(2), "runs_count": 3},
+        {"date": _utc_date(1), "runs_count": 0},
+        {"date": _utc_date(0), "runs_count": 1},
+    ]
 
-    totals, _ = db.get_os_metrics(_utc_date(2), _utc_date(2), fields=["runs_count"])
-    assert totals == [{"date": _utc_date(2), "runs_count": 3}]
+    days, _ = seeded_db.get_os_metrics(_utc_date(2), _utc_date(0), user_id="bob", fields=["input_tokens"])
+    assert days == [{"date": _utc_date(2), "input_tokens": 200}]
 
-
-def test_get_os_metrics_by_user(db):
-    """Ensure a read for one user returns only the numbers of that user"""
-    db.calculate_os_metrics()
-
-    totals, _ = db.get_os_metrics(_utc_date(2), _utc_date(0), user_id="bob")
-    assert [total["date"] for total in totals] == [_utc_date(2)]
-    assert totals[0]["sessions_count"] == 1
-    assert totals[0]["runs_count"] == 1
-    assert totals[0]["token_metrics"]["total_tokens"] == 300
+    totals, _ = seeded_db.get_os_metrics_totals(_utc_date(2), _utc_date(0), fields=["sessions_count", "runs_count"])
+    assert totals == {"sessions_count": 3, "runs_count": 4}
 
 
-def test_calculate_os_metrics_after_new_run(db):
-    """Ensure a rebuild after one more run changes the stored numbers, and a rebuild with nothing new does not"""
-    db.calculate_os_metrics()
-    assert _stored_rows(db)[(_utc_date(0), "alice")]["runs_count"] == 1
+def test_versions_move_only_when_a_day_changes(seeded_db):
+    assert seeded_db.refresh_os_metrics()[2] is True
+    versions = seeded_db.get_os_metrics_versions(_utc_date(2), _utc_date(0))
+    assert set(versions) == {f"daily {_utc_date(day).isoformat()}" for day in [2, 1, 0]}
 
-    new_run = _make_run("alice_run_today_2", "alice", _noon_utc(0) + 60, 5, 5)
-    db.upsert_run(new_run, session_id="alice_session_today", user_id="alice", run_index=1)
-    db.calculate_os_metrics()
+    previous_updated_at, latest_updated_at, changed = seeded_db.refresh_os_metrics()
+    assert (previous_updated_at == latest_updated_at, changed) == (True, False)
+    assert seeded_db.get_os_metrics_versions(_utc_date(2), _utc_date(0)) == versions
 
-    rows = _stored_rows(db)
-    assert rows[(_utc_date(0), "alice")]["runs_count"] == 2
-    assert rows[(_utc_date(0), "alice")]["token_metrics"]["total_tokens"] == 60
-
-    db.calculate_os_metrics()
-    assert _stored_rows(db) == rows
-
-
-def test_refresh_os_metrics(db):
-    """Ensure a refresh reports when the records were last updated before and after it, and whether any changed"""
-    before, after, changed = db.refresh_os_metrics()
-    assert before is None and after is not None and changed is True
-
-    assert db.refresh_os_metrics() == (after, after, False)
+    _persist(seeded_db, "bob_session_today", "bob", _utc_date(0), [5])
+    assert seeded_db.refresh_os_metrics()[2] is True
+    new_versions = seeded_db.get_os_metrics_versions(_utc_date(2), _utc_date(0))
+    assert new_versions[f"daily {_utc_date(0).isoformat()}"] == 2
+    assert new_versions[f"daily {_utc_date(2).isoformat()}"] == 1
 
 
-def test_get_os_metrics_totals_and_state(db):
-    """Ensure the totals of a whole date range are returned, and the state the records are in"""
-    db.calculate_os_metrics()
+def test_lazy_refresh_skipped_while_nothing_changed(seeded_db, monkeypatch):
+    seeded_db.calculate_os_metrics()
+    _later_clock(monkeypatch, 5)
+    # The first lazy refresh rebuilds from yesterday on, the days the next one compares
+    assert seeded_db._calculate_os_metrics(wait_for_rebuild=False) is not None
+    assert seeded_db._calculate_os_metrics(wait_for_rebuild=False) is None
 
-    totals, latest_updated_at = db.get_os_metrics_totals(_utc_date(2), _utc_date(0))
-    assert totals["sessions_count"] == 3
-    assert totals["runs_count"] == 4
-    assert totals["token_metrics"]["total_tokens"] == 515
+    _persist(seeded_db, "bob_session_today", "bob", _utc_date(0), [5])
+    _later_clock(monkeypatch, 10)
+    assert seeded_db._calculate_os_metrics(wait_for_rebuild=False) is not None
 
-    updated_at, state_hash = db.get_os_metrics_state()
-    assert updated_at == latest_updated_at
-    assert state_hash
+
+def test_lazy_refresh_skipped_while_another_process_rebuilds(seeded_db):
+    seeded_db.valkey_client.set(seeded_db._os_metrics_lock_key(), "another-process")
+
+    assert seeded_db._calculate_os_metrics(wait_for_rebuild=False) is None
+    assert seeded_db._os_metrics_refreshed_at == 0.0
+
+
+def test_versions_none_while_not_built(seeded_db):
+    seeded_db._os_metrics_refreshed_at = time.time()
+    assert seeded_db.get_os_metrics_versions(_utc_date(2), _utc_date(0)) is None
+
+    seeded_db.calculate_os_metrics()
+    assert seeded_db.get_os_metrics_versions(_utc_date(2), _utc_date(0)) is not None
+
+
+def test_month_rows_of_a_completed_month(valkey_db):
+    month_start = (_utc_date(0).replace(day=1) - timedelta(days=1)).replace(day=1)
+    if (_utc_date(0) - month_start).days < 40:
+        month_start = (month_start - timedelta(days=1)).replace(day=1)
+    _persist(valkey_db, "alice_month_1", "alice", month_start, [100])
+    _persist(valkey_db, "alice_month_2", "alice", month_start + timedelta(days=9), [50])
+    _persist(valkey_db, "bob_month", "bob", month_start + timedelta(days=3), [20])
+
+    valkey_db.calculate_os_metrics()
+
+    month_totals = [
+        record for record in valkey_db._get_all_os_metrics_totals_records() if record["aggregation_period"] == "monthly"
+    ]
+    assert [(record["date"], record["completed"], record["input_tokens"]) for record in month_totals] == [
+        (month_start, True, 170)
+    ]
+    month_rows = [
+        record
+        for record in valkey_db._get_os_metrics_records(valkey_db._get_os_metrics_record_ids("user_id", ["alice"]))
+        if record["aggregation_period"] == "monthly"
+    ]
+    assert [(record["date"], record["runs_count"], record["input_tokens"]) for record in month_rows] == [
+        (month_start, 2, 150)
+    ]
+
+    totals, _ = valkey_db.get_os_metrics_totals(month_start, _utc_date(0), fields=["runs_count", "input_tokens"])
+    assert totals == {"runs_count": 3, "input_tokens": 170}
+    totals, _ = valkey_db.get_os_metrics_totals(month_start, _utc_date(0), user_id="alice", fields=["input_tokens"])
+    assert totals == {"input_tokens": 150}

@@ -3,10 +3,10 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import UUID
 
-from agno.db.utils import OS_METRICS_FIXED_KEYS, get_sort_value
+from agno.db.utils import OS_METRICS_TOKEN_FIELDS, get_sort_value
 from agno.utils.log import log_warning
 from agno.utils.string import generate_id
 
@@ -14,6 +14,20 @@ try:
     from redis import Redis, RedisCluster
 except ImportError:
     raise ImportError("`redis` not installed. Please install it using `pip install redis`")
+
+
+# How long the OS metrics lock is held unless extended
+OS_METRICS_LOCK_MILLISECONDS = 60000
+
+# Keys read or written per pipeline, so a large rebuild never sends one huge request
+OS_METRICS_BATCH_SIZE = 1000
+
+# Keys each SCAN call walks. SCAN walks every key of the database, not only the matching ones, so a larger
+# count takes fewer round trips
+OS_METRICS_SCAN_COUNT = 10000
+
+# The keys of a stored run that hold the runs nested inside it
+_OS_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses")
 
 
 # -- Serialization and deserialization --
@@ -52,19 +66,22 @@ def generate_index_key(prefix: str, table_type: str, index_field: str, index_val
     return f"{prefix}:{table_type}:index:{index_field}:{index_value}"
 
 
-def get_all_keys_for_table(redis_client: Union[Redis, RedisCluster], prefix: str, table_type: str) -> List[str]:
+def get_all_keys_for_table(
+    redis_client: Union[Redis, RedisCluster], prefix: str, table_type: str, count: Optional[int] = None
+) -> List[str]:
     """Get all relevant keys for the given table type.
 
     Args:
         redis_client (Redis): The Redis client.
         prefix (str): The prefix for the keys.
         table_type (str): The table type.
+        count (Optional[int]): How many keys each SCAN call walks. ``None`` uses the Redis default.
 
     Returns:
         List[str]: A list of all relevant keys for the given table type.
     """
     pattern = f"{prefix}:{table_type}:*"
-    all_keys = redis_client.scan_iter(match=pattern, count=1000)
+    all_keys = redis_client.scan_iter(match=pattern, count=count)
     relevant_keys = []
 
     # Helper namespaces, matched by prefix so a record id that merely contains one
@@ -345,74 +362,52 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
 
 # -- OS metrics utils --
 
-OS_METRICS_LOCK_SECONDS = 300
 
-OS_METRICS_BATCH_SIZE = 1000
+def os_metrics_record_id(record: Dict[str, Any]) -> str:
+    """Generate the deterministic ID of an OS metrics record from its key. This simplifies avoiding duplicates.
 
-_OS_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses")
-
-
-def os_metrics_record_id(
-    day: date,
-    aggregation_period: str,
-    user_id: str = "",
-    agent_id: str = "",
-    team_id: str = "",
-    workflow_id: str = "",
-    parent_id: str = "",
-) -> str:
-    """Generate the deterministic ID of an OS metrics record. This simplifies avoiding duplicates.
-
-    The ID starts with the day, so the day of a record is read off an index entry without reading the record.
-
-    Args:
-        day (date): The day of the record.
-        aggregation_period (str): The period of the record.
-        user_id (str): The owner of the record. Empty for a total record.
-        agent_id (str): The agent of the record.
-        team_id (str): The team of the record.
-        workflow_id (str): The workflow of the record.
-        parent_id (str): The parent of the record.
-
-    Returns:
-        str: The ID of the record.
+    The ID starts with the day and the period, so both are read off an index entry without reading the record.
     """
-    component_id = generate_id(
-        json.dumps([user_id or "", agent_id or "", team_id or "", workflow_id or "", parent_id or ""])
+    component_key = generate_id(
+        json.dumps([record["user_id"], record["component_type"], record["component_id"], record["parent_component_id"]])
     )
-    return f"{day.isoformat()}_{aggregation_period}_{component_id}"
+    return f"{record['date'].isoformat()}_{record['aggregation_period']}_{component_key}"
 
 
-def os_metrics_record_day(record_id: Any) -> Optional[date]:
-    """Read the day off the ID of an OS metrics record, or ``None`` if it does not start with one."""
+def os_metrics_totals_record_id(aggregation_period: str, record_date: date) -> str:
+    """Generate the deterministic ID of an OS metrics totals record: its day, then its period."""
+    return f"{record_date.isoformat()}_{aggregation_period}"
+
+
+def os_metrics_record_day(record_id: Any) -> Tuple[date, str]:
+    """Read the day and the period off the ID of an OS metrics or OS metrics totals record."""
     # Coerce bytes -> str (decode_responses may not be set)
     record_id = record_id.decode() if isinstance(record_id, (bytes, bytearray)) else str(record_id)
-    try:
-        return date.fromisoformat(record_id[:10])
-    except ValueError:
-        return None
+    return date.fromisoformat(record_id[:10]), record_id[11:].split("_")[0]
 
 
-def get_os_metrics_index_fields(record: Dict[str, Any]) -> List[str]:
-    """Return the fields an OS metrics record is indexed by.
-
-    Only total records are indexed by period, and they are not indexed by owner.
-    """
-    if record["aggregation_period"] == "daily":
-        return ["date", "user_id"]
-    return ["date", "aggregation_period"]
+def deserialize_os_metrics_record(data: Any) -> Dict[str, Any]:
+    """Deserialize a stored OS metrics record, with its day read back as a date."""
+    record = deserialize_data(data)
+    record["date"] = date.fromisoformat(record["date"])
+    return record
 
 
-def deserialize_os_metrics_record(record: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a stored OS metrics record in the shape calculate_date_os_metrics writes.
+def serialize_os_metrics_totals_record(record: Dict[str, Any]) -> Dict[str, str]:
+    """Serialize each column of an OS metrics totals record to a field of the hash it is stored in."""
+    return {column: json.dumps(value, ensure_ascii=False, cls=CustomEncoder) for column, value in record.items()}
 
-    Args:
-        record (Dict[str, Any]): The stored record.
 
-    Returns:
-        Dict[str, Any]: The record, with its day, stored as an ISO string, as a date.
-    """
-    return {**record, "date": date.fromisoformat(record["date"])}
+def deserialize_os_metrics_totals_record(fields: Dict[Any, Any]) -> Dict[str, Any]:
+    """Deserialize the fields of a stored OS metrics totals record, with its day read back as a date."""
+    record = {
+        (column.decode() if isinstance(column, bytes) else column): json.loads(value)
+        for column, value in fields.items()
+        if value is not None
+    }
+    if "date" in record:
+        record["date"] = date.fromisoformat(record["date"])
+    return record
 
 
 def _build_os_metrics_run_data(run_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -420,12 +415,11 @@ def _build_os_metrics_run_data(run_data: Dict[str, Any]) -> Dict[str, Any]:
     metrics = run_data.get("metrics") or {}
     trimmed_metrics = {
         key: metrics[key]
-        for key in (*OS_METRICS_FIXED_KEYS["token_metrics"], "duration", "time_to_first_token")
+        for key in list(OS_METRICS_TOKEN_FIELDS) + ["duration", "time_to_first_token"]
         if metrics.get(key) is not None
     }
     # Only whether the model call reported details is counted
-    if metrics.get("details"):
-        trimmed_metrics["details"] = True
+    trimmed_metrics["details"] = bool(metrics.get("details"))
     trimmed: Dict[str, Any] = {
         "run_id": run_data.get("run_id"),
         "agent_id": run_data.get("agent_id"),
@@ -433,10 +427,12 @@ def _build_os_metrics_run_data(run_data: Dict[str, Any]) -> Dict[str, Any]:
         "metrics": trimmed_metrics,
         "model": run_data.get("model"),
         "model_provider": run_data.get("model_provider"),
-        # Only each request's duration, skipping messages carried over from an earlier run
+        "forked_from_session_id": run_data.get("forked_from_session_id"),
+        # Only each request's duration, skipping messages carried over from an earlier run: those from history,
+        # and those a forked run copied from the run it was forked from
         "messages": [
             {"role": "assistant", "metrics": {"duration": message["metrics"]["duration"]}}
-            for message in run_data.get("messages") or []
+            for message in (run_data.get("messages") or [])[run_data.get("forked_from_message_index") or 0 :]
             if isinstance(message, dict)
             and message.get("role") == "assistant"
             and not message.get("from_history")
@@ -451,6 +447,9 @@ def _build_os_metrics_run_data(run_data: Dict[str, Any]) -> Dict[str, Any]:
         ]
         if nested_runs:
             trimmed[key] = nested_runs
+    # A workflow agent's run is stored as the run itself, the other nested runs in lists
+    if isinstance(run_data.get("workflow_agent_run"), dict):
+        trimmed["workflow_agent_run"] = _build_os_metrics_run_data(run_data["workflow_agent_run"])
     return trimmed
 
 
@@ -461,8 +460,8 @@ def build_os_metrics_run(run: Dict[str, Any]) -> Dict[str, Any]:
         run (Dict[str, Any]): The run, as stored.
 
     Returns:
-        Dict[str, Any]: The run with the run_data calculate_date_os_metrics reads: no message content, and of
-            the metrics only the token counts, the timings and whether the model call reported details.
+        Dict[str, Any]: The run with the run_data calculate_date_os_metrics reads: no message content, and of the
+            metrics only the token counts, the timings and whether the model call reported details.
     """
     return {
         "run_id": run.get("run_id"),
@@ -484,7 +483,8 @@ def build_os_metrics_session(session: Dict[str, Any]) -> Dict[str, Any]:
         session (Dict[str, Any]): The session, as stored.
 
     Returns:
-        Dict[str, Any]: The session with its type, its owner and its agent, team or workflow.
+        Dict[str, Any]: The session with its type, its owner, its agent, team or workflow, and the runs not yet
+            migrated out of its legacy runs field.
     """
     return {
         "session_type": session.get("session_type"),
@@ -492,4 +492,6 @@ def build_os_metrics_session(session: Dict[str, Any]) -> Dict[str, Any]:
         "agent_id": session.get("agent_id"),
         "team_id": session.get("team_id"),
         "workflow_id": session.get("workflow_id"),
+        "created_at": session.get("created_at"),
+        "runs": session.get("runs"),
     }

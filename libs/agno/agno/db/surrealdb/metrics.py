@@ -1,23 +1,33 @@
-import json
 import time
 from datetime import date, datetime, timezone
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Union
+from uuid import uuid4
 
 from surrealdb import BlockingHttpSurrealConnection, BlockingWsSurrealConnection, RecordID
 
 from agno.db.base import SessionType
 from agno.db.surrealdb import utils
-from agno.db.surrealdb.models import desurrealize_session, surrealize_dates
-from agno.db.surrealdb.queries import WhereClause
+from agno.db.surrealdb.models import desurrealize_dates, desurrealize_session, surrealize_dates
+from agno.db.surrealdb.queries import WhereClause, order_limit_start
 from agno.db.utils import (
-    OS_METRICS_FIXED_KEYS,
-    OS_METRICS_STATE_ID,
-    build_os_metrics_state,
+    OS_METRICS_KEY_COLUMNS,
+    OS_METRICS_TOTALS_KEY_COLUMNS,
     metrics_starting_date_from_days,
 )
 from agno.utils.log import log_error
-from agno.utils.string import generate_id
+
+# A process that stopped mid-rebuild holds the OS metrics lock this many seconds at most
+OS_METRICS_LOCK_SECONDS = 300
+
+# Rows a rebuild reads at a time, so a day or a month of many rows is never held or decoded in one step
+OS_METRICS_BATCH_SIZE = 1000
+
+# The keys of a stored run that hold the runs nested inside it
+_OS_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses", "workflow_agent_run")
+
+# A run nested deeper than this is read whole
+_OS_METRICS_NESTED_RUNS_DEPTH = 6
 
 
 def get_all_sessions_for_metrics_calculation(
@@ -381,124 +391,30 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
     return records
 
 
-# --- OS Metrics ---
-
-_OS_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses")
-
-# A run nested deeper than this is read whole
-_OS_METRICS_NESTED_RUNS_DEPTH = 6
-
-
 def _os_metrics_nested_runs_fields(depth: int = _OS_METRICS_NESTED_RUNS_DEPTH) -> str:
     """The fields of the runs nested inside a stored run that OS metrics count, down to the given depth."""
     if depth == 0:
         return ", ".join(_OS_METRICS_NESTED_RUN_KEYS)
-    fields = "run_id, agent_id, team_id, metrics, model, model_provider, messages.{role, from_history, metrics}"
+    fields = (
+        "run_id, agent_id, team_id, metrics, model, model_provider, forked_from_message_index, "
+        "messages.{role, from_history, metrics}"
+    )
     nested_fields = _os_metrics_nested_runs_fields(depth - 1)
     return ", ".join(f"{key}.{{{fields}, {nested_fields}}}" for key in _OS_METRICS_NESTED_RUN_KEYS)
 
 
-def os_metrics_record_id(record: Dict[str, Any]) -> str:
-    """The id an OS metrics record is stored under: one per day, period, owner, component and parent.
-
-    The record id is what keeps two rebuilds that write the same record from storing it twice. Seeded with
-    the key as JSON, which no two keys share.
-    """
-    day = record["date"]
-    return generate_id(
-        json.dumps(
-            [
-                day.isoformat() if isinstance(day, date) else day,
-                record["aggregation_period"],
-                record.get("user_id") or "",
-                record.get("agent_id") or "",
-                record.get("team_id") or "",
-                record.get("workflow_id") or "",
-                record.get("parent_id") or "",
-            ]
-        )
-    )
-
-
-def _build_os_metrics_run_data(run_data: Dict[str, Any]) -> Dict[str, Any]:
-    """The run_data of a stored run, or of a run nested inside it, with only what OS metrics count."""
-    metrics = run_data.get("metrics") or {}
-    trimmed_metrics = {
-        key: metrics[key]
-        for key in (*OS_METRICS_FIXED_KEYS["token_metrics"], "duration", "time_to_first_token")
-        if metrics.get(key) is not None
-    }
-    # Only whether the model call reported details is counted
-    if metrics.get("details"):
-        trimmed_metrics["details"] = True
-    trimmed: Dict[str, Any] = {
-        "metrics": trimmed_metrics,
-        "model": run_data.get("model"),
-        "model_provider": run_data.get("model_provider"),
-        # Only each request's duration, skipping messages carried over from an earlier run
-        "messages": [
-            {"role": "assistant", "metrics": {"duration": message["metrics"]["duration"]}}
-            for message in run_data.get("messages") or []
-            if isinstance(message, dict)
-            and message.get("role") == "assistant"
-            and not message.get("from_history")
-            and (message.get("metrics") or {}).get("duration") is not None
-        ],
-    }
-    for key in _OS_METRICS_NESTED_RUN_KEYS:
-        nested_runs = [nested_run for nested_run in run_data.get(key) or [] if isinstance(nested_run, dict)]
-        if nested_runs:
-            trimmed[key] = [
-                {
-                    "run_id": nested_run.get("run_id"),
-                    "agent_id": nested_run.get("agent_id"),
-                    "team_id": nested_run.get("team_id"),
-                    **_build_os_metrics_run_data(nested_run),
-                }
-                for nested_run in nested_runs
-            ]
-    return trimmed
-
-
-def build_os_metrics_run(record: Dict[str, Any]) -> Dict[str, Any]:
-    """Build a run with only what OS metrics count from a record of the runs table.
-
-    Args:
-        record (Dict[str, Any]): A record of the runs table, as get_all_runs_for_os_metrics_calculation reads it.
-
-    Returns:
-        Dict[str, Any]: The run, with the run_data calculate_date_os_metrics reads.
-    """
-    run_data = record.get("run_data")
-    return {
-        "run_id": record.get("run_id"),
-        "run_type": record.get("run_type"),
-        "agent_id": record.get("agent_id"),
-        "team_id": record.get("team_id"),
-        "workflow_id": record.get("workflow_id"),
-        "user_id": record.get("user_id"),
-        "parent_run_id": record.get("parent_run_id"),
-        "status": record.get("status"),
-        "run_data": _build_os_metrics_run_data(
-            {**(run_data if isinstance(run_data, dict) else {}), "messages": record.get("messages")}
-        ),
-    }
-
-
-def _day_start(day: date) -> datetime:
-    """The datetime a day is stored as, and the start of the runs and sessions created on it."""
-    return datetime.combine(day, datetime.min.time()).replace(tzinfo=timezone.utc)
+def os_metrics_record_id(table: str, record: Dict[str, Any], key_columns: Sequence[str]) -> RecordID:
+    """The id an OS metrics row is stored under: its key, so a rebuild that writes the same row updates it."""
+    key = surrealize_dates({column: record[column] for column in key_columns})
+    return RecordID(table, [key[column] for column in key_columns])
 
 
 def desurrealize_os_metric(record: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a stored OS metrics record in the shape calculate_date_os_metrics writes, to compare and total it.
+    """Return a stored OS metrics row in the shape calculate_date_os_metrics builds, to compare and total it.
 
-    Unlike desurrealize_metric, the empty-string user_id and the day are kept as they are built.
+    Unlike desurrealize_metric, the empty-string user_id is kept as it is built, and the date is a plain date.
     """
     row = dict(record)
-
-    if isinstance(row.get("id"), RecordID):
-        row["id"] = str(row["id"].id)
 
     for field in ("created_at", "updated_at"):
         if isinstance(row.get(field), datetime):
@@ -507,97 +423,52 @@ def desurrealize_os_metric(record: Dict[str, Any]) -> Dict[str, Any]:
     if "date" in row:
         row["date"] = _stored_day(row["date"])
 
-    # A metadata of None is stored as NONE, which is not handed back
-    row.setdefault("metadata", None)
-
     return row
 
 
-def get_os_metrics_records(
-    client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection],
-    table: str,
-    aggregation_period: str,
-    starting_date: Optional[date] = None,
-    ending_date: Optional[date] = None,
-    user_id: Optional[str] = None,
-    fields: Optional[List[str]] = None,
-) -> List[Dict[str, Any]]:
-    """Get the OS metrics records of one period in the given date range.
-
-    Args:
-        table (str): The OS metrics table.
-        aggregation_period (str): The period to read: "daily" or "daily_total".
-        starting_date (Optional[date]): The first day to read. ``None`` reads from the first one stored.
-        ending_date (Optional[date]): The last day to read. ``None`` reads to the last one stored.
-        user_id (Optional[str]): Only this owner's records. ``None`` reads every owner's.
-        fields (Optional[List[str]]): The fields to read. ``None`` reads the whole record.
-
-    Returns:
-        List[Dict[str, Any]]: The records, in the shape calculate_date_os_metrics writes.
-    """
-    if starting_date is not None and ending_date is not None and starting_date > ending_date:
-        return []
-
-    where = WhereClause()
-    where = where.and_("aggregation_period", aggregation_period)
-    if starting_date is not None:
-        where = where.and_("date", _day_start(starting_date), ">=")
-    if ending_date is not None:
-        where = where.and_("date", _day_start(ending_date), "<=")
-    if user_id is not None:
-        where = where.and_("user_id", user_id)
-    where_clause, where_vars = where.build()
-
-    # The index of the day is bounded at both ends of the range, the index of the period at the first day only
-    index_clause = "WITH INDEX idx_date" if aggregation_period == "daily" and user_id is None else ""
-
-    query = dedent(f"""
-        SELECT {", ".join(fields) if fields is not None else "*"}
-        FROM {table} {index_clause}
-        {where_clause}
-    """)
-    return [desurrealize_os_metric(record) for record in utils.query(client, query, where_vars, dict)]
-
-
 def get_os_metrics_calculation_starting_date(
-    client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection], table: str, get_sessions: Callable
+    client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection], totals_table: str, sessions_table: str
 ) -> Optional[date]:
     """Get the first date for which OS metrics calculation is needed:
 
-    1. If there are OS metrics records, return the first day after the latest completed one.
-    2. If there are no OS metrics records, return the date of the first recorded session.
-    3. If there are no OS metrics records and no sessions records, return None.
+    1. If there are total rows of days, return the earliest day not completed after the latest completed one,
+       otherwise the day after that one.
+    2. If there are none, return the date of the first recorded session.
+    3. If there are no total rows and no sessions records, return None.
 
     Args:
-        table (str): The OS metrics table.
+        totals_table (str): The OS metrics totals table.
+        sessions_table (str): The sessions table.
 
     Returns:
         Optional[date]: The starting date for which OS metrics calculation is needed.
     """
-    # 1. A completed day has a total record, so the latest one is read off the index of the period
-    completed_days = utils.query(
+    # 1. resume at the earliest incomplete day after the latest completed one, otherwise the
+    # day after that one: the date column is a datetime stamped at midnight, so the strict
+    # comparison below excludes the completed day itself
+    completed_record = utils.query_one(
         client,
         dedent(f"""
-            SELECT date FROM {table}
-            WHERE aggregation_period = "daily_total"
+            SELECT date FROM ONLY {totals_table}
+            WHERE aggregation_period = "daily" AND completed = true
             ORDER BY date DESC
             LIMIT 1
         """),
         {},
         dict,
     )
-    stored_completed_day = completed_days[0]["date"] if completed_days else None
+    stored_completed_day = completed_record["date"] if completed_record else None
 
     incomplete_where = (
-        'WHERE aggregation_period = "daily"'
+        'WHERE aggregation_period = "daily" AND completed = false'
         if stored_completed_day is None
-        else 'WHERE aggregation_period = "daily" AND date > $last'
+        else 'WHERE aggregation_period = "daily" AND completed = false AND date > $last'
     )
     incomplete_vars: Dict[str, Any] = {} if stored_completed_day is None else {"last": stored_completed_day}
-    incomplete_days = utils.query(
+    incomplete_record = utils.query_one(
         client,
         dedent(f"""
-            SELECT date FROM {table}
+            SELECT date FROM ONLY {totals_table}
             {incomplete_where}
             ORDER BY date ASC
             LIMIT 1
@@ -607,72 +478,30 @@ def get_os_metrics_calculation_starting_date(
     )
 
     latest_completed = _stored_day(stored_completed_day)
-    earliest_incomplete = _stored_day(incomplete_days[0]["date"]) if incomplete_days else None
+    earliest_incomplete = _stored_day(incomplete_record["date"]) if incomplete_record else None
 
     starting_date = metrics_starting_date_from_days(latest_completed, earliest_incomplete)
     if starting_date is not None:
         return starting_date
 
-    # 2. No OS metrics records. Return the date of the first recorded session, of any type
-    first_session, _ = get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
+    # 2. No total rows. Return the date of the first recorded session.
+    # Queried directly rather than through get_sessions, which also counts the sessions
+    first_session = utils.query_one(
+        client,
+        dedent(f"""
+            SELECT created_at FROM ONLY {sessions_table}
+            ORDER BY created_at ASC
+            LIMIT 1
+        """),
+        {},
+        dict,
+    )
 
-    # 3. No OS metrics records and no sessions records. Return None
-    if not first_session:
+    # 3. No total rows and no sessions records. Return None.
+    if first_session is None:
         return None
 
-    return datetime.fromtimestamp(first_session[0]["created_at"], tz=timezone.utc).date()
-
-
-def get_run_days_for_os_metrics_calculation(
-    client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection],
-    table: str,
-    start_timestamp: datetime,
-    end_timestamp: datetime,
-) -> List[date]:
-    """Get the days of the given time range that have runs.
-
-    Args:
-        table (str): The runs table.
-        start_timestamp (datetime): The start of the range, included.
-        end_timestamp (datetime): The end of the range, not included.
-
-    Returns:
-        List[date]: Each UTC day that has runs.
-    """
-    query = dedent(f"""
-        SELECT time::floor(created_at, 1d) AS day
-        FROM {table}
-        WHERE created_at >= $start AND created_at < $end
-        GROUP BY day
-    """)
-    rows = utils.query(client, query, {"start": start_timestamp, "end": end_timestamp}, dict)
-    return [row["day"].date() for row in rows]
-
-
-def get_session_days_for_os_metrics_calculation(
-    client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection],
-    table: str,
-    start_timestamp: datetime,
-    end_timestamp: datetime,
-) -> List[date]:
-    """Get the days of the given time range that have sessions.
-
-    Args:
-        table (str): The sessions table.
-        start_timestamp (datetime): The start of the range, included.
-        end_timestamp (datetime): The end of the range, not included.
-
-    Returns:
-        List[date]: Each UTC day that has sessions.
-    """
-    query = dedent(f"""
-        SELECT time::floor(created_at, 1d) AS day
-        FROM {table}
-        WHERE created_at >= $start AND created_at < $end
-        GROUP BY day
-    """)
-    rows = utils.query(client, query, {"start": start_timestamp, "end": end_timestamp}, dict)
-    return [row["day"].date() for row in rows]
+    return _stored_day(first_session["created_at"])
 
 
 def get_all_sessions_for_os_metrics_calculation(
@@ -689,15 +518,50 @@ def get_all_sessions_for_os_metrics_calculation(
         end_timestamp (datetime): The end of the range, not included.
 
     Returns:
-        List[Dict[str, Any]]: The sessions: their type, their owner and their agent, team or workflow.
+        List[Dict[str, Any]]: The sessions: their id, type, owner and agent, team or workflow.
     """
     query = dedent(f"""
-        SELECT user_id, agent, team, workflow
+        SELECT id, user_id, agent, team, workflow
         FROM {table}
         WHERE created_at >= $start AND created_at < $end
     """)
     results = utils.query(client, query, {"start": start_timestamp, "end": end_timestamp}, dict)
-    return [desurrealize_session(x) for x in results]
+
+    sessions = [desurrealize_session(x) for x in results]
+    for session in sessions:
+        # Rows are kept under the type's value
+        if isinstance(session.get("session_type"), SessionType):
+            session["session_type"] = session["session_type"].value
+    return sessions
+
+
+def get_all_sessions_with_legacy_runs_for_os_metrics_calculation(
+    client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection],
+    table: str,
+    start_timestamp: datetime,
+    end_timestamp: datetime,
+    page: int,
+) -> List[Dict[str, Any]]:
+    """Get a page of the sessions that can hold legacy runs created in the given time range: those with a legacy
+    runs field, created before its end and last written after its start.
+
+    Args:
+        table (str): The sessions table.
+        start_timestamp (datetime): The start of the range, included.
+        end_timestamp (datetime): The end of the range, not included.
+        page (int): The page to read, from 1, of OS_METRICS_BATCH_SIZE sessions.
+
+    Returns:
+        List[Dict[str, Any]]: The sessions: their owner, creation time and legacy runs.
+    """
+    query = dedent(f"""
+        SELECT id, user_id, created_at, runs
+        FROM {table}
+        WHERE runs != NONE AND created_at < $end AND (updated_at ?? created_at) >= $start
+        {order_limit_start("id", "ASC", OS_METRICS_BATCH_SIZE, page)}
+    """)
+    results = utils.query(client, query, {"start": start_timestamp, "end": end_timestamp}, dict)
+    return [desurrealize_dates(x) for x in results]
 
 
 def get_all_runs_for_os_metrics_calculation(
@@ -714,88 +578,146 @@ def get_all_runs_for_os_metrics_calculation(
         end_timestamp (datetime): The end of the range, not included.
 
     Returns:
-        List[Dict[str, Any]]: The runs, with the run_data calculate_date_os_metrics reads.
+        List[Dict[str, Any]]: The runs, with the run_data calculate_date_os_metrics reads. Of the messages it
+            reads only the role, from_history and metrics, and of the runs nested inside a run the same.
     """
     query = dedent(f"""
         SELECT
             run_id, run_type, agent_id, team_id, workflow_id, user_id, parent_run_id, status,
-            run_data.{{metrics, model, model_provider, {_os_metrics_nested_runs_fields()}}} AS run_data,
-            run_data.messages.{{role, from_history, metrics}} AS messages
+            run_data.{{
+                metrics, model, model_provider, forked_from_message_index, forked_from_session_id,
+                messages.{{role, from_history, metrics}},
+                {_os_metrics_nested_runs_fields()}
+            }} AS run_data
         FROM {table}
         WHERE created_at >= $start AND created_at < $end
     """)
-    return [
-        build_os_metrics_run(record)
-        for record in utils.query(client, query, {"start": start_timestamp, "end": end_timestamp}, dict)
-    ]
+    return list(utils.query(client, query, {"start": start_timestamp, "end": end_timestamp}, dict))
 
 
-def get_stored_os_metrics_state(
-    client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection], table: str
-) -> Dict[str, Any]:
-    """Get the state of the OS metrics, from the state record.
+def lock_os_metrics(
+    client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection], table: str, wait_for_rebuild: bool
+) -> Optional[str]:
+    """Take the OS metrics lock of the given table, so one process rebuilds its OS metrics at a time.
+
+    The lock is a record that expires after OS_METRICS_LOCK_SECONDS, so a process that stopped mid-rebuild never
+    holds it for good.
 
     Args:
         table (str): The OS metrics table.
+        wait_for_rebuild (bool): Wait for a rebuild another process is running. When False, skip instead.
 
     Returns:
-        Dict[str, Any]: The state, as build_os_metrics_state builds it. Empty for a table no rebuild has written to.
+        Optional[str]: The token the lock is held with. None when another process holds it.
     """
-    state = utils.query_one(client, "SELECT * FROM ONLY $state", {"state": RecordID(table, OS_METRICS_STATE_ID)}, dict)
-    return state or {}
+    token = str(uuid4())
+    while True:
+        try:
+            # One block is one transaction: an expired lock is removed and the new one created together
+            client.query(
+                dedent(f"""
+                    {{
+                        DELETE $lock WHERE expires_at < time::now();
+                        CREATE $lock SET token = $lock_token, expires_at = time::now() + {OS_METRICS_LOCK_SECONDS}s;
+                    }}
+                """),
+                {"lock": RecordID(table, "lock"), "lock_token": token},
+            )
+            return token
+        except Exception as e:
+            # Another process holds the lock, or took it at the same moment
+            if "already exists" not in str(e) and "can be retried" not in str(e):
+                raise
+        if not wait_for_rebuild:
+            return None
+        time.sleep(0.1)
+
+
+def unlock_os_metrics(
+    client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection], table: str, token: str
+) -> None:
+    """Release the OS metrics lock of the given table, unless it expired and another process holds it.
+
+    Args:
+        table (str): The OS metrics table.
+        token (str): The token the lock is held with.
+    """
+    utils.query(
+        client, "DELETE $lock WHERE token = $lock_token", {"lock": RecordID(table, "lock"), "lock_token": token}, dict
+    )
 
 
 def bulk_upsert_os_metrics(
     client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection],
     table: str,
     os_metrics_records: List[Dict[str, Any]],
-    stale_ids: Optional[List[str]] = None,
-    day: Optional[date] = None,
+    totals_table: str,
+    totals_row: Optional[Dict[str, Any]],
+    stale_ids: Optional[List[RecordID]] = None,
 ) -> None:
-    """Bulk upsert OS metrics into the database, and delete the given records.
-
-    The state record is written with the last batch, so it moves only once the whole day is saved.
+    """Bulk upsert OS metrics and the totals row of their period into the database in one transaction, and delete
+    the given records first.
 
     Args:
-        table (str): The table to upsert into.
+        table (str): The OS metrics table.
         os_metrics_records (List[Dict[str, Any]]): The OS metrics records to upsert.
-        stale_ids (Optional[List[str]]): The ids of the records to delete.
-        day (Optional[date]): The day the records are of.
+        totals_table (str): The OS metrics totals table.
+        totals_row (Optional[Dict[str, Any]]): The totals row to upsert, from build_os_metrics_totals_row. A new
+            row starts at version 1, and every write of a stored one moves its version by one in the same
+            statement, so two writers never give it the same version. None writes no totals row.
+        stale_ids (Optional[List[RecordID]]): The ids of the stored OS metrics records to delete.
     """
-    if not os_metrics_records and not stale_ids:
+    statements = []
+    variables: Dict[str, Any] = {}
+
+    if stale_ids:
+        variables["stale_ids"] = stale_ids
+        statements.append("DELETE $stale_ids;")
+
+    if os_metrics_records:
+        variables["records"] = [
+            {**surrealize_dates(record), "id": os_metrics_record_id(table, record, OS_METRICS_KEY_COLUMNS)}
+            for record in os_metrics_records
+        ]
+        # Columns to update in case of conflict. The conflict key and created_at are never overwritten.
+        update_columns = [
+            f"{column} = $input.{column}"
+            for column in os_metrics_records[0]
+            if column
+            not in [
+                "aggregation_period",
+                "date",
+                "user_id",
+                "component_type",
+                "component_id",
+                "parent_component_id",
+                "created_at",
+            ]
+        ]
+        statements.append(
+            f"INSERT INTO {table} $records ON DUPLICATE KEY UPDATE {', '.join(update_columns)} RETURN NONE;"
+        )
+
+    if totals_row is not None:
+        variables["totals_row"] = {
+            **surrealize_dates(totals_row),
+            "id": os_metrics_record_id(totals_table, totals_row, OS_METRICS_TOTALS_KEY_COLUMNS),
+            "version": 1,
+        }
+        # Columns to update in case of conflict. The conflict key and created_at are never overwritten.
+        update_columns = [
+            f"{column} = $input.{column}"
+            for column in totals_row
+            if column not in ["aggregation_period", "date", "created_at", "version"]
+        ]
+        update_columns.append("version += 1")
+        # Written last, so its version never moves without the rows it tells of
+        statements.append(
+            f"INSERT INTO {totals_table} $totals_row ON DUPLICATE KEY UPDATE {', '.join(update_columns)} RETURN NONE;"
+        )
+
+    if not statements:
         return
 
-    state = build_os_metrics_state(
-        get_stored_os_metrics_state(client, table), int(time.time()), os_metrics_records, stale_ids or [], day
-    )
-    # The total record of a day is written last, so a day whose write failed part way has none
-    os_metrics_records = sorted(os_metrics_records, key=lambda record: record["aggregation_period"] != "daily")
-    records = [{**surrealize_dates(record), "id": RecordID(table, record["id"])} for record in os_metrics_records]
-    stale = [RecordID(table, stale_id) for stale_id in stale_ids or []]
-    rows_to_write = max(len(records), len(stale))
-    for start in range(0, rows_to_write, utils.OS_METRICS_BATCH_SIZE):
-        chunk: Dict[str, Any] = {
-            "stale": stale[start : start + utils.OS_METRICS_BATCH_SIZE],
-            "records": records[start : start + utils.OS_METRICS_BATCH_SIZE],
-        }
-        statements = "DELETE $stale; FOR $record IN $records { UPSERT $record.id CONTENT $record; };"
-        if start + utils.OS_METRICS_BATCH_SIZE >= rows_to_write:
-            chunk.update(
-                {
-                    "state": RecordID(table, OS_METRICS_STATE_ID),
-                    "state_content": {"aggregation_period": OS_METRICS_STATE_ID, **state},
-                }
-            )
-            statements += "UPSERT $state CONTENT $state_content;"
-        for _ in range(utils.OS_METRICS_WRITE_ATTEMPTS):
-            try:
-                client.query(f"{{ {statements} }}", chunk)
-                break
-            except Exception as e:
-                # Another rebuild wrote the same records at the same time, so the statement that lost is sent again
-                if "can be retried" not in str(e):
-                    raise
-        else:
-            raise RuntimeError(
-                f"OS metrics records were not written after {utils.OS_METRICS_WRITE_ATTEMPTS} write conflicts"
-            )
+    # One block is one transaction, so a read never sees half of it
+    utils.query(client, f"{{ {' '.join(statements)} }}", variables, dict)

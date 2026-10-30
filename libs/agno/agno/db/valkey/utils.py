@@ -3,11 +3,11 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union, cast
 from uuid import UUID
 
 from agno.db.filter_converter import DATETIME_COLUMNS, MAX_FILTER_DEPTH, _normalize_datetime_value
-from agno.db.utils import OS_METRICS_FIXED_KEYS, get_sort_value
+from agno.db.utils import get_sort_value
 from agno.utils.log import log_warning
 from agno.utils.string import generate_id
 
@@ -23,6 +23,16 @@ if TYPE_CHECKING:
     from glide_sync import GlideClusterClient as ValkeyClusterClientType
 
     AnyValkeyClient = Union[ValkeyClientType, ValkeyClusterClientType]
+
+
+# How long the OS metrics lock is held without being extended
+OS_METRICS_LOCK_SECONDS = 60
+
+# Kept small: a batch is a single request, which the client waits 250 milliseconds for by default
+OS_METRICS_BATCH_SIZE = 100
+
+# The keys of a stored run that hold the runs nested inside it, in the order the rollup walks them
+_OS_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses")
 
 
 # -- Serialization and deserialization --
@@ -540,113 +550,87 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
 
 # -- OS metrics utils --
 
-OS_METRICS_LOCK_SECONDS = 300
-
-# Kept small: a batch is a single request, which the client waits 250 milliseconds for by default
-OS_METRICS_BATCH_SIZE = 100
-
-_OS_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses")
-
 
 def os_metrics_record_id(
-    day: date,
     aggregation_period: str,
-    user_id: str = "",
-    agent_id: str = "",
-    team_id: str = "",
-    workflow_id: str = "",
-    parent_id: str = "",
+    record_date: date,
+    user_id: str,
+    component_type: str,
+    component_id: str,
+    parent_component_id: str,
 ) -> str:
-    """Generate the deterministic ID of an OS metrics record. This simplifies avoiding duplicates.
+    """Generate the deterministic ID of an OS metrics record from its key. This simplifies avoiding duplicates.
 
-    The ID starts with the day, so the day of a record is read off an index entry without reading the record.
-
-    Args:
-        day (date): The day of the record.
-        aggregation_period (str): The period of the record.
-        user_id (str): The owner of the record. Empty for a total record.
-        agent_id (str): The agent of the record.
-        team_id (str): The team of the record.
-        workflow_id (str): The workflow of the record.
-        parent_id (str): The parent of the record.
-
-    Returns:
-        str: The ID of the record.
+    The ID starts with the date and the aggregation period, so both are read off an index entry without
+    reading the record.
     """
-    component_id = generate_id(
-        json.dumps([user_id or "", agent_id or "", team_id or "", workflow_id or "", parent_id or ""])
-    )
-    return f"{day.isoformat()}_{aggregation_period}_{component_id}"
+    component_key = generate_id(json.dumps([user_id, component_type, component_id, parent_component_id]))
+    return f"{record_date.isoformat()}_{aggregation_period}_{component_key}"
 
 
-def os_metrics_record_day(record_id: Any) -> Optional[date]:
-    """Read the day off the ID of an OS metrics record, or ``None`` if it does not start with one."""
-    # glide returns bytes, decode if needed
-    record_id = record_id.decode() if isinstance(record_id, (bytes, bytearray)) else str(record_id)
-    try:
-        return date.fromisoformat(record_id[:10])
-    except ValueError:
-        return None
+def os_metrics_totals_record_id(aggregation_period: str, record_date: date) -> str:
+    """Generate the deterministic ID of an OS metrics totals record from its key."""
+    return f"{record_date.isoformat()}_{aggregation_period}"
 
 
-def get_os_metrics_index_fields(record: Dict[str, Any]) -> List[str]:
-    """Return the fields an OS metrics record is indexed by.
-
-    Only total records are indexed by period, and they are not indexed by owner.
-    """
-    if record["aggregation_period"] == "daily":
-        return ["date", "user_id"]
-    return ["date", "aggregation_period"]
+def os_metrics_record_period(record_id: str) -> Tuple[date, str]:
+    """Read the date and the aggregation period off the ID of an OS metrics record."""
+    record_date, aggregation_period = record_id.split("_")[:2]
+    return date.fromisoformat(record_date), aggregation_period
 
 
 def deserialize_os_metrics_record(record: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a stored OS metrics record in the shape calculate_date_os_metrics writes.
-
-    Args:
-        record (Dict[str, Any]): The stored record.
-
-    Returns:
-        Dict[str, Any]: The record, with its day, stored as an ISO string, as a date.
-    """
+    """Return a stored OS metrics record with its date, stored as an ISO string, as a date."""
     return {**record, "date": date.fromisoformat(record["date"])}
 
 
 def _build_os_metrics_run_data(run_data: Dict[str, Any]) -> Dict[str, Any]:
-    """The run_data of a stored run, or of a run nested inside it, with only what OS metrics count."""
+    """Build the run_data of a stored run, or of a run nested inside it, with only what OS metrics count."""
     metrics = run_data.get("metrics") or {}
-    trimmed_metrics = {
-        key: metrics[key]
-        for key in (*OS_METRICS_FIXED_KEYS["token_metrics"], "duration", "time_to_first_token")
-        if metrics.get(key) is not None
-    }
+    trimmed_metrics: Dict[str, Any] = {}
+    for key in [
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "audio_total_tokens",
+        "audio_input_tokens",
+        "audio_output_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "reasoning_tokens",
+        "duration",
+        "time_to_first_token",
+    ]:
+        if metrics.get(key) is not None:
+            trimmed_metrics[key] = metrics[key]
     # Only whether the model call reported details is counted
     if metrics.get("details"):
         trimmed_metrics["details"] = True
+
+    # Only each request's duration, skipping messages carried over from an earlier run: those from history, and those
+    # a forked run copied from the run it was forked from
+    messages = []
+    for message in (run_data.get("messages") or [])[run_data.get("forked_from_message_index") or 0 :]:
+        if message.get("role") != "assistant" or message.get("from_history"):
+            continue
+        if (message.get("metrics") or {}).get("duration") is None:
+            continue
+        messages.append({"role": "assistant", "metrics": {"duration": message["metrics"]["duration"]}})
+
     trimmed: Dict[str, Any] = {
         "run_id": run_data.get("run_id"),
-        "agent_id": run_data.get("agent_id"),
-        "team_id": run_data.get("team_id"),
         "metrics": trimmed_metrics,
         "model": run_data.get("model"),
         "model_provider": run_data.get("model_provider"),
-        # Only each request's duration, skipping messages carried over from an earlier run
-        "messages": [
-            {"role": "assistant", "metrics": {"duration": message["metrics"]["duration"]}}
-            for message in run_data.get("messages") or []
-            if isinstance(message, dict)
-            and message.get("role") == "assistant"
-            and not message.get("from_history")
-            and (message.get("metrics") or {}).get("duration") is not None
-        ],
+        "forked_from_session_id": run_data.get("forked_from_session_id"),
+        "messages": messages,
     }
     for key in _OS_METRICS_NESTED_RUN_KEYS:
-        nested_runs = [
-            _build_os_metrics_run_data(nested_run)
-            for nested_run in run_data.get(key) or []
-            if isinstance(nested_run, dict)
-        ]
-        if nested_runs:
-            trimmed[key] = nested_runs
+        if run_data.get(key):
+            trimmed[key] = [_build_os_metrics_run_data(nested_run) for nested_run in run_data[key]]
+    # A workflow agent's run is stored as the run itself, the other nested runs in lists
+    if run_data.get("workflow_agent_run"):
+        trimmed["workflow_agent_run"] = _build_os_metrics_run_data(run_data["workflow_agent_run"])
     return trimmed
 
 
@@ -670,6 +654,7 @@ def build_os_metrics_run(run: Dict[str, Any]) -> Dict[str, Any]:
         "parent_run_id": run.get("parent_run_id"),
         "status": run.get("status"),
         "run_data": _build_os_metrics_run_data(run.get("run_data") or {}),
+        "updated_at": run.get("updated_at"),
     }
 
 
@@ -680,12 +665,17 @@ def build_os_metrics_session(session: Dict[str, Any]) -> Dict[str, Any]:
         session (Dict[str, Any]): The session, as stored.
 
     Returns:
-        Dict[str, Any]: The session with its type, its owner and its agent, team or workflow.
+        Dict[str, Any]: The session with its type, its owner, its agent, team or workflow, and the runs not yet
+            migrated out of its legacy runs field.
     """
     return {
+        "session_id": session.get("session_id"),
         "session_type": session.get("session_type"),
         "user_id": session.get("user_id"),
         "agent_id": session.get("agent_id"),
         "team_id": session.get("team_id"),
         "workflow_id": session.get("workflow_id"),
+        "created_at": session.get("created_at"),
+        "updated_at": session.get("updated_at"),
+        "runs": session.get("runs"),
     }

@@ -6,7 +6,7 @@ from agno.db.schemas.authz import AUTHZ_TABLE_SCHEMAS
 from agno.db.schemas.mcp_oauth import MCP_OAUTH_TABLE_SCHEMAS
 
 try:
-    from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String, Text
+    from sqlalchemy.types import JSON, BigInteger, Boolean, Date, Integer, String, Text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -146,33 +146,70 @@ METRICS_TABLE_SCHEMA = {
 }
 
 OS_METRICS_TABLE_SCHEMA = {
-    "id": {"type": String, "primary_key": True, "nullable": False},
-    "date": {"type": Date, "nullable": False, "index": True},
-    "aggregation_period": {"type": String, "nullable": False},
-    # Owner and component of this row. Empty string, not NULL, for none:
-    # SQL treats multiple NULLs as distinct, which would break the unique constraint below.
-    "user_id": {"type": String, "nullable": False, "default": ""},
-    "agent_id": {"type": String, "nullable": False, "default": ""},
-    "team_id": {"type": String, "nullable": False, "default": ""},
-    "workflow_id": {"type": String, "nullable": False, "default": ""},
-    # The agent, team or workflow whose run started the runs of this row
-    "parent_id": {"type": String, "nullable": False, "default": ""},
+    "aggregation_period": {"type": String, "primary_key": True, "nullable": False},
+    "date": {"type": Date, "primary_key": True, "nullable": False},
+    "user_id": {"type": String, "primary_key": True, "nullable": False, "default": ""},
+    "component_type": {"type": String, "primary_key": True, "nullable": False},
+    "component_id": {"type": String, "primary_key": True, "nullable": False},
+    "parent_component_id": {"type": String, "primary_key": True, "nullable": False, "default": ""},
     "sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
     "runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "input_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "output_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "duration_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_duration_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_duration_ms": {"type": BigInteger, "nullable": True},
+    "time_to_first_token_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_time_to_first_token_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_time_to_first_token_ms": {"type": BigInteger, "nullable": True},
+    "model_calls_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_model_call_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_model_call_ms": {"type": BigInteger, "nullable": True},
+    "buckets_version": {"type": Integer, "nullable": False, "default": 1},
     "status_metrics": {"type": JSON, "nullable": False, "default": "{}"},
-    "token_metrics": {"type": JSON, "nullable": False, "default": "{}"},
-    "duration_metrics": {"type": JSON, "nullable": False, "default": "{}"},
+    "additional_token_metrics": {"type": JSON, "nullable": False, "default": "{}"},
+    "duration_buckets": {"type": JSON, "nullable": False, "default": "{}"},
+    "time_to_first_token_buckets": {"type": JSON, "nullable": False, "default": "{}"},
+    "model_call_buckets": {"type": JSON, "nullable": False, "default": "{}"},
     "model_metrics": {"type": JSON, "nullable": False, "default": "[]"},
-    "metadata": {"type": JSON, "nullable": True},
+    "additional_metrics": {"type": JSON, "nullable": False, "default": "{}"},
     "created_at": {"type": BigInteger, "nullable": False},
-    "updated_at": {"type": BigInteger, "nullable": True, "index": True},
-    "completed": {"type": Boolean, "nullable": False, "default": False},
-    "_unique_constraints": [
-        {
-            "name": "uq_os_metrics_user_date_period_component",
-            "columns": ["user_id", "date", "aggregation_period", "agent_id", "team_id", "workflow_id", "parent_id"],
-        }
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "__composite_indexes__": [
+        {"name": "ix_os_metrics_user_period", "columns": ["user_id", "aggregation_period", "date"]},
     ],
+}
+
+OS_METRICS_TOTALS_TABLE_SCHEMA = {
+    "aggregation_period": {"type": String, "primary_key": True, "nullable": False},
+    "date": {"type": Date, "primary_key": True, "nullable": False},
+    "sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "input_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "output_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "duration_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_duration_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_duration_ms": {"type": BigInteger, "nullable": True},
+    "time_to_first_token_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_time_to_first_token_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_time_to_first_token_ms": {"type": BigInteger, "nullable": True},
+    "model_calls_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_model_call_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_model_call_ms": {"type": BigInteger, "nullable": True},
+    "buckets_version": {"type": Integer, "nullable": False, "default": 1},
+    "status_metrics": {"type": JSON, "nullable": False, "default": "{}"},
+    "additional_token_metrics": {"type": JSON, "nullable": False, "default": "{}"},
+    "duration_buckets": {"type": JSON, "nullable": False, "default": "{}"},
+    "time_to_first_token_buckets": {"type": JSON, "nullable": False, "default": "{}"},
+    "model_call_buckets": {"type": JSON, "nullable": False, "default": "{}"},
+    "model_metrics": {"type": JSON, "nullable": False, "default": "[]"},
+    "additional_metrics": {"type": JSON, "nullable": False, "default": "{}"},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "completed": {"type": Boolean, "nullable": False, "default": False},
+    "version": {"type": Integer, "nullable": False, "default": 1},
 }
 
 TRACE_TABLE_SCHEMA = {
@@ -593,6 +630,7 @@ def get_table_schema_definition(
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
         "os_metrics": OS_METRICS_TABLE_SCHEMA,
+        "os_metrics_totals": OS_METRICS_TOTALS_TABLE_SCHEMA,
         "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
