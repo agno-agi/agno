@@ -11,23 +11,32 @@ Tests cover:
 - End-to-end: Full workflow.run() -> step -> agent.run() chain with MockTestModel
 """
 
+import asyncio
 import time
 from copy import deepcopy
 from typing import Any, AsyncIterator, Dict, Iterator
 from unittest.mock import AsyncMock, Mock
+from uuid import uuid4
 
 import pytest
+import pytest_asyncio
 
+import agno.os.event_streams as event_stream_module
+import agno.run.cancel as cancel_module
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
+from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.response import ModelResponse
-from agno.run.base import RunContext
+from agno.os.event_streams import InMemoryEventStream
+from agno.os.managers import EventsBuffer, SSESubscriberManager
+from agno.run.base import RunContext, RunStatus
+from agno.run.cancellation_management.in_memory_cancellation_manager import InMemoryRunCancellationManager
 from agno.session import WorkflowSession
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
-from agno.workflow.workflow import Workflow
+from agno.workflow.workflow import Workflow, _workflow_background_tasks
 
 # =============================================================================
 # Fixtures
@@ -971,3 +980,351 @@ class TestRunSessionMetadataPrecedence:
         )
         assert captured["metadata"]["session_only"] == "s"
         assert captured["metadata"]["wf_only"] == "w"
+
+
+# =============================================================================
+# Background SSE: public run parameters, model context and persistence
+# =============================================================================
+
+
+async def _close_database(database):
+    if isinstance(database, AsyncSqliteDb):
+        await database.close()
+    else:
+        database.close()
+
+
+async def _read_run(database, run_id):
+    if isinstance(database, AsyncSqliteDb):
+        return await database.get_run(run_id)
+    return database.get_run(run_id)
+
+
+@pytest_asyncio.fixture(params=[SqliteDb, AsyncSqliteDb], ids=["sqlite", "async_sqlite"])
+async def background_database(request, tmp_path):
+    database = request.param(db_file=str(tmp_path / "workflow.db"))
+    try:
+        yield database
+    finally:
+        await _close_database(database)
+
+
+@pytest_asyncio.fixture
+async def background_runtime(background_database, monkeypatch):
+    stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+    monkeypatch.setattr(event_stream_module, "_event_stream", stream)
+    monkeypatch.setattr(cancel_module, "_cancellation_manager", InMemoryRunCancellationManager())
+    prior_tasks = set(_workflow_background_tasks)
+    try:
+        yield stream
+    finally:
+        owned_tasks = set(_workflow_background_tasks) - prior_tasks
+        for task in owned_tasks:
+            if not task.done():
+                task.cancel()
+        if owned_tasks:
+            await asyncio.wait_for(asyncio.gather(*owned_tasks, return_exceptions=True), timeout=5)
+
+
+async def _complete_workflow(workflow, mode="sse", **kwargs):
+    """Exercise the public API and drain this run before checking persistence."""
+    run_id = str(uuid4())
+    prior_tasks = set(_workflow_background_tasks)
+    if mode == "sse":
+        iterator = workflow.arun(run_id=run_id, stream=True, background=True, **kwargs)
+
+        async def consume():
+            async for _event in iterator:
+                pass
+
+        try:
+            await asyncio.wait_for(consume(), timeout=5)
+        finally:
+            await iterator.aclose()
+    elif mode == "async_stream":
+
+        async def consume():
+            async for _event in workflow.arun(run_id=run_id, stream=True, **kwargs):
+                pass
+
+        await asyncio.wait_for(consume(), timeout=5)
+    elif mode == "polling":
+        run_id = (await asyncio.wait_for(workflow.arun(background=True, **kwargs), timeout=5)).run_id
+    else:
+        run_id = (await asyncio.wait_for(workflow.arun(**kwargs), timeout=5)).run_id
+
+    owned_tasks = set(_workflow_background_tasks) - prior_tasks
+    if owned_tasks:
+        await asyncio.wait_for(asyncio.gather(*owned_tasks), timeout=5)
+    assert all(task.done() for task in owned_tasks)
+    return run_id
+
+
+async def _assert_completed_durable_run(database, run_id):
+    reader = type(database)(db_file=database.db_file)
+    try:
+        stored = await _read_run(reader, run_id)
+        assert stored is not None, "the accepted run must be durable after producer completion"
+        assert stored.run_id == run_id
+        assert stored.status == RunStatus.completed
+        return stored
+    finally:
+        await _close_database(reader)
+
+
+def _capturing_workflow(database, captured, **kwargs):
+    def capture(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        captured["dependencies"] = deepcopy(run_context.dependencies)
+        captured["metadata"] = deepcopy(run_context.metadata)
+        return StepOutput(content="completed")
+
+    return Workflow(db=database, steps=[Step(name="capture", executor=capture)], telemetry=False, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_sse_inherits_workflow_dependencies(background_database, background_runtime):
+    expected = {"tenant": "workflow-default"}
+    captured = {}
+    workflow = _capturing_workflow(background_database, captured, dependencies=deepcopy(expected))
+    run_id = await _complete_workflow(workflow, input="synthetic input")
+    await _assert_completed_durable_run(background_database, run_id)
+    assert await background_runtime.get_run_status(run_id) == RunStatus.completed
+    assert captured["dependencies"] == expected
+
+
+@pytest.mark.asyncio
+async def test_sse_merges_callsite_dependencies_without_mutation(background_database, background_runtime):
+    defaults = {"workflow_only": "default", "shared": "workflow"}
+    override = {"call_only": "override", "shared": "call"}
+    captured = {}
+    workflow = _capturing_workflow(background_database, captured, dependencies=deepcopy(defaults))
+    run_id = await _complete_workflow(workflow, input="synthetic input", dependencies=override)
+    await _assert_completed_durable_run(background_database, run_id)
+    assert captured["dependencies"] == {"workflow_only": "default", "call_only": "override", "shared": "call"}
+    assert workflow.dependencies == defaults
+    assert override == {"call_only": "override", "shared": "call"}
+
+
+@pytest.mark.asyncio
+async def test_sse_preserves_run_metadata_durably(background_database, background_runtime):
+    defaults = {"workflow_only": "default", "shared": "workflow"}
+    override = {"call_only": "override", "shared": "call"}
+    expected = {"workflow_only": "default", "call_only": "override", "shared": "call"}
+    captured = {}
+    workflow = _capturing_workflow(background_database, captured, metadata=deepcopy(defaults))
+    run_id = await _complete_workflow(workflow, input="synthetic input", metadata=override)
+    stored = await _assert_completed_durable_run(background_database, run_id)
+    assert stored.metadata == expected
+    assert captured["metadata"] == expected
+    assert workflow.metadata == defaults
+    assert override == {"call_only": "override", "shared": "call"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "workflow_flag,call_flag,agent_flag,expected",
+    [(True, None, False, True), (False, True, False, True), (True, False, True, False)],
+    ids=["workflow_defaults", "explicit_true", "explicit_false"],
+)
+async def test_sse_context_flags_reach_actual_model_messages(
+    background_database, background_runtime, monkeypatch, workflow_flag, call_flag, agent_flag, expected
+):
+    model = MockTestModel()
+    prompts = []
+    original = model.ainvoke_stream
+
+    async def capture_messages(*args, **kwargs):
+        messages = kwargs.get("messages", args[0] if args else [])
+        prompts.extend(deepcopy(messages))
+        async for delta in original(*args, **kwargs):
+            yield delta
+
+    monkeypatch.setattr(model, "ainvoke_stream", capture_messages)
+    agent = Agent(
+        model=model,
+        add_dependencies_to_context=agent_flag,
+        add_session_state_to_context=agent_flag,
+        telemetry=False,
+    )
+    workflow = Workflow(
+        db=background_database,
+        steps=[Step(name="offline-agent", agent=agent)],
+        add_dependencies_to_context=workflow_flag,
+        add_session_state_to_context=workflow_flag,
+        telemetry=False,
+    )
+    run_id = await _complete_workflow(
+        workflow,
+        input="synthetic input",
+        dependencies={"marker": "DEPENDENCY_SENTINEL"},
+        session_state={"marker": "SESSION_SENTINEL"},
+        add_dependencies_to_context=call_flag,
+        add_session_state_to_context=call_flag,
+    )
+    await _assert_completed_durable_run(background_database, run_id)
+    assert prompts, "offline model must receive the Agent's actual prepared messages"
+    text = "\n".join(str(message.content) for message in prompts)
+    observed_flags = ("DEPENDENCY_SENTINEL" in text, "SESSION_SENTINEL" in text)
+    assert observed_flags == (expected, expected)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["async", "async_stream", "polling"])
+async def test_unaffected_async_modes_keep_run_params(background_database, background_runtime, mode):
+    captured = {}
+    workflow = _capturing_workflow(
+        background_database, captured, dependencies={"workflow_only": "default"}, metadata={"workflow_only": "default"}
+    )
+    run_id = await _complete_workflow(
+        workflow,
+        mode=mode,
+        input="synthetic input",
+        dependencies={"call_only": "override"},
+        metadata={"call_only": "override"},
+    )
+    expected = {"workflow_only": "default", "call_only": "override"}
+    stored = await _assert_completed_durable_run(background_database, run_id)
+    assert captured == {"dependencies": expected, "metadata": expected}
+    assert stored.metadata == expected
+
+
+@pytest.mark.asyncio
+async def test_sse_callsite_only_dependencies_continue_to_work(background_database, background_runtime):
+    captured = {}
+    workflow = _capturing_workflow(background_database, captured)
+    run_id = await _complete_workflow(workflow, input="synthetic input", dependencies={"call_only": "override"})
+    await _assert_completed_durable_run(background_database, run_id)
+    assert captured["dependencies"] == {"call_only": "override"}
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["nonstream", "stream"])
+def test_unaffected_sync_modes_keep_run_params(tmp_path, monkeypatch, stream):
+    monkeypatch.setattr(cancel_module, "_cancellation_manager", InMemoryRunCancellationManager())
+    database = SqliteDb(db_file=str(tmp_path / "sync-control.db"))
+    reader = SqliteDb(db_file=database.db_file)
+    captured = {}
+    workflow = _capturing_workflow(
+        database, captured, dependencies={"workflow_only": "default"}, metadata={"workflow_only": "default"}
+    )
+    run_id = str(uuid4())
+    try:
+        result = workflow.run(
+            run_id=run_id,
+            stream=stream,
+            input="synthetic input",
+            dependencies={"call_only": "override"},
+            metadata={"call_only": "override"},
+        )
+        if stream:
+            list(result)
+        expected = {"workflow_only": "default", "call_only": "override"}
+        assert captured == {"dependencies": expected, "metadata": expected}
+        stored = reader.get_run(run_id)
+        assert stored.status == RunStatus.completed
+        assert stored.metadata == expected
+    finally:
+        reader.close()
+        database.close()
+
+
+@pytest.mark.asyncio
+async def test_sse_run_overrides_do_not_leak_to_other_sessions(background_database, background_runtime):
+    captured = {}
+    defaults = {"options": {"shared": "workflow", "default_only": True}}
+    overrides = [
+        {"options": {"shared": "first", "first_only": True}},
+        {"options": {"shared": "second", "second_only": True}},
+        None,
+    ]
+    original_overrides = deepcopy(overrides)
+    workflow = _capturing_workflow(background_database, captured, dependencies=deepcopy(defaults))
+    observed = []
+    for session_id, override in zip(["first", "second", "third"], overrides):
+        run_id = await _complete_workflow(
+            workflow, input="synthetic input", session_id=session_id, dependencies=override
+        )
+        await _assert_completed_durable_run(background_database, run_id)
+        observed.append(captured["dependencies"])
+    assert observed == [
+        {"options": {"shared": "first", "default_only": True, "first_only": True}},
+        {"options": {"shared": "second", "default_only": True, "second_only": True}},
+        defaults,
+    ]
+    assert workflow.dependencies == defaults
+    assert overrides == original_overrides
+
+
+@pytest.mark.asyncio
+async def test_sse_dependency_merge_preserves_resource_identity(background_database, background_runtime):
+    class Resource:
+        def __deepcopy__(self, memo):
+            raise AssertionError("Dependency resources must not be deep-copied")
+
+    default_resource, call_resource = Resource(), Resource()
+    captured = {}
+
+    def capture_references(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        captured["dependencies"] = run_context.dependencies
+        return StepOutput(content="completed")
+
+    workflow = Workflow(
+        db=background_database,
+        dependencies={"default_resource": default_resource, "nested": {"default_resource": default_resource}},
+        steps=[Step(name="capture-references", executor=capture_references)],
+        telemetry=False,
+    )
+    run_id = await _complete_workflow(
+        workflow,
+        input="synthetic input",
+        dependencies={"call_resource": call_resource, "nested": {"call_resource": call_resource}},
+    )
+    await _assert_completed_durable_run(background_database, run_id)
+    assert captured["dependencies"]["default_resource"] is default_resource
+    assert captured["dependencies"]["call_resource"] is call_resource
+    assert captured["dependencies"]["nested"]["default_resource"] is default_resource
+    assert captured["dependencies"]["nested"]["call_resource"] is call_resource
+
+
+@pytest.mark.asyncio
+async def test_sse_metadata_respects_session_precedence_without_aliasing(background_database, background_runtime):
+    defaults = {"workflow_only": "w", "session_wins": "workflow", "nested": {"workflow": "w", "shared": "workflow"}}
+    session_metadata = {"session_only": "s", "session_wins": "session", "nested": {"session": "s", "shared": "session"}}
+    override = {"run_only": "r", "nested": {"call": "r", "shared": "call"}}
+    original_defaults, original_session, original_override = deepcopy((defaults, session_metadata, override))
+    captured = {}
+
+    def capture_and_mutate(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        captured["metadata"] = deepcopy(run_context.metadata)
+        if run_context.metadata is not None:
+            run_context.metadata["nested"]["executor_write"] = True
+        return StepOutput(content="completed")
+
+    workflow = Workflow(
+        id="layered-metadata",
+        db=background_database,
+        metadata=defaults,
+        steps=[Step(name="capture-and-mutate", executor=capture_and_mutate)],
+        telemetry=False,
+    )
+    session = WorkflowSession(session_id="existing-session", workflow_id=workflow.id, metadata=session_metadata)
+    if isinstance(background_database, AsyncSqliteDb):
+        await background_database.upsert_session(session)
+    else:
+        background_database.upsert_session(session)
+    run_id = await _complete_workflow(
+        workflow, input="synthetic input", session_id=session.session_id, metadata=override
+    )
+    stored = await _assert_completed_durable_run(background_database, run_id)
+    expected = {
+        "workflow_only": "w",
+        "session_only": "s",
+        "run_only": "r",
+        "session_wins": "session",
+        "nested": {"workflow": "w", "session": "s", "call": "r", "shared": "call"},
+    }
+    assert captured["metadata"] == expected
+    expected["nested"]["executor_write"] = True
+    assert stored.metadata == expected
+    assert workflow.metadata == original_defaults
+    assert session_metadata == original_session
+    assert override == original_override

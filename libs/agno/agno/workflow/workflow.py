@@ -854,7 +854,16 @@ class Workflow:
         # dependencies: merge run level with self.dependencies (run level wins on conflicts)
         resolved_dependencies: Optional[Dict[str, Any]] = None
         if dependencies is not None and self.dependencies is not None:
-            resolved_dependencies = self.dependencies.copy()
+
+            def _copy_merge_targets(defaults: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[str, Any]:
+                # Detach only mappings the merge writes; dependency resources retain their identity.
+                copied = defaults.copy()
+                for key, value in overrides.items():
+                    if key in copied and isinstance(copied[key], dict) and isinstance(value, dict):
+                        copied[key] = _copy_merge_targets(copied[key], value)
+                return copied
+
+            resolved_dependencies = _copy_merge_targets(self.dependencies, dependencies)
             merge_dictionaries(resolved_dependencies, dependencies)
         elif dependencies is not None:
             resolved_dependencies = dependencies.copy()
@@ -5408,6 +5417,9 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream_events: bool = False,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[str]:
@@ -5432,8 +5444,16 @@ class Workflow:
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         # Read existing session from database
-        workflow_session, session_state, _ = await self._aload_or_create_session(
+        workflow_session, session_state, session_metadata = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=session_state
+        )
+
+        resolved = self._resolve_run_params(
+            dependencies=dependencies,
+            metadata=metadata,
+            session_metadata=session_metadata,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
         )
 
         run_context = RunContext(
@@ -5441,7 +5461,8 @@ class Workflow:
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
-            dependencies=dependencies,
+            dependencies=resolved["dependencies"],
+            metadata=resolved["metadata"],
         )
 
         # Register the run for cancellation tracking before spawning the detached task
@@ -5460,6 +5481,7 @@ class Workflow:
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
+            metadata=run_context.metadata,
         )
 
         # Start the run metrics timer
@@ -5549,6 +5571,8 @@ class Workflow:
                         stream_events=stream_events,
                         run_context=run_context,
                         background_tasks=background_tasks,
+                        add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                        add_session_state_to_context=resolved["add_session_state_to_context"],
                         **kwargs,
                     ):
                         if isinstance(event, WfRunOutput):
@@ -10900,6 +10924,9 @@ class Workflow:
                     files=files,
                     stream_events=stream_events,
                     dependencies=dependencies,
+                    metadata=metadata,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                     background_tasks=background_tasks,
                     **kwargs,
                 )
