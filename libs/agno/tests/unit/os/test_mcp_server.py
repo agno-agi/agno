@@ -1799,8 +1799,33 @@ async def test_forwarded_headers_are_ignored_without_allowed_hosts(monkeypatch):
 
     card = response.json()
     assert "evil.attacker.com" not in card["remotes"][0]["url"]
-    assert card["remotes"][0]["url"] == "http://localhost/mcp"
+    assert card["remotes"][0]["url"] == "https://localhost/mcp"
     assert "attacker" not in card["name"]
+
+
+async def test_forwarded_proto_is_honoured_without_a_forwarded_host(monkeypatch):
+    """A TLS-terminating proxy (Render, ALB) sends X-Forwarded-Proto but no X-Forwarded-Host."""
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: False)
+    os = AgentOS(name="Docs AgentOS", agents=[_agent()], mcp=MCPConfig(default_tools=True, name="Agno Docs"))
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app, base_url="http://agentos.onrender.com") as client:
+        card = (await client.get("/mcp/server-card", headers={"x-forwarded-proto": "https"})).json()
+
+    assert card["remotes"][0]["url"] == "https://agentos.onrender.com/mcp"
+
+
+@pytest.mark.parametrize("proto", ["http, https", "https, http", "HTTPS"])
+async def test_any_https_in_a_forwarded_proto_chain_upgrades_the_card(monkeypatch, proto):
+    """Proxies may append to the header, so https anywhere in the chain means the client used TLS."""
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: False)
+    os = AgentOS(name="Docs AgentOS", agents=[_agent()], mcp=MCPConfig(default_tools=True, name="Agno Docs"))
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app, base_url="http://agentos.onrender.com") as client:
+        card = (await client.get("/mcp/server-card", headers={"x-forwarded-proto": proto})).json()
+
+    assert card["remotes"][0]["url"] == "https://agentos.onrender.com/mcp"
 
 
 async def test_the_card_varies_on_the_headers_that_shape_it(monkeypatch):
@@ -1911,7 +1936,7 @@ async def test_an_unlisted_forwarded_host_is_not_advertised(monkeypatch):
 
     assert "evil.attacker.com" not in card["remotes"][0]["url"]
     assert "attacker" not in card["name"]
-    assert card["remotes"][0]["url"] == "http://docs.agno.com/mcp"
+    assert card["remotes"][0]["url"] == "https://docs.agno.com/mcp"
 
 
 def test_card_name_keeps_its_slash_when_the_host_is_very_long():

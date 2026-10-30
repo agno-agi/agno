@@ -323,6 +323,90 @@ def test_manifest_defaults_yield_to_the_application_config(db):
     assert "platform-engineer" not in os.config.manifest
 
 
+@pytest.mark.parametrize("use_async", [False, True])
+def test_manager_discovery_uses_manifest_without_changing_agent_prompts(db, tmp_path, use_async):
+    from agno.os import CompanyConfig
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "manifest:\n"
+        "  daily-brief:\n    description: Daily news and when it matters.\n"
+        "  claude-engineer:\n    description: Review code with Claude.\n"
+        "  codex-engineer:\n    description: Investigate bugs with Codex.\n"
+        "  company-manager-internal:\n    description: Plan company work.\n"
+        "  explicit:\n    description: UI description.\n"
+        "  manifest-only:\n    description: This must not create a runnable agent.\n"
+    )
+    daily_brief = Agent(id="daily-brief", model=OfflineModel())
+    claude = ClaudeAgent(id="claude-engineer")
+    codex = CodexAgent(id="codex-engineer")
+    explicit = Agent(id="explicit", model=OfflineModel(), description="Agent description.")
+    undescribed = Agent(id="undescribed", model=OfflineModel())
+    os = AgentOS(
+        db=db,
+        agents=[daily_brief, claude, codex, explicit, undescribed],
+        manager=OSManager(model=OfflineModel()),
+        company=CompanyConfig(model=OfflineModel()),
+        config=str(config_file),
+        telemetry=False,
+    )
+    # Runs copy the manager; late-created Company metadata must remain visible there.
+    runner = next(t for t in os.manager.deep_copy().tools if isinstance(t, StudioRunnerTools))
+
+    def descriptions():
+        payload = asyncio.run(runner.alist_agents()) if use_async else runner.list_agents()
+        return {row["id"]: row["description"] for row in json.loads(payload)["agents"]}
+
+    assert descriptions() == {
+        "daily-brief": "Daily news and when it matters.",
+        "claude-engineer": "Review code with Claude.",
+        "codex-engineer": "Investigate bugs with Codex.",
+        COMPANY_MANAGER_ID: "Plan company work.",
+        "explicit": "Agent description.",
+        "undescribed": None,
+    }
+    assert daily_brief.description is claude.description is codex.description is None
+    assert os._company_manager.description is None
+    assert explicit.description == "Agent description."
+    os.config = AgentOSConfig(manifest={"daily-brief": Manifest(description="Updated description.")})
+    assert descriptions()["daily-brief"] == "Updated description."
+    assert descriptions()["claude-engineer"] is None
+    os.config = None
+    assert descriptions()["daily-brief"] is None
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_manager_discovery_describes_teams_workflows_and_default_managers(db, use_async):
+    from agno.os import CompanyConfig
+    from agno.team import Team
+    from agno.workflow import Workflow
+
+    team = Team(id="research", members=[], model=OfflineModel())
+    workflow = Workflow(id="digest", steps=[])
+    os = AgentOS(
+        db=db,
+        teams=[team],
+        workflows=[workflow],
+        manager=OSManager(model=OfflineModel()),
+        company=CompanyConfig(model=OfflineModel()),
+        config=AgentOSConfig(
+            manifest={"research": Manifest(description="Research team."), "digest": Manifest(description="Digest.")}
+        ),
+        telemetry=False,
+    )
+    runner = next(t for t in os.manager.deep_copy().tools if isinstance(t, StudioRunnerTools))
+    agents = json.loads(asyncio.run(runner.alist_agents()) if use_async else runner.list_agents())["agents"]
+    teams = json.loads(asyncio.run(runner.alist_teams()) if use_async else runner.list_teams())["teams"]
+    workflows = json.loads(asyncio.run(runner.alist_workflows()) if use_async else runner.list_workflows())["workflows"]
+    assert agents[0]["description"] == os.config.manifest[COMPANY_MANAGER_ID].description
+    assert {row["id"]: row["description"] for row in teams} == {
+        "research": "Research team.",
+        MANAGER_TEAM_ID: os.config.manifest[MANAGER_TEAM_ID].description,
+    }
+    assert workflows[0]["description"] == "Digest."
+    assert team.description is workflow.description is os.manager.description is None
+
+
 @pytest.mark.parametrize("with_manager", [False, True])
 def test_company_manager_has_default_quick_prompts(db, with_manager):
     from agno.os import CompanyConfig
