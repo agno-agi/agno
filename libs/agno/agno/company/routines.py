@@ -766,7 +766,9 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
         from agno.company.refresh import _completion_proposal, _records
 
         tasks = await _records(manager, "list_tasks", project_id=project["id"], include_deleted=True)
-        if not tasks or any(task["status"] not in {"done", "cancelled"} for task in tasks):
+        if not tasks or any(
+            task["status"] not in {"done", "cancelled"} for task in tasks if task.get("deleted_at") is None
+        ):
             return None
         path, content = _completion_proposal(project, tasks)
         wiki = await _manager_call(manager, "get_wiki", project["product_id"])

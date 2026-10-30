@@ -111,7 +111,9 @@ async def arefresh_product(manager: Any, product_id: str, user_id: Optional[str]
     projects = await _records(manager, "list_projects", product_id=product_id, status="active")
     for project in projects:
         tasks = await _records(manager, "list_tasks", project_id=project["id"], include_deleted=True)
-        if not tasks or any(task["status"] not in {"done", "cancelled"} for task in tasks):
+        if not tasks or any(
+            task["status"] not in {"done", "cancelled"} for task in tasks if task.get("deleted_at") is None
+        ):
             continue
         path, content = _completion_proposal(project, tasks)
         existing = await filesystem.aread_with_meta(path)

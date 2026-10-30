@@ -1118,6 +1118,52 @@ class SqliteDb(BaseDb):
             result = sess.execute(statement)
             return result.scalar_one_or_none() is not None
 
+    def update_run_if_matches(
+        self,
+        run_id: str,
+        session_id: str,
+        expected: Dict[str, Any],
+        fields: Dict[str, Any],
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """Apply ``fields`` to a stored run only while it still matches ``expected``, as one atomic step.
+
+        ``expected`` maps "status" and dotted paths into the run's data to the values they must hold. A
+        paused run is handed over to its continuation this way: a repeated or stale writer finds the run
+        changed and writes nothing. Returns whether the run was updated.
+        """
+        from sqlalchemy import update
+
+        from agno.db.sql.runs import apply_run_fields, run_matches
+
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                # Take SQLite's write lock before reading, so the check and the write are one atomic step,
+                # even for another process using the same file.
+                sess.execute(update(table).where(table.c.run_id == run_id).values(run_id=table.c.run_id))
+                row = sess.execute(
+                    select(table.c.run_data, table.c.status)
+                    .where(table.c.run_id == run_id, table.c.session_id == session_id)
+                    .where((table.c.user_id == user_id) | table.c.user_id.is_(None))
+                ).fetchone()
+                if row is None or row[0] is None:
+                    return False
+                stored = json.loads(row[0]) if isinstance(row[0], str) else dict(row[0])
+                if not run_matches(stored, row[1], expected):
+                    return False
+                run, status = apply_run_fields(stored, fields)
+                values: Dict[str, Any] = {"run_data": run, "updated_at": int(time.time())}
+                if status is not None:
+                    values["status"] = status
+                sess.execute(update(table).where(table.c.run_id == run_id).values(**values))
+                return True
+        except Exception as e:
+            log_warning(f"Error conditionally updating run {run_id}: {e}")
+            raise
+
     def upsert_run(
         self,
         run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
@@ -8494,7 +8540,7 @@ class SqliteDb(BaseDb):
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.projects import project_transition_fields
         from agno.db.schemas.tasks import _acceptance_count
-        from agno.db.sql.company import lock_child
+        from agno.db.sql.company import lock_child, open_project_tasks
 
         table = self._get_table(table_type="projects")
         if table is None:
@@ -8532,10 +8578,7 @@ class SqliteDb(BaseDb):
             existing = dict(row._mapping)
             open_tasks = []
             if tasks_table is not None:
-                open_query = select(tasks_table).where(
-                    tasks_table.c.project_id == project_id,
-                    tasks_table.c.status.not_in(["done", "cancelled"]),
-                )
+                open_query = open_project_tasks(tasks_table, project_id)
                 open_tasks = [dict(task._mapping) for task in sess.execute(open_query).fetchall()]
             fields = project_transition_fields(existing, target, reason, accepted_by, tasks=open_tasks)
             if auto_accept is not None:
@@ -8740,7 +8783,7 @@ class SqliteDb(BaseDb):
         products = self._get_table(table_type="products", create_table_if_not_found=True)
         projects = self._get_table(table_type="projects", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
-            lock_child(sess, products, projects, table, task_id)
+            lock_child(sess, products, projects, table, task_id, restoring=True)
             existing = sess.execute(select(table).where(table.c.id == task_id)).mappings().first()
             if existing is None:
                 return None

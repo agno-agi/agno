@@ -35,6 +35,38 @@ def _mock_evaluator_failure(eval_instance: AccuracyEval):
     return evaluator
 
 
+def test_default_evaluator_model_is_a_live_openai_model():
+    """The default judge has to name a model OpenAI still serves.
+
+    An unset `model` falls back to a hard-coded id. When OpenAI retired the previous
+    default (o4-mini, shut down 2026-10-23) every eval relying on it got a 404, scored
+    nothing, and reported an empty result. Pinning the id here makes the next bump a
+    deliberate edit rather than a silent breakage.
+    """
+    evaluator = AccuracyEval(input="What is 2 + 2?", expected_output="4").get_evaluator_agent()
+
+    assert evaluator.model is not None
+    assert evaluator.model.id == "gpt-5.6-terra"
+
+
+def test_an_explicit_model_outranks_the_default():
+    from agno.models.openai import OpenAIChat
+
+    chosen = OpenAIChat(id="gpt-5-mini")
+    evaluator = AccuracyEval(input="What is 2 + 2?", expected_output="4", model=chosen).get_evaluator_agent()
+
+    assert evaluator.model is chosen
+
+
+def test_an_explicit_evaluator_agent_outranks_the_default():
+    from agno.models.openai import OpenAIChat
+
+    judge = Agent(model=OpenAIChat(id="gpt-5-mini"))
+    evaluator = AccuracyEval(input="What is 2 + 2?", expected_output="4", evaluator_agent=judge).get_evaluator_agent()
+
+    assert evaluator is judge
+
+
 def test_basic_evaluation_computes_score():
     """A successful evaluation populates results and computes the score stats."""
     eval = AccuracyEval(

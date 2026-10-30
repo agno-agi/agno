@@ -1,12 +1,12 @@
 """
-O3 Mini With Tools
-==================
+GPT-5.6 Sol With Tools
+======================
 
 Demonstrates this reasoning cookbook example.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.websearch import WebSearchTools
 
 
@@ -15,7 +15,7 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 def run_example() -> None:
     agent = Agent(
-        model=OpenAIChat(id="o3-mini"),
+        model=OpenAIResponses(id="gpt-5.6-sol"),
         tools=[WebSearchTools(enable_news=False)],
         instructions="Use tables to display data.",
         markdown=True,

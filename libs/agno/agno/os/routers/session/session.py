@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import Any, Dict, List, Optional, Set, Union, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
@@ -28,6 +28,8 @@ from agno.os.schema import (
     PaginatedResponse,
     PaginationInfo,
     RunSchema,
+    RunsPage,
+    RunsPageInfo,
     SessionRunPreviewSchema,
     SessionSchema,
     SortOrder,
@@ -39,7 +41,14 @@ from agno.os.schema import (
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
 )
-from agno.os.services.sessions import SessionNotFoundError, get_sessions_page, search_sessions_page
+from agno.os.services.sessions import (
+    InvalidRunCursorError,
+    SessionNotFoundError,
+    get_session_runs_window,
+    get_sessions_page,
+    run_status_matches,
+    search_sessions_page,
+)
 from agno.os.services.sessions import get_session_run_previews as get_session_run_previews_from_service
 from agno.os.services.sessions import get_session_runs as get_session_runs_from_service
 from agno.os.settings import AgnoAPISettings
@@ -646,6 +655,21 @@ def attach_routes(
         else:
             return WorkflowSessionDetailSchema.from_session(session)  # type: ignore
 
+    def _parse_status_filter(status: Optional[List[str]]) -> Optional[Set[str]]:
+        from agno.run.base import RunStatus
+
+        if not status:
+            return None
+        valid = {member.value for member in RunStatus}
+        wanted_statuses = {value.upper() for value in status}
+        unknown = sorted(wanted_statuses - valid)
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status value(s) {unknown}; expected one of {sorted(valid)}",
+            )
+        return wanted_statuses
+
     async def _fetch_session_runs(
         request: Request,
         session_id: str,
@@ -659,18 +683,7 @@ def attach_routes(
         previews: bool = False,
     ) -> List[Any]:
         """Runs (or, with ``previews``, run previews) of a session, status-filtered."""
-        from agno.run.base import RunStatus
-
-        wanted_statuses = None
-        if status:
-            valid = {member.value for member in RunStatus}
-            wanted_statuses = {value.upper() for value in status}
-            unknown = sorted(wanted_statuses - valid)
-            if unknown:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid status value(s) {unknown}; expected one of {sorted(valid)}",
-                )
+        wanted_statuses = _parse_status_filter(status)
         db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
 
         runs: List[Any]
@@ -690,7 +703,9 @@ def attach_routes(
             if previews:
                 runs = await db.get_session_run_previews(**remote_kwargs, status=status)
             else:
-                runs = await db.get_session_runs(**remote_kwargs)
+                # No limit is passed, so the remote returns every run as a list.
+                remote_runs = await db.get_session_runs(**remote_kwargs)
+                runs = remote_runs if isinstance(remote_runs, list) else remote_runs.data
         else:
             # Shared with the MCP get_session_runs tool: auto-detection, timestamp
             # filtering, per-run classification, and sync-db threadpool offload all
@@ -712,19 +727,27 @@ def attach_routes(
         # RemoteDb cannot be assumed to understand the new param, and a session's
         # run list is bounded.
         if wanted_statuses is not None:
-            runs = [r for r in runs if (getattr(r, "status", None) or "").upper() in wanted_statuses]
+            runs = [r for r in runs if run_status_matches(getattr(r, "status", None), wanted_statuses)]
         return runs
 
     @router.get(
         "/sessions/{session_id}/runs",
-        response_model=List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+        response_model=Union[
+            RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+            List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+        ],
         status_code=200,
         operation_id="get_session_runs",
         summary="Get Session Runs",
         description=(
-            "Retrieve all runs (executions) for a specific session with optional timestamp and "
+            "Retrieve the runs (executions) for a specific session with optional timestamp and "
             "status filtering. Repeat the status param to match any of several (case-insensitive; "
             "e.g. status=PENDING&status=RUNNING&status=PAUSED is the live set a queue tray shows). "
+            "By default all runs are returned as a list. Pass 'limit' to receive a cursor-paginated "
+            "response instead: the newest 'limit' runs, or those before 'before_run_index' or after "
+            "'after_run_index'. Pages count top-level runs; member and step runs come with their parent "
+            "and filters select the top-level runs. For the older page pass meta.oldest_run_index as "
+            "before_run_index; for the newer page pass meta.newest_run_index as after_run_index. Runs are always in chronological order and carry their 'run_index'. "
             "Response schema varies based on session type. For lightweight entries, use "
             "GET /sessions/{session_id}/run-previews."
         ),
@@ -736,102 +759,109 @@ def attach_routes(
                     "application/json": {
                         "examples": {
                             "completed_run": {
-                                "summary": "Example completed run",
-                                "value": {
-                                    "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                    "parent_run_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                    "agent_id": "basic-agent",
-                                    "user_id": "",
-                                    "run_input": "Which tools do you have access to?",
-                                    "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
-                                    "run_response_format": "text",
-                                    "reasoning_content": "",
-                                    "metrics": {
-                                        "input_tokens": 82,
-                                        "output_tokens": 56,
-                                        "total_tokens": 138,
-                                        "time_to_first_token": 0.047505500027909875,
-                                        "duration": 4.840060166025069,
-                                    },
-                                    "messages": [
-                                        {
-                                            "content": "<additional_information>\n- Use markdown to format your answers.\n- The current time is 2025-09-08 17:52:10.101003.\n</additional_information>\n\nYou have the capability to retain memories from previous interactions with the user, but have not had any interactions with the user yet.",
-                                            "from_history": False,
-                                            "stop_after_tool_call": False,
-                                            "role": "system",
-                                            "created_at": 1757346730,
+                                "summary": "Example completed run (default list response)",
+                                "value": [
+                                    {
+                                        "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                        "run_index": 0,
+                                        "parent_run_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                        "agent_id": "basic-agent",
+                                        "user_id": "",
+                                        "run_input": "Which tools do you have access to?",
+                                        "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
+                                        "run_response_format": "text",
+                                        "reasoning_content": "",
+                                        "metrics": {
+                                            "input_tokens": 82,
+                                            "output_tokens": 56,
+                                            "total_tokens": 138,
+                                            "time_to_first_token": 0.047505500027909875,
+                                            "duration": 4.840060166025069,
                                         },
-                                        {
-                                            "content": "Which tools do you have access to?",
-                                            "from_history": False,
-                                            "stop_after_tool_call": False,
-                                            "role": "user",
-                                            "created_at": 1757346730,
-                                        },
-                                        {
-                                            "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
-                                            "from_history": False,
-                                            "stop_after_tool_call": False,
-                                            "role": "assistant",
-                                            "metrics": {"input_tokens": 82, "output_tokens": 56, "total_tokens": 138},
-                                            "created_at": 1757346730,
-                                        },
-                                    ],
-                                    "tools": None,
-                                    "events": [
-                                        {
-                                            "created_at": 1757346730,
-                                            "event": "RunStarted",
-                                            "agent_id": "basic-agent",
-                                            "agent_name": "Basic Agent",
-                                            "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                            "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                            "model": "gpt-4o",
-                                            "model_provider": "OpenAI",
-                                        },
-                                        {
-                                            "created_at": 1757346733,
-                                            "event": "MemoryUpdateStarted",
-                                            "agent_id": "basic-agent",
-                                            "agent_name": "Basic Agent",
-                                            "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                            "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                        },
-                                        {
-                                            "created_at": 1757346734,
-                                            "event": "MemoryUpdateCompleted",
-                                            "agent_id": "basic-agent",
-                                            "agent_name": "Basic Agent",
-                                            "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                            "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                        },
-                                        {
-                                            "created_at": 1757346734,
-                                            "event": "RunCompleted",
-                                            "agent_id": "basic-agent",
-                                            "agent_name": "Basic Agent",
-                                            "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                            "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                            "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
-                                            "content_type": "str",
-                                            "metrics": {
-                                                "input_tokens": 82,
-                                                "output_tokens": 56,
-                                                "total_tokens": 138,
-                                                "time_to_first_token": 0.047505500027909875,
-                                                "duration": 4.840060166025069,
+                                        "messages": [
+                                            {
+                                                "content": "<additional_information>\n- Use markdown to format your answers.\n- The current time is 2025-09-08 17:52:10.101003.\n</additional_information>\n\nYou have the capability to retain memories from previous interactions with the user, but have not had any interactions with the user yet.",
+                                                "from_history": False,
+                                                "stop_after_tool_call": False,
+                                                "role": "system",
+                                                "created_at": 1757346730,
                                             },
-                                        },
-                                    ],
-                                    "created_at": "2025-09-08T15:52:10Z",
-                                },
+                                            {
+                                                "content": "Which tools do you have access to?",
+                                                "from_history": False,
+                                                "stop_after_tool_call": False,
+                                                "role": "user",
+                                                "created_at": 1757346730,
+                                            },
+                                            {
+                                                "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
+                                                "from_history": False,
+                                                "stop_after_tool_call": False,
+                                                "role": "assistant",
+                                                "metrics": {
+                                                    "input_tokens": 82,
+                                                    "output_tokens": 56,
+                                                    "total_tokens": 138,
+                                                },
+                                                "created_at": 1757346730,
+                                            },
+                                        ],
+                                        "tools": None,
+                                        "events": [
+                                            {
+                                                "created_at": 1757346730,
+                                                "event": "RunStarted",
+                                                "agent_id": "basic-agent",
+                                                "agent_name": "Basic Agent",
+                                                "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                                "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                                "model": "gpt-4o",
+                                                "model_provider": "OpenAI",
+                                            },
+                                            {
+                                                "created_at": 1757346733,
+                                                "event": "MemoryUpdateStarted",
+                                                "agent_id": "basic-agent",
+                                                "agent_name": "Basic Agent",
+                                                "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                                "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                            },
+                                            {
+                                                "created_at": 1757346734,
+                                                "event": "MemoryUpdateCompleted",
+                                                "agent_id": "basic-agent",
+                                                "agent_name": "Basic Agent",
+                                                "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                                "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                            },
+                                            {
+                                                "created_at": 1757346734,
+                                                "event": "RunCompleted",
+                                                "agent_id": "basic-agent",
+                                                "agent_name": "Basic Agent",
+                                                "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                                "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                                "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
+                                                "content_type": "str",
+                                                "metrics": {
+                                                    "input_tokens": 82,
+                                                    "output_tokens": 56,
+                                                    "total_tokens": 138,
+                                                    "time_to_first_token": 0.047505500027909875,
+                                                    "duration": 4.840060166025069,
+                                                },
+                                            },
+                                        ],
+                                        "created_at": "2025-09-08T15:52:10Z",
+                                    }
+                                ],
                             }
                         }
                     }
                 },
             },
-            404: {"description": "Session not found or has no runs", "model": NotFoundResponse},
-            422: {"description": "Invalid session type", "model": ValidationErrorResponse},
+            404: {"description": "Session not found", "model": NotFoundResponse},
+            422: {"description": "Invalid session type or pagination parameters", "model": ValidationErrorResponse},
         },
     )
     async def get_session_runs(
@@ -856,13 +886,85 @@ def attach_routes(
             description="Status filter; repeatable to match any of several, case-insensitive "
             "(PENDING, RUNNING, PAUSED, COMPLETED, CANCELLED, ERROR, REGENERATED)",
         ),
+        limit: Optional[int] = Query(
+            default=None,
+            description="Maximum number of runs to return. Providing this returns a cursor-paginated response.",
+            ge=1,
+        ),
+        before_run_index: Optional[int] = Query(
+            default=None,
+            description="Return the newest runs with a run_index below this value. Requires 'limit'.",
+            ge=0,
+        ),
+        after_run_index: Optional[int] = Query(
+            default=None,
+            description="Return the oldest runs with a run_index above this value. Requires 'limit'.",
+            ge=0,
+        ),
         db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),
         table: Optional[str] = Query(default=None, description="Table to query runs from"),
-    ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
-        runs = await _fetch_session_runs(
-            request, session_id, session_type, user_id, created_after, created_before, status, db_id, table
+    ) -> Union[
+        RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+        List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+    ]:
+        if limit is None and (before_run_index is not None or after_run_index is not None):
+            raise HTTPException(status_code=422, detail="before_run_index and after_run_index require limit")
+
+        if limit is None:
+            runs = await _fetch_session_runs(
+                request, session_id, session_type, user_id, created_after, created_before, status, db_id, table
+            )
+            return cast(List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]], runs)
+
+        wanted_statuses = _parse_status_filter(status)
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_session_runs(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=effective_user_id,
+                created_after=created_after,
+                created_before=created_before,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+                status=status,
+                limit=limit,
+                before_run_index=before_run_index,
+                after_run_index=after_run_index,
+            )
+
+        try:
+            page = await get_session_runs_window(
+                db,
+                session_id=session_id,
+                limit=limit,
+                before_run_index=before_run_index,
+                after_run_index=after_run_index,
+                session_type=session_type,
+                user_id=effective_user_id,
+                created_after=created_after,
+                created_before=created_before,
+                statuses=wanted_statuses,
+            )
+        except SessionNotFoundError:
+            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+        except InvalidRunCursorError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+
+        return RunsPage(
+            data=page.runs,
+            meta=RunsPageInfo(
+                limit=limit,
+                total_count=page.total_count,
+                has_more=page.has_more,
+                oldest_run_index=page.oldest_run_index,
+                newest_run_index=page.newest_run_index,
+            ),
         )
-        return cast(List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]], runs)
 
     @router.get(
         "/sessions/{session_id}/run-previews",
@@ -1010,21 +1112,26 @@ def attach_routes(
         # Find the specific run
         # TODO: Move this filtering into the DB layer
         target_run = None
-        for run in runs:
+        target_run_index = None
+        for run_index, run in enumerate(runs):
             if run.get("run_id") == run_id:
                 target_run = run
+                target_run_index = run_index
                 break
 
         if not target_run:
             raise HTTPException(status_code=404, detail=f"Run with ID {run_id} not found in session {session_id}")
 
         # Return the appropriate schema based on run type
+        run_schema: Union[RunSchema, TeamRunSchema, WorkflowRunSchema]
         if target_run.get("workflow_id") is not None:
-            return WorkflowRunSchema.from_dict(target_run)
+            run_schema = WorkflowRunSchema.from_dict(target_run)
         elif target_run.get("team_id") is not None:
-            return TeamRunSchema.from_dict(target_run)
+            run_schema = TeamRunSchema.from_dict(target_run)
         else:
-            return RunSchema.from_dict(target_run, session=cast(Dict[str, Any], session))
+            run_schema = RunSchema.from_dict(target_run, session=cast(Dict[str, Any], session))
+        run_schema.run_index = target_run_index
+        return run_schema
 
     @router.delete(
         "/sessions/{session_id}",

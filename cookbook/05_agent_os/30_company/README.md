@@ -334,6 +334,7 @@ page uses three SQL statements in total, regardless of the number of cards.
 | File | Demonstrates |
 | --- | --- |
 | `07_heartbeat.py` | Code-declared Products, a reader Source, an Intake Skill, scheduler rows and duplicate-free scans without a model call. |
+| `11_disabled_routine.py` | A visible, initially disabled Routine that a human enables through the API used by the UI; activation survives restart. |
 
 Declare `Product`, `Source` and `Routine` from `agno.company`, then pass
 `CompanyConfig(products=[...])`. The same declarations work in OS configuration:
@@ -355,6 +356,13 @@ company:
           executor_id: source-reader
           cron_expr: "0 9 * * 1-5"
 ```
+
+Set `enabled=False` on a Python `Routine` (or `enabled: false` in YAML) to
+create it visibly but inactive. The default is `True`. Enable it later from the
+UI or `POST /company/routines/{id}/resume`. The initial value applies only when
+creating a routine; startup preserves saved enabled/disabled choices and other
+human edits. The same flag is accepted when creating a routine through the API
+or the sync/async Company Manager and Company tools.
 
 The executor must already be registered; an invalid declared target fails startup
 instead of silently dropping its Routine. Give it `CompanyTools(db)` and
@@ -674,8 +682,9 @@ one Task and only terminal Tasks. Each proposal is a versioned page under
 `project-completion/`; unchanged scans do not rewrite it. New open work withdraws
 the proposal. A human accepts it through the existing Project transition route.
 Refresh cannot transition a Project. Moving a Project to Done returns 409 with
-the open Task names and ids until every Task is Done or Cancelled, including
-Tasks that were manually archived while still open.
+the open Task names and ids until every visible Task is Done or Cancelled. Tasks
+archived while still open don't count, and restoring one into a Done or
+Cancelled Project is refused as open work.
 
 Products store `metadata.archive_window_days`, default 14. Refresh soft-archives
 Done and Cancelled Projects and Tasks whose last update is strictly older than
@@ -687,8 +696,8 @@ Refresh processes qualifying Projects before standalone Tasks, so a single
 maintenance pass preserves the Project's cascade as one restorable group.
 Restoring the Project restores only children taken by that cascade; Tasks
 independently archived before that pass stay archived. Retention skips terminal
-Projects that still contain Backlog work and refuses active Tasks. New open Tasks
-cannot be added or moved into Done or Cancelled Projects.
+Projects that still contain visible Backlog work and refuses active Tasks. New
+open Tasks cannot be added or moved into Done or Cancelled Projects.
 Restore retains the lifecycle and starts a fresh retention window. Archived
 records leave normal lists, grouped counts and execution. Read an individual
 record with `include_deleted=true` for inspection; lists still hide children
