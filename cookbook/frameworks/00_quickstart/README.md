@@ -1,11 +1,11 @@
-# Frameworks Quickstart: Agno, Claude Code, Codex, LangGraph, DSPy
+# Frameworks Quickstart: Agno, Claude Code, Codex, LangGraph, DSPy, Google ADK
 
 For the current Claude/Codex starting point, follow
 [framework integration walkthrough](../README.md). This folder retains
 the mixed-framework launch examples; they have separate validation from the
 Claude/Codex starting examples.
 
-AgentOS supports agents built with **Agno**, the **Claude Agent SDK** (Claude Code), **OpenAI Codex**, **LangGraph**, and **DSPy** — served through one runtime, one API, and one UI.
+AgentOS supports agents built with **Agno**, the **Claude Agent SDK** (Claude Code), **OpenAI Codex**, **LangGraph**, **DSPy**, and **Google ADK** — served through one runtime, one API, and one UI.
 
 This quickstart shows each framework on its own and all together.
 
@@ -18,6 +18,7 @@ This quickstart shows each framework on its own and all together.
 | `codex_agent.py` | OpenAI Codex agent via the Codex Python SDK, in a `workspace-write` sandbox |
 | `langgraph_agent.py` | A LangGraph chatbot wrapped for AgentOS |
 | `dspy_agent.py` | A DSPy `ChainOfThought` program wrapped for AgentOS |
+| `google_adk_agent.py` | A Google ADK `LlmAgent` wrapped for AgentOS |
 | `multi_framework_agentos.py` | Agno + Claude Code in one AgentOS — the example from the launch blog post |
 
 Each example uses SQLite for session storage so you can run it with no infra setup.
@@ -79,6 +80,9 @@ pip install langgraph langchain-openai
 
 # DSPy
 pip install dspy
+
+# Google ADK
+pip install google-adk
 ```
 
 Set your API keys:
@@ -86,6 +90,7 @@ Set your API keys:
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 export OPENAI_API_KEY=sk-...
+export GOOGLE_API_KEY=...
 ```
 
 Run any of the examples:
@@ -114,8 +119,9 @@ curl -X POST http://localhost:7777/agents/agno-agent/runs \
 - `../codex/` — sessions, MCP servers, structured output, sandboxes
 - `../langgraph/` — tool calls, sessions, time travel
 - `../dspy/` — sessions, ReAct with tools
+- `../google_adk/` — tools, agent trees, sessions, images
 - [AgentOS docs](https://docs.agno.com/agent-os/introduction)
 
 ## Status
 
-Claude Agent SDK, Codex, LangGraph, and DSPy support is in early alpha. Not every feature is wired up yet — please file issues for rough edges.
+Claude Agent SDK, Codex, LangGraph, DSPy, and Google ADK support is in early alpha. Not every feature is wired up yet — please file issues for rough edges.
