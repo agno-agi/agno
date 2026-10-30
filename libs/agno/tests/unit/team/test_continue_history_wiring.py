@@ -59,6 +59,7 @@ def _make_team() -> MagicMock:
     team.user_id = None
     team._learning = None  # short-circuits _aget_learning_tools
     team.tools = None  # short-circuits _check_and_refresh_mcp_tools/_connect_mcp_tools
+    team.skills = None  # short-circuits Skills.aload in _check_and_refresh_mcp_tools
     team.retries = 0  # `team.retries + 1` in the async retry loop
     team.events_to_skip = []  # iterated by handle_event
     team.store_events = False

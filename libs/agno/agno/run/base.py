@@ -47,6 +47,9 @@ class RunContext:
     # Merged AFTER agent.tools during tool resolution
     client_tools: Optional[List[Any]] = None
 
+    # This run's code-execution tools, which require confirmation once the run loads an MCP-served skill
+    skill_gated_tools: Optional[List[Any]] = None
+
 
 class _EventIndexCarrier:
     """Plain (non-dataclass) base carrying ``event_index``.

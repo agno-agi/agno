@@ -465,7 +465,9 @@ async def aget_tools(
 
     # Add tools for accessing skills
     if agent.skills is not None:
-        agent_tools.extend(agent.skills.get_tools())
+        # Runs after connect_mcp_tools so MCP-served skills can be listed on the live connection.
+        await agent.skills.aload()
+        agent_tools.extend(agent.skills.get_tools(async_mode=True))
 
     return agent_tools
 
@@ -689,6 +691,9 @@ def determine_tools_for_model(
                 func._files = joint_files
                 func._audios = joint_audios
                 func._videos = joint_videos
+
+    if agent.skills is not None:
+        agent.skills.gate_execution_tools(processed_tools or [], _functions, run_context, run_response)
 
     return _functions
 

@@ -20,6 +20,7 @@ class Skill:
         license: Optional license information
         compatibility: Optional compatibility requirements
         allowed_tools: Optional list of tools this skill is allowed to use
+        origin: Label of the MCP server that serves this skill, or None for a local skill
     """
 
     name: str
@@ -32,6 +33,7 @@ class Skill:
     license: Optional[str] = None
     compatibility: Optional[str] = None
     allowed_tools: Optional[List[str]] = None
+    origin: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert the Skill to a dictionary representation."""
@@ -46,6 +48,7 @@ class Skill:
             "license": self.license,
             "compatibility": self.compatibility,
             "allowed_tools": self.allowed_tools,
+            "origin": self.origin,
         }
 
     @classmethod
@@ -62,4 +65,5 @@ class Skill:
             license=data.get("license"),
             compatibility=data.get("compatibility"),
             allowed_tools=data.get("allowed_tools"),
+            origin=data.get("origin"),
         )

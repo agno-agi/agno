@@ -555,6 +555,8 @@ async def disconnect_mcp_tools(agent: Agent) -> None:
         except Exception as e:
             log_warning(f"Error disconnecting tool: {str(e)}")
     agent._mcp_tools_initialized_on_run = []
+    if agent.skills is not None:
+        await agent.skills.aclose()
 
 
 def connect_connectable_tools(agent: Agent) -> None:

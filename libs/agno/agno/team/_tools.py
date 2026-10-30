@@ -109,6 +109,10 @@ async def _check_and_refresh_mcp_tools(team: "Team") -> None:
                         log_warning(f"Failed to refresh MCP tool {tool}: {str(e)}")
                         continue
 
+    # MCP-served skills are listed once the MCP connections are up.
+    if team.skills is not None:
+        await team.skills.aload()
+
 
 def _determine_tools_for_model(
     team: "Team",
@@ -256,7 +260,7 @@ def _determine_tools_for_model(
 
     # Add tools for accessing skills
     if team.skills is not None:
-        _tools.extend(team.skills.get_tools())
+        _tools.extend(team.skills.get_tools(async_mode=async_mode))
 
     from agno.team.mode import TeamMode
 
@@ -506,6 +510,9 @@ def _determine_tools_for_model(
                 func._files = joint_files
                 func._audios = joint_audios
                 func._videos = joint_videos
+
+    if team.skills is not None:
+        team.skills.gate_execution_tools(_tools, _functions, run_context, run_response)
 
     return _functions
 
