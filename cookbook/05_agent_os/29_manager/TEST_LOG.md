@@ -1,5 +1,24 @@
 # Test log
 
+## Manifest discovery descriptions, 2026-10-30
+
+### manager_discovery.py
+
+**Status:** PASS
+
+**Description:** Ran `cookbook/05_agent_os/29_manager/manager_discovery.py`
+with `.venv/bin/python`, a temporary SQLite database, and no model calls.
+The agent has only a manifest description. Both sync and async manager
+discovery return that description without changing the agent's description.
+
+**Result:** Both listings matched and contained the configured description.
+The cookbook also passed in an isolated development environment, alongside
+656 manager/runner tests and the full format/validation scripts. The shared
+`.venv` validation reported nine existing typing errors in unchanged Google/AWS
+model files. No API key, hosted deployment, or live-model routing was exercised.
+
+---
+
 ## Focused documentation lookup, 2026-10-19
 
 ### manager_source.py

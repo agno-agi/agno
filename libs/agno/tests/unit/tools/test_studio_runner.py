@@ -1422,6 +1422,29 @@ class TestDispatchDepthCap:
 
 
 class TestDiscovery:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("use_async", [False, True])
+    @pytest.mark.parametrize("description", [None, "", "Stored description."])
+    async def test_description_fallback_does_not_change_stored_components(self, registry, db, use_async, description):
+        from agno.agent import Agent
+
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="Radar", instructions="i", model_id="gpt-5.4", description=description)
+        original = _loads(StudioRunnerTools(db=db).list_agents())["agents"][0]
+        agent = Agent(id="code", description=description)
+        runner = StudioRunnerTools(
+            db=db,
+            include_agents=[agent],
+            description_fallback={"radar": "Manifest description.", "code": "Manifest description."}.get,
+        )
+        listing = await runner.alist_agents() if use_async else runner.list_agents()
+        rows = {row["id"]: row for row in _loads(listing)["agents"]}
+        assert rows["code"]["description"] == rows["radar"]["description"] == (description or "Manifest description.")
+        assert rows["radar"]["status"] == "draft"
+        assert agent.description == description
+        # A standalone runner still sees the original persisted metadata.
+        assert _loads(StudioRunnerTools(db=db).list_agents())["agents"][0] == original
+
     def test_list_agents_reports_what_dispatch_admits(self, registry, db):
         # The instructions tell the caller to list first and run by id, so a
         # component that runs and cannot be found leaves it no way in. An

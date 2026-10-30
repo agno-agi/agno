@@ -286,6 +286,14 @@ def _component_references(component_type: str, config: Dict[str, Any]) -> List[t
 
 
 class StudioRunnerTools(Toolkit):
+    """Discover and run admitted components.
+
+    ``description_fallback`` optionally resolves a component id to discovery
+    text when its description is absent or empty. It never changes the
+    component or its stored configuration. OS Manager uses this to read its
+    current manifest without copying UI text into component system prompts.
+    """
+
     def __init__(
         self,
         registry: Optional["Registry"] = None,
@@ -301,6 +309,7 @@ class StudioRunnerTools(Toolkit):
         self_dispatch: Literal["never", "once"] = "never",
         list_limit: int = 100,
         name: str = "studio_runners",
+        description_fallback: Optional[Callable[[str], Optional[str]]] = None,
         **kwargs: Any,
     ):
         # 0 disables dispatch outright and is a valid posture; "unlimited" is
@@ -328,6 +337,8 @@ class StudioRunnerTools(Toolkit):
         self.include_agents = include_agents
         self.include_teams = include_teams
         self.include_workflows = include_workflows
+        # Discovery metadata only: never copy these descriptions into component prompts.
+        self.description_fallback = description_fallback
         # Each run_* flag exposes that kind's whole surface, list tool
         # included: the list reports exactly what dispatch admits, so a kind
         # that cannot run has nothing to list either.
@@ -2267,7 +2278,7 @@ class StudioRunnerTools(Toolkit):
             entry: Dict[str, Any] = {
                 "id": r.get("component_id"),
                 "name": r.get("name"),
-                "description": r.get("description"),
+                "description": self._listing_description(r["component_id"], r.get("description")),
             }
             # A caller following list-then-run needs the stage hint here, or
             # the refusal it hits is its first sign the row was a draft.
@@ -2431,6 +2442,12 @@ class StudioRunnerTools(Toolkit):
                 logger.warning("Failed to count %s for list disclosure", plural, exc_info=True)
         return {"other_components": counts} if counts else {}
 
+    def _listing_description(self, component_id: str, description: Optional[str]) -> Optional[str]:
+        """Keep component descriptions; consult the fallback only when one is absent or empty."""
+        if description or self.description_fallback is None:
+            return description
+        return self.description_fallback(component_id)
+
     def _admitted_code_components(self, component_type: str) -> List[Dict[str, Any]]:
         """The code-defined components this runner will dispatch, as list rows.
 
@@ -2455,7 +2472,7 @@ class StudioRunnerTools(Toolkit):
                 {
                     "id": component_id,
                     "name": getattr(component, "name", None),
-                    "description": getattr(component, "description", None),
+                    "description": self._listing_description(component_id, getattr(component, "description", None)),
                 }
             )
         return rows
