@@ -169,6 +169,35 @@ METRICS_COLLECTION_SCHEMA = [
     },
 ]
 
+OS_METRICS_COLLECTION_SCHEMA = [
+    {"key": "aggregation_period"},
+    {"key": "date"},
+    {"key": "user_id"},
+    {"key": "component_type"},
+    {"key": "component_id"},
+    {"key": "parent_component_id"},
+    {"key": "created_at"},
+    {"key": "updated_at"},
+    {"key": [("aggregation_period", "ASCENDING"), ("date", "ASCENDING")], "collection_group": False},
+    {
+        "key": [("user_id", "ASCENDING"), ("aggregation_period", "ASCENDING"), ("date", "ASCENDING")],
+        "collection_group": False,
+    },
+]
+
+OS_METRICS_TOTALS_COLLECTION_SCHEMA = [
+    {"key": "aggregation_period"},
+    {"key": "date"},
+    {"key": "completed"},
+    {"key": "created_at"},
+    {"key": "updated_at"},
+    {"key": [("aggregation_period", "ASCENDING"), ("date", "ASCENDING")], "collection_group": False},
+    {
+        "key": [("aggregation_period", "ASCENDING"), ("completed", "ASCENDING"), ("date", "DESCENDING")],
+        "collection_group": False,
+    },
+]
+
 TRACE_COLLECTION_SCHEMA = [
     {"key": "trace_id", "unique": True},
     {"key": "name"},
@@ -215,6 +244,8 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
         "runs": RUNS_COLLECTION_SCHEMA,
         "memories": USER_MEMORY_COLLECTION_SCHEMA,
         "metrics": METRICS_COLLECTION_SCHEMA,
+        "os_metrics": OS_METRICS_COLLECTION_SCHEMA,
+        "os_metrics_totals": OS_METRICS_TOTALS_COLLECTION_SCHEMA,
         "evals": EVAL_COLLECTION_SCHEMA,
         "knowledge": KNOWLEDGE_COLLECTION_SCHEMA,
         "traces": TRACE_COLLECTION_SCHEMA,

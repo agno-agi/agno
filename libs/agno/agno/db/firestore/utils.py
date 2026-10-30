@@ -4,14 +4,15 @@ import hashlib
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
+from uuid import uuid4
 
 from agno.db.firestore.schemas import get_collection_indexes
-from agno.db.utils import get_sort_value
+from agno.db.utils import get_sort_value, metric_record_day
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
-    from google.cloud.firestore import Client  # type: ignore[import-untyped]
+    from google.cloud.firestore import Client, Increment  # type: ignore[import-untyped]
     from google.cloud.firestore_admin_v1 import FirestoreAdminClient, Index  # type: ignore[import-untyped]
 except ImportError:
     raise ImportError(
@@ -369,3 +370,212 @@ def bulk_upsert_metrics(collection_ref, metrics_records: List[Dict[str, Any]]) -
         batch.commit()
 
     return results
+
+
+# -- OS metrics util methods --
+
+# The document of the OS metrics totals collection held by the one rebuild running
+OS_METRICS_LOCK_ID = "os_metrics_lock"
+
+# How long a rebuild holds the lock document at most, so a process stopped mid-rebuild never holds it for good
+OS_METRICS_LOCK_SECONDS = 60
+
+# How long a rebuild that waits for the lock sleeps before it tries again
+OS_METRICS_LOCK_RETRY_SECONDS = 0.1
+
+# Firestore takes 30 values at most in one `in` filter
+OS_METRICS_IN_LIST_LIMIT = 30
+
+# Rows a rebuild reads at a time, so a day or a month of many rows is never held or decoded in one step
+OS_METRICS_BATCH_SIZE = 1000
+
+
+def os_metrics_record_id(record: Dict[str, Any]) -> str:
+    """The id of the document an OS metrics row is stored under, one per period, day, owner, component and parent."""
+    # Firestore document ids reject ``/``, ``.``, ``..`` and ``__..__``, so hash the owner, component and parent
+    key = json.dumps(
+        [record["user_id"], record["component_type"], record["component_id"], record["parent_component_id"]]
+    )
+    key_segment = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return f"{record['date'].isoformat()}_{key_segment}_{record['aggregation_period']}"
+
+
+def os_metrics_totals_record_id(aggregation_period: str, row_date: date) -> str:
+    """The id of the document an OS metrics totals row is stored under, one per period and day."""
+    return f"{row_date.isoformat()}_{aggregation_period}"
+
+
+def deserialize_os_metrics_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a stored OS metrics row with its day, stored as an ISO string, as a date."""
+    return {**record, "date": metric_record_day(record)}
+
+
+def lock_os_metrics(totals_collection_ref, wait_for_rebuild: bool) -> Optional[str]:
+    """Take the lock one rebuild of the OS metrics holds at a time: a lock document created only when absent.
+
+    The lock document expires, so a process that stopped mid-rebuild never holds it for good.
+
+    Args:
+        totals_collection_ref: The OS metrics totals collection, which holds the lock document.
+        wait_for_rebuild (bool): Wait for a rebuild another process is running. When False, skip instead.
+
+    Returns:
+        Optional[str]: The token the lock is held under. ``None`` when another process holds it and
+            wait_for_rebuild is False.
+    """
+    from google.api_core.exceptions import AlreadyExists, FailedPrecondition, NotFound
+
+    lock_ref = totals_collection_ref.document(OS_METRICS_LOCK_ID)
+    token = str(uuid4())
+
+    while True:
+        try:
+            lock_ref.create({"token": token, "expires_at": time.time() + OS_METRICS_LOCK_SECONDS})
+            return token
+        except AlreadyExists:
+            snapshot = lock_ref.get()
+            if snapshot.exists and (snapshot.to_dict() or {}).get("expires_at", 0) <= time.time():
+                try:
+                    lock_ref.delete(
+                        option=totals_collection_ref._client.write_option(last_update_time=snapshot.update_time)
+                    )
+                except (FailedPrecondition, NotFound):
+                    pass
+                continue
+        if not wait_for_rebuild:
+            return None
+        time.sleep(OS_METRICS_LOCK_RETRY_SECONDS)
+
+
+def extend_os_metrics_lock(totals_collection_ref, token: str) -> bool:
+    """Hold the OS metrics lock for OS_METRICS_LOCK_SECONDS more, unless another process took it.
+
+    Args:
+        totals_collection_ref: The OS metrics totals collection, which holds the lock document.
+        token (str): The token the lock is held under.
+
+    Returns:
+        bool: Whether the lock is still held under the token.
+    """
+    from google.api_core.exceptions import FailedPrecondition, NotFound
+
+    lock_ref = totals_collection_ref.document(OS_METRICS_LOCK_ID)
+    snapshot = lock_ref.get()
+    if snapshot.exists and (snapshot.to_dict() or {}).get("token") == token:
+        try:
+            lock_ref.update(
+                {"expires_at": time.time() + OS_METRICS_LOCK_SECONDS},
+                option=totals_collection_ref._client.write_option(last_update_time=snapshot.update_time),
+            )
+            return True
+        except (FailedPrecondition, NotFound):
+            pass
+    return False
+
+
+def unlock_os_metrics(totals_collection_ref, token: str) -> None:
+    """Release the OS metrics lock, unless it expired and another process took it.
+
+    Args:
+        totals_collection_ref: The OS metrics totals collection, which holds the lock document.
+        token (str): The token the lock is held under.
+    """
+    from google.api_core.exceptions import FailedPrecondition, NotFound
+
+    lock_ref = totals_collection_ref.document(OS_METRICS_LOCK_ID)
+    snapshot = lock_ref.get()
+    if snapshot.exists and (snapshot.to_dict() or {}).get("token") == token:
+        try:
+            lock_ref.delete(option=totals_collection_ref._client.write_option(last_update_time=snapshot.update_time))
+        except (FailedPrecondition, NotFound):
+            pass
+
+
+def bulk_upsert_os_metrics(
+    collection_ref,
+    os_metrics_records: List[Dict[str, Any]],
+    stale_doc_ids: Sequence[str] = (),
+    totals_collection_ref=None,
+    totals_row: Optional[Dict[str, Any]] = None,
+    totals_row_stored: bool = False,
+    lock_token: Optional[str] = None,
+) -> bool:
+    """Bulk upsert OS metrics into the database, delete the stale ones and write the totals row last.
+
+    A new totals row starts at version 1, and every write of a stored one moves its version by one in the same
+    write, so two writers never give it the same version.
+
+    Args:
+        collection_ref: The OS metrics collection.
+        os_metrics_records (List[Dict[str, Any]]): The OS metrics records to upsert.
+        stale_doc_ids (Sequence[str]): The ids of the OS metrics records to delete.
+        totals_collection_ref: The OS metrics totals collection.
+        totals_row (Optional[Dict[str, Any]]): The totals row, from build_os_metrics_totals_row.
+        totals_row_stored (bool): Whether the totals row is already stored.
+        lock_token (Optional[str]): The token the OS metrics lock is held under, extended with every commit.
+
+    Returns:
+        bool: Whether every write was committed. False when the OS metrics lock was lost.
+    """
+    batch = collection_ref._client.batch()
+
+    batch_count = 0
+
+    # Firestore commits 500 writes at most at once, so a stored totals row whose rows need more commits moves its
+    # version in the first one: a later commit that fails never leaves rows changed under the version read before
+    if (
+        totals_collection_ref is not None
+        and totals_row is not None
+        and totals_row_stored
+        and len(stale_doc_ids) + len(os_metrics_records) >= 500
+    ):
+        doc_ref = totals_collection_ref.document(
+            os_metrics_totals_record_id(totals_row["aggregation_period"], totals_row["date"])
+        )
+        batch.update(doc_ref, {"version": Increment(1)})
+        batch_count += 1
+
+    for doc_id in stale_doc_ids:
+        batch.delete(collection_ref.document(doc_id))
+        batch_count += 1
+
+        # Firestore batch limit is 500 operations
+        if batch_count % 500 == 0:
+            batch.commit()
+            # A rebuild that lost the lock stops before its next commit
+            if lock_token is not None and not extend_os_metrics_lock(totals_collection_ref, lock_token):
+                return False
+            batch = collection_ref._client.batch()
+
+    for record in os_metrics_records:
+        doc_ref = collection_ref.document(os_metrics_record_id(record))
+        batch.set(doc_ref, {**record, "date": record["date"].isoformat()})
+        batch_count += 1
+
+        # Firestore batch limit is 500 operations
+        if batch_count % 500 == 0:
+            batch.commit()
+            if lock_token is not None and not extend_os_metrics_lock(totals_collection_ref, lock_token):
+                return False
+            batch = collection_ref._client.batch()
+
+    if totals_collection_ref is not None and totals_row is not None:
+        doc_ref = totals_collection_ref.document(
+            os_metrics_totals_record_id(totals_row["aggregation_period"], totals_row["date"])
+        )
+        batch.set(
+            doc_ref,
+            {**totals_row, "date": totals_row["date"].isoformat(), "version": Increment(1)},
+            merge=list(totals_row) + ["version"],
+        )
+        batch_count += 1
+
+        # Firestore batch limit is 500 operations
+        if batch_count % 500 == 0:
+            batch.commit()
+            batch = collection_ref._client.batch()
+
+    # Commit remaining operations
+    if batch_count % 500 != 0:
+        batch.commit()
+    return True

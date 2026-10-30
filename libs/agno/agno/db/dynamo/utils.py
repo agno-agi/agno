@@ -9,6 +9,7 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.utils import get_sort_value
 from agno.session import Session
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.string import generate_id
 
 
 def batch_write_with_retry(
@@ -51,6 +52,43 @@ def batch_write_with_retry(
                 f"after {max_retries} retries: {remaining_counts}. "
                 "Data loss will occur if we don't propagate this."
             )
+
+
+def batch_get_with_retry(
+    client,
+    request_items: Dict[str, Any],
+    max_retries: int = 5,
+    initial_backoff_seconds: float = 0.1,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Wrap ``client.batch_get_item`` with exponential-backoff retries for ``UnprocessedKeys``, as
+    ``batch_write_with_retry`` does for ``UnprocessedItems``. Returns the items read, by table.
+    """
+    responses: Dict[str, List[Dict[str, Any]]] = {}
+    remaining = request_items
+    backoff = initial_backoff_seconds
+    for attempt in range(max_retries + 1):
+        response = client.batch_get_item(RequestItems=remaining)
+        for table_name, items in response.get("Responses", {}).items():
+            responses.setdefault(table_name, []).extend(items)
+        unprocessed = response.get("UnprocessedKeys") or {}
+        if not unprocessed:
+            break
+        # Some keys were not read — retry with just those.
+        remaining_counts = {t: len(v["Keys"]) for t, v in unprocessed.items()}
+        if attempt < max_retries:
+            log_warning(
+                f"Dynamo batch_get_item returned UnprocessedKeys "
+                f"{remaining_counts}; retry {attempt + 1}/{max_retries} "
+                f"after {backoff:.2f}s"
+            )
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 5.0)
+            remaining = unprocessed
+        else:
+            raise RuntimeError(
+                f"DynamoDB batch_get_item still had UnprocessedKeys after {max_retries} retries: {remaining_counts}"
+            )
+    return responses
 
 
 # -- Serialization utils --
@@ -595,6 +633,128 @@ def deserialize_metrics_date(value: Any) -> Any:
         except ValueError:
             return value
     return value
+
+
+# -- OS metrics utils --
+
+
+def os_metrics_row_id(row: Dict[str, Any]) -> str:
+    """Return the id an OS metrics row is stored under beside its date, from its period, user, component and parent."""
+    return generate_id(
+        json.dumps(
+            [
+                row["aggregation_period"],
+                row["user_id"],
+                row["component_type"],
+                row["component_id"],
+                row["parent_component_id"],
+            ]
+        )
+    )
+
+
+def serialize_os_metrics_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Serialize an OS metrics row to a DynamoDB item.
+
+    Args:
+        row: The OS metrics row, as calculate_date_os_metrics builds it.
+
+    Returns:
+        A DynamoDB-ready dict. The day is written as an ISO string, and a row with no owner without user_id,
+        since a key attribute of an index cannot be an empty string.
+    """
+    data = dict(row)
+    if not data.get("user_id"):
+        data.pop("user_id", None)
+    data["id"] = os_metrics_row_id(row)
+    data["date"] = row["date"].isoformat()
+    return serialize_to_dynamo_item(data)
+
+
+def deserialize_os_metrics_row(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Deserialize a DynamoDB item to an OS metrics row, in the shape calculate_date_os_metrics builds.
+
+    Args:
+        item: The DynamoDB item.
+
+    Returns:
+        The row, with the day as a date and, for a row of agno_os_metrics, the empty user_id of a row with no
+        owner.
+    """
+    row = deserialize_from_dynamodb_item(item)
+    row["date"] = deserialize_metrics_date(row.get("date"))
+    if "id" in row:
+        row.setdefault("user_id", "")
+    return row
+
+
+def build_os_metrics_totals_update(table_name: str, totals_row: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the update_item arguments that upsert an OS metrics totals row.
+
+    A new row starts at version 1, and every write of a stored one moves its version by one in the same
+    request, so two writers never give it the same version.
+
+    Args:
+        table_name: The OS metrics totals table.
+        totals_row: The row, from build_os_metrics_totals_row.
+
+    Returns:
+        The update_item arguments.
+    """
+    names: Dict[str, str] = {"#created_at": "created_at", "#version": "version"}
+    values: Dict[str, Any] = {":created_at": {"N": str(totals_row["created_at"])}, ":one": {"N": "1"}}
+    set_parts = ["#created_at = if_not_exists(#created_at, :created_at)"]
+    remove_parts = []
+    serialized = serialize_to_dynamo_item(totals_row)
+    for key, value in totals_row.items():
+        if key in ["aggregation_period", "date", "created_at", "version"]:
+            continue
+        names[f"#{key}"] = key
+        # A maximum of nothing is no attribute, as an unset column is NULL
+        if value is None:
+            remove_parts.append(f"#{key}")
+        else:
+            set_parts.append(f"#{key} = :{key}")
+            values[f":{key}"] = serialized[key]
+    names["#rows_pending"] = "rows_pending"
+    remove_parts.append("#rows_pending")
+    update_expression = "SET " + ", ".join(set_parts)
+    if remove_parts:
+        update_expression += " REMOVE " + ", ".join(remove_parts)
+    update_expression += " ADD #version :one"
+    return {
+        "TableName": table_name,
+        "Key": {
+            "aggregation_period": {"S": totals_row["aggregation_period"]},
+            "date": {"S": totals_row["date"].isoformat()},
+        },
+        "UpdateExpression": update_expression,
+        "ExpressionAttributeNames": names,
+        "ExpressionAttributeValues": values,
+    }
+
+
+def query_all_items(dynamodb_client, query_kwargs: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Run a DynamoDB query through every page of its results.
+
+    Args:
+        dynamodb_client: DynamoDB client
+        query_kwargs: The query arguments
+
+    Returns:
+        List of DynamoDB items
+    """
+    items = []
+    response = dynamodb_client.query(**query_kwargs)
+    items.extend(response.get("Items", []))
+
+    # Handle pagination
+    while "LastEvaluatedKey" in response:
+        query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        response = dynamodb_client.query(**query_kwargs)
+        items.extend(response.get("Items", []))
+
+    return items
 
 
 # -- Query utils --

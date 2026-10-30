@@ -1,15 +1,42 @@
 """Utility functions for the MySQL database class."""
 
+import hashlib
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from uuid import uuid4
 
 from agno.db.mysql.schemas import get_table_schema_definition
+from agno.db.utils import (
+    OS_METRICS_COUNT_MAP_COLUMNS,
+    OS_METRICS_MAX_COLUMNS,
+    OS_METRICS_SUM_COLUMNS,
+    OS_METRICS_TOKEN_FIELDS,
+    empty_os_metrics_totals,
+    os_metrics_day_ranges,
+    os_metrics_days_to_read,
+    os_metrics_nested_run_ids,
+)
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
-    from sqlalchemy import Engine, Table, func
+    from sqlalchemy import (
+        JSON,
+        BigInteger,
+        Engine,
+        Integer,
+        Numeric,
+        Table,
+        and_,
+        cast,
+        func,
+        literal,
+        literal_column,
+        or_,
+        select,
+        true,
+        union_all,
+    )
     from sqlalchemy.dialects import mysql
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
     from sqlalchemy.inspection import inspect
@@ -17,6 +44,48 @@ try:
     from sqlalchemy.sql.expression import text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
+
+
+# MySQL caps a statement at max_allowed_packet, so IN lists are sent in chunks
+OS_METRICS_IN_LIST_LIMIT = 10000
+
+# MySQL scans the whole table for a long IN list of row values, so stale rows are deleted in smaller chunks
+OS_METRICS_STALE_KEYS_LIMIT = 1000
+
+# Rows a rebuild reads at a time, so a day or a month of many rows is never held or decoded in one step
+OS_METRICS_BATCH_SIZE = 1000
+
+# Every assistant message's position, role, whether it was carried over from an earlier run, and its request duration
+_OS_METRICS_MESSAGES: Any = literal_column(
+    "'$.messages[*]' COLUMNS (position FOR ORDINALITY, role VARCHAR(32) PATH '$.role', "
+    "from_history JSON PATH '$.from_history', duration JSON PATH '$.metrics.duration')"
+)
+
+# The values of a stored details object that a model call that served nothing reports, as text
+_OS_METRICS_EMPTY_DETAILS = ("{}", "[]", '""', "0", "false", "null")
+
+# The keys of a stored run that hold the runs nested inside it, in the order the rollup walks them
+_OS_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses", "workflow_agent_run")
+
+# Every run of one of those lists, with its position in the list
+_OS_METRICS_NESTED_RUNS: Any = literal_column("'$[*]' COLUMNS (ordinality FOR ORDINALITY, value JSON PATH '$')")
+
+# The one run a key holds on its own. MySQL's $[*] matches nothing in an object
+_OS_METRICS_NESTED_RUN: Any = literal_column("'$' COLUMNS (ordinality FOR ORDINALITY, value JSON PATH '$')")
+
+# Every key of a JSON object
+_OS_METRICS_KEYS: Any = literal_column("'$[*]' COLUMNS (entry_key VARCHAR(255) PATH '$')")
+
+# Every model of model_metrics
+_OS_METRICS_MODELS: Any = literal_column(
+    "'$[*]' COLUMNS ("
+    "model_id VARCHAR(512) PATH '$.model_id', "
+    "model_provider VARCHAR(512) PATH '$.model_provider', "
+    "model_count BIGINT PATH '$.count')"
+)
+
+# The JSON_TYPE of a JSON number
+_OS_METRICS_NUMBER_TYPES = ("INTEGER", "UNSIGNED INTEGER", "DOUBLE", "DECIMAL")
 
 
 # -- DB util methods --
@@ -381,6 +450,484 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
     if days_diff <= 0:
         return []
     return [starting_date + timedelta(days=x) for x in range(days_diff)]
+
+
+# -- OS metrics util methods --
+def os_metrics_lock_name(table_name: str) -> str:
+    """Named-lock key serializing the OS metrics rebuilds of one table. Hashed because MySQL caps lock names at
+    64 characters and every database of the server shares them."""
+    return "agno_os_metrics_" + hashlib.md5(table_name.encode()).hexdigest()
+
+
+def bulk_upsert_os_metrics(session: Session, table: Table, os_metrics_records: list[dict]) -> None:
+    """Bulk upsert OS metrics into the database, in the session's transaction.
+
+    Args:
+        session (Session): The session to upsert with.
+        table (Table): The table to upsert into.
+        os_metrics_records (list[dict]): The OS metrics records to upsert.
+    """
+    if not os_metrics_records:
+        return
+
+    stmt = mysql.insert(table)
+
+    # Columns to update in case of conflict. The conflict key and created_at are never overwritten.
+    update_columns = {
+        col.name: stmt.inserted[col.name]
+        for col in table.columns
+        if col.name
+        not in [
+            "aggregation_period",
+            "date",
+            "user_id",
+            "component_type",
+            "component_id",
+            "parent_component_id",
+            "created_at",
+        ]
+    }
+
+    stmt = stmt.on_duplicate_key_update(**update_columns)
+    session.execute(stmt, os_metrics_records)
+
+
+async def abulk_upsert_os_metrics(session: AsyncSession, table: Table, os_metrics_records: list[dict]) -> None:
+    """Bulk upsert OS metrics into the database, in the session's transaction.
+
+    Args:
+        session (AsyncSession): The session to upsert with.
+        table (Table): The table to upsert into.
+        os_metrics_records (list[dict]): The OS metrics records to upsert.
+    """
+    if not os_metrics_records:
+        return
+
+    stmt = mysql.insert(table)
+
+    # Columns to update in case of conflict. The conflict key and created_at are never overwritten.
+    update_columns = {
+        col.name: stmt.inserted[col.name]
+        for col in table.columns
+        if col.name
+        not in [
+            "aggregation_period",
+            "date",
+            "user_id",
+            "component_type",
+            "component_id",
+            "parent_component_id",
+            "created_at",
+        ]
+    }
+
+    stmt = stmt.on_duplicate_key_update(**update_columns)
+    await session.execute(stmt, os_metrics_records)
+
+
+def _os_metrics_totals_upsert(table: Table, totals_row: Dict[str, Any]) -> Any:
+    """Build the upsert of an OS metrics totals row.
+
+    A new row starts at version 1, and every write of a stored one moves its version by one in the same
+    statement, so two writers never give it the same version.
+
+    Args:
+        table (Table): The OS metrics totals table.
+        totals_row (Dict[str, Any]): The row, from build_os_metrics_totals_row.
+
+    Returns:
+        The upsert statement.
+    """
+    stmt = mysql.insert(table).values({**totals_row, "version": 1})
+
+    # Columns to update in case of conflict. The conflict key and created_at are never overwritten.
+    update_columns: Dict[str, Any] = {
+        col.name: stmt.inserted[col.name]
+        for col in table.columns
+        if col.name not in ["aggregation_period", "date", "created_at", "version"]
+    }
+    update_columns["version"] = table.c.version + 1
+
+    return stmt.on_duplicate_key_update(**update_columns)
+
+
+def upsert_os_metrics_totals_row(session: Session, table: Table, totals_row: Dict[str, Any]) -> None:
+    """Upsert an OS metrics totals row into the database, in the session's transaction.
+
+    Args:
+        session (Session): The session to upsert with.
+        table (Table): The table to upsert into.
+        totals_row (Dict[str, Any]): The row, from build_os_metrics_totals_row.
+    """
+    session.execute(_os_metrics_totals_upsert(table, totals_row))
+
+
+async def aupsert_os_metrics_totals_row(session: AsyncSession, table: Table, totals_row: Dict[str, Any]) -> None:
+    """Upsert an OS metrics totals row into the database, in the session's transaction.
+
+    Args:
+        session (AsyncSession): The session to upsert with.
+        table (Table): The table to upsert into.
+        totals_row (Dict[str, Any]): The row, from build_os_metrics_totals_row.
+    """
+    await session.execute(_os_metrics_totals_upsert(table, totals_row))
+
+
+def _os_metrics_run_metrics(run_data: Any, keys: Sequence[str] = ()) -> Any:
+    """Build the metrics of a stored run with only token counts, the given keys and whether details were reported."""
+    pairs: List[Any] = []
+    for key in list(OS_METRICS_TOKEN_FIELDS) + list(keys):
+        pairs.extend([key, func.json_extract(run_data, f"$.metrics.{key}")])
+    details = cast(func.json_extract(run_data, "$.metrics.details"), mysql.CHAR)
+    pairs.extend(["details", details.notin_(_OS_METRICS_EMPTY_DETAILS)])
+    return func.json_object(*pairs, type_=JSON)
+
+
+def _os_metrics_call_durations(run_data: Any) -> Any:
+    """Build every assistant message's request duration, skipping messages carried over from an earlier run: those
+    from history, and those a forked run copied from the run it was forked from."""
+    message = func.json_table(run_data, _OS_METRICS_MESSAGES).table_valued(
+        "position", "role", "from_history", "duration"
+    )
+    skip = func.coalesce(cast(func.json_extract(run_data, "$.forked_from_message_index"), Integer), 0)
+    return (
+        select(func.json_arrayagg(message.c.duration, type_=JSON))
+        .where(
+            message.c.position > skip,
+            message.c.role == "assistant",
+            or_(message.c.from_history.is_(None), message.c.from_history == literal_column("CAST('false' AS JSON)")),
+        )
+        .scalar_subquery()
+    )
+
+
+def _os_metrics_nested_run(path: Any, depth: Any, key: str, run_data: Any) -> Any:
+    """Build a run nested inside a stored run with only what OS metrics count, and where it sits.
+
+    Built where the run is read: MySQL rejects a JSON_TABLE over a column of the recursive query from outside it.
+    """
+    return func.json_object(
+        "path",
+        path,
+        "depth",
+        depth,
+        "key",
+        key,
+        "run_id",
+        func.json_extract(run_data, "$.run_id"),
+        "agent_id",
+        func.json_extract(run_data, "$.agent_id"),
+        "team_id",
+        func.json_extract(run_data, "$.team_id"),
+        "metrics",
+        _os_metrics_run_metrics(run_data),
+        "model",
+        func.json_extract(run_data, "$.model"),
+        "model_provider",
+        func.json_extract(run_data, "$.model_provider"),
+        "call_durations",
+        _os_metrics_call_durations(run_data),
+        type_=JSON,
+    )
+
+
+def build_os_metrics_runs_query(table: Table, start_timestamp: int, end_timestamp: int) -> Any:
+    """Build the query that reads the runs created in the given time range, with only what OS metrics count.
+
+    Args:
+        table (Table): The runs table.
+        start_timestamp (int): The start of the range, included.
+        end_timestamp (int): The end of the range, not included.
+
+    Returns:
+        Any: The query. Of the messages it reads only each request's duration, of the metrics only what
+            OS metrics count, and of the runs nested inside a run, at any depth, only the same.
+    """
+    # One row per nested run, read a level at a time. The path orders them the way the rollup walks them
+    nested_selects = []
+    for position, key in enumerate(_OS_METRICS_NESTED_RUN_KEYS):
+        nested_run = func.json_table(
+            func.json_extract(table.c.run_data, f"$.{key}"),
+            _OS_METRICS_NESTED_RUN if key == "workflow_agent_run" else _OS_METRICS_NESTED_RUNS,
+        ).table_valued("ordinality", "value")
+        path: Any = cast(func.concat(str(position), func.lpad(nested_run.c.ordinality, 9, "0")), mysql.CHAR(1000))
+        nested_selects.append(
+            select(
+                table.c.run_id.label("parent_run_id"),
+                path.label("path"),
+                literal(1).label("depth"),
+                nested_run.c.value.label("run_data"),
+                _os_metrics_nested_run(path, 1, key, nested_run.c.value).label("nested_run"),
+            )
+            .select_from(table.join(nested_run, true()))
+            .where(
+                table.c.created_at >= start_timestamp,
+                table.c.created_at < end_timestamp,
+                func.json_type(nested_run.c.value) == "OBJECT",
+            )
+        )
+    # MySQL takes every SELECT that starts the recursion ahead of the ones that follow it
+    nested = nested_selects[0].cte("nested", recursive=True)
+    nested_selects = nested_selects[1:]
+    for position, key in enumerate(_OS_METRICS_NESTED_RUN_KEYS):
+        nested_run = func.json_table(
+            func.json_extract(nested.c.run_data, f"$.{key}"),
+            _OS_METRICS_NESTED_RUN if key == "workflow_agent_run" else _OS_METRICS_NESTED_RUNS,
+        ).table_valued("ordinality", "value")
+        path = func.concat(nested.c.path, str(position), func.lpad(nested_run.c.ordinality, 9, "0"))
+        nested_selects.append(
+            select(
+                nested.c.parent_run_id,
+                path,
+                nested.c.depth + 1,
+                nested_run.c.value,
+                _os_metrics_nested_run(path, nested.c.depth + 1, key, nested_run.c.value),
+            )
+            .select_from(nested.join(nested_run, true()))
+            .where(func.json_type(nested_run.c.value) == "OBJECT")
+        )
+    nested = nested.union_all(*nested_selects)
+    nested_runs = (
+        select(
+            nested.c.parent_run_id,
+            # JSON_ARRAYAGG takes no ORDER BY, so each run carries its path and build_os_metrics_run orders them
+            func.json_arrayagg(nested.c.nested_run, type_=JSON).label("nested_runs"),
+        )
+        .group_by(nested.c.parent_run_id)
+        .subquery("nested_runs")
+    )
+    return (
+        select(
+            table.c.run_id,
+            table.c.run_type,
+            table.c.agent_id,
+            table.c.team_id,
+            table.c.workflow_id,
+            table.c.user_id,
+            table.c.parent_run_id,
+            table.c.status,
+            _os_metrics_run_metrics(table.c.run_data, ["duration", "time_to_first_token"]).label("metrics"),
+            func.json_extract(table.c.run_data, "$.model", type_=JSON).label("model"),
+            func.json_extract(table.c.run_data, "$.model_provider", type_=JSON).label("model_provider"),
+            _os_metrics_call_durations(table.c.run_data).label("call_durations"),
+            nested_runs.c.nested_runs,
+        )
+        .select_from(table.outerjoin(nested_runs, nested_runs.c.parent_run_id == table.c.run_id))
+        .where(
+            table.c.created_at >= start_timestamp,
+            table.c.created_at < end_timestamp,
+            # A run copied into a forked session repeats a run counted in the session it was made in
+            func.json_extract(table.c.run_data, "$.forked_from_session_id").is_(None),
+        )
+    )
+
+
+def build_os_metrics_run(row: Any) -> Dict[str, Any]:
+    """Build a run in its stored shape from a row of the OS metrics runs query.
+
+    Args:
+        row (Any): A row of build_os_metrics_runs_query.
+
+    Returns:
+        Dict[str, Any]: The run, with the run_data calculate_date_os_metrics reads.
+    """
+    run = dict(row._mapping)
+    nested_runs = run.pop("nested_runs") or []
+    run["run_data"] = {
+        "metrics": run.pop("metrics"),
+        "model": run.pop("model"),
+        "model_provider": run.pop("model_provider"),
+        "messages": [
+            {"role": "assistant", "metrics": {"duration": duration}} for duration in run.pop("call_durations") or []
+        ],
+    }
+    # A nested run comes after the run it is nested inside, so the last run met at each depth is its parent
+    parents = [run["run_data"]]
+    for nested_run in sorted(nested_runs, key=lambda nested_run: nested_run["path"]):
+        nested_run.pop("path")
+        depth = nested_run.pop("depth")
+        nested_run["messages"] = [
+            {"role": "assistant", "metrics": {"duration": duration}}
+            for duration in nested_run.pop("call_durations") or []
+        ]
+        key = nested_run.pop("key")
+        # A workflow agent's run is stored as the run itself, the other nested runs in lists
+        if key == "workflow_agent_run":
+            parents[depth - 1][key] = nested_run
+        else:
+            parents[depth - 1].setdefault(key, []).append(nested_run)
+        parents[depth:] = [nested_run]
+    return run
+
+
+def build_os_metrics_runs(rows: Sequence[Any]) -> Tuple[List[Dict[str, Any]], Set[str]]:
+    """Build the runs of a day in their stored shape from the rows of the OS metrics runs query.
+
+    Args:
+        rows (Sequence[Any]): The rows of build_os_metrics_runs_query.
+
+    Returns:
+        Tuple[List[Dict[str, Any]], Set[str]]: The runs, and the ids of every run nested inside them.
+    """
+    runs = [build_os_metrics_run(row) for row in rows]
+    return runs, os_metrics_nested_run_ids(runs)
+
+
+def _os_metrics_entries(column: Any) -> Any:
+    """Build the key of every entry of a JSON object column, one row each."""
+    return func.json_table(func.json_keys(column), _OS_METRICS_KEYS).table_valued("entry_key")
+
+
+def build_os_metrics_totals_queries(
+    table: Table,
+    starting_date: date,
+    ending_date: date,
+    user_id: Optional[str],
+    fields: Sequence[str],
+    month_starts: Sequence[date] = (),
+) -> Dict[str, Any]:
+    """Build the queries that total the OS metrics of each day in the given date range.
+
+    Args:
+        table (Table): The OS metrics totals table to total every user, or the OS metrics table to total one.
+        starting_date (date): The first day to total.
+        ending_date (date): The last day to total.
+        user_id (Optional[str]): The user whose OS metrics rows are totalled. ``None`` for the totals table.
+        fields (Sequence[str]): The columns to total.
+        month_starts (Sequence[date]): The first day of every month inside the date range to total from its month
+            row instead of its days.
+
+    Returns:
+        Dict[str, Any]: The queries, keyed "totals", "count_maps", "additional_metrics" and "model_metrics".
+            Empty when there is no day to total.
+    """
+    # Days that follow one another are looked up as one range
+    day_ranges = [
+        and_(table.c.date >= first_day, table.c.date <= last_day)
+        for first_day, last_day in os_metrics_day_ranges(
+            os_metrics_days_to_read(starting_date, ending_date, month_starts)
+        )
+    ]
+    filters = []
+    if day_ranges:
+        filters.append(and_(table.c.aggregation_period == "daily", or_(*day_ranges)))
+    if month_starts:
+        filters.append(and_(table.c.aggregation_period == "monthly", table.c.date.in_(month_starts)))
+    if not filters:
+        return {}
+    where = or_(*filters)
+    if user_id is not None:
+        where = and_(table.c.user_id == user_id, where)
+
+    totals = [func.max(table.c.updated_at).label("updated_at")]
+    for field in fields:
+        if field in OS_METRICS_SUM_COLUMNS:
+            totals.append(func.sum(table.c[field]).label(field))
+        elif field in OS_METRICS_MAX_COLUMNS:
+            totals.append(func.max(table.c[field]).label(field))
+    queries: Dict[str, Any] = {"totals": select(table.c.date, *totals).where(where).group_by(table.c.date)}
+
+    # Each key of a map of counts totalled on its own. MySQL has no function listing an object's key and value
+    # pairs, so its keys are listed and each value is read by its key
+    count_map_queries = []
+    for field in fields:
+        if field in OS_METRICS_COUNT_MAP_COLUMNS:
+            entry = _os_metrics_entries(table.c[field])
+            # Binary collation keeps string comparisons case-sensitive, matching other SQL backends.
+            entry_key = entry.c.entry_key.collate("utf8mb4_bin")
+            count = func.json_extract(table.c[field], func.concat('$."', entry.c.entry_key, '"'))
+            count_map_queries.append(
+                select(
+                    table.c.date,
+                    literal(field).label("field"),
+                    entry_key.label("key"),
+                    func.sum(cast(count, BigInteger)).label("count"),
+                )
+                .select_from(table.join(entry, true()))
+                .where(where)
+                .group_by(table.c.date, entry_key)
+            )
+    if count_map_queries:
+        queries["count_maps"] = union_all(*count_map_queries)
+
+    # Only the numbers of additional_metrics are totalled; the rest keeps no meaning across rows
+    if "additional_metrics" in fields:
+        entry = _os_metrics_entries(table.c.additional_metrics)
+        entry_key = entry.c.entry_key.collate("utf8mb4_bin")
+        value = func.json_extract(table.c.additional_metrics, func.concat('$."', entry.c.entry_key, '"'))
+        queries["additional_metrics"] = (
+            select(
+                table.c.date,
+                entry_key.label("key"),
+                func.sum(cast(value, Numeric(65, 30))).label("value"),
+            )
+            .select_from(table.join(entry, true()))
+            .where(where, func.json_type(value).in_(_OS_METRICS_NUMBER_TYPES))
+            .group_by(table.c.date, entry_key)
+        )
+
+    if "model_metrics" in fields:
+        model = func.json_table(table.c.model_metrics, _OS_METRICS_MODELS).table_valued(
+            "model_id", "model_provider", "model_count"
+        )
+        model_id = model.c.model_id.collate("utf8mb4_bin")
+        model_provider = model.c.model_provider.collate("utf8mb4_bin")
+        queries["model_metrics"] = (
+            select(
+                table.c.date,
+                model_id.label("model_id"),
+                model_provider.label("model_provider"),
+                func.sum(model.c.model_count).label("count"),
+            )
+            .select_from(table.join(model, true()))
+            .where(where)
+            .group_by(table.c.date, model_id, model_provider)
+        )
+
+    return queries
+
+
+def build_os_metrics_totals(
+    fields: Sequence[str],
+    rows_by_query: Dict[str, Sequence[Any]],
+) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+    """Build the OS metrics totals of each date from the rows of the totals queries.
+
+    Args:
+        fields (Sequence[str]): The columns that were totalled.
+        rows_by_query (Dict[str, Sequence[Any]]): The rows of each query of build_os_metrics_totals_queries.
+
+    Returns:
+        Tuple[List[Dict[str, Any]], Optional[int]]: One dict per date, oldest first, and when the rows were
+            last updated. A month totalled from its month row is one dict, dated its first day.
+    """
+    totals_by_date: Dict[date, Dict[str, Any]] = {}
+    latest_updated_at: Optional[int] = None
+    for row in rows_by_query.get("totals", []):
+        day_totals: Dict[str, Any] = {"date": row.date, **empty_os_metrics_totals(fields)}
+        for field in fields:
+            if field in OS_METRICS_SUM_COLUMNS:
+                day_totals[field] = int(getattr(row, field) or 0)
+            elif field in OS_METRICS_MAX_COLUMNS and getattr(row, field) is not None:
+                day_totals[field] = int(getattr(row, field))
+        totals_by_date[row.date] = day_totals
+        if row.updated_at is not None and (latest_updated_at is None or row.updated_at > latest_updated_at):
+            latest_updated_at = row.updated_at
+
+    for row in rows_by_query.get("count_maps", []):
+        totals_by_date[row.date][row.field][row.key] = int(row.count)
+
+    for row in rows_by_query.get("additional_metrics", []):
+        # A whole number comes back a whole number
+        value = int(row.value) if row.value == int(row.value) else float(row.value)
+        totals_by_date[row.date]["additional_metrics"][row.key] = value
+
+    for row in sorted(rows_by_query.get("model_metrics", []), key=lambda x: (x.model_id, x.model_provider)):
+        totals_by_date[row.date]["model_metrics"].append(
+            {"model_id": row.model_id, "model_provider": row.model_provider, "count": int(row.count)}
+        )
+
+    return [totals_by_date[day] for day in sorted(totals_by_date)], latest_updated_at
 
 
 # -- Async DB util methods --

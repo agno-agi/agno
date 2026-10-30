@@ -850,6 +850,17 @@ OS_METRICS_PERIODS = ("daily", "monthly")
 # What a row of agno_os_metrics is counted under, by the type of the session or run.
 OS_METRICS_COMPONENT_TYPES = ("agent", "team", "workflow")
 
+# The columns a row of agno_os_metrics is unique by, and a row of agno_os_metrics_totals.
+OS_METRICS_KEY_COLUMNS = (
+    "aggregation_period",
+    "date",
+    "user_id",
+    "component_type",
+    "component_id",
+    "parent_component_id",
+)
+OS_METRICS_TOTALS_KEY_COLUMNS = ("aggregation_period", "date")
+
 # The token counts kept in columns of their own. The rarer ones are kept in
 # additional_token_metrics.
 _OS_METRICS_TOKEN_COLUMNS = ("input_tokens", "output_tokens", "total_tokens")
@@ -1141,6 +1152,52 @@ def os_metrics_nested_run_ids(runs: Sequence[Dict[str, Any]]) -> Set[str]:
     for run in runs:
         _add_os_metrics_nested_run_ids(run.get("run_data") or {}, nested_run_ids)
     return nested_run_ids
+
+
+def get_os_metrics_legacy_runs(sessions: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The runs kept in the legacy runs field of the given sessions, as runs table records.
+
+    A legacy run is dated by its own created_at, else by its session's, and typed by its ids, as the v3.0.0
+    migration types it. The caller drops the ones the runs table also holds, as merge_runs_table_with_legacy_blob
+    does.
+    """
+    legacy_runs = []
+    for session in sessions:
+        runs = session.get("runs")
+        if isinstance(runs, str):
+            try:
+                runs = json.loads(runs)
+            except (json.JSONDecodeError, TypeError):
+                log_warning("Could not parse legacy runs blob during OS metrics calculation; ignoring it")
+                runs = None
+        if not isinstance(runs, list):
+            continue
+        for run in runs:
+            # The migration skips what is no run
+            if not isinstance(run, dict) or run.get("run_id") is None:
+                continue
+            if run.get("agent_id"):
+                run_type = "agent"
+            elif run.get("team_id"):
+                run_type = "team"
+            else:
+                run_type = "workflow"
+            legacy_runs.append(
+                {
+                    # As text, the way the runs table stores it
+                    "run_id": str(run["run_id"]),
+                    "run_type": run_type,
+                    "agent_id": run.get("agent_id"),
+                    "team_id": run.get("team_id"),
+                    "workflow_id": run.get("workflow_id"),
+                    "user_id": session.get("user_id"),
+                    "parent_run_id": run.get("parent_run_id"),
+                    "status": run.get("status"),
+                    "run_data": run,
+                    "created_at": run.get("created_at") or session.get("created_at"),
+                }
+            )
+    return legacy_runs
 
 
 def _os_metrics_model_calls(run_data: Dict[str, Any], seen_run_ids: Set[str]) -> List[Dict[str, Any]]:
@@ -1553,9 +1610,174 @@ def os_metrics_day_ranges(days: Sequence[date]) -> List[Tuple[date, date]]:
 def os_metrics_versions(rows: Sequence[Any]) -> Dict[str, int]:
     """The version of each totals row, keyed by its aggregation period and date.
 
-    Each row holds its aggregation_period, date and version.
+    Each row holds its aggregation_period, date and version, as attributes or as the keys of a dict.
     """
-    return {f"{row.aggregation_period} {row.date.isoformat()}": row.version for row in rows}
+    versions: Dict[str, int] = {}
+    for row in rows:
+        if isinstance(row, dict):
+            versions[f"{row['aggregation_period']} {row['date'].isoformat()}"] = row["version"]
+        else:
+            versions[f"{row.aggregation_period} {row.date.isoformat()}"] = row.version
+    return versions
+
+
+def build_os_metrics_totals(
+    fields: Sequence[str], rows: Sequence[Dict[str, Any]]
+) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+    """Build the OS metrics totals of each date from the stored rows of those dates.
+
+    Args:
+        fields (Sequence[str]): The columns to total.
+        rows (Sequence[Dict[str, Any]]): The rows of agno_os_metrics or agno_os_metrics_totals, their date a date.
+
+    Returns:
+        Tuple[List[Dict[str, Any]], Optional[int]]: One dict per date, oldest first, and when the rows were
+            last updated. A month totalled from its month rows is one dict, dated its first day.
+    """
+    rows_by_date: Dict[date, List[Dict[str, Any]]] = {}
+    latest_updated_at: Optional[int] = None
+    for row in rows:
+        if "additional_metrics" in fields:
+            # Only the numbers of additional_metrics are totalled; the rest keeps no meaning across rows
+            row = dict(row)
+            row["additional_metrics"] = {
+                key: value
+                for key, value in (row.get("additional_metrics") or {}).items()
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+            }
+        rows_by_date.setdefault(row["date"], []).append(row)
+        if row.get("updated_at") is not None and (latest_updated_at is None or row["updated_at"] > latest_updated_at):
+            latest_updated_at = row["updated_at"]
+
+    totals = []
+    for row_date in sorted(rows_by_date):
+        day_totals: Dict[str, Any] = {"date": row_date}
+        day_totals.update(merge_os_metrics_totals(rows_by_date[row_date], fields))
+        totals.append(day_totals)
+    return totals, latest_updated_at
+
+
+def deserialize_os_metrics_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return the stored OS metrics rows with their date as a date, as calculate_date_os_metrics builds them.
+
+    Args:
+        rows (List[Dict[str, Any]]): The rows as stored, their date an ISO string.
+
+    Returns:
+        List[Dict[str, Any]]: The rows with their date as a date.
+    """
+    return [{**row, "date": datetime.strptime(row["date"], "%Y-%m-%d").date()} for row in rows]
+
+
+def get_os_metrics_records_by_day(
+    records: List[Dict[str, Any]], start_timestamp: int, end_timestamp: int
+) -> Dict[date, List[Dict[str, Any]]]:
+    """Return the sessions or runs created in the given time range, by the UTC day they were created on.
+
+    Args:
+        records (List[Dict[str, Any]]): The sessions or the runs.
+        start_timestamp (int): The start of the range, included.
+        end_timestamp (int): The end of the range, not included.
+
+    Returns:
+        Dict[date, List[Dict[str, Any]]]: The records of each day that has any.
+    """
+    records_by_day: Dict[date, List[Dict[str, Any]]] = {}
+    for record in records:
+        created_at = record.get("created_at") or 0
+        if start_timestamp <= created_at < end_timestamp:
+            day = datetime.fromtimestamp(created_at, tz=timezone.utc).date()
+            records_by_day.setdefault(day, []).append(record)
+    return records_by_day
+
+
+def get_os_metrics_rows_by_key(
+    rows: List[Dict[str, Any]], key_columns: Sequence[str] = OS_METRICS_KEY_COLUMNS
+) -> Dict[Tuple[Any, ...], Dict[str, Any]]:
+    """Return the OS metrics rows keyed by the columns they are unique by, in their stored order.
+
+    Args:
+        rows (List[Dict[str, Any]]): The rows of agno_os_metrics, or of agno_os_metrics_totals.
+        key_columns (Sequence[str]): OS_METRICS_KEY_COLUMNS, or OS_METRICS_TOTALS_KEY_COLUMNS.
+
+    Returns:
+        Dict[Tuple[Any, ...], Dict[str, Any]]: The rows by key.
+    """
+    return {tuple(row[column] for column in key_columns): row for row in rows}
+
+
+def bulk_upsert_os_metrics(
+    rows_by_key: Dict[Tuple[Any, ...], Dict[str, Any]], os_metrics_records: List[Dict[str, Any]]
+) -> None:
+    """Bulk upsert OS metrics into the stored rows, in place.
+
+    Args:
+        rows_by_key (Dict[Tuple[Any, ...], Dict[str, Any]]): The stored rows, from get_os_metrics_rows_by_key.
+        os_metrics_records (List[Dict[str, Any]]): The OS metrics records to upsert.
+    """
+    for record in os_metrics_records:
+        key = tuple(record[column] for column in OS_METRICS_KEY_COLUMNS)
+        stored = rows_by_key.get(key)
+        # The key and created_at of a stored row are never overwritten
+        rows_by_key[key] = record if stored is None else {**record, "created_at": stored.get("created_at")}
+
+
+def upsert_os_metrics_totals_row(
+    totals_by_key: Dict[Tuple[Any, ...], Dict[str, Any]], totals_row: Dict[str, Any]
+) -> None:
+    """Upsert an OS metrics totals row into the stored total rows, in place.
+
+    A new row starts at version 1, and every write of a stored one moves its version by one.
+
+    Args:
+        totals_by_key (Dict[Tuple[Any, ...], Dict[str, Any]]): The stored total rows, from
+            get_os_metrics_rows_by_key.
+        totals_row (Dict[str, Any]): The row, from build_os_metrics_totals_row.
+    """
+    key = tuple(totals_row[column] for column in OS_METRICS_TOTALS_KEY_COLUMNS)
+    stored = totals_by_key.get(key)
+    if stored is None:
+        totals_by_key[key] = {**totals_row, "version": 1}
+    else:
+        totals_by_key[key] = {**totals_row, "created_at": stored.get("created_at"), "version": stored["version"] + 1}
+
+
+def total_os_metrics_rows(
+    rows: List[Dict[str, Any]],
+    starting_date: date,
+    ending_date: date,
+    user_id: Optional[str],
+    fields: Sequence[str],
+    month_starts: Sequence[date] = (),
+) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+    """Total the OS metrics rows of each date in the given date range.
+
+    Args:
+        rows (List[Dict[str, Any]]): The total rows to total every user, or the OS metrics rows to total one.
+        starting_date (date): The first day to total.
+        ending_date (date): The last day to total.
+        user_id (Optional[str]): The user whose OS metrics rows are totalled. ``None`` for the total rows.
+        fields (Sequence[str]): The columns to total.
+        month_starts (Sequence[date]): The first day of every month inside the date range to total from its month
+            row instead of its days.
+
+    Returns:
+        Tuple[List[Dict[str, Any]], Optional[int]]: One dict per date, oldest first, and when the rows were last
+            updated. A month totalled from its month row is one dict, dated its first day.
+    """
+    days = set(os_metrics_days_to_read(starting_date, ending_date, month_starts))
+    return build_os_metrics_totals(
+        fields,
+        [
+            row
+            for row in rows
+            if (user_id is None or row["user_id"] == user_id)
+            and (
+                (row["aggregation_period"] == "daily" and row["date"] in days)
+                or (row["aggregation_period"] == "monthly" and row["date"] in month_starts)
+            )
+        ],
+    )
 
 
 def os_metrics_percentile(buckets: Dict[str, int], fraction: float, max_ms: Optional[int] = None) -> Optional[int]:

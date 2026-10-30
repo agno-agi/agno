@@ -15,12 +15,33 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    OS_METRICS_TOTALS_KEY_COLUMNS,
+    add_month_os_metrics,
+    build_os_metrics_totals_row,
+    bulk_upsert_os_metrics,
+    calculate_date_os_metrics,
+    calculate_month_os_metrics,
     deserialize_history_run,
     deserialize_session,
     deserialize_sessions,
     drop_legacy_metrics,
     filter_context_runs,
+    get_months_to_calculate_os_metrics_for,
+    get_os_metrics_records_by_day,
+    get_os_metrics_rows_by_key,
+    get_run_type,
+    merge_os_metrics_totals,
     metrics_starting_date_from_records,
+    os_metrics_day_completed,
+    os_metrics_full_months,
+    os_metrics_month_end,
+    os_metrics_nested_run_ids,
+    os_metrics_rows_to_write,
+    os_metrics_totals_row_to_write,
+    os_metrics_versions,
+    resolve_os_metrics_fields,
+    total_os_metrics_rows,
+    upsert_os_metrics_totals_row,
 )
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -49,9 +70,18 @@ class InMemoryDb(BaseDb):
         self._run_object_cache: Dict[str, Dict[str, Tuple[Dict[str, Any], Any]]] = {}
         self._memories: List[Dict[str, Any]] = []
         self._metrics: List[Dict[str, Any]] = []
+        self._os_metrics: List[Dict[str, Any]] = []
+        self._os_metrics_totals: List[Dict[str, Any]] = []
         self._eval_runs: List[Dict[str, Any]] = []
         self._knowledge: List[Dict[str, Any]] = []
         self._schema_versions: Dict[str, str] = {}
+
+        # The token of the rebuild holding the OS metrics lock, by table
+        self._os_metrics_locks: Dict[str, str] = {}
+        # Zero means never refreshed; get_os_metrics uses this to refresh lazily, at most once per minute
+        self._os_metrics_refreshed_at: float = 0.0
+        # The sessions and runs the last refresh read, so a refresh with nothing new is skipped
+        self._os_metrics_fingerprint: Optional[Tuple[Any, ...]] = None
 
     def table_exists(self, table_name: str) -> bool:
         """In-memory implementation, always returns True."""
@@ -1088,6 +1118,483 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting metrics: {str(e)}")
+            raise e
+
+    # -- OS metrics methods --
+    def _get_os_metrics_calculation_starting_date(self, totals_rows: List[Dict[str, Any]]) -> Optional[date]:
+        """Get the first date for which OS metrics calculation is needed."""
+        resume_date = metrics_starting_date_from_records(
+            [row for row in totals_rows if row["aggregation_period"] == "daily"]
+        )
+        if resume_date is not None:
+            return resume_date
+
+        # No total rows. Return the date of the first recorded session.
+        if self._sessions:
+            # Sort by created_at
+            sorted_sessions = sorted(list(self._sessions.values()), key=lambda x: x.get("created_at", 0))
+            first_session_date = sorted_sessions[0]["created_at"]
+            return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
+
+        return None
+
+    def _lock_os_metrics(self, wait_for_rebuild: bool) -> Optional[str]:
+        """Take the lock of the OS metrics rebuild, returning its token, or None when skipped while another holds it."""
+        token = uuid4().hex
+        # setdefault sets the token only while no other rebuild holds the lock, in one step
+        while self._os_metrics_locks.setdefault(self.os_metrics_table_name, token) != token:
+            if not wait_for_rebuild:
+                return None
+            time.sleep(0.1)
+        return token
+
+    def _unlock_os_metrics(self, token: str) -> None:
+        """Release the lock of the OS metrics rebuild taken with the given token."""
+        if self._os_metrics_locks.get(self.os_metrics_table_name) == token:
+            del self._os_metrics_locks[self.os_metrics_table_name]
+
+    def _get_all_runs_for_os_metrics_calculation(self) -> List[Dict[str, Any]]:
+        """Get all runs for OS metrics calculation, in the shape of a runs table row."""
+        runs = []
+        # A copy of the sessions, as another thread may add one while they are read
+        for session in list(self._sessions.values()):
+            for run in session.get("runs") or []:
+                if not isinstance(run, dict):
+                    continue
+                runs.append(
+                    {
+                        "run_id": run.get("run_id"),
+                        "run_type": get_run_type(run),
+                        "agent_id": run.get("agent_id"),
+                        "team_id": run.get("team_id"),
+                        "workflow_id": run.get("workflow_id"),
+                        # A run is owned by its own user, as the runs table stores it, else by the user of its session
+                        "user_id": run.get("user_id") or session.get("user_id"),
+                        "parent_run_id": run.get("parent_run_id"),
+                        "status": run.get("status"),
+                        "run_data": run,
+                        "created_at": run.get("created_at"),
+                        # Every write of a run stamps its session, so the run changed when its session did
+                        "updated_at": session.get("updated_at"),
+                    }
+                )
+        return runs
+
+    def _calculate_month_os_metrics(
+        self,
+        rows_by_key: Dict[Tuple[Any, ...], Dict[str, Any]],
+        totals_by_key: Dict[Tuple[Any, ...], Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Calculate the month rows of every completed month that has none."""
+        results: List[Dict[str, Any]] = []
+        total_rows = list(totals_by_key.values())
+        day_starts = [row["date"] for row in total_rows if row["aggregation_period"] == "daily"]
+        calculated_months = [row["date"] for row in total_rows if row["aggregation_period"] == "monthly"]
+        latest_completed = max(
+            (row["date"] for row in total_rows if row["aggregation_period"] == "daily" and row["completed"]),
+            default=None,
+        )
+        for month_start in get_months_to_calculate_os_metrics_for(day_starts, calculated_months, latest_completed):
+            stored_rows = [
+                row
+                for row in rows_by_key.values()
+                if row["aggregation_period"] == "daily"
+                and month_start <= row["date"] <= os_metrics_month_end(month_start)
+            ]
+
+            per_owner: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
+            add_month_os_metrics(per_owner, stored_rows)
+
+            month_rows = calculate_month_os_metrics(month_start, per_owner)
+            bulk_upsert_os_metrics(rows_by_key, month_rows)
+            totals_row = build_os_metrics_totals_row(month_rows, "monthly", month_start, completed=True)
+            upsert_os_metrics_totals_row(totals_by_key, totals_row)
+            results.append(totals_row)
+
+        if results:
+            # Written last: a read takes a month from its rows only once the month has a total row
+            self._os_metrics = list(rows_by_key.values())
+            self._os_metrics_totals = list(totals_by_key.values())
+
+        return results
+
+    def _get_os_metrics_fingerprint(
+        self, sessions: List[Dict[str, Any]], runs: List[Dict[str, Any]], dates_to_process: List[date]
+    ) -> Optional[Tuple[Any, ...]]:
+        """Get the count and update times of the sessions and runs of the given dates. None while one of them was
+        updated in the current second, which a second update in that same second would leave unchanged."""
+        start_timestamp = int(
+            datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+        )
+        current_time = int(time.time())
+        fingerprint: List[Any] = [dates_to_process[0], dates_to_process[-1]]
+        for records in [sessions, runs]:
+            updated_ats = [
+                record.get("updated_at") or 0
+                for record in records
+                if (record.get("created_at") or 0) >= start_timestamp
+            ]
+            if updated_ats and max(updated_ats) >= current_time:
+                return None
+            fingerprint.extend([len(updated_ats), sum(updated_ats)])
+        return tuple(fingerprint)
+
+    def _calculate_os_metrics(
+        self, wait_for_rebuild: bool
+    ) -> Optional[Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]]:
+        """Calculate OS metrics for all dates without complete OS metrics."""
+        # Stamp first so failed runs are throttled too instead of retried on every read
+        self._os_metrics_refreshed_at = time.time()
+
+        starting_date = self._get_os_metrics_calculation_starting_date(self._os_metrics_totals)
+
+        if starting_date is None:
+            log_info("No session data found. Won't calculate OS metrics.")
+            return None
+
+        # Yesterday is never completed, so it is rebuilt even when it has no total row yet: a run that started
+        # before midnight and was stored after it is dated yesterday
+        starting_date = min(starting_date, datetime.now(timezone.utc).date() - timedelta(days=1))
+
+        dates_to_process = get_dates_to_calculate_metrics_for(starting_date)
+        if not dates_to_process:
+            log_info("OS metrics already calculated for all relevant dates.")
+            return None
+
+        start_timestamp = int(
+            datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+        )
+        end_timestamp = int(
+            datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+            .replace(tzinfo=timezone.utc)
+            .timestamp()
+        )
+        sessions = list(self._sessions.values())
+        runs = self._get_all_runs_for_os_metrics_calculation()
+
+        # Read before the days, so a session or run written while they are rebuilt moves the next one
+        fingerprint = self._get_os_metrics_fingerprint(sessions, runs, dates_to_process)
+        if not wait_for_rebuild and fingerprint is not None and fingerprint == self._os_metrics_fingerprint:
+            return None
+
+        # One rebuild at a time: a second one waits here, or skips when told not to wait
+        lock_token = self._lock_os_metrics(wait_for_rebuild)
+        if lock_token is None:
+            # Reset the throttle so the next read tries again
+            self._os_metrics_refreshed_at = 0.0
+            log_info("Another thread is calculating OS metrics. Won't calculate OS metrics.")
+            return None
+
+        results = []
+        written_totals_rows: List[Dict[str, Any]] = []
+        try:
+            # Read under the lock, so what a rebuild this one waited for counted and wrote is kept
+            sessions = list(self._sessions.values())
+            runs = self._get_all_runs_for_os_metrics_calculation()
+            rows_by_key = get_os_metrics_rows_by_key(self._os_metrics)
+            totals_by_key = get_os_metrics_rows_by_key(self._os_metrics_totals, OS_METRICS_TOTALS_KEY_COLUMNS)
+            stored_rows_by_day: Dict[date, List[Dict[str, Any]]] = {}
+            for row in rows_by_key.values():
+                if row["aggregation_period"] == "daily":
+                    stored_rows_by_day.setdefault(row["date"], []).append(row)
+            latest_completed = max(
+                (
+                    row["date"]
+                    for row in totals_by_key.values()
+                    if row["aggregation_period"] == "daily" and row["completed"]
+                ),
+                default=None,
+            )
+
+            sessions_by_day = get_os_metrics_records_by_day(sessions, start_timestamp, end_timestamp)
+            runs_by_day = get_os_metrics_records_by_day(runs, start_timestamp, end_timestamp)
+            run_ids = {run["run_id"] for run in runs if run.get("run_id")}
+            runs_by_id = {run["run_id"]: run for run in runs if run.get("run_id")}
+
+            rows_changed = False
+            try:
+                for date_to_process in dates_to_process:
+                    # Skip a day a rebuild this one waited for has completed
+                    if latest_completed is not None and date_to_process <= latest_completed:
+                        continue
+
+                    day_runs = runs_by_day.get(date_to_process, [])
+                    # A nested run also stored as a run of its own is counted from that row, whatever day it is on
+                    stored_run_ids = os_metrics_nested_run_ids(day_runs) & run_ids
+
+                    # A run started by a run of another day, such as a member run after midnight, names that run's
+                    # agent, team or workflow as its parent, read from every run of the rebuild
+                    day_run_ids = {run["run_id"] for run in day_runs if run.get("run_id")}
+                    parent_runs = [
+                        runs_by_id[run_id]
+                        for run_id in sorted(
+                            {run["parent_run_id"] for run in day_runs if run.get("parent_run_id")} - day_run_ids
+                        )
+                        if run_id in runs_by_id
+                    ]
+
+                    records = calculate_date_os_metrics(
+                        date_to_process,
+                        sessions_by_day.get(date_to_process, []),
+                        day_runs,
+                        stored_run_ids,
+                        parent_runs,
+                    )
+                    changed_rows, stale_keys = os_metrics_rows_to_write(
+                        records, stored_rows_by_day.get(date_to_process, [])
+                    )
+                    # Built before the day's rows change, as no transaction undoes a day that fails
+                    totals_row = os_metrics_totals_row_to_write(
+                        build_os_metrics_totals_row(
+                            records, "daily", date_to_process, os_metrics_day_completed(date_to_process)
+                        ),
+                        totals_by_key.get(("daily", date_to_process)),
+                        rows_changed=bool(changed_rows or stale_keys),
+                    )
+                    for stale_key in stale_keys:
+                        rows_by_key.pop(("daily", date_to_process) + stale_key)
+                    bulk_upsert_os_metrics(rows_by_key, changed_rows)
+                    rows_changed = rows_changed or bool(changed_rows or stale_keys)
+                    if totals_row is not None:
+                        upsert_os_metrics_totals_row(totals_by_key, totals_row)
+                        written_totals_rows.append(totals_row)
+                    results.extend(records)
+            finally:
+                # Written even when a later day fails, as new lists so a read never sees one half written.
+                # The total rows go last, so a version never moves without the rows it tells of
+                if rows_changed:
+                    self._os_metrics = list(rows_by_key.values())
+                if written_totals_rows:
+                    self._os_metrics_totals = list(totals_by_key.values())
+
+            written_totals_rows.extend(self._calculate_month_os_metrics(rows_by_key, totals_by_key))
+        finally:
+            self._unlock_os_metrics(lock_token)
+
+        self._os_metrics_fingerprint = fingerprint
+
+        log_debug("Updated OS metrics calculations")
+
+        return results, written_totals_rows
+
+    def _get_os_metrics_totals_by_date(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str],
+        fields: List[str],
+        use_month_rows: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Total the OS metrics of the given date range, every day from one period."""
+        # Each list is replaced whole, and the total rows are written after the rows, so the rows read after the
+        # total rows hold every month the total rows tell of
+        totals_rows = self._os_metrics_totals
+        # Every owner is read from the total rows, one owner from that owner's rows
+        rows = totals_rows if user_id is None else self._os_metrics
+
+        full_months = os_metrics_full_months(starting_date, ending_date) if use_month_rows else []
+        # A month's total row is written after its rows, so a month that has one is read from its rows
+        month_starts = [
+            row["date"] for row in totals_rows if row["aggregation_period"] == "monthly" and row["date"] in full_months
+        ]
+        return total_os_metrics_rows(rows, starting_date, ending_date, user_id, fields, month_starts=month_starts)
+
+    def calculate_os_metrics(self) -> Optional[List[Dict[str, Any]]]:
+        """Calculate OS metrics for all dates without complete OS metrics.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: The calculated OS metrics.
+
+        Raises:
+            Exception: If an error occurs during OS metrics calculation.
+        """
+        try:
+            calculation = self._calculate_os_metrics(wait_for_rebuild=True)
+            if calculation is None:
+                return None
+
+            results, _ = calculation
+            return results
+
+        except Exception as e:
+            log_error(f"Exception refreshing OS metrics: {str(e)}")
+            raise e
+
+    def refresh_os_metrics(self) -> Tuple[Optional[int], Optional[int], bool]:
+        """Calculate OS metrics for all dates without complete OS metrics, and report whether any row changed.
+
+        Returns:
+            Tuple[Optional[int], Optional[int], bool]: When the OS metrics were last updated before the
+                calculation and after it, and whether it wrote or deleted any row.
+
+        Raises:
+            Exception: If an error occurs during OS metrics calculation.
+        """
+        try:
+            # A period's total row is written with every write of its rows, so the newest total row is the newest write
+            previous_updated_at = max(
+                (row["updated_at"] for row in self._os_metrics_totals if row.get("updated_at") is not None),
+                default=None,
+            )
+
+            calculation = self._calculate_os_metrics(wait_for_rebuild=True)
+            written_totals_rows: List[Dict[str, Any]] = []
+            if calculation is not None:
+                _, written_totals_rows = calculation
+
+            latest_updated_at = max(
+                (row["updated_at"] for row in self._os_metrics_totals if row.get("updated_at") is not None),
+                default=None,
+            )
+
+            return previous_updated_at, latest_updated_at, bool(written_totals_rows)
+
+        except Exception as e:
+            log_error(f"Exception refreshing OS metrics: {str(e)}")
+            raise e
+
+    def get_os_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Get the OS metrics totals of each day in the given date range.
+
+        OS metrics are refreshed lazily, at most once per minute, without waiting for a rebuild another thread is
+        running. For every owner, each day is read from its total row; for one owner, from its rows.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each day, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_os_metrics_fields(fields)
+
+            # Refresh at most once per minute per process: recalculating the current
+            # day scans all of today's sessions, too costly for every read.
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    self._calculate_os_metrics(wait_for_rebuild=False)
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            return self._get_os_metrics_totals_by_date(starting_date, ending_date, user_id, fields)
+
+        except Exception as e:
+            log_error(f"Exception getting OS metrics: {str(e)}")
+            raise e
+
+    def get_os_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """Get the OS metrics totals of the whole given date range.
+
+        OS metrics are refreshed lazily, as in get_os_metrics. A calendar month inside the date range that has
+        month rows is read from them, and every other day as get_os_metrics reads it.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[Dict[str, Any], Optional[int]]: The totals of the date range, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_os_metrics_fields(fields)
+
+            # Refresh at most once per minute per process: recalculating the current
+            # day scans all of today's sessions, too costly for every read.
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    self._calculate_os_metrics(wait_for_rebuild=False)
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            totals, latest_updated_at = self._get_os_metrics_totals_by_date(
+                starting_date, ending_date, user_id, fields, use_month_rows=True
+            )
+            return merge_os_metrics_totals(totals, fields), latest_updated_at
+
+        except Exception as e:
+            log_error(f"Exception getting OS metrics totals: {str(e)}")
+            raise e
+
+    def get_os_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
+        """Get the version of every total row of a day or a month in the given date range.
+
+        OS metrics are refreshed lazily, as in get_os_metrics.
+
+        Args:
+            starting_date (date): The first day of the date range.
+            ending_date (date): The last day of the date range.
+
+        Returns:
+            Optional[Dict[str, int]]: The version of each total row, keyed by its aggregation period and date. The
+                same again only while no rebuild wrote or deleted a row of the date range. ``None`` while the days
+                are not built up to today, which every rebuild writes last: a read would find them half built.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            # Refresh at most once per minute per process: recalculating the current
+            # day scans all of today's sessions, too costly for every read. Refresh
+            # again on a new UTC day, which has no total row until a refresh writes it.
+            refreshed_on = datetime.fromtimestamp(self._os_metrics_refreshed_at, tz=timezone.utc).date()
+            if time.time() - self._os_metrics_refreshed_at >= 60 or refreshed_on < datetime.now(timezone.utc).date():
+                try:
+                    self._calculate_os_metrics(wait_for_rebuild=False)
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            totals_rows = self._os_metrics_totals
+
+            today = datetime.now(timezone.utc).date()
+            today_start = int(datetime.combine(today, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp())
+            # A rebuild writes its days oldest first and today last, so a database with sessions and no total
+            # row for yesterday, or with sessions today and no total row for today, is still being built
+            built_days = {
+                row["date"]
+                for row in totals_rows
+                if row["aggregation_period"] == "daily" and row["date"] in [today - timedelta(days=1), today]
+            }
+            unbuilt_sessions: List[Dict[str, Any]] = []
+            if today - timedelta(days=1) not in built_days:
+                unbuilt_sessions = list(self._sessions.values())
+            elif today not in built_days:
+                unbuilt_sessions = [
+                    session
+                    for session in list(self._sessions.values())
+                    if (session.get("created_at") or 0) >= today_start
+                ]
+            if unbuilt_sessions:
+                # Rows removed while no session or run changed leave the fingerprint as it was
+                self._os_metrics_fingerprint = None
+                return None
+
+            return os_metrics_versions([row for row in totals_rows if starting_date <= row["date"] <= ending_date])
+
+        except Exception as e:
+            log_error(f"Exception getting OS metrics versions: {str(e)}")
             raise e
 
     # -- Knowledge methods --

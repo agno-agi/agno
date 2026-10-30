@@ -1,7 +1,7 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Set, Tuple, Union, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -9,38 +9,67 @@ if TYPE_CHECKING:
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.firestore.utils import (
+    OS_METRICS_BATCH_SIZE,
+    OS_METRICS_IN_LIST_LIMIT,
     apply_pagination,
     apply_sorting,
     bulk_upsert_metrics,
+    bulk_upsert_os_metrics,
     calculate_date_metrics,
     create_collection_indexes,
+    deserialize_os_metrics_record,
+    extend_os_metrics_lock,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    lock_os_metrics,
+    os_metrics_record_id,
+    os_metrics_totals_record_id,
+    unlock_os_metrics,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    add_month_os_metrics,
+    build_os_metrics_totals,
+    build_os_metrics_totals_row,
     build_single_run_row,
+    calculate_date_os_metrics,
+    calculate_month_os_metrics,
     deserialize_run,
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
     drop_legacy_metrics,
     filter_context_runs,
+    get_months_to_calculate_os_metrics_for,
+    get_os_metrics_legacy_runs,
+    get_os_metrics_records_by_day,
+    merge_os_metrics_totals,
     merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_days,
     metrics_starting_date_from_records,
+    os_metrics_day_completed,
+    os_metrics_day_ranges,
+    os_metrics_days_to_read,
+    os_metrics_full_months,
+    os_metrics_month_end,
+    os_metrics_nested_run_ids,
+    os_metrics_rows_to_write,
+    os_metrics_totals_row_to_write,
+    os_metrics_versions,
+    resolve_os_metrics_fields,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from google.cloud.firestore import DELETE_FIELD, Client, FieldFilter  # type: ignore[import-untyped]
+    from google.cloud.firestore import DELETE_FIELD, Client, FieldFilter, transactional  # type: ignore[import-untyped]
 except ImportError:
     raise ImportError(
         "`google-cloud-firestore` not installed. Please install it using `pip install google-cloud-firestore`"
@@ -60,6 +89,8 @@ class FirestoreDb(BaseDb):
         runs_collection: Optional[str] = None,
         memory_collection: Optional[str] = None,
         metrics_collection: Optional[str] = None,
+        os_metrics_collection: Optional[str] = None,
+        os_metrics_totals_collection: Optional[str] = None,
         eval_collection: Optional[str] = None,
         knowledge_collection: Optional[str] = None,
         traces_collection: Optional[str] = None,
@@ -76,6 +107,8 @@ class FirestoreDb(BaseDb):
             runs_collection (Optional[str]): Name of the collection to store runs (one document per run).
             memory_collection (Optional[str]): Name of the collection to store memories.
             metrics_collection (Optional[str]): Name of the collection to store metrics.
+            os_metrics_collection (Optional[str]): Name of the collection to store OS metrics.
+            os_metrics_totals_collection (Optional[str]): Name of the collection to store the OS metrics totals.
             eval_collection (Optional[str]): Name of the collection to store evaluation runs.
             knowledge_collection (Optional[str]): Name of the collection to store knowledge documents.
             traces_collection (Optional[str]): Name of the collection to store traces.
@@ -95,6 +128,8 @@ class FirestoreDb(BaseDb):
             runs_table=runs_collection,
             memory_table=memory_collection,
             metrics_table=metrics_collection,
+            os_metrics_table=os_metrics_collection,
+            os_metrics_totals_table=os_metrics_totals_collection,
             eval_table=eval_collection,
             knowledge_table=knowledge_collection,
             traces_table=traces_collection,
@@ -109,6 +144,11 @@ class FirestoreDb(BaseDb):
 
         self.project_id: Optional[str] = project_id
         self.db_client: Client = _client
+
+        # Zero means never refreshed; get_os_metrics uses this to refresh lazily, at most once per minute
+        self._os_metrics_refreshed_at: float = 0.0
+        # The sessions and runs the last refresh read, so a refresh with nothing new is skipped
+        self._os_metrics_fingerprint: Optional[Tuple[Any, ...]] = None
 
     # -- DB methods --
 
@@ -172,6 +212,26 @@ class FirestoreDb(BaseDb):
                 create_collection_if_not_found=create_collection_if_not_found,
             )
             return self.metrics_collection
+
+        if table_type == "os_metrics":
+            if self.os_metrics_table_name is None:
+                raise ValueError("OS metrics collection was not provided on initialization")
+            self.os_metrics_collection = self._get_or_create_collection(
+                collection_name=self.os_metrics_table_name,
+                collection_type="os_metrics",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
+            return self.os_metrics_collection
+
+        if table_type == "os_metrics_totals":
+            if self.os_metrics_totals_table_name is None:
+                raise ValueError("OS metrics totals collection was not provided on initialization")
+            self.os_metrics_totals_collection = self._get_or_create_collection(
+                collection_name=self.os_metrics_totals_table_name,
+                collection_type="os_metrics_totals",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
+            return self.os_metrics_totals_collection
 
         if table_type == "evals":
             if self.eval_table_name is None:
@@ -1750,6 +1810,734 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting metrics: {str(e)}")
+            raise e
+
+    # -- OS metrics methods --
+
+    def _get_os_metrics_calculation_starting_date(self, totals_collection_ref) -> Optional[date]:
+        """Get the first date for which OS metrics calculation is needed."""
+        from google.cloud.firestore import Query
+
+        # Resume at the earliest incomplete day after the latest completed one, otherwise the
+        # day after that one
+        latest_completed = None
+        docs = (
+            totals_collection_ref.where(filter=FieldFilter("aggregation_period", "==", "daily"))
+            .where(filter=FieldFilter("completed", "==", True))
+            .order_by("date", direction=Query.DESCENDING)
+            .limit(1)
+            .select(["date"])
+            .stream()
+        )
+        for doc in docs:
+            latest_completed = deserialize_os_metrics_record(doc.to_dict())["date"]
+
+        # Only equalities, which need no composite index: few days are not completed
+        docs = (
+            totals_collection_ref.where(filter=FieldFilter("aggregation_period", "==", "daily"))
+            .where(filter=FieldFilter("completed", "==", False))
+            .select(["date"])
+            .stream()
+        )
+        incomplete_days = [deserialize_os_metrics_record(doc.to_dict())["date"] for doc in docs]
+        earliest_incomplete = min(
+            [day for day in incomplete_days if latest_completed is None or day > latest_completed], default=None
+        )
+
+        starting_date = metrics_starting_date_from_days(latest_completed, earliest_incomplete)
+        if starting_date is not None:
+            return starting_date
+
+        # No total rows. Return the date of the first recorded session.
+        # Queried directly rather than through get_sessions, which also counts and loads runs
+        sessions_collection_ref = self._get_collection(table_type="sessions")
+        if sessions_collection_ref is None:
+            return None
+        first_session_date = None
+        docs = sessions_collection_ref.order_by("created_at").limit(1).select(["created_at"]).stream()
+        for doc in docs:
+            first_session_date = doc.to_dict().get("created_at")
+
+        if first_session_date is None:
+            return None
+
+        return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
+
+    def _calculate_month_os_metrics(
+        self, collection_ref, totals_collection_ref, wait_for_rebuild: bool
+    ) -> List[Dict[str, Any]]:
+        """Calculate the month rows of every completed month that has none.
+
+        A completed month gets its month rows once, whichever rebuild completed its days. They are written
+        after the days, so a month that fails to calculate never holds back the rows of a day.
+
+        Args:
+            collection_ref: The OS metrics collection.
+            totals_collection_ref: The OS metrics totals collection.
+            wait_for_rebuild (bool): Wait for a rebuild another process is running. When False, skip instead.
+
+        Returns:
+            List[Dict[str, Any]]: The total rows of the months written.
+        """
+        results: List[Dict[str, Any]] = []
+        # Under the days' lock, so a month is written by one rebuild only
+        token = lock_os_metrics(totals_collection_ref, wait_for_rebuild)
+        if token is None:
+            return results
+
+        try:
+            docs = (
+                totals_collection_ref.where(filter=FieldFilter("aggregation_period", "==", "monthly"))
+                .select(["date"])
+                .stream()
+            )
+            calculated_months = [deserialize_os_metrics_record(doc.to_dict())["date"] for doc in docs]
+
+            # Months are written oldest first, so only the days after the latest month written can complete one
+            days_query = totals_collection_ref.where(filter=FieldFilter("aggregation_period", "==", "daily"))
+            if calculated_months:
+                latest_month_end = os_metrics_month_end(max(calculated_months))
+                days_query = days_query.where(filter=FieldFilter("date", ">", latest_month_end.isoformat()))
+            total_rows = [
+                deserialize_os_metrics_record(doc.to_dict())
+                for doc in days_query.select(["date", "completed"]).stream()
+            ]
+            day_starts = [record["date"] for record in total_rows]
+            latest_completed = max((record["date"] for record in total_rows if record["completed"]), default=None)
+
+            for month_start in get_months_to_calculate_os_metrics_for(day_starts, calculated_months, latest_completed):
+                # Streamed, so a month of many rows is added up a batch at a time instead of held whole
+                docs = (
+                    collection_ref.where(filter=FieldFilter("aggregation_period", "==", "daily"))
+                    .where(filter=FieldFilter("date", ">=", month_start.isoformat()))
+                    .where(filter=FieldFilter("date", "<=", os_metrics_month_end(month_start).isoformat()))
+                    .stream()
+                )
+                per_owner: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
+                stored_rows: List[Dict[str, Any]] = []
+                for doc in docs:
+                    stored_rows.append(deserialize_os_metrics_record(doc.to_dict()))
+                    if len(stored_rows) >= OS_METRICS_BATCH_SIZE:
+                        add_month_os_metrics(per_owner, stored_rows)
+                        stored_rows = []
+                        # Renewed after each batch read, so a month that takes longer than OS_METRICS_LOCK_SECONDS to
+                        # read keeps the lock
+                        if not extend_os_metrics_lock(totals_collection_ref, token):
+                            return results
+                if stored_rows:
+                    add_month_os_metrics(per_owner, stored_rows)
+
+                month_rows = calculate_month_os_metrics(month_start, per_owner)
+                # Written last: a read takes a month from its rows only once the month has a total row
+                totals_row = build_os_metrics_totals_row(month_rows, "monthly", month_start, completed=True)
+                # A rebuild that lost the lock stops, so a month is written by one rebuild only
+                if not extend_os_metrics_lock(totals_collection_ref, token):
+                    return results
+                if not bulk_upsert_os_metrics(
+                    collection_ref,
+                    month_rows,
+                    totals_collection_ref=totals_collection_ref,
+                    totals_row=totals_row,
+                    lock_token=token,
+                ):
+                    return results
+                results.append(totals_row)
+
+        finally:
+            unlock_os_metrics(totals_collection_ref, token)
+
+        return results
+
+    def _get_os_metrics_fingerprint(
+        self, sessions_collection_ref, runs_collection_ref, dates_to_process: List[date]
+    ) -> Optional[Tuple[Any, ...]]:
+        """Get the count and update times of the sessions and runs of the given dates. None while one of them was
+        updated in the current second, which a second update in that same second would leave unchanged, and when
+        Firestore cannot count them."""
+        start_timestamp = int(
+            datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+        )
+        current_time = int(time.time())
+        fingerprint: List[Any] = [dates_to_process[0], dates_to_process[-1]]
+        try:
+            for collection_ref in [sessions_collection_ref, runs_collection_ref]:
+                if collection_ref is None:
+                    continue
+                aggregation = (
+                    collection_ref.where(filter=FieldFilter("created_at", ">=", start_timestamp))
+                    .count(alias="count")
+                    .sum("updated_at", alias="total_updated_at")
+                    .get()
+                )
+                values = {result.alias: result.value for result in aggregation[0]}
+                # Read after the counts, so a write landing between them is seen. Any document updated this
+                # second counts, whatever day it was created on
+                recent_docs = (
+                    collection_ref.where(filter=FieldFilter("updated_at", ">=", current_time))
+                    .limit(1)
+                    .select(["updated_at"])
+                    .stream()
+                )
+                if list(recent_docs):
+                    return None
+                fingerprint.extend([int(values["count"]), values["total_updated_at"]])
+        except Exception as e:
+            # A client without sum aggregations, or an index not built yet: every refresh rebuilds
+            log_debug(f"Could not read the OS metrics fingerprint: {str(e)}")
+            return None
+        return tuple(fingerprint)
+
+    def _calculate_os_metrics(
+        self, wait_for_rebuild: bool
+    ) -> Optional[Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]]:
+        """Calculate OS metrics for all dates without complete OS metrics.
+
+        Args:
+            wait_for_rebuild (bool): Wait for a rebuild another process is running. When False, skip instead.
+
+        Returns:
+            Optional[Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]]: The calculated OS metrics and the total
+                rows written.
+
+        Raises:
+            Exception: If an error occurs during OS metrics calculation.
+        """
+        # Stamp first so failed runs are throttled too instead of retried on every read
+        self._os_metrics_refreshed_at = time.time()
+
+        collection_ref = self._get_collection(table_type="os_metrics", create_collection_if_not_found=True)
+        totals_collection_ref = self._get_collection(
+            table_type="os_metrics_totals", create_collection_if_not_found=True
+        )
+        if collection_ref is None or totals_collection_ref is None:
+            return None
+
+        starting_date = self._get_os_metrics_calculation_starting_date(totals_collection_ref)
+
+        if starting_date is None:
+            log_info("No session data found. Won't calculate OS metrics.")
+            return None
+
+        # Yesterday is never completed, so it is rebuilt even when it has no total row yet: a run that started
+        # before midnight and was stored after it is dated yesterday
+        starting_date = min(starting_date, datetime.now(timezone.utc).date() - timedelta(days=1))
+
+        dates_to_process = get_dates_to_calculate_metrics_for(starting_date)
+        if not dates_to_process:
+            log_info("OS metrics already calculated for all relevant dates.")
+            return None
+
+        sessions_collection_ref = self._get_collection(table_type="sessions")
+        if sessions_collection_ref is None:
+            return None
+        runs_collection_ref = self._get_collection(table_type="runs", create_collection_if_not_found=True)
+
+        # Read before the days, so a session or run written while they are rebuilt moves the next one
+        fingerprint = self._get_os_metrics_fingerprint(sessions_collection_ref, runs_collection_ref, dates_to_process)
+        if not wait_for_rebuild and fingerprint is not None and fingerprint == self._os_metrics_fingerprint:
+            return None
+
+        # Runs not yet migrated out of the legacy runs field, read once and dated the way the v3.0.0 migration
+        # dates them. A session holds runs created after it started and before it was last written
+        rebuild_start_timestamp = int(
+            datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+        )
+        rebuild_end_timestamp = int(
+            datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+            .replace(tzinfo=timezone.utc)
+            .timestamp()
+        )
+        legacy_sessions_query = sessions_collection_ref.where(
+            filter=FieldFilter("updated_at", ">=", rebuild_start_timestamp)
+        ).select(["user_id", "created_at", "runs"])
+        legacy_sessions = [
+            session
+            for session in (doc.to_dict() for doc in legacy_sessions_query.stream())
+            if session.get("runs") and (session.get("created_at") or 0) < rebuild_end_timestamp
+        ]
+        all_legacy_runs = get_os_metrics_legacy_runs(legacy_sessions)
+        legacy_runs_by_day = get_os_metrics_records_by_day(
+            all_legacy_runs, rebuild_start_timestamp, rebuild_end_timestamp
+        )
+        legacy_runs_by_id = {run["run_id"]: run for run in all_legacy_runs}
+
+        results: List[Dict[str, Any]] = []
+        written_totals_rows: List[Dict[str, Any]] = []
+
+        for date_to_process in dates_to_process:
+            # One rebuild of this collection at a time: a second one waits here, or skips when told not to wait.
+            # The lock is released once the day is written, so a day that fails never holds back the days before it
+            token = lock_os_metrics(totals_collection_ref, wait_for_rebuild)
+            if token is None:
+                # Reset the throttle so the next read tries again
+                self._os_metrics_refreshed_at = 0.0
+                log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                return None
+
+            try:
+                # Skip a day a rebuild this one waited for has completed
+                totals_doc = totals_collection_ref.document(os_metrics_totals_record_id("daily", date_to_process)).get()
+                stored_totals_row = deserialize_os_metrics_record(totals_doc.to_dict()) if totals_doc.exists else None
+                if stored_totals_row is not None and stored_totals_row.get("completed"):
+                    continue
+
+                start_timestamp = int(
+                    datetime.combine(date_to_process, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+                )
+                end_timestamp = int(
+                    datetime.combine(date_to_process + timedelta(days=1), datetime.min.time())
+                    .replace(tzinfo=timezone.utc)
+                    .timestamp()
+                )
+
+                sessions_query = (
+                    sessions_collection_ref.where(filter=FieldFilter("created_at", ">=", start_timestamp))
+                    .where(filter=FieldFilter("created_at", "<", end_timestamp))
+                    .select(["session_id", "session_type", "user_id", "agent_id", "team_id", "workflow_id"])
+                )
+                sessions = [doc.to_dict() for doc in sessions_query.stream()]
+                # Renewed after each read and write, so a day that takes longer than OS_METRICS_LOCK_SECONDS keeps the
+                # lock. A rebuild that lost it stops: the process that holds it calculates the days left
+                if not extend_os_metrics_lock(totals_collection_ref, token):
+                    log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                    return results, written_totals_rows
+
+                runs: List[Dict[str, Any]] = []
+                stored_run_ids: Set[str] = set()
+                if runs_collection_ref is not None:
+                    # Only the fields OS metrics count. Firestore projects no deeper than a field, so the messages
+                    # and the nested runs are read whole
+                    runs_query = (
+                        runs_collection_ref.where(filter=FieldFilter("created_at", ">=", start_timestamp))
+                        .where(filter=FieldFilter("created_at", "<", end_timestamp))
+                        .select(
+                            [
+                                "run_id",
+                                "run_type",
+                                "agent_id",
+                                "team_id",
+                                "workflow_id",
+                                "user_id",
+                                "parent_run_id",
+                                "status",
+                                "run_data.metrics",
+                                "run_data.model",
+                                "run_data.model_provider",
+                                "run_data.messages",
+                                "run_data.forked_from_message_index",
+                                "run_data.forked_from_session_id",
+                                "run_data.step_executor_runs",
+                                "run_data.member_responses",
+                                "run_data.workflow_agent_run",
+                            ]
+                        )
+                    )
+                    runs = [doc.to_dict() for doc in runs_query.stream()]
+                    if not extend_os_metrics_lock(totals_collection_ref, token):
+                        log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                        return results, written_totals_rows
+
+                # A legacy run migrated to the runs collection since the legacy runs were read is among the day's
+                # runs, and is counted from there
+                day_run_ids = {run["run_id"] for run in runs if run.get("run_id")}
+                runs.extend(
+                    run for run in legacy_runs_by_day.get(date_to_process, []) if run["run_id"] not in day_run_ids
+                )
+
+                if runs_collection_ref is not None:
+                    # A nested run also stored as a run of its own is counted from that row, whatever day it is on
+                    run_ids = sorted(os_metrics_nested_run_ids(runs))
+                    for start in range(0, len(run_ids), OS_METRICS_IN_LIST_LIMIT):
+                        stored_query = runs_collection_ref.where(
+                            filter=FieldFilter("run_id", "in", run_ids[start : start + OS_METRICS_IN_LIST_LIMIT])
+                        ).select(["run_id"])
+                        stored_run_ids.update(doc.to_dict()["run_id"] for doc in stored_query.stream())
+                    if not extend_os_metrics_lock(totals_collection_ref, token):
+                        log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                        return results, written_totals_rows
+
+                # A run started by a run of another day, such as a member run after midnight, names that run's
+                # agent, team or workflow as its parent, read from the legacy runs of the rebuild or the runs table
+                day_run_ids = {run["run_id"] for run in runs if run.get("run_id")}
+                parent_run_ids = sorted(
+                    {run["parent_run_id"] for run in runs if run.get("parent_run_id")} - day_run_ids
+                )
+                parent_runs = [legacy_runs_by_id[run_id] for run_id in parent_run_ids if run_id in legacy_runs_by_id]
+                parent_run_ids = [run_id for run_id in parent_run_ids if run_id not in legacy_runs_by_id]
+                if runs_collection_ref is not None:
+                    for start in range(0, len(parent_run_ids), OS_METRICS_IN_LIST_LIMIT):
+                        parents_query = runs_collection_ref.where(
+                            filter=FieldFilter("run_id", "in", parent_run_ids[start : start + OS_METRICS_IN_LIST_LIMIT])
+                        ).select(["run_id", "run_type", "agent_id", "team_id", "workflow_id"])
+                        parent_runs.extend(doc.to_dict() for doc in parents_query.stream())
+
+                if not extend_os_metrics_lock(totals_collection_ref, token):
+                    log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                    return results, written_totals_rows
+                records = calculate_date_os_metrics(date_to_process, sessions, runs, stored_run_ids, parent_runs)
+                docs = (
+                    collection_ref.where(filter=FieldFilter("aggregation_period", "==", "daily"))
+                    .where(filter=FieldFilter("date", "==", date_to_process.isoformat()))
+                    .stream()
+                )
+                stored_rows_by_id = {doc.id: deserialize_os_metrics_record(doc.to_dict()) for doc in docs}
+
+                changed_rows, stale_keys = os_metrics_rows_to_write(records, list(stored_rows_by_id.values()))
+                stored_ids_by_key = {
+                    (row["user_id"], row["component_type"], row["component_id"], row["parent_component_id"]): doc_id
+                    for doc_id, row in stored_rows_by_id.items()
+                }
+                # A stored row keeps when it was created
+                for index, row in enumerate(changed_rows):
+                    stored_row = stored_rows_by_id.get(os_metrics_record_id(row))
+                    if stored_row is not None:
+                        changed_rows[index] = {**row, "created_at": stored_row["created_at"]}
+
+                # Written last, with the day's rows, so its version never moves without the rows it tells of
+                totals_row = os_metrics_totals_row_to_write(
+                    build_os_metrics_totals_row(
+                        records, "daily", date_to_process, os_metrics_day_completed(date_to_process)
+                    ),
+                    stored_totals_row,
+                    rows_changed=bool(changed_rows or stale_keys),
+                )
+                if totals_row is not None and stored_totals_row is not None:
+                    totals_row["created_at"] = stored_totals_row["created_at"]
+                # A rebuild that lost the lock stops: the process that holds it calculates the days left
+                if not extend_os_metrics_lock(totals_collection_ref, token):
+                    log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                    return results, written_totals_rows
+                if not bulk_upsert_os_metrics(
+                    collection_ref,
+                    changed_rows,
+                    stale_doc_ids=[stored_ids_by_key[key] for key in stale_keys],
+                    totals_collection_ref=totals_collection_ref,
+                    totals_row=totals_row,
+                    totals_row_stored=stored_totals_row is not None,
+                    lock_token=token,
+                ):
+                    log_info("Another process is calculating OS metrics. Won't calculate OS metrics.")
+                    return results, written_totals_rows
+                if totals_row is not None:
+                    written_totals_rows.append(totals_row)
+                results.extend(records)
+
+            finally:
+                unlock_os_metrics(totals_collection_ref, token)
+
+        written_totals_rows.extend(
+            self._calculate_month_os_metrics(collection_ref, totals_collection_ref, wait_for_rebuild)
+        )
+        self._os_metrics_fingerprint = fingerprint
+
+        log_debug("Updated OS metrics calculations")
+
+        return results, written_totals_rows
+
+    def _get_os_metrics_totals_by_date(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str],
+        fields: List[str],
+        use_month_rows: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Total the OS metrics of the given date range, every day from one period.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner.
+            fields (List[str]): The columns to total.
+            use_month_rows (bool): Total a calendar month inside the date range from its month rows, as one date.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
+        """
+        totals_collection_ref = self._get_collection(
+            table_type="os_metrics_totals", create_collection_if_not_found=True
+        )
+        # Every owner is read from the total rows, one owner from that owner's rows
+        collection_ref = (
+            totals_collection_ref
+            if user_id is None
+            else self._get_collection(table_type="os_metrics", create_collection_if_not_found=True)
+        )
+        if totals_collection_ref is None or collection_ref is None:
+            return [], None
+
+        full_months = os_metrics_full_months(starting_date, ending_date) if use_month_rows else []
+
+        @transactional
+        def _read_records(transaction) -> List[Dict[str, Any]]:
+            month_starts: List[date] = []
+            if full_months:
+                # A month's total row is written after its rows, so a month that has one is read from its rows.
+                # The full months follow each other, so a range finds them however long the window is
+                months_query = (
+                    totals_collection_ref.where(filter=FieldFilter("aggregation_period", "==", "monthly"))
+                    .where(filter=FieldFilter("date", ">=", full_months[0].isoformat()))
+                    .where(filter=FieldFilter("date", "<=", full_months[-1].isoformat()))
+                    .select(["date"])
+                )
+                month_starts = sorted(
+                    deserialize_os_metrics_record(doc.to_dict())["date"]
+                    for doc in months_query.stream(transaction=transaction)
+                )
+
+            queries = [
+                collection_ref.where(filter=FieldFilter("aggregation_period", "==", "daily"))
+                .where(filter=FieldFilter("date", ">=", first_day.isoformat()))
+                .where(filter=FieldFilter("date", "<=", last_day.isoformat()))
+                for first_day, last_day in os_metrics_day_ranges(
+                    os_metrics_days_to_read(starting_date, ending_date, month_starts)
+                )
+            ]
+            if month_starts:
+                queries.append(
+                    collection_ref.where(filter=FieldFilter("aggregation_period", "==", "monthly"))
+                    .where(filter=FieldFilter("date", ">=", month_starts[0].isoformat()))
+                    .where(filter=FieldFilter("date", "<=", month_starts[-1].isoformat()))
+                )
+
+            records: List[Dict[str, Any]] = []
+            for query in queries:
+                if user_id is not None:
+                    query = query.where(filter=FieldFilter("user_id", "==", user_id))
+                query = query.select(["aggregation_period", "date", "updated_at"] + fields)
+                records.extend(
+                    deserialize_os_metrics_record(doc.to_dict()) for doc in query.stream(transaction=transaction)
+                )
+            # The range also holds a month whose rows are written and its total row not yet
+            return [
+                record
+                for record in records
+                if record["aggregation_period"] == "daily" or record["date"] in month_starts
+            ]
+
+        # One snapshot for every query of the read, so a rebuild writing between them is never half seen
+        records = _read_records(self.db_client.transaction(read_only=True))
+        return build_os_metrics_totals(fields, records)
+
+    def calculate_os_metrics(self) -> Optional[List[Dict[str, Any]]]:
+        """Calculate OS metrics for all dates without complete OS metrics.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: The calculated OS metrics.
+
+        Raises:
+            Exception: If an error occurs during OS metrics calculation.
+        """
+        try:
+            calculation = self._calculate_os_metrics(wait_for_rebuild=True)
+            if calculation is None:
+                return None
+
+            results, _ = calculation
+            return results
+
+        except Exception as e:
+            log_error(f"Exception calculating OS metrics: {str(e)}")
+            raise e
+
+    def refresh_os_metrics(self) -> Tuple[Optional[int], Optional[int], bool]:
+        """Calculate OS metrics for all dates without complete OS metrics, and report whether any row changed.
+
+        Returns:
+            Tuple[Optional[int], Optional[int], bool]: When the OS metrics were last updated before the
+                calculation and after it, and whether it wrote or deleted any row.
+
+        Raises:
+            Exception: If an error occurs during OS metrics calculation.
+        """
+        try:
+            totals_collection_ref = self._get_collection(
+                table_type="os_metrics_totals", create_collection_if_not_found=True
+            )
+            if totals_collection_ref is None:
+                return None, None, False
+
+            from google.cloud.firestore import Query
+
+            # A period's total row is written with every write of its rows, so the newest total row is the newest write
+            updated_at_query = (
+                totals_collection_ref.order_by("updated_at", direction=Query.DESCENDING).limit(1).select(["updated_at"])
+            )
+            previous_updated_at = None
+            for doc in updated_at_query.stream():
+                previous_updated_at = doc.to_dict().get("updated_at")
+
+            calculation = self._calculate_os_metrics(wait_for_rebuild=True)
+            written_totals_rows: List[Dict[str, Any]] = []
+            if calculation is not None:
+                _, written_totals_rows = calculation
+
+            latest_updated_at = None
+            for doc in updated_at_query.stream():
+                latest_updated_at = doc.to_dict().get("updated_at")
+
+            return previous_updated_at, latest_updated_at, bool(written_totals_rows)
+
+        except Exception as e:
+            log_error(f"Exception calculating OS metrics: {str(e)}")
+            raise e
+
+    def get_os_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Get the OS metrics totals of each day in the given date range.
+
+        OS metrics are refreshed lazily, at most once per minute per process, without waiting for a rebuild another
+        process is running. For every owner, each day is read from its total row; for one owner, from its rows.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each day, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_os_metrics_fields(fields)
+
+            # Refresh at most once per minute per process: recalculating the current
+            # day scans all of today's sessions, too costly for every read.
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    self._calculate_os_metrics(wait_for_rebuild=False)
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            return self._get_os_metrics_totals_by_date(starting_date, ending_date, user_id, fields)
+
+        except Exception as e:
+            log_error(f"Exception getting OS metrics: {str(e)}")
+            raise e
+
+    def get_os_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """Get the OS metrics totals of the whole given date range.
+
+        OS metrics are refreshed lazily, as in get_os_metrics. A calendar month inside the date range that has
+        month rows is read from them, and every other day as get_os_metrics reads it.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[Dict[str, Any], Optional[int]]: The totals of the date range, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_os_metrics_fields(fields)
+
+            # Refresh at most once per minute per process: recalculating the current
+            # day scans all of today's sessions, too costly for every read.
+            if time.time() - self._os_metrics_refreshed_at >= 60:
+                try:
+                    self._calculate_os_metrics(wait_for_rebuild=False)
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            totals, latest_updated_at = self._get_os_metrics_totals_by_date(
+                starting_date, ending_date, user_id, fields, use_month_rows=True
+            )
+            return merge_os_metrics_totals(totals, fields), latest_updated_at
+
+        except Exception as e:
+            log_error(f"Exception getting OS metrics totals: {str(e)}")
+            raise e
+
+    def get_os_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
+        """Get the version of every total row of a day or a month in the given date range.
+
+        OS metrics are refreshed lazily, as in get_os_metrics.
+
+        Args:
+            starting_date (date): The first day of the date range.
+            ending_date (date): The last day of the date range.
+
+        Returns:
+            Optional[Dict[str, int]]: The version of each total row, keyed by its aggregation period and date. The
+                same again only while no rebuild wrote or deleted a row of the date range. ``None`` while the days
+                are not built up to today, which every rebuild writes last: a read would find them half built.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            # Refresh at most once per minute per process: recalculating the current
+            # day scans all of today's sessions, too costly for every read. Refresh
+            # again on a new UTC day, which has no total row until a refresh writes it.
+            refreshed_on = datetime.fromtimestamp(self._os_metrics_refreshed_at, tz=timezone.utc).date()
+            if time.time() - self._os_metrics_refreshed_at >= 60 or refreshed_on < datetime.now(timezone.utc).date():
+                try:
+                    self._calculate_os_metrics(wait_for_rebuild=False)
+                except Exception as e:
+                    log_warning(f"Could not refresh OS metrics before reading them: {str(e)}")
+
+            totals_collection_ref = self._get_collection(
+                table_type="os_metrics_totals", create_collection_if_not_found=True
+            )
+            if totals_collection_ref is None:
+                return {}
+
+            sessions_collection_ref = self._get_collection(table_type="sessions")
+            today = datetime.now(timezone.utc).date()
+            today_start = int(datetime.combine(today, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp())
+            # A rebuild writes its days oldest first and today last, so a database with sessions and no total
+            # row for yesterday, or with sessions today and no total row for today, is still being built
+            references = [
+                totals_collection_ref.document(os_metrics_totals_record_id("daily", day))
+                for day in [today - timedelta(days=1), today]
+            ]
+            built_days = {
+                deserialize_os_metrics_record(snapshot.to_dict() or {})["date"]
+                for snapshot in self.db_client.get_all(references, field_paths=["date"])
+                if snapshot.exists
+            }
+            if sessions_collection_ref is not None:
+                unbuilt_sessions_query = None
+                if today - timedelta(days=1) not in built_days:
+                    unbuilt_sessions_query = sessions_collection_ref.limit(1)
+                elif today not in built_days:
+                    unbuilt_sessions_query = sessions_collection_ref.where(
+                        filter=FieldFilter("created_at", ">=", today_start)
+                    ).limit(1)
+                if unbuilt_sessions_query is not None:
+                    if list(unbuilt_sessions_query.select(["session_id"]).stream()):
+                        # Rows removed while no session or run changed leave the fingerprint as it was
+                        self._os_metrics_fingerprint = None
+                        return None
+            docs = (
+                totals_collection_ref.where(filter=FieldFilter("date", ">=", starting_date.isoformat()))
+                .where(filter=FieldFilter("date", "<=", ending_date.isoformat()))
+                .select(["aggregation_period", "date", "version"])
+                .stream()
+            )
+            return os_metrics_versions([deserialize_os_metrics_record(doc.to_dict()) for doc in docs])
+
+        except Exception as e:
+            log_error(f"Exception getting OS metrics versions: {str(e)}")
             raise e
 
     # -- Knowledge methods --

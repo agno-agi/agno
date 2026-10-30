@@ -3,7 +3,7 @@
 from typing import Any
 
 try:
-    from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String, Text
+    from sqlalchemy.types import JSON, BigInteger, Boolean, Date, Integer, String, Text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -128,6 +128,84 @@ METRICS_TABLE_SCHEMA = {
     # alongside the ``id`` primary key (error 1706). ``bulk_upsert_metrics`` enforces the triple instead.
 }
 
+OS_METRICS_TABLE_SCHEMA = {
+    "aggregation_period": {"type": lambda: String(20), "primary_key": True, "nullable": False},
+    "date": {"type": Date, "primary_key": True, "nullable": False},
+    # Binary collation keeps ids case-sensitive, so "Alice" and "alice" stay separate rows.
+    "user_id": {
+        "type": lambda: String(128, collation="utf8mb4_bin"),
+        "primary_key": True,
+        "nullable": False,
+        "default": "",
+    },
+    "component_type": {"type": lambda: String(20), "primary_key": True, "nullable": False},
+    "component_id": {"type": lambda: String(128, collation="utf8mb4_bin"), "primary_key": True, "nullable": False},
+    "parent_component_id": {
+        "type": lambda: String(128, collation="utf8mb4_bin"),
+        "primary_key": True,
+        "nullable": False,
+        "default": "",
+    },
+    "sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "input_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "output_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "duration_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_duration_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_duration_ms": {"type": BigInteger, "nullable": True},
+    "time_to_first_token_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_time_to_first_token_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_time_to_first_token_ms": {"type": BigInteger, "nullable": True},
+    "model_calls_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_model_call_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_model_call_ms": {"type": BigInteger, "nullable": True},
+    "buckets_version": {"type": Integer, "nullable": False, "default": 1},
+    "status_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "additional_token_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "duration_buckets": {"type": JSON, "nullable": False, "default": {}},
+    "time_to_first_token_buckets": {"type": JSON, "nullable": False, "default": {}},
+    "model_call_buckets": {"type": JSON, "nullable": False, "default": {}},
+    "model_metrics": {"type": JSON, "nullable": False, "default": []},
+    "additional_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "_composite_indexes": [
+        {"name": "ix_os_metrics_user_period", "columns": ["user_id", "aggregation_period", "date"]},
+    ],
+}
+
+OS_METRICS_TOTALS_TABLE_SCHEMA = {
+    "aggregation_period": {"type": lambda: String(20), "primary_key": True, "nullable": False},
+    "date": {"type": Date, "primary_key": True, "nullable": False},
+    "sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "input_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "output_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "duration_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_duration_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_duration_ms": {"type": BigInteger, "nullable": True},
+    "time_to_first_token_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_time_to_first_token_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_time_to_first_token_ms": {"type": BigInteger, "nullable": True},
+    "model_calls_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_model_call_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_model_call_ms": {"type": BigInteger, "nullable": True},
+    "buckets_version": {"type": Integer, "nullable": False, "default": 1},
+    "status_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "additional_token_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "duration_buckets": {"type": JSON, "nullable": False, "default": {}},
+    "time_to_first_token_buckets": {"type": JSON, "nullable": False, "default": {}},
+    "model_call_buckets": {"type": JSON, "nullable": False, "default": {}},
+    "model_metrics": {"type": JSON, "nullable": False, "default": []},
+    "additional_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "completed": {"type": Boolean, "nullable": False, "default": False},
+    "version": {"type": Integer, "nullable": False, "default": 1},
+}
+
 VERSIONS_TABLE_SCHEMA = {
     "table_name": {"type": lambda: String(128), "nullable": False, "primary_key": True},
     "version": {"type": lambda: String(10), "nullable": False},
@@ -213,6 +291,8 @@ def get_table_schema_definition(
         # "runs" is handled by _get_run_table_schema above (needs session_table_name)
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
+        "os_metrics": OS_METRICS_TABLE_SCHEMA,
+        "os_metrics_totals": OS_METRICS_TOTALS_TABLE_SCHEMA,
         "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,

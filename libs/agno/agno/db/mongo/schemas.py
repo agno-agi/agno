@@ -84,6 +84,25 @@ METRICS_COLLECTION_SCHEMA = [
     {"key": [("user_id", 1), ("date", 1), ("aggregation_period", 1)], "unique": True},
 ]
 
+OS_METRICS_COLLECTION_SCHEMA = [
+    {
+        "key": [
+            ("aggregation_period", 1),
+            ("date", 1),
+            ("user_id", 1),
+            ("component_type", 1),
+            ("component_id", 1),
+            ("parent_component_id", 1),
+        ],
+        "unique": True,
+    },
+    {"key": [("user_id", 1), ("aggregation_period", 1), ("date", 1)]},
+]
+
+OS_METRICS_TOTALS_COLLECTION_SCHEMA = [
+    {"key": [("aggregation_period", 1), ("date", 1)], "unique": True},
+]
+
 TRACE_COLLECTION_SCHEMA = [
     {"key": "trace_id", "unique": True},
     {"key": "name"},
@@ -169,6 +188,8 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
         "runs": RUNS_COLLECTION_SCHEMA,
         "memories": MEMORY_COLLECTION_SCHEMA,
         "metrics": METRICS_COLLECTION_SCHEMA,
+        "os_metrics": OS_METRICS_COLLECTION_SCHEMA,
+        "os_metrics_totals": OS_METRICS_TOTALS_COLLECTION_SCHEMA,
         "evals": EVAL_COLLECTION_SCHEMA,
         "knowledge": KNOWLEDGE_COLLECTION_SCHEMA,
         "traces": TRACE_COLLECTION_SCHEMA,

@@ -1413,6 +1413,15 @@ class TestKeptAnswers:
         assert second.status_code == 200
         assert second.json() == first.json()
 
+    def test_one_owner_answer_of_a_database_whose_owner_rows_lag_is_read_again(self, client, kept_db):
+        """A database whose one-owner rows follow a write a moment later never has its one-owner answers kept."""
+        kept_db.os_metrics_user_rows_lag = True
+        with _scope("alice"):
+            client.get(f"/os/metrics/sessions?{_last(2)}")
+            client.get(f"/os/metrics/sessions?{_last(2)}")
+
+        assert _reads(kept_db) == 2
+
     @pytest.mark.parametrize("versions", [_versions(today=2), _versions(day_2=1)])
     def test_changed_versions_are_read_again_with_the_new_numbers(self, client, kept_db, versions):
         """A day's version that moved, or a day that got its first total row, is a change."""

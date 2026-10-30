@@ -7,6 +7,9 @@ from typing import Any, Dict, List, Optional
 from agno.db.utils import get_sort_value
 from agno.utils.log import log_debug
 
+# How long the lock of an OS metrics rebuild is held before another rebuild may take it over, in seconds
+OS_METRICS_LOCK_SECONDS = 300
+
 
 def apply_sorting(
     data: List[Dict[str, Any]], sort_by: Optional[str] = None, sort_order: Optional[str] = None
