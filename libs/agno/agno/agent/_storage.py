@@ -33,6 +33,7 @@ from agno.registry._reserved import RESERVED_MANAGER_IDS, _reserved_manager_id_m
 from agno.registry.registry import Registry, _memory_manager_resource_name
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
+from agno.skills.component import pin_skill_refs, skill_links_for_save
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.agent import (
@@ -963,6 +964,13 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     if agent.max_tool_calls_from_history is not None:
         config["max_tool_calls_from_history"] = agent.max_tool_calls_from_history
 
+    # --- Skills settings ---
+    # Database skills are stored as references; their content lives in the skill components.
+    if agent.skills is not None:
+        skills_config = agent.skills.to_config()
+        if skills_config is not None:
+            config["skills"] = skills_config
+
     # --- Knowledge settings ---
     # Knowledge is a non-serializable object (it holds live db/vector_db connections),
     # so we store a reference by name and resolve it from the registry on load.
@@ -1224,7 +1232,11 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
 
 
 def from_dict(
-    cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registry] = None, strict: bool = False
+    cls: Type[Agent],
+    data: Dict[str, Any],
+    registry: Optional[Registry] = None,
+    strict: bool = False,
+    db: Optional[BaseDb] = None,
 ) -> Agent:
     """
     Create an agent from a dictionary.
@@ -1239,6 +1251,8 @@ def from_dict(
             and falls back to the caller's db in both modes. Pass False to
             reconstruct as much as possible, e.g. for listings that must show
             degraded components.
+        db: Database to resolve skill references against when the config
+            does not carry a sync db of its own.
 
     Returns:
         Agent: Reconstructed agent instance
@@ -1330,6 +1344,21 @@ def from_dict(
             # backends the caller's own db is the fallback, in both modes.
             log_warning(f"{component_label} has a serialized db config that could not be resolved.")
             del config["db"]
+
+    # --- Handle Skills reconstruction ---
+    if isinstance(config.get("skills"), dict):
+        from agno.skills import Skills
+        from agno.utils.component_scope import get_component_owner_scope
+
+        config["skills"] = Skills.from_config(
+            config["skills"],
+            db=config["db"] if isinstance(config.get("db"), BaseDb) else db,
+            strict=strict,
+            label=component_label,
+            user_id=get_component_owner_scope(),
+        )
+    else:
+        config.pop("skills", None)
 
     # --- Handle FileSystem reconstruction ---
     if isinstance(config.get("filesystem"), (dict, list)):
@@ -1491,6 +1520,7 @@ def from_dict(
         max_tool_calls_from_history=config.get("max_tool_calls_from_history"),
         # --- Knowledge settings ---
         knowledge=config.get("knowledge"),
+        skills=config.get("skills"),
         knowledge_filters=config.get("knowledge_filters"),
         enable_agentic_knowledge_filters=config.get("enable_agentic_knowledge_filters", False),
         add_knowledge_to_context=config.get("add_knowledge_to_context", False),
@@ -1604,6 +1634,11 @@ def save(
     if agent.id is None:
         agent.id = generate_id_from_name(agent.name)
 
+    # Every skill reference is validated, and its link row built, before the first write.
+    config_body = to_dict(agent)
+    skill_links = skill_links_for_save(config_body.get("skills"), db=db_, label=f"Agent '{agent.id}'")
+    pin_skill_refs(config_body.get("skills"), skill_links)
+
     try:
         # Create or update component
         db_.upsert_component(
@@ -1617,7 +1652,8 @@ def save(
         # Create or update config
         config = db_.upsert_config(
             component_id=agent.id,
-            config=to_dict(agent),
+            config=config_body,
+            links=skill_links or None,
             label=label,
             stage=stage,
             notes=notes,
@@ -1678,7 +1714,7 @@ def load(
     if config is None:
         return None
 
-    agent = cls.from_dict(config, registry=registry, strict=strict)
+    agent = cls.from_dict(config, registry=registry, strict=strict, db=db)
     agent.id = id
     # Only fall back to the caller-provided db if the config didn't
     # reconstruct one. Otherwise we'd clobber any custom table names

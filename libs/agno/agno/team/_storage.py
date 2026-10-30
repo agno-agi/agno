@@ -44,6 +44,7 @@ from agno.run.team import (
     TeamRunOutput,
 )
 from agno.session import TeamSession, WorkflowSession
+from agno.skills.component import pin_skill_refs, skill_links_for_save
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
@@ -635,6 +636,13 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["dependencies"] = team.dependencies
     if team.add_dependencies_to_context:
         config["add_dependencies_to_context"] = team.add_dependencies_to_context
+
+    # --- Skills settings ---
+    # Database skills are stored as references; their content lives in the skill components.
+    if team.skills is not None:
+        skills_config = team.skills.to_config()
+        if skills_config is not None:
+            config["skills"] = skills_config
 
     # --- Knowledge settings ---
     # Knowledge is a non-serializable object (it holds live db/vector_db connections),
@@ -1237,6 +1245,20 @@ def from_dict(
             log_warning(f"{component_label} has a serialized db config that could not be resolved.")
             del config["db"]
 
+    # --- Handle Skills reconstruction ---
+    if isinstance(config.get("skills"), dict):
+        from agno.skills import Skills
+
+        config["skills"] = Skills.from_config(
+            config["skills"],
+            db=config["db"] if isinstance(config.get("db"), BaseDb) else db,
+            strict=strict,
+            label=component_label,
+            user_id=owner_user_id,
+        )
+    else:
+        config.pop("skills", None)
+
     # --- Handle Schema reconstruction ---
     if "input_schema" in config and isinstance(config["input_schema"], str):
         schema_cls = registry.get_schema(config["input_schema"]) if registry else None
@@ -1368,6 +1390,7 @@ def from_dict(
             add_dependencies_to_context=config.get("add_dependencies_to_context", False),
             # --- Knowledge settings ---
             knowledge=config.get("knowledge"),
+            skills=config.get("skills"),
             knowledge_filters=config.get("knowledge_filters"),
             enable_agentic_knowledge_filters=config.get("enable_agentic_knowledge_filters", False),
             add_knowledge_to_context=config.get("add_knowledge_to_context", False),
@@ -1475,6 +1498,11 @@ def save(
     if team.id is None:
         team.id = generate_id_from_name(team.name)
 
+    # Every skill reference is validated, and its link row built, before the first write.
+    skill_links = skill_links_for_save(
+        team.skills.to_config() if team.skills is not None else None, db=db_, label=f"Team '{team.id}'"
+    )
+
     try:
         # Collect all links for members
         all_links: List[Dict[str, Any]] = []
@@ -1507,10 +1535,14 @@ def save(
             metadata=getattr(team, "metadata", None),
         )
 
+        config_body = team.to_dict()
+        pin_skill_refs(config_body.get("skills"), skill_links)
+        all_links.extend(skill_links)
+
         # Create or update config with links
         config = db_.upsert_config(
             component_id=team.id,
-            config=team.to_dict(),
+            config=config_body,
             links=all_links if all_links else None,
             label=label,
             stage=stage,
@@ -1571,11 +1603,12 @@ def _hydrate_from_graph(
         if child_config is None:
             continue
 
-        link_meta = child["link"].get("meta", {})
+        # A skill link carries no meta and no member type; from_dict resolves skills from the config.
+        link_meta = child["link"].get("meta") or {}
         member_type = link_meta.get("type")
 
         if member_type == "agent":
-            agent = Agent.from_dict(child_config, registry=registry, strict=strict)
+            agent = Agent.from_dict(child_config, registry=registry, strict=strict, db=db)
             agent.id = child_graph["component"]["component_id"]
             if agent.db is None:
                 if strict:

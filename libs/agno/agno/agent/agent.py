@@ -1045,8 +1045,14 @@ class Agent:
         return _storage.to_dict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], registry: Optional[Registry] = None, strict: bool = False) -> "Agent":
-        return _storage.from_dict(cls, data=data, registry=registry, strict=strict)
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional[Registry] = None,
+        strict: bool = False,
+        db: Optional["BaseDb"] = None,
+    ) -> "Agent":
+        return _storage.from_dict(cls, data=data, registry=registry, strict=strict, db=db)
 
     def save(
         self,
@@ -1919,7 +1925,7 @@ def get_agent_by_id(
         if cfg is None:
             raise ValueError(f"Invalid config found for agent {id}")
 
-        agent = Agent.from_dict(cfg, registry=registry, strict=strict)
+        agent = Agent.from_dict(cfg, registry=registry, strict=strict, db=db)
         agent.id = id
         # Only fall back to the caller-provided db if the config didn't
         # reconstruct one, matching Agent.load.
@@ -2017,7 +2023,7 @@ def get_agents(
                             agent_config["id"] = component_id
                         # Lenient on purpose: listings must show degraded
                         # components so they stay visible and fixable.
-                        agent = Agent.from_dict(agent_config, registry=registry, strict=False)
+                        agent = Agent.from_dict(agent_config, registry=registry, strict=False, db=db)
                         agent.id = component_id
                         agent._version = component.get("current_version")
                         agent._stage = config.get("stage")

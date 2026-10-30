@@ -52,3 +52,16 @@ Test results for `cookbook/93_components/` examples.
 **Note:** An `agno_components` table created before the `user_id` column was added fails with `Table ai.agno_components has an invalid schema`. Adding the column (`ALTER TABLE ... ADD COLUMN user_id VARCHAR`) is what the deferred migration will do; fresh databases are unaffected.
 
 ---
+
+### save_skill.py
+
+**Status:** PASS
+
+**Description:** Stores the `code-review` sample skill as a component, saves an agent that references it with no version, publishes a newer skill version, then loads the agent with `strict=True` and runs it with `gpt-5.6-luna` against Postgres.
+
+**Result:** The saved agent stored `{"refs": [{"skill_id": "code-review", "version": N}]}` pinned to the version it loaded, and the loaded agent used that version after a newer one was published. The model called `get_skill_instructions`, `get_skill_reference` and `get_skill_script` on the stored skill and returned a review that caught the `a - b` bug.
+
+**Note:** The sample `check_style.py` fails with `Exec format error` because it has no shebang line. It fails the same way when loaded from disk with `LocalSkills`, so it is unrelated to stored skills.
+
+---
+

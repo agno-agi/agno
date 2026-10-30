@@ -33,6 +33,7 @@ class ComponentType(str, Enum):
     AGENT = "agent"
     TEAM = "team"
     WORKFLOW = "workflow"
+    SKILL = "skill"
 
 
 # Stage marking a config version as deleted without freeing its number.
@@ -47,6 +48,10 @@ DELETED_CONFIG_STAGE = "_deleted"
 # pins" filter on THIS tuple - a bare "step" kind does not exist, and a guard
 # written against it silently skips every workflow.
 PIN_LINK_KINDS = ("member", "step_agent", "step_team", "step_workflow")
+
+# Link kinds that may store a NULL child_version, meaning "follow the child's
+# current published version". Every other kind pins an exact version.
+FOLLOW_LATEST_LINK_KINDS = ("skill",)
 
 
 def project_config_identity(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -1196,7 +1201,7 @@ class BaseDb(ABC):
 
         Args:
             component_id: The component ID.
-            component_type: Optional filter by type (agent|team|workflow).
+            component_type: Optional filter by type (agent|team|workflow|skill).
             user_id: If set, only return the component if owned by this user, unowned (shared), or published.
             include_deleted: Also return an archived (soft-deleted) row. Archived
                 ids are reserved, so an existence check must pass True.
@@ -1220,7 +1225,7 @@ class BaseDb(ABC):
 
         Args:
             component_id: Unique identifier.
-            component_type: Type (agent|team|workflow). Required for create, optional for update.
+            component_type: Type (agent|team|workflow|skill). Required for create, optional for update.
             name: Display name.
             description: Optional description.
             current_version: Optional current version.
@@ -1310,7 +1315,7 @@ class BaseDb(ABC):
         """List components with pagination.
 
         Args:
-            component_type: Filter by type (agent|team|workflow).
+            component_type: Filter by type (agent|team|workflow|skill).
             include_deleted: Include soft-deleted components.
             limit: Maximum number of items to return.
             offset: Number of items to skip.
@@ -1342,7 +1347,7 @@ class BaseDb(ABC):
 
         Args:
             component_id: Unique identifier.
-            component_type: Type (agent|team|workflow).
+            component_type: Type (agent|team|workflow|skill).
             name: Display name.
             config: The config data.
             description: Optional description.
@@ -1350,7 +1355,7 @@ class BaseDb(ABC):
             label: Optional config label.
             stage: "draft" or "published".
             notes: Optional notes.
-            links: Optional list of links. Each must have child_version set.
+            links: Optional list of links. Each must have child_version set, except a FOLLOW_LATEST_LINK_KINDS link.
             user_id: Owner to attribute the component to.
 
         Returns:
@@ -1442,7 +1447,7 @@ class BaseDb(ABC):
             label: Optional human-readable label.
             stage: "draft" or "published". Defaults to "draft" for new configs.
             notes: Optional notes.
-            links: Optional list of links. Each link must have child_version set.
+            links: Optional list of links. Each link must have child_version set, except a FOLLOW_LATEST_LINK_KINDS link.
             expected_latest_version: Optional CAS guard; None skips the check.
             expected_current_version: Optional CAS guard on the live pointer a
                 publish replaces; None skips the check, 0 expects no live
