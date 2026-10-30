@@ -281,8 +281,12 @@ async def _resume_stream_generator(
         yield sse_error_frame(f"event stream unavailable: {str(e)[:200]}")
         return
 
-    if buffer_status is None:
-        # PATH 3: Not in buffer -- fall back to database
+    from agno.os.utils import run_stream_served_here
+
+    # A replica-local stream never advances a run another replica's worker executes.
+    elsewhere = buffer_status in (RunStatus.pending, RunStatus.running) and not await run_stream_served_here(run_id)
+    if buffer_status is None or elsewhere:
+        # PATH 3: Not in buffer, or executed elsewhere -- fall back to database
         if session_id and not isinstance(team, RemoteTeam):
             try:
                 run_output = await team.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
@@ -299,7 +303,8 @@ async def _resume_stream_generator(
             elif run_output:
                 from agno.os.utils import no_stored_events_replay_meta
 
-                yield f"event: replay\ndata: {json.dumps(no_stored_events_replay_meta(run_output, run_id))}\n\n"
+                meta = no_stored_events_replay_meta(run_output, run_id, elsewhere=elsewhere)
+                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
                 return
 
         # Run not found anywhere
@@ -369,44 +374,9 @@ async def _resume_stream_generator(
 
     log_debug(f"SSE client subscribed to team run {run_id} (last_event_index: {last_event_index})")
 
-    # Pump the tail through a queue so we can heartbeat on idle without
-    # cancelling the tail generator (cancelling its __anext__ would kill it).
-    tail_queue: asyncio.Queue = asyncio.Queue()
-
-    async def _pump_tail() -> None:
-        try:
-            async for tail_item in event_stream.tail(run_id, last_event_index=last_replayed_index):
-                await tail_queue.put(tail_item)
-        except Exception as e:
-            # A tail that DIES must not look like a tail that FINISHED: emit an
-            # error frame so the client can distinguish and reconnect
-            log_error(f"Resume tail failed for run {run_id}: {e}")
-            with contextlib.suppress(Exception):
-                await tail_queue.put((-1, sse_error_frame(f"stream tail failed: {str(e)[:200]}")))
-        finally:
-            await tail_queue.put(None)
-
-    pump_task = asyncio.create_task(_pump_tail())
-    try:
-        while True:
-            try:
-                item = await asyncio.wait_for(tail_queue.get(), timeout=30.0)
-            except asyncio.TimeoutError:
-                # Tail is idle (queued or silent run) - keep the connection alive
-                yield ": heartbeat\n\n"
-                continue
-            if item is None:
-                # Tail finished: run reached a terminal state
-                break
-            _ev_index, sse_data = item
-            yield sse_data
-    finally:
-        pump_task.cancel()
-        # Suppress everything, not just CancelledError: an exception re-raised
-        # here reaches the ASGI layer on a response whose headers are already
-        # sent (the pump has already surfaced it as an error frame)
-        with contextlib.suppress(BaseException):
-            await pump_task
+    # The shared tail ends on a settled ticket or a claim by another replica as well.
+    async for frame in queued_run_tail_streamer(run_id, last_replayed_index, keepalive=": heartbeat\n\n"):
+        yield frame
 
 
 async def team_continue_response_streamer(

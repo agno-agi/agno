@@ -401,6 +401,8 @@ def format_sse_event_with_index(
 # Idle window between tail items before a keepalive (and the settled-ticket
 # truth probe) fires; module-level so tests can shrink it.
 _TAIL_IDLE_RECHECK_SECONDS = 30.0
+# How often a replica-local stream checks whether another replica claimed its queued run.
+_TAIL_CLAIM_RECHECK_SECONDS = 1.0
 
 
 def sse_error_frame(message: str) -> str:
@@ -413,25 +415,100 @@ def sse_error_frame(message: str) -> str:
     return f"event: error\ndata: {json.dumps({'event': 'error', 'error': message})}\n\n"
 
 
-async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None) -> Any:
+async def _run_ticket(run_id: str) -> Optional[Dict[str, Any]]:
+    """The durable queue's run ticket for ``run_id``; None without a queue worker or a run ticket."""
+    from agno.os.job_queue import get_active_queue_worker
+
+    worker = get_active_queue_worker()
+    job = await worker.store.get_job(run_id) if worker is not None else None
+    if job is None or job.get("job_type", "run") != "run":
+        return None
+    return job
+
+
+def _ticket_runs_here(job: Dict[str, Any]) -> bool:
+    """Whether this replica's worker holds the ticket, or it is still waiting to be claimed."""
+    from agno.os.job_queue import get_active_queue_worker
+
+    locked_by = job.get("locked_by")
+    return job.get("status") == "queued" or (
+        locked_by is not None and locked_by == getattr(get_active_queue_worker(), "worker_id", None)
+    )
+
+
+async def run_stream_served_here(run_id: str) -> bool:
+    """Whether this replica's event stream carries the run's live events.
+
+    A replica-local stream only sees the runs this replica's worker executes; the entry the
+    submitting replica registered never advances once another replica claims the job.
+    """
+    from agno.os.event_streams import get_event_stream
+
+    if getattr(get_event_stream(), "shared", False):
+        return True
+    try:
+        job = await _run_ticket(run_id)
+    except Exception:
+        return True
+    return job is None or _ticket_runs_here(job)
+
+
+async def _tail_closing_frame(run_id: str, job: Optional[Dict[str, Any]], event_stream: Any) -> Optional[str]:
+    """The stream_expired frame for a tail that nothing else will end, else None.
+
+    Either the ticket settled while the stream never got its terminal event (the producer
+    died between settling the ticket and closing the stream), or another replica runs the
+    job and this replica's stream will never see its events.
+    """
+    from agno.os.job_queue import ticket_status_to_api
+    from agno.run.base import RunStatus
+
+    if job is None:
+        return None
+    if job.get("status") in ("completed", "failed", "cancelled"):
+        stream_status = await event_stream.get_run_status(run_id)
+        if stream_status is not None and stream_status not in (RunStatus.pending, RunStatus.running):
+            return None
+        message = "The run finished but its stream lost the terminal event; poll the run for the complete output."
+    elif getattr(event_stream, "shared", False) or _ticket_runs_here(job):
+        return None
+    else:
+        message = (
+            "The run executes on another replica, whose events this replica's stream does not carry; "
+            "poll the run for the complete output."
+        )
+    payload = {
+        "event": "stream_expired",
+        "run_id": run_id,
+        "status": ticket_status_to_api(job.get("status", "")) or "ERROR",
+        "message": message,
+    }
+    return f"event: stream_expired\ndata: {json.dumps(payload)}\n\n"
+
+
+async def queued_run_tail_streamer(
+    run_id: str, from_index: Optional[int] = None, keepalive: str = ": keepalive\n\n"
+) -> Any:
     """SSE response for a durably queued STREAMING run: tail the event stream.
 
-    ONE implementation for all three routers. The run executes on whichever
-    replica's worker claims it; this connection just observes. Keepalives
-    cover the queued wait and silent stretches; a disconnect is harmless
-    (resume replays); the complete output is guaranteed via the run row even
-    if this stream is never watched.
+    ONE implementation for all three routers, and for the live path of
+    their /resume endpoints. The run executes on whichever replica's worker
+    claims it; this connection just observes. Keepalives cover the queued
+    wait and silent stretches; a disconnect is harmless (resume replays);
+    the complete output is guaranteed via the run row even if this stream
+    is never watched.
 
-    Honest close (the ticket-consulting wrapper LOOP is parked,
-    evidence-gated - see the ledger): when the tail ends WITHOUT the run
+    Honest close: when nothing will end the tail - the ticket settled
+    without the stream's terminal event, or another replica claimed the
+    job and this replica's stream is local - emit one ``stream_expired``
+    event and end. The same applies when the tail ends WITHOUT the run
     having reached a terminal stream state - the status key expired while
     the job sat queued past the TTL, or a producer died - and the durable
-    ticket still vouches for the run, emit an explicit ``stream_expired``
-    event instead of a silent, terminal-looking close. A real SSE event
-    type, not a comment: it must reach client handlers (unknown types are
-    ignored by standard consumers). Under the deployment-affinity
-    misconfiguration (jobs queued forever) clients will reconnect hourly -
-    expected and diagnostic, not a bug.
+    ticket still vouches for the run. A real SSE event type, not a comment:
+    it must reach client handlers (unknown types are ignored by standard
+    consumers). Under the deployment-affinity misconfiguration (jobs queued
+    forever) clients will reconnect hourly - expected and diagnostic, not a
+    bug.
     """
     import asyncio
     import contextlib
@@ -450,51 +527,38 @@ async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None
         except Exception as e:
             # A tail that DIES must not look like a tail that FINISHED: emit an
             # error frame so the client can distinguish and reconnect
-            log_error(f"Queued stream tail failed for run {run_id}: {e}")
+            log_error(f"Stream tail failed for run {run_id}: {e}")
             with contextlib.suppress(Exception):
                 await tail_queue.put((-1, sse_error_frame(f"stream tail failed: {str(e)[:200]}")))
         finally:
             await tail_queue.put(None)
 
     pump_task = asyncio.create_task(_pump())
+    # A replica-local stream cannot see another replica claim the job, so it checks often until a claim.
+    watch_claim = not getattr(event_stream, "shared", False)
+    idle = 0.0
     try:
         while True:
+            wait = _TAIL_IDLE_RECHECK_SECONDS
+            if watch_claim:
+                wait = min(_TAIL_CLAIM_RECHECK_SECONDS, wait)
             try:
-                item = await asyncio.wait_for(tail_queue.get(), timeout=_TAIL_IDLE_RECHECK_SECONDS)
+                item = await asyncio.wait_for(tail_queue.get(), timeout=wait)
             except asyncio.TimeoutError:
-                # Idle recheck. If the durable ticket has SETTLED while the
-                # stream never received its terminal sentinel (a lost
-                # terminal write - the producer died between settling the
-                # ticket and closing the stream), nothing will ever end this
-                # tail: it used to keepalive silently until the stream state
-                # expired. Tell the client the truth instead, once, and end -
-                # the complete output is guaranteed via the run row.
+                idle += wait
                 closed_frame: Optional[str] = None
                 with contextlib.suppress(Exception):
-                    from agno.os.job_queue import get_active_queue_worker, ticket_status_to_api
-
-                    worker = get_active_queue_worker()
-                    job = await worker.store.get_job(run_id) if worker is not None else None
-                    if (
-                        job is not None
-                        and job.get("job_type", "run") == "run"
-                        and job.get("status") in ("completed", "failed", "cancelled")
-                    ):
-                        stream_status = await event_stream.get_run_status(run_id)
-                        if stream_status is None or stream_status in (RunStatus.pending, RunStatus.running):
-                            payload = {
-                                "event": "stream_expired",
-                                "run_id": run_id,
-                                "status": ticket_status_to_api(job.get("status", "")) or "ERROR",
-                                "message": "The run finished but its stream lost the terminal event; "
-                                "poll the run for the complete output.",
-                            }
-                            closed_frame = f"event: stream_expired\ndata: {json.dumps(payload)}\n\n"
+                    job = await _run_ticket(run_id)
+                    watch_claim = watch_claim and job is not None and job.get("status") == "queued"
+                    closed_frame = await _tail_closing_frame(run_id, job, event_stream)
                 if closed_frame is not None:
                     yield closed_frame
                     return
-                yield ": keepalive\n\n"
+                if idle >= _TAIL_IDLE_RECHECK_SECONDS:
+                    idle = 0.0
+                    yield keepalive
                 continue
+            idle = 0.0
             if item is None:
                 break
             _ev_index, sse_data = item
@@ -577,16 +641,22 @@ def stored_event_replay_dicts(
     return dicts
 
 
-def no_stored_events_replay_meta(run_output: Any, run_id: str) -> Dict[str, Any]:
+def no_stored_events_replay_meta(run_output: Any, run_id: str, elsewhere: bool = False) -> Dict[str, Any]:
     """The replay meta for a run found in the database with no stored events.
 
     A run submitted with stream=false, inline or in the background, never publishes to the
     event stream and stores no events, so there is nothing to attach to: the message says
     whether the run is still going (poll the run endpoint) or finished with only its final
-    output, instead of claiming it completed.
+    output, instead of claiming it completed. ``elsewhere`` marks a run another replica
+    executes, whose events this replica's stream does not carry.
     """
     status = run_output.status.value if hasattr(run_output.status, "value") else (run_output.status or "unknown")
-    if status in (RunStatus.pending.value, RunStatus.running.value):
+    if elsewhere and status in (RunStatus.pending.value, RunStatus.running.value):
+        message = (
+            f"Run is {status} on another replica, whose events this replica's stream does not carry. "
+            "Poll the run endpoint for its result."
+        )
+    elif status in (RunStatus.pending.value, RunStatus.running.value):
         message = (
             f"Run is {status} and was submitted without streaming, so it has no event stream to attach to. "
             "Poll the run endpoint for its result."

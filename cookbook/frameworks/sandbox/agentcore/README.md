@@ -45,7 +45,7 @@ These steps create AWS resources and billable compute. You need an AWS profile t
 
    `sandbox_claude_agentcore.py` is this agent run directly, two turns on a new session.
 
-5. Serve it through AgentOS with a durable queue. Run Postgres and Redis, then `sandbox_claude_agentcore_agentos.py`; it submits every API request to the queue, so a dropped connection does not cancel a turn. Point `checkpoints=` at storage every replica can read, such as `S3CheckpointStore` (set `AGNO_SANDBOX_CHECKPOINT_BUCKET`): with a queue, any replica may run the next attempt, and AgentOS refuses the host-local default at startup. Give each AgentOS deployment that shares a database its own job table or deployment id, or their workers claim each other's jobs for agents with the same id.
+5. Serve it through AgentOS with a durable queue. Run Postgres, then `sandbox_claude_agentcore_agentos.py` (set `AGNO_SANDBOX_REDIS_URL` to add Redis for live streams and resume from any replica); it submits every API request to the queue, so a dropped connection does not cancel a turn. Point `checkpoints=` at storage every replica can read, such as `S3CheckpointStore` (set `AGNO_SANDBOX_CHECKPOINT_BUCKET`): with a queue, any replica may run the next attempt, and AgentOS refuses the host-local default at startup. Give each AgentOS deployment that shares a database its own job table or deployment id, or their workers claim each other's jobs for agents with the same id.
 
 6. Tear down when you are done, since the runtime is billable:
 

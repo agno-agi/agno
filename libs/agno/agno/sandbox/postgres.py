@@ -1259,6 +1259,27 @@ class _SandboxStore:
 
         return await self._transaction(stop)
 
+    async def acancelled_elsewhere(self, session_id: str, run_id: str) -> bool:
+        """Whether another writer cancelled this run: a cancel stop claimed on its binding, or a cancelled row.
+
+        The binding is read first because a stop claim commits before the computer is removed,
+        and the row only becomes CANCELLED after that.
+        """
+
+        def read(connection: Connection) -> bool:
+            binding = connection.execute(
+                select(self.bindings.c.run_id, self.bindings.c.record).where(self._key(session_id))
+            ).first()
+            if binding is not None and binding.run_id == run_id and binding.record.get("stop_status") == "CANCELLED":
+                return True
+            status = connection.execute(select(self.runs.c.status).where(self.runs.c.run_id == run_id)).scalar()
+            return str(status).upper() == "CANCELLED"
+
+        return await self._transaction(read)
+
+    def cancelled_elsewhere(self, session_id: str, run_id: str) -> bool:
+        return self._sync(self.acancelled_elsewhere, session_id, run_id)
+
     async def aprepare(self, run: Dict[str, Any]) -> None:
         """Insert an accepted queued run without rewriting existing session recovery metadata."""
         value = self._json(run)

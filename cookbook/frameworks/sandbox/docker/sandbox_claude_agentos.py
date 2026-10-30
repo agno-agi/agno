@@ -1,12 +1,10 @@
 """A sandboxed Claude agent behind AgentOS with a durable queue: the same agent as
 sandbox_claude.py, served over HTTP.
 
-Build the runtime image, run Postgres and Redis, and export ANTHROPIC_API_KEY or
-CLAUDE_CODE_OAUTH_TOKEN:
+Build the runtime image, run Postgres, and export ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN:
 
     .venv/bin/python cookbook/frameworks/sandbox/build_image.py --tag agno-sandbox:local
     ./cookbook/scripts/run_pgvector.sh
-    docker run -d --name agno-redis -p 6379:6379 redis
     .venv/bin/python cookbook/frameworks/sandbox/docker/sandbox_claude_agentos.py
 
 Then send a turn and poll it:
@@ -20,6 +18,10 @@ second request on the same session waits for the first. With a queue, any replic
 attempt, so checkpoints must live where every replica can read them: set
 AGNO_SANDBOX_CHECKPOINT_BUCKET to keep them in S3 (needs agno[s3] and AWS credentials). Unset, they
 stay in a directory on this host, which only a single replica can use.
+
+Redis is optional. Postgres alone handles cancellation, crash recovery and results on any number of
+replicas. Set AGNO_SANDBOX_REDIS_URL to add live streams and resume from any replica; without it, a
+replica streams only the turns its own worker runs, and a client that lands elsewhere polls the run.
 """
 
 import os
@@ -68,9 +70,9 @@ agent_os = AgentOS(
     queue=QueueConfig(
         durable=True,
         db=db,
-        redis=RedisCoordination(
-            url=os.getenv("AGNO_SANDBOX_REDIS_URL", "redis://localhost:6379/0")
-        ),
+        redis=RedisCoordination(url=os.environ["AGNO_SANDBOX_REDIS_URL"])
+        if os.getenv("AGNO_SANDBOX_REDIS_URL")
+        else None,
     ),
     telemetry=False,
 )

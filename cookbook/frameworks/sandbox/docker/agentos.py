@@ -47,10 +47,13 @@ def create_agent_os() -> AgentOS:
         queue=QueueConfig(
             durable=True,
             db=db,
+            # Optional: adds live streams and resume from any replica.
             redis=RedisCoordination(
                 url=os.environ["SANDBOX_REDIS_URL"],
                 key_prefix="agentos-sandbox-example",
-            ),
+            )
+            if os.environ.get("SANDBOX_REDIS_URL")
+            else None,
             max_attempts=2,
             max_concurrency=4,
         ),

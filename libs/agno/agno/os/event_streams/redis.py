@@ -159,6 +159,10 @@ class RedisEventStream(BaseEventStream):
         self._scripting_unavailable = False
         self._fence_refusals_logged: set = set()
 
+    @property
+    def shared(self) -> bool:
+        return True
+
     # ------------------------------------------------------------------
     # Keys
     # ------------------------------------------------------------------

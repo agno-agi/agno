@@ -950,6 +950,116 @@ async def test_cancellation_does_not_overwrite_a_recorded_stop(system, monkeypat
     assert output.status == RunStatus.error and output.content == "original failure"
 
 
+async def executing(coordinator):
+    """The binding once a turn's computer is bound and its execution has had time to start."""
+    store = coordinator.store
+    for _ in range(300):
+        row = await store._transaction(lambda c: c.execute(select(store.bindings)).mappings().one_or_none())
+        if row is not None and row["record"]["phase"] == "executing" and row["record"].get("computer"):
+            await asyncio.sleep(1)
+            return dict(row)
+        await asyncio.sleep(0.1)
+    pytest.fail("Turn never started executing")
+
+
+async def test_a_cancel_from_another_replica_ends_the_turn_cancelled(system):
+    from agno.exceptions import RunCancelledException
+
+    coordinator, spec, root = system
+    await run(coordinator, spec)
+    task = asyncio.create_task(run(coordinator, spec, "second", config={"delay": 20, "steps": 20}))
+    row = await executing(coordinator)
+    # Another replica's cancel endpoint: it fences the lease and removes the computer, but its
+    # cancel intent never reaches this process.
+    other = SandboxCoordinator(coordinator.store.db, coordinator.provider, coordinator.transfer, poll_wait=1)
+    await other._aterminate(
+        spec.session_id,
+        agent_id=spec.agent_id,
+        run_id="second",
+        user_id="user",
+        queue_attempt=row["queue_attempt"],
+        status="CANCELLED",
+        reason="Run cancelled",
+        env=spec.env,
+    )
+    with pytest.raises(RunCancelledException):
+        await asyncio.wait_for(task, 30)
+    assert await recovered_effects(coordinator, root) == ["first"]
+
+
+async def test_a_stop_claimed_elsewhere_reads_as_cancelled_before_the_computer_is_removed(system):
+    from agno.exceptions import RunCancelledException
+
+    coordinator, spec, _ = system
+    store = coordinator.store
+    task = asyncio.create_task(run(coordinator, spec, config={"delay": 20, "steps": 20}))
+    row = await executing(coordinator)
+    assert await store.acancelled_elsewhere(spec.session_id, "first") is False
+    state = await store._aclaim_stop(
+        agent_id=spec.agent_id,
+        session_id=spec.session_id,
+        user_id="user",
+        run_id="first",
+        queue_attempt=row["queue_attempt"],
+        status="CANCELLED",
+        reason="Run cancelled",
+    )
+    with pytest.raises(RunCancelledException):
+        await asyncio.wait_for(task, 30)
+    # Only the binding says so yet: the row turns CANCELLED once the other replica removes the computer.
+    status = await store._transaction(
+        lambda c: c.execute(select(store.runs.c.status).where(store.runs.c.run_id == "first")).scalar_one()
+    )
+    assert status == "RUNNING"
+    if isinstance(store.db, PostgresDb):
+        assert await asyncio.to_thread(store.cancelled_elsewhere, spec.session_id, "first") is True
+    assert (await coordinator._stop(state.lease, status="CANCELLED", reason="Run cancelled"))["status"] == "CANCELLED"
+    assert await store.acancelled_elsewhere(spec.session_id, "first") is True
+
+
+async def test_the_attempt_that_finds_its_computer_lost_restores_and_completes(system):
+    coordinator, spec, root = system
+    await run(coordinator, spec)
+    before = (await binding(coordinator))["record"]
+    # The process running the turn dies, then its host: the binding still names the lost computer.
+    task = asyncio.create_task(run(coordinator, spec, "second", config={"delay": 20, "steps": 20}))
+    await executing(coordinator)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await coordinator.provider.adestroy(handles_of(coordinator)[-1])
+    retried = await run(coordinator, spec, "second", config={"delay": 20, "steps": 20})
+    assert retried.status == RunStatus.completed, retried.content
+    after = (await binding(coordinator))["record"]
+    assert after["generation"] == before["generation"] + 2
+    assert len(handles_of(coordinator)) == 3
+    assert await recovered_effects(coordinator, root) == ["first", "second"]
+
+
+async def test_a_replacement_lost_again_ends_the_attempt_retryable(system, monkeypatch):
+    coordinator, spec, _ = system
+    await run(coordinator, spec)
+    task = asyncio.create_task(run(coordinator, spec, "second", config={"delay": 20, "steps": 20}))
+    await executing(coordinator)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await coordinator.provider.adestroy(handles_of(coordinator)[-1])
+    restore = coordinator.transfer.arestore
+
+    async def restore_then_lose(handle, reference):
+        state = await restore(handle, reference)
+        await coordinator.provider.adestroy(handle)
+        return state
+
+    # The replacement is lost as well: one replacement per attempt, then the queue decides.
+    monkeypatch.setattr(coordinator.transfer, "arestore", restore_then_lose)
+    failed = await run(coordinator, spec, "second", config={"delay": 20, "steps": 20})
+    assert failed.status == RunStatus.error and failed.metadata["retryable"] is True
+    assert "computer was lost" in failed.content
+    assert len(handles_of(coordinator)) == 3
+
+
 async def test_retryable_restore_failure_runs_again_on_the_next_queue_attempt(system, monkeypatch):
     coordinator, spec, root = system
     store = coordinator.store

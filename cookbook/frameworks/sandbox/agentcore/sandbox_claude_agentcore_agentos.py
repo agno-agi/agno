@@ -2,10 +2,9 @@
 
 The same agent as sandbox_claude_agentcore.py, served over HTTP like sandbox_claude_agentos.py.
 Deploy a runtime with agentcore_setup.py, set AGENTCORE_RUNTIME_ARN to the ARN it printed, set
-AWS_PROFILE and AWS_REGION, and run Postgres and Redis:
+AWS_PROFILE and AWS_REGION, and run Postgres:
 
     ./cookbook/scripts/run_pgvector.sh
-    docker run -d --name agno-redis -p 6379:6379 redis
     .venv/bin/python cookbook/frameworks/sandbox/agentcore/sandbox_claude_agentcore_agentos.py
 
 Then send a turn and poll it:
@@ -18,7 +17,8 @@ AgentOS, the queue and the database stay on this host; each turn runs Claude Cod
 microVM, which reaches Bedrock through the runtime's execution role. With a queue, any replica may
 run the next attempt, so every replica must read the same checkpoints: set
 AGNO_SANDBOX_CHECKPOINT_BUCKET to keep them in S3 (needs agno[s3]). Unset, they stay in a directory
-on this host, which only a single replica can use.
+on this host, which only a single replica can use. Redis is optional: set AGNO_SANDBOX_REDIS_URL to add
+live streams and resume from any replica.
 """
 
 import os
@@ -66,9 +66,9 @@ agent_os = AgentOS(
     queue=QueueConfig(
         durable=True,
         db=db,
-        redis=RedisCoordination(
-            url=os.getenv("AGNO_SANDBOX_REDIS_URL", "redis://localhost:6379/0")
-        ),
+        redis=RedisCoordination(url=os.environ["AGNO_SANDBOX_REDIS_URL"])
+        if os.getenv("AGNO_SANDBOX_REDIS_URL")
+        else None,
     ),
     telemetry=False,
 )
