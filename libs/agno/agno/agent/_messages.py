@@ -12,6 +12,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    Set,
     Tuple,
     Type,
     Union,
@@ -242,8 +243,25 @@ def _compaction_history_runs(agent: "Agent") -> Optional[int]:
     return max(agent.num_history_runs or 0, _PLANNER_WINDOW_MAX_RUNS)
 
 
+def _fanned_out_input_ids(agent: "Agent", input: Any) -> Optional[Set[str]]:
+    """Ids of the Message objects given as this run's input, when the session is shared between agents.
+
+    One Message run through several agents is already in the session once an earlier agent
+    answered it, so its history copy is left out and the run's own input stands as the turn.
+    """
+    if not agent.shared_session or input is None:
+        return None
+    messages = input if isinstance(input, list) else [input]
+    ids = {m.id for m in messages if isinstance(m, Message) and m.id is not None and not m.from_history}
+    return ids or None
+
+
 def _history_for_run(
-    agent: "Agent", session: AgentSession, run_response: Optional[RunOutput], skip_role: Optional[str]
+    agent: "Agent",
+    session: AgentSession,
+    run_response: Optional[RunOutput],
+    skip_role: Optional[str],
+    exclude_message_ids: Optional[Set[str]] = None,
 ) -> Tuple[List[Message], Any, Optional[Counter[str]]]:
     """The history a run works from, the fold in force for it, and the ids of the messages a run
     replays before the first fold - or None when it replays all of ``history``.
@@ -260,12 +278,16 @@ def _history_for_run(
     """
 
     def fetch(last_n_runs: Optional[int], limit: Optional[int]) -> List[Message]:
-        return session.get_messages(
+        messages = session.get_messages(
             last_n_runs=last_n_runs,
             limit=limit,
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
+            viewer_agent_id=agent.id if agent.shared_session else None,
         )
+        if exclude_message_ids:
+            messages = [m for m in messages if m.id not in exclude_message_ids]
+        return messages
 
     compaction = agent_compaction(agent)
     if compaction is None:
@@ -1970,7 +1992,9 @@ def get_run_messages(
             agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
         )
 
-        history, stored_record, replay_ids = _history_for_run(agent, session, run_response, skip_role)
+        history, stored_record, replay_ids = _history_for_run(
+            agent, session, run_response, skip_role, exclude_message_ids=_fanned_out_input_ids(agent, input)
+        )
 
         if len(history) > 0:
             history_copy = [copy_history_message(msg) for msg in history]
@@ -2185,7 +2209,9 @@ async def aget_run_messages(
             agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
         )
 
-        history, stored_record, replay_ids = _history_for_run(agent, session, run_response, skip_role)
+        history, stored_record, replay_ids = _history_for_run(
+            agent, session, run_response, skip_role, exclude_message_ids=_fanned_out_input_ids(agent, input)
+        )
 
         if len(history) > 0:
             history_copy = [copy_history_message(msg) for msg in history]
@@ -2368,7 +2394,11 @@ def _build_continue_run_messages(
         )
 
         history, stored_record, replay_ids = _history_for_run(
-            agent, continue_history_session(session, run_response), run_response, skip_role
+            agent,
+            continue_history_session(session, run_response),
+            run_response,
+            skip_role,
+            exclude_message_ids=_fanned_out_input_ids(agent, input),
         )
 
         if len(history) > 0:
