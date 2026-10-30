@@ -491,6 +491,36 @@ class TestPersistence:
         with pytest.raises(ValueError, match="stored as an Agent; saving a 'claude-agent-sdk' external agent"):
             ClaudeAgent(id="native").save(db=db)
 
+    def test_adapter_table_keys_are_adapter_parameters_only(self):
+        import inspect
+
+        from agno.db.base import BaseDb
+        from agno.db.postgres import AsyncPostgresDb, PostgresDb
+        from agno.db.utils import ADAPTER_TABLE_NAME_KEYS, DB_TABLE_NAME_KEYS
+
+        base_params = set(inspect.signature(BaseDb.__init__).parameters)
+        for key in ADAPTER_TABLE_NAME_KEYS:
+            assert key not in base_params and key not in DB_TABLE_NAME_KEYS
+            assert key in inspect.signature(PostgresDb.__init__).parameters
+            assert key in inspect.signature(AsyncPostgresDb.__init__).parameters
+
+    def test_registry_db_clone_keeps_the_sandbox_bindings_table(self):
+        from agno.db.postgres import PostgresDb
+
+        url = "postgresql+psycopg://ai:ai@127.0.0.1:1/none"
+        registered = PostgresDb(id="pg", db_url=url)
+        registry = Registry(dbs=[registered])
+        stored = ClaudeAgent(id="coder", db=PostgresDb(id="pg", db_url=url, sandbox_table="custom_bindings")).to_dict()
+
+        rebuilt = ClaudeAgent.from_dict(stored, registry=registry, strict=True)
+
+        # The override is honoured on a clone that shares the registered engine.
+        assert rebuilt.db.sandbox_table_name == "custom_bindings"
+        assert rebuilt.db is not registered
+        assert rebuilt.db.db_engine is registered.db_engine
+        same = ClaudeAgent.from_dict(ClaudeAgent(id="coder", db=registered).to_dict(), registry=registry, strict=True)
+        assert same.db is registered
+
     def test_agent_loaders_refuse_an_external_config(self, db, registry):
         ClaudeAgent(id="coder").save(db=db)
 

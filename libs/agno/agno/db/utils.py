@@ -53,6 +53,14 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
     }
 )
 
+# Table parameters only some adapters take, beyond BaseDb's. A stored config
+# that overrides one of these must clone the registered db with it too, or
+# the component silently lands on the adapter's default table.
+ADAPTER_TABLE_NAME_KEYS: frozenset = frozenset({"sandbox_table"})
+
+# Every table-name key a stored db config can carry.
+TABLE_NAME_KEYS: frozenset = DB_TABLE_NAME_KEYS | ADAPTER_TABLE_NAME_KEYS
+
 
 def is_unique_violation(exc: Exception) -> bool:
     """Whether ``exc`` is a DB unique-constraint / duplicate-key violation.
@@ -1105,7 +1113,7 @@ def _clone_db_with_table_overrides(
     Returns ``None`` if the source db type is not recognized, so the
     caller can decide how to fall back.
     """
-    overrides: Dict[str, Any] = {key: db_data[key] for key in DB_TABLE_NAME_KEYS if key in db_data}
+    overrides: Dict[str, Any] = {key: db_data[key] for key in TABLE_NAME_KEYS if key in db_data}
 
     def _accepted_by(cls: Any) -> Dict[str, Any]:
         """Only pass table overrides the adapter's constructor accepts: not
@@ -1190,7 +1198,7 @@ def resolve_db_from_config(
         if registry_db is not None:
             registry_dict = registry_db.to_dict()
             has_table_overrides = any(
-                key in db_data and db_data[key] != registry_dict.get(key) for key in DB_TABLE_NAME_KEYS
+                key in db_data and db_data[key] != registry_dict.get(key) for key in TABLE_NAME_KEYS
             )
             if not has_table_overrides:
                 return registry_db
