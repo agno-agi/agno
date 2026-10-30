@@ -2171,6 +2171,12 @@ async def _server_card(
     ``allowed_hosts``: the header is attacker-controlled even on a request whose ``Host`` is
     allowed, and this response is publicly cacheable, so an unvalidated value would let a caller
     plant a card naming their own host.
+
+    ``X-Forwarded-Proto`` is read without that check. A proxy that terminates TLS often sends it
+    with no ``X-Forwarded-Host`` at all, and gating the two together published ``http://`` for an
+    endpoint its clients only ever reach over TLS. It is safe unvalidated because only ``http``
+    and ``https`` are accepted: a caller can pick between the two schemes the endpoint already
+    speaks, which is not a host they control.
     """
     from urllib.parse import urlparse
 
@@ -2178,7 +2184,7 @@ async def _server_card(
         host = urlparse(card_url).netloc or request.headers.get("host") or request.url.netloc
         url = card_url
     else:
-        # Read on its own: a TLS-terminating proxy rarely sends X-Forwarded-Host, and only http(s) is accepted
+        # Only the two transport schemes; anything else here would be published as the endpoint's URL.
         forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
         scheme = forwarded_proto if forwarded_proto in ("http", "https") else request.url.scheme
         host = request.headers.get("host") or request.url.netloc
