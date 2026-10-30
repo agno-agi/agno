@@ -55,6 +55,7 @@ from agno.os.scopes import (
     AgentOSScope,
     get_default_scope_mappings,
     get_required_scopes_for_route,
+    restrict_scope_claims,
 )
 from agno.os.service_accounts import TOKEN_PREFIX as SERVICE_ACCOUNT_TOKEN_PREFIX
 from agno.os.service_accounts import VerificationStatus
@@ -690,7 +691,10 @@ def get_websocket_router(
                             # Store user context from JWT
                             websocket_user_context["user_id"] = claims["user_id"]
                             websocket_user_context["scopes"] = claims["scopes"]
-                            websocket_user_context["payload"] = payload
+                            # Factories read this as ctx.trusted.claims; carry the restricted scopes.
+                            websocket_user_context["payload"] = restrict_scope_claims(
+                                payload, claims["scopes"], jwt_validator.scopes_claim
+                            )
 
                             await websocket.send_text(
                                 json.dumps(

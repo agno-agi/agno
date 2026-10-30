@@ -22,12 +22,15 @@ from agno.os.auth import (
 )
 from agno.os.middleware.cors import OriginPolicy
 from agno.os.scopes import (
+    DENIES_CLAIM,
     AgentOSScope,
     RouteScopeCheck,
+    apply_scope_denies,
     get_default_scope_mappings,
     get_required_scopes_for_route,
     get_resource_context_from_path,
     has_required_scopes,
+    restrict_scope_claims,
 )
 from agno.os.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX, authenticate_service_account_request
 from agno.os.service_accounts import TOKEN_PREFIX as SERVICE_ACCOUNT_TOKEN_PREFIX
@@ -163,6 +166,7 @@ class JWTValidator:
         issuer: Optional[str] = None,
         issuer_claim: str = "iss",
         leeway: int = 10,
+        admin_scope: Optional[str] = None,
     ):
         """
         Initialize the JWT validator.
@@ -183,6 +187,8 @@ class JWTValidator:
                     IdP can mint tokens your keys verify.
             issuer_claim: JWT claim name for issuer (default: "iss").
             leeway: Seconds of leeway for clock skew tolerance (default: 10).
+            admin_scope: The scope that grants admin access (default: "agent_os:admin").
+                         Used when a token's denies claim restricts an admin token.
         """
         self.algorithm = algorithm
         self.validate = validate
@@ -193,6 +199,7 @@ class JWTValidator:
         self.issuer = issuer
         self.issuer_claim = issuer_claim
         self.leeway = leeway
+        self.admin_scope = admin_scope
 
         # Build list of verification keys
         self.verification_keys: List[str] = []
@@ -406,13 +413,15 @@ class JWTValidator:
             payload: The decoded JWT payload
 
         Returns:
-            Dictionary with user_id, session_id, scopes, and audience
+            Dictionary with user_id, session_id, scopes, and audience. ``scopes``
+            already has every grant named in the token's denies claim removed.
         """
         scopes = payload.get(self.scopes_claim, [])
         if isinstance(scopes, str):
             scopes = [scopes]
         elif not isinstance(scopes, list):
             scopes = []
+        scopes = apply_scope_denies(scopes, payload.get(DENIES_CLAIM), self.admin_scope)
 
         return {
             "user_id": payload.get(self.user_id_claim),
@@ -696,6 +705,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 session_id_claim=session_id_claim,
                 audience_claim=audience_claim,
                 issuer=issuer,
+                admin_scope=admin_scope,
             )
             if self._jwt_configured
             else None
@@ -1649,13 +1659,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 scopes = [scopes]
             elif not isinstance(scopes, list):
                 scopes = []
+            # Remove every grant the token's denies claim names, before anything reads
+            # or copies the scopes (route gates, factories, service-account minting).
+            scopes = apply_scope_denies(scopes, payload.get(DENIES_CLAIM), self.admin_scope)
 
             # Store claims in request.state
             request.state.authenticated = True
             request.state.user_id = user_id
             request.state.session_id = session_id
             request.state.scopes = scopes
-            request.state.claims = payload  # Full decoded JWT for factory ctx.trusted.claims
+            # Full decoded JWT for factory ctx.trusted.claims. When the token has denies, its
+            # scope claims carry the restricted list too, so nothing reading claims sees
+            # the denied grants.
+            request.state.claims = restrict_scope_claims(payload, scopes, self.scopes_claim)
             request.state.audience = audience
             request.state.authorization_enabled = self.authorization or False
             # Expose admin scope so downstream helpers (e.g. get_scoped_user_id)

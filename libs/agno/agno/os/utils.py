@@ -2144,6 +2144,7 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
                     # otherwise a token from an untrusted issuer that REST rejects would be
                     # accepted on the WS handshake (the pin held only on the HTTP path).
                     issuer=kwargs.get("issuer"),
+                    admin_scope=kwargs.get("admin_scope"),
                     issuer_claim=kwargs.get("issuer_claim", "iss"),
                 )
             except Exception as e:
