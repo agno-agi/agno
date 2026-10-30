@@ -167,6 +167,8 @@ def _db(db_id, *rows):
     """A database with the given id that answers both reads from the given rows."""
     db = MagicMock()
     db.id = db_id
+    db.db_engine = None
+    db.os_metrics_totals_table_name = "agno_os_metrics_totals"
     db.get_os_metrics = MagicMock(side_effect=_totals(*rows))
     db.get_os_metrics_totals = MagicMock(side_effect=_window_totals(*rows))
     return db
@@ -1057,6 +1059,15 @@ class TestWindow:
 
         assert response.status_code == 422
 
+    def test_window_longer_than_the_setting_is_a_422(self, mock_db):
+        client = _client(AgnoAPISettings(os_metrics_max_window_days=7), mock_db)
+        with _scope(None):
+            refused = client.get(f"/os/metrics/sessions?starting_date={_day(7).isoformat()}")
+            answered = client.get(f"/os/metrics/sessions?starting_date={_day(6).isoformat()}")
+
+        assert refused.status_code == 422
+        assert answered.status_code == 200
+
 
 # =============================================================================
 # Several databases, read at the same time and added up
@@ -1239,6 +1250,23 @@ class TestDatabases:
         support_db.refresh_os_metrics.assert_called_once_with()
         sales_db.refresh_os_metrics.assert_not_called()
         assert refresh["db_ids"] == {"db-1": UPDATED_AT_ISO}
+
+    def test_sync_and_async_databases_on_one_url_are_read_once(self, settings):
+        """Their ids differ, since the URL names the driver, but they hold the same rows."""
+        from agno.db.postgres import AsyncPostgresDb, PostgresDb
+
+        sync_db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+        async_db = AsyncPostgresDb(db_url="postgresql+psycopg_async://ai:ai@localhost:5532/ai")
+        assert sync_db.id != async_db.id
+        for db in (sync_db, async_db):
+            db.get_os_metrics = MagicMock(side_effect=_totals(_today_row()))
+            db.get_os_metrics_totals = MagicMock(side_effect=_window_totals(_today_row()))
+        client = _dbs_client(settings, sync_db, async_db)
+        with _scope(None):
+            body = client.get(f"/os/metrics/sessions?{_last(1)}").json()
+
+        assert body["total_sessions"] == 3
+        async_db.get_os_metrics.assert_not_called()
 
     def test_one_database_of_an_id_skipped_still_counts_the_other(self, settings):
         """The database that did answer is counted, and its id is named with the reason the other was left out."""
