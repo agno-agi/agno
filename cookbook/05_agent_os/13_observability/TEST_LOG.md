@@ -86,11 +86,38 @@ one agent run, one agent session, one user, and 42 total tokens.
 
 ---
 
+### os_metrics.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Ran the checked-in example on 2026-10-29 against the local
+PostgreSQL: `metrics-researcher` (`gpt-5.5`) and `metrics-summarizer`
+(`gpt-5.6-luna`) ran once each as `observability-user`, the example printed the
+day's totals and started the server, then every `/os/metrics` route was called
+over HTTP on port 7777.
+
+**Result:** Printed 18 sessions today, 20 runs today, 20 completed runs today,
+789 tokens today and 10 run(s) for each model, counting the earlier runs of the
+day in the same database. Every read route answered 200 with no database
+skipped; `?user_id=observability-user` returned that user's 2 sessions.
+`GET /os/metrics/users` answered 503, since the example passes no
+`user_directory`. `POST /os/metrics/refresh` answered `completed` with
+`changed: false`, `GET /os/metrics/refresh/status` then reported `completed`
+with its start and finish times, and a repeated read sent with its ETag
+answered 304 with no body. Re-ran `run_os_metrics_demo()` on 2026-10-30, with the
+self-check now comparing against the day's runs before the two new ones: it
+passed and printed 19 sessions, 26 runs, 26 completed runs, 941 tokens and 12
+run(s) for each model; the server was not started in that run.
+
+---
+
 ## Validation
 
-- All five runnable examples completed with live observed results.
+- All six runnable examples completed with live observed results.
 - The basic server passed `/health`, `/config`, and trace-route discovery.
-- Recursive pattern validation checked exactly 5 Python files with 0
+- Recursive pattern validation checked exactly 6 Python files with 0
   violations.
 - Targeted Ruff format and check passed.
 - Deprecated API, stale-model, non-final-status, emoji, and static-f-string

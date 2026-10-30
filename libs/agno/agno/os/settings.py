@@ -31,6 +31,11 @@ class AgnoAPISettings(BaseSettings):
         default=30, description="TTL (seconds) for the in-process service-account verification cache; 0 disables it"
     )
 
+    # Days one OS metrics route may cover; a longer window gets a 422
+    os_metrics_max_window_days: int = Field(
+        default=3660, description="Maximum number of days one OS metrics request may cover"
+    )
+
     # Cors origin list to allow requests from.
     # This list is set using the set_cors_origin_list validator
     cors_origin_list: Optional[List[str]] = Field(default=None, validate_default=True)
