@@ -2250,7 +2250,7 @@ class DynamoDb(BaseDb):
             totals_table_name: The OS metrics totals table.
             aggregation_period: "daily" or "monthly".
             starting_date: The first day to read. ``None`` reads every row of the period.
-            ending_date: The last day to read.
+            ending_date: The last day to read. ``None`` reads every day from the first one.
             attributes: The attributes to read. ``None`` reads the whole row.
 
         Returns:
@@ -2268,6 +2268,10 @@ class DynamoDb(BaseDb):
             query_kwargs["ExpressionAttributeNames"]["#date"] = "date"
             query_kwargs["ExpressionAttributeValues"][":start_date"] = {"S": starting_date.isoformat()}
             query_kwargs["ExpressionAttributeValues"][":end_date"] = {"S": ending_date.isoformat()}
+        elif starting_date is not None:
+            query_kwargs["KeyConditionExpression"] += " AND #date >= :start_date"
+            query_kwargs["ExpressionAttributeNames"]["#date"] = "date"
+            query_kwargs["ExpressionAttributeValues"][":start_date"] = {"S": starting_date.isoformat()}
         if attributes is not None:
             query_kwargs["ExpressionAttributeNames"].update({f"#{name}": name for name in attributes})
             query_kwargs["ProjectionExpression"] = ", ".join(f"#{name}" for name in attributes)
@@ -2475,10 +2479,16 @@ class DynamoDb(BaseDb):
         if not self._lock_os_metrics(totals_table_name, table_name, lock_id, wait_for_rebuild):
             return results
         try:
-            day_rows = self._get_os_metrics_totals_rows(totals_table_name, "daily", attributes=["date", "completed"])
             month_rows = self._get_os_metrics_totals_rows(totals_table_name, "monthly", attributes=["date"])
-            day_starts = [record["date"] for record in day_rows]
             calculated_months = [record["date"] for record in month_rows]
+            # Months are written oldest first, so only the days after the latest month written can complete one
+            starting_date = None
+            if calculated_months:
+                starting_date = os_metrics_month_end(max(calculated_months)) + timedelta(days=1)
+            day_rows = self._get_os_metrics_totals_rows(
+                totals_table_name, "daily", starting_date, attributes=["date", "completed"]
+            )
+            day_starts = [record["date"] for record in day_rows]
             latest_completed = max((record["date"] for record in day_rows if record.get("completed")), default=None)
             for month_start in get_months_to_calculate_os_metrics_for(day_starts, calculated_months, latest_completed):
                 # Page by page, so a month of many rows is added up a batch at a time instead of held whole

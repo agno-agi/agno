@@ -15,10 +15,11 @@ import pytest
 
 try:
     from agno.db.dynamo import DynamoDb
-    from agno.db.dynamo.utils import serialize_to_dynamo_item
+    from agno.db.dynamo.utils import build_os_metrics_totals_update, serialize_to_dynamo_item
 except ImportError:
     DynamoDb = None  # type: ignore[misc,assignment]
 
+from agno.db.utils import build_os_metrics_totals_row
 from agno.run.base import RunStatus
 
 pytestmark = pytest.mark.skipif(DynamoDb is None, reason="boto3 not installed")
@@ -430,3 +431,34 @@ def test_reads_every_owner_from_totals_rows_and_one_owner_from_their_rows():
     assert updated_at is not None
     assert [(day["date"], day["total_tokens"]) for day in alice] == [(_day(1), 14), (_day(0), 20)]
     assert [(day["date"], day["total_tokens"]) for day in no_owner] == [(_day(0), 6)]
+
+
+def test_month_step_reads_only_the_days_after_the_latest_month(monkeypatch):
+    db = _new_db()
+    for days_ago in range(1, 120):
+        db.client.update_item(
+            **build_os_metrics_totals_update(
+                "test_os_metrics_totals",
+                build_os_metrics_totals_row([], "daily", _day(days_ago), days_ago > 1),
+            )
+        )
+    latest_month = _day(1).replace(day=1)
+    db.client.update_item(
+        **build_os_metrics_totals_update(
+            "test_os_metrics_totals",
+            build_os_metrics_totals_row([], "monthly", (latest_month - timedelta(days=1)).replace(day=1), True),
+        )
+    )
+    day_rows_read: List[int] = []
+    query = db.client.query
+
+    def counting_query(**kwargs):
+        response = query(**kwargs)
+        if kwargs["ExpressionAttributeValues"].get(":period") == {"S": "daily"} and "Limit" not in kwargs:
+            day_rows_read.append(len(response["Items"]))
+        return response
+
+    monkeypatch.setattr(db.client, "query", counting_query)
+    db._calculate_month_os_metrics("test_os_metrics", "test_os_metrics_totals", "lock-1", True)
+
+    assert day_rows_read[0] == (_day(1) - latest_month).days + 1
