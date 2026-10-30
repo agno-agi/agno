@@ -1229,29 +1229,31 @@ def _migrate_mysql_like_sessions(db: BaseDb, table_name: str) -> bool:
             log_info(f"Table {table_name} has no runs column, skipping migration")
             return False
 
-        # Copy every legacy run into the runs table
-        result = sess.execute(
-            text(f"SELECT session_id, user_id, runs FROM `{db_schema}`.`{table_name}` WHERE runs IS NOT NULL")
-        )
+        # Copy every legacy run into the runs table. An unbuffered MySQL result blocks its
+        # connection until fully read, so the streamed read gets its own connection.
         migrated_runs = 0
-        while True:
-            batch = result.fetchmany(BATCH_SIZE)
-            if not batch:
-                break
+        with db.db_engine.connect() as read_conn:  # type: ignore
+            result = read_conn.execution_options(stream_results=True).execute(
+                text(f"SELECT session_id, user_id, runs FROM `{db_schema}`.`{table_name}` WHERE runs IS NOT NULL")
+            )
+            while True:
+                batch = result.fetchmany(BATCH_SIZE)
+                if not batch:
+                    break
 
-            rows: List[Dict[str, Any]] = []
-            for session_id, user_id, runs in batch:
-                # MySQL JSON columns come back as either dict/list (asyncmy)
-                # or str (pymysql), depending on driver — _build_run_rows handles both.
-                rows.extend(_build_run_rows(runs, session_id, user_id, run_data_as_string=False))
+                rows: List[Dict[str, Any]] = []
+                for session_id, user_id, runs in batch:
+                    # MySQL JSON columns come back as either dict/list (asyncmy)
+                    # or str (pymysql), depending on driver — _build_run_rows handles both.
+                    rows.extend(_build_run_rows(runs, session_id, user_id, run_data_as_string=False))
 
-            if rows:
-                insert_stmt = mysql.insert(runs_table).values(rows)
-                # ON DUPLICATE KEY UPDATE that effectively does nothing: keeps idempotency
-                # without raising on previously-migrated runs.
-                insert_stmt = insert_stmt.on_duplicate_key_update(run_id=insert_stmt.inserted.run_id)
-                sess.execute(insert_stmt)
-                migrated_runs += len(rows)
+                if rows:
+                    insert_stmt = mysql.insert(runs_table).values(rows)
+                    # ON DUPLICATE KEY UPDATE that effectively does nothing: keeps idempotency
+                    # without raising on previously-migrated runs.
+                    insert_stmt = insert_stmt.on_duplicate_key_update(run_id=insert_stmt.inserted.run_id)
+                    sess.execute(insert_stmt)
+                    migrated_runs += len(rows)
 
         log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs table")
         log_info(
@@ -1300,14 +1302,23 @@ async def _migrate_async_mysql_sessions(db: AsyncBaseDb, table_name: str) -> boo
             log_info(f"Table {table_name} has no runs column, skipping migration")
             return False
 
-        result = await sess.execute(
-            text(f"SELECT session_id, user_id, runs FROM `{db_schema}`.`{table_name}` WHERE runs IS NOT NULL")
-        )
+        # Page by primary key: asyncmy reads a streamed result into memory as fast as the server sends it.
         migrated_runs = 0
+        last_session_id: Optional[str] = None
         while True:
-            batch = result.fetchmany(BATCH_SIZE)
+            after_clause = "" if last_session_id is None else "AND session_id > :after "
+            batch = (
+                await sess.execute(
+                    text(
+                        f"SELECT session_id, user_id, runs FROM `{db_schema}`.`{table_name}` "
+                        f"WHERE runs IS NOT NULL {after_clause}ORDER BY session_id LIMIT {BATCH_SIZE}"
+                    ),
+                    {"after": last_session_id},
+                )
+            ).fetchall()
             if not batch:
                 break
+            last_session_id = batch[-1][0]
 
             rows: List[Dict[str, Any]] = []
             for session_id, user_id, runs in batch:
@@ -1862,9 +1873,9 @@ def _migrate_redis(db: BaseDb, table_type: str, table_name: str) -> bool:
     if table_type != "sessions":
         return False
 
-    sessions = db._get_all_records("sessions")  # type: ignore
+    # One session record in memory at a time, not the whole sessions table
     migrated_runs = 0
-    for session in sessions:
+    for session in db._iter_records("sessions"):  # type: ignore
         legacy_runs = session.get("runs")
         if not legacy_runs:
             continue
@@ -1954,9 +1965,9 @@ def _migrate_valkey(db: BaseDb, table_type: str, table_name: str) -> bool:
 
     from agno.db.valkey.utils import generate_valkey_key, serialize_data  # type: ignore
 
-    sessions = db._get_all_records("sessions")  # type: ignore
+    # One batch of session records in memory at a time, not the whole sessions table
     migrated_runs = 0
-    for session in sessions:
+    for session in db._iter_records("sessions", batch_size=BATCH_SIZE):  # type: ignore
         legacy_runs = session.get("runs")
         if not legacy_runs:
             continue
@@ -2263,52 +2274,53 @@ def _migrate_dynamodb(db: BaseDb, table_type: str, table_name: str) -> bool:
     # Ensure runs table exists
     db._get_table("runs", create_table_if_not_found=True)  # type: ignore
 
-    # Scan all sessions
-    items: List[Dict[str, Any]] = []
-    try:
-        response = client.scan(TableName=table_name)
-        items.extend(response.get("Items", []))
-        while "LastEvaluatedKey" in response:
-            response = client.scan(TableName=table_name, ExclusiveStartKey=response["LastEvaluatedKey"])
-            items.extend(response.get("Items", []))
-    except Exception as e:
-        log_error(f"Failed to scan {table_name} during v3 migration: {str(e)}")
-        return False
-
+    # Copy page by page so memory is bounded by one scan page, not the table
     migrated = 0
-    for item in items:
-        runs_attr = item.get("runs")
-        if runs_attr is None:
-            continue
+    scan_kwargs: Dict[str, Any] = {"TableName": table_name}
+    while True:
+        try:
+            response = client.scan(**scan_kwargs)
+        except Exception as e:
+            log_error(f"Failed to scan {table_name} during v3 migration: {str(e)}")
+            return False
 
-        legacy: Any = None
-        if "S" in runs_attr:
-            try:
-                legacy = _json.loads(runs_attr["S"])
-            except (_json.JSONDecodeError, TypeError):
-                legacy = None
-        elif "L" in runs_attr:
-            legacy = runs_attr["L"]
+        for item in response.get("Items", []):
+            runs_attr = item.get("runs")
+            if runs_attr is None:
+                continue
 
-        if not legacy:
-            continue
+            legacy: Any = None
+            if "S" in runs_attr:
+                try:
+                    legacy = _json.loads(runs_attr["S"])
+                except (_json.JSONDecodeError, TypeError):
+                    legacy = None
+            elif "L" in runs_attr:
+                legacy = runs_attr["L"]
 
-        session_id = item.get("session_id", {}).get("S")
-        user_id = item.get("user_id", {}).get("S")
-        if not session_id:
-            continue
+            if not legacy:
+                continue
 
-        rows = _build_run_rows(legacy, session_id, user_id, run_data_as_string=False)
-        for row in rows:
-            payload = {k: v for k, v in row.items() if v is not None}
-            if "run_data" in payload and isinstance(payload["run_data"], (dict, list)):
-                payload["run_data"] = _json.dumps(payload["run_data"])
-            dynamo_item = _serialize_to_dynamo_item_minimal(payload)
-            # Propagates on non-transient failure so a partial migration aborts
-            # loudly rather than silently dropping runs. Safe to re-run (the
-            # conditional write skips already-migrated runs).
-            if _dynamo_put_run_with_retry(client, runs_table, dynamo_item):
-                migrated += 1
+            session_id = item.get("session_id", {}).get("S")
+            user_id = item.get("user_id", {}).get("S")
+            if not session_id:
+                continue
+
+            rows = _build_run_rows(legacy, session_id, user_id, run_data_as_string=False)
+            for row in rows:
+                payload = {k: v for k, v in row.items() if v is not None}
+                if "run_data" in payload and isinstance(payload["run_data"], (dict, list)):
+                    payload["run_data"] = _json.dumps(payload["run_data"])
+                dynamo_item = _serialize_to_dynamo_item_minimal(payload)
+                # Propagates on non-transient failure so a partial migration aborts
+                # loudly rather than silently dropping runs. Safe to re-run (the
+                # conditional write skips already-migrated runs).
+                if _dynamo_put_run_with_retry(client, runs_table, dynamo_item):
+                    migrated += 1
+
+        if "LastEvaluatedKey" not in response:
+            break
+        scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
     log_info(
         f"-- Copied {migrated} runs into {runs_table}. The legacy 'runs' attribute on each session item "

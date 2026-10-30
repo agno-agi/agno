@@ -132,6 +132,31 @@ def test_v3_migration_is_non_destructive():
     assert raw is not None and raw.get("runs") is not None
 
 
+def test_v3_migration_copies_each_session_before_reading_the_next():
+    """Memory stays bounded by one session record, not the whole sessions table."""
+    db = _new_db()
+    for i in range(3):
+        _insert_legacy_session(db, f"s{i}", [_make_run(f"r{i}", f"s{i}", "x").to_dict()])
+    session_prefix = generate_redis_key(prefix=db.db_prefix, table_type="sessions", key_id="")
+    runs_pattern = generate_redis_key(prefix=db.db_prefix, table_type="runs", key_id="*")
+    real_get = db.redis_client.get
+    runs_copied_at_each_session_read: List[int] = []
+
+    def get(key):
+        if str(key).startswith(session_prefix):
+            run_keys = [k for k in db.redis_client.keys(runs_pattern) if ":by_session:" not in k]
+            runs_copied_at_each_session_read.append(len(run_keys))
+        return real_get(key)
+
+    db.redis_client.get = get  # type: ignore[method-assign]
+
+    from agno.db.migrations.versions.v3_0_0 import up as v3_up
+
+    v3_up(db, table_type="sessions", table_name="agno_sessions")
+
+    assert runs_copied_at_each_session_read == [0, 1, 2]
+
+
 def test_cleanup_refuses_when_legacy_runs_still_present():
     db = _new_db()
     _insert_legacy_session(db, "s7", [_make_run("r1", "s7", "x").to_dict()])
