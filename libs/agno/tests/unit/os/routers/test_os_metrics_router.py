@@ -1068,6 +1068,14 @@ class TestWindow:
         assert refused.status_code == 422
         assert answered.status_code == 200
 
+    def test_limit_shorter_than_the_default_window_shortens_it(self, mock_db):
+        client = _client(AgnoAPISettings(os_metrics_max_window_days=7), mock_db)
+        with _scope(None):
+            response = client.get("/os/metrics/sessions")
+
+        assert response.status_code == 200
+        assert _read_kwargs(mock_db)["starting_date"] == _day(13)
+
 
 # =============================================================================
 # Several databases, read at the same time and added up
