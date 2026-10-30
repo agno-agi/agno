@@ -4,6 +4,7 @@ import json
 import logging
 from collections import OrderedDict
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, List, Optional, Union
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Request, Response
@@ -101,26 +102,85 @@ def _window(starting_date: Optional[date], ending_date: Optional[date], max_wind
     if starting_date > ending_date:
         raise HTTPException(status_code=422, detail="starting_date must be on or before ending_date")
     if (ending_date - starting_date).days + 1 > max_window_days:
-        raise HTTPException(status_code=422, detail=f"The window can cover at most {max_window_days} days")
+        raise HTTPException(
+            status_code=422, detail=f"starting_date and ending_date can cover at most {max_window_days} days"
+        )
     return starting_date, ending_date
+
+
+def _os_metrics_location(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> tuple[Optional[str], ...]:
+    """Where a database keeps its OS metrics rows: databases at one location hold the same rows."""
+    table_names = (getattr(db, "os_metrics_table_name", None), getattr(db, "os_metrics_totals_table_name", None))
+    address: Optional[str] = None
+    db_engine = getattr(db, "db_engine", None)
+    connection_kwargs = getattr(
+        getattr(getattr(db, "redis_client", None), "connection_pool", None), "connection_kwargs", None
+    )
+    database_string = getattr(getattr(db, "db_client", None), "_database_string", None)
+    db_path = getattr(db, "db_path", None)
+    if db_engine is not None:
+        url = db_engine.url
+        # A URL that names no server, or no SQLite file, cannot tell two databases apart
+        if url.get_backend_name() == "sqlite":
+            named = bool(url.database) and url.query.get("mode") != "memory" and ":memory:" not in url.database
+        else:
+            # A PostgreSQL schema lives inside a database, while a MySQL schema is the database itself
+            named = url.host is not None and (bool(url.database) or url.get_backend_name() != "postgresql")
+        if named:
+            # The driver is left out, so a sync and an async adapter on one database share a location
+            address = url.set(drivername=url.get_backend_name()).render_as_string(hide_password=True)
+    elif isinstance(connection_kwargs, dict):
+        # A client on a unix socket names its path instead of a host and port, and a Sentinel client names neither
+        if connection_kwargs.get("path"):
+            address = f"unix://{connection_kwargs['path']}?db={connection_kwargs.get('db')}"
+        elif connection_kwargs.get("host") is not None:
+            address = (
+                f"redis://{connection_kwargs['host']}:{connection_kwargs.get('port')}/{connection_kwargs.get('db')}"
+            )
+    elif isinstance(database_string, str):
+        # A Firestore client names its project and database together
+        address = database_string
+    elif isinstance(db_path, Path):
+        address = str(db_path.resolve())
+    else:
+        for name in ("db_url", "_db_url", "project_id", "bucket_name"):
+            if isinstance(getattr(db, name, None), str):
+                address = getattr(db, name)
+                break
+    if address is None:
+        return (str(db.id), *table_names)
+    store_names = (
+        getattr(db, name, None) for name in ("db_schema", "db_name", "_db_ns", "_db_db", "db_prefix", "prefix")
+    )
+    return (address, *(name for name in store_names if isinstance(name, str)), *table_names)
 
 
 def _registered_os_dbs(
     os_db: Optional[Union[BaseDb, AsyncBaseDb]],
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
 ) -> dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]:
-    """Collect every database of the AgentOS by id, each once."""
+    """Collect every database of the AgentOS by id."""
     registered_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]] = {}
     if os_db is not None:
         registered_dbs[str(os_db.id)] = [os_db]
     for registered_db_id, db_list in dbs.items():
-        for db in db_list:
-            os_metrics_dbs = registered_dbs.setdefault(registered_db_id, [])
-            # Databases with the same id that share an OS metrics table hold the same rows, so only one is read
-            table_names = [getattr(os_metrics_db, "os_metrics_table_name", None) for os_metrics_db in os_metrics_dbs]
-            if getattr(db, "os_metrics_table_name", None) not in table_names:
-                os_metrics_dbs.append(db)
+        registered_dbs.setdefault(registered_db_id, []).extend(db_list)
     return registered_dbs
+
+
+def _unique_os_dbs(
+    os_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+) -> dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]:
+    """Keep each location once, under the first id it is registered with, so its rows are read once."""
+    locations = set()
+    unique_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]] = {}
+    for db_id, db_list in os_dbs.items():
+        for db in db_list:
+            location = _os_metrics_location(db)
+            if location not in locations:
+                locations.add(location)
+                unique_dbs.setdefault(db_id, []).append(db)
+    return unique_dbs
 
 
 def get_metrics_router(
@@ -514,13 +574,13 @@ def attach_routes(
         if not any(registered_dbs.values()):
             raise HTTPException(status_code=400, detail="No database is configured on this AgentOS")
         if not db_ids:
-            return registered_dbs
+            return _unique_os_dbs(registered_dbs)
         os_dbs = {}
         for db_id in db_ids:
             if db_id not in registered_dbs:
                 raise HTTPException(status_code=404, detail=f"No database found with id '{db_id}'")
             os_dbs[db_id] = registered_dbs[db_id]
-        return os_dbs
+        return _unique_os_dbs(os_dbs)
 
     async def _read_os_metrics(
         db: Union[BaseDb, AsyncBaseDb],
