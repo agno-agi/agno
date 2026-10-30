@@ -158,7 +158,7 @@ def _disconnect(
         )
         if os_info.auth_mode not in ("none",):
             require_secure_url(os_info.base_url, allow_http=allow_http, what="the admin credential")
-        admin_token = resolve_admin_token(os_info.auth_mode, json_mode)
+        admin_token = resolve_admin_token(os_info.auth_mode, json_mode, os_info.base_url)
         api = AgentOSAPI(os_info.base_url, admin_token=admin_token)
 
     adapters = build_adapters()

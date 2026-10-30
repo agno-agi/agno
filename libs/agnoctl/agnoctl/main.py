@@ -5,6 +5,7 @@ from rich.table import Table
 from rich.text import Text
 
 from agnoctl import __version__
+from agnoctl.commands.cloud import login, logout, os_app
 from agnoctl.commands.connect import connect
 from agnoctl.commands.create import create
 from agnoctl.commands.disconnect import disconnect
@@ -21,6 +22,9 @@ app = typer.Typer(
     pretty_exceptions_show_locals=False,
 )
 
+app.command(name="login")(login)
+app.command(name="logout")(logout)
+app.add_typer(os_app, name="os")
 app.command(name="connect")(connect)
 app.command(name="disconnect")(disconnect)
 app.command(name="create")(create)
@@ -46,6 +50,13 @@ _GROUPS: List[Tuple[str, List[Tuple[str, str]]]] = [
             ("agno create", "Create a new AgentOS"),
             ("agno connect", "Connect your AI apps to your AgentOS using MCP"),
             ("agno disconnect", "Disconnect your AI apps from your AgentOS"),
+        ],
+    ),
+    (
+        "os.agno.com",
+        [
+            ("agno login / logout", "Sign in to os.agno.com"),
+            ("agno os register", "Register a deployed AgentOS and write its JWKS URL"),
         ],
     ),
     (
