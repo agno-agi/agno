@@ -1432,6 +1432,44 @@ def test_calculate_os_metrics_reads_nested_run_ids_in_chunks(postgres_db_real: P
     assert _stored_totals_rows(postgres_db_real)[("daily", past_day)]["input_tokens"] == 50
 
 
+def test_calculate_os_metrics_names_a_parent_run_of_the_day_before(postgres_db_real: PostgresDb):
+    """Ensure a member run started after midnight by a team run of the day before names that team as its parent"""
+    midnight = _noon_utc(2) - 12 * 3600
+    member_run = RunOutput(
+        run_id="member_run",
+        agent_id="agent-2",
+        user_id="bob",
+        parent_run_id="team_run",
+        status=RunStatus.completed,
+        model="gpt-5",
+        model_provider="OpenAI",
+        metrics=_run_metrics(10, 0),
+        messages=[],
+        created_at=midnight + 60,
+    )
+    team_session = TeamSession(
+        session_id="team_session",
+        team_id="team-1",
+        user_id="bob",
+        runs=[
+            TeamRunOutput(
+                run_id="team_run",
+                team_id="team-1",
+                user_id="bob",
+                status=RunStatus.completed,
+                created_at=midnight - 60,
+            ),
+            member_run,
+        ],
+        created_at=midnight - 60,
+        updated_at=midnight + 60,
+    )
+    _persist(postgres_db_real, team_session)
+    postgres_db_real.calculate_os_metrics()
+
+    assert _stored_rows(postgres_db_real)[(_utc_date(2), "bob", "agent", "agent-2")]["parent_component_id"] == "team-1"
+
+
 def test_calculate_os_metrics_stores_each_day_as_it_is_calculated(postgres_db_real: PostgresDb, monkeypatch):
     """Ensure a day that fails to calculate leaves the days before it stored, and the next rebuild writes the rest"""
     for days_ago in [3, 2, 1, 0]:

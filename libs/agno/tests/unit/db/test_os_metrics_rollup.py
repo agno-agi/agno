@@ -128,7 +128,7 @@ def _rows(sessions=(), runs=(), stored_run_ids=frozenset()):
     """Build the day's rows keyed by (user_id, component_type, component_id)."""
     return {
         (row["user_id"], row["component_type"], row["component_id"]): row
-        for row in calculate_date_os_metrics(TARGET_DATE, list(sessions), list(runs), set(stored_run_ids))
+        for row in calculate_date_os_metrics(TARGET_DATE, list(sessions), list(runs), set(stored_run_ids), [])
     }
 
 
@@ -143,7 +143,7 @@ def _stable(row):
 
 
 def _day_rows(runs, sessions=(), day=TARGET_DATE):
-    return calculate_date_os_metrics(day, list(sessions), list(runs), set())
+    return calculate_date_os_metrics(day, list(sessions), list(runs), set(), [])
 
 
 class _Row:
@@ -254,6 +254,19 @@ def test_team_member_run_counts_under_the_member_agent():
     assert rows[("alice", "team", "team-1")]["runs_count"] == 1
     assert rows[("alice", "agent", "member-1")]["runs_count"] == 1
     assert rows[("alice", "agent", "member-1")]["parent_component_id"] == "team-1"
+
+
+def test_member_run_names_a_team_run_of_another_day_as_its_parent():
+    """A member run started after midnight by a team run of the day before names that team as its parent."""
+    rows = calculate_date_os_metrics(
+        TARGET_DATE,
+        [],
+        [_run("member-run", component_id="member-1", parent_run_id="team-run")],
+        set(),
+        [{"run_id": "team-run", "run_type": "team", "team_id": "team-1"}],
+    )
+
+    assert [(row["component_id"], row["parent_component_id"]) for row in rows] == [("member-1", "team-1")]
 
 
 def test_member_run_and_the_same_agent_alone_are_two_rows():
@@ -570,8 +583,8 @@ def test_model_metrics_sorted_deterministically():
 def test_rebuild_yields_identical_rows():
     """Two builds of the same inputs differ only in their timestamps."""
     runs = [_run("run-1", duration=1.0, call_durations=(0.2,)), _run("run-2", status=ERROR)]
-    first = calculate_date_os_metrics(TARGET_DATE, [_session()], runs, set())
-    second = calculate_date_os_metrics(TARGET_DATE, [_session()], runs, set())
+    first = calculate_date_os_metrics(TARGET_DATE, [_session()], runs, set(), [])
+    second = calculate_date_os_metrics(TARGET_DATE, [_session()], runs, set(), [])
 
     assert [_stable(row) for row in first] == [_stable(row) for row in second]
 
@@ -579,8 +592,8 @@ def test_rebuild_yields_identical_rows():
 def test_unchanged_rebuild_writes_nothing():
     """A rebuild equal to the stored rows returns no rows to write and no stale keys."""
     runs = [_run("run-1", duration=1.0, call_durations=(0.2,))]
-    stored = calculate_date_os_metrics(TARGET_DATE, [_session()], runs, set())
-    rebuilt = calculate_date_os_metrics(TARGET_DATE, [_session()], runs, set())
+    stored = calculate_date_os_metrics(TARGET_DATE, [_session()], runs, set(), [])
+    rebuilt = calculate_date_os_metrics(TARGET_DATE, [_session()], runs, set(), [])
 
     assert os_metrics_rows_to_write(rebuilt, stored) == ([], [])
 
@@ -678,7 +691,7 @@ def test_total_row_totals_every_owner():
 
 def test_day_without_rows_gets_a_total_row_of_zeros():
     """A day without traffic has no rows but still a total row, so it is never rebuilt again once completed."""
-    assert calculate_date_os_metrics(TARGET_DATE, [], [], set()) == []
+    assert calculate_date_os_metrics(TARGET_DATE, [], [], set(), []) == []
 
     day = build_os_metrics_totals_row([], "daily", TARGET_DATE, completed=True)
 

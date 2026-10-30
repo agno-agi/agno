@@ -1197,6 +1197,7 @@ def calculate_date_os_metrics(
     sessions: List[Dict[str, Any]],
     runs: List[Dict[str, Any]],
     stored_run_ids: Set[str],
+    parent_runs: Sequence[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """Calculate OS metrics for the given single date, one row per user and agent, team or workflow.
 
@@ -1210,6 +1211,8 @@ def calculate_date_os_metrics(
         runs (List[Dict[str, Any]]): The runs created on that date, as stored.
         stored_run_ids (Set[str]): The ids of the nested runs of that date that are stored as
             runs of their own, on any date. Those are counted where they are stored.
+        parent_runs (Sequence[Dict[str, Any]]): The runs of another date that started runs of
+            that date, such as a team run started before midnight. Only their ids are read.
 
     Returns:
         List[Dict[str, Any]]: The calculated rows of agno_os_metrics, one per user, agent, team
@@ -1228,7 +1231,7 @@ def calculate_date_os_metrics(
     seen_run_ids = {run["run_id"] for run in runs if run.get("run_id")} | stored_run_ids
     components = {
         run["run_id"]: component
-        for run in runs
+        for run in list(runs) + list(parent_runs)
         if run.get("run_id") and (component := _os_metrics_component(run)) is not None
     }
     for run in runs:

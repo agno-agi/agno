@@ -3461,6 +3461,7 @@ class PostgresDb(BaseDb):
         # its sessions: no index finds the sessions that hold a day's legacy runs. Nothing writes the column since
         # runs moved to the runs table, so a read before the days misses nothing
         legacy_run_rows_by_day: Dict[date, List[Any]] = {}
+        legacy_run_rows_by_id: Dict[str, Any] = {}
         legacy_runs_table = build_os_metrics_legacy_runs_table(
             sessions_table, runs_table, start_timestamp, end_timestamp
         )
@@ -3473,6 +3474,7 @@ class PostgresDb(BaseDb):
             for record in result:
                 legacy_run_day = datetime.fromtimestamp(record.created_at, tz=timezone.utc).date()
                 legacy_run_rows_by_day.setdefault(legacy_run_day, []).append(record)
+                legacy_run_rows_by_id[record.run_id] = record
 
         results = []
         written_totals_rows: List[Dict[str, Any]] = []
@@ -3527,6 +3529,19 @@ class PostgresDb(BaseDb):
                     )
                 runs, nested_run_ids = build_os_metrics_runs(run_rows + legacy_run_rows_by_day.get(date_to_process, []))
 
+                # A run started by a run of another day, such as a member run after midnight, names that run's
+                # agent, team or workflow as its parent, read from the legacy runs of the rebuild or the runs table
+                day_run_ids = {run["run_id"] for run in runs if run.get("run_id")}
+                parent_run_ids = sorted(
+                    {run["parent_run_id"] for run in runs if run.get("parent_run_id")} - day_run_ids
+                )
+                parent_runs = [
+                    dict(legacy_run_rows_by_id[run_id]._mapping)
+                    for run_id in parent_run_ids
+                    if run_id in legacy_run_rows_by_id
+                ]
+                parent_run_ids = [run_id for run_id in parent_run_ids if run_id not in legacy_run_rows_by_id]
+
                 if runs_table is not None:
                     # A nested run also stored as a run of its own is counted from that row, whatever day it is on
                     run_ids = sorted(nested_run_ids)
@@ -3536,7 +3551,17 @@ class PostgresDb(BaseDb):
                         )
                         stored_run_ids.update(record.run_id for record in sess.execute(stored_stmt).fetchall())
 
-                records = calculate_date_os_metrics(date_to_process, sessions, runs, stored_run_ids)
+                    for start in range(0, len(parent_run_ids), OS_METRICS_IN_LIST_LIMIT):
+                        parents_stmt = select(
+                            runs_table.c.run_id,
+                            runs_table.c.run_type,
+                            runs_table.c.agent_id,
+                            runs_table.c.team_id,
+                            runs_table.c.workflow_id,
+                        ).where(runs_table.c.run_id.in_(parent_run_ids[start : start + OS_METRICS_IN_LIST_LIMIT]))
+                        parent_runs.extend(dict(record._mapping) for record in sess.execute(parents_stmt).fetchall())
+
+                records = calculate_date_os_metrics(date_to_process, sessions, runs, stored_run_ids, parent_runs)
                 result = sess.execute(
                     select(table).where(table.c.aggregation_period == "daily", table.c.date == date_to_process)
                 ).fetchall()
