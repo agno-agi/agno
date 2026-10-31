@@ -139,6 +139,30 @@ def on_run_content(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEv
     else:
         content = ""
 
+    if state.suppress_member_run_content:
+        if not content:
+            return events
+
+        source = "member" if getattr(chunk, "parent_run_id", None) else "team"
+        if not state.live_content_source:
+            state.live_content_source = source
+
+        if source == state.live_content_source:
+            state.live_content += content
+            events.extend(_emit_text_content(state, content))
+            return events
+
+        state.buffered_content += content
+        return events
+
+    return _emit_text_content(state, content, open_empty=True)
+
+
+def _emit_text_content(state: StreamState, content: str, open_empty: bool = False) -> List[BaseEvent]:
+    events: List[BaseEvent] = []
+    if not content and not open_empty:
+        return events
+
     if not state.text_message_open:
         message_id = state.open_text_message()
         state.clear_pending_tool_calls_parent_id()
@@ -158,8 +182,26 @@ def on_run_content(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEv
                 delta=content,
             )
         )
-
     return events
+
+
+def _flush_buffered_content(state: StreamState) -> List[BaseEvent]:
+    """Emit the alternate content stream after its final text can be compared."""
+    content = state.buffered_content
+    state.buffered_content = ""
+    if content:
+        return _emit_text_content(state, content)
+    return []
+
+
+def _finish_alternate_content(state: StreamState) -> List[BaseEvent]:
+    """Resolve any still-ambiguous content when a run reaches a terminal event."""
+    if not state.suppress_member_run_content or not state.buffered_content:
+        return []
+    if state.buffered_content == state.live_content:
+        state.buffered_content = ""
+        return []
+    return _flush_buffered_content(state)
 
 
 def on_tool_call_started(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
@@ -353,7 +395,8 @@ def on_run_error(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEven
     message = getattr(chunk, "content", None) or "Run failed"
     error_type = getattr(chunk, "error_type", None)
 
-    events = _close_open_spans(state)
+    events = _finish_alternate_content(state)
+    events.extend(_close_open_spans(state))
     events.append(
         AGUIRunErrorEvent(
             type=EventType.RUN_ERROR,
@@ -366,7 +409,8 @@ def on_run_error(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEven
 
 
 def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
-    events = _close_open_spans(state)
+    events = _finish_alternate_content(state)
+    events.extend(_close_open_spans(state))
 
     # 1. Collect paused tools for frontend rendering
     paused_tools: List[ToolExecution] = []

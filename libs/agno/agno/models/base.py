@@ -2862,8 +2862,8 @@ class Model(ABC):
                                 function_call_output += item.content or ""
 
                             if function_call.function.show_result and item.content is not None:
+                                # Keep forwarding the member event after emitting the team response.
                                 await event_queue.put(ModelResponse(content=item.content))
-                                continue
 
                         if isinstance(item, CustomEvent):
                             function_call_output += str(item)

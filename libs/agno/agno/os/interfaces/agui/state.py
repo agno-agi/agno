@@ -41,6 +41,12 @@ class StreamState:
     thread_id: str = ""
     run_id: str = ""
     run_state: Optional[Dict[str, Any]] = None
+    # Route teams can emit a member reply again as team content. Buffer the second
+    # stream until a terminal event to deduplicate identical replies without interleaving.
+    suppress_member_run_content: bool = False
+    live_content_source: str = ""
+    live_content: str = ""
+    buffered_content: str = ""
 
     def open_text_message(self) -> str:
         self.text_message_id = str(uuid.uuid4())
