@@ -81,4 +81,4 @@ class ZendeskTools(Toolkit):
             articles = [re.sub(clean, "", article["body"]) for article in response.json()["results"]]
             return json.dumps(articles)
         except requests.RequestException as e:
-            raise ConnectionError(f"API request failed: {e}")
+            raise ConnectionError(f"API request failed: {e}") from e
