@@ -563,7 +563,23 @@ class Groq(Model):
 
         metrics.input_tokens = response_usage.prompt_tokens or 0
         metrics.output_tokens = response_usage.completion_tokens or 0
-        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+        metrics.total_tokens = getattr(response_usage, "total_tokens", None) or (
+            metrics.input_tokens + metrics.output_tokens
+        )
+
+        # Add prompt_tokens_details if available
+        if prompt_tokens_details := getattr(response_usage, "prompt_tokens_details", None):
+            if isinstance(prompt_tokens_details, dict):
+                metrics.cache_read_tokens = prompt_tokens_details.get("cached_tokens", 0) or 0
+            else:
+                metrics.cache_read_tokens = getattr(prompt_tokens_details, "cached_tokens", 0) or 0
+
+        # Add completion_tokens_details if available
+        if completion_tokens_details := getattr(response_usage, "completion_tokens_details", None):
+            if isinstance(completion_tokens_details, dict):
+                metrics.reasoning_tokens = completion_tokens_details.get("reasoning_tokens", 0) or 0
+            else:
+                metrics.reasoning_tokens = getattr(completion_tokens_details, "reasoning_tokens", 0) or 0
 
         # Additional time metrics offered by Groq
         if completion_time := response_usage.completion_time:
