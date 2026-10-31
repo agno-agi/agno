@@ -2232,6 +2232,8 @@ class FunctionCall(BaseModel):
             except Exception as e:
                 log_warning(f"Error in pre-hook callback: {str(e)}")
                 log_exception(e)
+                self.error = str(e)
+                raise
 
     def _handle_post_hook(self):
         """Handles the post-hook for the function call."""
@@ -2622,43 +2624,43 @@ class FunctionCall(BaseModel):
         # read an identity the call will not actually execute with.
         self._drop_injected_overrides(entrypoint_args)
 
-        # Execute pre-hook if it exists
-        self._handle_pre_hook()
-
-        # Check cache if enabled and not a generator function
-        cached_result = None
-        cacheable = self.function.cache_results and not isgeneratorfunction(self.function.entrypoint)
-        if cacheable and getattr(self.function.entrypoint, "_agno_authorization_sensitive", False):
-            from agno.run.authorization import authorization_for
-
-            # Re-decide permission before serving a result after grants change.
-            # An entrypoint cache hit would otherwise skip its authorization check.
-            cacheable = authorization_for(self.function._run_context) is None
-        if cacheable and _has_injected_media(entrypoint_args):
-            log_debug(f"Skipping cache for {self.function.name}: the call carries attached media")
-            cacheable = False
-        if cacheable:
-            try:
-                cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
-                cache_file = self.function._get_cache_file_path(cache_key)
-                cached_result = self.function._get_cached_result(cache_file)
-                if cached_result is not None:
-                    log_debug(f"Cache hit for: {self.get_call_str()}")
-            except Exception:
-                # An unusable cache directory must cost the tool its caching,
-                # not the run.
-                log_exception("Error reading cache")
-                cacheable = False
-        # A cache hit still runs tool_hooks and post_hook, so audit hooks see
-        # every tool call.
-        from_cache = cached_result is not None
-
         # Execute function
         execution_result: FunctionExecutionResult
         exception_to_raise = None
 
         raw_results: List[Any] = []
         try:
+            # Execute pre-hook if it exists
+            self._handle_pre_hook()
+
+            # Check cache if enabled and not a generator function
+            cached_result = None
+            cacheable = self.function.cache_results and not isgeneratorfunction(self.function.entrypoint)
+            if cacheable and getattr(self.function.entrypoint, "_agno_authorization_sensitive", False):
+                from agno.run.authorization import authorization_for
+
+                # Re-decide permission before serving a result after grants change.
+                # An entrypoint cache hit would otherwise skip its authorization check.
+                cacheable = authorization_for(self.function._run_context) is None
+            if cacheable and _has_injected_media(entrypoint_args):
+                log_debug(f"Skipping cache for {self.function.name}: the call carries attached media")
+                cacheable = False
+            if cacheable:
+                try:
+                    cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
+                    cache_file = self.function._get_cache_file_path(cache_key)
+                    cached_result = self.function._get_cached_result(cache_file)
+                    if cached_result is not None:
+                        log_debug(f"Cache hit for: {self.get_call_str()}")
+                except Exception:
+                    # An unusable cache directory must cost the tool its caching,
+                    # not the run.
+                    log_exception("Error reading cache")
+                    cacheable = False
+            # A cache hit still runs tool_hooks and post_hook, so audit hooks see
+            # every tool call.
+            from_cache = cached_result is not None
+
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
                 execution_chain = self._build_nested_execution_chain(
@@ -2754,6 +2756,8 @@ class FunctionCall(BaseModel):
             except Exception as e:
                 log_warning(f"Error in pre-hook callback: {str(e)}")
                 log_exception(e)
+                self.error = str(e)
+                raise
 
     async def _handle_post_hook_async(self):
         """Handles the async post-hook for the function call."""
@@ -2900,48 +2904,48 @@ class FunctionCall(BaseModel):
         # read an identity the call will not actually execute with.
         self._drop_injected_overrides(entrypoint_args)
 
-        # Execute pre-hook if it exists
-        if iscoroutinefunction(self.function.pre_hook):
-            await self._handle_pre_hook_async()
-        else:
-            self._handle_pre_hook()
-
-        # Check cache if enabled and not a generator function
-        cached_result = None
-        cacheable = self.function.cache_results and not (
-            isasyncgenfunction(self.function.entrypoint) or isgeneratorfunction(self.function.entrypoint)
-        )
-        if cacheable and getattr(self.function.entrypoint, "_agno_authorization_sensitive", False):
-            from agno.run.authorization import authorization_for
-
-            # Re-decide permission before serving a result after grants change.
-            # An entrypoint cache hit would otherwise skip its authorization check.
-            cacheable = authorization_for(self.function._run_context) is None
-        if cacheable and _has_injected_media(entrypoint_args):
-            log_debug(f"Skipping cache for {self.function.name}: the call carries attached media")
-            cacheable = False
-        if cacheable:
-            try:
-                cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
-                cache_file = self.function._get_cache_file_path(cache_key)
-                cached_result = self.function._get_cached_result(cache_file)
-                if cached_result is not None:
-                    log_debug(f"Cache hit for: {self.get_call_str()}")
-            except Exception:
-                # An unusable cache directory must cost the tool its caching,
-                # not the run.
-                log_exception("Error reading cache")
-                cacheable = False
-        # A cache hit still runs tool_hooks and post_hook, so audit hooks see
-        # every tool call.
-        from_cache = cached_result is not None
-
         # Execute function
         execution_result: FunctionExecutionResult
         exception_to_raise = None
 
         raw_results: List[Any] = []
         try:
+            # Execute pre-hook if it exists
+            if iscoroutinefunction(self.function.pre_hook):
+                await self._handle_pre_hook_async()
+            else:
+                self._handle_pre_hook()
+
+            # Check cache if enabled and not a generator function
+            cached_result = None
+            cacheable = self.function.cache_results and not (
+                isasyncgenfunction(self.function.entrypoint) or isgeneratorfunction(self.function.entrypoint)
+            )
+            if cacheable and getattr(self.function.entrypoint, "_agno_authorization_sensitive", False):
+                from agno.run.authorization import authorization_for
+
+                # Re-decide permission before serving a result after grants change.
+                # An entrypoint cache hit would otherwise skip its authorization check.
+                cacheable = authorization_for(self.function._run_context) is None
+            if cacheable and _has_injected_media(entrypoint_args):
+                log_debug(f"Skipping cache for {self.function.name}: the call carries attached media")
+                cacheable = False
+            if cacheable:
+                try:
+                    cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
+                    cache_file = self.function._get_cache_file_path(cache_key)
+                    cached_result = self.function._get_cached_result(cache_file)
+                    if cached_result is not None:
+                        log_debug(f"Cache hit for: {self.get_call_str()}")
+                except Exception:
+                    # An unusable cache directory must cost the tool its caching,
+                    # not the run.
+                    log_exception("Error reading cache")
+                    cacheable = False
+            # A cache hit still runs tool_hooks and post_hook, so audit hooks see
+            # every tool call.
+            from_cache = cached_result is not None
+
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
                 execution_chain = await self._build_nested_execution_chain_async(

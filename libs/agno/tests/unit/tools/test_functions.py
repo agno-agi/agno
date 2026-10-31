@@ -1794,6 +1794,65 @@ def test_arguments_are_sanitized_before_the_pre_hook_runs():
     assert seen["arguments"] == {"query": "q"}
 
 
+def test_pre_hook_raising_exception_stops_tool_execution():
+    """A pre-hook that raises an exception must prevent the tool from executing and return a failure result."""
+    ran = []
+
+    def delete_records(table: str) -> str:
+        ran.append(table)
+        return f"deleted {table}"
+
+    def deny(fc: FunctionCall):
+        raise PermissionError("caller is not allowed to delete")
+
+    func = Function(name="delete_records", entrypoint=delete_records, pre_hook=deny)
+    func.process_entrypoint()
+
+    out = FunctionCall(function=func, arguments={"table": "customers"}).execute()
+    assert out.status == "failure"
+    assert "caller is not allowed to delete" in str(out.error)
+    assert ran == []
+
+
+@pytest.mark.asyncio
+async def test_async_pre_hook_raising_exception_stops_tool_execution():
+    """An async pre-hook that raises an exception must prevent the async tool from executing and return a failure result."""
+    ran = []
+
+    async def delete_records(table: str) -> str:
+        ran.append(table)
+        return f"deleted {table}"
+
+    async def deny(fc: FunctionCall):
+        raise PermissionError("caller is not allowed to delete (async)")
+
+    func = Function(name="delete_records", entrypoint=delete_records, pre_hook=deny)
+    func.process_entrypoint()
+
+    out = await FunctionCall(function=func, arguments={"table": "customers"}).aexecute()
+    assert out.status == "failure"
+    assert "caller is not allowed to delete (async)" in str(out.error)
+    assert ran == []
+
+
+def test_pre_hook_raising_agent_run_exception_is_reraised():
+    """An AgentRunException raised by a pre-hook must be re-raised to control agent execution flow."""
+    from agno.exceptions import StopAgentRun
+
+    def delete_records(table: str) -> str:
+        return f"deleted {table}"
+
+    def stop(fc: FunctionCall):
+        raise StopAgentRun("stopped by pre-hook")
+
+    func = Function(name="delete_records", entrypoint=delete_records, pre_hook=stop)
+    func.process_entrypoint()
+
+    with pytest.raises(StopAgentRun) as exc_info:
+        FunctionCall(function=func, arguments={"table": "customers"}).execute()
+    assert "stopped by pre-hook" in str(exc_info.value)
+
+
 @pytest.mark.asyncio
 async def test_spoofed_agno_channel_is_dropped_on_the_async_path():
     """aexecute must sanitize exactly as execute does."""
