@@ -1983,6 +1983,22 @@ class TestAgentManagerRoundtrip:
         assert isinstance(restored.model, OpenAIResponses)
         assert restored.model.id == "gpt-4.1-mini"
 
+    def test_string_models_roundtrip(self):
+        from agno.compression.manager import CompressionManager
+        from agno.session.summary import SessionSummaryManager
+
+        agent = Agent(
+            id="a",
+            session_summary_manager=SessionSummaryManager(model="openai:gpt-4.1-mini"),
+            compression_manager=CompressionManager(model="openai:gpt-4.1-mini"),
+        )
+        config = agent.to_dict()
+        assert config["session_summary_manager"]["model"] == "openai:gpt-4.1-mini"
+        assert config["compression_manager"]["model"] == "openai:gpt-4.1-mini"
+        reconstructed = Agent.from_dict(config)
+        assert reconstructed.session_summary_manager.model.id == "gpt-4.1-mini"
+        assert reconstructed.compression_manager.model.id == "gpt-4.1-mini"
+
     def test_compression_manager_roundtrip(self):
         from agno.compression.manager import CompressionManager
 

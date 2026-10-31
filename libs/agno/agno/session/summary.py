@@ -111,7 +111,7 @@ class SessionSummaryManager:
 
         config: Dict[str, Any] = {"summary_request_message": self.summary_request_message}
         if self.model is not None:
-            config["model"] = model_identity(self.model)
+            config["model"] = model_identity(self.model) if isinstance(self.model, Model) else str(self.model)
         for name in ("id", "name", "session_summary_prompt", "last_n_runs", "conversation_limit"):
             value = getattr(self, name)
             if value is not None:

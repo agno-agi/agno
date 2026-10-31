@@ -73,7 +73,7 @@ class CompressionManager:
 
         config: Dict[str, Any] = {"compress_tool_results": self.compress_tool_results}
         if self.model is not None:
-            config["model"] = model_identity(self.model)
+            config["model"] = model_identity(self.model) if isinstance(self.model, Model) else str(self.model)
         for name in ("compress_tool_results_limit", "compress_token_limit", "compress_tool_call_instructions"):
             value = getattr(self, name)
             if value is not None:
