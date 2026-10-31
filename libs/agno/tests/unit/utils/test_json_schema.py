@@ -173,6 +173,19 @@ def test_get_json_schema_typed_dict_unchanged():
     assert typed_dict_lower["additionalProperties"] == {"type": "integer"}
 
 
+def test_get_json_schema_for_arg_dict_int_keys():
+    """Dict[int, V] must advertise string propertyNames (JSON object keys are always strings)."""
+    int_keys = get_json_schema_for_arg(Dict[int, str])
+    assert int_keys["type"] == "object"
+    assert int_keys["propertyNames"] == {"type": "string", "pattern": "^[0-9]+$"}
+    assert int_keys["additionalProperties"] == {"type": "string"}
+
+    # str keys keep plain string propertyNames (unchanged)
+    str_keys = get_json_schema_for_arg(Dict[str, int])
+    assert str_keys["propertyNames"] == {"type": "string"}
+    assert str_keys["additionalProperties"] == {"type": "integer"}
+
+
 def test_get_json_schema_for_arg_union():
     # Test Optional type (Union with None)
     optional_schema = get_json_schema_for_arg(Optional[str])
