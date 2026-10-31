@@ -35,7 +35,8 @@ class Perplexity(OpenAILike):
         provider (str): The provider name. Defaults to "Perplexity".
         api_key (Optional[str]): The API key.
         base_url (str): The base URL. Defaults to "https://api.perplexity.ai/".
-        max_tokens (int): The maximum number of tokens. Defaults to 1024.
+        max_tokens (Optional[int]): The maximum number of tokens. Defaults to None, so the
+            parameter is omitted and the model's own output limit applies.
     """
 
     id: str = "sonar"
@@ -46,7 +47,7 @@ class Perplexity(OpenAILike):
 
     api_key: Optional[str] = field(default_factory=lambda: getenv("PERPLEXITY_API_KEY"))
     base_url: str = "https://api.perplexity.ai/"
-    max_tokens: int = 1024
+    max_tokens: Optional[int] = None
     top_k: Optional[float] = None
 
     supports_native_structured_outputs: bool = False

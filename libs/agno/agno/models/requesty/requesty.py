@@ -20,7 +20,8 @@ class Requesty(OpenAILike):
         provider (str): The provider name. Defaults to "Requesty".
         api_key (Optional[str]): The API key.
         base_url (str): The base URL. Defaults to "https://router.requesty.ai/v1".
-        max_tokens (int): The maximum number of tokens. Defaults to 1024.
+        max_tokens (Optional[int]): The maximum number of tokens. Defaults to None, so the
+            parameter is omitted and the routed model's own output limit applies.
     """
 
     id: str = "openai/gpt-4.1"
@@ -29,7 +30,7 @@ class Requesty(OpenAILike):
 
     api_key: Optional[str] = None
     base_url: str = "https://router.requesty.ai/v1"
-    max_tokens: int = 1024
+    max_tokens: Optional[int] = None
 
     def _get_client_params(self) -> Dict[str, Any]:
         """
