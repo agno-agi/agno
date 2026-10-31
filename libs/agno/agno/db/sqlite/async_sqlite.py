@@ -10,7 +10,7 @@ from sqlalchemy import and_, or_
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
-from agno.db.base import _UNSET_UPDATED_AT, AsyncBaseDb, SessionType
+from agno.db.base import _UNSET_UPDATED_AT, AsyncBaseDb, CompanyDeletionUnavailableError, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.authz import (
     AUTHZ_AUDIT,
@@ -180,6 +180,13 @@ class AsyncSqliteDb(AsyncBaseDb):
                 db_file = str(default_db_path)
                 log_debug(f"Created SQLite database: {default_db_path}")
 
+        # Only native file connections can be reproduced on a guard-owned loop.
+        self._execution_guard_url: Optional[str] = None
+        url = _engine.url
+        if db_engine is None and url.database and url.database != ":memory:" and not url.query:
+            self._execution_guard_url = url.set(database=str(Path(url.database).resolve())).render_as_string(
+                hide_password=False
+            )
         self.db_engine: AsyncEngine = _engine
         self.db_url: Optional[str] = db_url
         self.db_file: Optional[str] = db_file
@@ -1063,6 +1070,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        *,
+        raise_on_error: bool = False,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         """Get all runs matching the given filters.
 
@@ -1078,6 +1087,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             sort_by (Optional[str]): The field to sort by. Defaults to run_index when filtering by session.
             sort_order (Optional[str]): The sort order.
             deserialize (Optional[bool]): Whether to deserialize the runs. Defaults to True.
+            raise_on_error (bool): Fail when run storage cannot be read instead of reporting absence.
 
         Returns:
             - When deserialize=True: List of run output objects
@@ -1087,6 +1097,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         try:
             table = await self._get_table(table_type="runs")
             if table is None:
+                if raise_on_error:
+                    raise RuntimeError("The runs table is unavailable")
                 return [] if deserialize else ([], 0)
 
             async with self.async_session_factory() as sess:
@@ -5864,6 +5876,38 @@ class AsyncSqliteDb(AsyncBaseDb):
         async with self.async_session_factory() as sess, sess.begin():
             return await sess.run_sync(archive_product, products, projects, tasks, product_id, user_id)
 
+    async def purge_product(
+        self,
+        product_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+        verified_routine_ids: Optional[Sequence[str]] = None,
+    ) -> bool:
+        """Permanently remove a Product after verifying its Task snapshot."""
+        from agno.db.sql.company import purge_product
+
+        products = await self._get_table(table_type="products")
+        if products is None:
+            return False
+        projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
+        tasks = await self._get_table(table_type="tasks", create_table_if_not_found=True)
+        sources = await self._get_table(table_type="sources", create_table_if_not_found=True)
+        if any(table is None for table in (products, projects, tasks, sources)):
+            raise CompanyDeletionUnavailableError("Company deletion tables are unavailable")
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(
+                purge_product,
+                products,
+                projects,
+                tasks,
+                sources,
+                product_id,
+                user_id,
+                expected_tasks,
+                verified_routine_ids,
+            )
+
     async def restore_product(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         from agno.db.sql.company import restore_product
 
@@ -6000,6 +6044,26 @@ class AsyncSqliteDb(AsyncBaseDb):
         tasks = await self._get_table(table_type="tasks", create_table_if_not_found=True)
         async with self.async_session_factory() as sess, sess.begin():
             return await sess.run_sync(archive_project, products, projects, tasks, project_id, user_id, updated_before)
+
+    async def purge_project(
+        self,
+        project_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Permanently remove a Project after verifying its Task snapshot."""
+        from agno.db.sql.company import purge_project
+
+        projects = await self._get_table(table_type="projects")
+        if projects is None:
+            return False
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        tasks = await self._get_table(table_type="tasks", create_table_if_not_found=True)
+        if any(table is None for table in (products, projects, tasks)):
+            raise CompanyDeletionUnavailableError("Company deletion tables are unavailable")
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(purge_project, products, projects, tasks, project_id, user_id, expected_tasks)
 
     async def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         from agno.db.sql.company import restore_project
@@ -6169,6 +6233,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         session_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        *,
+        include_deleted_parents: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         from agno.db.schemas.products import company_sort
         from agno.db.sql.company import active_parents
@@ -6181,7 +6247,9 @@ class AsyncSqliteDb(AsyncBaseDb):
             return [], 0
         products = await self._get_table(table_type="products", create_table_if_not_found=True)
         projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
-        stmt = active_parents(select(table), table, products, projects)
+        stmt = select(table)
+        if not include_deleted_parents:
+            stmt = active_parents(stmt, table, products, projects)
         if failed is not None:
             result_status = table.c.result["status"].as_string()
             stmt = stmt.where(
@@ -6269,6 +6337,60 @@ class AsyncSqliteDb(AsyncBaseDb):
             result = (await sess.execute(stmt.values(deleted_at=now, updated_at=now).returning(table.c.id))).fetchone()
             return result is not None
 
+    async def acquire_task_execution(
+        self,
+        session_id: str,
+        token: str,
+        *,
+        expected_task_ids: Optional[Sequence[str]] = None,
+        execution_store: Optional[Dict[str, Any]] = None,
+    ) -> List[str]:
+        """Protect all Tasks using this session, including archived records."""
+        from agno.db.sql.company import acquire_task_execution
+
+        tasks = await self._get_table(table_type="tasks")
+        if tasks is None:
+            raise CompanyDeletionUnavailableError("Company execution table is unavailable")
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(
+                acquire_task_execution,
+                tasks,
+                session_id,
+                token,
+                expected_task_ids=expected_task_ids,
+                execution_store=execution_store,
+            )
+
+    async def release_task_execution(self, session_id: str, token: str) -> None:
+        """Release only this execution token without changing Task activity."""
+        from agno.db.sql.company import release_task_execution
+
+        tasks = await self._get_table(table_type="tasks")
+        if tasks is None:
+            raise CompanyDeletionUnavailableError("Company execution table is unavailable")
+        async with self.async_session_factory() as sess, sess.begin():
+            await sess.run_sync(release_task_execution, tasks, session_id, token)
+
+    async def purge_task(
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Permanently remove a Task after verifying its Task snapshot."""
+        from agno.db.sql.company import purge_task
+
+        tasks = await self._get_table(table_type="tasks")
+        if tasks is None:
+            return False
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
+        if any(table is None for table in (products, projects, tasks)):
+            raise CompanyDeletionUnavailableError("Company deletion tables are unavailable")
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(purge_task, products, projects, tasks, task_id, user_id, expected_tasks)
+
     async def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         from agno.db.sql.company import lock_child, task_restore_fields
 
@@ -6346,13 +6468,16 @@ class AsyncSqliteDb(AsyncBaseDb):
         async with self.async_session_factory() as sess, sess.begin():
             row = (
                 await sess.execute(
-                    select(table).where(
+                    table.update()
+                    .where(
                         table.c.id == task_id,
                         table.c.job_id == job_id,
                         table.c.deleted_at.is_(None),
                         table.c.status == "in_progress",
                         or_(table.c.result.is_(None), table.c.result == JSON.NULL),
                     )
+                    .values(updated_at=table.c.updated_at)
+                    .returning(table)
                 )
             ).fetchone()
             if row is None:

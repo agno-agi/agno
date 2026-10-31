@@ -2723,3 +2723,403 @@ async def test_component_cleanup_gates_cancelled_ticket(cleanup_fails):
     await worker._execute_claimed(claimed)
     assert calls == ["running"]
     assert (await store.get_job("cleanup"))["status"] == ("running" if cleanup_fails else "cancelled")
+
+
+@pytest.fixture
+async def protected_queue(tmp_path):
+    from agno.company.manager import CompanyManager
+    from agno.db.sqlite import SqliteDb
+    from agno.run.concurrency import _TaskExecutionProvider
+
+    db = SqliteDb(db_file=str(tmp_path / "claims.db"))
+    manager = CompanyManager(db)
+    product = manager.create(name="Product")
+    project = manager.create_project(product_id=product["id"], name="Project")
+    task = manager.create_task(product_id=product["id"], project_id=project["id"], title="Task")
+    provider = _TaskExecutionProvider(db)
+    await provider.ainitialize()
+    worker = make_worker(InMemoryQueueStore(), FakeAgent(), make_config())
+    worker._task_execution_provider = provider
+    yield worker, db, task
+    await provider.aclose()
+    db.close()
+
+
+@pytest.mark.asyncio
+async def test_queue_admission_claims_before_observable_ticket(protected_queue, monkeypatch):
+    from agno.os.job_queue import aenqueue_ticket
+
+    worker, db, task = protected_queue
+    original = worker.store.enqueue_job
+
+    async def inspect_enqueue(job, **kwargs):
+        claims = db.get_task(task["id"])["metadata"].get("_agno_execution_claims", [])
+        assert claims, "Task must be protected before acceptance becomes observable"
+        assert job["payload"]["_agno_company_task_ids"] == [task["id"]]
+        return await original(job, **kwargs)
+
+    monkeypatch.setattr(worker.store, "enqueue_job", inspect_enqueue)
+    for i in range(2):
+        job = make_job(f"guard-{i}")
+        job["session_id"] = task["session_id"]
+        job["payload"]["_agno_company_acceptance_token"] = "caller-controlled"
+        result = await aenqueue_ticket(worker, job)
+        assert result["job"]["payload"]["_agno_company_acceptance_token"] != "caller-controlled"
+
+
+@pytest.mark.asyncio
+async def test_queue_cancel_releases_acceptance_claim(protected_queue):
+    from agno.os.job_queue import aenqueue_ticket
+
+    worker, db, task = protected_queue
+    for i in range(2):
+        job = make_job(f"cancel-guard-{i}")
+        job["session_id"] = task["session_id"]
+        await aenqueue_ticket(worker, job)
+        assert db.get_task(task["id"])["metadata"].get("_agno_execution_claims")
+        assert await worker.acancel_queued(job["id"])
+        assert not db.get_task(task["id"])["metadata"].get("_agno_execution_claims")
+
+
+@pytest.mark.asyncio
+async def test_queue_duplicate_and_unknown_outcome_keep_winning_protection(protected_queue, monkeypatch):
+    from agno.os.job_queue import aenqueue_ticket
+
+    worker, db, task = protected_queue
+    job = make_job("winner")
+    job.update(session_id=task["session_id"], idempotency_key="same")
+    winner = (await aenqueue_ticket(worker, job))["job"]
+    token = winner["payload"]["_agno_company_acceptance_token"]
+    duplicate = await aenqueue_ticket(worker, {**job, "id": "loser"})
+    assert not duplicate["accepted"]
+    assert db.get_task(task["id"])["metadata"]["_agno_execution_claims"] == [token]
+    original = worker.store.enqueue_job
+
+    async def unknown(job, **kwargs):
+        await original(job, **kwargs)
+        raise RuntimeError("lost acknowledgment")
+
+    monkeypatch.setattr(worker.store, "enqueue_job", unknown)
+    with pytest.raises(RuntimeError, match="lost acknowledgment"):
+        await aenqueue_ticket(worker, {**job, "id": "uncertain", "idempotency_key": "new"})
+    assert len(db.get_task(task["id"])["metadata"]["_agno_execution_claims"]) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", [RunStatus.completed, RunStatus.paused, RunStatus.error])
+async def test_queue_settlement_only_releases_terminal_acceptance(protected_queue, outcome):
+    from agno.os.job_queue import aenqueue_ticket
+
+    worker, db, task = protected_queue
+    agent = FakeAgent(status=outcome)
+    worker.resolve_component = lambda *args, **kwargs: agent
+    for i in range(2):
+        job = make_job(f"settle-{i}", max_attempts=2)
+        job["session_id"] = task["session_id"]
+        await aenqueue_ticket(worker, job)
+        claimed = await worker.store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+        saved = await worker.store.get_job(job["id"])
+        assert (
+            saved["status"]
+            == {RunStatus.completed: "completed", RunStatus.paused: "paused", RunStatus.error: "queued"}[outcome]
+        )
+        claims = db.get_task(task["id"])["metadata"].get("_agno_execution_claims", [])
+        assert len(claims) == (0 if outcome == RunStatus.completed else 1)
+        # Keep the next repetition independent from the retry queue, without clearing claims.
+        if outcome != RunStatus.completed:
+            assert await worker.acancel_queued(job["id"])
+            assert not db.get_task(task["id"])["metadata"].get("_agno_execution_claims")
+
+
+@pytest.mark.asyncio
+async def test_swept_live_worker_retains_independent_execution_claim(protected_queue):
+    from agno.company.execution import _release_queue_execution
+    from agno.os.job_queue import aenqueue_ticket
+
+    worker, db, task = protected_queue
+    entered, finish = asyncio.Event(), asyncio.Event()
+
+    class Running(FakeAgent):
+        async def arun(self, **kwargs):
+            entered.set()
+            await finish.wait()
+            return SimpleNamespace(status=RunStatus.completed, content="done")
+
+    worker.resolve_component = lambda *args, **kwargs: Running()
+    job = make_job("live")
+    job["session_id"] = task["session_id"]
+    accepted_job = (await aenqueue_ticket(worker, job))["job"]
+    claimed = await worker.store.claim_job(worker.worker_id)
+    running = asyncio.create_task(worker._execute_claimed(claimed))
+    await asyncio.wait_for(entered.wait(), 3)
+    try:
+        worker.store._jobs[job["id"]]["locked_at"] = 0
+        assert await worker.store.acquire_sweep(job["id"], "sweeper", 1)
+        assert await worker.store.settle_swept_job(job["id"], "sweeper", "failed")
+        await _release_queue_execution(worker, accepted_job)
+        assert len(db.get_task(task["id"])["metadata"]["_agno_execution_claims"]) == 1
+    finally:
+        finish.set()
+        await running
+    assert not db.get_task(task["id"])["metadata"].get("_agno_execution_claims")
+
+
+@pytest.mark.asyncio
+async def test_requeue_refuses_deleted_original_task_and_old_cleanup_is_fenced(protected_queue):
+    from agno.company.execution import _release_queue_execution, _requeue_ticket
+    from agno.os.job_queue import aenqueue_ticket
+
+    worker, db, task = protected_queue
+    job = make_job("restart")
+    job["session_id"] = task["session_id"]
+    old = (await aenqueue_ticket(worker, job))["job"]
+    assert await worker.acancel_queued(job["id"])
+    assert await _requeue_ticket(worker, await worker.store.get_job(job["id"]))
+    new = await worker.store.get_job(job["id"])
+    await _release_queue_execution(worker, old)
+    assert db.get_task(task["id"])["metadata"]["_agno_execution_claims"] == [
+        new["payload"]["_agno_company_acceptance_token"]
+    ]
+    assert await worker.acancel_queued(job["id"])
+    # Real storage deletion after protection ends; retained queue identity must reject reuse.
+    table = db._get_table("tasks")
+    with db.Session() as session, session.begin():
+        session.execute(table.delete().where(table.c.id == task["id"]))
+    with pytest.raises(ValueError, match="identity changed"):
+        await _requeue_ticket(worker, await worker.store.get_job(job["id"]))
+    assert (await worker.store.get_job(job["id"]))["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["failed", "cancelled", "completed"])
+async def test_terminal_continue_cannot_fall_back_after_task_deletion(protected_queue, status):
+    from fastapi import HTTPException
+
+    from agno.os.job_queue import acontinue_via_queue
+
+    worker, db, task = protected_queue
+    job = make_job("continued-terminal")
+    job.update(session_id=task["session_id"], status=status)
+    job["payload"].update(_agno_company_acceptance_token="old", _agno_company_task_ids=[task["id"]])
+    await worker.store.enqueue_job(job)
+    table = db._get_table("tasks")
+    with db.Session() as session, session.begin():
+        session.execute(table.delete().where(table.c.id == task["id"]))
+    with pytest.raises(HTTPException) as error:
+        await acontinue_via_queue(worker, job["id"], {})
+    assert error.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_legacy_generic_continue_cannot_fall_back_to_unverified_execution(protected_queue):
+    from fastapi import HTTPException
+
+    from agno.os.job_queue import acontinue_via_queue
+
+    worker, _, task = protected_queue
+    job = make_job("continued-legacy")
+    job.update(session_id=task["session_id"], status="failed")
+    await worker.store.enqueue_job(job)
+    with pytest.raises(HTTPException) as error:
+        await acontinue_via_queue(worker, job["id"], {})
+    assert error.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_continuation_keeps_acceptance_across_repeated_pauses(protected_queue):
+    from agno.os.job_queue import acontinue_via_queue, aenqueue_ticket
+
+    worker, db, task = protected_queue
+    job = make_job("pause-owner")
+    job["session_id"] = task["session_id"]
+    accepted_job = (await aenqueue_ticket(worker, job))["job"]
+    original = accepted_job["payload"]["_agno_company_acceptance_token"]
+    for _ in range(2):
+        claimed = await worker.store.claim_job(worker.worker_id)
+        assert await worker.store.complete_job(job["id"], worker.worker_id, claimed["attempt"], "paused")
+        result = await acontinue_via_queue(worker, job["id"], {"updated_tools": []})
+        assert result["outcome"] == "queued"
+        assert result["job"]["payload"]["_agno_company_acceptance_token"] == original
+        assert (await acontinue_via_queue(worker, job["id"], {}))["outcome"] == "attach"
+        assert db.get_task(task["id"])["metadata"]["_agno_execution_claims"] == [original]
+
+
+@pytest.mark.asyncio
+async def test_legacy_company_continuation_installs_one_winning_identity(protected_queue):
+    from agno.company.execution import _continue_ticket
+
+    worker, db, task = protected_queue
+    job = make_job("legacy-company")
+    job.update(session_id=task["session_id"], status="paused")
+    job["payload"]["company_task_id"] = task["id"]
+    await worker.store.enqueue_job(job)
+    outcomes = await asyncio.gather(_continue_ticket(worker, job, {}), _continue_ticket(worker, job, {}))
+    assert sorted(result["outcome"] for result in outcomes) == ["attach", "queued"]
+    current = await worker.store.get_job(job["id"])
+    assert current["payload"]["_agno_company_task_ids"] == [task["id"]]
+    assert db.get_task(task["id"])["metadata"]["_agno_execution_claims"] == [
+        current["payload"]["_agno_company_acceptance_token"]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_failed_prepare_cleans_only_cancelled_acceptance(protected_queue, monkeypatch):
+    from fastapi import HTTPException
+
+    from agno.os.job_queue import aenqueue_ticket, aprepare_accepted_or_abort
+
+    worker, db, task = protected_queue
+    for i in range(2):
+        job = make_job(f"prepare-failure-{i}")
+        job["session_id"] = task["session_id"]
+        await aenqueue_ticket(worker, job)
+
+        async def fail(*args, **kwargs):
+            raise RuntimeError("session store unavailable")
+
+        monkeypatch.setattr("agno.os.job_queue.aprepare_queued_run", fail)
+        with pytest.raises(HTTPException):
+            await aprepare_accepted_or_abort(worker, FakeAgent(), "agent", job["id"], task["session_id"], None, "work")
+        assert (await worker.store.get_job(job["id"]))["status"] == "cancelled"
+        assert not db.get_task(task["id"])["metadata"].get("_agno_execution_claims")
+
+
+@pytest.mark.asyncio
+async def test_terminal_continue_hands_original_identity_to_detached_producer(protected_queue):
+    from agno.os.job_queue import acontinue_via_queue
+    from agno.run.concurrency import guard_task_execution, task_execution_scope
+
+    worker, db, task = protected_queue
+    job = make_job("fallback-gap")
+    job.update(session_id=task["session_id"], status="failed")
+    job["payload"].update(_agno_company_acceptance_token="old", _agno_company_task_ids=[task["id"]])
+    await worker.store.enqueue_job(job)
+    effects = []
+
+    class Native:
+        @guard_task_execution()
+        async def arun(self, session_id):
+            effects.append("executed")
+
+    with task_execution_scope(worker._task_execution_provider):
+        assert await acontinue_via_queue(worker, job["id"], {}) is None
+        table = db._get_table("tasks")
+        with db.Session() as session, session.begin():
+            session.execute(table.delete().where(table.c.id == task["id"]))
+        with pytest.raises(ValueError, match="identity changed"):
+            await Native().arun(session_id=task["session_id"])
+    assert not effects
+
+
+@pytest.mark.asyncio
+async def test_worker_records_unknown_execution_store_before_custom_component_runs(protected_queue):
+    from agno.os.job_queue import aenqueue_ticket
+
+    worker, db, task = protected_queue
+
+    class Custom(FakeAgent):
+        async def arun(self, **kwargs):
+            provenance = db.get_task(task["id"])["metadata"]["_agno_execution_provenance"]
+            assert provenance["complete"] is False, "Unknown producer store must be recorded before effects"
+            return await super().arun(**kwargs)
+
+    custom = Custom()
+    worker.resolve_component = lambda *args, **kwargs: custom
+    job = make_job("unknown-store")
+    job["session_id"] = task["session_id"]
+    await aenqueue_ticket(worker, job)
+    claimed = await worker.store.claim_job(worker.worker_id)
+    await worker._execute_claimed(claimed)
+    assert len(custom.calls) == 1
+    assert (await worker.store.get_job(job["id"]))["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_queue_cleanup_binds_provider_outside_request_or_worker_execution(protected_queue):
+    from agno.os.job_queue import aenqueue_ticket
+    from agno.run.concurrency import current_task_execution_provider
+    from agno.run.status_persist import RunPersistOutcome
+
+    worker, _, task = protected_queue
+    seen = []
+
+    class Cleanup(FakeAgent):
+        def _queue_terminal_writer(self):
+            async def write(*args):
+                seen.append(current_task_execution_provider())
+                return RunPersistOutcome.UPDATED
+
+            return write
+
+    worker.resolve_component = lambda *args, **kwargs: Cleanup()
+    job = make_job("cleanup-provider")
+    job["session_id"] = task["session_id"]
+    await aenqueue_ticket(worker, job)
+    assert current_task_execution_provider() is None
+    assert await worker.acancel_queued(job["id"])
+    assert seen == [worker._task_execution_provider]
+    assert current_task_execution_provider() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("current_status", ["queued", "paused", "cancelled"])
+async def test_stale_continuation_releases_recreated_old_generation(protected_queue, current_status):
+    from agno.company.execution import _continue_ticket, _requeue_ticket
+    from agno.os.job_queue import aenqueue_ticket
+
+    worker, db, task = protected_queue
+    job = make_job("stale-continue")
+    job["session_id"] = task["session_id"]
+    await aenqueue_ticket(worker, job)
+    claimed = await worker.store.claim_job(worker.worker_id)
+    await worker.store.complete_job(job["id"], worker.worker_id, claimed["attempt"], "paused")
+    stale = await worker.store.get_job(job["id"])
+    assert await worker.acancel_queued(job["id"])
+    assert await _requeue_ticket(worker, await worker.store.get_job(job["id"]))
+    current = await worker.store.get_job(job["id"])
+    token = current["payload"]["_agno_company_acceptance_token"]
+    if current_status == "paused":
+        claimed = await worker.store.claim_job(worker.worker_id)
+        await worker.store.complete_job(job["id"], worker.worker_id, claimed["attempt"], "paused")
+    elif current_status == "cancelled":
+        assert await worker.acancel_queued(job["id"])
+    for _ in range(2):
+        result = await _continue_ticket(worker, stale, {})
+        assert result["outcome"] == (
+            "conflict"
+            if current_status == "cancelled"
+            else ("queued" if current_status == "paused" and _ == 0 else "attach")
+        )
+        claims = db.get_task(task["id"])["metadata"].get("_agno_execution_claims", [])
+        assert claims == ([] if current_status == "cancelled" else [token])
+
+
+@pytest.mark.asyncio
+async def test_continue_lookup_fails_closed_on_transient_first_read(protected_queue, monkeypatch):
+    from fastapi import HTTPException
+
+    from agno.os.job_queue import acontinue_via_queue, aenqueue_ticket
+
+    worker, _, task = protected_queue
+    job = make_job("lookup-failure")
+    job["session_id"] = task["session_id"]
+    await aenqueue_ticket(worker, job)
+    await worker.acancel_queued(job["id"])
+    original = worker.store.get_job
+    reads = []
+
+    async def transient(run_id, strict=False):
+        reads.append(strict)
+        if len(reads) == 1:
+            if strict:
+                raise OSError("temporary queue read failure")
+            return None
+        return await original(run_id, strict=strict)
+
+    monkeypatch.setattr(worker.store, "get_job", transient)
+    with pytest.raises(HTTPException) as error:
+        await acontinue_via_queue(worker, job["id"], {})
+    assert error.value.status_code == 503
+    assert (await worker.store.get_job(job["id"], strict=True))["status"] == "cancelled"
+    assert reads == [True, True]

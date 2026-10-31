@@ -2,8 +2,9 @@
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb
@@ -118,13 +119,121 @@ def _pending_task_attempt(task: Dict[str, Any]) -> Optional[int]:
 
 def _task_run_database(os: Any, task: Dict[str, Any]) -> Any:
     """Resolve the original run store even if the executor's database has changed."""
-    store_ids = [entry.get("run_db_id") for entry in task["transitions"] if entry.get("attempt")]
+    store_ids = [entry.get("run_db_id") for entry in task.get("transitions") or [] if "attempt" in entry]
     if store_ids and store_ids[0]:
         stores = list({id(store): store for store in os.dbs.get(store_ids[0], [])}.values())
         if len(stores) == 1:
             return stores[0]
         raise _TaskRunUnavailable("Task session database is unavailable or ambiguous")
     return getattr(_executor(os.registry, task["executor_type"], task["executor_id"]), "db", None)
+
+
+def _task_execution_databases(os: Any, task: Dict[str, Any]) -> List[Any]:
+    """Resolve every recorded original store, independent of executor reassignment."""
+    from agno.db.schemas.tasks import task_execution_stores
+
+    descriptors = task_execution_stores(task)
+    databases: Dict[int, Any] = {}
+    registry = getattr(os, "dbs", {})
+    for descriptor in descriptors:
+        matches = {
+            id(db): db
+            for db in registry.get(descriptor["db_id"], [])
+            if db.session_table_name == descriptor["session_table"] and db.runs_table_name == descriptor["runs_table"]
+        }
+        if len(matches) != 1:
+            raise _TaskRunUnavailable("Task original execution store is unavailable or ambiguous")
+        databases.update(matches)
+    for entry in task.get("transitions") or []:
+        if "attempt" not in entry:
+            continue
+        store_id = entry.get("run_db_id")
+        if not store_id:
+            raise _TaskRunUnavailable("Task attempt has no original execution store")
+        if any(descriptor["db_id"] == store_id for descriptor in descriptors):
+            continue
+        matches = {id(db): db for db in registry.get(store_id, [])}
+        if len(matches) != 1:
+            raise _TaskRunUnavailable("Task original execution store is unavailable or ambiguous")
+        databases.update(matches)
+    return list(databases.values())
+
+
+async def _verify_task_purge(os: Any, tasks: List[Dict[str, Any]], queue: Any = None) -> None:
+    """Refuse removal while any affected Task session has live execution."""
+    from inspect import signature
+
+    if not tasks:
+        return
+    from agno.db.schemas.tasks import task_execution_stores
+
+    try:
+        for task in tasks:
+            task_execution_stores(task)
+    except ValueError as exc:
+        raise _TaskRunUnavailable(str(exc)) from exc
+    attempted = {
+        task["id"]
+        for task in tasks
+        if task.get("job_id")
+        or task.get("result") is not None
+        or task["status"] == "in_progress"
+        or any("attempt" in entry for entry in task.get("transitions") or [])
+    }
+    if attempted and (os is None or queue is None):
+        raise _TaskRunUnavailable("Cannot verify Task executions; the runtime is unavailable")
+    if queue is not None:
+        ids = {task["id"] for task in tasks}
+        sessions = {task["session_id"] for task in tasks if task.get("session_id")}
+        try:
+            from agno.os.job_queue import _SyncStoreAdapter
+
+            store = queue.store._store if isinstance(queue.store, _SyncStoreAdapter) else queue.store
+            filters = signature(store.list_jobs).parameters
+            if "company_task_id" in filters and "session_id" in filters:
+                jobs, _ = await queue.store.list_jobs(
+                    company_task_id=list(ids), status=["queued", "running", "paused"], limit=1, raise_on_error=True
+                )
+                if not jobs and sessions:
+                    jobs, _ = await queue.store.list_jobs(
+                        session_id=list(sessions), status=["queued", "running", "paused"], limit=1, raise_on_error=True
+                    )
+            else:
+                limit = 100
+                while True:
+                    jobs, total = await queue.store.list_jobs(
+                        status=["queued", "running", "paused"], limit=limit, raise_on_error=True
+                    )
+                    if total <= len(jobs):
+                        break
+                    limit = max(limit * 2, total)
+        except Exception as exc:
+            raise _TaskRunUnavailable("Cannot verify Task executions; the queue is unavailable") from exc
+        if any(
+            (job.get("payload") or {}).get("company_task_id") in ids or job.get("session_id") in sessions
+            for job in jobs
+        ):
+            raise _TaskRunConflict("Cancel live Task executions before permanently deleting their records")
+    for task in tasks:
+        try:
+            databases = _task_execution_databases(os, task)
+            if databases and not task.get("session_id"):
+                raise _TaskRunUnavailable("Task session identity is unavailable")
+            for run_db in databases:
+                if "raise_on_error" not in signature(run_db.get_runs).parameters:
+                    raise _TaskRunUnavailable("Task run database does not support strict verification")
+                rows, _ = await _call(
+                    run_db, "get_runs", session_id=task["session_id"], deserialize=False, raise_on_error=True
+                )
+                for row in rows:
+                    if row.get("status") in {"PENDING", "RUNNING", "PAUSED"}:
+                        raise _TaskRunConflict("Cancel live Task executions before permanently deleting their records")
+                    if row.get("status") not in {"COMPLETED", "ERROR", "CANCELLED"}:
+                        raise _TaskRunUnavailable("Cannot verify Task executions; a stored run has unknown status")
+        except _TaskRunConflict:
+            raise
+        except Exception as exc:
+            raise _TaskRunUnavailable("Cannot verify Task executions; the run database is unavailable") from exc
 
 
 def _reservation_owner(task: Dict[str, Any], run: Dict[str, Any]) -> Optional[str]:
@@ -348,7 +457,170 @@ async def _reconcile_task_run(
     return updated is not None
 
 
-async def _enqueue_ticket(worker: Any, job: Dict[str, Any]) -> Dict[str, Any]:
+def _queue_provider(worker: Any, job: Dict[str, Any]) -> Any:
+    from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TASK_IDS, QUEUE_ACCEPTANCE_TOKEN
+
+    provider = getattr(worker, "_task_execution_provider", None)
+    if provider is not None and provider.enabled:
+        return provider
+    payload = job.get("payload") or {}
+    if QUEUE_ACCEPTANCE_TOKEN in payload or QUEUE_ACCEPTANCE_TASK_IDS in payload:
+        raise RuntimeError("Company execution protection is unavailable")
+    return None
+
+
+async def _acquire_queue_execution(
+    worker: Any,
+    job: Dict[str, Any],
+    *,
+    fresh: bool = False,
+    rotate: bool = False,
+    execution_store: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TASK_IDS, QUEUE_ACCEPTANCE_TOKEN
+
+    provider = _queue_provider(worker, job)
+    if provider is None:
+        return {}
+    payload = job.get("payload") or {}
+    expected = None if fresh else payload.get(QUEUE_ACCEPTANCE_TASK_IDS)
+    if not fresh and expected is None:
+        task_id = payload.get("company_task_id")
+        if not task_id:
+            raise ValueError("Queued Task identity must be verified before restarting this legacy run")
+        expected = [task_id]
+    if expected is not None and (not isinstance(expected, list) or any(not isinstance(i, str) for i in expected)):
+        raise ValueError("Invalid queued Task identity")
+    token = None if fresh or rotate else payload.get(QUEUE_ACCEPTANCE_TOKEN)
+    if token is not None and (not isinstance(token, str) or not token):
+        raise ValueError("Invalid queued execution owner")
+    token = token or uuid4().hex
+    ids = await provider.aacquire(job["session_id"], token, expected_task_ids=expected, execution_store=execution_store)
+    return {QUEUE_ACCEPTANCE_TOKEN: token, QUEUE_ACCEPTANCE_TASK_IDS: ids}
+
+
+@asynccontextmanager
+async def _queue_execution(worker: Any, job: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
+    from agno.run.concurrency import task_execution_scope
+
+    provider = _queue_provider(worker, job)
+    owner = await _acquire_queue_execution(worker, job, rotate=True)
+    with task_execution_scope(provider, queued=True):
+        yield owner
+    # Cancellation or an unresolved exception cannot establish that detached work stopped.
+    await _release_queue_execution(worker, {**job, "payload": {**(job.get("payload") or {}), **owner}})
+
+
+async def _release_queue_execution(worker: Any, job: Dict[str, Any]) -> None:
+    from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TOKEN
+    from agno.utils.log import log_error
+
+    token = (job.get("payload") or {}).get(QUEUE_ACCEPTANCE_TOKEN)
+    if token is None:
+        return
+    try:
+        provider = _queue_provider(worker, job)
+        await provider.arelease(job["session_id"], token)
+    except Exception as error:
+        # The queue write already committed; keep uncertain protection for recovery.
+        log_error(f"Could not release Company execution protection for job {job['id']}: {error}")
+
+
+def _queue_acceptance_kwargs(worker: Any, method: str, owner: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    from inspect import signature
+
+    from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TASK_IDS, QUEUE_ACCEPTANCE_TOKEN
+
+    if owner == {}:
+        return {}
+    store = getattr(worker.store, "_store", worker.store)
+    parameters = signature(getattr(store, method)).parameters
+    if not {"acceptance_token", "acceptance_task_ids"}.issubset(parameters):
+        raise RuntimeError("Queue store does not support Company execution protection")
+    if owner is None:
+        return {}
+    return {"acceptance_token": owner[QUEUE_ACCEPTANCE_TOKEN], "acceptance_task_ids": owner[QUEUE_ACCEPTANCE_TASK_IDS]}
+
+
+async def _prepare_queue_fallback(worker: Any, job: Dict[str, Any]) -> None:
+    from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TASK_IDS
+
+    owner = await _acquire_queue_execution(worker, job, rotate=True)
+    if owner:
+        from agno.run.concurrency import remember_task_execution
+
+        # The detached producer must check the same IDs, not rediscover an empty session.
+        remember_task_execution(job["session_id"], owner[QUEUE_ACCEPTANCE_TASK_IDS])
+        await _release_queue_execution(worker, {**job, "payload": {**(job.get("payload") or {}), **owner}})
+
+
+async def _continue_ticket(worker: Any, job: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
+    from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TOKEN
+
+    # Validate store support before acquiring a provisional legacy owner.
+    provider = _queue_provider(worker, job)
+    if provider is not None:
+        _queue_acceptance_kwargs(worker, "continue_job")
+    owner = await _acquire_queue_execution(worker, job)
+    result = await worker.store.continue_job(
+        job["id"], payload, **_queue_acceptance_kwargs(worker, "continue_job", owner)
+    )
+    current = result.get("job")
+    current_token = ((current or {}).get("payload") or {}).get(QUEUE_ACCEPTANCE_TOKEN)
+    if owner and (
+        result["outcome"] == "conflict"
+        or (current_token is not None and current_token != owner[QUEUE_ACCEPTANCE_TOKEN])
+    ):
+        await _release_queue_execution(worker, {**job, "payload": {**(job.get("payload") or {}), **owner}})
+    return result
+
+
+async def _requeue_ticket(worker: Any, job: Dict[str, Any], *, clear_cancellation: bool = False) -> bool:
+    if _queue_provider(worker, job) is not None:
+        _queue_acceptance_kwargs(worker, "requeue_job")
+    owner = await _acquire_queue_execution(worker, job, rotate=True)
+    protected = {**job, "payload": {**(job.get("payload") or {}), **owner}}
+    if clear_cancellation:
+        from agno.run.cancel import acleanup_run
+
+        try:
+            await acleanup_run(job["id"])
+        except BaseException:
+            await _release_queue_execution(worker, protected)
+            raise
+    accepted = await worker.store.requeue_job(job["id"], **_queue_acceptance_kwargs(worker, "requeue_job", owner))
+    if not accepted:
+        await _release_queue_execution(worker, protected)
+    return accepted
+
+
+async def _enqueue_ticket(
+    worker: Any, job: Dict[str, Any], *, execution_store: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TASK_IDS, QUEUE_ACCEPTANCE_TOKEN
+
+    payload = {
+        key: value
+        for key, value in (job.get("payload") or {}).items()
+        if key not in {QUEUE_ACCEPTANCE_TOKEN, QUEUE_ACCEPTANCE_TASK_IDS}
+    }
+    submission = _task_submission.get()
+    if submission is not None:
+        payload["company_task_id"] = submission["task"]["id"]
+    job = {**job, "payload": payload}
+    owner = await _acquire_queue_execution(worker, job, fresh=submission is None, execution_store=execution_store)
+    job = {**job, "payload": {**payload, **owner}}
+    result = await _enqueue_task_ticket(worker, job)
+    if owner and not result["accepted"]:
+        winner = result.get("job")
+        winning_token = ((winner or {}).get("payload") or {}).get(QUEUE_ACCEPTANCE_TOKEN)
+        # A recovered commit can report duplicate while still owning our token.
+        if winner is None or (winning_token is not None and winning_token != owner[QUEUE_ACCEPTANCE_TOKEN]):
+            await _release_queue_execution(worker, job)
+    return result
+
+
+async def _enqueue_task_ticket(worker: Any, job: Dict[str, Any]) -> Dict[str, Any]:
     submission = _task_submission.get()
     if submission is None:
         return await worker.store.enqueue_job(job, max_depth=worker.config.max_queue_depth)

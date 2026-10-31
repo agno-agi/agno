@@ -546,11 +546,17 @@ class MongoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        *,
+        raise_on_error: bool = False,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
-        """Get all runs matching the given filters."""
+        """Get matching runs; strict reads raise if the run collection is unavailable."""
         try:
-            collection = self._get_collection(table_type="runs")
+            if raise_on_error and not self.table_exists(self.runs_table_name):
+                raise RuntimeError("The runs collection is unavailable")
+            collection = self._get_collection(table_type="runs", create_collection_if_not_found=not raise_on_error)
             if collection is None:
+                if raise_on_error:
+                    raise RuntimeError("The runs collection is unavailable")
                 return [] if deserialize else ([], 0)
 
             query: Dict[str, Any] = {}

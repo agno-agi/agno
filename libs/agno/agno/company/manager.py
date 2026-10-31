@@ -7,6 +7,7 @@ from uuid import uuid4
 from agno.company.summary import _serialized_summary
 from agno.db.base import _UNSET_UPDATED_AT, AsyncBaseDb, BaseDb
 from agno.db.schemas.products import validate_product_fields
+from agno.db.schemas.tasks import TASK_EXECUTION_PROVENANCE
 
 
 def _validate_agent_source(type: str, executor_type: str, executor_id: Optional[str], run_id: Optional[str]) -> None:
@@ -200,6 +201,36 @@ class CompanyManager:
         """Archive a Product and its children atomically; active Tasks raise ValueError."""
         return self.db.delete_product(product_id, user_id=user_id)
 
+    def purge(
+        self,
+        product_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+        verified_routine_ids: Optional[Sequence[str]] = None,
+    ) -> bool:
+        """Verify the Routine catalog and permanently remove a Product with its checked Task snapshot."""
+        if verified_routine_ids is None:
+            from agno.scheduler import ScheduleManager
+
+            product = self.db.get_product(product_id, user_id=user_id, include_deleted=True)
+            if product is None:
+                return False
+            verified_routine_ids = (product.get("metadata") or {}).get("routine_ids") or []
+            schedules = ScheduleManager(self.schedule_db).list_all(user_id=None, raise_on_error=True)
+            if any(
+                schedule.id in verified_routine_ids
+                or (
+                    schedule.managed_by == "company"
+                    and (schedule.payload or {}).get("metadata", {}).get("product_id") == product_id
+                )
+                for schedule in schedules
+            ):
+                raise ValueError("Registered Routines must be deleted and their absence verified first")
+        return self.db.purge_product(
+            product_id, user_id=user_id, expected_tasks=expected_tasks, verified_routine_ids=verified_routine_ids
+        )
+
     def restore(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a Product and only children archived by it; return None if already active."""
         return self.db.restore_product(product_id, user_id=user_id)
@@ -301,6 +332,16 @@ class CompanyManager:
             _require_routine_product(record["product_id"])
         return self.db.delete_project(project_id, user_id=user_id, updated_before=updated_before)
 
+    def purge_project(
+        self,
+        project_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Permanently remove a Project after verifying its Task snapshot."""
+        return self.db.purge_project(project_id, user_id=user_id, expected_tasks=expected_tasks)
+
     def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a Project and only Tasks archived by it."""
         return self.db.restore_project(project_id, user_id=user_id)
@@ -396,6 +437,7 @@ class CompanyManager:
             "routine_id": routine_id,
             **_proposal_origin(),
             "session_id": str(uuid4()),
+            "metadata": {TASK_EXECUTION_PROVENANCE: {"complete": True, "stores": []}},
             "user_id": user_id,
             "transitions": [],
             "created_at": int(time.time()),
@@ -473,6 +515,16 @@ class CompanyManager:
     def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
         """Soft-delete a visible task."""
         return self.db.delete_task(task_id, user_id=user_id, updated_before=updated_before)
+
+    def purge_task(
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Permanently remove a Task after verifying its Task snapshot."""
+        return self.db.purge_task(task_id, user_id=user_id, expected_tasks=expected_tasks)
 
     def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a deleted task."""
@@ -863,6 +915,7 @@ class CompanyManager:
                 "origin": "routine" if routine_id else "product_manager",
                 "routine_id": routine_id,
                 "session_id": str(uuid4()),
+                "metadata": {TASK_EXECUTION_PROVENANCE: {"complete": True, "stores": []}},
                 "user_id": user_id,
                 "transitions": [],
                 "created_at": int(time.time()),
@@ -1105,6 +1158,36 @@ class AsyncCompanyManager:
         """Archive a Product and its children atomically; active Tasks raise ValueError."""
         return await self.db.delete_product(product_id, user_id=user_id)
 
+    async def purge(
+        self,
+        product_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+        verified_routine_ids: Optional[Sequence[str]] = None,
+    ) -> bool:
+        """Verify the Routine catalog and permanently remove a Product with its checked Task snapshot."""
+        if verified_routine_ids is None:
+            from agno.scheduler import ScheduleManager
+
+            product = await self.db.get_product(product_id, user_id=user_id, include_deleted=True)
+            if product is None:
+                return False
+            verified_routine_ids = (product.get("metadata") or {}).get("routine_ids") or []
+            schedules = await ScheduleManager(self.schedule_db).alist_all(user_id=None, raise_on_error=True)
+            if any(
+                schedule.id in verified_routine_ids
+                or (
+                    schedule.managed_by == "company"
+                    and (schedule.payload or {}).get("metadata", {}).get("product_id") == product_id
+                )
+                for schedule in schedules
+            ):
+                raise ValueError("Registered Routines must be deleted and their absence verified first")
+        return await self.db.purge_product(
+            product_id, user_id=user_id, expected_tasks=expected_tasks, verified_routine_ids=verified_routine_ids
+        )
+
     async def restore(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a Product and only children archived by it; return None if already active."""
         return await self.db.restore_product(product_id, user_id=user_id)
@@ -1206,6 +1289,16 @@ class AsyncCompanyManager:
             _require_routine_product(record["product_id"])
         return await self.db.delete_project(project_id, user_id=user_id, updated_before=updated_before)
 
+    async def purge_project(
+        self,
+        project_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Permanently remove a Project after verifying its Task snapshot."""
+        return await self.db.purge_project(project_id, user_id=user_id, expected_tasks=expected_tasks)
+
     async def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a Project and only Tasks archived by it."""
         return await self.db.restore_project(project_id, user_id=user_id)
@@ -1301,6 +1394,7 @@ class AsyncCompanyManager:
             "routine_id": routine_id,
             **_proposal_origin(),
             "session_id": str(uuid4()),
+            "metadata": {TASK_EXECUTION_PROVENANCE: {"complete": True, "stores": []}},
             "user_id": user_id,
             "transitions": [],
             "created_at": int(time.time()),
@@ -1380,6 +1474,16 @@ class AsyncCompanyManager:
     ) -> bool:
         """Soft-delete a visible task."""
         return await self.db.delete_task(task_id, user_id=user_id, updated_before=updated_before)
+
+    async def purge_task(
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Permanently remove a Task after verifying its Task snapshot."""
+        return await self.db.purge_task(task_id, user_id=user_id, expected_tasks=expected_tasks)
 
     async def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a deleted task."""
@@ -1772,6 +1876,7 @@ class AsyncCompanyManager:
                 "origin": "routine" if routine_id else "product_manager",
                 "routine_id": routine_id,
                 "session_id": str(uuid4()),
+                "metadata": {TASK_EXECUTION_PROVENANCE: {"complete": True, "stores": []}},
                 "user_id": user_id,
                 "transitions": [],
                 "created_at": int(time.time()),

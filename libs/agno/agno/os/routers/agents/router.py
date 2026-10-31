@@ -1655,9 +1655,8 @@ def get_agent_router(
                 if not tracked:
 
                     async def stored_native_events():
-                        from agno.run.agent import RunOutput
-
                         from agno.agents._hitl import hitl_state
+                        from agno.run.agent import RunOutput
 
                         answered = set(hitl_state(submitted).get("decisions") or {})
                         async for event in tail_stored(
@@ -1795,6 +1794,9 @@ def get_agent_router(
                 run_id,
                 component_type="agent",
                 component_id=getattr(agent, "id", None) or agent_id,
+                component=agent,
+                session_id=session_id,
+                user_id=user_id,
             )
 
         if stream and background:

@@ -150,7 +150,7 @@ async def test_disabled_on_demand_routine_stays_disabled_when_its_product_is_arc
     path = "/company/routines/" + routine["id"]
     await _call(db, "update_schedule", routine["id"], enabled=False)
     product_id = routine["payload"]["metadata"]["product_id"]
-    assert (await client.delete("/company/products/" + product_id)).status_code == 204
+    assert (await client.post("/company/products/" + product_id + "/archive")).status_code == 200
     disabled = await _call(db, "get_schedule", routine["id"])
     assert disabled["enabled"] is False
     refused = await client.post(path + "/resume")
@@ -508,7 +508,7 @@ async def test_automatic_disable_leaves_routine_updated_at(system, clock, cause,
         await _call(db, "update_schedule", routine["id"], cron_expr="not a cron")
     else:
         product_id = (await _call(db, "get_schedule", routine["id"]))["payload"]["metadata"]["product_id"]
-        assert (await client.delete("/company/products/" + product_id)).status_code == 204
+        assert (await client.post("/company/products/" + product_id + "/archive")).status_code == 200
     claimed = await claim_routine(db, routine["id"])
     edited = await stored_updated_at(db, routine["id"])
     clock[0] += 1000
@@ -685,3 +685,110 @@ async def test_execution_keeps_routine_order_and_edit_changes_it(system, clock):
     assert (await client.patch("/company/routines/" + older["id"], json={"name": "edited"})).status_code == 200
     assert await order("updated_at") == [older["id"], newer["id"]]
     assert await order("created_at") == [newer["id"], older["id"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("winner", ["delete", "create"])
+@pytest.mark.parametrize("repeat", range(2))
+async def test_routine_creation_does_not_orphan_schedule_during_product_purge(system, monkeypatch, winner, repeat):
+    client, db, _, _, _ = system
+    await _call(db, "_create_all_tables")
+    product = (await client.post("/company/products", json={"name": "Concurrent routine"})).json()
+    catalog_read, release_delete = asyncio.Event(), asyncio.Event()
+    schedule_saved, release_create = asyncio.Event(), asyncio.Event()
+    original_list = ScheduleManager.alist_all
+    original_create = db.create_schedule
+
+    async def held_list(self, *args, **kwargs):
+        rows = await original_list(self, *args, **kwargs)
+        catalog_read.set()
+        await asyncio.wait_for(release_delete.wait(), 10)
+        return rows
+
+    async def held_create(*args, **kwargs):
+        row = (
+            await original_create(*args, **kwargs)
+            if isinstance(db, AsyncBaseDb)
+            else await asyncio.to_thread(original_create, *args, **kwargs)
+        )
+        schedule_saved.set()
+        await asyncio.wait_for(release_create.wait(), 10)
+        return row
+
+    monkeypatch.setattr(ScheduleManager, "alist_all", held_list)
+    monkeypatch.setattr(db, "create_schedule", held_create)
+    deletion = asyncio.create_task(client.delete("/company/products/" + product["id"]))
+    creation = None
+    try:
+        await asyncio.wait_for(catalog_read.wait(), 10)
+        creation = asyncio.create_task(
+            client.post(
+                "/company/routines",
+                json={
+                    "product_id": product["id"],
+                    "name": "Concurrent",
+                    "instructions": "Review",
+                    "executor_type": "agent",
+                    "executor_id": "writer",
+                },
+            )
+        )
+        await asyncio.wait_for(schedule_saved.wait(), 10)
+        if winner == "delete":
+            release_delete.set()
+            assert (await asyncio.wait_for(deletion, 10)).status_code == 204
+            release_create.set()
+            assert (await asyncio.wait_for(creation, 10)).status_code == 422
+        else:
+            release_create.set()
+            assert (await asyncio.wait_for(creation, 10)).status_code == 201
+            release_delete.set()
+            assert (await asyncio.wait_for(deletion, 10)).status_code == 409
+    finally:
+        release_delete.set()
+        release_create.set()
+        await asyncio.gather(deletion, *([creation] if creation else []), return_exceptions=True)
+    schedules = await original_list(ScheduleManager(db))
+    owned = [row for row in schedules if (row.payload or {}).get("metadata", {}).get("product_id") == product["id"]]
+    assert len(owned) == (1 if winner == "create" else 0)
+    assert (await _call(db, "get_product", product["id"]) is not None) == (winner == "create")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["raises", "false"])
+async def test_routine_link_cleanup_failure_is_not_hidden(system, monkeypatch, failure):
+    client, db, _, _, _ = system
+    product = (await client.post("/company/products", json={"name": "Failed compensation"})).json()
+
+    async def refuse_link(*args, **kwargs):
+        await _call(db, "purge_product", product["id"], verified_routine_ids=())
+        raise ValueError("Product disappeared")
+
+    async def refuse_cleanup(*args, **kwargs):
+        if failure == "raises":
+            raise RuntimeError("Schedule cleanup unavailable")
+        return False
+
+    monkeypatch.setattr(db, "add_product_routine", refuse_link)
+    monkeypatch.setattr(ScheduleManager, "adelete", refuse_cleanup)
+    fields = {
+        "product_id": product["id"],
+        "name": "Unlinked",
+        "instructions": "Review",
+        "executor_type": "agent",
+        "executor_id": "writer",
+    }
+    if failure == "raises":
+        with pytest.raises(RuntimeError, match="Schedule cleanup unavailable") as error:
+            await client.post("/company/routines", json=fields)
+        assert error.value.__context__ is not None
+    else:
+        failed = await client.post("/company/routines", json=fields)
+        assert failed.status_code == 503
+        assert "cleanup" in failed.text
+    owned = [
+        row
+        for row in await ScheduleManager(db).alist_all()
+        if (row.payload or {}).get("metadata", {}).get("product_id") == product["id"]
+    ]
+    assert len(owned) == 1 and not owned[0].enabled

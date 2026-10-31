@@ -211,16 +211,23 @@ def _error_body(detail: str, exc: BaseException) -> Dict[str, Any]:
 @asynccontextmanager
 async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
     """Initializes databases in the event loop and closes them on shutdown."""
-    if agent_os.auto_provision_dbs:
-        agent_os._initialize_sync_databases()
-        await agent_os._initialize_async_databases()
-    await agent_os._acheck_sandbox_tables()
-
-    yield
-
-    # Let in-flight cancel-persist tasks finish writing before the pool closes
-    await _drain_cancel_persist_tasks()
-    await agent_os._close_databases()
+    provider = agent_os._task_execution_provider
+    try:
+        if agent_os.auto_provision_dbs:
+            agent_os._initialize_sync_databases()
+            await agent_os._initialize_async_databases()
+        if provider is not None:
+            await provider.ainitialize()
+        await agent_os._acheck_sandbox_tables()
+        yield
+    finally:
+        # Let in-flight cancel-persist tasks finish writing before the pool closes.
+        await _drain_cancel_persist_tasks()
+        try:
+            if provider is not None:
+                await provider.aclose()
+        finally:
+            await agent_os._close_databases()
 
 
 @asynccontextmanager
@@ -512,6 +519,13 @@ class AgentOS:
                 company = replace(company, products=self.config.company.products)
         self.company = company
         self._company_db = (company.db if company.db is not None else db) if company is not None else None
+        from agno.run.concurrency import _TaskExecutionProvider
+
+        self._task_execution_provider = (
+            _TaskExecutionProvider(self._company_db, auto_provision=auto_provision_dbs)
+            if self._company_db is not None
+            else None
+        )
         self.checkpoint = checkpoint
 
         self.telemetry = telemetry
@@ -1022,11 +1036,11 @@ class AgentOS:
             from agno.os.routers.company.runs import get_company_runs_router
             from agno.os.routers.company.tasks import get_tasks_router
 
-            updated_routers.append(get_products_router(db=self._company_db, settings=self.settings))
+            updated_routers.append(get_products_router(db=self._company_db, settings=self.settings, os=self))
             updated_routers.append(get_heartbeat_router(self))
-            updated_routers.append(get_projects_router(db=self._company_db, settings=self.settings))
+            updated_routers.append(get_projects_router(db=self._company_db, settings=self.settings, os=self))
             updated_routers.append(
-                get_tasks_router(db=self._company_db, settings=self.settings, registry=self.registry)
+                get_tasks_router(db=self._company_db, settings=self.settings, registry=self.registry, os=self)
             )
             updated_routers.append(get_playbook_router(db=self._company_db, settings=self.settings))
             updated_routers.append(get_company_runs_router(self))
@@ -1878,6 +1892,16 @@ class AgentOS:
         setup_tracing_for_os(db=db)
 
     def get_app(self) -> FastAPI:
+        if (
+            not self._base_app_prepared
+            and self._task_execution_provider is not None
+            and self._task_execution_provider._closed
+        ):
+            from agno.run.concurrency import _TaskExecutionProvider
+
+            self._task_execution_provider = _TaskExecutionProvider(
+                self._company_db, auto_provision=self.auto_provision_dbs
+            )
         if self.public is not None:
             from agno.os.public import PublicSurface
 
@@ -2047,10 +2071,12 @@ class AgentOS:
             from agno.os.routers.company.runs import get_company_runs_router
             from agno.os.routers.company.tasks import get_tasks_router
 
-            routers.append(get_products_router(db=self._company_db, settings=self.settings))
+            routers.append(get_products_router(db=self._company_db, settings=self.settings, os=self))
             routers.append(get_heartbeat_router(self))
-            routers.append(get_projects_router(db=self._company_db, settings=self.settings))
-            routers.append(get_tasks_router(db=self._company_db, settings=self.settings, registry=self.registry))
+            routers.append(get_projects_router(db=self._company_db, settings=self.settings, os=self))
+            routers.append(
+                get_tasks_router(db=self._company_db, settings=self.settings, registry=self.registry, os=self)
+            )
             routers.append(get_playbook_router(db=self._company_db, settings=self.settings))
             routers.append(get_company_runs_router(self))
         # Routes that require a database
@@ -2290,7 +2316,11 @@ class AgentOS:
 
         from agno.os.authz.run_context import RunAuthorizationMiddleware
 
-        fastapi_app.add_middleware(RunAuthorizationMiddleware, authorization_app=fastapi_app)
+        fastapi_app.add_middleware(
+            RunAuthorizationMiddleware,
+            authorization_app=fastapi_app,
+            task_execution_provider=self._task_execution_provider,
+        )
 
         # Add trailing slash normalization middleware
         from agno.os.middleware.trailing_slash import TrailingSlashMiddleware

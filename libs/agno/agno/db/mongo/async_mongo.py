@@ -537,7 +537,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
             if not hasattr(self, f"_{collection_name}_initialized"):
                 if not create_collection_if_not_found:
-                    return None
+                    return collection if await self.table_exists(collection_name) else None
                 # Create indexes asynchronously for async MongoDB collections
                 await create_collection_indexes_async(collection, collection_type)
                 setattr(self, f"_{collection_name}_initialized", True)
@@ -743,10 +743,18 @@ class AsyncMongoDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        *,
+        raise_on_error: bool = False,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         try:
-            collection = await self._get_collection(table_type="runs")
+            if raise_on_error and not await self.table_exists(self.runs_table_name):
+                raise RuntimeError("The runs collection is unavailable")
+            collection = await self._get_collection(
+                table_type="runs", create_collection_if_not_found=not raise_on_error
+            )
             if collection is None:
+                if raise_on_error:
+                    raise RuntimeError("The runs collection is unavailable")
                 return [] if deserialize else ([], 0)
 
             query: Dict[str, Any] = {}

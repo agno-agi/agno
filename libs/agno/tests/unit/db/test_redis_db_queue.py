@@ -567,3 +567,173 @@ class TestCleanupCASGuard:
         removed = db.cleanup_jobs(older_than_seconds=86400)
         assert removed == 0
         assert db._q_load_job("cl1")["status"] == "queued", "requeued run must not vanish"
+
+
+class TestAcceptanceToken:
+    @pytest.mark.parametrize("serialized", [False, True])
+    def test_requeue_replaces_acceptance_generation(self, db, serialized):
+        job = make_job()
+        job["payload"].update(serialize_session=serialized, _agno_company_acceptance_token="original")
+        db.enqueue_job(job)
+        for token in ("second", "third"):
+            claimed = db.claim_job("w1")
+            assert db.complete_job("r1", "w1", claimed["attempt"], "failed")
+            previous = db.get_job("r1")
+            previous_payload = previous["payload"]
+            previous_token = previous_payload["_agno_company_acceptance_token"]
+            assert db.requeue_job("r1", acceptance_token=token, acceptance_task_ids=[] if (token) is not None else None)
+            queued = db.get_job("r1")
+            assert queued["payload"]["_agno_company_acceptance_token"] == token
+            assert previous_payload["_agno_company_acceptance_token"] == previous_token
+            assert queued["payload"]["input"] == "hello"
+            assert queued["payload"]["serialize_session"] is serialized
+            assert queued["max_attempts"] == previous["attempt"] + 1
+            assert queued["locked_by"] is None and queued["locked_at"] is None
+        assert db.cancel_job("r1")
+        assert db.requeue_job("r1")
+        assert (db.get_job("r1"))["payload"]["_agno_company_acceptance_token"] == "third"
+
+    @pytest.mark.parametrize("existing", [None, "original"])
+    def test_continuation_preserves_acceptance_generation(self, db, existing):
+        job = make_job()
+        if existing is not None:
+            job["payload"]["_agno_company_acceptance_token"] = existing
+        db.enqueue_job(job)
+        for token in ("second", "third"):
+            claimed = db.claim_job("w1")
+            assert db.complete_job("r1", "w1", claimed["attempt"], "paused")
+            result = db.continue_job(
+                "r1", {"input": token}, acceptance_token=token, acceptance_task_ids=[] if (token) is not None else None
+            )
+            assert result["outcome"] == "queued"
+            assert result["job"]["payload"]["_agno_company_acceptance_token"] == (existing or "second")
+            assert result["job"]["payload"]["continue"] == {"input": token}
+            assert result["job"]["payload"]["input"] == "hello"
+            before = db.get_job("r1")
+            assert (db.continue_job("r1", {}, acceptance_token="loser", acceptance_task_ids=[]))["outcome"] == "attach"
+            assert db.get_job("r1") == before
+
+    @pytest.mark.parametrize("status", ["queued", "running", "paused", "completed", "missing"])
+    def test_refused_requeue_does_not_replace_acceptance(self, db, status):
+        if status != "missing":
+            job = make_job(status=status)
+            job["payload"]["_agno_company_acceptance_token"] = "original"
+            db.enqueue_job(job)
+        before = db.get_job("r1")
+        assert not db.requeue_job("r1", acceptance_token="loser", acceptance_task_ids=[])
+        assert db.get_job("r1") == before
+
+    @pytest.mark.parametrize("status", ["queued", "running", "completed", "failed", "cancelled", "missing"])
+    def test_refused_continue_does_not_replace_acceptance(self, db, status):
+        if status != "missing":
+            job = make_job(status=status)
+            job["payload"]["_agno_company_acceptance_token"] = "original"
+            db.enqueue_job(job)
+        before = db.get_job("r1")
+        result = db.continue_job("r1", {"input": "loser"}, acceptance_token="loser", acceptance_task_ids=[])
+        assert result["outcome"] == ("attach" if status in ("queued", "running") else "conflict")
+        assert db.get_job("r1") == before
+
+    @pytest.mark.parametrize("operation", ["requeue", "continue"])
+    @pytest.mark.parametrize("committed", [False, True])
+    def test_acceptance_write_errors_propagate(self, db, monkeypatch, operation, committed):
+        from redis.exceptions import ConnectionError
+
+        job = make_job(status="failed" if operation == "requeue" else "paused")
+        job["payload"]["_agno_company_acceptance_token"] = "original"
+        db.enqueue_job(job)
+        before = db.get_job("r1")
+        pipeline_type = type(db.redis_client.pipeline())
+        execute = pipeline_type.execute
+
+        def lost_response(pipe, *args, **kwargs):
+            if committed:
+                execute(pipe, *args, **kwargs)
+            raise ConnectionError("connection lost during acceptance")
+
+        monkeypatch.setattr(pipeline_type, "execute", lost_response)
+        with pytest.raises(ConnectionError, match="connection lost during acceptance"):
+            if operation == "requeue":
+                db.requeue_job("r1", acceptance_token="new", acceptance_task_ids=[])
+            else:
+                db.continue_job("r1", {}, acceptance_token="new", acceptance_task_ids=[])
+        after = db.get_job("r1")
+        if committed:
+            assert after["status"] == "queued"
+            assert after["payload"]["_agno_company_acceptance_token"] == (
+                "new" if operation == "requeue" else "original"
+            )
+        else:
+            assert after == before
+
+    @pytest.mark.parametrize("operation", ["requeue", "continue"])
+    def test_acceptance_watch_race_keeps_winning_payload(self, db, monkeypatch, operation):
+        job = make_job(status="failed" if operation == "requeue" else "paused")
+        db.enqueue_job(job)
+        save = db._q_save_job_in_pipe
+        winner = db.get_job("r1")
+        winner["status"] = "queued"
+        winner["payload"]["_agno_company_acceptance_token"] = "winner"
+        raced = False
+
+        def racing_save(pipe, updated):
+            nonlocal raced
+            if not raced:
+                raced = True
+                db.redis_client.set(db._q_job_key("r1"), json.dumps(winner))
+            save(pipe, updated)
+
+        monkeypatch.setattr(db, "_q_save_job_in_pipe", racing_save)
+        if operation == "requeue":
+            assert db.requeue_job("r1", acceptance_token="loser", acceptance_task_ids=[]) is False
+        else:
+            assert db.continue_job("r1", {}, acceptance_token="loser", acceptance_task_ids=[])["outcome"] == "attach"
+        assert raced
+        assert db.get_job("r1") == winner
+
+    def test_retry_preserves_acceptance_generation(self, db):
+        job = make_job(max_attempts=3)
+        job["payload"]["_agno_company_acceptance_token"] = "original"
+        db.enqueue_job(job)
+        for _ in range(2):
+            claimed = db.claim_job("w1")
+            assert db.retry_or_fail_job("r1", "w1", claimed["attempt"], "retry", retry_delay_seconds=0) == "queued"
+            assert (db.get_job("r1"))["payload"]["_agno_company_acceptance_token"] == "original"
+
+    @pytest.mark.parametrize("operation", ["requeue", "continue"])
+    @pytest.mark.parametrize("error_type", ["connection", "timeout", "socket_timeout"])
+    @pytest.mark.parametrize("guarded", [False, True])
+    def test_acceptance_exec_response_loss_is_not_a_refusal(self, db, monkeypatch, operation, error_type, guarded):
+        from socket import timeout
+
+        from redis.exceptions import ConnectionError, TimeoutError, WatchError
+
+        error = {"connection": ConnectionError, "timeout": TimeoutError, "socket_timeout": timeout}[error_type]
+        db.enqueue_job(make_job(status="failed" if operation == "requeue" else "paused"))
+        pipeline_type = type(db.redis_client.pipeline())
+        parse_response = pipeline_type.parse_response
+        lost = False
+
+        def lose_exec_response(pipe, connection, command_name, **options):
+            nonlocal lost
+            response = parse_response(pipe, connection, command_name, **options)
+            if command_name == "_" and isinstance(response, list) and not lost:
+                lost = True
+                raise error("lost EXEC response")
+            return response
+
+        monkeypatch.setattr(pipeline_type, "parse_response", lose_exec_response)
+        kwargs = {"acceptance_token": "new", "acceptance_task_ids": []} if guarded else {}
+        args = ("r1",) if operation == "requeue" else ("r1", {})
+        method = db.requeue_job if operation == "requeue" else db.continue_job
+        if guarded:
+            with pytest.raises(WatchError) as raised:
+                method(*args, **kwargs)
+            assert isinstance(raised.value.__context__, error)
+        else:
+            result = method(*args, **kwargs)
+            assert result is False if operation == "requeue" else result["outcome"] == "attach"
+        assert lost
+        job = db.get_job("r1")
+        assert job["status"] == "queued"
+        assert job["payload"].get("_agno_company_acceptance_token") == ("new" if guarded else None)

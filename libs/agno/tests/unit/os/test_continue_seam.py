@@ -302,12 +302,16 @@ class TestSideEntranceGate:
     async def test_service_executes_when_no_ticket_or_no_worker(self):
         from agno.os.job_queue import set_active_queue_worker
         from agno.os.services import runs as run_service
+        from agno.run.agent import RunOutput
 
         calls: list = []
 
         class StubAgent:
             id = "a1"
             db = object()
+
+            async def aget_run_output(self, run_id, session_id, user_id=None):
+                return RunOutput(status="PAUSED", execution_origin="inline")
 
             async def acontinue_run(self, **kwargs):
                 calls.append(kwargs)
@@ -984,3 +988,231 @@ class TestPausedGate409CarriesEscapeHatch:
         assert "requeue the ticket" in excinfo.value.detail, (
             "the 409 must carry the cancel+requeue escape hatch for the lost-row corner"
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["paused", "failed"])
+async def test_unverified_queue_restart_returns_conflict(status):
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    store = InMemoryQueueStore()
+    job = make_job()
+    job["status"] = status
+    await store.enqueue_job(job)
+    worker = make_worker(store)
+    worker._task_execution_provider = SimpleNamespace(enabled=True)
+    with pytest.raises(HTTPException) as error:
+        await acontinue_via_queue(worker, "r1", {})
+    assert error.value.status_code == 409
+    assert (await store.get_job("r1"))["status"] == status
+
+
+@pytest.mark.asyncio
+async def test_unavailable_queue_lookup_refuses_detached_fallback(monkeypatch):
+    from fastapi import HTTPException
+
+    store = InMemoryQueueStore()
+
+    async def unavailable(*args, **kwargs):
+        raise OSError("queue unavailable")
+
+    monkeypatch.setattr(store, "get_job", unavailable)
+    with pytest.raises(HTTPException) as error:
+        await acontinue_via_queue(make_worker(store), "r1", {})
+    assert error.value.status_code == 503
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error,status", [(ValueError("Task execution identity changed"), 409), (RuntimeError("Unavailable"), 503)]
+)
+async def test_failed_inline_continue_verifies_task_identity(error, status):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from fastapi import HTTPException
+
+    from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TASK_IDS, QUEUE_ACCEPTANCE_TOKEN
+    from agno.os.job_queue import araise_if_ticket_owns_continue
+
+    store = InMemoryQueueStore()
+    job = make_job()
+    job["status"] = "failed"
+    job["payload"].update({QUEUE_ACCEPTANCE_TOKEN: "old-owner", QUEUE_ACCEPTANCE_TASK_IDS: ["original-task"]})
+    await store.enqueue_job(job)
+    before = await store.get_job("r1")
+    worker = make_worker(store)
+    worker._task_execution_provider = SimpleNamespace(enabled=True, aacquire=AsyncMock(side_effect=error))
+    for _ in range(2):
+        with pytest.raises(HTTPException) as exc:
+            await araise_if_ticket_owns_continue(worker, "r1", "workflow", "wf-1")
+        assert exc.value.status_code == status
+        assert await store.get_job("r1") == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "enabled,status,attempt,origin,expected",
+    [
+        (True, "ERROR", 0, None, 409),
+        (True, "ERROR", 2, None, 409),
+        (True, "ERROR", None, None, 409),
+        (True, "ERROR", None, "inline", None),
+        (True, "ERROR", None, "queue", 409),
+        (True, "COMPLETED", 2, None, None),
+        (False, "ERROR", 2, None, 409),
+        (True, "PENDING", 0, None, 409),
+        (True, "RUNNING", 1, None, 409),
+        (True, "PAUSED", 1, None, 409),
+        (True, "CANCELLED", 1, None, 409),
+    ],
+)
+async def test_missing_ticket_checks_retained_queue_origin(enabled, status, attempt, origin, expected):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from fastapi import HTTPException
+
+    from agno.os.job_queue import araise_if_ticket_owns_continue
+    from agno.run.agent import RunOutput
+
+    worker = make_worker(InMemoryQueueStore())
+    worker._task_execution_provider = SimpleNamespace(enabled=enabled)
+    run = RunOutput(status=status, queue_attempt=attempt)
+    run.execution_origin = origin
+    component = SimpleNamespace(aget_run_output=AsyncMock(return_value=run))
+    for _ in range(2):
+        if expected:
+            with pytest.raises(HTTPException) as exc:
+                await araise_if_ticket_owns_continue(
+                    worker, "r1", component=component, session_id="s1", user_id="owner"
+                )
+            assert exc.value.status_code == expected
+        else:
+            await araise_if_ticket_owns_continue(worker, "r1", component=component, session_id="s1", user_id="owner")
+    component.aget_run_output.assert_awaited_with("r1", "s1", user_id="owner")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("origin,expected", [(None, 409), ("inline", None)])
+async def test_workerless_continuation_uses_stored_origin(origin, expected):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from fastapi import HTTPException
+
+    from agno.os.job_queue import araise_if_ticket_owns_continue
+    from agno.run.agent import RunOutput
+
+    run = RunOutput(status="ERROR", queue_attempt=None)
+    run.execution_origin = origin
+    component = SimpleNamespace(aget_run_output=AsyncMock(return_value=run))
+    for _ in range(2):
+        if expected is None:
+            await araise_if_ticket_owns_continue(None, "r1", component=component, session_id="s1", user_id="owner")
+        else:
+            with pytest.raises(HTTPException) as exc:
+                await araise_if_ticket_owns_continue(None, "r1", component=component, session_id="s1", user_id="owner")
+            assert exc.value.status_code == expected
+    assert component.aget_run_output.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_missing_ticket_keeps_ordinary_workflow_approval_continuation():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from agno.os.job_queue import araise_if_ticket_owns_continue
+    from agno.run.workflow import WorkflowRunOutput
+
+    worker = make_worker(InMemoryQueueStore())
+    worker._task_execution_provider = SimpleNamespace(enabled=True)
+    component = SimpleNamespace(
+        aget_run_output=AsyncMock(return_value=WorkflowRunOutput(status="PAUSED", queue_attempt=None))
+    )
+    for _ in range(2):
+        await araise_if_ticket_owns_continue(
+            worker, "r1", component_type="workflow", component=component, session_id="s1"
+        )
+    component.aget_run_output.assert_not_called()
+
+
+def test_execution_origin_scope_is_reset_after_queued_and_nested_runs():
+    from agno.run.concurrency import current_execution_origin, task_execution_scope
+
+    for _ in range(2):
+        assert current_execution_origin() == "inline"
+        with task_execution_scope(None, queued=True):
+            assert current_execution_origin() == "queue"
+            with task_execution_scope(None):
+                assert current_execution_origin() == "inline"
+            assert current_execution_origin() == "queue"
+        assert current_execution_origin() == "inline"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unavailable", [False, True])
+async def test_missing_ticket_history_read_fails_closed(unavailable):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from fastapi import HTTPException
+
+    from agno.os.job_queue import araise_if_ticket_owns_continue
+
+    worker = make_worker(InMemoryQueueStore())
+    worker._task_execution_provider = SimpleNamespace(enabled=True)
+    lookup = AsyncMock(side_effect=OSError("storage unavailable")) if unavailable else AsyncMock(return_value=None)
+    for _ in range(2):
+        with pytest.raises(HTTPException) as exc:
+            await araise_if_ticket_owns_continue(
+                worker, "r1", component=SimpleNamespace(aget_run_output=lookup), session_id="s1", user_id="owner"
+            )
+        assert exc.value.status_code == (503 if unavailable else 404)
+
+
+@pytest.mark.asyncio
+async def test_missing_ticket_remote_history_stays_remote(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from agno.agent import RemoteAgent
+    from agno.os.job_queue import araise_if_ticket_owns_continue
+
+    worker = make_worker(InMemoryQueueStore())
+    worker._task_execution_provider = SimpleNamespace(enabled=True)
+    component = RemoteAgent(base_url="https://example.com", agent_id="remote")
+    lookup = AsyncMock(side_effect=AssertionError("Must not look up remote history locally"))
+    monkeypatch.setattr(component, "aget_run_output", lookup, raising=False)
+    await araise_if_ticket_owns_continue(worker, "r1", component=component, session_id="s1", user_id="owner")
+    lookup.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_missing_ticket_service_refuses_retry(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from fastapi import HTTPException
+
+    from agno.agent import Agent
+    from agno.os import job_queue
+    from agno.os.services.runs import continue_paused_run
+    from agno.run.agent import RunOutput
+
+    worker = make_worker(InMemoryQueueStore())
+    worker._task_execution_provider = SimpleNamespace(enabled=True)
+    monkeypatch.setattr(job_queue, "get_active_queue_worker", lambda: worker)
+    component = Agent(id="agent")
+    lookup = AsyncMock(return_value=RunOutput(status="ERROR", queue_attempt=1))
+    producer = AsyncMock(side_effect=AssertionError("Must refuse before execution"))
+    monkeypatch.setattr(component, "aget_run_output", lookup)
+    monkeypatch.setattr(component, "acontinue_run", producer)
+    for _ in range(2):
+        with pytest.raises(HTTPException) as exc:
+            await continue_paused_run(component, run_id="r1", session_id="s1", user_id="owner")
+        assert exc.value.status_code == 409
+    lookup.assert_awaited_with("r1", "s1", user_id="owner")
+    producer.assert_not_called()

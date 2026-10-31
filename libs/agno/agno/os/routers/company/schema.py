@@ -172,6 +172,13 @@ class TaskResponse(BaseModel):
 
         return public_task({"transitions": value})["transitions"]
 
+    @field_validator("metadata")
+    @classmethod
+    def public_metadata(cls, value: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.tasks import public_task
+
+        return public_task({"metadata": value})["metadata"]
+
     product_id: str = Field(..., min_length=1)
     title: str = Field(..., min_length=1)
     brief: Optional[str] = None

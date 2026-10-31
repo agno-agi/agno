@@ -92,3 +92,11 @@ class TestNoWorkerAnswers503:
             resp = client.get(path)
             assert resp.status_code == 503, f"{path}: expected 503, got {resp.status_code}"
             assert "not enabled" in resp.json()["detail"]
+
+
+def test_guarded_legacy_generic_requeue_refused(harness):
+    harness.client.app.state.queue_worker._task_execution_provider = SimpleNamespace(enabled=True)
+    seed_terminal(harness.store, "legacy", "cancelled", int(time.time()))
+    response = harness.client.post("/queue/jobs/legacy/requeue")
+    assert response.status_code == 409, response.text
+    assert harness.store._jobs["legacy"]["status"] == "cancelled"

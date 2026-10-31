@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from agno.run.status_persist import RunPersistOutcome
     from agno.tracing.schemas import Span, Trace
 
-from agno.db.base import _UNSET_UPDATED_AT, AsyncBaseDb, SessionType
+from agno.db.base import _UNSET_UPDATED_AT, AsyncBaseDb, CompanyDeletionUnavailableError, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.engine import _engine_options
 from agno.db.postgres.schemas import default_sandbox_table_name, get_table_schema_definition
@@ -32,6 +32,7 @@ from agno.db.schemas.authz import (
     AUTHZ_USERS,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
+from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TASK_IDS, QUEUE_ACCEPTANCE_TOKEN
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.schemas.service_accounts import (
@@ -194,6 +195,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         if _engine is None:
             raise ValueError("One of db_url or db_engine must be provided")
 
+        self._execution_guard_url: Optional[str] = db_url if db_engine is None else None
         self.db_url: Optional[str] = db_url
         self.db_engine: AsyncEngine = _engine
         if id is None:
@@ -1105,6 +1107,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        *,
+        raise_on_error: bool = False,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         """Get all runs matching the given filters.
 
@@ -1120,6 +1124,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             sort_by (Optional[str]): The field to sort by. Defaults to run_index when filtering by session.
             sort_order (Optional[str]): The sort order.
             deserialize (Optional[bool]): Whether to deserialize the runs. Defaults to True.
+            raise_on_error (bool): Fail when run storage cannot be read instead of reporting absence.
 
         Returns:
             - When deserialize=True: List of run output objects
@@ -1129,6 +1134,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         try:
             table = await self._get_table(table_type="runs")
             if table is None:
+                if raise_on_error:
+                    raise RuntimeError("The runs table is unavailable")
                 return [] if deserialize else ([], 0)
 
             async with self.async_session_factory() as sess:
@@ -1170,6 +1177,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from runs table: {str(e)}")
+            if raise_on_error:
+                raise
             return [] if deserialize else ([], 0)
 
     async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
@@ -5628,6 +5637,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         session_id: Optional[Union[str, List[str]]] = None,
         user_id: Optional[str] = None,
         raise_on_error: bool = False,
+        company_task_id: Optional[Union[str, List[str]]] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List jobs, propagating read errors when raise_on_error is True."""
         try:
@@ -5641,6 +5651,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             if session_id is not None:
                 session_ids = [session_id] if isinstance(session_id, str) else list(session_id)
                 stmt = stmt.where(table.c.session_id.in_(session_ids))
+            if company_task_id is not None:
+                task_ids = [company_task_id] if isinstance(company_task_id, str) else list(company_task_id)
+                stmt = stmt.where(table.c.payload["company_task_id"].astext.in_(task_ids))
             if user_id is not None:
                 stmt = stmt.where(table.c.user_id == user_id)
             count_stmt = select(func.count()).select_from(stmt.alias())
@@ -5662,14 +5675,22 @@ class AsyncPostgresDb(AsyncBaseDb):
                 raise
             return [], 0
 
-    async def requeue_job(self, job_id: str) -> bool:
+    async def requeue_job(
+        self, job_id: str, *, acceptance_token: Optional[str] = None, acceptance_task_ids: Optional[List[str]] = None
+    ) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
-        exactly one more execution by raising max_attempts to attempt + 1."""
+        exactly one more execution by raising max_attempts to attempt + 1.
+        A supplied acceptance token replaces the old owner and makes storage errors propagate.
+        """
+        if (acceptance_token is None) != (acceptance_task_ids is None):
+            raise ValueError("Acceptance token and Task IDs must be supplied together")
         from agno.job_queue.session import is_serialized, with_session_seq
 
         try:
             table = await self._get_table(table_type="jobs")
             if table is None:
+                if acceptance_token is not None:
+                    raise RuntimeError("Job queue table not found")
                 return False
             now = _db_epoch()
             async with self.async_session_factory() as sess:
@@ -5703,13 +5724,28 @@ class AsyncPostgresDb(AsyncBaseDb):
                         values["payload"] = with_session_seq(job, await self._q_next_session_seq(sess, table, job))[
                             "payload"
                         ]
+                    if acceptance_token is not None:
+                        values["payload"] = {
+                            **(values.get("payload", job.get("payload")) or {}),
+                            QUEUE_ACCEPTANCE_TOKEN: acceptance_token,
+                            QUEUE_ACCEPTANCE_TASK_IDS: list(acceptance_task_ids or []),
+                        }
                     await sess.execute(update(table).where(table.c.id == job_id).values(**values))
                     return True
         except Exception as e:
             log_error(f"Job queue store: requeue failed for job {job_id}: {e}")
+            if acceptance_token is not None:
+                raise
             return False
 
-    async def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def continue_job(
+        self,
+        job_id: str,
+        continue_payload: Dict[str, Any],
+        *,
+        acceptance_token: Optional[str] = None,
+        acceptance_task_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         """Continuation CAS: flip the EXISTING paused ticket back to queued,
         mirroring requeue_job's transition (row-locked read + conditional
         update in one transaction). No new rows, ever - id == run_id is
@@ -5722,11 +5758,14 @@ class AsyncPostgresDb(AsyncBaseDb):
         queued = CAS won; attach = ticket already queued/running (double-click
         idempotency - the caller attaches, this click's inputs are discarded);
         conflict = terminal ticket or no ticket (job is the row or None).
+        A supplied acceptance token fills only a missing owner on a winning CAS.
 
         Exceptions propagate (like enqueue_job, unlike the ops-surface
         requeue_job): this CAS is the durable acceptance of the continue, and
         a DB failure must surface as a 500, never masquerade as "conflict".
         """
+        if (acceptance_token is None) != (acceptance_task_ids is None):
+            raise ValueError("Acceptance token and Task IDs must be supplied together")
         table = await self._get_table(table_type="jobs")
         if table is None:
             raise RuntimeError("Job queue table not found")
@@ -5743,6 +5782,9 @@ class AsyncPostgresDb(AsyncBaseDb):
                     return {"outcome": "attach", "job": job}
                 payload = dict(job.get("payload") or {})
                 payload["continue"] = dict(continue_payload)
+                if acceptance_token is not None and QUEUE_ACCEPTANCE_TOKEN not in payload:
+                    payload[QUEUE_ACCEPTANCE_TOKEN] = acceptance_token
+                    payload[QUEUE_ACCEPTANCE_TASK_IDS] = list(acceptance_task_ids or [])
                 values: Dict[str, Any] = {
                     "status": "queued",
                     "payload": payload,
@@ -6688,6 +6730,38 @@ class AsyncPostgresDb(AsyncBaseDb):
         async with self.async_session_factory() as sess, sess.begin():
             return await sess.run_sync(archive_product, products, projects, tasks, product_id, user_id)
 
+    async def purge_product(
+        self,
+        product_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+        verified_routine_ids: Optional[Sequence[str]] = None,
+    ) -> bool:
+        """Permanently remove a Product after verifying its Task snapshot."""
+        from agno.db.sql.company import purge_product
+
+        products = await self._get_table(table_type="products")
+        if products is None:
+            return False
+        projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
+        tasks = await self._get_table(table_type="tasks", create_table_if_not_found=True)
+        sources = await self._get_table(table_type="sources", create_table_if_not_found=True)
+        if any(table is None for table in (products, projects, tasks, sources)):
+            raise CompanyDeletionUnavailableError("Company deletion tables are unavailable")
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(
+                purge_product,
+                products,
+                projects,
+                tasks,
+                sources,
+                product_id,
+                user_id,
+                expected_tasks,
+                verified_routine_ids,
+            )
+
     async def restore_product(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         from agno.db.sql.company import restore_product
 
@@ -6824,6 +6898,26 @@ class AsyncPostgresDb(AsyncBaseDb):
         tasks = await self._get_table(table_type="tasks", create_table_if_not_found=True)
         async with self.async_session_factory() as sess, sess.begin():
             return await sess.run_sync(archive_project, products, projects, tasks, project_id, user_id, updated_before)
+
+    async def purge_project(
+        self,
+        project_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Permanently remove a Project after verifying its Task snapshot."""
+        from agno.db.sql.company import purge_project
+
+        projects = await self._get_table(table_type="projects")
+        if projects is None:
+            return False
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        tasks = await self._get_table(table_type="tasks", create_table_if_not_found=True)
+        if any(table is None for table in (products, projects, tasks)):
+            raise CompanyDeletionUnavailableError("Company deletion tables are unavailable")
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(purge_project, products, projects, tasks, project_id, user_id, expected_tasks)
 
     async def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         from agno.db.sql.company import restore_project
@@ -6993,6 +7087,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         session_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        *,
+        include_deleted_parents: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         from agno.db.schemas.products import company_sort
         from agno.db.sql.company import active_parents
@@ -7005,7 +7101,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             return [], 0
         products = await self._get_table(table_type="products", create_table_if_not_found=True)
         projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
-        stmt = active_parents(select(table), table, products, projects)
+        stmt = select(table)
+        if not include_deleted_parents:
+            stmt = active_parents(stmt, table, products, projects)
         if failed is not None:
             result_status = table.c.result["status"].as_string()
             stmt = stmt.where(
@@ -7093,6 +7191,60 @@ class AsyncPostgresDb(AsyncBaseDb):
             result = (await sess.execute(stmt.values(deleted_at=now, updated_at=now).returning(table.c.id))).fetchone()
             return result is not None
 
+    async def acquire_task_execution(
+        self,
+        session_id: str,
+        token: str,
+        *,
+        expected_task_ids: Optional[Sequence[str]] = None,
+        execution_store: Optional[Dict[str, Any]] = None,
+    ) -> List[str]:
+        """Protect all Tasks using this session, including archived records."""
+        from agno.db.sql.company import acquire_task_execution
+
+        tasks = await self._get_table(table_type="tasks")
+        if tasks is None:
+            raise CompanyDeletionUnavailableError("Company execution table is unavailable")
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(
+                acquire_task_execution,
+                tasks,
+                session_id,
+                token,
+                expected_task_ids=expected_task_ids,
+                execution_store=execution_store,
+            )
+
+    async def release_task_execution(self, session_id: str, token: str) -> None:
+        """Release only this execution token without changing Task activity."""
+        from agno.db.sql.company import release_task_execution
+
+        tasks = await self._get_table(table_type="tasks")
+        if tasks is None:
+            raise CompanyDeletionUnavailableError("Company execution table is unavailable")
+        async with self.async_session_factory() as sess, sess.begin():
+            await sess.run_sync(release_task_execution, tasks, session_id, token)
+
+    async def purge_task(
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        *,
+        expected_tasks: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Permanently remove a Task after verifying its Task snapshot."""
+        from agno.db.sql.company import purge_task
+
+        tasks = await self._get_table(table_type="tasks")
+        if tasks is None:
+            return False
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
+        if any(table is None for table in (products, projects, tasks)):
+            raise CompanyDeletionUnavailableError("Company deletion tables are unavailable")
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(purge_task, products, projects, tasks, task_id, user_id, expected_tasks)
+
     async def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         from agno.db.sql.company import lock_child, task_restore_fields
 
@@ -7170,13 +7322,16 @@ class AsyncPostgresDb(AsyncBaseDb):
         async with self.async_session_factory() as sess, sess.begin():
             row = (
                 await sess.execute(
-                    select(table).where(
+                    table.update()
+                    .where(
                         table.c.id == task_id,
                         table.c.job_id == job_id,
                         table.c.deleted_at.is_(None),
                         table.c.status == "in_progress",
                         or_(table.c.result.is_(None), table.c.result == JSON.NULL),
                     )
+                    .values(updated_at=table.c.updated_at)
+                    .returning(table)
                 )
             ).fetchone()
             if row is None:

@@ -8,7 +8,7 @@ the corresponding runtime pieces, including the DB-backed queue worker
 import asyncio
 import contextlib
 import inspect
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Iterator, List, Optional, Protocol, Sequence, Union
 
 from agno.job_queue.config import QueueConfig, RedisCoordination
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -338,7 +338,11 @@ async def aenqueue_ticket(queue_worker: Any, job: Dict[str, Any], component: Any
     config = queue_worker.config
     if config.queue_per_session or getattr(component, "one_turn_per_session", False) is True:
         job = {**job, "payload": {**(job.get("payload") or {}), "serialize_session": True}}
-    return await _enqueue_ticket(queue_worker, job)
+    from agno.run.concurrency import task_execution_store
+
+    return await _enqueue_ticket(
+        queue_worker, job, execution_store=task_execution_store(component) if component is not None else None
+    )
 
 
 async def aattach_waiting_on(queue_worker: Any, run_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
@@ -645,6 +649,7 @@ class QueueWorker:
 
         self.authorization_app = authorization_app
         self._company_db: Any = None
+        self._task_execution_provider: Any = None
         self._company_schedule_db: Any = None
         self.store = store
         self.resolve_component = resolve_component
@@ -1126,7 +1131,10 @@ class QueueWorker:
             # ticket we swept. The row and stream belong to that newer
             # writer - touch neither - but the ticket bookkeeping still
             # settles, or it would sit sweep-locked and re-sweep forever
-            await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error)
+            if await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error):
+                from agno.company.execution import _release_queue_execution
+
+                await _release_queue_execution(self, job)
             log_warning(
                 f"Job queue: swept job {job['id']} is owned by a newer attempt on the run row; "
                 "ticket failed without touching the row or stream"
@@ -1137,7 +1145,10 @@ class QueueWorker:
             from agno.company.execution import _project_run_before_settle
 
             await _project_run_before_settle(self, job, "failed", task_error)
-        await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error)
+        if await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error):
+            from agno.company.execution import _release_queue_execution
+
+            await _release_queue_execution(self, job)
         log_warning(f"Job queue: swept job {job['id']} to failed ({error})")
 
     async def _aresolve_job_component(self, job: Dict[str, Any]) -> Optional["QueueableComponent"]:
@@ -1155,16 +1166,19 @@ class QueueWorker:
         scope stamped at accept time. Tickets without a scope (registry
         components, pre-scope producers) resolve by type/id alone, so a
         two-argument resolver keeps working; resolvers may be sync or async."""
-        # component_type / component_id are required ticket fields (QueuedJob)
-        component_type, component_id = job["component_type"], job["component_id"]
-        scope = (job.get("payload") or {}).get("scope")
-        if scope:
-            resolved = self.resolve_component(component_type, component_id, scope=scope)
-        else:
-            resolved = self.resolve_component(component_type, component_id)
-        if inspect.isawaitable(resolved):
-            resolved = await resolved
-        return resolved
+        from agno.company.execution import _queue_execution
+
+        async with _queue_execution(self, job):
+            # component_type / component_id are required ticket fields (QueuedJob)
+            component_type, component_id = job["component_type"], job["component_id"]
+            scope = (job.get("payload") or {}).get("scope")
+            if scope:
+                resolved = self.resolve_component(component_type, component_id, scope=scope)
+            else:
+                resolved = self.resolve_component(component_type, component_id)
+            if inspect.isawaitable(resolved):
+                resolved = await resolved
+            return resolved
 
     async def _areconcile_swept_job(self, job: Dict[str, Any]) -> bool:
         """Settle a swept ticket to MATCH an already-settled run row.
@@ -1208,6 +1222,9 @@ class QueueWorker:
                 await _project_run_before_settle(self, job, ticket_status)
             settled = await self.store.settle_swept_job(job["id"], self.worker_id, ticket_status)
             if settled:
+                from agno.company.execution import _release_queue_execution
+
+                await _release_queue_execution(self, job)
                 log_warning(
                     f"Job queue: reconciled swept job {job['id']} to {ticket_status} - the leg had "
                     "settled before the sweep (only the ticket write was lost)"
@@ -1331,8 +1348,12 @@ class QueueWorker:
                 "the racing leg is cancelled by the registered intent at its first checkpoint"
             )
             return False
+        from agno.company.execution import _release_queue_execution
         from agno.os.event_streams import get_event_stream
         from agno.run.base import RunStatus
+
+        if prior is not None:
+            await _release_queue_execution(self, prior)
 
         with contextlib.suppress(Exception):
             event_stream = get_event_stream()
@@ -1556,8 +1577,11 @@ class QueueWorker:
         the fenced persist, UPDATED when the legacy fallback persisted, or
         None when nothing could be written (component unresolvable, store
         failure) - the keep-the-ticket-alive case."""
+        from agno.run.concurrency import task_execution_scope
+
         try:
-            return await self._persist_run_error_inner(job, error, status, cancellation_stage)
+            with task_execution_scope(self._task_execution_provider):
+                return await self._persist_run_error_inner(job, error, status, cancellation_stage)
         except Exception as e:
             log_warning(f"Job queue: run-row error persist failed for job {job.get('id')}: {e}")
             return None
@@ -2006,11 +2030,12 @@ class QueueWorker:
         backstop for a genuinely unsettled ticket is the sweep - we stop
         refreshing the lock the moment we return, so the ticket is collected
         once the lease expires - but it must be LOUD, never silent."""
+        job = None
         try:
+            job = await self.store.get_job(job_id)
             if self._company_db is not None and status in {"completed", "failed", "cancelled"}:
                 from agno.company.execution import _project_run, _project_run_before_settle
 
-                job = await self.store.get_job(job_id)
                 if job is not None and job.get("locked_by") == self.worker_id and job.get("attempt") == attempt:
                     # A held ticket is settled from its run row without executing: by a reclaim
                     # while attempts remain (which holds it again), then by the sweep, which
@@ -2035,6 +2060,10 @@ class QueueWorker:
                 "store could not commit the write. The ticket stays RUNNING with an unrefreshed lease and "
                 "will be collected by the sweep."
             )
+        if applied and job is not None and status in {"completed", "failed", "cancelled"}:
+            from agno.company.execution import _release_queue_execution
+
+            await _release_queue_execution(self, job)
         return applied
 
     async def _aretry_or_fail_ticket(
@@ -2044,11 +2073,12 @@ class QueueWorker:
         _asettle_ticket). None means the store declined or could not commit -
         the ticket is left RUNNING for the sweep rather than silently
         assumed requeued."""
+        job = None
         try:
+            job = await self.store.get_job(job_id)
             if self._company_db is not None:
                 from agno.company.execution import _project_run
 
-                job = await self.store.get_job(job_id)
                 if (
                     job is not None
                     and job.get("locked_by") == self.worker_id
@@ -2072,6 +2102,10 @@ class QueueWorker:
                 "could not commit the write. The ticket stays RUNNING with an unrefreshed lease and will be "
                 "collected by the sweep."
             )
+        if outcome == "failed" and job is not None:
+            from agno.company.execution import _release_queue_execution
+
+            await _release_queue_execution(self, job)
         return outcome
 
     async def _execute_claimed(self, job: Dict[str, Any]) -> None:
@@ -2105,7 +2139,13 @@ class QueueWorker:
 
                 authority = _ExecutorAuthorization(authority)
             with authorization_scope(lambda: authority):
-                await self._execute_claimed_inner(job, ownership)
+                from agno.company.execution import _queue_execution
+
+                async with _queue_execution(self, job) as execution_owner:
+                    if execution_owner:
+                        await self._execute_claimed_inner(job, ownership, execution_owner=execution_owner)
+                    else:
+                        await self._execute_claimed_inner(job, ownership)
 
     async def _await_with_timeout(self, execution: Any, ownership: Any, component: Any = None, job: Any = None) -> Any:
         """asyncio.wait_for with cause attribution: the cancellation cause is
@@ -2162,7 +2202,9 @@ class QueueWorker:
             raise asyncio.TimeoutError()
         return exec_task.result()
 
-    async def _execute_claimed_inner(self, job: Dict[str, Any], ownership: Any = None) -> None:
+    async def _execute_claimed_inner(
+        self, job: Dict[str, Any], ownership: Any = None, *, execution_owner: Optional[Dict[str, Any]] = None
+    ) -> None:
         from agno.exceptions import RunCancelledException
         from agno.run.base import RunStatus
 
@@ -2262,6 +2304,15 @@ class QueueWorker:
             )
             return
 
+        if execution_owner:
+            from agno.company.execution import _acquire_queue_execution
+            from agno.run.concurrency import task_execution_store
+
+            await _acquire_queue_execution(
+                self,
+                {**job, "payload": {**payload, **execution_owner}},
+                execution_store=task_execution_store(component),
+            )
         is_stream = bool(payload.get("stream"))
         slot_acquired = False
         try:
@@ -2564,7 +2615,14 @@ async def asettle_paused_ticket(queue_worker: Any, run_id: str, final_status: An
 
 
 async def araise_if_ticket_owns_continue(
-    queue_worker: Any, run_id: str, component_type: Optional[str] = None, component_id: Optional[str] = None
+    queue_worker: Any,
+    run_id: str,
+    component_type: Optional[str] = None,
+    component_id: Optional[str] = None,
+    *,
+    component: Any = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> None:
     """Inline-door admission gate: a durable ticket in paused/queued/running
     OWNS its run's continuation, and no non-queue door may execute one.
@@ -2583,15 +2641,18 @@ async def araise_if_ticket_owns_continue(
     (completed/failed/cancelled) allow inline: the queue is done with that
     run, matching the durable seam's swept-leg philosophy. A ticket for a
     DIFFERENT component allows inline too - the caller's own run lookup
-    reports not-found honestly (cross-component case).
+    reports not-found honestly (cross-component case). Failed Company tickets
+    must still verify their original Task identity before resuming. A run
+    that already completed instead starts a new follow-up. After ticket
+    cleanup, a retained queue-attempt marker prevents an unverifiable
+    Company retry; ordinary nonqueued continuations remain eligible.
 
     Raises 409 (use the durable door / continuation in progress) or 503
     (ticket lookup failed - FAIL CLOSED: executing while unable to verify
     ownership is exactly the race this gate exists to prevent). No queue
-    worker configured means no tickets can exist: allow.
+    worker configured means no tickets can exist, but stored run origin still
+    needs verification.
     """
-    if queue_worker is None:
-        return
     from fastapi import HTTPException
 
     try:
@@ -2601,16 +2662,36 @@ async def araise_if_ticket_owns_continue(
         # race during exactly the outages this gate exists for. Third-party
         # stores whose get_job lacks the strict flag keep best-effort
         # semantics (the TypeError retry below).
-        try:
-            job = await queue_worker.store.get_job(run_id, strict=True)
-        except TypeError:
-            job = await queue_worker.store.get_job(run_id)
+        if queue_worker is None:
+            job = None
+        else:
+            try:
+                job = await queue_worker.store.get_job(run_id, strict=True)
+            except TypeError:
+                job = await queue_worker.store.get_job(run_id)
     except Exception:
         raise HTTPException(
             status_code=503,
             detail=f"Could not verify continuation ownership for run {run_id}; retry the request",
         )
-    if job is None or job.get("job_type", "run") != "run":
+    if job is None:
+        from agno.remote.base import BaseRemote
+
+        if component is not None and component_type != "workflow" and not isinstance(component, BaseRemote):
+            with _queue_admission_errors():
+                run = await component.aget_run_output(run_id, session_id, user_id=user_id)
+                if run is None:
+                    raise HTTPException(status_code=404, detail="Run not found")
+                if run.status != "COMPLETED" and (
+                    getattr(run, "queue_attempt", None) is not None
+                    or getattr(run, "execution_origin", None) != "inline"
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Cannot verify the run's original execution identity; start a new run instead",
+                    )
+        return
+    if job.get("job_type", "run") != "run":
         return
     if component_type is not None and job.get("component_type") != component_type:
         return
@@ -2636,6 +2717,32 @@ async def araise_if_ticket_owns_continue(
             detail=f"A continuation of run {run_id} is already queued or executing; "
             "poll the run or attach via a background=true continue",
         )
+
+    if status == "failed":
+        from agno.company.execution import _prepare_queue_fallback, _queue_provider
+
+        with _queue_admission_errors():
+            if _queue_provider(queue_worker, job) is None:
+                return
+            if component is not None:
+                run = await component.aget_run_output(run_id, job["session_id"], user_id=job.get("user_id"))
+                if getattr(run, "status", None) == "COMPLETED":
+                    return
+            await _prepare_queue_fallback(queue_worker, job)
+
+
+@contextlib.contextmanager
+def _queue_admission_errors() -> Iterator[None]:
+    from fastapi import HTTPException
+
+    try:
+        yield
+    except HTTPException:
+        raise
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=503, detail="Queue execution verification is unavailable") from error
 
 
 async def acontinue_via_queue(
@@ -2682,9 +2789,10 @@ async def acontinue_via_queue(
     continuation events would inflate the count and the tail would silently
     skip the start of the continuation output.
     """
-    job = None
-    with contextlib.suppress(Exception):
-        job = await queue_worker.store.get_job(run_id)
+    from agno.company.execution import _prepare_queue_fallback
+
+    with _queue_admission_errors():
+        job = await queue_worker.store.get_job(run_id, strict=True)
     if job is None or job.get("job_type", "run") != "run":
         return None
     # Component identity: the ticket must belong to the component the caller
@@ -2736,15 +2844,11 @@ async def acontinue_via_queue(
             # floor would skip its early events for the attacher.
             persisted = existing_continue.get("tail_from", tail_from)
             return {"outcome": "attach", "job": job, "tail_from": persisted}
-        # A queued ticket without a continue block is a fresh submission that
-        # has not executed - continuing it is a state error the detached
-        # path reports properly (the run row cannot be PAUSED and the ticket
-        # pre-execution at once except transiently)
-        return None
     if status != "paused":
-        # Terminal ticket under a paused run row (e.g. the leg was swept or
-        # timed out after the pause write): the detached path can still
-        # continue the run; the caller logs the bypass
+        # A queued ticket without a continuation has not run; a terminal ticket
+        # no longer owns the run. Both leave continuation to the detached path.
+        with _queue_admission_errors():
+            await _prepare_queue_fallback(queue_worker, job)
         return None
     from agno.run.authorization import stamp_authorization
 
@@ -2775,7 +2879,10 @@ async def acontinue_via_queue(
     # requeue with clear_cancellation=true - an explicit human override,
     # not silent automation. Attempt-scoped intent (roadmap, with the
     # queue/steering ownership convergence) dissolves this entirely.
-    result = await queue_worker.store.continue_job(run_id, continue_payload)
+    from agno.company.execution import _continue_ticket
+
+    with _queue_admission_errors():
+        result = await _continue_ticket(queue_worker, job, continue_payload)
     if result.get("outcome") == "queued":
         wake_queue_worker(queue_worker)
     if result.get("outcome") == "attach":
@@ -2933,6 +3040,7 @@ async def aprepare_queued_run(
             status=RunStatus.pending,
             # 0 marks a durable queue ticket's row before any claim; in-process rows stay None.
             queue_attempt=0,
+            execution_origin="queue",
         )
 
         async def load_agent_session() -> Any:
@@ -2970,6 +3078,7 @@ async def aprepare_queued_run(
             input=TeamRunInput(input_content=input),
             status=RunStatus.pending,
             queue_attempt=0,
+            execution_origin="queue",
         )
 
         async def load_team_session() -> Any:
@@ -3064,6 +3173,7 @@ async def aprepare_accepted_or_abort(
       swallow the prepare failure and acknowledge. A 500 here would be the
       lie - the work happens anyway.
     """
+    accepted_job = await queue_worker.store.get_job(run_id)
     try:
         await aprepare_queued_run(
             component, component_type, run_id, session_id, user_id, input, **({"media": media} if media else {})
@@ -3078,6 +3188,10 @@ async def aprepare_accepted_or_abort(
                 "claimed - acknowledging; the worker's claim-time ensure owns the run row"
             )
             return
+        from agno.company.execution import _release_queue_execution
+
+        if accepted_job is not None:
+            await _release_queue_execution(queue_worker, accepted_job)
         from fastapi import HTTPException
 
         from agno.os.event_streams import get_event_stream
@@ -3350,6 +3464,7 @@ async def queue_lifespan(app: Any, agent_os: Any):
         authorization_app=app,
     )
     worker._company_db = getattr(agent_os, "_company_db", None)
+    worker._task_execution_provider = getattr(agent_os, "_task_execution_provider", None)
     worker._company_schedule_db = agent_os.db
     app.state.queue_worker = worker
     set_active_queue_worker(worker)

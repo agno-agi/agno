@@ -595,6 +595,7 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
                 "POST /company/products": ["products:write"],
                 "PATCH /company/products/*": ["products:write"],
                 "DELETE /company/products/*": ["products:delete"],
+                "POST /company/products/*/archive": ["products:delete"],
                 "POST /company/products/*/restore": ["products:delete"],
                 # Company Project endpoints
                 "GET /company/projects": ["projects:read"],
@@ -602,6 +603,7 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
                 "POST /company/projects": ["projects:write"],
                 "PATCH /company/projects/*": ["projects:write"],
                 "DELETE /company/projects/*": ["projects:delete"],
+                "POST /company/projects/*/archive": ["projects:delete"],
                 "POST /company/projects/*/restore": ["projects:delete"],
                 "POST /company/projects/*/transitions": ["projects:write"],
                 # Company Task endpoints
@@ -610,6 +612,7 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
                 "POST /company/tasks": ["tasks:write"],
                 "PATCH /company/tasks/*": ["tasks:write"],
                 "DELETE /company/tasks/*": ["tasks:delete"],
+                "POST /company/tasks/*/archive": ["tasks:delete"],
                 "POST /company/tasks/*/restore": ["tasks:delete"],
                 "POST /company/tasks/*/transitions": ["tasks:write"],
                 # Company execution and attention reuse Task access; executor routes check run permission too.

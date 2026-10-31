@@ -4,6 +4,7 @@ import asyncio
 import json
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Coroutine, Dict, Mapping, Optional, Sequence
 
@@ -78,7 +79,7 @@ def _sync(coro: Coroutine[Any, Any, Any]) -> Any:
     except RuntimeError:
         return asyncio.run(coro)
     with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
+        return pool.submit(copy_context().run, asyncio.run, coro).result()
 
 
 class Sandbox(ABC):

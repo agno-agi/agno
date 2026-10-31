@@ -1,7 +1,11 @@
 """Validation and explicit lifecycle rules for Company tasks."""
 
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
+TASK_EXECUTION_CLAIMS = "_agno_execution_claims"
+TASK_EXECUTION_REVISION = "_agno_execution_revision"
+TASK_EXECUTION_PROVENANCE = "_agno_execution_provenance"
 
 # In progress is entered only by starting a run; review and completion need an earlier attempt.
 TASK_TRANSITIONS = {
@@ -87,16 +91,44 @@ def task_transition_fields(
     return fields
 
 
+def task_execution_stores(task: Dict[str, Any], *, require_complete: bool = True) -> List[Dict[str, str]]:
+    """Validate the trusted inventory; an empty current query cannot certify old history."""
+    provenance = (task.get("metadata") or {}).get(TASK_EXECUTION_PROVENANCE)
+    if (
+        not isinstance(provenance, dict)
+        or not isinstance(provenance.get("complete"), bool)
+        or (require_complete and provenance["complete"] is not True)
+        or not isinstance(provenance.get("stores"), list)
+    ):
+        raise ValueError("Task execution provenance requires offline verification")
+    stores = provenance["stores"]
+    for store in stores:
+        if (
+            not isinstance(store, dict)
+            or set(store) != {"db_id", "session_table", "runs_table"}
+            or any(not isinstance(value, str) or not value.strip() for value in store.values())
+        ):
+            raise ValueError("Task execution provenance contains an invalid store")
+    return stores
+
+
 def public_task(task: Dict[str, Any]) -> Dict[str, Any]:
-    """Keep persisted caller claims out of API and tool results."""
+    """Keep internal authorization and execution metadata out of public results."""
     from agno.run.authorization import AUTHORIZATION_KEY
 
-    return {
+    result = {
         **task,
         "transitions": [
             {k: v for k, v in entry.items() if k != AUTHORIZATION_KEY} for entry in task.get("transitions", [])
         ],
     }
+    if task.get("metadata") is not None:
+        result["metadata"] = {
+            key: value
+            for key, value in task["metadata"].items()
+            if key not in {TASK_EXECUTION_CLAIMS, TASK_EXECUTION_REVISION, TASK_EXECUTION_PROVENANCE}
+        }
+    return result
 
 
 def task_run_id(task_id: str, attempt: int) -> str:

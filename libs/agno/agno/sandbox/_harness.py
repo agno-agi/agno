@@ -327,7 +327,7 @@ def _media_wire(media: Any) -> List[Dict[str, Any]]:
 
 
 def _execution(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
-    from agno.run.concurrency import get_worker_ownership
+    from agno.run.concurrency import current_task_execution, get_worker_ownership
     from agno.sandbox.media import decode_media
 
     # Metadata for the session the turn creates, set by the host for a team member; not a run option.
@@ -343,6 +343,7 @@ def _execution(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -
         run_id=run_id,
         input=input,
         sdk=agent._sandbox_runtime,
+        **({"_task_execution": current_task_execution()} if current_task_execution() is not None else {}),
         user_id=kwargs.get("user_id"),
         agent_name=agent.name,
         config=config,
@@ -408,6 +409,7 @@ async def aprepare_pending_run(
     user_id: Optional[str],
     input: Any,
     media: Optional[List[Dict[str, Any]]] = None,
+    queued: bool = False,
 ) -> RunOutput:
     from agno.sandbox.media import decode_media
 
@@ -422,6 +424,8 @@ async def aprepare_pending_run(
         # the host path; the runtime's messages replace these when the turn completes.
         messages=[Message(role="user", content=str(input), created_at=int(time.time()))],
         status=RunStatus.pending,
+        queue_attempt=0 if queued else None,
+        execution_origin="queue" if queued else "inline",
     )
     await coordinator(agent).store.aprepare(run.to_dict())
     return run
@@ -535,6 +539,8 @@ async def astart_background(
         agent_id=agent.get_id(),
         user_id=user_id,
         status=RunStatus.pending,
+        queue_attempt=0,
+        execution_origin="queue",
     )
 
 

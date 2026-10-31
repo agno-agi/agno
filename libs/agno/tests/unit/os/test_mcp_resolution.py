@@ -31,7 +31,7 @@ def _bind_agent_session(agent, component_id, session_id, run_id):
     sess = AgentSession(
         session_id=session_id,
         agent_id=component_id,
-        runs=[RunOutput(run_id=run_id, agent_id=component_id, session_id=session_id)],
+        runs=[RunOutput(run_id=run_id, agent_id=component_id, session_id=session_id, execution_origin="inline")],
     )
 
     async def _fake_aget_session(session_id=None, user_id=None, **kw):
@@ -251,6 +251,7 @@ async def test_continue_run_resolves_the_stamped_version(monkeypatch):
 
     continued_on = []
     stamped_agent = Agent(id="preview-agent", name="Preview Agent v7")
+    _bind_agent_session(stamped_agent, "preview-agent", "s-1", "run-1")
 
     async def stamped_acontinue_run(*, run_id, session_id, user_id, requirements, stream=False):
         continued_on.append("stamped")
@@ -307,7 +308,7 @@ async def test_continue_run_without_a_stamp_keeps_base_resolution(monkeypatch):
     agent = Agent(id="plain-agent", name="Plain Agent")
 
     async def fake_aget_run_output(run_id=None, session_id=None, user_id=None):
-        return RunOutput(run_id="run-1", session_id="s-1")  # no metadata stamp
+        return RunOutput(run_id="run-1", session_id="s-1", execution_origin="inline")  # no metadata stamp
 
     async def fake_acontinue_run(*, run_id, session_id, user_id, requirements, stream=False):
         return RunOutput(run_id=run_id, session_id=session_id, content="resumed")

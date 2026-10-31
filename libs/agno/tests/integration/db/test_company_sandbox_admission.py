@@ -75,7 +75,7 @@ async def test_successful_retry_establishes_missing_pin(sandbox_system, first_st
     await _project_run(worker, job, first_status, "Transient first attempt")
     await worker.store.cancel_job(job["id"])
     failed = await _call(db, "get_task", task["id"])
-    assert failed["metadata"] is None
+    assert "checkout" not in (failed["metadata"] or {})
     second = await client.post(path + "/runs", json={"attempt": 2})
     assert second.status_code == 202, second.text
     second_job = await worker.store.get_job(second.json()["run_id"])
@@ -128,7 +128,7 @@ async def test_live_job_blocks_after_task_mutation(sandbox_system, mutation):
             value = await _call(db, "get_task", first["id"])
             await _call(db, "start_task_run", first["id"], 2, value["transitions"], run_db_id=worker.config.db.id)
     elif mutation == "archived":
-        assert (await client.delete(path)).status_code == 204
+        assert (await client.post(path + "/archive")).status_code == 200
     blocked = await client.post(second_path)
     assert blocked.status_code == 409 and "live job" in blocked.text, blocked.text
     assert (await worker.store.get_job(job["id"]))["status"] == "running"
@@ -478,7 +478,7 @@ async def test_recovered_retry_establishes_absent_checkout(sandbox_system):
     second = await client.post(path, json={"attempt": 2})
     assert second.status_code == 202, second.text
     task = await _call(db, "get_task", task["id"])
-    assert task["metadata"] is None
+    assert "checkout" not in (task["metadata"] or {})
     run = agent.db.get_run(task["job_id"], deserialize=False)
     agent.db.upsert_run(
         {**run["run_data"], "status": "COMPLETED", "metadata": {"sandbox": {"repository": PIN}}},
@@ -571,3 +571,380 @@ async def test_pinned_task_refuses_non_sandboxed_reacceptance(sandbox_system, ki
     assert saved["session_id"] == task["session_id"]
     assert saved["metadata"] == before["metadata"]
     assert saved["result"]["status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_failure", ["none", "provider", "commit", "new_before_replay", "binding", "complete"])
+async def test_sandbox_detach_retains_original_task_claim_until_confirmed_stop(
+    sandbox_system, monkeypatch, stop_failure
+):
+    import asyncio
+    from uuid import uuid4
+
+    from sqlalchemy import select
+
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.run.concurrency import _TaskExecutionProvider, task_execution_scope
+    from agno.sandbox import _harness
+    from agno.sandbox.base import SandboxHandle
+    from agno.sandbox.coordinator import SandboxCoordinator
+
+    client, db, _, _, agent = sandbox_system
+    task = await engineering_task(client, db)
+    provider = _TaskExecutionProvider(db)
+    await provider.ainitialize()
+    runner = _harness.coordinator(agent)
+    alive = {}
+    admissions = []
+    starts = []
+
+    async def create(session_id, *, agent_id=None, generation=1, **kwargs):
+        claims = (await _call(db, "get_task", task["id"]))["metadata"].get(TASK_EXECUTION_CLAIMS, [])
+        admissions.append(any(token.startswith("sandbox:") for token in claims))
+        handle = SandboxHandle(uuid4().hex, "controlled", agent_id, session_id, generation, "running", "fixture")
+        alive[handle.provider_ref] = handle
+        return handle
+
+    async def get(reference):
+        return alive.get(reference)
+
+    async def find(*args, **kwargs):
+        return next(iter(alive.values()), None)
+
+    async def destroy(handle):
+        alive.pop(handle.provider_ref, None)
+
+    async def start(handle, **kwargs):
+        starts.append(kwargs)
+
+    async def poll(execution, **kwargs):
+        await asyncio.sleep(0)
+        return SimpleNamespace(cursor=1, result=None, events=[{"event": "RunContent", "content": "working"}])
+
+    monkeypatch.setattr(runner.provider, "acreate", create)
+    monkeypatch.setattr(runner.provider, "aget", get)
+    monkeypatch.setattr(runner.provider, "afind", find)
+    monkeypatch.setattr(runner.provider, "adestroy", destroy)
+    monkeypatch.setattr(runner.client, "astart", start)
+    monkeypatch.setattr(runner.client, "apoll", poll)
+    checkpoints = {}
+
+    async def capture(handle, *, state):
+        from agno.sandbox.checkpoint import CheckpointRef
+
+        reference = CheckpointRef(uuid4().hex * 2, 1)
+        checkpoints[reference.sha256] = state
+        return reference
+
+    async def verify(reference):
+        assert reference.sha256 in checkpoints
+
+    async def restore(handle, reference):
+        return checkpoints[reference.sha256]
+
+    monkeypatch.setattr(runner.transfer, "acapture", capture)
+    monkeypatch.setattr(runner.transfer, "arestore", restore)
+    monkeypatch.setattr(runner.transfer.store, "averify", verify)
+    previous = None
+    try:
+        for cycle in range(2):
+            run_id = f"sandbox-{cycle}"
+            if stop_failure == "binding" and cycle == 1:
+                write = runner.store._write_record
+
+                def refuse_binding(connection, lease, record, **kwargs):
+                    raise RuntimeError("Binding ownership write failed")
+
+                monkeypatch.setattr(runner.store, "_write_record", refuse_binding)
+                with task_execution_scope(provider):
+                    stream = agent.arun(
+                        "work",
+                        stream=True,
+                        session_id=task["session_id"],
+                        run_id=run_id,
+                        _team_id="team",
+                        yield_run_output=True,
+                    )
+                    failed = [event async for event in stream]
+                    assert failed[-1].status.value == "ERROR"
+                    monkeypatch.setattr(runner.store, "_write_record", write)
+                    row = await runner.store._transaction(
+                        lambda connection: dict(connection.execute(select(runner.store.bindings)).mappings().one())
+                    )
+                    assert (await _call(db, "get_task", task["id"]))["metadata"].get(TASK_EXECUTION_CLAIMS)
+                    await runner._aterminate(
+                        row["session_id"],
+                        agent_id=agent.id,
+                        run_id=row["run_id"],
+                        user_id=None,
+                        queue_attempt=None,
+                        status="CANCELLED",
+                        reason="Stop",
+                    )
+                    assert not (await _call(db, "get_task", task["id"]))["metadata"].get(TASK_EXECUTION_CLAIMS)
+                break
+            with task_execution_scope(provider):
+                stream = agent.arun("work", stream=True, session_id=task["session_id"], run_id=run_id, _team_id="team")
+                await stream.__anext__()
+                await stream.aclose()
+            assert admissions[-1] is True, "Sandbox compute started without the original Task claim"
+            row = await _call(db, "get_task", task["id"])
+            claims = row["metadata"].get(TASK_EXECUTION_CLAIMS, [])
+            assert len(claims) == 1 and claims[0].startswith("sandbox:")
+            record = await runner.store._transaction(
+                lambda connection: dict(connection.execute(select(runner.store.bindings)).mappings().one())
+            )
+            assert record["session_id"] != task["session_id"]
+            token = "sandbox:" + record["record"]["execution_id"]
+            assert claims == [token]
+            fresh = SandboxCoordinator(agent.db, runner.provider, runner.transfer, warm_computer_seconds=0)
+            monkeypatch.setattr(fresh.client, "astart", start)
+            monkeypatch.setattr(fresh.client, "apoll", poll)
+            with task_execution_scope(provider):
+                if previous is not None:
+                    await fresh._release_task_execution(previous)
+                    assert (await _call(db, "get_task", task["id"]))["metadata"][TASK_EXECUTION_CLAIMS] == [token]
+                stream = fresh.astream(
+                    record["session_id"],
+                    agent_id=agent.id,
+                    run_id=record["run_id"],
+                    input="work",
+                    sdk="fixture",
+                    config=starts[-1]["config"],
+                    env=_harness.env(agent),
+                )
+                await stream.__anext__()
+                await stream.aclose()
+                assert starts[-1]["execution_id"] == record["record"]["execution_id"]
+                assert (await _call(db, "get_task", task["id"]))["metadata"][TASK_EXECUTION_CLAIMS] == [token]
+                if stop_failure == "provider":
+
+                    async def refuse_stop(handle):
+                        raise RuntimeError("compute removal unavailable")
+
+                    monkeypatch.setattr(runner.provider, "adestroy", refuse_stop)
+                    with pytest.raises(RuntimeError, match="compute removal unavailable"):
+                        await fresh._aterminate(
+                            record["session_id"],
+                            agent_id=agent.id,
+                            run_id=record["run_id"],
+                            user_id=None,
+                            queue_attempt=None,
+                            status="CANCELLED",
+                            reason="Stop",
+                        )
+                    assert (await _call(db, "get_task", task["id"]))["metadata"][TASK_EXECUTION_CLAIMS] == [token]
+                    monkeypatch.setattr(runner.provider, "adestroy", destroy)
+                if stop_failure == "complete":
+
+                    async def complete(execution, **kwargs):
+                        result = {
+                            "type": "execution_finished",
+                            "run": {
+                                "run_id": record["run_id"],
+                                "session_id": record["session_id"],
+                                "agent_id": agent.id,
+                                "user_id": None,
+                                "status": "COMPLETED",
+                                "content": "Finished",
+                            },
+                            "session": {
+                                "session_id": record["session_id"],
+                                "user_id": None,
+                                "session_data": {"fixture_session_id": "native"},
+                            },
+                        }
+                        return SimpleNamespace(cursor=1, result=result, events=[])
+
+                    monkeypatch.setattr(fresh.client, "apoll", complete)
+                    result = [
+                        event
+                        async for event in fresh.astream(
+                            record["session_id"],
+                            agent_id=agent.id,
+                            run_id=record["run_id"],
+                            input="work",
+                            sdk="fixture",
+                            config=starts[-1]["config"],
+                            env=_harness.env(agent),
+                        )
+                    ]
+                    assert result[-1].status.value == "COMPLETED"
+                    assert "_company_execution" not in str(result[-1].to_dict())
+                elif stop_failure in ("commit", "new_before_replay"):
+                    finish = fresh.store.afinish_stop
+
+                    async def lost_ack(lease):
+                        await finish(lease)
+                        raise RuntimeError("lost terminal commit response")
+
+                    monkeypatch.setattr(fresh.store, "afinish_stop", lost_ack)
+                    with pytest.raises(RuntimeError, match="lost terminal commit response"):
+                        await fresh._aterminate(
+                            record["session_id"],
+                            agent_id=agent.id,
+                            run_id=record["run_id"],
+                            user_id=None,
+                            queue_attempt=None,
+                            status="CANCELLED",
+                            reason="Stop",
+                        )
+                    assert (await _call(db, "get_task", task["id"]))["metadata"][TASK_EXECUTION_CLAIMS] == [token]
+                    if stop_failure == "new_before_replay" and cycle == 0:
+                        previous = record["record"]
+                        continue
+                    replay = fresh.astream(
+                        record["session_id"],
+                        agent_id=agent.id,
+                        run_id=record["run_id"],
+                        input="work",
+                        sdk="fixture",
+                        config=starts[-1]["config"],
+                        env=_harness.env(agent),
+                    )
+                    result = [event async for event in replay]
+                    assert result[-1].status.value == "CANCELLED"
+                else:
+                    await fresh._aterminate(
+                        record["session_id"],
+                        agent_id=agent.id,
+                        run_id=record["run_id"],
+                        user_id=None,
+                        queue_attempt=None,
+                        status="CANCELLED",
+                        reason="Stop",
+                    )
+            assert not (await _call(db, "get_task", task["id"]))["metadata"].get(TASK_EXECUTION_CLAIMS)
+            previous = record["record"]
+        if stop_failure == "none":
+            with task_execution_scope(provider):
+                stream = agent.arun("work", stream=True, session_id="ordinary", run_id="ordinary")
+                await stream.__anext__()
+                await stream.aclose()
+            ordinary = await runner.store._transaction(
+                lambda connection: connection.execute(
+                    select(runner.store.bindings.c.record).where(runner.store._key("ordinary"))
+                ).scalar_one()
+            )
+            assert "_company_execution" not in ordinary
+            await runner._aterminate(
+                "ordinary",
+                agent_id=agent.id,
+                run_id="ordinary",
+                user_id=None,
+                queue_attempt=None,
+                status="CANCELLED",
+                reason="Stop",
+            )
+    finally:
+        await provider.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sandbox_sync_call_keeps_company_execution_scope(sandbox_system, monkeypatch):
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.run.concurrency import _TaskExecutionProvider, current_task_execution_provider, task_execution_scope
+    from agno.sandbox import _harness
+
+    client, db, _, _, agent = sandbox_system
+    task = await engineering_task(client, db)
+    provider = _TaskExecutionProvider(db)
+    await provider.ainitialize()
+    runner = _harness.coordinator(agent)
+
+    async def controlled(session_id, **kwargs):
+        observed = current_task_execution_provider()
+        assert observed is provider, "Sandbox sync bridge lost the Company execution context"
+        await observed.aacquire(session_id, "sync-sandbox")
+        await observed.arelease(session_id, "sync-sandbox")
+        return "done"
+
+    monkeypatch.setattr(runner, "arun", controlled)
+    try:
+        for _ in range(2):
+            with task_execution_scope(provider):
+                assert (
+                    runner.run(task["session_id"], agent_id=agent.id, run_id="sync", input="work", sdk="fixture")
+                    == "done"
+                )
+            assert not (await _call(db, "get_task", task["id"]))["metadata"].get(TASK_EXECUTION_CLAIMS)
+    finally:
+        await provider.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry", ["arun", "run", "stream"])
+async def test_direct_sandbox_protects_task_before_preparation(sandbox_system, monkeypatch, entry):
+    from agno.run.concurrency import _TaskExecutionProvider, task_execution_scope
+    from agno.sandbox import _harness
+
+    client, db, _, _, agent = sandbox_system
+    task = await engineering_task(client, db)
+    provider = _TaskExecutionProvider(db)
+    await provider.ainitialize()
+    runner = _harness.coordinator(agent)
+
+    async def before_prepare(**kwargs):
+        row = await provider._acall("get_task", task["id"])
+        with pytest.raises(ValueError, match="active Task executions"):
+            await provider._acall("purge_task", task["id"], expected_tasks=[row])
+        raise RuntimeError("Admission verified before preparation")
+
+    monkeypatch.setattr(runner.store, "aclaim", before_prepare)
+    try:
+        for _ in range(2):
+            with task_execution_scope(provider), pytest.raises(RuntimeError, match="Admission verified"):
+                result = getattr(runner, entry)(
+                    task["session_id"], agent_id=agent.id, run_id="direct", input="work", sdk="fixture"
+                )
+                if entry == "arun":
+                    await result
+                elif entry == "stream":
+                    next(result)
+            assert await _call(db, "get_task", task["id"]) is not None
+    finally:
+        await provider.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sandbox_lost_preparation_keeps_original_task_identity(sandbox_system, monkeypatch):
+    from agno.run.concurrency import _TaskExecutionProvider, task_execution_scope
+    from agno.sandbox import _harness
+
+    client, db, _, _, agent = sandbox_system
+    provider = _TaskExecutionProvider(db)
+    await provider.ainitialize()
+    runner = _harness.coordinator(agent)
+    claim = runner.store.aclaim
+    prepared = []
+
+    async def lost_ack(**kwargs):
+        prepared.append(await claim(**kwargs))
+        raise RuntimeError("Lost prepared binding acknowledgment")
+
+    async def no_compute(*args, **kwargs):
+        pytest.fail("A deleted Task's prepared execution reached compute")
+
+    async def no_orphan(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(runner.provider, "acreate", no_compute)
+    monkeypatch.setattr(runner.provider, "afind", no_orphan)
+    try:
+        for cycle in range(2):
+            task = await engineering_task(client, db)
+            monkeypatch.setattr(runner.store, "aclaim", lost_ack)
+            options = dict(agent_id=agent.id, run_id=f"lost-{cycle}", input="work", sdk="fixture")
+            with task_execution_scope(provider):
+                with pytest.raises(RuntimeError, match="Lost prepared binding"):
+                    await runner.astream(task["session_id"], **options).__anext__()
+                state = prepared[-1]
+                assert state.record.get("_company_execution", {}).get("task_ids") == [task["id"]]
+                await runner.store.arelinquish(state.lease)
+                row = await _call(db, "get_task", task["id"])
+                assert await _call(db, "purge_task", task["id"], expected_tasks=[row])
+                monkeypatch.setattr(runner.store, "aclaim", claim)
+                result = [event async for event in runner.astream(task["session_id"], **options)]
+                assert result[-1].status.value == "ERROR"
+    finally:
+        await provider.aclose()

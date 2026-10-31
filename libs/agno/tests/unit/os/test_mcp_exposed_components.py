@@ -134,7 +134,7 @@ def _seed_agent_run(agent, session_id, run_id, user_id=None):
 
     agent.db.upsert_session(AgentSession(session_id=session_id, agent_id=agent.id, user_id=user_id))
     agent.db.upsert_run(
-        RunOutput(run_id=run_id, agent_id=agent.id, session_id=session_id),
+        RunOutput(run_id=run_id, agent_id=agent.id, session_id=session_id, execution_origin="inline"),
         session_id=session_id,
         user_id=user_id,
     )
@@ -145,7 +145,7 @@ def _seed_team_run(team, session_id, run_id, user_id=None):
 
     team.db.upsert_session(TeamSession(session_id=session_id, team_id=team.id, user_id=user_id))
     team.db.upsert_run(
-        TeamRunOutput(run_id=run_id, team_id=team.id, session_id=session_id),
+        TeamRunOutput(run_id=run_id, team_id=team.id, session_id=session_id, execution_origin="inline"),
         session_id=session_id,
         user_id=user_id,
     )

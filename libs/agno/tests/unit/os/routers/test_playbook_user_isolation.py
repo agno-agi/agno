@@ -99,7 +99,7 @@ def test_wiki_shared_reads_writes_and_versions(client):
     assert client.get("/company/products/missing/wiki", headers=headers("alice")).status_code == 404
     assert client.get(url + "/bad.txt", headers=headers("alice")).status_code == 422
     assert client.put(url + "/status.md", json={"content": "unguarded"}, headers=headers("alice")).status_code == 422
-    assert client.delete("/company/products/" + product["id"], headers=headers("alice")).status_code == 204
+    assert client.post("/company/products/" + product["id"] + "/archive", headers=headers("alice")).status_code == 200
     assert client.get(url, headers=headers("alice")).status_code == 404
     assert client.post("/company/products/" + product["id"] + "/restore", headers=headers("alice")).status_code == 200
     assert client.get(url + "/status.md", headers=headers("bob")).json()["content"] == "Updated"
