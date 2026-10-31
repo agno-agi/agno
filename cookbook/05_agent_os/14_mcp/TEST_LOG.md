@@ -169,6 +169,59 @@ PAT principal `sa:secure-mcp-client-b0ebb699ad` authenticated, exactly the six
 
 ---
 
+### stateless.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (MCP transport), MOCK (model)
+
+**Description:** Served the cookbook and checked the transport-level effect of
+`MCPConfig(stateless=True)`. A raw `initialize` POST to `/mcp` was compared
+against a default-config server started from the same process, since the flag's
+whole observable difference is whether the server hands back a session.
+
+**Result:** The stateless server answered `initialize` with 200 and **no**
+`mcp-session-id` response header; the default server returned 200 **with** one.
+Verified on fastmcp 4.0.2 / mcp 2.1.1. The four `test_mcp_server.py` stateless
+unit tests pass, covering the flag being absent by default, forwarded as
+`stateless_http=True` when set, absent for plain `mcp=True`, and the field
+default. The agent run itself was not exercised end to end -- no
+`OPENAI_API_KEY` was set in the test environment -- so the model path is
+unverified here.
+
+---
+
+### server_identity.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (MCP transport), MOCK (model)
+
+**Description:** Served the cookbook (agno from this branch, fastmcp 4.0.2 / mcp
+2.1.1) and connected a FastMCP streamable-HTTP client twice, once with
+`mode="legacy"` and once with `mode="auto"`, to read what a client learns about
+the server at connect time.
+
+**Result:** Both handshakes reported `server_info` name `Acme Support` and version
+`1.4.0` and the full instructions string from `MCPConfig(instructions=...)`; the
+legacy handshake carried them in the initialize result and the 2026-07-28
+negotiation exposed the same values on the client. `tools/list` returned the
+eight default tools. No `OPENAI_API_KEY` was set, so `run_agent` was not
+exercised. The four unit tests in `test_mcp_server.py` cover the AgentOS
+defaults, the fastmcp fallback when nothing is set, the `MCPConfig` overrides,
+and the initialize response.
+
+Re-run with the Server Card: a browser-style `GET /mcp` (Accept `text/html`)
+answered 302 to `/mcp/server-card`. The card came back as
+`application/mcp-server-card+json` with the extension's CORS and cache headers,
+name `localhost/acme-support`, title `Acme Support`, version `1.4.0`, the
+AgentOS description and the endpoint URL. With `X-Forwarded-Proto: https` and
+`X-Forwarded-Host: docs.agno.com` the name became `com.agno.docs/acme-support`
+and the URL `https://docs.agno.com/mcp`. A GET with `Accept: text/event-stream`
+was not redirected; fastmcp answered it with its own 400 for a missing session.
+
+---
+
 ### oauth_builtin.py
 
 **Status:** PASS
@@ -254,3 +307,110 @@ and the SQLite file removed afterwards.
   with no violations.
 - `git diff --check` passed for the lesson and consumed legacy MCP folder.
 - All scoped servers were stopped after testing.
+
+## Agno 3.0.x MCP defaults validation (2026-09-18)
+
+Used an isolated `.venvs/demo` with this worktree installed, `mcp==2.1.1`, and `fastmcp==4.0.3`. Imported each cookbook, constructed its real AgentOS app, and inspected registration through a FastMCP in-memory client. Temporary local data and test-only credentials were used. These are configuration/discovery checks; no live model calls, hosted clients, database-backed public-page ingestion, or production services were exercised.
+
+### agents_as_tools.py
+
+**Status:** PASS
+
+**Description:** Rechecked after making lifecycle additions opt-in: chief and deep_research are the entire MCP tool list with both default_tools and lifecycle_tools omitted.
+
+**Result:** Application construction and exact MCP tool registration passed.
+
+---
+
+### custom_tools.py
+
+**Status:** PASS
+
+**Description:** Built the app and verified ask_workspace is the only MCP tool with default_tools omitted.
+
+**Result:** Application construction and exact MCP tool registration passed.
+
+---
+
+### toolkit_tools.py
+
+**Status:** PASS
+
+**Description:** Built the app and verified get_memories, add_memory, update_memory, and delete_memory are the entire MCP tool list with default_tools omitted.
+
+**Result:** Application construction and exact MCP tool registration passed.
+
+---
+
+### server_identity.py
+
+**Status:** PASS
+
+**Description:** Built the app and verified all eight default tools remain available with explicit default_tools=True.
+
+**Result:** Application construction and exact MCP tool registration passed.
+
+---
+
+### stateless.py
+
+**Status:** PASS
+
+**Description:** Built the app and verified all eight default tools remain available with explicit default_tools=True and stateless=True.
+
+**Result:** Application construction and exact MCP tool registration passed.
+
+---
+
+### secure_mcp.py
+
+**Status:** PASS
+
+**Description:** Built the app using a temporary root key and verified the six core tools remain available with explicit default_tools=True. The existing authorize warning still appears; PAT enforcement is covered by the framework suites, not this discovery smoke.
+
+**Result:** Application construction and exact MCP tool registration passed.
+
+---
+
+## Explicit lifecycle defaults follow-up (2026-09-18)
+
+**Status:** PASS
+
+**Description:** Re-ran all six MCP cookbook configuration/discovery checks listed
+above with `mcp==2.1.1` and `fastmcp==4.0.3`. The agents-as-tools example publishes
+only chief and deep_research; default-server examples retain continuation and
+cancellation. Updated the migration guidance for the next 3.0.x release.
+
+**Result:** All six checks passed. A separate automated regression exercises real
+Agent execution and SQLite history through an in-memory MCP client with an offline
+model: the follow-up receives the first user message and assistant response even
+though ask_product_agent is the only published tool. No live provider calls.
+### inspect_tools.py
+
+**Status:** PASS
+
+**Description:** Added and first tested LIVE on 2026-09-29 on the
+`feat/mcp-tool-run-api` branch, when `POST /mcp/server/tools/{name}/run` landed. The
+tool list is read from the Server Card, which already publishes each tool's
+input schema, so the runner adds no listing of its own. Ran the server and drove
+it with the `--client` flow: read the eight default tools with their `required`
+arrays off the card, ran `get_agentos_config` (19 ms) and `run_agent` against a
+live model (2188 ms), then exercised the three failure classes.
+
+**Result:** `get_agentos_config` returned `isError: false` with the
+`support-agent` id in `structuredContent`, and `run_agent` returned the model's
+answer as text. A run naming a missing agent came back HTTP 200 with
+`isError: true` -- the tool ran and failed, which is a result, not a transport
+error. Omitting the required `message` was refused with HTTP 400
+`invalid_arguments` before the tool ran, and an unpublished name with HTTP 404
+`tool_not_found`. The server logs a traceback for each of those two deliberate
+failures; that is the tool erroring as intended, not the endpoint failing.
+
+Re-run LIVE on 2026-10-05, after a timed-out call began stopping the work. With
+`tool_run_timeout_seconds=5`, a 1500-word essay returned HTTP 504 at 5011 ms, the model's
+own HTTP request recorded `aborted` rather than `completed` -- generation stopped instead
+of finishing unobserved -- and the run was persisted as `CANCELLED`. The custom
+`research` tool, which drives an agent internally, timed out the same way at 5013 ms:
+the budget governs every published tool, not just the built-in ones.
+
+---

@@ -9,6 +9,8 @@ with an external store. Backends that ship today:
 - ``FileSystemBackend`` — the directory is the source of truth. ``sync``
   and ``commit_after_write`` are no-ops. Demoable with no auth, no
   network. The path that proves the design works.
+- ``DurableWikiBackend`` — an Agno FileSystem namespace, with native async
+  database access and no directory mirror.
 - ``GitBackend`` — the directory is a clone of a remote git repo. ``sync``
   pulls; ``commit_after_write`` stages, commits, rebases on top of the
   remote, and pushes. PAT auth via ``github_token``.
@@ -20,9 +22,8 @@ with an external store. Backends that ship today:
 - ``NotionPageBackend`` — planned for v2 (root page -> nested directory
   tree). Stub today.
 
-All backends expose the same surface so the provider doesn't branch on
-backend type; new backends (S3, GitHub App auth, etc.) can drop in
-without touching ``WikiContextProvider``.
+Directory backends share Workspace tools. Durable namespaces use FileSystem
+tools while retaining the provider's read/write and lifecycle contract.
 """
 
 from __future__ import annotations
@@ -1011,3 +1012,27 @@ def _pseudo_sha(changes: list[str]) -> str:
     are unique per write. Truncated to 40 chars to match git's display.
     """
     return hashlib.sha1("\n".join(changes).encode("utf-8")).hexdigest()
+
+
+class DurableWikiBackend(WikiBackend):
+    """A wiki namespace in an existing Agno FileSystem, including async databases.
+
+    The provider uses filesystem tools directly; no local mirror is required.
+    """
+
+    def __init__(self, filesystem: Any) -> None:
+        self.filesystem = filesystem
+        # A descriptive root for the provider's instructions, never a disk mirror.
+        self.path = Path(filesystem.namespace)
+
+    async def setup(self) -> None:
+        return None
+
+    async def sync(self) -> None:
+        return None
+
+    async def commit_after_write(self, *, model=None) -> CommitSummary | None:
+        return None
+
+    def status(self) -> Status:
+        return Status(ok=True, detail=f"FileSystem namespace: {self.filesystem.namespace}")

@@ -4,6 +4,7 @@ from agno.factory.utils import (
     FactoryError,
     FactoryPermissionError,
     FactoryValidationError,
+    QueuedRequest,
     RequestContext,
     TrustedContext,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "FactoryError",
     "FactoryPermissionError",
     "FactoryValidationError",
+    "QueuedRequest",
     "RequestContext",
     "TrustedContext",
 ]

@@ -199,6 +199,23 @@ def _extract_xlsx_text(content_bytes: bytes) -> str:
     return "\n".join(lines)
 
 
+def _pptx_shape_lines(shapes: Any) -> List[str]:
+    from pptx.shapes.group import GroupShape  # type: ignore[import-not-found]
+
+    lines: List[str] = []
+    for shape in shapes:
+        # A group has no text frame of its own; its text boxes sit in .shapes
+        if isinstance(shape, GroupShape):
+            lines.extend(_pptx_shape_lines(shape.shapes))
+        elif shape.has_text_frame:
+            for paragraph in shape.text_frame.paragraphs:
+                # paragraph.text keeps a line break as "\v"; joining run.text drops it
+                text = paragraph.text.replace("\v", "\n")
+                if text.strip():
+                    lines.append(text)
+    return lines
+
+
 def _extract_pptx_text(content_bytes: bytes) -> str:
     from pptx import Presentation  # type: ignore[import-not-found]
 
@@ -207,12 +224,7 @@ def _extract_pptx_text(content_bytes: bytes) -> str:
     lines = []
     for i, slide in enumerate(prs.slides, 1):
         lines.append(f"=== Slide {i} ===")
-        for shape in slide.shapes:
-            if shape.has_text_frame:
-                for paragraph in shape.text_frame.paragraphs:
-                    text = "".join(run.text for run in paragraph.runs)
-                    if text.strip():
-                        lines.append(text)
+        lines.extend(_pptx_shape_lines(slide.shapes))
     return "\n".join(lines)
 
 

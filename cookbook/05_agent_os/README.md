@@ -56,6 +56,8 @@ surface.
 | [23_skills](./23_skills/) | Serve local skills through an Agent and execute checked-in skill scripts through the AgentOS run API. |
 | [24_showcase](./24_showcase/) | Run the secure, traced capstone with RAG, web and finance research, a Team, and a real evaluation. |
 | [25_agentos_tools](./25_agentos_tools/) | Answer platform ops questions (usage, latency, tool statistics) with an agent using AgentOSTools. |
+| [26_authorization](./26_authorization/) | Replace the built-in scope check with managed roles, a user directory, an IdP, ReBAC, or your own provider. |
+| [28_compaction](./28_compaction/) | Keep long sessions inside the context window, and fold a session on demand over the `/compact` route. |
 
 ## Canonical ports
 
@@ -102,6 +104,8 @@ surface.
 | `23_skills` | `OPENAI_API_KEY` | Local sample-skill files with executable Python scripts |
 | `24_showcase` | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OS_SECURITY_KEY` | `./cookbook/scripts/run_pgvector.sh`, internet access, and tracing |
 | `25_agentos_tools` | `OPENAI_API_KEY` | Local SQLite with tracing enabled |
+| `26_authorization` | None for the local examples | Throwaway SQLite; `agno[os]`, and `agno[fga]` only to swap in a real OpenFGA |
+| `28_compaction` | `OPENAI_API_KEY` | `./cookbook/scripts/run_pgvector.sh`; AgentOS on 7777 for the REST script |
 
 Run cookbook files with `.venvs/demo/bin/python`. Development checks use
 `.venv`.

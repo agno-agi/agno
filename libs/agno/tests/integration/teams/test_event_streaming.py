@@ -117,7 +117,7 @@ def test_basic_intermediate_steps_events(shared_db):
 
 def test_intermediate_steps_with_tools(shared_db):
     team = Team(
-        model=OpenAIChat(id="o3-mini"),
+        model=OpenAIChat(id="gpt-5-mini"),
         members=[],
         tools=[YFinanceTools(cache_results=True)],
         db=shared_db,
@@ -1088,20 +1088,20 @@ def test_intermediate_steps_with_member_agents_delegate_to_all_members():
 
     agent_1 = Agent(
         name="Web Researcher",
-        model=OpenAIChat(id="o3-mini"),
+        model=OpenAIChat(id="gpt-5-mini"),
         instructions="You are an expert web researcher with strong analytical skills! Use your tools to find answers to questions.",
         tools=[get_news_from_duckduckgo],
         stream_events=True,
     )
     agent_2 = Agent(
         name="Hackernews Researcher",
-        model=OpenAIChat(id="o3-mini"),
+        model=OpenAIChat(id="gpt-5-mini"),
         instructions="You are an expert hackernews researcher with strong analytical skills! Use your tools to find answers to questions.",
         tools=[get_news_from_hackernews],
         stream_events=True,
     )
     team = Team(
-        model=OpenAIChat(id="o3-mini"),
+        model=OpenAIChat(id="gpt-5-mini"),
         members=[agent_1, agent_2],
         telemetry=False,
         delegate_to_all_members=True,

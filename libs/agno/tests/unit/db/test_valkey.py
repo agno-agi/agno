@@ -85,6 +85,9 @@ def _ensure_glide_sync_stub():
         def zadd(self, key, members_scores):
             self.commands.append(("zadd", key, members_scores))
 
+        def zrange(self, key, range_query, reverse=False):
+            self.commands.append(("zrange", key, range_query, reverse))
+
         def expire(self, key, seconds):
             self.commands.append(("expire", key, seconds))
 

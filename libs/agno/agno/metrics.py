@@ -18,6 +18,7 @@ class ModelType(str, Enum):
     SESSION_SUMMARY_MODEL = "session_summary_model"
     LEARNING_MODEL = "learning_model"
     COMPRESSION_MODEL = "compression_model"
+    COMPACTION_MODEL = "compaction_model"
     FOLLOWUP_MODEL = "followup_model"
 
 

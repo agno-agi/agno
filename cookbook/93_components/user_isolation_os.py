@@ -30,8 +30,7 @@ A token for a different user sees none of it:
 """
 
 from agno.db.postgres import PostgresDb
-from agno.os import AgentOS
-from agno.os.config import AuthorizationConfig
+from agno.os import AgentOS, Authorization
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -46,12 +45,11 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", id="postg
 agent_os = AgentOS(
     id="user-isolation-os",
     db=db,
-    authorization=True,
-    authorization_config=AuthorizationConfig(
+    authorization=Authorization(
         verification_keys=["my-jwt-secret"],
         algorithm="HS256",
-        user_isolation=True,
     ),
+    user_isolation=True,
 )
 
 app = agent_os.get_app()

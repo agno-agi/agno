@@ -1,0 +1,32 @@
+name: agno-harness-readiness
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: harness
+      POSTGRES_PASSWORD: harness-local-test
+      POSTGRES_DB: harness
+    ports:
+      - "127.0.0.1:5543:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U harness -d harness"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - postgres-data:/var/lib/postgresql
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6387:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - redis-data:/data
+volumes:
+  postgres-data:
+  redis-data:

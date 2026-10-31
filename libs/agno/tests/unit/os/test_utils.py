@@ -121,6 +121,8 @@ DOCUMENT_FORMATS = [
     ("sheet.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
     ("sheet.xls", "application/vnd.ms-excel"),
     ("email.msg", "application/vnd.ms-outlook"),
+    ("archive.zip", "application/zip"),
+    ("email.eml", "message/rfc822"),
     ("module.py", "text/x-python"),
     ("readme.txt", "text/plain"),
     ("page.html", "text/html"),
@@ -129,6 +131,16 @@ DOCUMENT_FORMATS = [
     ("data.csv", "text/csv"),
     ("feed.xml", "text/xml"),
     ("doc.rtf", "text/rtf"),
+]
+
+# Alternate spellings clients send for formats already in DOCUMENT_FORMATS:
+# (filename, MIME the client sends, canonical MIME it must resolve to).
+MIME_TYPE_ALIASES = [
+    ("archive.zip", "application/x-zip", "application/zip"),
+    ("archive.zip", "application/x-zip-compressed", "application/zip"),
+    ("feed.xml", "application/xml", "text/xml"),
+    ("doc.rtf", "application/rtf", "text/rtf"),
+    ("script.js", "application/javascript", "text/javascript"),
 ]
 
 
@@ -151,6 +163,10 @@ class TestClassifyUploadFile:
     def test_all_document_content_types_route_to_document(self, filename, content_type):
         assert classify_upload_file(_make_upload_file(filename, content_type)) == "document"
 
+    @pytest.mark.parametrize("filename, content_type, _canonical", MIME_TYPE_ALIASES)
+    def test_mime_aliases_route_to_document(self, filename, content_type, _canonical):
+        assert classify_upload_file(_make_upload_file(filename, content_type)) == "document"
+
     @pytest.mark.parametrize("filename, _content_type", DOCUMENT_FORMATS)
     @pytest.mark.parametrize("ambiguous", ["application/octet-stream", "", None])
     def test_documents_fall_back_to_extension(self, filename, _content_type, ambiguous):
@@ -162,7 +178,6 @@ class TestClassifyUploadFile:
 
     def test_unsupported_type_returns_none(self):
         """Genuinely unsupported files must still be rejected (router raises 400)."""
-        assert classify_upload_file(_make_upload_file("archive.zip", "application/zip")) is None
         assert classify_upload_file(_make_upload_file("mystery.xyz", "application/octet-stream")) is None
         assert classify_upload_file(_make_upload_file("noext", "application/octet-stream")) is None
 
@@ -188,6 +203,22 @@ class TestProcessDocument:
         assert result is not None
         assert result.mime_type == content_type
         assert result.format == filename.rsplit(".", 1)[-1]
+
+    @pytest.mark.parametrize("filename, content_type, canonical", MIME_TYPE_ALIASES)
+    def test_mime_aliases_are_canonicalized(self, filename, content_type, canonical):
+        result = process_document(_make_upload_file(filename, content_type, b"data"))
+
+        assert result is not None
+        assert result.mime_type == canonical
+        assert result.format == filename.rsplit(".", 1)[-1]
+
+    @pytest.mark.parametrize("filename, content_type, canonical", MIME_TYPE_ALIASES)
+    def test_mime_aliases_without_extension_use_canonical_format(self, filename, content_type, canonical):
+        """Without an extension the format falls back to the content type, which must be canonical."""
+        result = process_document(_make_upload_file("attachment", content_type, b"data"))
+
+        assert result is not None
+        assert result.format == canonical.split("/")[-1]
 
     def test_empty_file_raises(self):
         from fastapi import HTTPException

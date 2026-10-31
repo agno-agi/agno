@@ -19,6 +19,12 @@ Nothing is summarized away, there is no model call on the write path, and
 every read back is capped. Substitution happens before the tool message is
 built, so the persisted session row carries the envelope too.
 
+Search returns multiple matches even when a JSON response occupies one line.
+Use a match's line number and `start_char` with `read_result(max_chars=2000)`
+to retrieve a focused passage. The same parameter is available on
+`ResultStore.read` and `aread`; it is clamped to 1–16,000 characters and
+defaults to 16,000. The full stored payload remains unchanged.
+
 Pass a `ResultStore` to change the defaults:
 
 ```python
@@ -64,6 +70,7 @@ Teams offload member answers the same way: see
 | [`05_payloads_on_disk.py`](./05_payloads_on_disk.py) | `ResultStore(fs=...)` sends payloads to a local directory while the index stays on the db; the delete cascade removes the files. |
 | [`06_postgres_layout.py`](./06_postgres_layout.py) | PostgreSQL: the index in your `db_schema`, the payload table in the shared `fs` schema, queried side by side. Needs `./cookbook/scripts/run_pgvector.sh`. |
 | [`07_delete_session_cascade.py`](./07_delete_session_cascade.py) | Two users, two sessions: a delete as the wrong user removes nothing, the right user's delete takes session, index row and payload together. |
+| [`08_focused_readback.py`](./08_focused_readback.py) | Model-free sync/async search and small excerpts from a large single-line JSON response, using a temporary database. |
 
 ```bash
 .venvs/demo/bin/python cookbook/02_agents/22_result_offloading/01_offload_tool_results.py

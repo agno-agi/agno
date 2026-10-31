@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -28,6 +29,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent import Agent
+from agno.agent.followup import FollowupConfig, resolve_followup_settings
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.base import BaseEval
@@ -161,8 +163,8 @@ def __init__(
     metadata: Optional[Dict[str, Any]] = None,
     reasoning_model: Optional[Union[Model, str]] = None,
     reasoning_agent: Optional[Agent] = None,
-    followups: bool = False,
-    num_followups: int = 3,
+    followups: Union[bool, FollowupConfig] = False,
+    num_followups: Optional[int] = None,
     followup_model: Optional[Union[Model, str]] = None,
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = None,
@@ -360,9 +362,7 @@ def __init__(
     team.reasoning_agent = reasoning_agent
 
     team.followups = followups
-    if num_followups < 1:
-        raise ValueError("num_followups must be at least 1")
-    team.num_followups = num_followups
+    team.num_followups = resolve_followup_settings(followups, num_followups, followup_model)
     team.followup_model = followup_model  # type: ignore[assignment]
 
     team.stream = stream
@@ -486,6 +486,7 @@ def _set_telemetry(team: "Team") -> None:
 
 
 def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: Optional[bool] = None) -> None:
+    from agno.agents.base import BaseExternalAgent
     from agno.team.team import Team
 
     # Set debug mode for all members
@@ -516,6 +517,13 @@ def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: O
         if member.model is None and team.model is not None:
             member.model = team.model
             log_info(f"Agent '{member.name or member.id}' inheriting model from Team: {team.model.id}")
+
+    elif isinstance(member, BaseExternalAgent):
+        # A harness agent (Claude Code, Codex) runs its own model and tools. Nothing is set on it:
+        # the same instance can also run on its own, so the team passes its id on each member call.
+        # That makes the member keep its own state, and with a sandbox its own computer binding, in a
+        # session per team session and member.
+        pass
 
     elif isinstance(member, Team):
         member.parent_team_id = team.id
@@ -818,6 +826,15 @@ def _resolve_models(team: "Team") -> None:
         team.parser_model = get_model(team.parser_model)
     if team.output_model is not None:
         team.output_model = get_model(team.output_model)
+
+    # Follow-up slots resolve strings like the siblings but keep the instance's
+    # model_type: follow-up metrics are attributed explicitly at the call site, and
+    # the same instance may also serve as the main model.
+    if team.followup_model is not None:
+        team.followup_model = get_model(team.followup_model)
+    if isinstance(team.followups, FollowupConfig) and isinstance(team.followups.model, str):
+        # Resolve on a copy: one config object may be shared across components.
+        team.followups = replace(team.followups, model=get_model(team.followups.model))
 
     if team.fallback_config is not None:
         team.fallback_config.resolve_models()

@@ -34,7 +34,7 @@ class BaseInterface(ABC):
         are authorization-gated. Returning ``{}`` (the default) leaves every route unmapped,
         which the RBAC layer treats as *allow* -- so a non-self-authenticating interface that
         runs entities but returns no mappings is reachable by any authenticated token
-        regardless of scopes. AgentOS merges these at startup (see ``_add_auth_middleware``),
+        regardless of scopes. AgentOS merges these during app assembly (see ``get_app``),
         so entries reflect the interface's *actual* mount prefix.
         """
         return {}

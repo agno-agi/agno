@@ -99,7 +99,7 @@ def test_up_adds_user_id_column_and_index():
     assert "user_id" not in _columns(db_file)
     assert EVAL_INDEX not in _indexes(db_file)
 
-    asyncio.run(MigrationManager(db).up(table_type="evals"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="evals"))
 
     assert "user_id" in _columns(db_file)
     assert EVAL_INDEX in _indexes(db_file)
@@ -113,7 +113,7 @@ def test_migrated_column_type_matches_fresh_schema():
 
     db, db_file = _new_db()
     _make_legacy(db_file)
-    asyncio.run(MigrationManager(db).up(table_type="evals"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="evals"))
 
     assert _column_type(db_file, "user_id") == fresh_type
 
@@ -124,7 +124,7 @@ def test_up_is_idempotent():
     db, db_file = _new_db()
     _make_legacy(db_file)
 
-    asyncio.run(MigrationManager(db).up(table_type="evals"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="evals"))
     # the manager stops at the stamp, so the migration is called directly to run it twice
     v3_0_0.up(db, "evals", EVAL_TABLE)
 
@@ -137,7 +137,7 @@ def test_legacy_rows_survive_with_null_user_id():
     _make_legacy(db_file)
     _insert_legacy_run(db_file, "legacy-1")
 
-    asyncio.run(MigrationManager(db).up(table_type="evals"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="evals"))
 
     run = db.get_eval_run("legacy-1", deserialize=False)
     assert run is not None
@@ -150,7 +150,7 @@ def test_down_drops_column_and_index_preserving_rows():
     db, db_file = _new_db()
     _make_legacy(db_file)
     _insert_legacy_run(db_file, "legacy-1")
-    asyncio.run(MigrationManager(db).up(table_type="evals"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="evals"))
     db.create_eval_run(_make_record("run-2"))
 
     asyncio.run(MigrationManager(db).down(target_version="2.5.6", table_type="evals"))
@@ -169,9 +169,9 @@ def test_down_drops_column_and_index_preserving_rows():
 def test_up_after_down_restores_the_column():
     db, db_file = _new_db()
     _make_legacy(db_file)
-    asyncio.run(MigrationManager(db).up(table_type="evals"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="evals"))
     asyncio.run(MigrationManager(db).down(target_version="2.5.6", table_type="evals"))
-    asyncio.run(MigrationManager(db).up(table_type="evals"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="evals"))
 
     assert "user_id" in _columns(db_file)
     assert EVAL_INDEX in _indexes(db_file)
@@ -268,7 +268,7 @@ async def test_async_up_and_down():
     await db._get_table(table_type="evals", create_table_if_not_found=True)
     _make_legacy(db_file)
 
-    await MigrationManager(db).up(table_type="evals")
+    await MigrationManager(db).up(target_version="3.0.0", table_type="evals")
     assert "user_id" in _columns(db_file)
     assert EVAL_INDEX in _indexes(db_file)
 
@@ -378,8 +378,8 @@ def test_schedules_migration_restores_column_and_composite_index():
     assert "user_id" not in _table_columns(db_file, SCHEDULES_TABLE)
     assert "user_id" not in _table_columns(db_file, SCHEDULE_RUNS_TABLE)
 
-    asyncio.run(MigrationManager(db).up(table_type="schedules"))
-    asyncio.run(MigrationManager(db).up(table_type="schedule_runs"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="schedules"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="schedule_runs"))
 
     assert "user_id" in _table_columns(db_file, SCHEDULES_TABLE)
     assert f"idx_{SCHEDULES_TABLE}_user_id" in _table_indexes(db_file, SCHEDULES_TABLE)
@@ -408,7 +408,7 @@ def test_schedules_up_after_down_restores_everything():
     asyncio.run(MigrationManager(db).down(target_version="2.5.6", table_type="schedules"))
     assert "user_id" not in _table_columns(db_file, SCHEDULES_TABLE)
 
-    asyncio.run(MigrationManager(db).up(table_type="schedules"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="schedules"))
 
     assert "user_id" in _table_columns(db_file, SCHEDULES_TABLE)
     assert SCHEDULES_COMPOSITE_INDEX in _table_indexes(db_file, SCHEDULES_TABLE)
@@ -420,7 +420,7 @@ def test_knowledge_migration_adds_user_id():
     _strip_user_id(db_file, KNOWLEDGE_TABLE, [f"idx_{KNOWLEDGE_TABLE}_user_id", knowledge_composite])
     assert "user_id" not in _table_columns(db_file, KNOWLEDGE_TABLE)
 
-    asyncio.run(MigrationManager(db).up(table_type="knowledge"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="knowledge"))
 
     assert "user_id" in _table_columns(db_file, KNOWLEDGE_TABLE)
     assert f"idx_{KNOWLEDGE_TABLE}_user_id" in _table_indexes(db_file, KNOWLEDGE_TABLE)
@@ -445,7 +445,7 @@ def test_schedules_migration_is_idempotent():
         ],
     )
 
-    asyncio.run(MigrationManager(db).up(table_type="schedules"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="schedules"))
     before_cols = _table_columns(db_file, SCHEDULES_TABLE)
     before_idx = _table_indexes(db_file, SCHEDULES_TABLE)
     v3_0_0.up(db, "schedules", SCHEDULES_TABLE)
@@ -500,7 +500,7 @@ def test_schedules_migration_adds_provenance_columns_to_stripped_table():
     assert "user_id" not in cols
     assert not cols & set(SCHEDULE_PROVENANCE_COLUMNS)
 
-    asyncio.run(MigrationManager(db).up(table_type="schedules"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="schedules"))
 
     cols = _table_columns(db_file, SCHEDULES_TABLE)
     assert "user_id" in cols
@@ -524,7 +524,7 @@ async def test_async_schedules_migration_adds_provenance_columns():
     assert "user_id" not in cols
     assert not cols & set(SCHEDULE_PROVENANCE_COLUMNS)
 
-    await MigrationManager(db).up(table_type="schedules")
+    await MigrationManager(db).up(target_version="3.0.0", table_type="schedules")
 
     cols = _table_columns(db_file, SCHEDULES_TABLE)
     assert "user_id" in cols
@@ -772,7 +772,7 @@ def test_metrics_migration_swaps_the_unique_key():
     db, db_file = _new_legacy_metrics_db()
     assert METRICS_LEGACY_UNIQUE in _table_ddl(db_file, METRICS_TABLE)
 
-    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="metrics"))
 
     assert "user_id" in _table_columns(db_file, METRICS_TABLE)
     assert METRICS_USER_INDEX in _table_indexes(db_file, METRICS_TABLE)
@@ -784,7 +784,7 @@ def test_metrics_migration_swaps_the_unique_key():
 def test_metrics_migration_keeps_rows_and_other_indexes():
     db, db_file = _new_legacy_metrics_db()
 
-    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="metrics"))
 
     assert _metrics_rows(db_file) == [(FINISHED_DAY.isoformat(), 7)]
     # both of the indexes v2.5.6 declared come back with the rebuilt table
@@ -797,7 +797,7 @@ def test_metrics_migrated_rows_land_in_the_unowned_bucket():
     user_id would treat every NULL as distinct."""
     db, db_file = _new_legacy_metrics_db()
 
-    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="metrics"))
 
     assert _metrics_owners(db_file) == [""]
     # "" is an implementation detail: the adapter hands back None
@@ -812,7 +812,7 @@ def test_metrics_migration_drops_unfinished_days_and_keeps_finished_ones():
     db, db_file = _new_legacy_metrics_db()
     _insert_legacy_metrics_row(db_file, UNFINISHED_DAY, completed=False)
 
-    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="metrics"))
 
     assert _metrics_rows(db_file) == [(FINISHED_DAY.isoformat(), 7)]
 
@@ -831,7 +831,7 @@ def test_metrics_two_owners_can_share_a_date_after_the_migration():
         _insert_legacy_metrics_row(legacy_file, FINISHED_DAY)
 
     db, db_file = _new_legacy_metrics_db()
-    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="metrics"))
 
     _upsert_metrics(db, [_metrics_record("alice"), _metrics_record("bob")])
 
@@ -844,7 +844,7 @@ def test_metrics_migration_is_idempotent():
 
     db, db_file = _new_legacy_metrics_db()
 
-    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="metrics"))
     before_ddl = _table_ddl(db_file, METRICS_TABLE)
     before_idx = _table_indexes(db_file, METRICS_TABLE)
     v3_0_0.up(db, "metrics", METRICS_TABLE)
@@ -865,7 +865,7 @@ def test_metrics_rebuild_refuses_a_table_with_operator_columns():
     )
     before_ddl = _table_ddl(db_file, METRICS_TABLE)
 
-    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="metrics"))
 
     assert _table_ddl(db_file, METRICS_TABLE) == before_ddl
     assert "user_id" not in _table_columns(db_file, METRICS_TABLE)
@@ -891,7 +891,7 @@ def test_metrics_interrupted_rebuild_leaves_the_table_untouched():
     )
 
     with pytest.raises(Exception):
-        asyncio.run(MigrationManager(db).up(table_type="metrics"))
+        asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="metrics"))
 
     assert _table_ddl(db_file, METRICS_TABLE) == before_ddl
     assert _table_indexes(db_file, METRICS_TABLE) == before_indexes
@@ -900,7 +900,7 @@ def test_metrics_interrupted_rebuild_leaves_the_table_untouched():
     assert db.get_latest_schema_version(METRICS_TABLE) == "2.5.6"
 
     _run_sqlite(db_file, f"DROP INDEX {METRICS_USER_INDEX}")
-    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="metrics"))
 
     assert METRICS_UNIQUE in _table_ddl(db_file, METRICS_TABLE)
     assert _metrics_rows(db_file) == [(FINISHED_DAY.isoformat(), 7)]
@@ -911,7 +911,7 @@ def test_metrics_rebuild_refuses_a_lookalike_table():
     db, db_file = _new_lookalike_metrics_db()
     before_ddl = _table_ddl(db_file, LOOKALIKE_TABLE)
 
-    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="metrics"))
 
     assert _table_ddl(db_file, LOOKALIKE_TABLE) == before_ddl
     assert "user_id" not in _table_columns(db_file, LOOKALIKE_TABLE)
@@ -925,7 +925,7 @@ def test_metrics_rebuild_refuses_a_lookalike_table():
 def test_metrics_revert_refuses_while_rows_are_owned():
     """Dropping user_id would merge alice's and bob's buckets for a date."""
     db, db_file = _new_legacy_metrics_db()
-    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="metrics"))
     _upsert_metrics(db, [_metrics_record("alice"), _metrics_record("bob")])
 
     asyncio.run(MigrationManager(db).down(target_version="2.5.6", table_type="metrics"))
@@ -951,7 +951,7 @@ def test_metrics_revert_restores_the_legacy_unique_key():
     before_ddl = _table_ddl(db_file, METRICS_TABLE)
     before_indexes = _table_indexes(db_file, METRICS_TABLE)
     assert {METRICS_DATE_INDEX, METRICS_PERIOD_INDEX} <= before_indexes
-    asyncio.run(MigrationManager(db).up(table_type="metrics"))
+    asyncio.run(MigrationManager(db).up(target_version="3.0.0", table_type="metrics"))
 
     asyncio.run(MigrationManager(db).down(target_version="2.5.6", table_type="metrics"))
 
@@ -968,7 +968,7 @@ async def test_async_metrics_up_and_down():
     _, db_file = _new_legacy_metrics_db()
     db = AsyncSqliteDb(db_file=db_file)
 
-    await MigrationManager(db).up(table_type="metrics")
+    await MigrationManager(db).up(target_version="3.0.0", table_type="metrics")
     assert "user_id" in _table_columns(db_file, METRICS_TABLE)
     assert METRICS_UNIQUE in _table_ddl(db_file, METRICS_TABLE)
     assert {METRICS_DATE_INDEX, METRICS_PERIOD_INDEX, METRICS_USER_INDEX} <= _table_indexes(db_file, METRICS_TABLE)

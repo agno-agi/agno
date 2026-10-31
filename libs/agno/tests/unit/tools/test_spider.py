@@ -39,6 +39,22 @@ def test_search_web_uses_constructor_max_results(mock_spider):
     assert get_options_sent(mock_spider.search)["num"] == 3
 
 
+def test_search_web_constructor_max_results_zero_is_honored(mock_spider):
+    """A constructor max_results of 0 must reach the client instead of the default 5."""
+    tools = SpiderTools(max_results=0)
+    tools.search_web("test query")
+
+    assert get_options_sent(mock_spider.search)["num"] == 0
+
+
+def test_search_web_explicit_max_results_zero_overrides_constructor(mock_spider):
+    """An explicit max_results of 0 wins over the constructor value."""
+    tools = SpiderTools(max_results=3)
+    tools.search_web("test query", max_results=0)
+
+    assert get_options_sent(mock_spider.search)["num"] == 0
+
+
 def test_search_web_explicit_max_results_overrides_constructor(mock_spider):
     """Test that an explicit max_results argument wins over the constructor value."""
     tools = SpiderTools(max_results=3)

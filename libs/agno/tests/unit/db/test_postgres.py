@@ -1,3 +1,4 @@
+import inspect
 from unittest.mock import Mock, patch
 
 import pytest
@@ -5,6 +6,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import Index, Table, UniqueConstraint
 
+from agno.db.postgres.async_postgres import AsyncPostgresDb
 from agno.db.postgres.postgres import PostgresDb
 from agno.db.postgres.schemas import (
     EVAL_TABLE_SCHEMA,
@@ -497,3 +499,10 @@ def test_get_schedules_table_none_raises_under_flag(postgres_db, monkeypatch):
     assert postgres_db.get_schedules() == ([], 0)
     with pytest.raises(RuntimeError, match="schedules table unavailable"):
         postgres_db.get_schedules(raise_on_error=True)
+
+
+@pytest.mark.parametrize("adapter", [PostgresDb, AsyncPostgresDb])
+def test_sandbox_table_follows_existing_constructor_arguments(adapter):
+    # A new table option inserted mid-signature would rebind existing positional callers.
+    parameters = list(inspect.signature(adapter.__init__).parameters)
+    assert parameters.index("sandbox_table") > parameters.index("create_schema")

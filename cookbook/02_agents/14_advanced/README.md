@@ -28,3 +28,44 @@ Advanced examples covering caching, compression, concurrency, events, retries, d
 
 ## Run
 - `.venvs/demo/bin/python cookbook/02_agents/14_advanced/<file>.py`
+
+### Domain-aware follow-ups
+
+`followup_instructions.py` uses `FollowupConfig` with an agent that answers only
+Python documentation questions. The same configuration works on `Team`.
+
+`followups` takes `False`, `True` for the defaults, or a `FollowupConfig` that enables
+follow-ups and carries the count, custom instructions and an optional separate model.
+The top-level arguments still work on their own: `followups=True` with `num_followups`
+or `followup_model`. Use one form or the other: passing a `FollowupConfig` together
+with `num_followups` or `followup_model` raises `ValueError`.
+
+| You write | You get |
+|---|---|
+| `followups=True` | exactly 3 suggestions |
+| `followups=True, num_followups=5` | exactly 5 |
+| `FollowupConfig()` | exactly 3, the same as `True` |
+| `FollowupConfig(num_followups=5)` | exactly 5 |
+| `FollowupConfig(max_followups=3)` | up to 3, possibly none |
+| `FollowupConfig(min_followups=1, max_followups=3)` | 1 to 3 |
+| `FollowupConfig(min_followups=1)` | 1 to 3 (the maximum defaults to 3) |
+
+Inside the config, set the count with `num_followups` or with `min_followups` and
+`max_followups`, not both. The maximum is enforced: extra suggestions are dropped. The
+minimum is only requested from the model, so fewer can come back. With
+`max_followups` alone, the model may return nothing when a declined request leaves no
+useful in-scope continuation, so consumers should hide suggestion controls for an
+empty list. Failed, cancelled or malformed generation produces `None`.
+
+Every component with follow-ups enabled gets a prompt that asks the model to respect
+refusals and stay within the answer's scope. This is prompt guidance, not enforcement.
+Only the question, answer and follow-up instructions are sent to this call; the main
+instructions, retrieved evidence and history are not copied as separate context.
+Either model slot accepts a `Model` object or a `provider:model_id` string, resolved
+when the component is built.
+
+`to_dict()` and `from_dict()` on `Agent` and `Team` keep the follow-up settings in
+whichever form was used. A follow-up model is stored by identity only (`id`, `name`,
+`provider`), never with credentials or request headers; register the live model in a
+`Registry` to keep custom endpoints or connection settings when the component is
+recreated.

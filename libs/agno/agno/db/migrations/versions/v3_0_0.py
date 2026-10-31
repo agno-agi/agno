@@ -781,7 +781,12 @@ def _migrate_postgres_sessions(db: BaseDb, table_name: str) -> bool:
             return False
 
         # Move all runs into the runs table
-        result = sess.execute(text(f"SELECT session_id, user_id, runs FROM {full_table} WHERE runs IS NOT NULL"))
+        # Server-side cursor: without it the driver buffers every session's runs before the
+        # first fetchmany, and BATCH_SIZE would bound nothing.
+        result = sess.execute(
+            text(f"SELECT session_id, user_id, runs FROM {full_table} WHERE runs IS NOT NULL"),
+            execution_options={"stream_results": True},
+        )
         migrated_runs = 0
         while True:
             batch = result.fetchmany(BATCH_SIZE)
@@ -841,10 +846,12 @@ async def _migrate_async_postgres_sessions(db: AsyncBaseDb, table_name: str) -> 
             return False
 
         # Move all runs into the runs table
-        result = await sess.execute(text(f"SELECT session_id, user_id, runs FROM {full_table} WHERE runs IS NOT NULL"))
+        # stream() uses a server-side cursor; execute() would buffer every session's runs
+        # before the first fetchmany, and BATCH_SIZE would bound nothing.
+        result = await sess.stream(text(f"SELECT session_id, user_id, runs FROM {full_table} WHERE runs IS NOT NULL"))
         migrated_runs = 0
         while True:
-            batch = result.fetchmany(BATCH_SIZE)
+            batch = await result.fetchmany(BATCH_SIZE)
             if not batch:
                 break
 

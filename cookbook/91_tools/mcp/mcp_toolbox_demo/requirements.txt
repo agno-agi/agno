@@ -101,7 +101,7 @@ referencing==0.36.2
     # via
     #   jsonschema
     #   jsonschema-specifications
-requests==2.32.4
+requests==2.33.0
     # via toolbox-core
 rpds-py==0.26.0
     # via
@@ -135,7 +135,7 @@ typing-inspection==0.4.1
     # via
     #   pydantic
     #   pydantic-settings
-urllib3==2.5.0
+urllib3==2.7.0
     # via requests
 uvicorn==0.35.0
     # via mcp

@@ -1,29 +1,41 @@
 """
-Claude Agent SDK with built-in tool calls, wrapped in Agno's ClaudeAgent.
+ClaudeAgent: Stream a Code Review
+==================================
+Inspect the bundled shipping project with a streamed response and tool display.
 
-The Claude Agent SDK has built-in tools (Read, Edit, Bash, Glob, Grep, WebSearch, etc.)
-that are executed internally by the SDK. You just specify which tools to allow.
-
-Requirements:
-    pip install claude-agent-sdk
-
-Usage:
-    .venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/claude_tools.py
+The harness owns tool execution; print_response displays progress and tool calls.
+It returns the final RunOutput, whose tools retain the full results. Expect
+shipping fees of 8, 0 and 0 dollars, including the boundary order.
+This reads files; it does not demonstrate edits, approvals or tenant isolation.
+See README.md for setup and permission details.
 """
+
+from pathlib import Path
 
 from agno.agents.claude import ClaudeAgent
 
-# ----- Agent with built-in tools -----
+# ---------------------------------------------------------------------------
+# Configure the Workspace
+# ---------------------------------------------------------------------------
+workspace = Path(__file__).resolve().parents[1] / "sample_project"
+prompt = "Read shipping.py and orders.json with your file or shell tools. Explain the shipping fee for each order and the boundary condition. Do not modify files or use the network."
+
+# ---------------------------------------------------------------------------
+# Create the Agent
+# ---------------------------------------------------------------------------
 agent = ClaudeAgent(
-    name="Claude Coder",
-    model="claude-sonnet-4-6",
-    allowed_tools=["Read", "Bash", "Glob"],
-    permission_mode="acceptEdits",
-    max_turns=5,
+    id="claude-tools",
+    model="claude-sonnet-5-5",
+    cwd=str(workspace),
+    allowed_tools=["Read"],
+    permission_mode="dontAsk",
+    tools=["Read"],
+    setting_sources=[],
+    strict_mcp_config=True,
 )
 
-# Streaming with tool calls visible
-agent.print_response(
-    "List the Python files in the current directory and summarize what this project does",
-    stream=True,
-)
+# ---------------------------------------------------------------------------
+# Run the Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    result = agent.print_response(prompt, stream=True)

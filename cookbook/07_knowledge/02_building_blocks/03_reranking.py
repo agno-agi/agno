@@ -39,8 +39,10 @@ knowledge = Knowledge(
         url=qdrant_url,
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-        reranker=CohereReranker(model="rerank-multilingual-v3.0"),
     ),
+    # Reranking belongs on Knowledge: it applies to every vector db and can
+    # widen the candidate pool for rerankers that need one.
+    reranker=CohereReranker(model="rerank-multilingual-v3.0"),
 )
 
 # ---------------------------------------------------------------------------

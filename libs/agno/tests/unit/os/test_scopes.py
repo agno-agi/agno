@@ -252,3 +252,14 @@ class TestResourceContextAnchoring:
         result = check_route_scopes(["agents:a1:read"], get_default_scope_mappings(), "GET", "/agents")
         assert result.allowed is True
         assert result.accessible_resource_ids == {"a1"}
+
+
+def test_knowledge_content_refresh_requires_knowledge_write():
+    """POST /knowledge/content/{id}/refresh re-ingests content, a write. It had no mapping, so a
+    zero-scope token reached the handler while its siblings required knowledge:write."""
+    from agno.os.scopes import check_route_scopes, get_default_scope_mappings
+
+    mappings = get_default_scope_mappings()
+    assert check_route_scopes([], mappings, "POST", "/knowledge/content/abc/refresh").allowed is False
+    assert check_route_scopes(["knowledge:write"], mappings, "POST", "/knowledge/content/abc/refresh").allowed is True
+    assert check_route_scopes(["knowledge:read"], mappings, "POST", "/knowledge/content/abc/refresh").allowed is False

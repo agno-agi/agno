@@ -8,6 +8,7 @@ from agno.agent.agent import (
     get_agents,
 )
 from agno.agent.factory import AgentFactory
+from agno.agent.followup import FollowupConfig
 from agno.agent.remote import RemoteAgent
 from agno.factory import (
     BaseFactory,
@@ -80,4 +81,5 @@ __all__ = [
     "ToolCallCompletedEvent",
     "get_agent_by_id",
     "get_agents",
+    "FollowupConfig",
 ]

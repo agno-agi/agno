@@ -5,6 +5,8 @@ from unittest.mock import patch
 import pytest
 
 from agno.agent.agent import Agent
+from agno.agents.claude import ClaudeAgent
+from agno.agents.codex import CodexAgent
 from agno.db.in_memory import InMemoryDb
 from agno.os import AgentOS
 from agno.team.team import Team
@@ -64,3 +66,57 @@ def test_tracing_uses_default_db(mock_setup_tracing, default_db):
     AgentOS(agents=[agent], db=default_db, tracing=True)
 
     mock_setup_tracing.assert_called_once_with(db=default_db)
+
+
+@pytest.mark.parametrize("agent_class", [Agent, ClaudeAgent, CodexAgent])
+@patch("agno.os.app.setup_tracing_for_os")
+def test_tracing_discovers_agent_db(mock_setup_tracing, default_db, agent_class):
+    agent = agent_class(id="traced-agent", db=default_db)
+
+    AgentOS(agents=[agent], tracing=True)
+
+    mock_setup_tracing.assert_called_once_with(db=default_db)
+
+
+@patch("agno.os.app.setup_tracing_for_os")
+def test_tracing_explicit_db_takes_precedence_over_external_agent(mock_setup_tracing, default_db, secondary_db):
+    agent = ClaudeAgent(id="claude", db=secondary_db)
+
+    AgentOS(agents=[agent], db=default_db, tracing=True)
+
+    mock_setup_tracing.assert_called_once_with(db=default_db)
+    assert agent.db is secondary_db
+
+
+@patch("agno.os.app.setup_tracing_for_os")
+def test_tracing_skips_agents_without_db(mock_setup_tracing, default_db):
+    agent = ClaudeAgent(id="claude")
+    codex = CodexAgent(id="codex", db=default_db)
+
+    AgentOS(agents=[agent, codex], tracing=True)
+
+    mock_setup_tracing.assert_called_once_with(db=default_db)
+
+
+@pytest.mark.parametrize("component", ["team", "workflow"])
+@patch("agno.os.app.setup_tracing_for_os")
+def test_tracing_falls_back_when_external_agent_has_no_db(mock_setup_tracing, default_db, component):
+    agent = ClaudeAgent(id="claude")
+    components = (
+        {"teams": [Team(id="team", members=[], db=default_db)]}
+        if component == "team"
+        else {"workflows": [Workflow(id="workflow", db=default_db)]}
+    )
+
+    AgentOS(agents=[agent], tracing=True, **components)
+
+    mock_setup_tracing.assert_called_once_with(db=default_db)
+
+
+@patch("agno.os.app.log_warning")
+@patch("agno.os.app.setup_tracing_for_os")
+def test_tracing_warns_when_external_agent_has_no_db(mock_setup_tracing, mock_warning):
+    AgentOS(agents=[ClaudeAgent(id="claude")], tracing=True)
+
+    mock_setup_tracing.assert_not_called()
+    assert any("tracing=True but no database found" in call.args[0] for call in mock_warning.call_args_list)

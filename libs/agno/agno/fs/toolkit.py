@@ -17,8 +17,9 @@ tested.
 These names deliberately collide with the rest of the file-toolkit family
 (Workspace, FileTools, PythonTools, CodingTools, ...). Agno's tool resolver
 keeps the first registration per name and drops later duplicates with a logged
-warning, so attach at most one file-like toolkit per agent; when an agent
-genuinely needs both FileSystem and a local workspace, wrap one in a sub-agent.
+warning. Use ``Agent(filesystem=[...])`` for multiple filesystem stores: the
+agent qualifies each store's tool names to avoid collisions. Manually attached
+toolkits still need distinct tool names.
 """
 
 import asyncio
@@ -108,8 +109,8 @@ class FileSystemTools(Toolkit):
     ``search_content``, ``move_file``, ``delete_file``) deliberately collide with
     the rest of the file-toolkit family (Workspace, FileTools, PythonTools, ...).
     Agno's resolver keeps the first registration per name and drops later duplicates
-    with a logged warning, so attach at most one file-like toolkit per agent; if an
-    agent genuinely needs both, wrap one in a sub-agent.
+    with a logged warning. Pass multiple stores through ``Agent(filesystem=[...])``
+    to give each store distinct tool names.
     """
 
     # The whole surface, exported for callers that want everything explicitly.
@@ -151,6 +152,7 @@ class FileSystemTools(Toolkit):
     ):
         self.fs = fs
         self.read_only = read_only
+        self.allow_delete = allow_delete
         # Every mutating tool is a read-modify-write over one row, and a model's
         # tool calls for one turn are gathered concurrently (models/base.py) -
         # the path AgentOS REST and /mcp take. Two replace_lines on one note
@@ -200,6 +202,12 @@ class FileSystemTools(Toolkit):
             add_instructions=add_instructions,
             **kwargs,
         )
+
+    @property
+    def can_write(self) -> bool:
+        """Whether any registered tool can change files, after include/exclude_tools."""
+        read_capable = set(self._READ_CAPABLE_TOOLS)
+        return any(name not in read_capable for name in self.functions)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -680,9 +688,47 @@ class FileSystemTools(Toolkit):
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``read_file``."""
-        return await asyncio.to_thread(
-            self.read_file, path, start_line, end_line, run_context=run_context, agent=agent, team=team
-        )
+        try:
+            log_debug(f"read_file: {path}")
+            fs = self._resolved(run_context, agent, team)
+            contents = await fs.aread(path)
+            if contents is None:
+                return f"Error: file not found: {path}"
+            total = _line_count(contents)
+            if total == 0:
+                return f"({path} is empty)"
+            if start_line is None and end_line is None:
+                if len(contents) > _MAX_READ_CHARS:
+                    return (
+                        f"Error: file too long to read whole ({len(contents)} chars, {total} lines; "
+                        f"limit {_MAX_READ_CHARS} chars). Read a range with start_line/end_line, or "
+                        "use search_content first: it reports each matching file's first-match line."
+                    )
+                return _format_with_line_numbers(contents, start_line=1)
+            start = start_line if start_line is not None else 1
+            end = end_line if end_line is not None else total
+            # Report a bad range instead of returning an empty string. An empty result
+            # is indistinguishable from an empty file and gives the caller nothing to
+            # correct, so every out-of-range case names the file's real line count.
+            if start < 1:
+                return f"Error: start_line must be 1 or greater (got {start})."
+            if end < 1:
+                return f"Error: end_line must be 1 or greater (got {end})."
+            # Past-EOF before inverted-range: when end_line is omitted it defaults to
+            # the line count, so a start past the end would otherwise be reported as
+            # an end_line problem for a parameter the caller never passed.
+            if start > total:
+                return f"Error: start_line {start} is past the end of {path}, which has {total} lines."
+            if end < start:
+                return f"Error: end_line {end} is before start_line {start}."
+            lines = contents.split("\n")
+            chunk = "\n".join(lines[start - 1 : min(end, total)])
+            return _format_with_line_numbers(chunk, start_line=start)
+        except InvalidPathError as e:
+            return f"Error: {e}"
+        except Exception as e:
+            log_error(f"read_file failed: {e}")
+            return f"Error: {e}"
 
     async def alist_files(
         self,
@@ -696,9 +742,84 @@ class FileSystemTools(Toolkit):
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``list_files``."""
-        return await asyncio.to_thread(
-            self.list_files, directory, pattern, recursive, max_depth, run_context=run_context, agent=agent, team=team
-        )
+        try:
+            fs = self._resolved(run_context, agent, team)
+            metas = await fs.alist(directory)
+            normalized_directory = normalize_directory(directory)
+            prefix_len = 0 if not normalized_directory else len(normalized_directory.split("/"))
+            # Entries appear down to max_depth levels of nesting below `directory`;
+            # the boundary directory is itself enumerated, so paths carry up to
+            # max_depth + 1 segments below it.
+            depth_cap = max_depth + 1 if recursive else 1
+
+            file_entries: List[Dict[str, Union[str, None]]] = []
+            dir_paths: set = set()
+            for meta in metas:
+                segments = meta.path.split("/")
+                rel = segments[prefix_len:]
+                if len(rel) <= depth_cap:
+                    # An empty pattern means no filter: Workspace truthiness, not `is None`
+                    # (models do pass pattern="").
+                    if not pattern or fnmatch(segments[-1], pattern):
+                        file_entries.append(
+                            {
+                                "path": meta.path,
+                                "type": "file",
+                                "size": _format_size(meta.size_bytes),
+                                "updated": _format_time(meta.updated_at),
+                            }
+                        )
+                for k in range(1, min(len(rel) - 1, depth_cap) + 1):
+                    dir_path = "/".join(segments[: prefix_len + k])
+                    if not pattern or fnmatch(dir_path.split("/")[-1], pattern):
+                        dir_paths.add(dir_path)
+
+            sorted_dirs = sorted(dir_paths, key=path_sort_key)
+            truncated_dirs = 0
+            if len(sorted_dirs) > _MAX_DIR_ENTRIES:
+                truncated_dirs = len(sorted_dirs) - _MAX_DIR_ENTRIES
+                sorted_dirs = sorted_dirs[:_MAX_DIR_ENTRIES]
+            dir_entries: List[Dict[str, Union[str, None]]] = [
+                {"path": dir_path, "type": "dir", "size": None, "updated": None} for dir_path in sorted_dirs
+            ]
+
+            # Cap files as well as dirs. The namespace quota bounds total BYTES, not
+            # entry count, so a namespace of many tiny files would otherwise dump an
+            # unbounded listing straight into the model's context.
+            file_entries.sort(key=lambda e: path_sort_key(str(e["path"])))
+            truncated_files = 0
+            if len(file_entries) > _MAX_DIR_ENTRIES:
+                truncated_files = len(file_entries) - _MAX_DIR_ENTRIES
+                file_entries = file_entries[:_MAX_DIR_ENTRIES]
+
+            entries = sorted(file_entries + dir_entries, key=lambda e: path_sort_key(str(e["path"])))
+            if truncated_files:
+                entries.append(
+                    {"path": f"...and {truncated_files} more", "type": "file", "size": None, "updated": None}
+                )
+            if truncated_dirs:
+                entries.append({"path": f"...and {truncated_dirs} more", "type": "dir", "size": None, "updated": None})
+
+            current_usage = await fs.ausage()
+            return json.dumps(
+                {
+                    "directory": directory,
+                    "pattern": pattern,
+                    "recursive": recursive,
+                    "files": entries,
+                    "usage": {
+                        "files": current_usage.file_count,
+                        "bytes_used": current_usage.total_bytes,
+                        "bytes_limit": fs.max_namespace_bytes,
+                    },
+                },
+                indent=2,
+            )
+        except InvalidPathError as e:
+            return f"Error: {e}"
+        except Exception as e:
+            log_error(f"list_files failed: {e}")
+            return f"Error: {e}"
 
     async def asearch_content(
         self,
@@ -711,9 +832,27 @@ class FileSystemTools(Toolkit):
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``search_content``."""
-        return await asyncio.to_thread(
-            self.search_content, query, directory, limit, run_context=run_context, agent=agent, team=team
-        )
+        try:
+            if not query or not query.strip():
+                return "Error: query cannot be empty"
+            fs = self._resolved(run_context, agent, team)
+            matches = await fs.asearch(query, directory=directory, limit=limit)
+            files = [
+                {
+                    "file": match.path,
+                    "line": match.line,
+                    "matches": match.match_count,
+                    "size": _format_size(match.size_bytes),
+                    "snippet": match.snippet,
+                }
+                for match in matches
+            ]
+            return json.dumps({"query": query, "matches_found": len(files), "files": files}, indent=2)
+        except InvalidPathError as e:
+            return f"Error: {e}"
+        except Exception as e:
+            log_error(f"search_content failed: {e}")
+            return f"Error: {e}"
 
     async def acheck_lines(
         self,
@@ -725,9 +864,15 @@ class FileSystemTools(Toolkit):
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``check_lines``."""
-        return await asyncio.to_thread(
-            self.check_lines, lines, directory, run_context=run_context, agent=agent, team=team
-        )
+        try:
+            fs = self._resolved(run_context, agent, team)
+            result = await fs.acontains(lines, directory=directory)
+            return json.dumps({"found": result.found, "missing": result.missing}, indent=2)
+        except InvalidPathError as e:
+            return f"Error: {e}"
+        except Exception as e:
+            log_error(f"check_lines failed: {e}")
+            return f"Error: {e}"
 
     def _lock_for(self, key: str) -> "asyncio.Lock":
         """The lock for one file, per running event loop.
@@ -777,9 +922,24 @@ class FileSystemTools(Toolkit):
     ) -> str:
         """Async variant of ``write_file``."""
         async with self._locked(path):
-            return await asyncio.to_thread(
-                self.write_file, path, content, overwrite, run_context=run_context, agent=agent, team=team
-            )
+            try:
+                fs = self._resolved(run_context, agent, team)
+                meta = await fs.awrite(path, content, overwrite=overwrite)
+                return f"Wrote {meta.size_bytes} bytes to {path}"
+            except FileExistsError:
+                if not overwrite:
+                    return f"Error: file exists and overwrite=False: {path}"
+                # overwrite=True yet a FileExistsError surfaced: a path segment collides with
+                # an existing file on disk. Blaming overwrite here is false and makes the
+                # model retry identically.
+                return f"Error: cannot write {path}: a parent path segment is an existing file."
+            except QuotaExceededError as e:
+                return self._quota_error(e, path)
+            except InvalidPathError as e:
+                return f"Error: {e}"
+            except Exception as e:
+                log_error(f"write_file failed: {e}")
+                return f"Error: {e}"
 
     async def aappend_file(
         self,
@@ -793,9 +953,29 @@ class FileSystemTools(Toolkit):
     ) -> str:
         """Async variant of ``append_file``."""
         async with self._locked(path):
-            return await asyncio.to_thread(
-                self.append_file, path, content, unique, run_context=run_context, agent=agent, team=team
-            )
+            try:
+                fs = self._resolved(run_context, agent, team)
+                if unique:
+                    # Size delta rather than a second copy of the filter: whatever the
+                    # dedupe kept is exactly what the file grew by.
+                    previous = await fs.aread(path)
+                    before_bytes = len(previous.encode("utf-8")) if previous else 0
+                    meta = await fs.aappend(path, content, unique=True)
+                    added = meta.size_bytes - before_bytes
+                    if added <= 0:
+                        return f"Appended nothing to {path}: every line was already present (still {meta.size_bytes} bytes)"
+                    return f"Appended {added} bytes to {path}, skipping lines already present (now {meta.size_bytes} bytes)"
+                meta = await fs.aappend(path, content)
+                chunk = build_chunk(content)
+                appended_bytes = len(chunk.encode("utf-8")) if chunk else 0
+                return f"Appended {appended_bytes} bytes to {path} (now {meta.size_bytes} bytes)"
+            except QuotaExceededError as e:
+                return self._quota_error(e, path)
+            except InvalidPathError as e:
+                return f"Error: {e}"
+            except Exception as e:
+                log_error(f"append_file failed: {e}")
+                return f"Error: {e}"
 
     async def areplace_lines(
         self,
@@ -810,16 +990,22 @@ class FileSystemTools(Toolkit):
     ) -> str:
         """Async variant of ``replace_lines``."""
         async with self._locked(path):
-            return await asyncio.to_thread(
-                self.replace_lines,
-                path,
-                start_line,
-                end_line,
-                content,
-                run_context=run_context,
-                agent=agent,
-                team=team,
-            )
+            try:
+                fs = self._resolved(run_context, agent, team)
+                meta = await fs.areplace_lines(path, start_line, end_line, content)
+                action = "Deleted" if not content else "Replaced"
+                return f"{action} lines {start_line}-{end_line} in {path} (now {meta.size_bytes} bytes)"
+            except FileNotFoundError:
+                return f"Error: file not found: {path}"
+            except ValueError as e:
+                return f"Error: {e}"
+            except QuotaExceededError as e:
+                return self._quota_error(e, path)
+            except InvalidPathError as e:
+                return f"Error: {e}"
+            except Exception as e:
+                log_error(f"replace_lines failed: {e}")
+                return f"Error: {e}"
 
     async def amove_file(
         self,
@@ -833,9 +1019,23 @@ class FileSystemTools(Toolkit):
     ) -> str:
         """Async variant of ``move_file``."""
         async with self._locked(src, dst):
-            return await asyncio.to_thread(
-                self.move_file, src, dst, overwrite, run_context=run_context, agent=agent, team=team
-            )
+            try:
+                fs = self._resolved(run_context, agent, team)
+                await fs.amove(src, dst, overwrite=overwrite)
+                return f"Moved {src} -> {dst}"
+            except FileNotFoundError:
+                return f"Error: file not found: {src}"
+            except FileExistsError:
+                if not overwrite:
+                    return f"Error: dst exists and overwrite=False: {dst}"
+                # overwrite=True still surfaced a collision: on the DB backend two runs may
+                # have moved onto {dst} at once; on local disk a parent segment may be a file.
+                return f"Error: could not move to {dst}; it may have changed concurrently. Retry or use another name."
+            except InvalidPathError as e:
+                return f"Error: {e}"
+            except Exception as e:
+                log_error(f"move_file failed: {e}")
+                return f"Error: {e}"
 
     async def adelete_file(
         self,
@@ -847,12 +1047,21 @@ class FileSystemTools(Toolkit):
     ) -> str:
         """Async variant of ``delete_file``."""
         async with self._locked(path):
-            return await asyncio.to_thread(self.delete_file, path, run_context=run_context, agent=agent, team=team)
+            try:
+                fs = self._resolved(run_context, agent, team)
+                if not await fs.adelete(path):
+                    return f"Error: file not found: {path}"
+                return f"Deleted {path}"
+            except InvalidPathError as e:
+                return f"Error: {e}"
+            except Exception as e:
+                log_error(f"delete_file failed: {e}")
+                return f"Error: {e}"
 
 
-# The async twins delegate to their sync counterparts via asyncio.to_thread, so they
-# are behaviourally identical, but agno builds the async agent's tool schema from the
-# ASYNC method's docstring. Give each async method the sync method's full D7 docstring
+# Async twins use the filesystem's native async operations. Agno builds the async
+# agent's tool schema from the ASYNC method's docstring. Give each async method
+# the sync method's full documentation
 # so an async agent gets the same normative prompt surface (names, param guidance, the
 # check_lines contract) instead of a bare "Async variant of ...". The sync docstrings
 # stay the single source of truth. (Framework note: the tuple-form async_tools

@@ -25,13 +25,15 @@ knowledge = Knowledge(
         table_name="agno_docs_infinity",
         search_type=SearchType.hybrid,
         embedder=CohereEmbedder(id="embed-v4.0"),
-        # Use Infinity reranker for local, fast reranking
-        reranker=InfinityReranker(
-            model="BAAI/bge-reranker-base",  # You can change this to other models
-            host="localhost",
-            port=7997,
-            top_n=5,  # Return top 5 reranked documents
-        ),
+    ),
+    # Reranking belongs on Knowledge: it applies to every vector db and can
+    # widen the candidate pool for rerankers that need one.
+    # Use Infinity reranker for local, fast reranking.
+    reranker=InfinityReranker(
+        model="BAAI/bge-reranker-base",  # You can change this to other models
+        host="localhost",
+        port=7997,
+        top_n=5,  # Return top 5 reranked documents
     ),
 )
 

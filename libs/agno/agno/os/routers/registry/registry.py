@@ -452,6 +452,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                         name=agent_name,
                         id=agent_id,
                         type=RegistryResourceType.AGENT,
+                        sandboxed=_sandboxed(agent),
                         description=_safe_str(getattr(agent, "description", None)),
                         metadata={
                             "id": agent_id,
@@ -589,3 +590,9 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
             raise HTTPException(status_code=500, detail=str(e))
 
     return router
+
+
+def _sandboxed(component: Any) -> bool:
+    from agno.agents.base import BaseExternalAgent
+
+    return isinstance(component, BaseExternalAgent) and component.sandbox is not None

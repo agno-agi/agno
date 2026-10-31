@@ -1,6 +1,6 @@
-# CLAUDE.md — Agno
+# Agno - Agent Instructions
 
-Instructions for Claude Code when working on this codebase.
+Instructions for AI coding agents (Claude Code, Codex, Cursor, etc.) working on this codebase.
 
 ---
 
@@ -43,12 +43,12 @@ This project uses two virtual environments:
 
 | Environment | Purpose | Setup |
 |-------------|---------|-------|
-| `.venv/` | Development: tests, formatting, validation | `./scripts/dev_setup.sh` |
-| `.venvs/demo/` | Cookbooks: has all demo dependencies | `./scripts/demo_setup.sh` |
+| `.venv/` | Development and cookbooks: demo dependencies, tests, formatting, validation | `./scripts/dev_setup.sh` |
+| `.venvs/demo/` | Dedicated demos: same dependencies, separate environment | `./scripts/demo_setup.sh` |
 
-**Use `.venv`** for development tasks (`pytest`, `./scripts/format.sh`, `./scripts/validate.sh`).
+**Use `.venv`** for development tasks (`pytest`, `./scripts/format.sh`, `./scripts/validate.sh`) and day-to-day cookbook work.
 
-**Use `.venvs/demo`** for running cookbook examples.
+**Use `.venvs/demo`** for running demos in a separate environment. The cookbook commands below use this environment and also work with `.venv/bin/python`.
 
 ---
 
@@ -254,5 +254,5 @@ When running in GitHub Actions (CI), always end your response with a plain-text 
 Agno-specific checks to always verify:
 - Both sync and async variants exist for all new public methods
 - No agent creation inside loops (agents should be reused)
-- CLAUDE.md coding patterns are followed
+- Coding patterns in this file are followed
 - No f-strings for print lines where there are no variables

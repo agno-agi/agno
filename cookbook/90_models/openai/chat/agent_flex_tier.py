@@ -13,7 +13,7 @@ from agno.models.openai import OpenAIChat
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=OpenAIChat(id="o4-mini", service_tier="flex"),
+    model=OpenAIChat(id="gpt-5.6-terra", service_tier="flex"),
     markdown=True,
 )
 

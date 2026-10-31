@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from agno.media import File, Image
 from agno.models.message import Message
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 if TYPE_CHECKING:
     from agno.models.anthropic.claude import SystemPromptBlock
@@ -38,9 +38,38 @@ _PREFILL_SUPPORTED_ALIASES = {
     "claude-haiku-4",
 }
 
+# Models that still accept temperature, top_p and top_k. Another closed set — the
+# sampling parameters were deprecated with Claude 4.7, so the 4.x releases that
+# predate it are the last ones that take them. Opus shipped 4-7 and 4-8, so the
+# versions are enumerated rather than matched on a "claude-opus-4-" prefix.
+_SAMPLING_SUPPORTED_PREFIXES = (
+    "claude-3-",
+    "claude-sonnet-4-0",
+    "claude-sonnet-4-1",
+    "claude-sonnet-4-2",
+    "claude-sonnet-4-5",
+    "claude-sonnet-4-6",
+    "claude-opus-4-0",
+    "claude-opus-4-1",
+    "claude-opus-4-2",
+    "claude-opus-4-5",
+    "claude-opus-4-6",
+    "claude-haiku-4-0",
+    "claude-haiku-4-1",
+    "claude-haiku-4-2",
+    "claude-haiku-4-5",
+)
 
-def supports_prefill(model_id: str) -> bool:
-    """Return True if the given model ID supports assistant message prefill.
+# Family aliases, exact-matched for the same reason as the prefill aliases above.
+_SAMPLING_SUPPORTED_ALIASES = {
+    "claude-sonnet-4",
+    "claude-opus-4",
+    "claude-haiku-4",
+}
+
+
+def core_model_id(model_id: str) -> str:
+    """Strip provider decoration from a Claude model ID, leaving the bare Anthropic ID.
 
     Handles provider-specific ID formats:
       - Anthropic direct:  "claude-sonnet-4-5-20250929"
@@ -57,11 +86,42 @@ def supports_prefill(model_id: str) -> bool:
     # Strip Bedrock version suffix (e.g. "claude-sonnet-4-5-20250929-v1:0")
     if ":0" in core_id:
         core_id = core_id.split("-v")[0] if "-v" in core_id else core_id.split(":")[0]
+    return core_id
+
+
+def supports_prefill(model_id: str) -> bool:
+    """Return True if the given model ID supports assistant message prefill."""
+    core_id = core_model_id(model_id)
 
     if not core_id.startswith("claude"):
         return True  # Non-Claude models are unaffected — don't inject trailing messages
 
     return core_id in _PREFILL_SUPPORTED_ALIASES or core_id.startswith(_PREFILL_SUPPORTED_PREFIXES)
+
+
+def supports_sampling_params(model_id: str) -> bool:
+    """Return True if the given model ID accepts temperature, top_p and top_k.
+
+    Claude 4.7 deprecated the sampling parameters, and every model released since
+    rejects a non-default value with a 400. This is a closed set of the families that
+    still accept them, so an unrecognised Claude ID is assumed to reject them rather
+    than assumed to work.
+    """
+    core_id = core_model_id(model_id)
+
+    if not core_id.startswith("claude"):
+        return True  # Non-Claude models are unaffected — pass their parameters through
+
+    return core_id in _SAMPLING_SUPPORTED_ALIASES or core_id.startswith(_SAMPLING_SUPPORTED_PREFIXES)
+
+
+def supports_thinking_budget(model_id: str) -> bool:
+    """Return True if the given model ID accepts thinking={"type": "enabled", "budget_tokens": N}.
+
+    Claude 4.7 removed thinking budgets in the same release that deprecated the sampling
+    parameters, so the closed set of families that still accept one is the same.
+    """
+    return supports_sampling_params(model_id)
 
 
 @dataclass
@@ -112,17 +172,84 @@ def _anthropic_coerce_content_block(item: Any) -> Optional[Any]:
     if item is None:
         return None
     if isinstance(item, dict):
-        return item if item.get("type") else None
-    model_dump = getattr(item, "model_dump", None)
-    if callable(model_dump):
+        block_dict = item
+    else:
+        model_dump = getattr(item, "model_dump", None)
+        if not callable(model_dump):
+            return None
         try:
             block_dict = model_dump(exclude_none=True)
         except Exception as e:
             log_warning(f"Failed to serialize Anthropic content block of type {type(item).__name__}: {e}")
             return None
-        if isinstance(block_dict, dict) and block_dict.get("type"):
-            return block_dict
-    return None
+    if not isinstance(block_dict, dict) or not block_dict.get("type"):
+        return None
+    if block_dict["type"] == "text" and isinstance(block_dict.get("citations"), list):
+        # Document titles are required but nullable. Restore nulls dropped by
+        # exclude_none above or by earlier versions, without mutating stored history.
+        block_dict = {
+            **block_dict,
+            "citations": [
+                {"document_title": None, **citation}
+                if isinstance(citation, dict)
+                and citation.get("type") in ("page_location", "char_location", "content_block_location")
+                else citation
+                for citation in block_dict["citations"]
+            ],
+        }
+    return block_dict
+
+
+_ANTHROPIC_THINKING_BLOCK_TYPES = ("thinking", "redacted_thinking")
+
+
+def _anthropic_block_type(block: Any) -> Optional[str]:
+    """Return the ``type`` of a content block that may be a dict or an SDK block object."""
+    block_type = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
+    return block_type if isinstance(block_type, str) else None
+
+
+def serialize_content_blocks(blocks: Any) -> List[Dict[str, Any]]:
+    """Serialize a provider response's content blocks, in order, into plain dicts.
+
+    The result is stored on the assistant message so a later request can echo the turn back
+    exactly as the API produced it. The API signs thinking blocks and verifies them on replay,
+    so the stored sequence must keep every block, its order, and its signature.
+    """
+    serialized: List[Dict[str, Any]] = []
+    for block in blocks or []:
+        block_dict = _anthropic_coerce_content_block(block)
+        if block_dict is None:
+            continue
+        if block_dict.get("type") == "redacted_reasoning_content":
+            # Legacy spelling accepted from rehydrated events; the API only knows redacted_thinking.
+            block_dict = {**block_dict, "type": "redacted_thinking"}
+        serialized.append(block_dict)
+    return serialized
+
+
+def _anthropic_stored_assistant_blocks(message: Message) -> Optional[List[Dict[str, Any]]]:
+    """Return the provider content blocks stored on an assistant message, ready to replay.
+
+    Returns None when the message carries no stored blocks (it predates block storage, or was
+    produced by another provider) so the caller rebuilds the turn from the convenience fields.
+    ``tool_use`` blocks are kept only when the message still carries the matching tool call: a
+    response truncated by ``max_tokens`` can contain a tool_use that never ran, and the API
+    rejects a tool_use that has no tool_result.
+    """
+    if not message.provider_data:
+        return None
+    stored = message.provider_data.get("content_blocks")
+    if not isinstance(stored, list) or not stored:
+        return None
+    tool_call_ids = {tc.get("id") for tc in (message.tool_calls or []) if isinstance(tc, dict)}
+    replay: List[Dict[str, Any]] = []
+    for block in serialize_content_blocks(stored):
+        if block.get("type") == "tool_use" and block.get("id") not in tool_call_ids:
+            continue
+        # Copy so request-time edits to the payload can never reach the stored session message.
+        replay.append(dict(block))
+    return replay
 
 
 def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
@@ -547,66 +674,83 @@ def format_messages(
 
             content = []
 
-            if message.reasoning_content is not None and message.provider_data is not None:
-                from anthropic.types import RedactedThinkingBlock, ThinkingBlock
+            stored_blocks = _anthropic_stored_assistant_blocks(message)
+            if stored_blocks is not None:
+                # Echo the turn exactly as the API produced it: block order, text boundaries and
+                # every signed thinking block. Rebuilding the turn from the convenience fields
+                # below loses all of those, and the API rejects a modified thinking sequence.
+                # A stored list that filters down to nothing (a truncated tool_use only) falls
+                # through to the empty-assistant skip below like any other empty turn.
+                content.extend(stored_blocks)
+            else:
+                if message.reasoning_content is not None and message.provider_data is not None:
+                    from anthropic.types import ThinkingBlock
 
-                content.append(
-                    ThinkingBlock(
-                        thinking=message.reasoning_content,
-                        signature=message.provider_data.get("signature"),
-                        type="thinking",
-                    )
-                )
-
-            if message.redacted_reasoning_content is not None:
-                from anthropic.types import RedactedThinkingBlock
-
-                content.append(RedactedThinkingBlock(data=message.redacted_reasoning_content, type="redacted_thinking"))
-
-            # Extract structured blocks from list-shaped content (used when callers persist and
-            # rehydrate full assistant turns rather than the text-only + provider_data split).
-            structured_from_list: List[Any] = []
-            list_block_identities: set = set()
-            if isinstance(message.content, list):
-                for item in message.content:
-                    blk = _anthropic_coerce_content_block(item)
-                    if blk is None:
-                        continue
-                    block_type = blk.get("type") if isinstance(blk, dict) else None
-                    if block_type == "tool_use" and message.tool_calls:
-                        continue
-                    identity = _anthropic_block_identity(blk)
-                    if identity is not None:
-                        list_block_identities.add(identity)
-                    structured_from_list.append(blk)
-
-            # Reconstruct server tool blocks (web_fetch, web_search, etc.) from provider_data.
-            # Merge by identity (type, id-or-tool_use_id) so blocks already present in list-content
-            # aren't duplicated, but blocks that exist only in provider_data are still emitted.
-            if message.provider_data and message.provider_data.get("server_tool_blocks"):
-                for block_dict in message.provider_data["server_tool_blocks"]:
-                    identity = _anthropic_block_identity(block_dict)
-                    if identity is not None and identity in list_block_identities:
-                        continue
-                    content.append(block_dict)
-
-            if structured_from_list:
-                content.extend(structured_from_list)
-            elif isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
-                content.append(TextBlock(text=message.content, type="text"))
-
-            if message.tool_calls:
-                for tool_call in message.tool_calls:
-                    content.append(
-                        ToolUseBlock(
-                            id=tool_call["id"],
-                            input=json.loads(tool_call["function"]["arguments"])
-                            if "arguments" in tool_call["function"]
-                            else {},
-                            name=tool_call["function"]["name"],
-                            type="tool_use",
+                    signature = message.provider_data.get("signature")
+                    if isinstance(signature, str) and signature:
+                        content.append(
+                            ThinkingBlock(
+                                thinking=message.reasoning_content,
+                                signature=signature,
+                                type="thinking",
+                            )
                         )
+                    else:
+                        # The API verifies thinking blocks by signature, so one without a signature
+                        # (reasoning from another provider, or a partially stored response) can only
+                        # be omitted. Omitting prior thinking is permitted outside a tool-use turn.
+                        log_debug("Omitting reasoning content without a thinking signature from Anthropic history")
+
+                if message.redacted_reasoning_content is not None:
+                    from anthropic.types import RedactedThinkingBlock
+
+                    content.append(
+                        RedactedThinkingBlock(data=message.redacted_reasoning_content, type="redacted_thinking")
                     )
+
+                # Extract structured blocks from list-shaped content (used when callers persist and
+                # rehydrate full assistant turns rather than the text-only + provider_data split).
+                structured_from_list: List[Any] = []
+                list_block_identities: set = set()
+                if isinstance(message.content, list):
+                    for item in message.content:
+                        blk = _anthropic_coerce_content_block(item)
+                        if blk is None:
+                            continue
+                        if _anthropic_block_type(blk) == "tool_use" and message.tool_calls:
+                            continue
+                        identity = _anthropic_block_identity(blk)
+                        if identity is not None:
+                            list_block_identities.add(identity)
+                        structured_from_list.append(blk)
+
+                # Reconstruct server tool blocks (web_fetch, web_search, etc.) from provider_data.
+                # Merge by identity (type, id-or-tool_use_id) so blocks already present in list-content
+                # aren't duplicated, but blocks that exist only in provider_data are still emitted.
+                if message.provider_data and message.provider_data.get("server_tool_blocks"):
+                    for block_dict in message.provider_data["server_tool_blocks"]:
+                        identity = _anthropic_block_identity(block_dict)
+                        if identity is not None and identity in list_block_identities:
+                            continue
+                        content.append(block_dict)
+
+                if structured_from_list:
+                    content.extend(structured_from_list)
+                elif isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
+                    content.append(TextBlock(text=message.content, type="text"))
+
+                if message.tool_calls:
+                    for tool_call in message.tool_calls:
+                        content.append(
+                            ToolUseBlock(
+                                id=tool_call["id"],
+                                input=json.loads(tool_call["function"]["arguments"])
+                                if "arguments" in tool_call["function"]
+                                else {},
+                                name=tool_call["function"]["name"],
+                                type="tool_use",
+                            )
+                        )
         elif message.role == "tool":
             content = []
 
@@ -660,6 +804,16 @@ def format_messages(
             curr_blocks = (
                 curr_content if isinstance(curr_content, list) else [{"type": "text", "text": str(curr_content)}]
             )
+            if msg["role"] == "assistant":
+                # Two assistant responses can only share one message by dropping the earlier
+                # response's thinking: the API verifies an assistant message's thinking sequence
+                # against a single original response and rejects a stitched sequence. Omitting
+                # that thinking is permitted because the earlier response ended without a tool
+                # call to continue (a thinking-only response truncated by max_tokens, or an
+                # injected assistant message).
+                prev_blocks = [
+                    b for b in prev_blocks if _anthropic_block_type(b) not in _ANTHROPIC_THINKING_BLOCK_TYPES
+                ]
             merged_messages[-1]["content"] = [*prev_blocks, *curr_blocks]
         else:
             merged_messages.append(msg)
@@ -764,16 +918,56 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
 SAMPLING_PARAMS = ("temperature", "top_p", "top_k")
 
 
-def route_sampling_params_to_extra_body(request_params: Dict[str, Any]) -> Dict[str, Any]:
+def route_sampling_params_to_extra_body(
+    request_params: Dict[str, Any], model_id: Optional[str] = None
+) -> Dict[str, Any]:
     """Move the sampling parameters out of the request kwargs and into extra_body.
 
     Mutates and returns the dict it is given, so it also catches a sampling parameter
     that arrived through ``request_params`` rather than through a model field.
+
+    When ``model_id`` names a model that rejects the sampling parameters, they are
+    dropped with a warning instead of being sent: the model would answer the whole
+    request with a 400, and the parameter is the only part of it that is unsupported.
     """
     moved = {name: request_params.pop(name) for name in SAMPLING_PARAMS if name in request_params}
-    if moved:
-        # A caller who wrote extra_body themselves outranks the model's own fields.
-        request_params["extra_body"] = {**moved, **(request_params.get("extra_body") or {})}
+    if not moved:
+        return request_params
+
+    if model_id is not None and not supports_sampling_params(model_id):
+        names = ", ".join(sorted(moved))
+        log_warning(
+            f"{model_id} rejects {names}, so the request is sent without {names}. "
+            "Guide the model through its prompt instead."
+        )
+        return request_params
+
+    # A caller who wrote extra_body themselves outranks the model's own fields.
+    request_params["extra_body"] = {**moved, **(request_params.get("extra_body") or {})}
+    return request_params
+
+
+def route_thinking_budget_to_adaptive(request_params: Dict[str, Any], model_id: Optional[str] = None) -> Dict[str, Any]:
+    """Replace a thinking budget with adaptive thinking on models that no longer accept one.
+
+    Mutates and returns the dict it is given, so it also catches a thinking config that
+    arrived through ``request_params`` rather than through the ``thinking`` field.
+
+    Those models answer ``{"type": "enabled", "budget_tokens": N}`` with a 400. Adaptive
+    thinking is their replacement for it; ``display`` defaults to ``"summarized"`` because
+    they otherwise return empty thinking blocks, which would leave ``reasoning_content`` empty.
+    """
+    thinking = request_params.get("thinking")
+    if model_id is None or not isinstance(thinking, dict) or thinking.get("type") != "enabled":
+        return request_params
+    if supports_thinking_budget(model_id):
+        return request_params
+
+    log_warning(
+        f"{model_id} rejects thinking budgets, so the request is sent with adaptive thinking instead. "
+        "Use output_config={'effort': ...} to control how much it thinks."
+    )
+    request_params["thinking"] = {"type": "adaptive", "display": thinking.get("display", "summarized")}
     return request_params
 
 

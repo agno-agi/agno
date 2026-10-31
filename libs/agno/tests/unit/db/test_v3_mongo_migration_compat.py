@@ -70,6 +70,8 @@ def test_fresh_schema_round_trip():
     session.upsert_run(_make_run("r1", "s1", "one"))
     session.upsert_run(_make_run("r2", "s1", "two"))
     db.upsert_session(session)
+    for index, run in enumerate(session.runs):
+        db.upsert_run(run=run, session_id=session.session_id, user_id=session.user_id, run_index=index)
 
     raw = db._database["agno_sessions"].find_one({"session_id": "s1"})
     assert raw is not None and "runs" not in raw
@@ -99,6 +101,8 @@ def test_continue_legacy_session_writes_all_runs_to_collection():
 
     loaded.upsert_run(_make_run("r2", "s3", "fresh"))
     db.upsert_session(loaded)
+    for index, run in enumerate(loaded.runs):
+        db.upsert_run(run=run, session_id=loaded.session_id, user_id=loaded.user_id, run_index=index)
 
     ids = [d["run_id"] for d in db._database["agno_runs"].find({"session_id": "s3"}, sort=[("run_index", 1)])]
     assert ids == ["r0", "r1", "r2"]
@@ -218,6 +222,8 @@ def test_get_run_get_runs_apis():
     for i in range(3):
         session.upsert_run(_make_run(f"r{i}", "sx", f"c{i}"))
     db.upsert_session(session)
+    for index, run in enumerate(session.runs):
+        db.upsert_run(run=run, session_id=session.session_id, user_id=session.user_id, run_index=index)
 
     run = db.get_run("r1")
     assert run is not None and run.content == "c1"

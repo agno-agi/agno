@@ -463,7 +463,7 @@ class SSESubscriberManager:
             self._subscribers[run_id] = []
         queue: asyncio.Queue[Optional[tuple[int, str]]] = asyncio.Queue()
         self._subscribers[run_id].append(queue)
-        log_debug(f"SSE subscriber registered for run {run_id}")
+        log_debug(f"Event subscriber connected: run={run_id}")
         return queue
 
     def unsubscribe(self, run_id: str, queue: "asyncio.Queue[Optional[tuple[int, str]]]") -> None:

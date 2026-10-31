@@ -93,3 +93,23 @@ def test_transcribe_audio_does_not_leak_descriptors_in_a_loop(audio_file):
 
     assert len(opened) == 5
     assert all(handle.closed for handle in opened)
+
+
+def test_default_image_model_is_current():
+    """dall-e-3 was shut down on May 12, 2026; the default must be a GPT Image model."""
+    assert OpenAITools(api_key="test-key").image_model == "gpt-image-2"
+
+
+def test_generate_image_with_default_model_uses_base64_output():
+    """GPT Image models always return base64 data, so no response_format is sent for the default."""
+    import base64
+    from unittest.mock import MagicMock
+
+    fake_client = MagicMock()
+    fake_client.images.generate.return_value = MagicMock(data=[MagicMock(b64_json=base64.b64encode(b"png").decode())])
+    with patch("agno.tools.openai.OpenAIClient", return_value=fake_client):
+        result = OpenAITools(api_key="test-key").generate_image(prompt="a yak")
+    kwargs = fake_client.images.generate.call_args.kwargs
+    assert kwargs["model"] == "gpt-image-2"
+    assert "response_format" not in kwargs
+    assert result is not None

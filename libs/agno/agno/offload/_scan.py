@@ -11,30 +11,57 @@ agno and never the caller's code, and a caller script without an
 ``multiprocessing`` spawn worker would re-execute it.
 
 The request arrives on stdin as one JSON document and the reply leaves on
-stdout as another. Only match positions cross; the caller renders the text,
-with the same code the in-process scan uses.
+stdout as another. Only match positions cross; the caller renders the text.
+ResultStore also imports the position finder and the excerpt window from this
+module, so the in-process scan and the subprocess scan find the same positions
+and skip the same already-visible matches.
 """
 
 import json
 import re
 import sys
-from typing import List
+from typing import List, Tuple
+
+
+def _match_window(line: str, char_offset: int, match_len: int, clip: int) -> Tuple[int, int]:
+    """Character bounds of the excerpt rendered around a match."""
+    if len(line) <= clip:
+        return 0, len(line)
+    width = clip - 6
+    lead = width // 4
+    start = max(0, min(char_offset - lead, len(line) - width))
+    need_end = char_offset + min(max(match_len, 1), width)
+    if start + width < need_end:
+        start = min(need_end - width, len(line) - width)
+    return start, start + width
+
+
+def _find_match_positions(
+    lines: List[str], compiled: "re.Pattern[str]", limit: int, clip: int
+) -> Tuple[List[Tuple[int, int, int]], bool]:
+    """Return bounded excerpts, skipping matches already visible in an earlier one."""
+    positions: List[Tuple[int, int, int]] = []
+    for index, line in enumerate(lines):
+        covered_end = -1
+        for found in compiled.finditer(line):
+            if found.end() <= covered_end:
+                continue
+            if len(positions) >= limit:
+                return positions, True
+            match_len = found.end() - found.start()
+            positions.append((index + 1, found.start(), match_len))
+            _, covered_end = _match_window(line, found.start(), match_len, clip)
+            if covered_end >= len(line):
+                # The excerpt shows the rest of the line; no later match on it can be new.
+                break
+    return positions, False
 
 
 def main() -> None:
     request = json.loads(sys.stdin.buffer.read().decode("utf-8"))
-    compiled = re.compile(request["pattern"])
-    limit = int(request["limit"])
-    positions: List[List[int]] = []
-    more = False
-    for index, line in enumerate(request["content"].split("\n")):
-        found = compiled.search(line)
-        if found is None:
-            continue
-        if len(positions) >= limit:
-            more = True
-            break
-        positions.append([index + 1, found.start(), found.end() - found.start()])
+    positions, more = _find_match_positions(
+        request["content"].split("\n"), re.compile(request["pattern"]), int(request["limit"]), int(request["clip"])
+    )
     print(json.dumps({"positions": positions, "more": more}))
 
 

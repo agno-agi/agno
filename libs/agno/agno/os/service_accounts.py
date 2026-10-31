@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from starlette._utils import get_route_path
 from starlette.concurrency import run_in_threadpool
 
 from agno.db.base import AsyncBaseDb, BaseDb
@@ -385,7 +386,7 @@ async def authenticate_service_account_request(
         list(account.scopes),
         scope_mappings,
         request.method,
-        request.url.path,
+        get_route_path(request.scope),
         admin_scope=admin_scope,
     )
     request.state.required_scopes = scope_check.required_scopes

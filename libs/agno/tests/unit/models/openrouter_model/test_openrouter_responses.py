@@ -3,6 +3,7 @@ from unittest.mock import patch
 import pytest
 
 from agno.exceptions import ModelAuthenticationError
+from agno.models.message import Message
 from agno.models.openrouter import OpenRouterResponses
 
 
@@ -61,19 +62,69 @@ def test_openrouter_responses_fallback_models():
     ]
 
 
-def test_openrouter_responses_reasoning_model_detection():
+@pytest.mark.parametrize(
+    "model_id,expected",
+    [
+        ("anthropic/claude-sonnet-4", False),
+        ("openai/gpt-4.1", False),
+        ("openai/gpt-oss-20b", False),
+        ("other/gpt-6-sol", False),
+        ("openai/o3-mini", True),
+        ("openai/o4-mini", True),
+        ("openai/gpt-5.6-luna", True),
+        ("openai/gpt-6-sol", True),
+        ("openai/gpt-6.1-sol", True),
+    ],
+)
+def test_openrouter_responses_reasoning_model_detection(model_id, expected):
     """Test OpenRouterResponses reasoning model detection."""
-    # Non-reasoning model
-    model = OpenRouterResponses(id="anthropic/claude-sonnet-4", api_key="test-key")
-    assert model._using_reasoning_model() is False
+    model = OpenRouterResponses(id=model_id, api_key="test-key")
+    assert model._using_reasoning_model() is expected
 
-    # OpenAI o3 model via OpenRouter
-    model = OpenRouterResponses(id="openai/o3-mini", api_key="test-key")
-    assert model._using_reasoning_model() is True
 
-    # OpenAI o4 model via OpenRouter
-    model = OpenRouterResponses(id="openai/o4-mini", api_key="test-key")
-    assert model._using_reasoning_model() is True
+@pytest.mark.parametrize("model_id", ["openai/gpt-5.6-luna", "openai/gpt-6-sol", "openai/gpt-6.1-sol"])
+def test_openrouter_gpt_tool_follow_up_requests_reasoning_without_chaining(model_id):
+    """Stateless tool follow-ups request encrypted reasoning and replay it with the call."""
+    model = OpenRouterResponses(id=model_id, api_key="test-key", include=["message.output_text.logprobs"])
+    messages = [
+        Message(role="user", content="Look it up"),
+        Message(
+            role="assistant",
+            provider_data={
+                "response_id": "resp_previous",
+                "reasoning_output": {
+                    "id": "rs_previous",
+                    "type": "reasoning",
+                    "summary": [],
+                    "encrypted_content": "encrypted-reasoning",
+                },
+            },
+            tool_calls=[
+                {
+                    "id": "fc_previous",
+                    "call_id": "call_previous",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": "{}"},
+                }
+            ],
+        ),
+        Message(role="tool", tool_call_id="call_previous", content="Found it"),
+    ]
+
+    params = model.get_request_params(messages=messages)
+    assert params["store"] is False
+    assert "previous_response_id" not in params
+    assert "reasoning" not in params
+    assert params["include"] == ["message.output_text.logprobs", "reasoning.encrypted_content"]
+    assert model.include == ["message.output_text.logprobs"]
+
+    formatted = model._format_messages(messages)
+    assert formatted[0] == {"role": "user", "content": "Look it up"}
+    assert formatted[1].model_dump(exclude_none=True) == messages[1].provider_data["reasoning_output"]
+    assert formatted[2]["type"] == "function_call"
+    assert formatted[2]["id"] == "fc_previous"
+    assert formatted[2]["call_id"] == "call_previous"
+    assert formatted[3] == {"type": "function_call_output", "call_id": "call_previous", "output": "Found it"}
 
 
 def test_openrouter_responses_client_params():

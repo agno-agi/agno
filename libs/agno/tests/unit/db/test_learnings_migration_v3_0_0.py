@@ -71,7 +71,7 @@ class TestRekeyRunsWithTheOtherMigrations:
     async def test_a_clean_row_moves_to_its_owners_key(self, db: SqliteDb) -> None:
         legacy_id = _seed_legacy(db, "acme", ALICE, ALICE, "renewal at 50k")
 
-        await MigrationManager(db).up()
+        await MigrationManager(db).up(target_version="3.0.0")
 
         expected = build_learning_id(
             "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id=ALICE
@@ -84,7 +84,7 @@ class TestRekeyRunsWithTheOtherMigrations:
     async def test_the_owner_reads_the_entity_back_after_the_migration(self, db: SqliteDb) -> None:
         _seed_legacy(db, "acme", ALICE, ALICE, "renewal at 50k")
 
-        await MigrationManager(db).up()
+        await MigrationManager(db).up(target_version="3.0.0")
 
         store = EntityMemoryStore(config=EntityMemoryConfig(namespace="user", db=db))  # type: ignore[arg-type]
         entity = store.get(entity_id="acme", entity_type="company", user_id=ALICE)
@@ -94,7 +94,7 @@ class TestRekeyRunsWithTheOtherMigrations:
     async def test_the_table_is_stamped_at_the_new_version(self, db: SqliteDb) -> None:
         _seed_legacy(db, "acme", ALICE, ALICE, "renewal at 50k")
 
-        await MigrationManager(db).up()
+        await MigrationManager(db).up(target_version="3.0.0")
 
         assert db.get_latest_schema_version(db.learnings_table_name) == "3.0.0"
 
@@ -102,7 +102,7 @@ class TestRekeyRunsWithTheOtherMigrations:
         legacy_id = _seed_legacy(db, "acme", ALICE, ALICE, "renewal at 50k")
         db.upsert_schema_version(db.learnings_table_name, "3.0.0")
 
-        await MigrationManager(db).up()
+        await MigrationManager(db).up(target_version="3.0.0")
 
         assert db.get_learning_by_id(legacy_id) is not None
 
@@ -115,7 +115,7 @@ class TestContaminatedRowsLeaveTheReadableNamespace:
     async def test_a_contaminated_row_moves_under_the_quarantine_namespace(self, db: SqliteDb) -> None:
         legacy_id = _seed_legacy(db, "globex", ALICE, BOB, "BOB PRIVATE: they churned")
 
-        await MigrationManager(db).up()
+        await MigrationManager(db).up(target_version="3.0.0")
 
         quarantined = legacy_entity_learning_id("globex", "company", QUARANTINE_NAMESPACE)
         assert db.get_learning_by_id(legacy_id) is None
@@ -127,7 +127,7 @@ class TestContaminatedRowsLeaveTheReadableNamespace:
     async def test_the_owner_cannot_read_a_contaminated_row(self, db: SqliteDb) -> None:
         _seed_legacy(db, "globex", ALICE, BOB, "BOB PRIVATE: they churned")
 
-        await MigrationManager(db).up()
+        await MigrationManager(db).up(target_version="3.0.0")
 
         store = EntityMemoryStore(config=EntityMemoryConfig(namespace="user", db=db))  # type: ignore[arg-type]
         assert store.get(entity_id="globex", entity_type="company", user_id=ALICE) is None
@@ -139,7 +139,7 @@ class TestContaminatedRowsLeaveTheReadableNamespace:
         _seed_legacy(db, "acme", ALICE, ALICE, "renewal at 50k")
         _seed_legacy(db, "globex", ALICE, BOB, "BOB PRIVATE: they churned")
 
-        await MigrationManager(db).up()
+        await MigrationManager(db).up(target_version="3.0.0")
 
         store = EntityMemoryStore(config=EntityMemoryConfig(namespace="user", db=db))  # type: ignore[arg-type]
         entity = store.get(entity_id="acme", entity_type="company", user_id=ALICE)
@@ -207,7 +207,7 @@ class TestTheRekeyRunsOnAnAsyncDb:
     async def test_a_clean_row_moves_to_its_owners_key(self, async_db: AsyncSqliteDb) -> None:
         legacy_id = await _seed_legacy_async(async_db, "acme", ALICE, ALICE, "renewal at 50k")
 
-        await MigrationManager(async_db).up()
+        await MigrationManager(async_db).up(target_version="3.0.0")
 
         expected = build_learning_id(
             "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id=ALICE
@@ -220,7 +220,7 @@ class TestTheRekeyRunsOnAnAsyncDb:
     async def test_a_contaminated_row_moves_under_the_quarantine_namespace(self, async_db: AsyncSqliteDb) -> None:
         legacy_id = await _seed_legacy_async(async_db, "globex", ALICE, BOB, "BOB PRIVATE: they churned")
 
-        await MigrationManager(async_db).up()
+        await MigrationManager(async_db).up(target_version="3.0.0")
 
         quarantined = legacy_entity_learning_id("globex", "company", QUARANTINE_NAMESPACE)
         assert await async_db.get_learning_by_id(legacy_id) is None
@@ -232,7 +232,7 @@ class TestTheRekeyRunsOnAnAsyncDb:
     async def test_the_table_is_stamped_at_the_new_version(self, async_db: AsyncSqliteDb) -> None:
         await _seed_legacy_async(async_db, "acme", ALICE, ALICE, "renewal at 50k")
 
-        await MigrationManager(async_db).up()
+        await MigrationManager(async_db).up(target_version="3.0.0")
 
         assert await async_db.get_latest_schema_version(async_db.learnings_table_name) == "3.0.0"
 
@@ -248,7 +248,7 @@ class TestTheRekeyRunsOnAnAsyncDb:
         legacy_id = await _seed_legacy_async(async_db, "acme", ALICE, ALICE, "renewal at 50k")
         await async_db.upsert_schema_version(async_db.learnings_table_name, "3.0.0")
 
-        await MigrationManager(async_db).up()
+        await MigrationManager(async_db).up(target_version="3.0.0")
 
         assert await async_db.get_learning_by_id(legacy_id) is not None
 

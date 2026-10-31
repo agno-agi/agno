@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "3.0.5"
+version = "3.1.12"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -40,6 +40,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+agentcore-sandbox = ["boto3>=1.43.113"]
 dev = [
   "mypy==2.1.0",
   "ruff==0.15.20",
@@ -50,6 +51,7 @@ dev = [
   "timeout-decorator",
   "types-pyyaml",
   "types-aiofiles",
+  "types-regex",
   "fastapi",
   "python-multipart>=0.0.18",
   "uvicorn",
@@ -76,8 +78,10 @@ dev = [
 ]
 
 # AgentOS server bundle
-os = ["fastapi", "python-multipart>=0.0.18", "uvicorn", "websockets", "sqlalchemy", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "agno[scheduler]"]
+os = ["fastapi", "python-multipart>=0.0.18", "jsonschema", "uvicorn", "websockets", "sqlalchemy[asyncio]", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "agno[scheduler]"]
 mcp = ["mcp>=2.1.0,<3.0.0", "fastmcp>=4.0.0,<5"]
+# Optional extra for fine-grained / relationship-based authorization (ReBAC) via OpenFGA.
+fga = ["openfga-sdk>=0.9"]
 scheduler = ["croniter>=1.3", "pytz>=2023.3"]
 
 # Dependencies for Telemetry
@@ -86,6 +90,10 @@ weave = ["weave"]
 openlit = ["openlit", "agno[opentelemetry]"]
 arize = ["arize-phoenix", "agno[opentelemetry]", "opentelemetry-exporter-otlp-proto-grpc", "opentelemetry-distro"]
 langfuse = ["langfuse"]
+
+# Dependencies for External Agent Harnesses
+claude = ["claude-agent-sdk>=0.2.148"]
+codex = ["openai-codex"]
 
 # Dependencies for Models
 # >=0.77.0: the first release accepting output_config on the stable messages endpoint
@@ -116,6 +124,7 @@ cel = ["cel-python"]
 
 # Dependencies for Tools
 agentql = ["agentql"]
+anakin = []  # uses httpx, already a core dependency
 apify = ["apify-client"]
 arxiv = ["arxiv"]
 brave = ["brave-search"]
@@ -188,12 +197,13 @@ async-mongo = ["pymongo>=4.9", "motor"]
 async-postgres = ["asyncpg"]
 firestore = ["google-cloud-firestore"]
 gcs = ["google-cloud-storage"]
-mysql = ["pymysql", "asyncmy"]
-postgres = ["sqlalchemy", "psycopg[binary]"]
+mysql = ["sqlalchemy[asyncio]", "pymysql", "asyncmy"]
+postgres = ["sqlalchemy[asyncio]", "psycopg[binary]"]
+pages = ["agno[postgres]", "agno[pgvector]", "dnspython>=2.6.1", "beautifulsoup4", "regex>=2024.5.15"]
 redis = ["redis>=4.5.4", "redisvl>=0.12.1"]  # >=4.5.4: safe cancellation of blocking commands (XREAD in event stream tail)
 s3 = ["boto3", "aioboto3"]
-sql = ["sqlalchemy"]
-sqlite = ["sqlalchemy", "aiosqlite"]
+sql = ["sqlalchemy[asyncio]"]
+sqlite = ["sqlalchemy[asyncio]", "aiosqlite"]
 valkey = ["valkey-glide-sync>=2.1.0"]
 
 # Dependencies for Vector databases
@@ -201,6 +211,7 @@ cassandra = ["cassio"]
 chromadb = ["chromadb"]
 clickhouse = ["clickhouse-connect"]
 couchbase = ["couchbase"]
+elasticsearch = ["elasticsearch[async]>=8.14.0"]
 lancedb = ["lancedb>=0.26.0"]
 milvusdb = ["pymilvus>=2.5.10"]
 mongodb = ["pymongo[srv]"]
@@ -223,7 +234,7 @@ csv = ["aiofiles"]
 docx = ["python-docx"]
 excel = ["openpyxl", "xlrd"]
 markdown = ["aiofiles"]
-pdf = ["pypdf"]
+pdf = ["pypdf", "fonttools"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
 # The website and llms_txt readers both import bs4 at module scope.
@@ -290,6 +301,7 @@ models = [
 # All tools
 tools = [
   "agno[agentql]",
+  "agno[anakin]",
   "agno[apify]",
   "agno[arxiv]",
   # "agno[brave]",  # Excluded: brave-search 0.2.0 ships invalid metadata (bad httpx specifier) that uv cannot parse; test_setup.sh installs it with --no-deps
@@ -370,6 +382,7 @@ vectordbs = [
   "agno[chromadb]",
   "agno[clickhouse]",
   "agno[couchbase]",
+  "agno[elasticsearch]",
   "agno[lancedb]",
   "agno[milvusdb]",
   "agno[mongodb]",
@@ -415,6 +428,9 @@ embedders = [
 
 # All libraries for testing
 tests = [
+    "claude-agent-sdk>=0.2.148",
+    "openai-codex==0.163.0; python_version >= '3.10'",
+  "agno[pages]",
     "agno[a2a]",
     "agno[slack]",
     "agno[dev]",
@@ -429,6 +445,8 @@ tests = [
     "agno[cookbooks]",
     "agno[agui]",
     "agno[integration-tests]",
+    # In-process S3 for the sandbox checkpoint store tests.
+    "moto[s3]>=5",
     "twine",
     "build",
     "grpcio>=1.76.0",
@@ -436,10 +454,11 @@ tests = [
 
 # Models integration test dependencies
 integration-tests = [
+  "agno[pages]",
     "exa_py>=2.0.0",
     "ddgs",
     "yfinance",
-    "sqlalchemy",
+    "sqlalchemy[asyncio]",
     "Pillow",
     "agno[mcp]",
     "PyJWT",
@@ -478,10 +497,11 @@ demo = [
     "pillow",
     "psycopg[binary]",
     "pypdf",
-    "sqlalchemy",
+    "sqlalchemy[asyncio]",
     "yfinance",
     "youtube-transcript-api",
     "claude-agent-sdk",
+    "openai-codex",
     "langgraph",
     "langchain-openai",
     "dspy",
@@ -503,7 +523,7 @@ build-backend = "setuptools.build_meta"
 include = ["agno*"]
 
 [tool.setuptools.package-data]
-agno = ["py.typed"]
+agno = ["py.typed", "company/skills/*/SKILL.md"]
 include = ["LICENSE"]
 
 [tool.pytest.ini_options]
@@ -511,6 +531,7 @@ log_cli = true
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
+  "live: opt-in tests against public external services",
   "integration: tests that need live services (kernels, databases)",
 ]
 
@@ -571,6 +592,7 @@ module = [
   "docx.*",
   "duckdb.*",
   "ddgs.*",
+  "elasticsearch.*",
   "email_validator.*",
   "e2b_code_interpreter.*",
   "ipykernel.*",
@@ -623,6 +645,8 @@ module = [
   "newspaper.*",
   "numpy.*",
   "ollama.*",
+  "openai_codex.*",
+  "openfga_sdk.*",
   "openpyxl.*",
   "openai.*",
   "opensearchpy.*",

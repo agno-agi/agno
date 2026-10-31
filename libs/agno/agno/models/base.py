@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from agno.offload.store import ResultStore
 from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, PydanticUserError
 
 from agno.exceptions import (
     AgentRunException,
@@ -213,8 +213,7 @@ class Model(ABC):
         if isinstance(error, ContextWindowExceededError):
             return False
 
-        non_retryable_codes = {400, 401, 403, 404, 413, 422}
-        if error.status_code in non_retryable_codes:
+        if error.status_code in ModelProviderError.NON_RETRYABLE_STATUS_CODES:
             return False
 
         # Defense-in-depth: catch context window errors even if not pre-classified
@@ -466,6 +465,12 @@ class Model(ABC):
 
         def _cache_default(obj: Any) -> Any:
             if isinstance(obj, type):
+                if issubclass(obj, BaseModel):
+                    try:
+                        return obj.model_json_schema()
+                    except PydanticUserError:
+                        # Some models (e.g. arbitrary types, Callable fields) have no JSON schema
+                        return f"{obj.__module__}.{obj.__qualname__}"
                 return obj.__name__
             if hasattr(obj, "model_dump"):
                 return obj.model_dump()
@@ -2347,7 +2352,7 @@ class Model(ABC):
                 if tool_result.files:
                     function_execution_result.files = tool_result.files
             else:
-                function_call_output = str(function_execution_result.result) if function_execution_result.result else ""
+                function_call_output = str(function_execution_result.result)
 
             if function_call.function.show_result and function_call_output is not None:
                 yield ModelResponse(content=function_call_output)

@@ -50,7 +50,7 @@ def _create_container_mock(container_id: str = "container_xyz", expires_at=None)
 def _create_non_streaming_response(content_blocks, container=None):
     response = MagicMock()
     response.id = "msg_test"
-    response.model = "claude-sonnet-4-5-20250929"
+    response.model = "claude-sonnet-5-5"
     response.role = "assistant"
     response.stop_reason = "end_turn"
     response.content = content_blocks
@@ -82,7 +82,7 @@ def _create_stream_stop_event(content_blocks, container=None):
 def test_non_streaming_extracts_file_ids_when_skills_enabled():
     """Skills-enabled model should extract file_ids from bash_code_execution_tool_result."""
     model = Claude(
-        id="claude-sonnet-4-5-20250929",
+        id="claude-sonnet-5-5",
         skills=[{"type": "anthropic", "skill_id": "xlsx", "version": "latest"}],
     )
     response = _create_non_streaming_response(
@@ -100,7 +100,7 @@ def test_non_streaming_extracts_file_ids_when_skills_enabled():
 
 def test_non_streaming_extracts_file_ids_without_skills():
     """Model without skills (standalone code_execution) should still extract file_ids."""
-    model = Claude(id="claude-sonnet-4-5-20250929")
+    model = Claude(id="claude-sonnet-5-5")
     response = _create_non_streaming_response(
         [
             _create_text_block(),
@@ -121,7 +121,7 @@ def test_non_streaming_extracts_file_ids_without_skills():
 
 def test_non_streaming_captures_container_info():
     """Container ID and expiry should be captured in provider_data."""
-    model = Claude(id="claude-sonnet-4-5-20250929")
+    model = Claude(id="claude-sonnet-5-5")
     container = _create_container_mock("container_xyz789")
     response = _create_non_streaming_response([_create_text_block()], container=container)
 
@@ -139,7 +139,7 @@ def test_non_streaming_captures_container_info():
 def test_streaming_extracts_file_ids_at_message_stop():
     """Streaming path should extract file_ids from the final MessageStopEvent."""
     model = Claude(
-        id="claude-sonnet-4-5-20250929",
+        id="claude-sonnet-5-5",
         skills=[{"type": "anthropic", "skill_id": "xlsx", "version": "latest"}],
     )
     event = _create_stream_stop_event(
@@ -158,7 +158,7 @@ def test_streaming_extracts_file_ids_at_message_stop():
 def test_streaming_captures_container_at_message_stop():
     """Streaming path should capture container info from the final MessageStopEvent."""
     model = Claude(
-        id="claude-sonnet-4-5-20250929",
+        id="claude-sonnet-5-5",
         skills=[{"type": "anthropic", "skill_id": "xlsx", "version": "latest"}],
     )
     container = _create_container_mock("container_stream_999")
@@ -173,7 +173,7 @@ def test_streaming_captures_container_at_message_stop():
 def test_streaming_extracts_multiple_file_ids():
     """Multiple file_ids from different code execution blocks should all be captured."""
     model = Claude(
-        id="claude-sonnet-4-5-20250929",
+        id="claude-sonnet-5-5",
         skills=[{"type": "anthropic", "skill_id": "xlsx", "version": "latest"}],
     )
     event = _create_stream_stop_event(
@@ -208,7 +208,7 @@ def _make_message(role: str, container_id: str | None = None):
 
 def test_extract_container_id_from_messages_returns_last():
     """Should return the container ID from the most recent message that has one."""
-    model = Claude(id="claude-sonnet-4-5-20250929")
+    model = Claude(id="claude-sonnet-5-5")
     messages = [
         _make_message("user"),
         _make_message("assistant", container_id="container_turn1"),
@@ -220,7 +220,7 @@ def test_extract_container_id_from_messages_returns_last():
 
 def test_extract_container_id_from_messages_returns_none_when_absent():
     """Should return None when no message has a container ID."""
-    model = Claude(id="claude-sonnet-4-5-20250929")
+    model = Claude(id="claude-sonnet-5-5")
     messages = [_make_message("user"), _make_message("assistant")]
     assert model._extract_container_id_from_messages(messages) is None
 
@@ -228,7 +228,7 @@ def test_extract_container_id_from_messages_returns_none_when_absent():
 def test_prepare_request_kwargs_includes_container_id_when_messages_have_one():
     """get_request_params should include container.id when messages contain a prior container."""
     model = Claude(
-        id="claude-sonnet-4-5-20250929",
+        id="claude-sonnet-5-5",
         skills=[{"type": "anthropic", "skill_id": "xlsx", "version": "latest"}],
     )
     messages = [
@@ -243,7 +243,7 @@ def test_prepare_request_kwargs_includes_container_id_when_messages_have_one():
 def test_prepare_request_kwargs_omits_container_id_on_first_turn():
     """On the first turn (no prior assistant message with container), no id should be set."""
     model = Claude(
-        id="claude-sonnet-4-5-20250929",
+        id="claude-sonnet-5-5",
         skills=[{"type": "anthropic", "skill_id": "xlsx", "version": "latest"}],
     )
     messages = [_make_message("user")]
@@ -255,7 +255,7 @@ def test_prepare_request_kwargs_omits_container_id_on_first_turn():
 def test_prepare_request_kwargs_safe_with_shared_model_instance():
     """Two independent runs using the same model instance should not share container IDs."""
     model = Claude(
-        id="claude-sonnet-4-5-20250929",
+        id="claude-sonnet-5-5",
         skills=[{"type": "anthropic", "skill_id": "xlsx", "version": "latest"}],
     )
     # Run A has a container from a previous turn

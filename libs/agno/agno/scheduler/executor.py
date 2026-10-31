@@ -3,9 +3,10 @@
 import asyncio
 import json
 import time
-from typing import Any, Dict, List, Optional, Union
+from contextvars import ContextVar
+from inspect import signature
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import quote
-from uuid import uuid4
 
 from agno.db.schemas.scheduler import (
     RESERVED_RUN_METADATA_KEYS,
@@ -14,6 +15,7 @@ from agno.db.schemas.scheduler import (
     Schedule,
     match_run_endpoint,
 )
+from agno.scheduler.run_id import new_schedule_run_id
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
@@ -35,6 +37,54 @@ def _to_form_value(v: Any) -> str:
     if isinstance(v, (dict, list)):
         return json.dumps(v)
     return str(v)
+
+
+# A safety margin past a run's timeout before nothing is left to record its final status.
+RUN_DEADLINE_MARGIN_SECONDS = 300
+
+
+def run_deadline(triggered_at: int, timeout_seconds: int) -> int:
+    """When the executor has stopped waiting on a run, plus the safety margin."""
+    return triggered_at + timeout_seconds + RUN_DEADLINE_MARGIN_SECONDS
+
+
+def terminal_run_status(data: Dict[str, Any], company_routine: bool) -> Optional[Tuple[str, Optional[str]]]:
+    """Map a finished component run to its schedule run status and error; None while it has not finished."""
+    run_status = data.get("status")
+    if run_status not in _TERMINAL_STATUSES:
+        return None
+    company_error = None
+    if company_routine:
+        from agno.company.routines import _routine_failure
+
+        company_error = _routine_failure(data)
+    if run_status == "COMPLETED":
+        return ("failed" if company_error else "success"), company_error
+    if run_status == "PAUSED":
+        return "paused", None
+    if run_status == "CANCELLED":
+        # A cancelled run was stopped on purpose, so it is neither a failure nor retried.
+        return "cancelled", data.get("error") or "Run was cancelled"
+    return "failed", company_error or data.get("error") or f"Run failed with status {run_status}"
+
+
+_active_schedule_run: ContextVar[Optional[tuple]] = ContextVar("active_schedule_run", default=None)
+
+
+def _preserve_updated_at(db: Any, method: str, schedule: Schedule) -> Dict[str, Any]:
+    """Keyword for a ``db.<method>`` write that keeps a Company routine's last-edit time.
+
+    An adapter that does not name the parameter still gets the write: skipping a release or a disable
+    would leave a failing schedule stuck or armed. Its updated_at advances, and a warning is logged.
+    """
+    if schedule.managed_by == "company":
+        if "preserve_updated_at" in signature(getattr(db, method)).parameters:
+            return {"preserve_updated_at": True}
+        log_warning(
+            f"{type(db).__name__}.{method} does not accept preserve_updated_at; "
+            f"schedule {schedule.id} will have its updated_at advanced"
+        )
+    return {}
 
 
 class ScheduleExecutor:
@@ -91,7 +141,7 @@ class ScheduleExecutor:
         Returns:
             The ScheduleRun dict.
         """
-        from agno.scheduler.cron import compute_next_run
+        from agno.scheduler.cron import next_run_for
 
         # Normalize to Schedule dataclass for typed access
         sched = Schedule.from_dict(schedule) if isinstance(schedule, dict) else schedule
@@ -123,7 +173,7 @@ class ScheduleExecutor:
                     )
                     log_error(last_error)
 
-                    run_record_id = str(uuid4())
+                    run_record_id = new_schedule_run_id()
                     now = int(time.time())
                     run_dict = {
                         "id": run_record_id,
@@ -160,10 +210,15 @@ class ScheduleExecutor:
 
                     disabled_reason = f"endpoint_drift:{sched.endpoint}!={sched.target_type}:{sched.target_id}"
                     try:
+                        disable = {
+                            "enabled": False,
+                            "disabled_reason": disabled_reason,
+                            **_preserve_updated_at(db, "update_schedule", sched),
+                        }
                         if asyncio.iscoroutinefunction(getattr(db, "update_schedule", None)):
-                            await db.update_schedule(schedule_id, enabled=False, disabled_reason=disabled_reason)
+                            await db.update_schedule(schedule_id, **disable)
                         else:
-                            db.update_schedule(schedule_id, enabled=False, disabled_reason=disabled_reason)
+                            db.update_schedule(schedule_id, **disable)
                     except Exception as exc:
                         log_error(f"Failed to disable schedule {schedule_id} after endpoint drift: {exc}")
 
@@ -173,7 +228,7 @@ class ScheduleExecutor:
             max_attempts = max(1, (sched.max_retries or 0) + 1)
             retry_delay = sched.retry_delay_seconds or 60
             for attempt in range(1, max_attempts + 1):
-                run_record_id = str(uuid4())
+                run_record_id = new_schedule_run_id()
                 now = int(time.time())
 
                 run_dict = {
@@ -201,7 +256,11 @@ class ScheduleExecutor:
                     db.create_schedule_run(run_dict)
 
                 try:
-                    result = await self._call_endpoint(sched)
+                    token = _active_schedule_run.set((db, run_record_id))
+                    try:
+                        result = await self._call_endpoint(sched)
+                    finally:
+                        _active_schedule_run.reset(token)
                     last_status = result.get("status", "success")
                     last_status_code = result.get("status_code")
                     last_error = result.get("error")
@@ -227,7 +286,7 @@ class ScheduleExecutor:
                     else:
                         db.update_schedule_run(run_record_id, **updates)
 
-                    if last_status in ("success", "paused"):
+                    if last_status in ("success", "paused", "cancelled"):
                         break
 
                 except Exception as exc:
@@ -284,10 +343,7 @@ class ScheduleExecutor:
             # Always release the schedule lock so it doesn't stay stuck
             if release_schedule and schedule_id is not None:
                 try:
-                    next_run_at = compute_next_run(
-                        sched.cron_expr,
-                        sched.timezone or "UTC",
-                    )
+                    next_run_at = next_run_for(sched.cron_expr, sched.timezone or "UTC")
                 except Exception as e:
                     log_warning(
                         f"Failed to compute next_run_at for schedule {schedule_id}; "
@@ -296,18 +352,29 @@ class ScheduleExecutor:
 
                     next_run_at = None
                     try:
+                        disable = {"enabled": False, **_preserve_updated_at(db, "update_schedule", sched)}
                         if asyncio.iscoroutinefunction(getattr(db, "update_schedule", None)):
-                            await db.update_schedule(schedule_id, enabled=False)
+                            await db.update_schedule(schedule_id, **disable)
                         else:
-                            db.update_schedule(schedule_id, enabled=False)
+                            db.update_schedule(schedule_id, **disable)
                     except Exception as exc:
                         log_error(f"Failed to disable schedule {schedule_id} after cron failure: {exc}")
 
                 try:
+                    release_kwargs: Dict[str, Any] = {"next_run_at": next_run_at}
+                    # A poller can reclaim with the same worker ID. Match the
+                    # individual claim so an expired invocation cannot release it.
+                    # Older custom adapters retain their existing release API.
+                    parameters = signature(db.release_schedule).parameters
+                    if sched.locked_by is not None and "worker_id" in parameters:
+                        release_kwargs["worker_id"] = sched.locked_by
+                    if sched.locked_at is not None and "locked_at" in parameters:
+                        release_kwargs["locked_at"] = sched.locked_at
+                    release_kwargs.update(_preserve_updated_at(db, "release_schedule", sched))
                     if asyncio.iscoroutinefunction(getattr(db, "release_schedule", None)):
-                        await db.release_schedule(schedule_id, next_run_at=next_run_at)
+                        await db.release_schedule(schedule_id, **release_kwargs)
                     else:
-                        db.release_schedule(schedule_id, next_run_at=next_run_at)
+                        db.release_schedule(schedule_id, **release_kwargs)
                 except Exception as exc:
                     log_error(f"Failed to release schedule {schedule_id}: {exc}")
 
@@ -316,7 +383,23 @@ class ScheduleExecutor:
         """Make the HTTP call to the schedule's endpoint."""
         method = (schedule.method or "POST").upper()
         endpoint = schedule.endpoint
-        payload = schedule.payload or {}
+        from agno.run.authorization import AUTHORIZATION_HEADER, AUTHORIZATION_KEY
+
+        payload = dict(schedule.payload or {})
+        payload.pop("_agno_company_acceptance", None)
+        has_authority = AUTHORIZATION_KEY in payload
+        snapshot = payload.pop(AUTHORIZATION_KEY, None)
+        if schedule.managed_by == "company":
+            unscoped = snapshot is None
+            snapshot = dict(
+                snapshot
+                or {"context": {"principal_id": schedule.user_id}, "service_account": True, "enforce_tools": True}
+            )
+            snapshot["company_routine_unscoped"] = unscoped
+            snapshot["company_routine_id"] = schedule.id
+            snapshot["company_product_id"] = (payload.get("metadata") or {}).get("product_id")
+            snapshot["company_routine"] = True
+            has_authority = True
         timeout_seconds = schedule.timeout_seconds or self.timeout
         url = f"{self.base_url}{endpoint}"
 
@@ -326,6 +409,8 @@ class ScheduleExecutor:
         headers: Dict[str, str] = {
             "Authorization": f"Bearer {self.internal_service_token}",
         }
+        if has_authority:
+            headers[AUTHORIZATION_HEADER] = json.dumps(snapshot, ensure_ascii=True)
         if schedule.user_id is not None:
             # Percent-encoded: header values must be latin-1, and padded ids stay distinct from bare ones
             headers[SCHEDULE_OWNER_HEADER] = quote(schedule.user_id, safe="")
@@ -480,6 +565,14 @@ class ScheduleExecutor:
                 "requirements": None,
             }
 
+        active = _active_schedule_run.get()
+        if active is not None:
+            db, record_id = active
+            if asyncio.iscoroutinefunction(db.update_schedule_run):
+                await db.update_schedule_run(record_id, run_id=run_id, session_id=session_id)
+            else:
+                await asyncio.to_thread(db.update_schedule_run, record_id, run_id=run_id, session_id=session_id)
+
         return await self._poll_run(
             client,
             headers,
@@ -501,8 +594,11 @@ class ScheduleExecutor:
         timeout_seconds: int,
     ) -> Dict[str, Any]:
         """Poll a run status endpoint until the run reaches a terminal state."""
+        from agno.run.authorization import AUTHORIZATION_HEADER
+
         poll_url = f"{self.base_url}/{resource_type}/{resource_id}/runs/{run_id}"
         deadline = time.monotonic() + timeout_seconds
+        company_routine = bool(json.loads(headers.get(AUTHORIZATION_HEADER, "{}")).get("company_routine"))
 
         while True:
             if time.monotonic() >= deadline:
@@ -550,20 +646,9 @@ class ScheduleExecutor:
                 continue
 
             run_status = data.get("status")
-
-            if run_status in _TERMINAL_STATUSES:
-                if run_status == "COMPLETED":
-                    status = "success"
-                    error = None
-                elif run_status == "PAUSED":
-                    status = "paused"
-                    error = None
-                elif run_status == "CANCELLED":
-                    status = "failed"
-                    error = data.get("error") or "Run was cancelled"
-                else:
-                    status = "failed"
-                    error = data.get("error") or f"Run failed with status {run_status}"
+            settled = terminal_run_status(data, company_routine)
+            if settled is not None:
+                status, error = settled
 
                 # Extract input, output, and requirements from RunOutput
                 run_input = data.get("input") if isinstance(data.get("input"), dict) else None

@@ -60,13 +60,33 @@ class TestInfoEndpointMcpDiscovery:
     def test_mcp_disabled_by_default(self):
         client = _build_client()
         body = client.get("/info").json()
-        assert body["mcp"] == {"enabled": False, "path": None, "oauth": None}
+        assert body["mcp"] == {"enabled": False, "path": None, "oauth": None, "tool_run_endpoint": False}
 
     def test_mcp_enabled_reports_path(self):
         pytest.importorskip("fastmcp")
         client = _build_client(mcp_server=True)
         body = client.get("/info").json()
-        assert body["mcp"] == {"enabled": True, "path": "/mcp", "oauth": None}
+        assert body["mcp"] == {"enabled": True, "path": "/mcp", "oauth": None, "tool_run_endpoint": True}
+
+    def test_tool_run_endpoint_is_reported_off_when_switched_off(self):
+        """A client can disable its Run control upfront instead of failing on the call."""
+        pytest.importorskip("fastmcp")
+        from agno.os import MCPConfig
+
+        client = _build_client(mcp=MCPConfig(default_tools=True, tool_run_endpoint=False))
+        body = client.get("/info").json()
+        assert body["mcp"]["enabled"] is True
+        assert body["mcp"]["tool_run_endpoint"] is False
+
+    def test_mcp_path_reports_the_configured_transport_path(self):
+        """The path is configurable; a client builds the card and runner URLs from it."""
+        pytest.importorskip("fastmcp")
+        from agno.os import MCPConfig
+
+        client = _build_client(mcp=MCPConfig(default_tools=True, path="/ai/mcp"))
+        body = client.get("/info").json()
+        # Reported verbatim: hardcoding "/mcp" sent clients to a path this OS does not serve.
+        assert body["mcp"]["path"] == "/ai/mcp"
 
 
 class TestInfoEndpointAuthMode:
@@ -128,6 +148,55 @@ class TestInfoEndpointAuthMode:
         client = TestClient(app)
         body = client.get("/info").json()
         assert body["auth_mode"] == "jwt"
+
+
+class TestInfoEndpointUserIsolation:
+    """A client reads ``user_isolation`` with ``auth_mode`` to know whether it must name the user
+    itself: under jwt the token does; under none / security_key the OS cannot tell who is asking."""
+
+    def test_off_by_default_in_every_mode(self):
+        assert _build_client().get("/info").json()["user_isolation"] is False
+        keyed = _build_client(settings=AgnoAPISettings(os_security_key="test-key"))
+        assert keyed.get("/info").json()["user_isolation"] is False
+
+    def test_on_without_auth(self):
+        body = _build_client(user_isolation=True).get("/info").json()
+        assert (body["auth_mode"], body["user_isolation"]) == ("none", True)
+
+    def test_on_with_a_security_key(self):
+        client = _build_client(user_isolation=True, settings=AgnoAPISettings(os_security_key="test-key"))
+        body = client.get("/info").json()  # still unauthenticated: a client needs it before it has a key
+        assert (body["auth_mode"], body["user_isolation"]) == ("security_key", True)
+
+    def test_on_under_jwt_via_the_top_level_flag(self):
+        client = _build_client(
+            user_isolation=True,
+            authorization=True,
+            authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+        )
+        body = client.get("/info").json()
+        assert (body["auth_mode"], body["user_isolation"]) == ("jwt", True)
+
+    def test_on_under_jwt_via_the_legacy_config_flag(self):
+        """The released spelling, AuthorizationConfig(user_isolation=True), reports the same."""
+        client = _build_client(
+            authorization=True,
+            authorization_config=AuthorizationConfig(
+                verification_keys=[JWT_SECRET], algorithm="HS256", user_isolation=True
+            ),
+        )
+        assert client.get("/info").json()["user_isolation"] is True
+
+    def test_a_directory_alone_does_not_turn_it_on(self):
+        """user_directory and user_isolation are separate switches; the roster is not isolation."""
+        import os
+        import tempfile
+
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(db_file=os.path.join(tempfile.mkdtemp(), "info.db"))
+        body = _build_client(db=db, user_directory=True).get("/info").json()
+        assert body["user_isolation"] is False
 
 
 class TestGetEffectiveAuthMode:

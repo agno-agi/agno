@@ -1309,6 +1309,7 @@ def _get_user_message(
                         query=user_msg_content,
                         filters=run_context.knowledge_filters,
                         run_context=run_context,
+                        run_response=run_response,
                         **kwargs,
                     )
                     if docs_from_knowledge is not None:
@@ -1467,6 +1468,7 @@ async def _aget_user_message(
                         query=user_msg_content,
                         filters=run_context.knowledge_filters,
                         run_context=run_context,
+                        run_response=run_response,
                         **kwargs,
                     )
                     if docs_from_knowledge is not None:

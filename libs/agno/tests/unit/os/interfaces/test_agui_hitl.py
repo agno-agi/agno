@@ -9,6 +9,8 @@ Covers the gap #8565 leaves open:
 """
 
 import json
+import logging
+from typing import Any, AsyncIterator, Dict, Iterator, List
 from unittest.mock import MagicMock
 
 import pytest
@@ -17,10 +19,16 @@ pytest.importorskip("ag_ui", reason="ag_ui not installed")
 
 from ag_ui.core.types import Tool as AGUITool
 from ag_ui.core.types import ToolMessage as AGUIToolMessage
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from agno.agent._tools import parse_tools
 from agno.agent.agent import Agent
-from agno.models.response import ToolExecution, UserInputField
+from agno.db.sqlite import SqliteDb
+from agno.models.base import Model
+from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution, UserInputField
+from agno.os import AgentOS
+from agno.os.interfaces.agui import AGUI
 from agno.os.interfaces.agui.handlers import on_run_completed
 from agno.os.interfaces.agui.input import parse_client_tools
 from agno.os.interfaces.agui.resume import (
@@ -34,6 +42,7 @@ from agno.os.interfaces.agui.stream import (
 )
 from agno.run import RunContext
 from agno.run.agent import RunPausedEvent
+from agno.run.base import RunStatus
 from agno.run.requirement import RunRequirement
 from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 from agno.tools import tool
@@ -50,6 +59,16 @@ def _paused(tool: ToolExecution) -> RunPausedEvent:
 
 def _tm(tool_call_id: str, content: str) -> AGUIToolMessage:
     return AGUIToolMessage(id="m-" + tool_call_id, role="tool", content=content, tool_call_id=tool_call_id)
+
+
+def _tm_parts(tool_call_id: str, parts: List[Dict[str, Any]]) -> AGUIToolMessage:
+    """A tool message whose content is a list of content parts, the form ag-ui-protocol 1.0 added."""
+    try:
+        return AGUIToolMessage.model_validate(
+            {"id": "m-" + tool_call_id, "role": "tool", "content": parts, "toolCallId": tool_call_id}
+        )
+    except ValidationError:
+        pytest.skip("installed ag-ui-protocol only accepts string tool content")
 
 
 def _team_paused(*, requirements=None, tools=None) -> TeamRunPausedEvent:
@@ -224,6 +243,40 @@ class TestPauseResolution:
         assert req.is_resolved() is False
 
 
+class TestPauseResolutionWithContentParts:
+    """ag-ui-protocol 1.0 lets a tool message carry a list of content parts instead of a string.
+    The answer is the text of its text parts, whichever pause type it resolves."""
+
+    def test_confirmation_in_a_text_part_confirms(self):
+        req = RunRequirement(ToolExecution(tool_call_id="tc1", tool_name="x", requires_confirmation=True))
+        answer = _tm_parts("tc1", [{"type": "text", "text": json.dumps({"accepted": True})}])
+        resolve_requirements_from_tool_messages([req], [answer])
+        assert req.tool_execution.confirmed is True
+        assert req.is_resolved()
+
+    def test_external_execution_result_is_the_text_of_the_parts(self):
+        te = ToolExecution(tool_call_id="tc3", tool_name="run", external_execution_required=True)
+        req = RunRequirement(te)
+        answer = _tm_parts("tc3", [{"type": "text", "text": "first line"}, {"type": "text", "text": "second line"}])
+        resolve_requirements_from_tool_messages([req], [answer])
+        assert req.external_execution_result == "first line\nsecond line"
+
+    def test_external_execution_drops_media_parts_with_a_warning(self, caplog):
+        te = ToolExecution(tool_call_id="tc4", tool_name="run", external_execution_required=True)
+        req = RunRequirement(te)
+        answer = _tm_parts(
+            "tc4",
+            [
+                {"type": "text", "text": "the chart"},
+                {"type": "image", "source": {"type": "url", "value": "https://example.com/chart.png"}},
+            ],
+        )
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            resolve_requirements_from_tool_messages([req], [answer])
+        assert req.external_execution_result == "the chart"
+        assert any("tc4" in record.message and "image" in record.message for record in caplog.records)
+
+
 class TestDedupe:
     def test_backend_confirmation_tool_wins_over_same_named_client_tool(self):
         """A frontend-advertised client tool must NOT shadow the agent's own
@@ -362,3 +415,83 @@ class TestTeamPauseEmission:
         resolve_requirements_from_tool_messages([req], [_tm("m-res", json.dumps({"accepted": True}))])
         assert req.tool_execution.confirmed is True
         assert req.is_resolved()
+
+
+def _sse_events(text: str) -> List[Dict[str, Any]]:
+    return [json.loads(line[5:]) for line in text.splitlines() if line.startswith("data:")]
+
+
+class _ScriptedModel(Model):
+    """Calls change_background on its first turn and answers in text afterwards. Records the tool results it is sent."""
+
+    def __init__(self):
+        super().__init__(id="scripted", name="scripted", provider="test")
+        self.turns = 0
+        self.tool_results_seen: List[Any] = []
+
+    def _next(self, messages: List[Any]) -> ModelResponse:
+        self.turns += 1
+        self.tool_results_seen.extend(m.content for m in messages if m.role == "tool")
+        if self.turns == 1:
+            function = {"name": "change_background", "arguments": json.dumps({"color": "blue"})}
+            return ModelResponse(
+                role="assistant", tool_calls=[{"id": "call_1", "type": "function", "function": function}]
+            )
+        return ModelResponse(role="assistant", content="all done", event=ModelResponseEvent.assistant_response.value)
+
+    def invoke(self, messages=None, *args, **kwargs) -> ModelResponse:
+        return self._next(messages or [])
+
+    async def ainvoke(self, messages=None, *args, **kwargs) -> ModelResponse:
+        return self._next(messages or [])
+
+    def invoke_stream(self, messages=None, *args, **kwargs) -> Iterator[ModelResponse]:
+        yield self._next(messages or [])
+
+    async def ainvoke_stream(self, messages=None, *args, **kwargs) -> AsyncIterator[ModelResponse]:
+        yield self._next(messages or [])
+
+    def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
+        return response
+
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        return response
+
+
+class TestResumeWithContentPartsThroughTheRoute:
+    """A pause answered over POST /agui with list-form tool content must finish AND be saved as finished.
+    SqliteDb, not InMemoryDb: the defect was a run that could not be serialized on save, and only a
+    database that serializes the run can show it."""
+
+    def test_external_execution_answer_reaches_the_model_as_text_and_the_run_is_saved_completed(self, tmp_path):
+        answer = [{"type": "text", "text": "blue is set"}]
+        _tm_parts("probe", answer)  # skips on an ag-ui-protocol that only accepts string tool content
+        model = _ScriptedModel()
+        agent = Agent(id="parts-agent", model=model, db=SqliteDb(db_file=str(tmp_path / "parts.db")), telemetry=False)
+        client = TestClient(AgentOS(agents=[agent], interfaces=[AGUI(agent=agent)], telemetry=False).get_app())
+        frontend_tool = {
+            "name": "change_background",
+            "description": "Change the page background",
+            "parameters": {"type": "object", "properties": {"color": {"type": "string"}}},
+        }
+
+        def post(run_id: str, messages: list):
+            body = {"threadId": "thread-parts", "runId": run_id, "state": {}, "messages": messages}
+            return client.post("/agui", json={**body, "tools": [frontend_tool], "context": [], "forwardedProps": {}})
+
+        user = {"id": "u1", "role": "user", "content": "go"}
+        paused = post("run-1", [user])
+        call = next(e for e in _sse_events(paused.text) if e["type"] == "TOOL_CALL_START")
+        function = {"name": "change_background", "arguments": json.dumps({"color": "blue"})}
+        assistant = {
+            "id": "a1",
+            "role": "assistant",
+            "toolCalls": [{"id": call["toolCallId"], "type": "function", "function": function}],
+        }
+        tool_message = {"id": "t1", "role": "tool", "toolCallId": call["toolCallId"], "content": answer}
+        resumed = post("run-2", [user, assistant, tool_message])
+
+        assert resumed.status_code == 200
+        assert [e["type"] for e in _sse_events(resumed.text)][-1] == "RUN_FINISHED"
+        assert model.tool_results_seen == ["blue is set"]
+        assert [run.status for run in agent.get_session(session_id="thread-parts").runs] == [RunStatus.completed]

@@ -9,7 +9,7 @@ from agno.agent import Agent
 from agno.filters import AND, IN, NOT
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.pdf_reader import PDFReader
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.team import Team
 from agno.utils.media import (
     SampleDataFileExtension,
@@ -85,7 +85,7 @@ web_agent = Agent(
     name="Knowledge Search Agent",
     role="Handle knowledge search",
     knowledge=knowledge_base,
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.6-sol"),
 )
 
 # Create team with knowledge filters
@@ -96,7 +96,7 @@ team_with_knowledge = Team(
     members=[
         web_agent
     ],  # If you omit the member, the leader will search the knowledge base itself.
-    model=OpenAIChat(id="o3-mini"),
+    model=OpenAIResponses(id="gpt-5.6-sol"),
     knowledge=knowledge_base,
     show_members_responses=True,
     markdown=True,

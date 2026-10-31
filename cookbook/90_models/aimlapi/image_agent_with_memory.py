@@ -6,6 +6,7 @@ Cookbook example for `aimlapi/image_agent_with_memory.py`.
 """
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.media import Image
 from agno.models.aimlapi import AIMLAPI
 
@@ -14,7 +15,8 @@ from agno.models.aimlapi import AIMLAPI
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=AIMLAPI(id="meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo"),
+    model=AIMLAPI(id="gpt-5.6-luna"),
+    db=SqliteDb(db_file="tmp/aimlapi_image_agent.db"),
     markdown=True,
     add_history_to_context=True,
     num_history_runs=3,

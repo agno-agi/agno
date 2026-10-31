@@ -239,3 +239,49 @@ def test_no_logging_when_no_custom_prompt(mock_model):
 
             assert not mock_log_debug.called
             assert chunker.chunk_size == MAX_CHUNK_SIZE
+
+
+def test_invalid_max_chunk_size(mock_model):
+    """Test that initializing AgenticChunking with max_chunk_size <= 0 raises ValueError."""
+    with patch("agno.knowledge.chunking.agentic.get_model", return_value=mock_model):
+        with pytest.raises(ValueError, match="`max_chunk_size` must be greater than 0"):
+            AgenticChunking(model="test-model", max_chunk_size=0)
+
+        with pytest.raises(ValueError, match="`max_chunk_size` must be greater than 0"):
+            AgenticChunking(model="test-model", max_chunk_size=-100)
+
+
+def test_zero_breakpoint_fallback_to_chunk_size(mock_model):
+    """Test that model returning '0' falls back to chunk_size without infinite looping."""
+    mock_response = Mock()
+    mock_response.content = "0"
+    mock_model.response.return_value = mock_response
+
+    with patch("agno.knowledge.chunking.agentic.get_model", return_value=mock_model):
+        chunker = AgenticChunking(model="test-model", max_chunk_size=500)
+
+    doc = Document(id="test", name="test", content="A" * 1200)
+    chunks = chunker.chunk(doc)
+
+    assert len(chunks) == 3
+    assert len(chunks[0].content) == 500
+    assert len(chunks[1].content) == 500
+    assert len(chunks[2].content) == 200
+
+
+def test_negative_breakpoint_fallback_to_chunk_size(mock_model):
+    """Test that model returning a negative number falls back to chunk_size without infinite looping."""
+    mock_response = Mock()
+    mock_response.content = "-10"
+    mock_model.response.return_value = mock_response
+
+    with patch("agno.knowledge.chunking.agentic.get_model", return_value=mock_model):
+        chunker = AgenticChunking(model="test-model", max_chunk_size=500)
+
+    doc = Document(id="test", name="test", content="B" * 1200)
+    chunks = chunker.chunk(doc)
+
+    assert len(chunks) == 3
+    assert len(chunks[0].content) == 500
+    assert len(chunks[1].content) == 500
+    assert len(chunks[2].content) == 200

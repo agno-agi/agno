@@ -16,9 +16,13 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
+from agno.agent import Agent
 from agno.registry.registry import Registry, ToolSource
+from agno.team import Team
 from agno.tools.function import RUNTIME_ONLY_FIELDS, SERIALIZED_FIELDS, Function
+from agno.tools.studio_runner import StudioRunnerTools
 from agno.tools.toolkit import Toolkit
+from agno.workflow import Workflow
 
 # =============================================================================
 # Test Schemas
@@ -2340,3 +2344,48 @@ class TestAddToolSource:
         registry = Registry()
         registry.add_tool(Toolkit(name="legacy_kit", tools=[sample_function]), source="discovered")
         assert "legacy_kit" in registry.undeclared_tool_names
+
+
+@pytest.fixture(params=["agents", "teams", "workflows"])
+def component_list(request):
+    if request.param == "agents":
+        component = Agent(id="application-agent")
+    elif request.param == "teams":
+        component = Team(id="application-team", members=[])
+    else:
+        component = Workflow(id="application-workflow", steps=[])
+    return request.param, component
+
+
+def test_supplied_component_list_stays_live_for_runner(component_list):
+    name, component = component_list
+    supplied = []
+    registry = Registry(**{name: supplied})
+    runner = StudioRunnerTools(registry=registry)
+    registry.exclude_components([])
+
+    supplied.append(component)
+    assert getattr(registry, name) is supplied
+    assert getattr(runner, "_iter_" + name)() == [component]
+
+    supplied.clear()
+    assert getattr(runner, "_iter_" + name)() == []
+
+
+def test_exclusion_only_replaces_lists_that_contain_excluded_components(component_list):
+    name, component = component_list
+    supplied = {"agents": [], "teams": [], "workflows": []}
+    supplied[name].append(component)
+    registry = Registry(**supplied)
+    registry.exclude_components([component])
+
+    assert supplied[name] == [component]
+    assert getattr(registry, name) == []
+    assert getattr(registry, name) is not supplied[name]
+    for other_name, original in supplied.items():
+        if other_name != name:
+            assert getattr(registry, other_name) is original
+
+    filtered = getattr(registry, name)
+    registry.exclude_components([])
+    assert getattr(registry, name) is filtered

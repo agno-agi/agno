@@ -859,16 +859,21 @@ class InMemoryDb(BaseDb):
             memory_dict = memory.to_dict() if hasattr(memory, "to_dict") else memory.__dict__
             memory_dict["updated_at"] = int(time.time())
 
+            # `to_dict()` passes nested values (e.g. `topics`) through by reference, so
+            # store a detached copy: mutating the caller's `UserMemory` afterwards would
+            # otherwise change what this database already holds, including topic listings.
+            stored_memory = deepcopy(memory_dict)
+
             # Find existing memory to update
             memory_updated = False
             for i, existing_memory in enumerate(self._memories):
                 if existing_memory.get("memory_id") == memory.memory_id:
-                    self._memories[i] = memory_dict
+                    self._memories[i] = stored_memory
                     memory_updated = True
                     break
 
             if not memory_updated:
-                self._memories.append(memory_dict)
+                self._memories.append(stored_memory)
 
             memory_dict_copy = deepcopy(memory_dict)
             if not deserialize:

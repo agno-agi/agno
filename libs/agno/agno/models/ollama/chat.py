@@ -404,7 +404,7 @@ class Ollama(Model):
             response (ChatResponse): The response from the provider.
 
         Returns:
-            Iterator[ModelResponse]: An iterator of the model response.
+            ModelResponse: The parsed response.
         """
         model_response = ModelResponse()
 

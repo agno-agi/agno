@@ -312,6 +312,13 @@ class FirestoreDb(BaseDb):
         )
         return [doc.to_dict().get("run_data") for doc in query.stream() if doc.exists]
 
+    def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """Run dicts for several sessions in one read, used by the search fallback."""
+        runs_collection_ref = self._get_collection(table_type="runs", create_collection_if_not_found=False)
+        if runs_collection_ref is None:
+            return {}
+        return self._get_sessions_runs_docs(runs_collection_ref, session_ids)
+
     def _get_sessions_runs_docs(self, runs_collection_ref, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         """Get the raw run_data dicts for several sessions, grouped by session_id.
 
@@ -751,6 +758,7 @@ class FirestoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions.
 
@@ -765,7 +773,7 @@ class FirestoreDb(BaseDb):
             page (Optional[int]): The page number to get.
             sort_by (Optional[str]): The field to sort the sessions by.
             sort_order (Optional[str]): The order to sort the sessions by.
-            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
 
         Returns:
             Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
@@ -837,9 +845,10 @@ class FirestoreDb(BaseDb):
             else:
                 sessions_raw = all_sessions_raw
 
+            # Search scans skip the runs table; the record's legacy runs field is kept for merging later.
             # Attach runs from the runs collection, merged with any runs still
             # in the legacy `runs` field.
-            if runs_collection_ref is not None and sessions_raw:
+            if include_runs and runs_collection_ref is not None and sessions_raw:
                 runs_by_session = self._get_sessions_runs_docs(
                     runs_collection_ref, [s["session_id"] for s in sessions_raw]
                 )
@@ -876,7 +885,7 @@ class FirestoreDb(BaseDb):
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name of the session.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -1244,7 +1253,7 @@ class FirestoreDb(BaseDb):
 
         Args:
             memory_id (str): The ID of the memory to get.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
             user_id (Optional[str]): The ID of the user (optional, for filtering).
 
         Returns:
@@ -1305,7 +1314,7 @@ class FirestoreDb(BaseDb):
             page (Optional[int]): The page number to get.
             sort_by (Optional[str]): The field to sort the memories by.
             sort_order (Optional[str]): The order to sort the memories by.
-            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
             create_table_if_not_found: Whether to create the index if it doesn't exist.
 
         Returns:
@@ -1429,7 +1438,7 @@ class FirestoreDb(BaseDb):
 
         Args:
             memory (UserMemory): The memory to upsert.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -1991,7 +2000,7 @@ class FirestoreDb(BaseDb):
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
             user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
@@ -2058,7 +2067,7 @@ class FirestoreDb(BaseDb):
             user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type of eval to filter by.
             filter_type (Optional[EvalFilterType]): The type of filter to apply.
-            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
             create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
@@ -2146,7 +2155,7 @@ class FirestoreDb(BaseDb):
         Args:
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
             user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:

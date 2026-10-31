@@ -37,6 +37,10 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
         "component_links_table",
         "learnings_table",
         "schedules_table",
+        "products_table",
+        "sources_table",
+        "projects_table",
+        "tasks_table",
         "schedule_runs_table",
         "approvals_table",
         "auth_tokens_table",
@@ -835,6 +839,16 @@ def identify_metrics_by_owner(rows: Sequence[Dict[str, Any]], user_id: str) -> L
     return identified
 
 
+def owner_key(user_id: Any) -> Optional[str]:
+    """Give a submitted and a stored user_id the same shape before comparing them.
+
+    A stored row comes back as the text its column holds, so a session submitted with a
+    non-string user_id would never match the row it just wrote and would be read as a write
+    the owner check refused.
+    """
+    return None if user_id is None else str(user_id)
+
+
 def get_sort_value(record: Dict[str, Any], sort_by: str) -> Any:
     """Get the sort value for a record, with fallback to created_at for updated_at.
 
@@ -952,38 +966,6 @@ def json_serializer(obj: Any) -> str:
     return json.dumps(obj, cls=CustomJSONEncoder)
 
 
-def serialize_session_json_fields(session: dict) -> dict:
-    """Serialize all JSON fields in the given Session dictionary.
-
-    Uses CustomJSONEncoder to handle non-JSON-serializable types like
-    datetime, date, UUID, Message, Metrics, etc.
-
-    Args:
-        session (dict): The session dictionary to serialize JSON fields in.
-
-    Returns:
-        dict: The dictionary with JSON fields serialized.
-    """
-    if session.get("session_data") is not None:
-        session["session_data"] = json.dumps(session["session_data"], cls=CustomJSONEncoder)
-    if session.get("agent_data") is not None:
-        session["agent_data"] = json.dumps(session["agent_data"], cls=CustomJSONEncoder)
-    if session.get("team_data") is not None:
-        session["team_data"] = json.dumps(session["team_data"], cls=CustomJSONEncoder)
-    if session.get("workflow_data") is not None:
-        session["workflow_data"] = json.dumps(session["workflow_data"], cls=CustomJSONEncoder)
-    if session.get("metadata") is not None:
-        session["metadata"] = json.dumps(session["metadata"], cls=CustomJSONEncoder)
-    if session.get("chat_history") is not None:
-        session["chat_history"] = json.dumps(session["chat_history"], cls=CustomJSONEncoder)
-    if session.get("summary") is not None:
-        session["summary"] = json.dumps(session["summary"], cls=CustomJSONEncoder)
-    if session.get("runs") is not None:
-        session["runs"] = json.dumps(session["runs"], cls=CustomJSONEncoder)
-
-    return session
-
-
 def deserialize_session_json_fields(session: dict) -> dict:
     """Deserialize JSON fields in the given Session dictionary.
 
@@ -1047,7 +1029,7 @@ def deserialize_session_json_fields(session: dict) -> dict:
     return session
 
 
-def db_from_dict(db_data: Dict[str, Any]) -> Optional[Union["BaseDb"]]:
+def db_from_dict(db_data: Dict[str, Any]) -> Optional[Union["BaseDb", "AsyncBaseDb"]]:
     """
     Create a database instance from a dictionary.
 
@@ -1073,6 +1055,22 @@ def db_from_dict(db_data: Dict[str, Any]) -> Optional[Union["BaseDb"]]:
             return SqliteDb.from_dict(db_data)
         except Exception as e:
             log_error(f"Error reconstructing SqliteDb from dictionary: {str(e)}")
+            return None
+    elif db_type == "async_postgres":
+        try:
+            from agno.db.postgres import AsyncPostgresDb
+
+            return AsyncPostgresDb.from_dict(db_data)
+        except Exception as e:
+            log_error(f"Error reconstructing AsyncPostgresDb from dictionary: {str(e)}")
+            return None
+    elif db_type == "async_sqlite":
+        try:
+            from agno.db.sqlite import AsyncSqliteDb
+
+            return AsyncSqliteDb.from_dict(db_data)
+        except Exception as e:
+            log_error(f"Error reconstructing AsyncSqliteDb from dictionary: {str(e)}")
             return None
     elif db_type == "clickhouse":
         try:
@@ -1163,8 +1161,8 @@ def _clone_db_with_table_overrides(
 def resolve_db_from_config(
     db_data: Dict[str, Any],
     registry: Optional["Registry"] = None,
-) -> Optional["BaseDb"]:
-    """Resolve a serialized db config to a concrete ``BaseDb`` instance.
+) -> Optional[Union["BaseDb", "AsyncBaseDb"]]:
+    """Resolve a serialized db config to a synchronous or asynchronous database.
 
     Prefers a registered db instance (for connection reuse) when the
     serialized config does not override any table names. If it does, a
@@ -1184,7 +1182,7 @@ def resolve_db_from_config(
             db instance by id.
 
     Returns:
-        A ``BaseDb`` instance, or ``None`` if reconstruction fails.
+        A database instance, or ``None`` if reconstruction fails.
     """
     db_id = db_data.get("id")
     if registry is not None and db_id:

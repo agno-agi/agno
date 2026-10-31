@@ -11,6 +11,7 @@ reads run concurrently.
 """
 
 import gzip
+import zlib
 from typing import Generator, List, Optional, Tuple
 from urllib.parse import urlparse
 from xml.etree import ElementTree
@@ -108,7 +109,7 @@ class SitemapReader(Reader):
         if raw[:2] == _GZIP_MAGIC:
             try:
                 return gzip.decompress(raw)
-            except OSError:
+            except (OSError, EOFError, zlib.error):
                 return raw
         return raw
 

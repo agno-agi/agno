@@ -287,6 +287,32 @@ class TestCreateComponent:
         assert response.status_code == 201
         assert mock_db.create_component_with_config.call_args.kwargs["links"] is None
 
+    def test_create_team_rejects_external_registry_member(self, mock_db, settings):
+        from agno.registry import Registry
+        from agno.sandbox.docker import DockerSandbox
+        from agno.sandbox.fixture import FixtureAgent
+
+        mock_db.get_component.return_value = None
+        registry = Registry(
+            agents=[
+                FixtureAgent(id="engineer", sandbox=DockerSandbox("unused", env={"AGNO_SANDBOX_TEST_RUNTIME": "1"}))
+            ]
+        )
+        app = FastAPI()
+        app.include_router(get_components_router(os_db=mock_db, settings=settings, registry=registry))
+        response = TestClient(app).post(
+            "/components",
+            json={
+                "name": "Team",
+                "component_type": "team",
+                "component_id": "team",
+                "config": {"members": [{"type": "agent", "agent_id": "engineer"}]},
+            },
+        )
+        assert response.status_code == 400
+        assert "External agents cannot be team members" in response.text
+        mock_db.create_component_with_config.assert_not_called()
+
     def test_create_team_with_unresolved_member_returns_400(self, mock_db, settings):
         """Test create_component surfaces members that resolve to neither db nor registry."""
         from agno.registry import Registry

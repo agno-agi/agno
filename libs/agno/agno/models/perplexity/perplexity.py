@@ -34,7 +34,7 @@ class Perplexity(OpenAILike):
         name (str): The model name. Defaults to "Perplexity".
         provider (str): The provider name. Defaults to "Perplexity".
         api_key (Optional[str]): The API key.
-        base_url (str): The base URL. Defaults to "https://api.perplexity.ai/chat/completions".
+        base_url (str): The base URL. Defaults to "https://api.perplexity.ai/".
         max_tokens (int): The maximum number of tokens. Defaults to 1024.
     """
 

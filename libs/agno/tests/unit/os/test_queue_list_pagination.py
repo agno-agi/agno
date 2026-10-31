@@ -6,6 +6,7 @@ PaginatedResponse body ({data, meta}) instead of a bare list, so the ops UI
 can page the table and reuse the shared pagination components.
 """
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -27,12 +28,13 @@ def harness():
     return SimpleNamespace(store=store, client=TestClient(app, raise_server_exceptions=False))
 
 
-def seed(store, job_id, status="queued", created_at=None, attempt=0):
+def seed(store, job_id, status="queued", created_at=None, attempt=0, session_id="s1", user_id=None):
     job = QueuedJob(
         id=job_id,
         component_type="agent",
         component_id="a1",
-        session_id="s1",
+        session_id=session_id,
+        user_id=user_id,
         payload={"input": "hi"},
         status=status,
         attempt=attempt,
@@ -86,6 +88,54 @@ class TestListJobsPagination:
         # One invalid value among several rejects the request
         resp = harness.client.get("/queue/jobs", params={"status": ["failed", "bogus"]})
         assert resp.status_code == 400
+
+    def test_multi_session_and_status_filters_compose(self, harness):
+        seed(harness.store, "j0", status="queued", session_id="s1")
+        seed(harness.store, "j1", status="running", session_id="s2")
+        seed(harness.store, "j2", status="paused", session_id="s3")
+        seed(harness.store, "j3", status="completed", session_id="s1")
+
+        resp = harness.client.get(
+            "/queue/jobs",
+            params={"session_id": ["s1", "s2"], "status": ["queued", "running", "paused"]},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert {job["id"] for job in body["data"]} == {"j0", "j1"}
+        assert body["meta"]["total_count"] == 2
+
+    def test_user_filter(self, harness):
+        seed(harness.store, "j0", user_id="u1")
+        seed(harness.store, "j1", user_id="u2")
+
+        resp = harness.client.get("/queue/jobs", params={"user_id": "u1"})
+        assert resp.status_code == 200
+        assert [job["id"] for job in resp.json()["data"]] == ["j0"]
+
+    def test_empty_session_or_user_filter_rejected(self, harness):
+        assert harness.client.get("/queue/jobs", params={"session_id": ""}).status_code == 400
+        assert harness.client.get("/queue/jobs", params={"user_id": ""}).status_code == 400
+
+    def test_store_on_the_older_list_jobs_signature_still_lists(self, harness):
+        class LegacyStore(InMemoryQueueStore):
+            async def list_jobs(self, status=None, limit=20, page=1, sort_by="created_at", sort_order="desc"):
+                return await super().list_jobs(status, limit, page, sort_by, sort_order)
+
+        legacy = LegacyStore()
+        seed(legacy, "j0")
+        harness.client.app.state.queue_worker.store = legacy
+
+        resp = harness.client.get("/queue/jobs")
+        assert resp.status_code == 200
+        assert [job["id"] for job in resp.json()["data"]] == ["j0"]
+
+    def test_positional_pagination_args_are_not_read_as_filters(self, harness):
+        for i in range(3):
+            seed(harness.store, f"j{i}", status="failed", created_at=1000 + i, session_id=f"s{i}")
+
+        jobs, total = asyncio.run(harness.store.list_jobs("failed", 2, 1))
+        assert total == 3
+        assert [job["id"] for job in jobs] == ["j2", "j1"]
 
     def test_invalid_params_rejected(self, harness):
         assert harness.client.get("/queue/jobs", params={"status": "bogus"}).status_code == 400
