@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 from dataclasses import dataclass
 from ssl import SSLContext
@@ -286,7 +287,7 @@ class HITLHandler:
             fn = getattr(db, "get_approval", None)
             if not fn:
                 return "pending"
-            if asyncio.iscoroutinefunction(fn):
+            if inspect.iscoroutinefunction(fn):
                 approval = await fn(approval_id)
             else:
                 approval = fn(approval_id)

@@ -1,6 +1,7 @@
 """Schedule poller -- periodically claims and executes due schedules."""
 
 import asyncio
+import inspect
 from typing import Any, Dict, Optional, Set, Union
 from uuid import uuid4
 
@@ -100,7 +101,7 @@ class SchedulePoller:
                 break
 
             try:
-                if asyncio.iscoroutinefunction(getattr(self.db, "claim_due_schedule", None)):
+                if inspect.iscoroutinefunction(getattr(self.db, "claim_due_schedule", None)):
                     schedule = await self.db.claim_due_schedule(self.worker_id)
                 else:
                     schedule = self.db.claim_due_schedule(self.worker_id)
@@ -128,7 +129,7 @@ class SchedulePoller:
     async def trigger(self, schedule_id: str) -> None:
         """Manually trigger a schedule by ID (immediate execution)."""
         try:
-            if asyncio.iscoroutinefunction(getattr(self.db, "get_schedule", None)):
+            if inspect.iscoroutinefunction(getattr(self.db, "get_schedule", None)):
                 schedule = await self.db.get_schedule(schedule_id)
             else:
                 schedule = self.db.get_schedule(schedule_id)

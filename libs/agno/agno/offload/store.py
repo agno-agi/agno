@@ -16,6 +16,7 @@ so, and the run continues.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import re
 import time
@@ -427,7 +428,7 @@ class ResultStore:
         if self.db is None:
             raise RuntimeError("ResultStore has no db; index operations are unavailable")
         fn = getattr(self.db, method_name)
-        if asyncio.iscoroutinefunction(fn):
+        if inspect.iscoroutinefunction(fn):
             raise RuntimeError(
                 f"ResultStore: '{method_name}' is async on {type(self.db).__name__}; use the a-prefixed store method"
             )
@@ -437,7 +438,7 @@ class ResultStore:
         if self.db is None:
             raise RuntimeError("ResultStore has no db; index operations are unavailable")
         fn = getattr(self.db, method_name)
-        if asyncio.iscoroutinefunction(fn):
+        if inspect.iscoroutinefunction(fn):
             return await fn(*args, **kwargs)
         return await asyncio.to_thread(fn, *args, **kwargs)
 

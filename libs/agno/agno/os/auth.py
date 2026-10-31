@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import hmac
 from functools import lru_cache
 from os import getenv
@@ -1098,7 +1099,7 @@ async def run_continuation_blocked_reason(
         return None
 
     try:
-        if asyncio.iscoroutinefunction(fn):
+        if inspect.iscoroutinefunction(fn):
             result = await fn(run_id=run_id, status="pending", approval_type="required")
         else:
             # Sync DB drivers do blocking I/O; keep it off the event loop, matching the

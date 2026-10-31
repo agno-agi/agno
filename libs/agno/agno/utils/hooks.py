@@ -1,3 +1,4 @@
+import inspect
 from copy import deepcopy
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -107,7 +108,7 @@ def normalize_pre_hooks(
                 if not async_mode:
                     import asyncio
 
-                    if asyncio.iscoroutinefunction(hook):
+                    if inspect.iscoroutinefunction(hook):
                         raise ValueError(
                             f"Cannot use {get_hook_name(hook)} (an async hook) with `run()`. Use `arun()` instead."
                         )
@@ -150,7 +151,7 @@ def normalize_post_hooks(
                 if not async_mode:
                     import asyncio
 
-                    if asyncio.iscoroutinefunction(hook):
+                    if inspect.iscoroutinefunction(hook):
                         raise ValueError(
                             f"Cannot use {get_hook_name(hook)} (an async hook) with `run()`. Use `arun()` instead."
                         )

@@ -193,7 +193,7 @@ class ScheduleExecutor:
                         "user_id": sched.user_id,
                         "created_at": now,
                     }
-                    if asyncio.iscoroutinefunction(getattr(db, "create_schedule_run", None)):
+                    if inspect.iscoroutinefunction(getattr(db, "create_schedule_run", None)):
                         await db.create_schedule_run(run_dict)
                     else:
                         db.create_schedule_run(run_dict)
@@ -203,7 +203,7 @@ class ScheduleExecutor:
                         "status": "failed",
                         "error": last_error,
                     }
-                    if asyncio.iscoroutinefunction(getattr(db, "update_schedule_run", None)):
+                    if inspect.iscoroutinefunction(getattr(db, "update_schedule_run", None)):
                         await db.update_schedule_run(run_record_id, **drift_updates)
                     else:
                         db.update_schedule_run(run_record_id, **drift_updates)
@@ -215,7 +215,7 @@ class ScheduleExecutor:
                             "disabled_reason": disabled_reason,
                             **_preserve_updated_at(db, "update_schedule", sched),
                         }
-                        if asyncio.iscoroutinefunction(getattr(db, "update_schedule", None)):
+                        if inspect.iscoroutinefunction(getattr(db, "update_schedule", None)):
                             await db.update_schedule(schedule_id, **disable)
                         else:
                             db.update_schedule(schedule_id, **disable)
@@ -250,7 +250,7 @@ class ScheduleExecutor:
                     "created_at": now,
                 }
 
-                if asyncio.iscoroutinefunction(getattr(db, "create_schedule_run", None)):
+                if inspect.iscoroutinefunction(getattr(db, "create_schedule_run", None)):
                     await db.create_schedule_run(run_dict)
                 else:
                     db.create_schedule_run(run_dict)
@@ -281,7 +281,7 @@ class ScheduleExecutor:
                         "output": last_output,
                         "requirements": last_requirements,
                     }
-                    if asyncio.iscoroutinefunction(getattr(db, "update_schedule_run", None)):
+                    if inspect.iscoroutinefunction(getattr(db, "update_schedule_run", None)):
                         await db.update_schedule_run(run_record_id, **updates)
                     else:
                         db.update_schedule_run(run_record_id, **updates)
@@ -299,7 +299,7 @@ class ScheduleExecutor:
                         "status": "failed",
                         "error": last_error,
                     }
-                    if asyncio.iscoroutinefunction(getattr(db, "update_schedule_run", None)):
+                    if inspect.iscoroutinefunction(getattr(db, "update_schedule_run", None)):
                         await db.update_schedule_run(run_record_id, **updates)
                     else:
                         db.update_schedule_run(run_record_id, **updates)
@@ -331,7 +331,7 @@ class ScheduleExecutor:
                     "error": "Execution cancelled during shutdown",
                 }
                 try:
-                    if asyncio.iscoroutinefunction(getattr(db, "update_schedule_run", None)):
+                    if inspect.iscoroutinefunction(getattr(db, "update_schedule_run", None)):
                         await db.update_schedule_run(run_record_id, **cancel_updates)
                     else:
                         db.update_schedule_run(run_record_id, **cancel_updates)
@@ -353,7 +353,7 @@ class ScheduleExecutor:
                     next_run_at = None
                     try:
                         disable = {"enabled": False, **_preserve_updated_at(db, "update_schedule", sched)}
-                        if asyncio.iscoroutinefunction(getattr(db, "update_schedule", None)):
+                        if inspect.iscoroutinefunction(getattr(db, "update_schedule", None)):
                             await db.update_schedule(schedule_id, **disable)
                         else:
                             db.update_schedule(schedule_id, **disable)
@@ -371,7 +371,7 @@ class ScheduleExecutor:
                     if sched.locked_at is not None and "locked_at" in parameters:
                         release_kwargs["locked_at"] = sched.locked_at
                     release_kwargs.update(_preserve_updated_at(db, "release_schedule", sched))
-                    if asyncio.iscoroutinefunction(getattr(db, "release_schedule", None)):
+                    if inspect.iscoroutinefunction(getattr(db, "release_schedule", None)):
                         await db.release_schedule(schedule_id, **release_kwargs)
                     else:
                         db.release_schedule(schedule_id, **release_kwargs)
@@ -568,7 +568,7 @@ class ScheduleExecutor:
         active = _active_schedule_run.get()
         if active is not None:
             db, record_id = active
-            if asyncio.iscoroutinefunction(db.update_schedule_run):
+            if inspect.iscoroutinefunction(db.update_schedule_run):
                 await db.update_schedule_run(record_id, run_id=run_id, session_id=session_id)
             else:
                 await asyncio.to_thread(db.update_schedule_run, record_id, run_id=run_id, session_id=session_id)
