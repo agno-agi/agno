@@ -2143,3 +2143,56 @@ class TestTeamFollowupConfigRoundtrip:
             assert secret not in serialized
             for forbidden in ("api_key", "base_url", "client", "http://"):
                 assert forbidden not in serialized
+
+
+# =============================================================================
+# Session summary and compression round trip
+# =============================================================================
+
+
+class TestTeamManagerRoundtrip:
+    """session_summary_manager and compression_manager survive to_dict/from_dict."""
+
+    def test_session_summary_manager_roundtrip(self):
+        from agno.models.openai import OpenAIResponses
+        from agno.session.summary import SessionSummaryManager
+
+        manager = SessionSummaryManager(
+            id="summaries",
+            model=OpenAIResponses(id="gpt-4.1-mini"),
+            session_summary_prompt="Summarize the session.",
+            last_n_runs=3,
+        )
+        restored = Team.from_dict(Team(members=[], session_summary_manager=manager).to_dict()).session_summary_manager
+        assert isinstance(restored, SessionSummaryManager)
+        assert restored.id == "summaries"
+        assert restored.session_summary_prompt == "Summarize the session."
+        assert restored.last_n_runs == 3
+        assert isinstance(restored.model, OpenAIResponses)
+        assert restored.model.id == "gpt-4.1-mini"
+
+    def test_compression_manager_roundtrip(self):
+        from agno.compression.manager import CompressionManager
+
+        manager = CompressionManager(compress_token_limit=1000, compress_tool_call_instructions="Keep ids.")
+        restored = Team.from_dict(Team(members=[], compression_manager=manager).to_dict()).compression_manager
+        assert isinstance(restored, CompressionManager)
+        assert restored.compress_token_limit == 1000
+        assert restored.compress_tool_results_limit is None
+        assert restored.compress_tool_call_instructions == "Keep ids."
+
+    def test_owner_model_is_not_pinned_into_managers(self):
+        from agno.compression.manager import CompressionManager
+        from agno.models.openai import OpenAIResponses
+        from agno.session.summary import SessionSummaryManager
+
+        model = OpenAIResponses(id="gpt-4.1")
+        team = Team(
+            members=[],
+            model=model,
+            session_summary_manager=SessionSummaryManager(model=model),
+            compression_manager=CompressionManager(model=model),
+        )
+        config = team.to_dict()
+        assert "model" not in config["session_summary_manager"]
+        assert "model" not in config["compression_manager"]

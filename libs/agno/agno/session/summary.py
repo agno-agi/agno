@@ -7,13 +7,14 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from agno.models.base import Model
-from agno.models.utils import get_model
+from agno.models.utils import get_model, resolve_model
 from agno.run.agent import Message
 from agno.utils.log import log_debug, log_warning
 
 # TODO: Look into moving all managers into a separate dir
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
+    from agno.registry import Registry
     from agno.session import Session
     from agno.session.agent import AgentSession
     from agno.session.team import TeamSession
@@ -100,6 +101,40 @@ class SessionSummaryManager:
             raise ValueError(f"last_n_runs must be a positive integer, got {self.last_n_runs}")
         if self.conversation_limit is not None and self.conversation_limit <= 0:
             raise ValueError(f"conversation_limit must be a positive integer, got {self.conversation_limit}")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize the settings for component storage; a model keeps only its identity.
+
+        Run state (summaries_updated) and the owner the OS assigns on registration are not stored.
+        """
+        from agno.agent.followup import model_identity
+
+        config: Dict[str, Any] = {"summary_request_message": self.summary_request_message}
+        if self.model is not None:
+            config["model"] = model_identity(self.model)
+        for name in ("id", "name", "session_summary_prompt", "last_n_runs", "conversation_limit"):
+            value = getattr(self, name)
+            if value is not None:
+                config[name] = value
+        return config
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any], registry: Optional["Registry"] = None) -> "SessionSummaryManager":
+        """Rebuild from to_dict output; a registered live model is preferred over its identity dict."""
+        model = data.get("model")
+        kwargs = {
+            name: data[name]
+            for name in (
+                "id",
+                "name",
+                "session_summary_prompt",
+                "summary_request_message",
+                "last_n_runs",
+                "conversation_limit",
+            )
+            if name in data
+        }
+        return cls(model=resolve_model(model, registry) if model is not None else None, **kwargs)
 
     def get_response_format(self, model: "Model") -> Union[Dict[str, Any], Type[BaseModel]]:  # type: ignore
         if model.supports_native_structured_outputs:

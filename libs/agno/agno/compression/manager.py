@@ -7,11 +7,12 @@ from pydantic import BaseModel
 
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.utils import get_model
+from agno.models.utils import get_model, resolve_model
 from agno.utils.log import log_error, log_info, log_warning
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
+    from agno.registry import Registry
 
 DEFAULT_COMPRESSION_PROMPT = dedent("""\
     You are compressing tool call results to save context space while preserving critical information.
@@ -62,6 +63,38 @@ class CompressionManager:
     def __post_init__(self):
         if self.compress_tool_results_limit is None and self.compress_token_limit is None:
             self.compress_tool_results_limit = 3
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize the settings for component storage; a model keeps only its identity.
+
+        Run statistics are not stored.
+        """
+        from agno.agent.followup import model_identity
+
+        config: Dict[str, Any] = {"compress_tool_results": self.compress_tool_results}
+        if self.model is not None:
+            config["model"] = model_identity(self.model)
+        for name in ("compress_tool_results_limit", "compress_token_limit", "compress_tool_call_instructions"):
+            value = getattr(self, name)
+            if value is not None:
+                config[name] = value
+        return config
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any], registry: Optional["Registry"] = None) -> "CompressionManager":
+        """Rebuild from to_dict output; a registered live model is preferred over its identity dict."""
+        model = data.get("model")
+        kwargs = {
+            name: data[name]
+            for name in (
+                "compress_tool_results",
+                "compress_tool_results_limit",
+                "compress_token_limit",
+                "compress_tool_call_instructions",
+            )
+            if name in data
+        }
+        return cls(model=resolve_model(model, registry) if model is not None else None, **kwargs)
 
     def _is_tool_result_message(self, msg: Message) -> bool:
         return msg.role == "tool"
