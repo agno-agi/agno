@@ -927,6 +927,53 @@ class AsyncSqliteDb(AsyncBaseDb):
             result = await sess.execute(statement)
             return result.scalar_one_or_none() is not None
 
+    async def update_run_if_matches(
+        self,
+        run_id: str,
+        session_id: str,
+        expected: Dict[str, Any],
+        fields: Dict[str, Any],
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """Apply ``fields`` to a stored run only while it still matches ``expected``, as one atomic step.
+
+        ``expected`` maps "status" and dotted paths into the run's data to the values they must hold. A
+        paused run is handed over to its continuation this way: a repeated or stale writer finds the run
+        changed and writes nothing. Returns whether the run was updated.
+        """
+        from sqlalchemy import update
+
+        from agno.db.sql.runs import apply_run_fields, run_matches
+
+        try:
+            table = await self._get_table(table_type="runs")
+            if table is None:
+                return False
+            async with self.async_session_factory() as sess, sess.begin():
+                # Take SQLite's write lock before reading, so the check and the write are one atomic step,
+                # even for another process using the same file.
+                await sess.execute(update(table).where(table.c.run_id == run_id).values(run_id=table.c.run_id))
+                result = await sess.execute(
+                    select(table.c.run_data, table.c.status)
+                    .where(table.c.run_id == run_id, table.c.session_id == session_id)
+                    .where((table.c.user_id == user_id) | table.c.user_id.is_(None))
+                )
+                row = result.fetchone()
+                if row is None or row[0] is None:
+                    return False
+                stored = json.loads(row[0]) if isinstance(row[0], str) else dict(row[0])
+                if not run_matches(stored, row[1], expected):
+                    return False
+                run, status = apply_run_fields(stored, fields)
+                values: Dict[str, Any] = {"run_data": run, "updated_at": int(time.time())}
+                if status is not None:
+                    values["status"] = status
+                await sess.execute(update(table).where(table.c.run_id == run_id).values(**values))
+                return True
+        except Exception as e:
+            log_warning(f"Error conditionally updating run {run_id}: {e}")
+            raise
+
     async def upsert_run(
         self,
         run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
@@ -2628,7 +2675,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     runs_result = await sess.execute(runs_stmt)
                     runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
                     for session_id, model, model_provider in runs_result.fetchall():
-                        runs_by_session.setdefault(session_id, []).append(
+                        runs_by_session.setdefault(cast(str, session_id), []).append(
                             {"model": model, "model_provider": model_provider}
                         )
 

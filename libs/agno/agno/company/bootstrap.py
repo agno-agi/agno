@@ -108,6 +108,7 @@ async def arehydrate_product(
                     **fields,
                     user_id=routine_owner,
                     if_exists="skip",
+                    enabled_on_create=routine.enabled,
                     provenance={
                         "managed_by": "company",
                         "target_type": routine.executor_type,

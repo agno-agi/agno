@@ -385,8 +385,12 @@ class AgentCoreSandbox(Sandbox):
         A failed or lost reply never touches the claimed computer: the caller
         reconciles. Only an unclaimed replacement microVM is stopped.
         """
-        if operation not in ("start", "poll") or not isinstance(payload, bytes) or len(payload) > 1024 * 1024:
-            raise ValueError("Runtime RPC requires start/poll and a payload no larger than 1 MiB")
+        if (
+            operation not in ("start", "poll", "resolve", "capabilities")
+            or not isinstance(payload, bytes)
+            or len(payload) > 1024 * 1024
+        ):
+            raise ValueError("Runtime RPC requires start/poll/resolve/capabilities and a payload no larger than 1 MiB")
         reply = await self._invoke_for(handle, "rpc", operation=operation, payload=payload.decode())
         body = str(reply["body"])[: 4 * 1024 * 1024]
         if reply["status"] != 200:
