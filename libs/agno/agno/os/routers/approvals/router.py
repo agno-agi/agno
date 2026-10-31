@@ -1,6 +1,7 @@
 """Approval API router -- list, resolve, and delete human approvals."""
 
 import asyncio
+import inspect
 import time
 from typing import Any, Dict, Literal, Optional
 
@@ -54,7 +55,7 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         if fn is None:
             raise HTTPException(status_code=503, detail="Approvals not supported by the configured database")
         try:
-            if asyncio.iscoroutinefunction(fn):
+            if inspect.iscoroutinefunction(fn):
                 return await fn(*args, **kwargs)
             return fn(*args, **kwargs)
         except NotImplementedError:
