@@ -522,6 +522,18 @@ class TestTeamCheckpointSyncPreservesChildRunId:
 
         assert run_response.tools[0].child_run_id == "member-new"
 
+    def test_empty_streaming_snapshot_preserves_paused_tool(self):
+        paused_tool = ToolExecution(tool_call_id="tc-pause", tool_name="ask_user", requires_user_input=True)
+        run_response = TeamRunOutput(run_id="team-1", tools=[paused_tool])
+
+        team_run._sync_team_run_response_with_model_response(
+            run_response,
+            self._run_messages(),
+            self._model_response([]),
+        )
+
+        assert run_response.tools == [paused_tool]
+
 
 class TestTeamCheckpointScrubIsolation:
     """A mid-run team checkpoint with store_media=False must scrub the storage

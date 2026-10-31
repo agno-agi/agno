@@ -11,8 +11,10 @@ Scope covers:
 
 from __future__ import annotations
 
+import json
 import os
-from typing import List, Optional
+from dataclasses import dataclass
+from typing import AsyncIterator, Iterator, List, Optional
 from unittest.mock import patch
 
 import pytest
@@ -30,7 +32,9 @@ from agno.agent._run import (
     persist_run_in_session,
 )
 from agno.agent.agent import Agent
+from agno.db.base import SessionType
 from agno.db.in_memory import InMemoryDb
+from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.openai.responses import OpenAIResponses
 from agno.models.response import ModelResponse, ToolExecution
@@ -38,6 +42,7 @@ from agno.run import RunContext, RunStatus
 from agno.run.agent import RunOutput
 from agno.run.messages import RunMessages
 from agno.session import AgentSession
+from agno.tools.user_control_flow import UserControlFlowTools
 
 # ---------------------------------------------------------------------------
 # Fixtures + helpers
@@ -184,22 +189,33 @@ class TestSyncRunResponseWithModelResponse:
         assert len(run_response.messages) == 1
         assert run_response.messages[0].content == "keep me"
 
-    def test_replaces_tools_does_not_extend(self):
-        """The model_response.tool_executions list is cumulative; the sync should
-        replace run_response.tools to avoid double-counting."""
+    def test_merges_tools_by_id_without_duplicates(self):
         run_response = _make_run_response()
-        run_response.tools = [ToolExecution(tool_call_id="old", tool_name="t", tool_args={})]
+        run_response.tools = [
+            ToolExecution(tool_call_id="tc-1", tool_name="t", tool_args={}, result="old"),
+            ToolExecution(tool_call_id="tc-2", tool_name="t", tool_args={}),
+        ]
         run_messages = _make_run_messages()
         model_response = ModelResponse()
         model_response.tool_executions = [
-            ToolExecution(tool_call_id="new-1", tool_name="t", tool_args={}),
-            ToolExecution(tool_call_id="new-2", tool_name="t", tool_args={}),
+            ToolExecution(tool_call_id="tc-1", tool_name="t", tool_args={}, result="new"),
+            ToolExecution(tool_call_id="tc-3", tool_name="t", tool_args={}),
         ]
 
         _sync_run_response_with_model_response(run_response, run_messages, model_response)
 
         assert run_response.tools is not None
-        assert [t.tool_call_id for t in run_response.tools] == ["new-1", "new-2"]
+        assert [t.tool_call_id for t in run_response.tools] == ["tc-1", "tc-2", "tc-3"]
+        assert run_response.tools[0].result == "new"
+
+    def test_empty_streaming_snapshot_preserves_paused_tool(self):
+        paused_tool = ToolExecution(tool_call_id="tc-pause", tool_name="ask_user", requires_user_input=True)
+        run_response = _make_run_response()
+        run_response.tools = [paused_tool]
+
+        _sync_run_response_with_model_response(run_response, _make_run_messages(), ModelResponse())
+
+        assert run_response.tools == [paused_tool]
 
 
 class TestCheckpointRun:
@@ -557,6 +573,103 @@ class TestHookFiring:
             ["tc0", "tc1"],
             ["tc0", "tc1", "tc2"],
         ]
+
+
+@dataclass
+class _AskUserStreamingModel(Model):
+    id: str = "ask-user"
+    name: str = "AskUserStreamingModel"
+    provider: str = "test"
+
+    def _next(self) -> ModelResponse:
+        fields = [
+            {
+                "field_name": "clarification",
+                "field_type": "str",
+                "field_description": "What should be shown?",
+            }
+        ]
+        return ModelResponse(
+            role="assistant",
+            tool_calls=[
+                {
+                    "id": "call-ask",
+                    "type": "function",
+                    "function": {
+                        "name": "get_user_input",
+                        "arguments": json.dumps({"user_input_fields": fields}),
+                    },
+                }
+            ],
+        )
+
+    def invoke(self, *args, **kwargs) -> ModelResponse:
+        return self._next()
+
+    async def ainvoke(self, *args, **kwargs) -> ModelResponse:
+        return self._next()
+
+    def invoke_stream(self, *args, **kwargs) -> Iterator[ModelResponse]:
+        yield self._next()
+
+    async def ainvoke_stream(self, *args, **kwargs) -> AsyncIterator[ModelResponse]:
+        yield self._next()
+
+    def _parse_provider_response(self, response, **kwargs) -> ModelResponse:
+        return response
+
+    def _parse_provider_response_delta(self, response) -> ModelResponse:
+        return response
+
+
+def _make_streaming_hitl_agent(db: InMemoryDb) -> Agent:
+    return Agent(
+        name="streaming-hitl-checkpoint",
+        model=_AskUserStreamingModel(),
+        db=db,
+        tools=[UserControlFlowTools(instructions="Ask the user when clarification is required.")],
+        checkpoint="tool-batch",
+        telemetry=False,
+    )
+
+
+def _assert_stored_run_is_paused(db: InMemoryDb, session_id: str) -> None:
+    session = db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+    assert session is not None
+    stored_run = session.runs[-1]
+    assert stored_run.status == RunStatus.paused
+    assert stored_run.tools is not None
+    assert len(stored_run.tools) == 1
+    assert stored_run.tools[0].tool_call_id == "call-ask"
+    assert stored_run.tools[0].is_paused
+
+
+class TestStreamingHitlCheckpoint:
+    def test_sync_stream_preserves_paused_tool(self):
+        db = InMemoryDb()
+        agent = _make_streaming_hitl_agent(db)
+
+        events = list(
+            agent.run(input="show me", stream=True, stream_events=True, session_id="sync-session", user_id="u1")
+        )
+
+        assert any(type(event).__name__ == "RunPausedEvent" for event in events)
+        _assert_stored_run_is_paused(db, "sync-session")
+
+    @pytest.mark.asyncio
+    async def test_async_stream_preserves_paused_tool(self):
+        db = InMemoryDb()
+        agent = _make_streaming_hitl_agent(db)
+
+        events = [
+            event
+            async for event in agent.arun(
+                input="show me", stream=True, stream_events=True, session_id="async-session", user_id="u1"
+            )
+        ]
+
+        assert any(type(event).__name__ == "RunPausedEvent" for event in events)
+        _assert_stored_run_is_paused(db, "async-session")
 
 
 class TestModelLayerHookFailureContained:
