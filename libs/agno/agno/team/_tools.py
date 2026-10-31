@@ -175,8 +175,10 @@ def _determine_tools_for_model(
         team,
     )
 
-    # Prepare tools
+    # Prepare tools. Framework tools are registered before provided tools so a
+    # user-defined name cannot silently replace a Team capability.
     _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+    provided_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
     # Add provided tools
     if resolved_tools is not None:
@@ -186,7 +188,7 @@ def _determine_tools_for_model(
                 # Only add the tool if it successfully connected and built its tools
                 if check_mcp_tools and not tool.initialized:  # type: ignore
                     continue
-            _tools.append(tool)
+            provided_tools.append(tool)
 
     if team.read_chat_history:
         _tools.append(_get_chat_history_function(team, session=session, async_mode=async_mode))
@@ -332,6 +334,8 @@ def _determine_tools_for_model(
         if team.get_member_information_tool:
             _tools.append(team.get_member_information)
 
+    _tools.extend(provided_tools)
+
     # Get Agent tools
     if len(_tools) > 0:
         log_debug("Processing tools for model")
@@ -398,10 +402,7 @@ def _determine_tools_for_model(
             toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
             for name, _func in toolkit_functions.items():
                 if name in _function_names:
-                    log_warning(
-                        f"Duplicate tool name '{name}' from toolkit '{tool.name}' "
-                        f"already registered on team; skipping the duplicate."
-                    )
+                    _handle_tool_name_collision(team, name)
                     continue
                 _function_names.append(name)
                 _func = _func._per_run_copy()
@@ -432,7 +433,7 @@ def _determine_tools_for_model(
                 source_toolkit, tool_index
             )
             if tool.name in _function_names:
-                log_warning(f"Duplicate tool name '{tool.name}' already registered on team; skipping the duplicate.")
+                _handle_tool_name_collision(team, tool.name)
                 if emit_toolkit_instructions and source_toolkit is not None:
                     add_toolkit_instructions(source_toolkit)
                 continue
@@ -469,9 +470,7 @@ def _determine_tools_for_model(
                 # per-run copy, so no further copy is needed before mutating it.
                 _func = Function.from_callable(tool, strict=strict)
                 if _func.name in _function_names:
-                    log_warning(
-                        f"Duplicate tool name '{_func.name}' already registered on team; skipping the duplicate."
-                    )
+                    _handle_tool_name_collision(team, _func.name)
                     continue
                 _function_names.append(_func.name)
 
@@ -508,6 +507,14 @@ def _determine_tools_for_model(
                 func._videos = joint_videos
 
     return _functions
+
+
+def _handle_tool_name_collision(team: "Team", name: str) -> None:
+    if team.error_on_tool_name_collision:
+        raise ValueError(
+            f"Duplicate tool name '{name}' already registered on team; rename or remove the conflicting tool."
+        )
+    log_warning(f"Duplicate tool name '{name}' already registered on team; skipping the duplicate.")
 
 
 def get_member_information(team: "Team", run_context: Optional["RunContext"] = None) -> str:
