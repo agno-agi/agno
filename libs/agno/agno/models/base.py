@@ -86,6 +86,54 @@ class MessageData:
     extra: Optional[Dict[str, Any]] = None
 
 
+class _ToolOutputBuffer:
+    """Builds a tool's text result from the items its generator yields.
+
+    A team's members run concurrently under one delegate call, so their
+    content events arrive interleaved. Each run's content is kept in its own
+    segment so the result reads member by member instead of mixing chunks,
+    with a blank line between two runs' segments. A run's content only joins
+    its earlier segment while nothing but other runs' content has been added
+    since, so a single run's output keeps the order it was yielded in.
+    """
+
+    def __init__(self) -> None:
+        self._parts: List[str] = []
+        # The run each part belongs to; None for plain text.
+        self._part_runs: List[Optional[str]] = []
+        self._run_parts: Dict[str, int] = {}
+        self._last_text = -1
+
+    def add_text(self, text: str) -> None:
+        self._parts.append(text)
+        self._part_runs.append(None)
+        self._last_text = len(self._parts) - 1
+
+    def add_run_content(self, run_id: Optional[str], content: str) -> None:
+        if run_id is None:
+            self.add_text(content)
+            return
+        index = self._run_parts.get(run_id)
+        if index is not None and index > self._last_text:
+            self._parts[index] += content
+            return
+        self._parts.append(content)
+        self._part_runs.append(run_id)
+        self._run_parts[run_id] = len(self._parts) - 1
+
+    def getvalue(self) -> str:
+        output = ""
+        last_run_id: Optional[str] = None
+        for part, run_id in zip(self._parts, self._part_runs):
+            if not part:
+                continue
+            if run_id is not None and last_run_id is not None and run_id != last_run_id:
+                output += "\n\n"
+            output += part
+            last_run_id = run_id
+        return output
+
+
 def _log_messages(messages: List[Message]) -> None:
     """
     Log messages for debugging.
@@ -2279,6 +2327,7 @@ class Model(ABC):
         function_call_output: str = ""
 
         if isinstance(function_execution_result.result, (GeneratorType, collections.abc.Iterator)):
+            output_buffer = _ToolOutputBuffer()
             try:
                 for item in function_execution_result.result:
                     # This function yields agent/team/workflow run events
@@ -2286,16 +2335,16 @@ class Model(ABC):
                         # We only capture content events for output accumulation
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
-                                function_call_output += item.content.model_dump_json()
+                                output_buffer.add_run_content(item.run_id, item.content.model_dump_json())
                             else:
                                 # Capture output
-                                function_call_output += item.content or ""
+                                output_buffer.add_run_content(item.run_id, item.content or "")
 
                             if function_call.function.show_result and item.content is not None:
                                 yield ModelResponse(content=item.content)
 
                         if isinstance(item, CustomEvent):
-                            function_call_output += str(item)
+                            output_buffer.add_text(str(item))
                             item.tool_call_id = function_call.call_id
 
                         # For WorkflowCompletedEvent, extract content for final output
@@ -2304,9 +2353,9 @@ class Model(ABC):
                         if isinstance(item, WorkflowCompletedEvent):
                             if item.content is not None:
                                 if isinstance(item.content, BaseModel):
-                                    function_call_output += item.content.model_dump_json()
+                                    output_buffer.add_text(item.content.model_dump_json())
                                 else:
-                                    function_call_output += str(item.content)
+                                    output_buffer.add_text(str(item.content))
 
                         # Yield the event itself to bubble it up. The isinstance guards
                         # above narrow item at runtime, but mypy cannot see through
@@ -2314,7 +2363,7 @@ class Model(ABC):
                         yield item  # type: ignore[misc]
 
                     else:
-                        function_call_output += str(item)
+                        output_buffer.add_text(str(item))
                         if function_call.function.show_result and item is not None:
                             yield ModelResponse(content=str(item))
             except RunCancelledException:
@@ -2325,6 +2374,7 @@ class Model(ABC):
                 )
                 function_call.error = str(e)
                 function_call_success = False
+            function_call_output = output_buffer.getvalue()
 
             # For generators, re-capture updated_session_state after consumption
             # since session_state modifications were made during iteration
@@ -2847,7 +2897,7 @@ class Model(ABC):
         # Create background tasks for each async generator
         async def process_async_generator(result, generator_id):
             function_call_success, function_call_timer, function_call, function_execution_result = result
-            function_call_output = ""
+            output_buffer = _ToolOutputBuffer()
 
             try:
                 async for item in function_call.result:
@@ -2856,17 +2906,17 @@ class Model(ABC):
                         # We only capture content events
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
-                                function_call_output += item.content.model_dump_json()
+                                output_buffer.add_run_content(item.run_id, item.content.model_dump_json())
                             else:
                                 # Capture output
-                                function_call_output += item.content or ""
+                                output_buffer.add_run_content(item.run_id, item.content or "")
 
                             if function_call.function.show_result and item.content is not None:
                                 await event_queue.put(ModelResponse(content=item.content))
                                 continue
 
                         if isinstance(item, CustomEvent):
-                            function_call_output += str(item)
+                            output_buffer.add_text(str(item))
                             item.tool_call_id = function_call.call_id
 
                             # For WorkflowCompletedEvent, extract content for final output
@@ -2875,21 +2925,21 @@ class Model(ABC):
                             if isinstance(item, WorkflowCompletedEvent):
                                 if item.content is not None:
                                     if isinstance(item.content, BaseModel):
-                                        function_call_output += item.content.model_dump_json()
+                                        output_buffer.add_text(item.content.model_dump_json())
                                     else:
-                                        function_call_output += str(item.content)
+                                        output_buffer.add_text(str(item.content))
 
                         # Put the event into the queue to be yielded
                         await event_queue.put(item)
 
                     # Yield custom events emitted by the tool
                     else:
-                        function_call_output += str(item)
+                        output_buffer.add_text(str(item))
                         if function_call.function.show_result and item is not None:
                             await event_queue.put(ModelResponse(content=str(item)))
 
                 # Store the final output for this generator
-                async_generator_outputs[generator_id] = (result, function_call_output, None)
+                async_generator_outputs[generator_id] = (result, output_buffer.getvalue(), None)
 
             except Exception as e:
                 # Store the exception
@@ -2982,6 +3032,7 @@ class Model(ABC):
                 function_call_output = async_function_call_output
                 # Events from async generators were already yielded in real-time above
             elif isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
+                output_buffer = _ToolOutputBuffer()
                 try:
                     for item in function_call.result:
                         # This function yields agent/team/workflow run events
@@ -2989,23 +3040,23 @@ class Model(ABC):
                             # We only capture content events
                             if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                                 if item.content is not None and isinstance(item.content, BaseModel):
-                                    function_call_output += item.content.model_dump_json()
+                                    output_buffer.add_run_content(item.run_id, item.content.model_dump_json())
                                 else:
                                     # Capture output
-                                    function_call_output += item.content or ""
+                                    output_buffer.add_run_content(item.run_id, item.content or "")
 
                                 if function_call.function.show_result and item.content is not None:
                                     yield ModelResponse(content=item.content)
                                     continue
 
                             elif isinstance(item, CustomEvent):
-                                function_call_output += str(item)
+                                output_buffer.add_text(str(item))
                                 item.tool_call_id = function_call.call_id
 
                             # Yield the event itself to bubble it up
                             yield item
                         else:
-                            function_call_output += str(item)
+                            output_buffer.add_text(str(item))
                             if function_call.function.show_result and item is not None:
                                 yield ModelResponse(content=str(item))
                 except RunCancelledException:
@@ -3016,6 +3067,7 @@ class Model(ABC):
                     )
                     function_call.error = str(e)
                     function_call_success = False
+                function_call_output = output_buffer.getvalue()
 
             # For generators (sync or async), re-capture updated_session_state after consumption
             # since session_state modifications were made during iteration
