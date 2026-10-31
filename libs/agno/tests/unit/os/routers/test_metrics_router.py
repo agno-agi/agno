@@ -17,6 +17,9 @@ from agno.os.settings import AgnoAPISettings
 # =============================================================================
 
 
+_ABSENT = object()  # Stands for a column the stored row does not carry at all.
+
+
 def _make_metric(user_id, *, date="2026-01-01", runs=1, tokens=10, model="gpt-5-mini", period="daily"):
     """Create a stored per-user metrics row as the db layer emits it."""
     now = int(time.time())
@@ -143,6 +146,41 @@ class TestGetMetrics:
             client.get("/metrics?user_id=bob")
 
         assert mock_db.get_metrics.call_args.kwargs["user_id"] == "alice"
+
+    @pytest.mark.parametrize(
+        "column,value",
+        [
+            ("model_metrics", {}),  # The default every adapter schema declares for this column.
+            ("model_metrics", None),
+            ("model_metrics", _ABSENT),  # A row written before the field existed.
+            ("token_metrics", None),
+            ("token_metrics", _ABSENT),
+        ],
+    )
+    @pytest.mark.parametrize("scoped", [None, "alice"], ids=["aggregated", "per-owner"])
+    def test_falsy_stored_metric_columns_are_read_as_empty(self, client, mock_db, alice_row, column, value, scoped):
+        """A stored row can hold the column default instead of a list/dict, and that day is reported."""
+        if value is _ABSENT:
+            del alice_row[column]
+        else:
+            alice_row[column] = value
+        mock_db.get_metrics.return_value = ([alice_row], int(time.time()))
+
+        with _scope(scoped):
+            resp = client.get("/metrics")
+
+        assert resp.status_code == 200
+        assert resp.json()["metrics"][0][column] == ([] if column == "model_metrics" else {})
+
+    def test_corrupt_metric_column_is_still_an_error(self, client, mock_db, alice_row):
+        """Absorbing the falsy shapes must not hide a value that cannot be metrics at all."""
+        alice_row["model_metrics"] = {"gpt-5-mini": 2}
+        mock_db.get_metrics.return_value = ([alice_row], int(time.time()))
+
+        with _scope("alice"):
+            resp = client.get("/metrics")
+
+        assert resp.status_code == 500
 
     def test_identity_less_caller_gets_403_not_500(self, client):
         """The fail-closed scoping status must not be masked by the broad handler."""
