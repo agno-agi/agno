@@ -283,6 +283,18 @@ def _followups_from_config(value: Any, registry: Optional[Registry] = None) -> U
     return bool(value)
 
 
+def manager_to_config(manager: Any, owner_model: Any) -> Dict[str, Any]:
+    """A session summary manager, compression manager or Compaction as it is stored.
+
+    Initialization gives a manager without a model the owner's model. That model is left out, so
+    the load gives the manager the owner's model again instead of pinning a copy of it.
+    """
+    config = manager.to_dict()
+    if owner_model is not None and manager.model is owner_model:
+        config.pop("model", None)
+    return config
+
+
 def get_run_output(
     agent: Agent, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
 ) -> Optional[RunOutput]:
@@ -879,9 +891,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["enable_session_summaries"] = agent.enable_session_summaries
     if agent.add_session_summary_to_context is not None:
         config["add_session_summary_to_context"] = agent.add_session_summary_to_context
-    # TODO: implement session summary manager serialization
-    # if agent.session_summary_manager is not None:
-    #     config["session_summary_manager"] = agent.session_summary_manager.to_dict()
+    if agent.session_summary_manager is not None:
+        config["session_summary_manager"] = manager_to_config(agent.session_summary_manager, agent.model)
 
     # --- Dependencies ---
     if agent.dependencies is not None:
@@ -1200,13 +1211,12 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # --- Result offloading settings ---
     if agent.offload_tool_results is not None:
         config["offload_tool_results"] = _offload_to_config(agent.offload_tool_results)
-    # TODO: implement compression manager serialization
-    # if agent.compression_manager is not None:
-    #     config["compression_manager"] = agent.compression_manager.to_dict()
-    # TODO: implement compaction serialization - until then an agent saved with compaction
-    # (True or a Compaction) loads back with it off.
-    # if agent.compaction is not None:
-    #     config["compaction"] = agent.compaction if isinstance(agent.compaction, bool) else agent.compaction.to_dict()
+    if agent.compression_manager is not None:
+        config["compression_manager"] = manager_to_config(agent.compression_manager, agent.model)
+    if isinstance(agent.compaction, bool):
+        config["compaction"] = agent.compaction
+    elif agent.compaction is not None:
+        config["compaction"] = manager_to_config(agent.compaction, agent.model)
 
     # --- Callable factory settings ---
     if not agent.cache_callables:
@@ -1392,10 +1402,10 @@ def from_dict(
     resolve_memory_manager_reference(config, registry, strict, component_label)
 
     # --- Handle SessionSummaryManager reconstruction ---
-    # TODO: implement session summary manager deserialization
-    # if "session_summary_manager" in config and isinstance(config["session_summary_manager"], dict):
-    #     from agno.session import SessionSummaryManager
-    #     config["session_summary_manager"] = SessionSummaryManager.from_dict(config["session_summary_manager"])
+    if isinstance(config.get("session_summary_manager"), dict):
+        from agno.session.summary import SessionSummaryManager
+
+        config["session_summary_manager"] = SessionSummaryManager.from_dict(config["session_summary_manager"], registry)
 
     # --- Handle Knowledge reconstruction ---
     # Knowledge is stored as a reference by name and resolved from the registry,
@@ -1422,16 +1432,17 @@ def from_dict(
             del config["knowledge"]
 
     # --- Handle CompressionManager reconstruction ---
-    # TODO: implement compression manager deserialization
-    # if "compression_manager" in config and isinstance(config["compression_manager"], dict):
-    #     from agno.compression.manager import CompressionManager
-    #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
+    if isinstance(config.get("compression_manager"), dict):
+        from agno.compression.manager import CompressionManager
+
+        config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"], registry)
 
     # --- Handle Compaction reconstruction ---
-    # TODO: implement compaction deserialization
-    # if "compaction" in config and isinstance(config["compaction"], dict):
-    #     from agno.compaction import Compaction
-    #     config["compaction"] = Compaction.from_dict(config["compaction"])
+    # Stored as True/False or as the Compaction settings.
+    if isinstance(config.get("compaction"), dict):
+        from agno.compaction import Compaction
+
+        config["compaction"] = Compaction.from_dict(config["compaction"], registry)
 
     # --- Handle Learning reconstruction ---
     # A named machine is stored as a reference and resolved from the registry;
@@ -1469,7 +1480,7 @@ def from_dict(
         num_past_session_runs_in_search=config.get("num_past_session_runs_in_search"),
         enable_session_summaries=config.get("enable_session_summaries", False),
         add_session_summary_to_context=config.get("add_session_summary_to_context"),
-        # session_summary_manager=config.get("session_summary_manager"),  # TODO
+        session_summary_manager=config.get("session_summary_manager"),
         # --- Dependencies ---
         dependencies=config.get("dependencies"),
         add_dependencies_to_context=config.get("add_dependencies_to_context", False),
@@ -1559,7 +1570,9 @@ def from_dict(
         metadata=strip_reserved_run_metadata(config.get("metadata")),
         # --- Compression settings ---
         compress_tool_results=config.get("compress_tool_results", False),
-        # compression_manager=config.get("compression_manager"),  # TODO
+        compression_manager=config.get("compression_manager"),
+        # --- Compaction settings ---
+        compaction=config.get("compaction"),
         # --- Result offloading settings ---
         offload_tool_results=_offload_from_config(config.get("offload_tool_results")),
         # --- Debug and telemetry settings ---
