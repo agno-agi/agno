@@ -109,6 +109,27 @@ def test_every_tool_named_in_the_prompt_is_attached(mode):
     assert named <= attached, f"{mode}: prompt names unattached tools/args {sorted(named - attached)}"
 
 
+@pytest.mark.parametrize("mode", [mode for mode in MODES if mode != TeamMode.tasks.value])
+def test_delegation_requires_confirmation(mode):
+    team = _team(mode=mode)
+    team.initialize_team()
+    run_context = RunContext(session_state={}, run_id="r1", session_id="s1")
+
+    tools = team._determine_tools_for_model(
+        model=team.model,
+        run_response=TeamRunOutput(run_id="r1"),
+        run_context=run_context,
+        team_run_context={},
+        session=_session(),
+    )
+
+    delegation_tools = [
+        tool for tool in tools if getattr(tool, "name", None) in {"delegate_task_to_member", "delegate_task_to_members"}
+    ]
+    assert len(delegation_tools) == 1
+    assert delegation_tools[0].requires_confirmation is True
+
+
 def test_get_member_information_is_named_only_where_it_is_attached():
     """Tasks mode takes the task-tool branch, which never attaches it."""
     for mode in MODES:
