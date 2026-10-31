@@ -127,6 +127,28 @@ class TestAgentFactory:
         with pytest.raises(FactoryError, match="async"):
             factory.invoke(ctx)
 
+    @pytest.mark.asyncio
+    async def test_invoke_async_with_async_callable_object(self):
+        class Builder:
+            async def __call__(self, ctx):
+                return _make_mock_agent(f"agent-{ctx.user_id}")
+
+        factory = AgentFactory(db=_mock_db, id="f1", factory=Builder())
+        assert factory.is_async()
+        ctx = _make_ctx(user_id="user-123")
+        result = await factory.invoke_async(ctx)
+        assert result.id == "agent-user-123"
+
+    def test_invoke_sync_rejects_async_callable_object(self):
+        class Builder:
+            async def __call__(self, ctx):
+                return _make_mock_agent()
+
+        factory = AgentFactory(db=_mock_db, id="f1", factory=Builder())
+        ctx = _make_ctx()
+        with pytest.raises(FactoryError, match="async"):
+            factory.invoke(ctx)
+
 
 # ---------------------------------------------------------------------------
 # Input validation
