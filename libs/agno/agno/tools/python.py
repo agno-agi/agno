@@ -16,6 +16,18 @@ def warn() -> None:
 
 
 class PythonTools(Toolkit):
+    # Tools in this toolkit that execute code (or install packages, whose
+    # setup code runs) in the host process. They require human confirmation
+    # by default: without the gate, a model-influenced tool call reaches
+    # exec()/runpy()/subprocess immediately (see run_function_calls()).
+    # Pass requires_confirmation_tools=[] explicitly to opt out.
+    DEFAULT_REQUIRES_CONFIRMATION_TOOLS = (
+        "run_python_code",
+        "save_to_file_and_run",
+        "run_python_file_return_variable",
+        "pip_install_package",
+        "uv_pip_install_package",
+    )
     """Tools for generating, saving, and executing Python code in the current process.
 
     .. warning::
@@ -31,10 +43,16 @@ class PythonTools(Toolkit):
         to code once it runs: executed code can read ``/etc/passwd``, dump
         ``os.environ``, or reach the network regardless of that flag.
 
-        To require human approval before code runs, gate the tools through the
-        toolkit's confirmation mechanism::
+        The toolkit's confirmation mechanism pauses tools for human approval
+        before the orchestration loop executes them. The code-executing tools
+        (``run_python_code``, ``save_to_file_and_run``,
+        ``run_python_file_return_variable``, ``pip_install_package``,
+        ``uv_pip_install_package``) require confirmation by default: the
+        orchestration loop pauses them (``tool_call_paused``) instead of
+        executing a model-requested call immediately. To run them without
+        confirmation (e.g. inside a real sandbox), opt out explicitly::
 
-            PythonTools(requires_confirmation_tools=["run_python_code", "save_to_file_and_run"])
+            PythonTools(requires_confirmation_tools=[])
 
         To drop the execution tools entirely, use ``exclude_tools=[...]``. For
         untrusted input, run code in a real sandbox (separate process or container
@@ -70,6 +88,13 @@ class PythonTools(Toolkit):
         # Execution namespaces seeded into exec()/runpy. Not a security boundary.
         self.safe_globals: dict = safe_globals or globals()
         self.safe_locals: dict = safe_locals or locals()
+
+        # Default-deny: code-executing tools require confirmation unless the
+        # caller explicitly provides requires_confirmation_tools (an explicit
+        # value, including [], is used as-is so automated/sandboxed setups can
+        # opt out deliberately).
+        if kwargs.get("requires_confirmation_tools") is None:
+            kwargs["requires_confirmation_tools"] = list(self.DEFAULT_REQUIRES_CONFIRMATION_TOOLS)
 
         tools: List[Any] = [
             self.save_to_file_and_run,
