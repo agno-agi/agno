@@ -259,6 +259,22 @@ def test_tasks_block_matches_the_loop_it_runs():
     assert "finishes at once instead of after a reminder" in content
 
 
+@pytest.mark.parametrize("determine_input_for_members", [True, False])
+@pytest.mark.asyncio
+async def test_route_prompt_allows_direct_answers_without_member_expertise(determine_input_for_members):
+    team = _team(mode=TeamMode.route, determine_input_for_members=determine_input_for_members)
+    for message in (
+        team.get_system_message(session=_session()),
+        await team.aget_system_message(session=_session()),
+    ):
+        delegation = message.content.split("<delegation>", 1)[1].split("</delegation>", 1)[0]
+        assert "When the request needs a member's expertise or tools" in delegation
+        assert "hand the request to exactly one member" in delegation
+        assert "reply is returned to the user as written and ends the run" in delegation
+        assert "answer directly without delegating" in delegation
+        assert "questions about the team's capabilities" in delegation
+
+
 def test_inner_members_of_a_sub_team_render_without_ids():
     """Only a directly delegable member shows an id.
 
