@@ -386,3 +386,81 @@ def test_format_tool_params_handles_list_types_in_function(openai_responses_mode
     assert formatted_tools[0]["parameters"]["properties"]["optional_param"]["type"] == "string"
     # Regular string type should remain unchanged
     assert formatted_tools[0]["parameters"]["properties"]["required_param"]["type"] == "string"
+
+
+def test_format_tool_params_defaults_strict_to_false(openai_responses_model):
+    """Test that tools with an unset `strict` are sent with an explicit strict=False.
+
+    The Responses API treats a missing `strict` as strict mode, which turns every
+    property into a required one, so optional parameters can no longer be omitted.
+    """
+    from agno.models.message import Message
+    from agno.tools.function import Function
+
+    messages = [Message(role="user", content="Test")]
+
+    # Function object with strict=None (the default)
+    test_function = Function(
+        name="optional_param_tool",
+        description="A tool with an optional parameter",
+        parameters={
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "description": "An optional filter"},
+            },
+            "required": [],
+        },
+    )
+    assert test_function.strict is None
+
+    formatted_tools = openai_responses_model._format_tool_params(messages, [test_function])
+
+    assert len(formatted_tools) == 1
+    assert formatted_tools[0]["strict"] is False
+
+    # A dict function tool without a `strict` key gets the same treatment
+    dict_tool = {
+        "type": "function",
+        "function": {
+            "name": "dict_tool",
+            "description": "A dict tool with an optional parameter",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {"type": "string", "description": "An optional filter"},
+                },
+                "required": [],
+            },
+        },
+    }
+
+    formatted_tools = openai_responses_model._format_tool_params(messages, [dict_tool])
+
+    assert len(formatted_tools) == 1
+    assert formatted_tools[0]["strict"] is False
+
+
+def test_format_tool_params_preserves_explicit_strict(openai_responses_model):
+    """Test that an explicit strict=True/False is kept as-is."""
+    from agno.models.message import Message
+    from agno.tools.function import Function
+
+    messages = [Message(role="user", content="Test")]
+
+    strict_function = Function(
+        name="strict_tool",
+        description="A strict tool",
+        strict=True,
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "The query"},
+            },
+            "required": ["query"],
+        },
+    )
+
+    formatted_tools = openai_responses_model._format_tool_params(messages, [strict_function])
+
+    assert len(formatted_tools) == 1
+    assert formatted_tools[0]["strict"] is True

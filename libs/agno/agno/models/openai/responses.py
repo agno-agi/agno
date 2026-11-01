@@ -606,6 +606,11 @@ class OpenAIResponses(Model):
                 if isinstance(_tool, Function):
                     _tool_dict = _tool.to_dict()
                     _tool_dict["type"] = "function"
+                    # The Responses API treats a missing `strict` as strict mode, which
+                    # turns every property into a required one. Mirror Chat Completions
+                    # semantics: an unset `strict` means the tool is not strict.
+                    if _tool_dict.get("strict") is None:
+                        _tool_dict["strict"] = False
                     for prop in _tool_dict.get("parameters", {}).get("properties", {}).values():
                         if isinstance(prop.get("type", ""), list):
                             prop["type"] = prop["type"][0]
@@ -613,6 +618,8 @@ class OpenAIResponses(Model):
                 elif _tool.get("type") == "function":
                     _tool_dict = _tool.get("function", {})
                     _tool_dict["type"] = "function"
+                    if _tool_dict.get("strict") is None:
+                        _tool_dict["strict"] = False
                     for prop in _tool_dict.get("parameters", {}).get("properties", {}).values():
                         if isinstance(prop.get("type", ""), list):
                             prop["type"] = prop["type"][0]
