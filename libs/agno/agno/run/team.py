@@ -1049,6 +1049,13 @@ class TeamRunOutput:
 
         if "cancellation_stage" in data:
             data["cancellation_stage"] = CancellationStage.coerce(data["cancellation_stage"])
+        # Stored runs carry the status as its string value; readers expect the enum, so a value
+        # that is not one of ours is left as is rather than rejected.
+        if isinstance(data.get("status"), str):
+            try:
+                data["status"] = RunStatus(data["status"])
+            except ValueError:
+                pass
 
         supported_fields = {f.name for f in fields(cls)}
         filtered_data = {k: v for k, v in data.items() if k in supported_fields}
