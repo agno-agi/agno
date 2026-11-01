@@ -1377,6 +1377,13 @@ CREDENTIAL_PATHS = [
     ".kube/config",
     ".docker/config.json",
     ".azure/azureProfile.json",
+    # gcloud token stores (agno#11420): the directory component and the
+    # database filenames, including copies outside `.config/gcloud`.
+    ".config/gcloud/credentials.db",
+    ".config/gcloud/access_tokens.db",
+    ".config/gcloud/application_default_credentials.json",
+    "backup/credentials.db",
+    "backup/access_tokens.db",
     ".m2/settings.xml",
     ".cargo/credentials.toml",
     ".composer/auth.json",

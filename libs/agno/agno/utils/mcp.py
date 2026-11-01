@@ -380,8 +380,9 @@ def prepare_command(command: str) -> list[str]:
     import shutil
     from shlex import split
 
-    # Block dangerous characters
-    if any(char in command for char in ["&", "|", ";", "`", "$", "(", ")"]):
+    # Block dangerous characters (including line breaks, which would let a
+    # single "command" string smuggle a second shell command past shlex.split)
+    if any(char in command for char in ["&", "|", ";", "`", "$", "(", ")", "\n", "\r"]):
         raise ValueError("MCP command can't contain shell metacharacters")
 
     parts = split(command)
@@ -427,10 +428,11 @@ def prepare_command(command: str) -> list[str]:
         # Allow binaries in current directory
         return parts
 
-    # Check if it's a binary in PATH
-    if shutil.which(executable):
-        return parts
-
+    # NOTE: a bare executable name must pass the ALLOWED_COMMANDS check below.
+    # A previous version returned early here for any binary found on PATH
+    # (shutil.which), which made the allowlist unreachable for PATH binaries
+    # such as `sh`, `bash` or `curl`. PATH lookup is therefore deliberately
+    # NOT an escape hatch: only allowlisted runtimes may be named bare.
     if executable not in ALLOWED_COMMANDS:
         raise ValueError(f"MCP command needs to use one of the following executables: {ALLOWED_COMMANDS}")
 

@@ -63,13 +63,17 @@ DEFAULT_EXCLUDE_PATTERNS = [
     "authorized_keys",
     # Directories a credential-writing CLI keeps in a home directory. Patterns match a
     # single component and cannot name a path, so the directory is the only way to reach
-    # the files inside it (`.aws/credentials`, `.kube/config`, `.docker/config.json`).
+    # the files inside it (`.aws/credentials`, `.kube/config`, `.docker/config.json`,
+    # `.config/gcloud/credentials.db`).
     ".ssh",
     ".aws",
     ".gnupg",
     ".kube",
     ".docker",
     ".azure",
+    # gcloud keeps OAuth refresh/access tokens in `.config/gcloud/` (credentials.db,
+    # access_tokens.db); the directory component is the only way to reach them.
+    "gcloud",
     ".m2",
     ".cargo",
     ".composer",
@@ -94,6 +98,14 @@ DEFAULT_EXCLUDE_PATTERNS = [
     # `credentials` is left out for the same reason: it would match a `credentials/`
     # package directory and hide every file under it.
     "credentials.json",
+    # gcloud token databases: also covered when they sit under a `gcloud`
+    # directory (see above), but named explicitly so a copy elsewhere -- a
+    # backup, a test fixture, a renamed config dir -- stays excluded too.
+    # `application_default_credentials.json` was already matched by
+    # `*_credentials.json`; it is listed here so the gcloud set reads complete.
+    "credentials.db",
+    "access_tokens.db",
+    "application_default_credentials.json",
     "credentials.yaml",
     "credentials.yml",
     "credentials.ini",
