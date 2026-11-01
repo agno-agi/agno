@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import text
 
 from agno.db.postgres import AsyncPostgresDb
 from agno.run.agent import RunOutput
@@ -320,3 +321,83 @@ async def test_get_sessions_for_metrics_with_timestamp_filter(async_postgres_db_
 
     # Should get 1 session (1 hour ago only)
     assert len(sessions) == 1
+
+
+# One more session than a 65,535-parameter query can list next to the model and provider keys
+SESSIONS_PAST_PARAMETER_LIMIT = 65_534
+
+
+@pytest.mark.asyncio
+async def test_calculate_metrics_past_query_parameter_limit(async_postgres_db_real: AsyncPostgresDb):
+    """Metrics cover every session and run even when they outnumber a query's parameter limit"""
+    sessions_table = await async_postgres_db_real._get_table("sessions", create_table_if_not_found=True)
+    runs_table = await async_postgres_db_real._get_table("runs", create_table_if_not_found=True)
+    created_at = int(time.time()) - 86400
+
+    async with async_postgres_db_real.async_session_factory() as sess, sess.begin():
+        await sess.execute(
+            sessions_table.insert(),
+            [
+                {"session_id": f"s_{i}", "session_type": "agent", "created_at": created_at}
+                for i in range(SESSIONS_PAST_PARAMETER_LIMIT)
+            ],
+        )
+        await sess.execute(
+            runs_table.insert(),
+            [
+                {
+                    "run_id": f"r_{i}",
+                    "session_id": f"s_{i}",
+                    "run_type": "agent",
+                    "run_data": {"model": "gpt-5.5", "model_provider": "OpenAI"},
+                    "created_at": created_at,
+                }
+                for i in range(SESSIONS_PAST_PARAMETER_LIMIT)
+            ],
+        )
+
+    result = await async_postgres_db_real.calculate_metrics()
+
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["agent_sessions_count"] == SESSIONS_PAST_PARAMETER_LIMIT
+    assert result[0]["agent_runs_count"] == SESSIONS_PAST_PARAMETER_LIMIT
+    assert result[0]["model_metrics"] == [
+        {"model_id": "gpt-5.5", "model_provider": "OpenAI", "count": SESSIONS_PAST_PARAMETER_LIMIT}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_calculate_metrics_raises_when_sessions_cannot_be_read(async_postgres_db_real: AsyncPostgresDb):
+    """A failed sessions read surfaces as an error instead of an empty metrics refresh"""
+    agent_run = RunOutput(run_id="test_run_1", agent_id="test_agent_1", status=RunStatus.completed, messages=[])
+    session = AgentSession(
+        session_id="test_session_1",
+        agent_id="test_agent_1",
+        runs=[agent_run],
+        created_at=int(time.time()) - 86400,
+    )
+    await _persist(async_postgres_db_real, session)
+
+    runs_table = await async_postgres_db_real._get_table("runs")
+    async with async_postgres_db_real.db_engine.begin() as conn:
+        await conn.execute(text(f"DROP TABLE {runs_table.fullname}"))
+
+    with pytest.raises(Exception, match=runs_table.name):
+        await async_postgres_db_real.calculate_metrics()
+
+
+@pytest.mark.asyncio
+async def test_calculate_metrics_raises_when_first_session_date_cannot_be_read(
+    async_postgres_db_real: AsyncPostgresDb,
+):
+    """A failed read of the first session's date surfaces as an error instead of an empty metrics refresh"""
+    session = AgentSession(session_id="test_session_1", agent_id="test_agent_1", created_at=int(time.time()) - 86400)
+    await async_postgres_db_real.upsert_session(session)
+
+    sessions_table = await async_postgres_db_real._get_table("sessions")
+    async with async_postgres_db_real.db_engine.begin() as conn:
+        await conn.execute(text(f"ALTER TABLE {sessions_table.fullname} DROP COLUMN created_at"))
+
+    with pytest.raises(Exception, match="created_at"):
+        await async_postgres_db_real.calculate_metrics()

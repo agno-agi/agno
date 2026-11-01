@@ -143,7 +143,14 @@ class AdanosTools(Toolkit):
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Asynchronously get sentiment for a stock from one Adanos data source."""
+        """Get sentiment for a stock from one Adanos data source.
+
+        Args:
+            ticker: Stock ticker, for example ``AAPL`` or ``TSLA``.
+            source: Sentiment source: reddit, x, news, or polymarket.
+            start_date: Inclusive UTC start date in YYYY-MM-DD format.
+            end_date: Inclusive UTC end date in YYYY-MM-DD format.
+        """
         path = self._STOCK_PATHS.get(source)
         if path is None:
             return {"error": "source must be one of: reddit, x, news, polymarket"}
@@ -166,7 +173,13 @@ class AdanosTools(Toolkit):
     async def aget_crypto_sentiment(
         self, symbol: str, start_date: Optional[str] = None, end_date: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Asynchronously get Reddit sentiment for a cryptocurrency."""
+        """Get Reddit sentiment for a cryptocurrency.
+
+        Args:
+            symbol: Cryptocurrency symbol, for example ``BTC`` or ``ETH``.
+            start_date: Inclusive UTC start date in YYYY-MM-DD format.
+            end_date: Inclusive UTC end date in YYYY-MM-DD format.
+        """
         normalized_symbol = quote(symbol.strip().upper(), safe=".-")
         return await self._arequest(
             f"{self._CRYPTO_PATH}/token/{normalized_symbol}", self._params(start_date, end_date)
@@ -203,7 +216,15 @@ class AdanosTools(Toolkit):
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Asynchronously get trending stocks or cryptocurrencies ranked by buzz score with sentiment data."""
+        """Get trending stocks or cryptocurrencies ranked by buzz score with sentiment data.
+
+        Args:
+            asset_type: Asset universe: stocks or crypto.
+            source: For stocks, reddit, x, news, or polymarket. Crypto uses reddit.
+            limit: Maximum number of results, from 1 to 100.
+            start_date: Inclusive UTC start date in YYYY-MM-DD format.
+            end_date: Inclusive UTC end date in YYYY-MM-DD format.
+        """
         path = self._asset_path(asset_type, source)
         if isinstance(path, dict):
             return path
@@ -237,7 +258,14 @@ class AdanosTools(Toolkit):
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Asynchronously get aggregate market sentiment for stocks or cryptocurrencies."""
+        """Get aggregate market sentiment for stocks or cryptocurrencies.
+
+        Args:
+            asset_type: Asset universe: stocks or crypto.
+            source: For stocks, reddit, x, news, or polymarket. Crypto uses reddit.
+            start_date: Inclusive UTC start date in YYYY-MM-DD format.
+            end_date: Inclusive UTC end date in YYYY-MM-DD format.
+        """
         path = self._asset_path(asset_type, source)
         if isinstance(path, dict):
             return path

@@ -5,6 +5,51 @@ import pytest
 from agno.exceptions import ContextWindowExceededError, ModelProviderError
 
 # =============================================================================
+# Gemini context window patterns
+# =============================================================================
+
+
+class TestGeminiContextWindowPatterns:
+    """Gemini reports the count rather than the limit and never says "context window".
+
+    Its wording matched none of the original patterns, so an oversized Gemini request was
+    never classified - and anything keyed on ContextWindowExceededError, including compaction's
+    reactive fold, silently did nothing.
+    """
+
+    @pytest.mark.parametrize(
+        "error_message",
+        [
+            "The input token count (1050000) exceeds the maximum number of tokens allowed (1048575).",
+            "400 INVALID_ARGUMENT. Request contains an invalid argument: input token count exceeds the maximum",
+            "Token count exceeds the maximum allowed for this model.",
+        ],
+        ids=[
+            "gemini_input_token_count_with_limit",
+            "gemini_invalid_argument_wrapper",
+            "gemini_capitalized_short_form",
+        ],
+    )
+    def test_classify_gemini_context_window_errors(self, error_message: str):
+        """Gemini context window errors should be classified as ContextWindowExceededError."""
+        error = ModelProviderError(message=error_message, status_code=400)
+        classified = ModelProviderError.classify(error)
+
+        assert isinstance(classified, ContextWindowExceededError)
+        assert classified.message == error_message
+
+    def test_token_count_alone_does_not_match(self):
+        """ "token count" on its own appears in billing and usage messages.
+
+        Both halves are required, or an unrelated error would be treated as an oversized
+        request and trigger a fold that cannot help.
+        """
+        error = ModelProviderError(message="Billing: your token count for this month is 1.2M", status_code=400)
+
+        assert not isinstance(ModelProviderError.classify(error), ContextWindowExceededError)
+
+
+# =============================================================================
 # Anthropic context window patterns
 # =============================================================================
 

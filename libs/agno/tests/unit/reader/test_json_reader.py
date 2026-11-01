@@ -38,6 +38,36 @@ def test_read_json_bytesio():
     assert json.loads(documents[0].content) == test_data
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize(
+    ("stream_name", "name", "expected_name"),
+    [
+        (None, None, "json_file"),
+        (3, None, "json_file"),
+        (None, "upload", "upload"),
+        (3, "upload", "upload"),
+        ("report.v1.json", None, "report"),
+        ("report.v1.json", "upload", "upload"),
+    ],
+)
+async def test_read_json_stream_names(use_async, stream_name, name, expected_name):
+    with BytesIO(b'{"key": "value"}') as stream:
+        stream.name = stream_name
+        stream.seek(0, 2)
+        reader = JSONReader(chunk=False)
+
+        if use_async:
+            documents = await reader.async_read(stream, name=name)
+        else:
+            documents = reader.read(stream, name=name)
+
+        assert len(documents) == 1
+        assert documents[0].name == expected_name
+        assert json.loads(documents[0].content) == {"key": "value"}
+        assert not stream.closed
+
+
 def test_read_json_list():
     # Test reading a JSON file containing a list
     test_data = [{"key1": "value1"}, {"key2": "value2"}]
@@ -316,3 +346,26 @@ def test_chunk_false_keeps_large_objects_whole():
     parsed = [json.loads(doc.content) for doc in documents]
     assert parsed == test_data
     assert all("chunk" not in doc.meta_data for doc in documents)
+
+
+@pytest.mark.parametrize(
+    ("json_text", "expected"),
+    [('"hello"', "hello"), ('""', ""), ("42", 42), ("true", True), ("null", None)],
+)
+def test_scalar_json_roots_are_read_as_single_documents(json_text, expected):
+    documents = JSONReader(chunk=False).read(BytesIO(json_text.encode()))
+
+    assert len(documents) == 1
+    assert json.loads(documents[0].content) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("json_text", "expected"),
+    [('"hello"', "hello"), ('""', ""), ("42", 42), ("true", True), ("null", None)],
+)
+async def test_async_scalar_json_roots_are_read_as_single_documents(json_text, expected):
+    documents = await JSONReader(chunk=False).async_read(BytesIO(json_text.encode()))
+
+    assert len(documents) == 1
+    assert json.loads(documents[0].content) == expected

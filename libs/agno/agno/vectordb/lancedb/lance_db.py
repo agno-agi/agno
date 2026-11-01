@@ -38,7 +38,7 @@ class LanceDb(VectorDb):
         search_type: The search type to use when searching for documents.
         distance: The distance metric to use when searching for documents.
         nprobes: The number of probes to use when searching for documents.
-        reranker: The reranker to use when reranking documents.
+        reranker: The reranker to use when reranking documents. Deprecated: pass the reranker to Knowledge instead.
         on_bad_vectors: What to do if the vector is bad. One of "error", "drop", "fill", "null".
         fill_value: The value to fill the vector with if on_bad_vectors is "fill".
     """

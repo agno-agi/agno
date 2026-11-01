@@ -36,6 +36,8 @@ class TestSupportsStructuredOutputs:
             "claude-opus-4-6-20251201",
             # Claude Sonnet 4.6
             "claude-sonnet-4-6",
+            # Claude Sonnet 5.5
+            "claude-sonnet-5-5",
             # Future models should also be supported by default
             "claude-opus-4-7",
             "claude-sonnet-5-0",

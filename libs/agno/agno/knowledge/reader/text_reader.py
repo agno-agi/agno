@@ -46,9 +46,13 @@ class TextReader(Reader):
                 file_contents = file.read_text(encoding=self.encoding or "utf-8")
             else:
                 log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")
-                file_name = name or getattr(file, "name", "text_file").split(".")[0]
+                # Streams opened from file descriptors can have an integer name.
+                stream_name = getattr(file, "name", None)
+                file_name = name or (stream_name.split(".")[0] if isinstance(stream_name, str) else "text_file")
                 file.seek(0)
-                file_contents = file.read().decode(self.encoding or "utf-8")
+                file_contents = file.read()
+                if isinstance(file_contents, bytes):
+                    file_contents = file_contents.decode(self.encoding or "utf-8")
 
             documents = [
                 Document(
@@ -86,9 +90,12 @@ class TextReader(Reader):
                     file_contents = file.read_text(encoding=self.encoding or "utf-8")
             else:
                 log_debug(f"Reading uploaded file asynchronously: {getattr(file, 'name', 'BytesIO')}")
-                file_name = name or getattr(file, "name", "text_file").split(".")[0]
+                stream_name = getattr(file, "name", None)
+                file_name = name or (stream_name.split(".")[0] if isinstance(stream_name, str) else "text_file")
                 file.seek(0)
-                file_contents = file.read().decode(self.encoding or "utf-8")
+                file_contents = file.read()
+                if isinstance(file_contents, bytes):
+                    file_contents = file_contents.decode(self.encoding or "utf-8")
 
             document = Document(
                 name=file_name,

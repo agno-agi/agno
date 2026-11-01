@@ -9,6 +9,7 @@ from agno.utils.string import url_safe_string
 
 if TYPE_CHECKING:
     from agno.agent.remote import RemoteAgent
+    from agno.agents.base import BaseExternalAgent
     from agno.team.remote import RemoteTeam
     from agno.team.team import Team
 
@@ -32,7 +33,7 @@ def format_member_agent_task(
 
 
 def get_member_id(
-    member: Union[Agent, "Team", "RemoteAgent", "RemoteTeam"],
+    member: Union[Agent, "Team", "RemoteAgent", "RemoteTeam", "BaseExternalAgent"],
 ) -> Optional[str]:
     """
     Get the ID of a member
@@ -48,11 +49,12 @@ def get_member_id(
     characters unsafe for tool-call arguments, is converted.
     """
     from agno.agent.remote import RemoteAgent
+    from agno.agents.base import BaseExternalAgent
     from agno.team.remote import RemoteTeam
     from agno.team.team import Team
 
     # First priority: Use the ID if explicitly provided
-    if isinstance(member, (Agent, Team, RemoteAgent, RemoteTeam)) and member.id is not None:
+    if isinstance(member, (Agent, Team, RemoteAgent, RemoteTeam, BaseExternalAgent)) and member.id is not None:
         return member.id
     # Second priority: Use the name if available
     elif member.name is not None:

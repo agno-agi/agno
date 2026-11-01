@@ -6,6 +6,8 @@ prompt when response_format={"type": "json_object"} is used. The followup
 system prompt must satisfy this and describe the expected JSON shape.
 """
 
+import pytest
+
 from agno.agent._response import _build_followup_messages, _get_followups_response_format
 from agno.run.agent import Followups
 
@@ -68,3 +70,20 @@ def test_get_followups_response_format_fallback_to_json_object():
     assert _get_followups_response_format(_FakeModel()) == {"type": "json_object"}
     assert _get_followups_response_format(_FakeModel(native=True)) is Followups
     assert _get_followups_response_format(_FakeModel(json_schema=True))["type"] == "json_schema"
+
+
+@pytest.mark.parametrize(
+    "minimum,count_line,allows_fewer",
+    [
+        (None, "Generate exactly 3 follow-up suggestions.", False),
+        (3, "Generate exactly 3 follow-up suggestions.", False),
+        (0, "Generate at most 3 follow-up suggestions.", True),
+        (1, "Generate between 1 and 3 follow-up suggestions.", False),
+    ],
+    ids=["default-exact", "explicit-exact", "up-to", "range"],
+)
+def test_count_line_and_return_fewer_sentence_follow_the_range(minimum, count_line, allows_fewer):
+    messages = _build_followup_messages("Answer.", 3, min_suggestions=minimum)
+    assert count_line in messages[1].content
+    assert ("Return fewer suggestions, including an empty list" in messages[0].content) is allows_fewer
+    assert "Never suggest repeating or fulfilling a request the assistant declined" in messages[0].content

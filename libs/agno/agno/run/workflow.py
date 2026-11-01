@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.run.agent import RunEvent, RunOutput, run_output_event_from_dict
-from agno.run.base import BaseRunOutputEvent, RunStatus
+from agno.run.base import BaseRunOutputEvent, CancellationStage, RunStatus
 from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
 from agno.utils.log import log_warning
 from agno.utils.media import (
@@ -50,6 +50,7 @@ class WorkflowRunEvent(str, Enum):
 
     step_started = "StepStarted"
     step_completed = "StepCompleted"
+    step_progress = "StepProgress"
     step_paused = "StepPaused"
     step_continued = "StepContinued"
     step_executor_paused = "StepExecutorPaused"
@@ -312,6 +313,18 @@ class StepStartedEvent(BaseWorkflowRunOutputEvent):
     event: str = WorkflowRunEvent.step_started.value
     step_name: Optional[str] = None
     step_index: Optional[Union[int, tuple]] = None
+
+
+@dataclass
+class StepProgressEvent(BaseWorkflowRunOutputEvent):
+    """Function progress attached to the existing workflow/step and retry attempt."""
+
+    event: str = WorkflowRunEvent.step_progress.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    attempt: int = 1
+    content: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -655,6 +668,7 @@ WorkflowRunOutputEvent = Union[
     WorkflowCancelledEvent,
     StepStartedEvent,
     StepCompletedEvent,
+    StepProgressEvent,
     StepPausedEvent,
     StepContinuedEvent,
     StepExecutorPausedEvent,
@@ -694,6 +708,7 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.workflow_error.value: WorkflowErrorEvent,
     WorkflowRunEvent.step_started.value: StepStartedEvent,
     WorkflowRunEvent.step_completed.value: StepCompletedEvent,
+    WorkflowRunEvent.step_progress.value: StepProgressEvent,
     WorkflowRunEvent.step_paused.value: StepPausedEvent,
     WorkflowRunEvent.step_continued.value: StepContinuedEvent,
     WorkflowRunEvent.step_executor_paused.value: StepExecutorPausedEvent,
@@ -784,6 +799,10 @@ class WorkflowRunOutput:
     # against a NEWER stored value, so a presumed-dead attempt's late write
     # cannot clobber its successor. None outside durable-queue execution.
     queue_attempt: Optional[int] = None
+    # For a CANCELLED run, where it was when cancelled (see CancellationStage).
+    # None on runs written before the field existed and on shutdown
+    # interrupts: consumers treat None as unknown.
+    cancellation_stage: Optional[CancellationStage] = None
 
     # Unified HITL requirements to continue a paused workflow
     # Handles all HITL types: confirmation, user input, and route selection
@@ -894,6 +913,9 @@ class WorkflowRunOutput:
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
+
+        if self.cancellation_stage is not None:
+            _dict["cancellation_stage"] = getattr(self.cancellation_stage, "value", self.cancellation_stage)
 
         if self.pause_kind is not None:
             # Local import to avoid circular import at module load
@@ -1087,6 +1109,9 @@ class WorkflowRunOutput:
 
         # Filter data to only include fields that are actually defined in the WorkflowRunOutput dataclass
         from dataclasses import fields
+
+        if "cancellation_stage" in data:
+            data["cancellation_stage"] = CancellationStage.coerce(data["cancellation_stage"])
 
         supported_fields = {f.name for f in fields(cls)}
         filtered_data = {k: v for k, v in data.items() if k in supported_fields}

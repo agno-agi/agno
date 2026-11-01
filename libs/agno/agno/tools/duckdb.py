@@ -322,7 +322,7 @@ class DuckDbTools(Toolkit):
             f"SELECT * FROM read_csv('{self._escape_sql_string(path)}', ignore_errors=false, auto_detect=true"
         )
         if delimiter is not None:
-            select_statement += f", delim='{delimiter}')"
+            select_statement += f", delim='{self._escape_sql_string(delimiter)}')"
         else:
             select_statement += ")"
 
@@ -375,7 +375,7 @@ class DuckDbTools(Toolkit):
             f"SELECT * FROM read_csv('{self._escape_sql_string(path)}', ignore_errors=false, auto_detect=true"
         )
         if delimiter is not None:
-            select_statement += f", delim='{delimiter}')"
+            select_statement += f", delim='{self._escape_sql_string(delimiter)}')"
         else:
             select_statement += ")"
 

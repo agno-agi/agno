@@ -98,7 +98,8 @@ class TavilyReader(Reader):
         # Prepare extract parameters
         extract_params = {
             "urls": [url],
-            "depth": self.extract_depth,
+            "extract_depth": self.extract_depth,
+            "format": self.extract_format,
         }
 
         # Add optional params if provided

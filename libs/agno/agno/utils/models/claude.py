@@ -38,9 +38,38 @@ _PREFILL_SUPPORTED_ALIASES = {
     "claude-haiku-4",
 }
 
+# Models that still accept temperature, top_p and top_k. Another closed set — the
+# sampling parameters were deprecated with Claude 4.7, so the 4.x releases that
+# predate it are the last ones that take them. Opus shipped 4-7 and 4-8, so the
+# versions are enumerated rather than matched on a "claude-opus-4-" prefix.
+_SAMPLING_SUPPORTED_PREFIXES = (
+    "claude-3-",
+    "claude-sonnet-4-0",
+    "claude-sonnet-4-1",
+    "claude-sonnet-4-2",
+    "claude-sonnet-4-5",
+    "claude-sonnet-4-6",
+    "claude-opus-4-0",
+    "claude-opus-4-1",
+    "claude-opus-4-2",
+    "claude-opus-4-5",
+    "claude-opus-4-6",
+    "claude-haiku-4-0",
+    "claude-haiku-4-1",
+    "claude-haiku-4-2",
+    "claude-haiku-4-5",
+)
 
-def supports_prefill(model_id: str) -> bool:
-    """Return True if the given model ID supports assistant message prefill.
+# Family aliases, exact-matched for the same reason as the prefill aliases above.
+_SAMPLING_SUPPORTED_ALIASES = {
+    "claude-sonnet-4",
+    "claude-opus-4",
+    "claude-haiku-4",
+}
+
+
+def core_model_id(model_id: str) -> str:
+    """Strip provider decoration from a Claude model ID, leaving the bare Anthropic ID.
 
     Handles provider-specific ID formats:
       - Anthropic direct:  "claude-sonnet-4-5-20250929"
@@ -57,11 +86,42 @@ def supports_prefill(model_id: str) -> bool:
     # Strip Bedrock version suffix (e.g. "claude-sonnet-4-5-20250929-v1:0")
     if ":0" in core_id:
         core_id = core_id.split("-v")[0] if "-v" in core_id else core_id.split(":")[0]
+    return core_id
+
+
+def supports_prefill(model_id: str) -> bool:
+    """Return True if the given model ID supports assistant message prefill."""
+    core_id = core_model_id(model_id)
 
     if not core_id.startswith("claude"):
         return True  # Non-Claude models are unaffected — don't inject trailing messages
 
     return core_id in _PREFILL_SUPPORTED_ALIASES or core_id.startswith(_PREFILL_SUPPORTED_PREFIXES)
+
+
+def supports_sampling_params(model_id: str) -> bool:
+    """Return True if the given model ID accepts temperature, top_p and top_k.
+
+    Claude 4.7 deprecated the sampling parameters, and every model released since
+    rejects a non-default value with a 400. This is a closed set of the families that
+    still accept them, so an unrecognised Claude ID is assumed to reject them rather
+    than assumed to work.
+    """
+    core_id = core_model_id(model_id)
+
+    if not core_id.startswith("claude"):
+        return True  # Non-Claude models are unaffected — pass their parameters through
+
+    return core_id in _SAMPLING_SUPPORTED_ALIASES or core_id.startswith(_SAMPLING_SUPPORTED_PREFIXES)
+
+
+def supports_thinking_budget(model_id: str) -> bool:
+    """Return True if the given model ID accepts thinking={"type": "enabled", "budget_tokens": N}.
+
+    Claude 4.7 removed thinking budgets in the same release that deprecated the sampling
+    parameters, so the closed set of families that still accept one is the same.
+    """
+    return supports_sampling_params(model_id)
 
 
 @dataclass
@@ -112,17 +172,32 @@ def _anthropic_coerce_content_block(item: Any) -> Optional[Any]:
     if item is None:
         return None
     if isinstance(item, dict):
-        return item if item.get("type") else None
-    model_dump = getattr(item, "model_dump", None)
-    if callable(model_dump):
+        block_dict = item
+    else:
+        model_dump = getattr(item, "model_dump", None)
+        if not callable(model_dump):
+            return None
         try:
             block_dict = model_dump(exclude_none=True)
         except Exception as e:
             log_warning(f"Failed to serialize Anthropic content block of type {type(item).__name__}: {e}")
             return None
-        if isinstance(block_dict, dict) and block_dict.get("type"):
-            return block_dict
-    return None
+    if not isinstance(block_dict, dict) or not block_dict.get("type"):
+        return None
+    if block_dict["type"] == "text" and isinstance(block_dict.get("citations"), list):
+        # Document titles are required but nullable. Restore nulls dropped by
+        # exclude_none above or by earlier versions, without mutating stored history.
+        block_dict = {
+            **block_dict,
+            "citations": [
+                {"document_title": None, **citation}
+                if isinstance(citation, dict)
+                and citation.get("type") in ("page_location", "char_location", "content_block_location")
+                else citation
+                for citation in block_dict["citations"]
+            ],
+        }
+    return block_dict
 
 
 _ANTHROPIC_THINKING_BLOCK_TYPES = ("thinking", "redacted_thinking")
@@ -843,16 +918,56 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
 SAMPLING_PARAMS = ("temperature", "top_p", "top_k")
 
 
-def route_sampling_params_to_extra_body(request_params: Dict[str, Any]) -> Dict[str, Any]:
+def route_sampling_params_to_extra_body(
+    request_params: Dict[str, Any], model_id: Optional[str] = None
+) -> Dict[str, Any]:
     """Move the sampling parameters out of the request kwargs and into extra_body.
 
     Mutates and returns the dict it is given, so it also catches a sampling parameter
     that arrived through ``request_params`` rather than through a model field.
+
+    When ``model_id`` names a model that rejects the sampling parameters, they are
+    dropped with a warning instead of being sent: the model would answer the whole
+    request with a 400, and the parameter is the only part of it that is unsupported.
     """
     moved = {name: request_params.pop(name) for name in SAMPLING_PARAMS if name in request_params}
-    if moved:
-        # A caller who wrote extra_body themselves outranks the model's own fields.
-        request_params["extra_body"] = {**moved, **(request_params.get("extra_body") or {})}
+    if not moved:
+        return request_params
+
+    if model_id is not None and not supports_sampling_params(model_id):
+        names = ", ".join(sorted(moved))
+        log_warning(
+            f"{model_id} rejects {names}, so the request is sent without {names}. "
+            "Guide the model through its prompt instead."
+        )
+        return request_params
+
+    # A caller who wrote extra_body themselves outranks the model's own fields.
+    request_params["extra_body"] = {**moved, **(request_params.get("extra_body") or {})}
+    return request_params
+
+
+def route_thinking_budget_to_adaptive(request_params: Dict[str, Any], model_id: Optional[str] = None) -> Dict[str, Any]:
+    """Replace a thinking budget with adaptive thinking on models that no longer accept one.
+
+    Mutates and returns the dict it is given, so it also catches a thinking config that
+    arrived through ``request_params`` rather than through the ``thinking`` field.
+
+    Those models answer ``{"type": "enabled", "budget_tokens": N}`` with a 400. Adaptive
+    thinking is their replacement for it; ``display`` defaults to ``"summarized"`` because
+    they otherwise return empty thinking blocks, which would leave ``reasoning_content`` empty.
+    """
+    thinking = request_params.get("thinking")
+    if model_id is None or not isinstance(thinking, dict) or thinking.get("type") != "enabled":
+        return request_params
+    if supports_thinking_budget(model_id):
+        return request_params
+
+    log_warning(
+        f"{model_id} rejects thinking budgets, so the request is sent with adaptive thinking instead. "
+        "Use output_config={'effort': ...} to control how much it thinks."
+    )
+    request_params["thinking"] = {"type": "adaptive", "display": thinking.get("display", "summarized")}
     return request_params
 
 

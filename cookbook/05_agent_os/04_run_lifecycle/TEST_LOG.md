@@ -34,6 +34,12 @@ cancel route returned HTTP 200, and polling observed `RUNNING` followed by
 `CANCELLED`. The final live run ID was
 `1fa2c79e-588c-4268-aafe-f93520c50ede`.
 
+**Update (2026-09-22):** the poll loop now also prints the run's
+`cancellation_stage` (`PENDING`, `EXECUTING` or `PAUSED`) when the API
+returns one. Not re-run live for that change: no model key in the test
+environment. The field's persistence is covered by unit and Postgres
+integration tests.
+
 ---
 
 ### sse_reconnect.py

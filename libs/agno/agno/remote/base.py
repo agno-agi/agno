@@ -40,6 +40,7 @@ if TYPE_CHECKING:
         ConfigResponse,
         PaginatedResponse,
         RunSchema,
+        RunsPage,
         SessionSchema,
         TeamRunSchema,
         TeamSessionDetailSchema,
@@ -129,6 +130,9 @@ class RemoteDb:
         )
 
     # SESSIONS
+    async def search_sessions(self, **kwargs: Any) -> "PaginatedResponse[SessionSchema]":
+        return await self.client.asearch_sessions(**kwargs)
+
     async def get_sessions(self, **kwargs: Any) -> "PaginatedResponse[SessionSchema]":
         return await self.client.get_sessions(**kwargs)
 
@@ -139,7 +143,10 @@ class RemoteDb:
 
     async def get_session_runs(
         self, session_id: str, **kwargs: Any
-    ) -> List[Union["RunSchema", "TeamRunSchema", "WorkflowRunSchema"]]:
+    ) -> Union[
+        "List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]",
+        "RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]",
+    ]:
         return await self.client.get_session_runs(session_id, **kwargs)
 
     async def create_session(

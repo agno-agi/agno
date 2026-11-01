@@ -22,7 +22,6 @@ agent_os = AgentOS(
     name="Documentation MCP",
     mcp=MCPConfig(
         tools=[documentation_home],
-        default_tools=False,
         stateless=True,
         root_host="mcp.example.com",
         server_card_url="https://mcp.example.com",

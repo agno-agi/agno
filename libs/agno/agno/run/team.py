@@ -12,7 +12,7 @@ from agno.models.message import Citations, Message
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
-from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
+from agno.run.base import BaseRunOutputEvent, CancellationStage, MessageReferences, RunStatus
 from agno.run.requirement import RunRequirement
 from agno.utils.log import log_error
 from agno.utils.media import (
@@ -797,6 +797,10 @@ class TeamRunOutput:
     # against a NEWER stored value, so a presumed-dead attempt's late write
     # cannot clobber its successor. None outside durable-queue execution.
     queue_attempt: Optional[int] = None
+    # For a CANCELLED run, where it was when cancelled (see CancellationStage).
+    # None on runs written before the field existed and on shutdown
+    # interrupts: consumers treat None as unknown.
+    cancellation_stage: Optional[CancellationStage] = None
 
     # User control flow (HITL) requirements to continue a run when paused, in order of arrival
     requirements: Optional[list[RunRequirement]] = None
@@ -881,6 +885,9 @@ class TeamRunOutput:
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
+
+        if self.cancellation_stage is not None:
+            _dict["cancellation_stage"] = getattr(self.cancellation_stage, "value", self.cancellation_stage)
 
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
@@ -1039,6 +1046,9 @@ class TeamRunOutput:
 
         # Filter data to only include fields that are actually defined in the TeamRunOutput dataclass
         from dataclasses import fields
+
+        if "cancellation_stage" in data:
+            data["cancellation_stage"] = CancellationStage.coerce(data["cancellation_stage"])
 
         supported_fields = {f.name for f in fields(cls)}
         filtered_data = {k: v for k, v in data.items() if k in supported_fields}

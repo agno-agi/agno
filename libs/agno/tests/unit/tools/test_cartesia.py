@@ -5,7 +5,9 @@ import json
 # import logging # Removed unused import
 from unittest.mock import MagicMock, patch  # Removed unused mock_open
 
+import httpx
 import pytest
+from cartesia import Cartesia
 
 from agno.agent import Agent  # Added for TTS test
 from agno.media import Audio
@@ -78,7 +80,7 @@ def test_init_with_api_key(mock_cartesia_client):
         mock_cartesia_class.assert_called_once_with(api_key="test_key")
         assert tools.api_key == "test_key"
         # Check default model/voice IDs are set
-        assert tools.model_id == "sonic-2"
+        assert tools.model_id == "sonic-3.6"
         assert tools.default_voice_id == "78ab82d5-25be-4f7d-82b3-7ad64e5b85b2"
 
 
@@ -93,7 +95,7 @@ def test_init_with_env_var(mock_cartesia_client):
         tools = CartesiaTools()
         mock_cartesia_class.assert_called_once_with(api_key="env_key")
         assert tools.api_key == "env_key"
-        assert tools.model_id == "sonic-2"
+        assert tools.model_id == "sonic-3.6"
         assert tools.default_voice_id == "78ab82d5-25be-4f7d-82b3-7ad64e5b85b2"
 
 
@@ -223,6 +225,30 @@ def test_text_to_speech(cartesia_tools, mock_cartesia_client, mock_agent):
     assert audio_artifact.mime_type == "audio/mpeg"
     expected_content = b"audio data"
     assert audio_artifact.content == expected_content
+
+
+@pytest.mark.parametrize("model_id, expected_model_id", [(None, "sonic-3.6"), ("custom-model", "custom-model")])
+def test_text_to_speech_model_request(model_id, expected_model_id, mock_agent):
+    """Send the default or explicit model through the real SDK without network access."""
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, content=b"audio data", headers={"Content-Type": "audio/mpeg"})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as http_client:
+        client = Cartesia(api_key="test_key", http_client=http_client)
+        with patch("agno.tools.cartesia.cartesia.Cartesia", return_value=client):
+            kwargs = {"model_id": model_id} if model_id is not None else {}
+            tools = CartesiaTools(api_key="test_key", **kwargs)
+
+        result = tools.text_to_speech(agent=mock_agent, transcript="Hello world")
+
+    assert len(requests) == 1
+    assert requests[0]["model_id"] == expected_model_id
+    assert requests[0]["transcript"] == "Hello world"
+    assert result.audios is not None
+    assert result.audios[0].content == b"audio data"
 
 
 def test_text_to_speech_error(cartesia_tools, mock_cartesia_client, mock_agent):

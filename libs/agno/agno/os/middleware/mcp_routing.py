@@ -8,18 +8,28 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.routing import Match, Mount
 
-from agno.os.config import MCP_SERVER_CARD_PATH, MCPConfig
+from agno.os.config import MCP_SERVER_CARD_PATH, MCP_SERVER_TOOLS_PATH, MCPConfig
+
+
+def _under(path: str, prefixes: tuple) -> bool:
+    """True when ``path`` is one of ``prefixes`` or a segment beneath it.
+
+    A prefix match alone would also claim ``/mcp/servers``, so a longer path must continue
+    with a separator.
+    """
+    return any(path == prefix or path.startswith(prefix + "/") for prefix in prefixes)
 
 
 def validate_mcp_routes(app: Any, config: MCPConfig, mcp_app: Any) -> None:
     """Reject transport paths that would hide an existing REST route."""
     # Revalidate routing settings if a caller mutated/copied the configuration.
-    MCPConfig(path=config.path, path_aliases=config.path_aliases, root_host=config.root_host)
+    # This temporary config only validates paths; it does not publish any tools.
+    MCPConfig(default_tools=True, path=config.path, path_aliases=config.path_aliases, root_host=config.root_host)
     for route in app.routes:
         if isinstance(route, Mount) and route.app is mcp_app:
             continue
         for path in [config.path, *config.path_aliases]:
-            for candidate in (path, path + "/server-card"):
+            for candidate in (path, path + "/server-card", path + "/server"):
                 match, _ = route.matches({"type": "http", "method": "GET", "path": candidate, "root_path": ""})
                 if match != Match.NONE:
                     raise ValueError(f"MCP routing conflicts with existing route at {candidate}")
@@ -38,18 +48,34 @@ class MCPRoutingMiddleware:
             return
         from agno.os.mcp import _mcp_request_hostname
 
+        path = get_route_path(scope).rstrip("/") or "/"
+        prefixes = self.paths
+        card_paths = tuple(prefix + "/server-card" for prefix in prefixes)
+        # The runner carries a variable segment ({tool_name}/run), so it matches on the
+        # "/server/tools" prefix rather than on an exact path.
+        tools_prefixes = tuple(prefix + "/server/tools" for prefix in prefixes)
+        on_tools = _under(path, tools_prefixes) or _under(path, (MCP_SERVER_TOOLS_PATH,))
+        candidate = path in prefixes or path in card_paths or path in ("/mcp", MCP_SERVER_CARD_PATH) or on_tools
+        if self.root_host is not None and (path in ("/", "/server-card") or _under(path, ("/server/tools",))):
+            candidate = True
+        if not candidate:
+            await self.app(scope, receive, send)
+            return
         headers = Headers(scope=scope)
         hosts = headers.getlist("host")
-        if len(hosts) != 1 or not re.fullmatch(r"(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(?::[0-9]{1,5})?", hosts[0]):
+        if len(hosts) != 1 or not re.fullmatch(r"(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._-]+)(?::[0-9]{1,5})?", hosts[0]):
             await JSONResponse({"error": "invalid_host"}, status_code=400)(scope, receive, send)
             return
         # Forwarding headers never select the dedicated-host route.
         root = self.root_host is not None and _mcp_request_hostname(hosts[0]) == self.root_host
-        path = get_route_path(scope).rstrip("/") or "/"
-        prefixes = self.paths
         mapped = None
-        if root and path in ("/", "/server-card"):
-            mapped = "/mcp" if path == "/" else MCP_SERVER_CARD_PATH
+        if root and (path in ("/", "/server-card") or _under(path, ("/server/tools",))):
+            if path == "/":
+                mapped = "/mcp"
+            elif path == "/server-card":
+                mapped = MCP_SERVER_CARD_PATH
+            else:
+                mapped = MCP_SERVER_TOOLS_PATH + path[len("/server/tools") :]
         else:
             for prefix in prefixes:
                 if path == prefix:
@@ -58,8 +84,11 @@ class MCPRoutingMiddleware:
                 if path == prefix + "/server-card":
                     mapped = MCP_SERVER_CARD_PATH
                     break
+                if _under(path, (prefix + "/server/tools",)):
+                    mapped = MCP_SERVER_TOOLS_PATH + path[len(prefix + "/server/tools") :]
+                    break
         if mapped is None:
-            if path in ("/mcp", MCP_SERVER_CARD_PATH):
+            if path in ("/mcp", MCP_SERVER_CARD_PATH) or _under(path, (MCP_SERVER_TOOLS_PATH,)):
                 await JSONResponse({"error": "not_found"}, status_code=404)(scope, receive, send)
                 return
             await self.app(scope, receive, send)
