@@ -481,3 +481,55 @@ def test_get_json_schema_dataclass_annotated_fields():
     schema = get_json_schema({"p": Point})
     assert schema["properties"]["p"]["properties"]["x"] == {"type": "integer"}
     assert schema["properties"]["p"]["properties"]["y"] == {"type": "integer"}
+
+
+def test_get_json_schema_dataclass_optional_complex_fields_keep_schema():
+    """Collapsing an Optional dataclass field must keep the non-null variant's full
+    schema -- items, propertyNames/additionalProperties and nested properties --
+    not just its "type" string."""
+
+    class Region(BaseModel):
+        name: str
+        code: str
+
+    @dataclass
+    class Filters:
+        tags: Optional[List[str]] = None
+        limits: Optional[Dict[str, int]] = None
+        region: Optional[Region] = None
+        note: Optional[str] = None
+        owner: str = "unset"
+
+    arg_schema = get_json_schema_for_arg(Filters)
+    props = arg_schema["properties"]
+
+    assert props["tags"] == {"type": "array", "items": {"type": "string"}}
+    assert props["limits"] == {
+        "type": "object",
+        "propertyNames": {"type": "string"},
+        "additionalProperties": {"type": "integer"},
+    }
+    assert "properties" in props["region"]
+    assert set(props["region"]["properties"]) == {"name", "code"}
+    assert props["note"] == {"type": "string"}
+
+    # Optional fields stay optional; the plain field stays required
+    assert arg_schema["required"] == ["owner"]
+
+    # The parameter survives when reached through a tool-style type_hints map
+    schema = get_json_schema({"filters": Filters})
+    assert schema["properties"]["filters"]["properties"]["tags"] == {
+        "type": "array",
+        "items": {"type": "string"},
+    }
+
+
+def test_get_json_schema_dataclass_optional_union_keeps_all_variants():
+    """Optional[Union[A, B]] keeps both non-null variants in anyOf, minus null."""
+
+    @dataclass
+    class Flexible:
+        value: Optional[Union[int, str]] = None
+
+    props = get_json_schema_for_arg(Flexible)["properties"]
+    assert props["value"] == {"anyOf": [{"type": "integer"}, {"type": "string"}]}

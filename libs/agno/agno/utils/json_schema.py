@@ -168,13 +168,18 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
                 and "anyOf" in field_schema
                 and any(schema.get("type") == "null" for schema in field_schema["anyOf"])
             ):
-                non_null_type = next(
-                    (schema["type"] for schema in field_schema["anyOf"] if schema.get("type") not in (None, "null")),
-                    None,
-                )
-                if non_null_type is not None:
-                    field_schema["type"] = non_null_type
-                    field_schema.pop("anyOf")
+                # Optional field: collapse to the non-null variant, keeping its full
+                # schema (items, properties, enum, ...) instead of only the "type"
+                # string. Several non-null variants keep their anyOf, minus null;
+                # a typeless variant (e.g. a mixed Literal renders {"enum": [...]})
+                # leaves the anyOf untouched.
+                non_null_members = [
+                    schema for schema in field_schema["anyOf"] if schema.get("type") not in (None, "null")
+                ]
+                if len(non_null_members) == 1:
+                    field_schema = dict(non_null_members[0])
+                elif len(non_null_members) > 1:
+                    field_schema = {**field_schema, "anyOf": non_null_members}
             else:
                 required.append(field_name)
 
