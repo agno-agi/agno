@@ -414,6 +414,29 @@ class TestCheckTimeout:
         req = StepRequirement(step_id="step-1", timeout_at=past, on_timeout="cancel")
         assert check_timeout(req) == "cancel"
 
+    def test_timed_out_when_confirmed_returns_none(self):
+        from agno.workflow.utils.hitl import check_timeout
+
+        past = datetime.now(timezone.utc) - timedelta(seconds=1)
+        req = StepRequirement(step_id="step-1", requires_confirmation=True, timeout_at=past, on_timeout="approve")
+        req.confirm()
+        assert check_timeout(req) is None
+
+    def test_timed_out_when_rejected_returns_none(self):
+        from agno.workflow.utils.hitl import check_timeout
+
+        past = datetime.now(timezone.utc) - timedelta(seconds=1)
+        req = StepRequirement(step_id="step-1", requires_confirmation=True, timeout_at=past, on_timeout="approve")
+        req.reject()
+        assert check_timeout(req) is None
+
+    def test_is_timed_out_property_false_when_resolved(self):
+        past = datetime.now(timezone.utc) - timedelta(seconds=1)
+        req = StepRequirement(step_id="step-1", requires_confirmation=True, timeout_at=past, on_timeout="approve")
+        assert req.is_timed_out is True
+        req.confirm()
+        assert req.is_timed_out is False
+
 
 # =============================================================================
 # Test StepOutput: iteration review flag

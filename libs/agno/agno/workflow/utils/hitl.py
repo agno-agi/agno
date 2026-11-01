@@ -340,6 +340,16 @@ def check_timeout(step_requirement: "StepRequirement") -> Optional[str]:
     if step_requirement.timeout_at is None:
         return None
 
+    # Do not apply timeout action if the requirement has already been answered
+    if step_requirement.confirmed is not None:
+        return None
+    if step_requirement.requires_user_input and not step_requirement.needs_user_input:
+        return None
+    if step_requirement.requires_route_selection and not step_requirement.needs_route_selection:
+        return None
+    if step_requirement.requires_executor_input and not step_requirement.needs_executor_resolution:
+        return None
+
     from datetime import datetime, timezone
 
     if datetime.now(timezone.utc) >= step_requirement.timeout_at:
