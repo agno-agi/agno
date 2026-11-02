@@ -58,7 +58,6 @@ from agno.run.agent import (
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
 # One registry for every detached run, shared with agents, so AgentOS shutdown drains one set.
 from agno.run.background import _background_tasks  # noqa: E402
-from agno.run.base import METRICS_FINAL_STATUSES
 from agno.run.cancel import (
     acancel_run as acancel_run_global,
 )
@@ -2202,7 +2201,7 @@ async def _arun_tasks(
         # 2. Determine tools for model (includes task management tools)
         team_run_context: Dict[str, Any] = {}
         await _check_and_refresh_mcp_tools(team)
-        learning_tools = await _aget_learning_tools(team, user_id, team_session)
+        learning_tools = await _aget_learning_tools(team, user_id, team_session, run_response)
         _tools = _determine_tools_for_model(
             team,
             model=team.model,
@@ -2585,7 +2584,7 @@ async def _arun_tasks_stream(
         # 2. Determine tools for model (includes task management tools)
         team_run_context: Dict[str, Any] = {}
         await _check_and_refresh_mcp_tools(team)
-        learning_tools = await _aget_learning_tools(team, user_id, team_session)
+        learning_tools = await _aget_learning_tools(team, user_id, team_session, run_response)
         _tools = _determine_tools_for_model(
             team,
             model=team.model,
@@ -3179,7 +3178,7 @@ async def _arun(
                 await _check_and_refresh_mcp_tools(
                     team,
                 )
-                learning_tools = await _aget_learning_tools(team, user_id, team_session)
+                learning_tools = await _aget_learning_tools(team, user_id, team_session, run_response)
                 _tools = _determine_tools_for_model(
                     team,
                     model=team.model,
@@ -3754,7 +3753,7 @@ async def _arun_stream(
                 await _check_and_refresh_mcp_tools(
                     team,
                 )
-                learning_tools = await _aget_learning_tools(team, user_id, team_session)
+                learning_tools = await _aget_learning_tools(team, user_id, team_session, run_response)
                 _tools = _determine_tools_for_model(
                     team,
                     model=team.model,
@@ -6491,10 +6490,15 @@ def _replace_member_response(
     if member_response is None:
         return
     for member_run in run_response.member_responses:
+        if member_run.run_id != member_response.run_id:
+            continue
         # A remote continue stream has no started event naming the model, so keep the paused copy's
-        if member_run.run_id == member_response.run_id and member_response.model is None:
+        if member_response.model is None:
             member_response.model = member_run.model
             member_response.model_provider = member_run.model_provider
+        # Nor the team run it belongs to
+        if not member_response.parent_run_id:
+            member_response.parent_run_id = member_run.parent_run_id
     run_response.member_responses = [
         member_response if member_run.run_id == member_response.run_id else member_run
         for member_run in run_response.member_responses
@@ -8123,11 +8127,16 @@ def _remove_run_from_session_metrics_on_start(
 
     stored_run = _stored_run_with_member_runs(session, run_response)
     remove_run_from_session_metrics(team, session=session, run_response=stored_run)
+    session_metrics = (session.session_data or {}).get("session_metrics")
     try:
         yield from stream
     except GeneratorExit:
-        # Closed before the run wrote itself back: put its earlier writes back
-        if run_response.status not in METRICS_FINAL_STATUSES:
+        # Closed before the run wrote itself back, or after a checkpoint took it back out: put back the run it holds now
+        if (
+            run_response.status == RunStatus.running
+            or (session.session_data or {}).get("session_metrics") is session_metrics
+        ):
+            stored_run = _stored_run_with_member_runs(session, run_response)
             update_session_metrics(team, session=session, run_response=stored_run)
         raise
 
@@ -9790,7 +9799,7 @@ async def _acontinue_run(
                     await _check_and_refresh_mcp_tools(team)
 
                     team_run_context: Dict[str, Any] = {}
-                    learning_tools = await _aget_learning_tools(team, user_id, team_session)
+                    learning_tools = await _aget_learning_tools(team, user_id, team_session, run_response)
                     _tools = _determine_tools_for_model(
                         team,
                         model=team.model,
@@ -9839,7 +9848,7 @@ async def _acontinue_run(
                     await _check_and_refresh_mcp_tools(team)
 
                     team_run_context: Dict[str, Any] = {}  # type: ignore[no-redef]
-                    learning_tools = await _aget_learning_tools(team, user_id, team_session)
+                    learning_tools = await _aget_learning_tools(team, user_id, team_session, run_response)
                     _tools = _determine_tools_for_model(
                         team,
                         model=team.model,
@@ -10292,7 +10301,7 @@ async def _acontinue_run_stream(
                     await _check_and_refresh_mcp_tools(team)
 
                     team_run_context: Dict[str, Any] = {}
-                    learning_tools = await _aget_learning_tools(team, user_id, team_session)
+                    learning_tools = await _aget_learning_tools(team, user_id, team_session, run_response)
                     _tools = _determine_tools_for_model(
                         team,
                         model=team.model,
@@ -10421,7 +10430,7 @@ async def _acontinue_run_stream(
                     await _check_and_refresh_mcp_tools(team)
 
                     team_run_context: Dict[str, Any] = {}  # type: ignore[no-redef]
-                    learning_tools = await _aget_learning_tools(team, user_id, team_session)
+                    learning_tools = await _aget_learning_tools(team, user_id, team_session, run_response)
                     _tools = _determine_tools_for_model(
                         team,
                         model=team.model,

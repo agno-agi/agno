@@ -182,6 +182,23 @@ async def test_background_workflow_started_inside_a_tool_call_is_linked(tmp_path
     assert stored_run.called_from_run_id == "outer"
 
 
+async def test_closing_an_async_stream_closes_the_stream_it_collects_from():
+    closed = []
+
+    async def stream():
+        try:
+            yield 1
+            yield 2
+        finally:
+            closed.append(True)
+
+    iterator = NestedRuns(None).aiterate(stream())
+    await iterator.__anext__()
+    await iterator.aclose()
+
+    assert closed == [True]
+
+
 class ScriptedModel(MockModel):
     """MockModel that answers each call with the next of the given responses, built from the messages when it is a
     function, and with a plain answer once they run out."""

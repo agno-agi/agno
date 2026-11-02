@@ -53,13 +53,18 @@ class NestedRuns:
 
     def iterate(self, result: Iterator[T]) -> Iterator[T]:
         """Collect the runs started while a generator tool runs, between the items it yields."""
-        while True:
-            with self.collect():
-                try:
-                    item = next(result)
-                except StopIteration:
-                    return
-            yield item
+        try:
+            while True:
+                with self.collect():
+                    try:
+                        item = next(result)
+                    except StopIteration:
+                        return
+                yield item
+        finally:
+            close = getattr(result, "close", None)
+            if close is not None:
+                close()
 
     async def acollect(self, coroutine: Awaitable[T]) -> T:
         """Collect the runs started while an async tool runs."""
@@ -68,13 +73,18 @@ class NestedRuns:
 
     async def aiterate(self, result: AsyncIterator[T]) -> AsyncIterator[T]:
         """Collect the runs started while an async generator tool runs, between the items it yields."""
-        while True:
-            with self.collect():
-                try:
-                    item = await result.__anext__()
-                except StopAsyncIteration:
-                    return
-            yield item
+        try:
+            while True:
+                with self.collect():
+                    try:
+                        item = await result.__anext__()
+                    except StopAsyncIteration:
+                        return
+                yield item
+        finally:
+            aclose = getattr(result, "aclose", None)
+            if aclose is not None:
+                await aclose()
 
     def add_to_run(self) -> None:
         """Add the tokens of the finished runs stored nowhere to the run whose tool started them."""

@@ -74,6 +74,7 @@ async def _aget_learning_tools(
     team: "Team",
     user_id: Optional[str] = None,
     session: Optional[TeamSession] = None,
+    run_response: Optional[TeamRunOutput] = None,
 ) -> List[Callable]:
     """Async helper to fetch learning tools for Team runs."""
     if team._learning is None:
@@ -82,6 +83,7 @@ async def _aget_learning_tools(
         user_id=user_id,
         session_id=session.session_id if session else None,
         team_id=team.id,
+        run_metrics=run_response.metrics if run_response else None,
     )
 
 
@@ -206,6 +208,7 @@ def _determine_tools_for_model(
                 user_id=user_id,
                 session_id=session.session_id if session else None,
                 team_id=team.id,
+                run_metrics=run_response.metrics,
             )
             _tools.extend(_learning_tools)
 
