@@ -1,16 +1,25 @@
 """Utility functions for the MongoDB database class."""
 
-import json
-import time
-from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
-from uuid import uuid4
+from datetime import date, datetime
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
 from agno.db.mongo.schemas import get_collection_indexes
-from agno.utils.log import log_error, log_info, log_warning
+from agno.db.utils import (
+    COMPONENT_METRICS_KEY_COLUMNS,
+    METRICS_COMPONENT_TYPES,
+    METRICS_COST_FIELDS,
+    METRICS_TOKEN_DETAILS_FIELDS,
+    METRICS_TOKEN_FIELDS,
+    USER_METRICS_KEY_COLUMNS,
+    build_user_metrics_row,
+    list_metrics_models,
+    metrics_day_ranges,
+    metrics_days_to_read,
+)
+from agno.utils.log import log_info, log_warning
 
 try:
-    from pymongo import ReturnDocument
+    from pymongo import UpdateOne
     from pymongo.collection import Collection
     from pymongo.errors import OperationFailure
 except ImportError:
@@ -22,6 +31,37 @@ if TYPE_CHECKING:
 
 LEGACY_METRICS_INDEX = "date_1_aggregation_period_1"
 INDEX_NOT_FOUND = 27  # MongoDB's IndexNotFound error code
+
+# A query document holds 16 MB at most, so $in lists are sent in chunks
+METRICS_IN_LIST_LIMIT = 10000
+
+
+# The keys of a stored run that hold the runs nested inside it, read whole, and only from the runs that have them
+_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses", "workflow_agent_run")
+
+# What component metrics count of a run. Of the messages only each request's duration is read, never the content
+_METRICS_RUN_DATA_FIELDS = (
+    "run_id",
+    "metrics",
+    "model",
+    "model_provider",
+    "messages.role",
+    "messages.from_history",
+    "messages.metrics.duration",
+    "forked_from_message_index",
+)
+
+# What a legacy run keeps of its own beside run_data: the fields the runs collection keeps a column of
+_METRICS_LEGACY_RUN_FIELDS = (
+    "agent_id",
+    "team_id",
+    "workflow_id",
+    "parent_run_id",
+    "status",
+    "created_at",
+    "called_from_run_id",
+    "forked_from_session_id",
+)
 
 
 # -- DB util methods --
@@ -136,222 +176,401 @@ def apply_pagination(
     return query_args
 
 
-# -- Metrics util methods --
-def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
-    """Calculate metrics for the given single date, one record per user.
-
-    Sessions with no ``user_id`` are bucketed under the empty-string sentinel.
-    """
-
-    def _empty_metric_record() -> Dict[str, Any]:
-        return {
-            "users_count": 0,
-            "agent_sessions_count": 0,
-            "team_sessions_count": 0,
-            "workflow_sessions_count": 0,
-            "agent_runs_count": 0,
-            "team_runs_count": 0,
-            "workflow_runs_count": 0,
-            "token_metrics": {
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "total_tokens": 0,
-                "audio_total_tokens": 0,
-                "audio_input_tokens": 0,
-                "audio_output_tokens": 0,
-                "cache_read_tokens": 0,
-                "cache_write_tokens": 0,
-                "reasoning_tokens": 0,
-            },
-            "model_counts": {},
-        }
-
-    session_types = [
-        ("agent", "agent_sessions_count", "agent_runs_count"),
-        ("team", "team_sessions_count", "team_runs_count"),
-        ("workflow", "workflow_sessions_count", "workflow_runs_count"),
-    ]
-
-    per_user: Dict[str, Dict[str, Any]] = {}
-
-    for session_type, sessions_count_key, runs_count_key in session_types:
-        sessions = sessions_data.get(session_type, []) or []
-
-        for session in sessions:
-            bucket_key = session.get("user_id") or ""
-            bucket = per_user.setdefault(bucket_key, _empty_metric_record())
-            bucket[sessions_count_key] += 1
-
-            runs = session.get("runs", []) or []
-            if isinstance(runs, str):
-                runs = json.loads(runs)
-            bucket[runs_count_key] += len(runs)
-            for run in runs:
-                if model_id := run.get("model"):
-                    model_provider = run.get("model_provider", "")
-                    key = f"{model_id}:{model_provider}"
-                    bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
-
-            session_data = session.get("session_data", {}) or {}
-            if isinstance(session_data, str):
-                session_data = json.loads(session_data)
-            session_metrics = session_data.get("session_metrics", {}) or {}
-            for field in bucket["token_metrics"]:
-                bucket["token_metrics"][field] += session_metrics.get(field, 0)
-
-    current_time = int(time.time())
-    completed = date_to_process < datetime.now(timezone.utc).date()
-
-    records: List[dict] = []
-    for user_id, bucket in per_user.items():
-        model_metrics = []
-        for model, count in bucket["model_counts"].items():
-            model_id, model_provider = model.rsplit(":", 1)
-            model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
-
-        users_count = 0 if user_id == "" else 1
-
-        records.append(
-            {
-                "id": str(uuid4()),
-                "date": date_to_process,
-                "completed": completed,
-                "token_metrics": bucket["token_metrics"],
-                "model_metrics": model_metrics,
-                "created_at": current_time,
-                "updated_at": current_time,
-                "aggregation_period": "daily",
-                "user_id": user_id,
-                "users_count": users_count,
-                "agent_sessions_count": bucket["agent_sessions_count"],
-                "team_sessions_count": bucket["team_sessions_count"],
-                "workflow_sessions_count": bucket["workflow_sessions_count"],
-                "agent_runs_count": bucket["agent_runs_count"],
-                "team_runs_count": bucket["team_runs_count"],
-                "workflow_runs_count": bucket["workflow_runs_count"],
-            }
-        )
-
-    return records
-
-
-def fetch_all_sessions_data(
-    sessions: List[Dict[str, Any]], dates_to_process: list[date], start_timestamp: int
-) -> Optional[dict]:
-    """Return all session data for the given dates, for all session types."""
-    if not dates_to_process:
-        return None
-
-    all_sessions_data: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
-        date_to_process.isoformat(): {"agent": [], "team": [], "workflow": []} for date_to_process in dates_to_process
+# -- Component metrics util methods --
+def build_component_metrics_runs_projection() -> Dict[str, int]:
+    """Build the projection of a stored run with only what component metrics count, and the runs nested inside it."""
+    return {
+        "_id": 0,
+        "run_id": 1,
+        "run_type": 1,
+        "agent_id": 1,
+        "team_id": 1,
+        "workflow_id": 1,
+        "user_id": 1,
+        "parent_run_id": 1,
+        "status": 1,
+        "created_at": 1,
+        "run_data.called_from_run_id": 1,
+        **{f"run_data.{field}": 1 for field in _METRICS_RUN_DATA_FIELDS},
+        **{f"run_data.{key}": 1 for key in _METRICS_NESTED_RUN_KEYS},
     }
 
-    for session in sessions:
-        session_date = (
-            datetime.fromtimestamp(session.get("created_at", start_timestamp), tz=timezone.utc).date().isoformat()
+
+def build_component_metrics_legacy_runs_projection() -> Dict[str, int]:
+    """Build the projection of a session with only what component metrics count of the runs of its legacy runs
+    field, and the runs nested inside them."""
+    return {
+        "_id": 0,
+        "user_id": 1,
+        "created_at": 1,
+        **{f"runs.{field}": 1 for field in _METRICS_LEGACY_RUN_FIELDS},
+        **{f"runs.{field}": 1 for field in _METRICS_RUN_DATA_FIELDS},
+        **{f"runs.{key}": 1 for key in _METRICS_NESTED_RUN_KEYS},
+    }
+
+
+def serialize_metrics_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Serialize a metrics row to the document stored for it: its date as text, and its models as the list
+    agno_metrics keeps, so no model id becomes a field name."""
+    document = {**row, "date": row["date"].isoformat()}
+    if "model_metrics" in document:
+        document["model_metrics"] = list_metrics_models(document["model_metrics"])
+    return document
+
+
+def deserialize_metrics_row(document: Dict[str, Any]) -> Dict[str, Any]:
+    """Deserialize a stored metrics document to the row shape the metrics helpers compare and total."""
+    row = {**document, "date": datetime.strptime(document["date"], "%Y-%m-%d").date()}
+    if "model_metrics" in row:
+        model_metrics: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for model in row["model_metrics"] or []:
+            model_totals: Dict[str, Any] = {"count": model["count"]}
+            if model.get("cost") is not None:
+                model_totals["cost"] = model["cost"]
+            model_metrics.setdefault(model["model_provider"], {})[model["model_id"]] = model_totals
+        row["model_metrics"] = model_metrics
+    return row
+
+
+def _component_metrics_upserts(component_metrics_records: List[Dict[str, Any]]) -> List[UpdateOne]:
+    """Build the upsert of each component metrics record, matched on its key."""
+    upserts = []
+    for record in component_metrics_records:
+        document = serialize_metrics_row(record)
+        # The key and created_at are never overwritten
+        fields = {
+            key: value for key, value in document.items() if key not in [*COMPONENT_METRICS_KEY_COLUMNS, "created_at"]
+        }
+        upserts.append(
+            UpdateOne(
+                {column: document[column] for column in COMPONENT_METRICS_KEY_COLUMNS},
+                {"$set": fields, "$setOnInsert": {"created_at": document["created_at"]}},
+                upsert=True,
+            )
         )
-        if session_date in all_sessions_data:
-            all_sessions_data[session_date][session["session_type"]].append(session)
-
-    return all_sessions_data
+    return upserts
 
 
-def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
-    """Return the list of dates to calculate metrics for."""
-    today = datetime.now(timezone.utc).date()
-    days_diff = (today - starting_date).days + 1
-    if days_diff <= 0:
-        return []
-    return [starting_date + timedelta(days=x) for x in range(days_diff)]
-
-
-def bulk_upsert_metrics(collection: Collection, metrics_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Bulk upsert metrics into the database.
+def bulk_upsert_component_metrics(collection: Collection, component_metrics_records: List[Dict[str, Any]]) -> None:
+    """Bulk upsert component metrics into the database, in one request.
 
     Args:
-        collection (Collection): The collection to upsert the metrics into.
-        metrics_records (List[Dict[str, Any]]): The list of metrics records to upsert.
-
-    Returns:
-        The list of upserted metrics records.
+        collection (Collection): The component metrics collection.
+        component_metrics_records (List[Dict[str, Any]]): The component metrics records to upsert.
     """
-    if not metrics_records:
-        return []
+    if not component_metrics_records:
+        return
 
-    results = []
-    for record in metrics_records:
-        record["date"] = record["date"].isoformat() if isinstance(record["date"], date) else record["date"]
-        try:
-            # Legacy records have no ``user_id``, so default to the empty-string sentinel bucket
-            key_filter = {
-                "user_id": record.get("user_id", ""),
-                "date": record["date"],
-                "aggregation_period": record["aggregation_period"],
-            }
-
-            # id and created_at belong to the first write, so only $set the fields that change
-            identity = {"id": record.pop("id"), "created_at": record.pop("created_at")}
-            stored = collection.find_one_and_update(
-                key_filter,
-                {"$set": record, "$setOnInsert": identity},
-                upsert=True,
-                return_document=ReturnDocument.AFTER,
-                projection={"_id": False},
-            )
-            # Upserting and returning AFTER always yields the document; a miss would put a
-            # None where every caller expects a record
-            if stored is not None:
-                results.append(stored)
-
-        except Exception as e:
-            log_error(f"Error upserting metrics record: {str(e)}")
-            continue
-
-    return results
+    collection.bulk_write(_component_metrics_upserts(component_metrics_records))
 
 
-async def abulk_upsert_metrics(
-    collection: "AsyncMongoCollectionType", metrics_records: List[Dict[str, Any]]
-) -> List[Dict[str, Any]]:
-    """Async bulk upsert metrics into the database.
+async def abulk_upsert_component_metrics(
+    collection: "AsyncMongoCollectionType", component_metrics_records: List[Dict[str, Any]]
+) -> None:
+    """Bulk upsert component metrics into the database, in one request.
 
     Args:
-        collection (AsyncMongoCollectionType): The async collection to upsert the metrics into.
-        metrics_records (List[Dict[str, Any]]): The list of metrics records to upsert.
+        collection (AsyncMongoCollectionType): The component metrics collection.
+        component_metrics_records (List[Dict[str, Any]]): The component metrics records to upsert.
+    """
+    if not component_metrics_records:
+        return
+
+    await collection.bulk_write(_component_metrics_upserts(component_metrics_records))
+
+
+def _user_metrics_upsert(
+    user_metrics_row: Dict[str, Any], read_version: Optional[int]
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """Build the filter and the update of the upsert of a user metrics row.
+
+    A new row starts at version 1, and every write of a stored one moves its version by one in the same update, so
+    two writers never give it the same version.
+
+    Args:
+        user_metrics_row (Dict[str, Any]): The row, from build_user_metrics_row.
+        read_version (Optional[int]): The version of the stored row read before its rows were rebuilt. None when
+            there was no stored row.
 
     Returns:
-        The list of upserted metrics records.
+        Tuple[Dict[str, Any], List[Dict[str, Any]]]: The filter and the update pipeline.
     """
-    if not metrics_records:
-        return []
+    document = serialize_metrics_row(user_metrics_row)
+    # The key and created_at are never overwritten. Each value is a literal, so a string starting with $ is never
+    # read as a field
+    fields: Dict[str, Any] = {
+        key: {"$literal": value}
+        for key, value in document.items()
+        if key not in [*USER_METRICS_KEY_COLUMNS, "created_at", "version", "completed"]
+    }
+    fields["created_at"] = {"$ifNull": ["$created_at", {"$literal": document["created_at"]}]}
+    fields["version"] = {"$add": [{"$ifNull": ["$version", 0]}, 1]}
+    # Compared in the update, so a reopen written since the version was read keeps the period open
+    fields["completed"] = {
+        "$cond": [
+            {"$eq": [{"$type": "$version"}, "missing"]},
+            document["completed"],
+            {"$and": [document["completed"], {"$eq": ["$version", {"$literal": read_version}]}]},
+        ]
+    }
+    key_filter = {column: document[column] for column in USER_METRICS_KEY_COLUMNS}
+    return key_filter, [{"$set": fields}]
 
-    results = []
-    for record in metrics_records:
-        record["date"] = record["date"].isoformat() if isinstance(record["date"], date) else record["date"]
-        try:
-            # Legacy records have no ``user_id``, so default to the empty-string sentinel bucket
-            key_filter = {
-                "user_id": record.get("user_id", ""),
-                "date": record["date"],
-                "aggregation_period": record["aggregation_period"],
-            }
 
-            # id and created_at belong to the first write, so only $set the fields that change
-            identity = {"id": record.pop("id"), "created_at": record.pop("created_at")}
-            stored = await collection.find_one_and_update(
-                key_filter,
-                {"$set": record, "$setOnInsert": identity},
+def upsert_user_metrics_row(
+    collection: Collection, user_metrics_row: Dict[str, Any], read_version: Optional[int]
+) -> None:
+    """Upsert a user metrics row into the database.
+
+    Args:
+        collection (Collection): The user metrics collection.
+        user_metrics_row (Dict[str, Any]): The row, from build_user_metrics_row.
+        read_version (Optional[int]): The version of the stored row read before its rows were rebuilt.
+    """
+    key_filter, update = _user_metrics_upsert(user_metrics_row, read_version)
+    collection.update_one(key_filter, update, upsert=True)
+
+
+async def aupsert_user_metrics_row(
+    collection: "AsyncMongoCollectionType", user_metrics_row: Dict[str, Any], read_version: Optional[int]
+) -> None:
+    """Upsert a user metrics row into the database.
+
+    Args:
+        collection (AsyncMongoCollectionType): The user metrics collection.
+        user_metrics_row (Dict[str, Any]): The row, from build_user_metrics_row.
+        read_version (Optional[int]): The version of the stored row read before its rows were rebuilt.
+    """
+    key_filter, update = _user_metrics_upsert(user_metrics_row, read_version)
+    await collection.update_one(key_filter, update, upsert=True)
+
+
+def _user_metrics_rows_upserts(user_metrics_rows: List[Dict[str, Any]]) -> List[UpdateOne]:
+    """Build the upsert of each user row of the user metrics table. A user row is written with its period's
+    everyone row, so its completed and version are never compared."""
+    upserts = []
+    for user_metrics_row in user_metrics_rows:
+        document = serialize_metrics_row(user_metrics_row)
+        # The key and created_at are never overwritten
+        fields = {
+            key: value
+            for key, value in document.items()
+            if key not in [*USER_METRICS_KEY_COLUMNS, "created_at", "version"]
+        }
+        upserts.append(
+            UpdateOne(
+                {column: document[column] for column in USER_METRICS_KEY_COLUMNS},
+                {"$set": fields, "$setOnInsert": {"created_at": document["created_at"]}, "$inc": {"version": 1}},
                 upsert=True,
-                return_document=ReturnDocument.AFTER,
-                projection={"_id": False},
             )
-            # Upserting and returning AFTER always yields the document; a miss would put a
-            # None where every caller expects a record
-            if stored is not None:
-                results.append(stored)
+        )
+    return upserts
 
-        except Exception as e:
-            log_error(f"Error upserting metrics record: {str(e)}")
-            continue
 
-    return results
+def bulk_upsert_user_metrics_rows(collection: Collection, user_metrics_rows: List[Dict[str, Any]]) -> None:
+    """Bulk upsert the user rows of a period into the user metrics table, in one request.
+
+    Args:
+        collection (Collection): The user metrics collection.
+        user_metrics_rows (List[Dict[str, Any]]): The user rows, from build_user_metrics_rows.
+    """
+    if not user_metrics_rows:
+        return
+    collection.bulk_write(_user_metrics_rows_upserts(user_metrics_rows))
+
+
+async def abulk_upsert_user_metrics_rows(
+    collection: "AsyncMongoCollectionType", user_metrics_rows: List[Dict[str, Any]]
+) -> None:
+    """Bulk upsert the user rows of a period into the user metrics table, in one request.
+
+    Args:
+        collection (AsyncMongoCollectionType): The user metrics collection.
+        user_metrics_rows (List[Dict[str, Any]]): The user rows, from build_user_metrics_rows.
+    """
+    if not user_metrics_rows:
+        return
+    await collection.bulk_write(_user_metrics_rows_upserts(user_metrics_rows))
+
+
+def _reopen_metrics_row(row_date: date, aggregation_period: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Build the filter and the update that reopen a day's or a month's everyone row of the user metrics table,
+    inserting an empty open row when it has none."""
+    empty_row = serialize_metrics_row(build_user_metrics_row([], aggregation_period, row_date, completed=False))
+    key_filter = {column: empty_row[column] for column in USER_METRICS_KEY_COLUMNS}
+    update = {
+        "$set": {"completed": False},
+        "$inc": {"version": 1},
+        "$setOnInsert": {
+            key: value for key, value in empty_row.items() if key not in [*USER_METRICS_KEY_COLUMNS, "completed"]
+        },
+    }
+    return key_filter, update
+
+
+def reopen_metrics_day(collection: Collection, day: date) -> None:
+    """Reopen a day's user metrics row, so the next refresh rebuilds the day.
+
+    Args:
+        collection (Collection): The user metrics collection.
+        day (date): The day, from metrics_day_to_reopen.
+    """
+    collection.update_one(*_reopen_metrics_row(day, "daily"), upsert=True)
+
+
+async def areopen_metrics_day(collection: "AsyncMongoCollectionType", day: date) -> None:
+    """Reopen a day's user metrics row, so the next refresh rebuilds the day.
+
+    Args:
+        collection (AsyncMongoCollectionType): The user metrics collection.
+        day (date): The day, from metrics_day_to_reopen.
+    """
+    await collection.update_one(*_reopen_metrics_row(day, "daily"), upsert=True)
+
+
+def _reopen_metrics_days_from(starting_date: date) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Build the filter and the update that reopen every day's everyone row of the user metrics table from the given
+    date on."""
+    return (
+        {"aggregation_period": "daily", "user_id": "", "date": {"$gte": starting_date.isoformat()}},
+        {"$set": {"completed": False}, "$inc": {"version": 1}},
+    )
+
+
+def reopen_metrics_days_from(collection: Collection, starting_date: date) -> None:
+    """Reopen every day's user metrics row from the given date on, as a write reopens a day, so the next refresh
+    rebuilds them.
+
+    Args:
+        collection (Collection): The user metrics collection.
+        starting_date (date): The first day to reopen.
+    """
+    collection.update_many(*_reopen_metrics_days_from(starting_date))
+
+
+async def areopen_metrics_days_from(collection: "AsyncMongoCollectionType", starting_date: date) -> None:
+    """Reopen every day's user metrics row from the given date on, as a write reopens a day, so the next refresh
+    rebuilds them.
+
+    Args:
+        collection (AsyncMongoCollectionType): The user metrics collection.
+        starting_date (date): The first day to reopen.
+    """
+    await collection.update_many(*_reopen_metrics_days_from(starting_date))
+
+
+def reopen_metrics_month(collection: Collection, month_start: date) -> None:
+    """Reopen a month's user metrics row, so the next refresh rebuilds the month.
+
+    Args:
+        collection (Collection): The user metrics collection.
+        month_start (date): The first day of the month.
+    """
+    collection.update_one(*_reopen_metrics_row(month_start, "monthly"), upsert=True)
+
+
+async def areopen_metrics_month(collection: "AsyncMongoCollectionType", month_start: date) -> None:
+    """Reopen a month's user metrics row, so the next refresh rebuilds the month.
+
+    Args:
+        collection (AsyncMongoCollectionType): The user metrics collection.
+        month_start (date): The first day of the month.
+    """
+    await collection.update_one(*_reopen_metrics_row(month_start, "monthly"), upsert=True)
+
+
+def build_metrics_fingerprint_pipeline(start_timestamp: int) -> List[Dict[str, Any]]:
+    """Build the pipeline that counts the sessions or runs created from the given time on, and adds up and finds the
+    latest of their update times."""
+    return [
+        {"$match": {"created_at": {"$gte": start_timestamp}}},
+        {
+            "$group": {
+                "_id": None,
+                "count": {"$sum": 1},
+                "total_updated_at": {"$sum": "$updated_at"},
+                "latest_updated_at": {"$max": "$updated_at"},
+            }
+        },
+    ]
+
+
+def build_metrics_days_pipeline() -> List[Dict[str, Any]]:
+    """Build the pipeline that finds every day a session or run was created on, as days since 1970-01-01. Read from
+    the created_at index alone."""
+    return [
+        {"$match": {"created_at": {"$ne": None}}},
+        {"$project": {"_id": 0, "created_at": 1}},
+        {"$group": {"_id": {"$floor": {"$divide": ["$created_at", 86400]}}}},
+    ]
+
+
+def build_metrics_rows_filter(
+    starting_date: date,
+    ending_date: date,
+    user_id: str,
+    month_starts: Sequence[date] = (),
+) -> Optional[Dict[str, Any]]:
+    """Build the filter of one user's metrics rows of each day in the given date range.
+
+    Args:
+        starting_date (date): The first day to read.
+        ending_date (date): The last day to read.
+        user_id (str): The user whose rows are read. "" for the everyone rows of the user metrics table, or the rows
+            with no user of the component metrics table.
+        month_starts (Sequence[date]): The first day of every month inside the date range to read the month row of
+            instead of its days.
+
+    Returns:
+        Optional[Dict[str, Any]]: The filter. None when there is no day to read.
+    """
+    # Days that follow one another are looked up as one range
+    filters: List[Dict[str, Any]] = [
+        {"aggregation_period": "daily", "date": {"$gte": first_day.isoformat(), "$lte": last_day.isoformat()}}
+        for first_day, last_day in metrics_day_ranges(metrics_days_to_read(starting_date, ending_date, month_starts))
+    ]
+    if month_starts:
+        filters.append(
+            {
+                "aggregation_period": "monthly",
+                "date": {"$in": [month_start.isoformat() for month_start in month_starts]},
+            }
+        )
+    if not filters:
+        return None
+    return {"user_id": user_id, "$or": filters}
+
+
+def build_metrics_rows_projection(fields: Sequence[str]) -> Dict[str, int]:
+    """Build the projection of a stored metrics row with only what totalling the given fields reads."""
+    projection = {"_id": 0, "aggregation_period": 1, "date": 1, "updated_at": 1, **{field: 1 for field in fields}}
+    if any(field in [*METRICS_TOKEN_DETAILS_FIELDS, "audio_total_tokens", *METRICS_COST_FIELDS] for field in fields):
+        projection["token_details"] = 1
+    # The user metrics table keeps the sessions of each type, and the component metrics table the runs of each
+    # component, with the run that started them
+    if "sessions_count" in fields:
+        projection.update({f"{component_type}_sessions_count": 1 for component_type in METRICS_COMPONENT_TYPES})
+    if "root_runs_count" in fields:
+        projection.update({"runs_count": 1, "parent_component_id": 1})
+    return projection
+
+
+def build_metrics_by_owner_projection() -> Dict[str, int]:
+    """Build the projection of a stored component metrics row with only what get_metrics reads of it."""
+    return {
+        "_id": 0,
+        "date": 1,
+        "user_id": 1,
+        "component_type": 1,
+        "sessions_count": 1,
+        "runs_count": 1,
+        **{
+            field: 1
+            for field in METRICS_TOKEN_FIELDS
+            if field not in [*METRICS_TOKEN_DETAILS_FIELDS, "audio_total_tokens"]
+        },
+        "token_details": 1,
+        "model_metrics": 1,
+        "created_at": 1,
+        "updated_at": 1,
+    }

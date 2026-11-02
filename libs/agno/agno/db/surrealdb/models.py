@@ -20,6 +20,9 @@ TableType = Literal[
     "knowledge",
     "memories",
     "metrics",
+    "component_metrics",
+    "user_metrics",
+    "metrics_refreshes",
     "runs",
     "sessions",
     "spans",
@@ -245,6 +248,7 @@ def get_schema(table_type: TableType, table_name: str) -> str:
             {define_table}
             DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE INDEX idx_created_at ON {table_name} FIELDS created_at;
             """)
     elif table_type == "traces":
         return dedent(f"""
@@ -281,6 +285,18 @@ def get_schema(table_type: TableType, table_name: str) -> str:
             DEFINE INDEX idx_team_id ON {table_name} FIELDS team_id;
             DEFINE INDEX idx_workflow_id ON {table_name} FIELDS workflow_id;
             DEFINE INDEX idx_status ON {table_name} FIELDS status;
+            DEFINE INDEX idx_created_at ON {table_name} FIELDS created_at;
+            """)
+    elif table_type == "component_metrics":
+        return dedent(f"""
+            {define_table}
+            DEFINE INDEX idx_aggregation_period_date ON {table_name} FIELDS aggregation_period, date;
+            DEFINE INDEX idx_user_id_date ON {table_name} FIELDS user_id, date;
+            """)
+    elif table_type == "user_metrics":
+        return dedent(f"""
+            {define_table}
+            DEFINE INDEX idx_aggregation_period_date ON {table_name} FIELDS aggregation_period, date;
             """)
     else:
         return define_table

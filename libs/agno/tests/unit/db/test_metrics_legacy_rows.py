@@ -49,7 +49,10 @@ UNOWNED_BUCKET_SHAPED = _record("", 99, record_id=f"{DAY}__daily", users_count=2
 
 @pytest.fixture(params=["json", "in_memory"])
 def db(request, tmp_path):
-    return JsonDb(db_path=str(tmp_path)) if request.param == "json" else InMemoryDb()
+    db = JsonDb(db_path=str(tmp_path)) if request.param == "json" else InMemoryDb()
+    # Read as AgentOS reads a database it calculates: a refresh would build the metrics tables and read them instead
+    db.stop_metrics_refresh_on_read()
+    return db
 
 
 def _seed(db, records):

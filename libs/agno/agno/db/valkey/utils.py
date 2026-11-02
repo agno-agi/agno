@@ -1,17 +1,24 @@
 """Utility functions for the Valkey database class."""
 
+import hashlib
 import json
-import time
-from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Union, cast
+from datetime import date, datetime, timezone
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union, cast
 from uuid import UUID
 
 from agno.db.filter_converter import DATETIME_COLUMNS, MAX_FILTER_DEPTH, _normalize_datetime_value
-from agno.db.utils import get_sort_value
+from agno.db.utils import (
+    METRICS_REFRESH_ID,
+    METRICS_TOKEN_FIELDS,
+    build_user_metrics_row,
+    get_metrics_legacy_runs,
+    get_metrics_parent_run_id,
+    get_sort_value,
+)
 from agno.utils.log import log_warning
 
 try:
-    from glide_sync import ClusterScanCursor, GlideClusterClient
+    from glide_sync import ClusterScanCursor, GlideClusterClient, Script
 
     ValkeyClusterClient: type = GlideClusterClient
 except ImportError:
@@ -22,6 +29,13 @@ if TYPE_CHECKING:
     from glide_sync import GlideClusterClient as ValkeyClusterClientType
 
     AnyValkeyClient = Union[ValkeyClientType, ValkeyClusterClientType]
+
+
+# Kept small: a batch is a single request, which the client waits 250 milliseconds for by default
+METRICS_PIPELINE_SIZE = 100
+
+# The keys of a stored run that hold the runs nested inside it, in the order the rollup walks them
+_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses", "workflow_agent_run")
 
 
 # -- Serialization and deserialization --
@@ -388,150 +402,560 @@ def remove_index_entries(
 
 # -- Metrics utils --
 
+# The metrics refresh is claimed, heartbeated and released, and the rows of a calculation written, by one script each,
+# so the check that the calculation holds the refresh and the write run as one step on the server. A GLIDE client sends
+# every caller's commands over one connection, so a WATCH would be lifted by another thread's transaction.
+CLAIM_METRICS_REFRESH_LUA = """
+local now = tonumber(redis.call('TIME')[1])
+local stored = redis.call('GET', KEYS[1])
+local row = {id = ARGV[2], finished_at = cjson.null, fingerprint = cjson.null}
+if stored then
+  row = cjson.decode(stored)
+  -- A stale lock is taken over: the process that held it stopped
+  if row['locked_by'] ~= cjson.null and row['locked_at'] > now - tonumber(ARGV[3]) then
+    return false
+  end
+end
+row['locked_by'] = ARGV[1]
+row['locked_at'] = now
+row['started_at'] = now
+row['status'] = 'running'
+row['error'] = cjson.null
+local encoded = cjson.encode(row)
+redis.call('SET', KEYS[1], encoded)
+return encoded
+"""
 
-def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
-    """Calculate metrics for the given date, bucketed per user_id.
+HEARTBEAT_METRICS_REFRESH_LUA = """
+local stored = redis.call('GET', KEYS[1])
+if not stored then
+  return 0
+end
+local row = cjson.decode(stored)
+if row['locked_by'] ~= ARGV[1] then
+  return 0
+end
+row['locked_at'] = tonumber(redis.call('TIME')[1])
+redis.call('SET', KEYS[1], cjson.encode(row))
+return 1
+"""
 
-    Sessions without a user_id aggregate under the sentinel empty-string bucket.
+RELEASE_METRICS_REFRESH_LUA = """
+local stored = redis.call('GET', KEYS[1])
+if not stored then
+  return 0
+end
+local row = cjson.decode(stored)
+if row['locked_by'] ~= ARGV[1] then
+  return 0
+end
+row['locked_by'] = cjson.null
+row['locked_at'] = cjson.null
+if ARGV[2] == 'stopped' then
+  -- The days it did not reach stay open for the next calculation; a first one that stopped has none to show
+  if row['finished_at'] == cjson.null then
+    row['status'] = 'failed'
+    row['error'] = ARGV[4]
+  else
+    row['status'] = 'completed'
+    row['error'] = cjson.null
+  end
+elseif ARGV[2] == 'completed' then
+  row['status'] = 'completed'
+  row['error'] = cjson.null
+  row['finished_at'] = tonumber(redis.call('TIME')[1])
+  row['fingerprint'] = cjson.decode(ARGV[3])
+else
+  row['status'] = 'failed'
+  row['error'] = ARGV[4]
+end
+redis.call('SET', KEYS[1], cjson.encode(row))
+return 1
+"""
+
+# Runs the recorded writes, each [command, index of its key in KEYS, arguments...], while ARGV[1] holds the refresh
+FENCED_METRICS_WRITES_LUA = """
+local stored = redis.call('GET', KEYS[1])
+if not stored or cjson.decode(stored)['locked_by'] ~= ARGV[1] then
+  return 0
+end
+for _, command in ipairs(cjson.decode(ARGV[2])) do
+  command[2] = KEYS[command[2]]
+  redis.call(unpack(command))
+end
+return 1
+"""
+
+# The everyone row stays completed only while it still has the version read before its period's rows, as
+# user_metrics_row_to_store keeps it; created_at is never overwritten
+UPSERT_USER_METRICS_ROW_LUA = """
+local stored = redis.call('GET', KEYS[1])
+if not stored or cjson.decode(stored)['locked_by'] ~= ARGV[1] then
+  return 0
+end
+local fields = cjson.decode(ARGV[3])
+local version = redis.call('HGET', KEYS[2], 'version')
+if version then
+  if ARGV[2] == '' or tonumber(version) ~= tonumber(ARGV[2]) then
+    fields['completed'] = 'false'
+  end
+  local created_at = redis.call('HGET', KEYS[2], 'created_at')
+  if created_at then
+    fields['created_at'] = created_at
+  end
+  fields['version'] = tostring(tonumber(version) + 1)
+else
+  fields['version'] = '1'
+end
+for column, value in pairs(fields) do
+  redis.call('HSET', KEYS[2], column, value)
+end
+if ARGV[4] ~= '' then
+  redis.call('EXPIRE', KEYS[2], tonumber(ARGV[4]))
+end
+redis.call('SADD', KEYS[3], ARGV[5])
+redis.call('SADD', KEYS[4], ARGV[5])
+return 1
+"""
+
+
+class MetricsWrites:
+    """The writes of metrics rows, recorded as a GLIDE batch records them, so FENCED_METRICS_WRITES_LUA runs them in
+    one step with the check that the calculation still holds the metrics refresh."""
+
+    def __init__(self, refresh_key: str):
+        self.keys: List[Any] = [refresh_key]
+        self.commands: List[List[Any]] = []
+
+    def _add(self, command: str, key: str, *args: Any) -> None:
+        if key not in self.keys:
+            self.keys.append(key)
+        # Lua tables count from 1
+        self.commands.append([command, self.keys.index(key) + 1, *args])
+
+    def set(self, key: str, value: str) -> None:
+        self._add("SET", key, value)
+
+    def delete(self, keys: List[str]) -> None:
+        for key in keys:
+            self._add("DEL", key)
+
+    def sadd(self, key: str, members: List[str]) -> None:
+        self._add("SADD", key, *members)
+
+    def srem(self, key: str, members: List[str]) -> None:
+        self._add("SREM", key, *members)
+
+    def hset(self, key: str, field_value_map: Dict[str, str]) -> None:
+        self._add("HSET", key, *[item for field_value in field_value_map.items() for item in field_value])
+
+    def hsetnx(self, key: str, field: str, value: str) -> None:
+        self._add("HSETNX", key, field, value)
+
+    def hincrby(self, key: str, field: str, amount: int) -> None:
+        self._add("HINCRBY", key, field, amount)
+
+    def expire(self, key: str, seconds: int) -> None:
+        self._add("EXPIRE", key, seconds)
+
+
+def generate_created_at_index_key(prefix: str, table_type: str) -> str:
+    """Generate the key of the sorted set that lists the records of a table by created_at, so the records of a day are
+    read without scanning the table."""
+    return f"{prefix}:{table_type}:index:created_at"
+
+
+def generate_metrics_prefix(prefix: str) -> str:
+    """Generate the prefix of every key of the metrics tables. The braces make it the keys' hash tag, so they share one
+    cluster slot and a script can write the rows of a day together with the metrics refresh."""
+    return f"{{{prefix}}}"
+
+
+def component_metrics_record_id(record: Dict[str, Any]) -> str:
+    """The id of the key a row of the component metrics table is stored under, one per period, day, owner and
+    component.
+
+    The id starts with the day and ends with the period, so both are read off an index entry without reading the row.
+    """
+    key = json.dumps(
+        [
+            record["user_id"],
+            record["component_type"],
+            record["component_id"],
+            record["parent_component_id"],
+            record["root_component_id"],
+        ]
+    )
+    key_segment = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return f"{record['date'].isoformat()}_{key_segment}_{record['aggregation_period']}"
+
+
+def user_metrics_record_id(aggregation_period: str, row_date: date, user_id: str) -> str:
+    """The id of the key a row of the user metrics table is stored under, one per period, day and user."""
+    user_segment = hashlib.sha256(user_id.encode("utf-8")).hexdigest()
+    return f"{row_date.isoformat()}_{user_segment}_{aggregation_period}"
+
+
+def metrics_record_key(record_id: Any) -> Tuple[date, str]:
+    """Read the day and the period off the id of a component metrics or user metrics row."""
+    record_id = _decode_value(record_id)
+    return date.fromisoformat(record_id[:10]), record_id.rsplit("_", 1)[1]
+
+
+def metrics_day_start(day: date) -> int:
+    """The timestamp of the start of the given UTC day."""
+    return int(datetime.combine(day, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp())
+
+
+def deserialize_component_metrics_record(data: Any) -> Dict[str, Any]:
+    """Deserialize a stored component metrics row, with its day read back as a date."""
+    record = deserialize_data(_decode_value(data))
+    record["date"] = date.fromisoformat(record["date"])
+    return record
+
+
+def serialize_user_metrics_record(record: Dict[str, Any]) -> Dict[str, str]:
+    """Serialize each column of a user metrics row to a field of the hash it is stored in."""
+    return {column: json.dumps(value, ensure_ascii=False, cls=CustomEncoder) for column, value in record.items()}
+
+
+def deserialize_user_metrics_record(fields: Dict[Any, Any]) -> Dict[str, Any]:
+    """Deserialize the fields of a stored user metrics row, with its day read back as a date."""
+    record = {
+        _decode_value(column): json.loads(_decode_value(value)) for column, value in fields.items() if value is not None
+    }
+    if "date" in record:
+        record["date"] = date.fromisoformat(record["date"])
+    return record
+
+
+def bulk_upsert_component_metrics(
+    pipe: Any, prefix: str, component_metrics_records: List[Dict[str, Any]], expire: Optional[int] = None
+) -> None:
+    """Upsert component metrics into the database, in the given pipeline.
 
     Args:
-        date_to_process (date): The date to calculate metrics for.
-        sessions_data (dict): The sessions data.
-
-    Returns:
-        List[dict]: A list of per-user metrics records.
+        pipe (Any): The pipeline to upsert in.
+        prefix (str): The prefix of the metrics keys.
+        component_metrics_records (List[Dict[str, Any]]): The component metrics records to upsert, each with the
+            created_at of its stored row.
+        expire (Optional[int]): The TTL of the keys in seconds.
     """
-
-    def _empty_metric_record() -> Dict[str, Any]:
-        return {
-            "users_count": 0,
-            "agent_sessions_count": 0,
-            "team_sessions_count": 0,
-            "workflow_sessions_count": 0,
-            "agent_runs_count": 0,
-            "team_runs_count": 0,
-            "workflow_runs_count": 0,
-            "token_metrics": {
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "total_tokens": 0,
-                "audio_total_tokens": 0,
-                "audio_input_tokens": 0,
-                "audio_output_tokens": 0,
-                "cache_read_tokens": 0,
-                "cache_write_tokens": 0,
-                "reasoning_tokens": 0,
-            },
-            "model_counts": {},
-        }
-
-    session_types = [
-        ("agent", "agent_sessions_count", "agent_runs_count"),
-        ("team", "team_sessions_count", "team_runs_count"),
-        ("workflow", "workflow_sessions_count", "workflow_runs_count"),
-    ]
-
-    per_user: Dict[str, Dict[str, Any]] = {}
-
-    for session_type, sessions_count_key, runs_count_key in session_types:
-        sessions = sessions_data.get(session_type, []) or []
-
-        for session in sessions:
-            bucket_key = session.get("user_id") or ""
-            bucket = per_user.setdefault(bucket_key, _empty_metric_record())
-            bucket[sessions_count_key] += 1
-
-            runs = session.get("runs") or []
-            bucket[runs_count_key] += len(runs)
-            for run in runs:
-                if model_id := run.get("model"):
-                    model_provider = run.get("model_provider", "")
-                    key = f"{model_id}:{model_provider}"
-                    bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
-
-            session_metrics = (session.get("session_data") or {}).get("session_metrics", {}) or {}
-            for field in bucket["token_metrics"]:
-                bucket["token_metrics"][field] += session_metrics.get(field, 0)
-
-    current_time = int(time.time())
-    completed = date_to_process < datetime.now(timezone.utc).date()
-
-    records: List[dict] = []
-    for user_id, bucket in per_user.items():
-        model_metrics = []
-        for model, count in bucket["model_counts"].items():
-            model_id, model_provider = model.rsplit(":", 1)
-            model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
-
-        users_count = 0 if user_id == "" else 1
-        # Create a deterministic ID based on date and user. This simplifies avoiding duplicates
-        metric_id = f"{date_to_process.isoformat()}_{user_id}_daily"
-
-        records.append(
-            {
-                "id": metric_id,
-                "date": date_to_process,
-                "completed": completed,
-                "token_metrics": bucket["token_metrics"],
-                "model_metrics": model_metrics,
-                "created_at": current_time,
-                "updated_at": current_time,
-                "aggregation_period": "daily",
-                "user_id": user_id,
-                "users_count": users_count,
-                "agent_sessions_count": bucket["agent_sessions_count"],
-                "team_sessions_count": bucket["team_sessions_count"],
-                "workflow_sessions_count": bucket["workflow_sessions_count"],
-                "agent_runs_count": bucket["agent_runs_count"],
-                "team_runs_count": bucket["team_runs_count"],
-                "workflow_runs_count": bucket["workflow_runs_count"],
-            }
+    for record in component_metrics_records:
+        record_id = component_metrics_record_id(record)
+        key = generate_valkey_key(prefix=prefix, table_type="component_metrics", key_id=record_id)
+        pipe.set(key, serialize_data(record))
+        if expire is not None:
+            pipe.expire(key, expire)
+        create_index_entries(
+            valkey_client=pipe,
+            prefix=prefix,
+            table_type="component_metrics",
+            record_id=record_id,
+            record_data=record,
+            index_fields=["date", "user_id"],
         )
 
-    return records
 
-
-def fetch_all_sessions_data(
-    sessions: List[Dict[str, Any]], dates_to_process: list[date], start_timestamp: int
-) -> Optional[dict]:
-    """Return all session data for the given dates, for all session types.
+def delete_component_metrics(pipe: Any, prefix: str, component_metrics_records: List[Dict[str, Any]]) -> None:
+    """Delete the given stored component metrics rows, in the given pipeline.
 
     Args:
-        sessions (List[Dict[str, Any]]): The sessions data.
-        dates_to_process (list[date]): The dates to process.
-        start_timestamp (int): The start timestamp.
+        pipe (Any): The pipeline to delete in.
+        prefix (str): The prefix of the metrics keys.
+        component_metrics_records (List[Dict[str, Any]]): The stored rows to delete.
+    """
+    for record in component_metrics_records:
+        record_id = component_metrics_record_id(record)
+        remove_index_entries(
+            valkey_client=pipe,
+            prefix=prefix,
+            table_type="component_metrics",
+            record_id=record_id,
+            record_data=record,
+            index_fields=["date", "user_id"],
+        )
+        pipe.delete([generate_valkey_key(prefix=prefix, table_type="component_metrics", key_id=record_id)])
+
+
+def upsert_user_metrics_row(
+    valkey_client: "AnyValkeyClient",
+    prefix: str,
+    user_metrics_row: Dict[str, Any],
+    read_version: Optional[int],
+    worker_id: str,
+    expire: Optional[int] = None,
+) -> bool:
+    """Upsert a user metrics row into the database, only while the given worker still holds the metrics refresh.
+
+    The holder check, the version compare and the write run in one script on the server, so no write of another
+    process or another thread lands between them.
+
+    Args:
+        valkey_client (GlideClient): The Valkey GLIDE client.
+        prefix (str): The prefix of the metrics keys.
+        user_metrics_row (Dict[str, Any]): The row, from build_user_metrics_row.
+        read_version (Optional[int]): The version of the stored row read before its rows were rebuilt.
+        worker_id (str): The id of the calculation that holds the metrics refresh.
+        expire (Optional[int]): The TTL of the key in seconds.
 
     Returns:
-        Optional[dict]: A dictionary with the session data for the given dates, for all session types.
+        bool: False when another process took the metrics refresh over, and nothing was written.
     """
-    if not dates_to_process:
-        return None
+    record_id = user_metrics_record_id(
+        user_metrics_row["aggregation_period"], user_metrics_row["date"], user_metrics_row["user_id"]
+    )
+    written = valkey_client.invoke_script(
+        Script(UPSERT_USER_METRICS_ROW_LUA),
+        keys=[
+            generate_valkey_key(prefix=prefix, table_type="metrics_refreshes", key_id=METRICS_REFRESH_ID),
+            generate_valkey_key(prefix=prefix, table_type="user_metrics", key_id=record_id),
+            generate_index_key(prefix, "user_metrics", "date", str(user_metrics_row["date"])),
+            generate_index_key(prefix, "user_metrics", "user_id", user_metrics_row["user_id"]),
+        ],
+        args=[
+            worker_id,
+            str(read_version) if read_version is not None else "",
+            json.dumps(serialize_user_metrics_record(user_metrics_row)),
+            str(expire) if expire is not None else "",
+            record_id,
+        ],
+    )
+    return written == 1
 
-    all_sessions_data: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
-        date_to_process.isoformat(): {"agent": [], "team": [], "workflow": []} for date_to_process in dates_to_process
+
+def bulk_upsert_user_metrics_rows(
+    pipe: Any, prefix: str, user_metrics_rows: List[Dict[str, Any]], expire: Optional[int] = None
+) -> None:
+    """Upsert the user rows of a period into the user metrics table, in the given pipeline.
+
+    A user row is written with its period's everyone row, so its completed is never compared. Every write moves its
+    version by one in the same pipeline, so two writers never give it the same version, and created_at is never
+    overwritten.
+
+    Args:
+        pipe (Any): The pipeline to upsert in.
+        prefix (str): The prefix of the metrics keys.
+        user_metrics_rows (List[Dict[str, Any]]): The user rows, from build_user_metrics_rows.
+        expire (Optional[int]): The TTL of the keys in seconds.
+    """
+    for user_metrics_row in user_metrics_rows:
+        record_id = user_metrics_record_id(
+            user_metrics_row["aggregation_period"], user_metrics_row["date"], user_metrics_row["user_id"]
+        )
+        key = generate_valkey_key(prefix=prefix, table_type="user_metrics", key_id=record_id)
+        fields = serialize_user_metrics_record(user_metrics_row)
+        created_at = fields.pop("created_at")
+        pipe.hset(key, fields)
+        pipe.hsetnx(key, "created_at", created_at)
+        pipe.hincrby(key, "version", 1)
+        if expire is not None:
+            pipe.expire(key, expire)
+        create_index_entries(
+            valkey_client=pipe,
+            prefix=prefix,
+            table_type="user_metrics",
+            record_id=record_id,
+            record_data=user_metrics_row,
+            index_fields=["date", "user_id"],
+        )
+
+
+def delete_user_metrics_rows(pipe: Any, prefix: str, user_metrics_rows: List[Dict[str, Any]]) -> None:
+    """Delete the given stored user rows of the user metrics table, in the given pipeline.
+
+    Args:
+        pipe (Any): The pipeline to delete in.
+        prefix (str): The prefix of the metrics keys.
+        user_metrics_rows (List[Dict[str, Any]]): The stored rows to delete.
+    """
+    for user_metrics_row in user_metrics_rows:
+        record_id = user_metrics_record_id(
+            user_metrics_row["aggregation_period"], user_metrics_row["date"], user_metrics_row["user_id"]
+        )
+        remove_index_entries(
+            valkey_client=pipe,
+            prefix=prefix,
+            table_type="user_metrics",
+            record_id=record_id,
+            record_data=user_metrics_row,
+            index_fields=["date", "user_id"],
+        )
+        pipe.delete([generate_valkey_key(prefix=prefix, table_type="user_metrics", key_id=record_id)])
+
+
+def _reopen_metrics_row(pipe: Any, prefix: str, row_date: date, aggregation_period: str, expire: Optional[int]) -> None:
+    """Add the reopen of a day's or a month's everyone row of the user metrics table to the given pipeline.
+
+    Every field of an empty open row is set only where the row has none, then the row is opened and its version moved
+    by one, so the reopen never reads the row: a period with no row gets an empty open row at version 1.
+    """
+    record_id = user_metrics_record_id(aggregation_period, row_date, "")
+    key = generate_valkey_key(prefix=prefix, table_type="user_metrics", key_id=record_id)
+    empty_row = {**build_user_metrics_row([], aggregation_period, row_date, completed=False), "version": 0}
+    for column, value in serialize_user_metrics_record(empty_row).items():
+        pipe.hsetnx(key, column, value)
+    pipe.hset(key, {"completed": json.dumps(False)})
+    pipe.hincrby(key, "version", 1)
+    if expire is not None:
+        pipe.expire(key, expire)
+    create_index_entries(
+        valkey_client=pipe,
+        prefix=prefix,
+        table_type="user_metrics",
+        record_id=record_id,
+        record_data=empty_row,
+        index_fields=["date", "user_id"],
+    )
+
+
+def reopen_metrics_day(pipe: Any, prefix: str, day: date, expire: Optional[int] = None) -> None:
+    """Reopen a day's user metrics row, in the given pipeline, so the next refresh rebuilds the day.
+
+    Args:
+        pipe (Any): The pipeline of the write that changed the day.
+        prefix (str): The prefix of the metrics keys.
+        day (date): The day, from metrics_day_to_reopen.
+        expire (Optional[int]): The TTL of the key in seconds.
+    """
+    _reopen_metrics_row(pipe, prefix, day, "daily", expire)
+
+
+def reopen_metrics_month(pipe: Any, prefix: str, month_start: date, expire: Optional[int] = None) -> None:
+    """Reopen a month's user metrics row, in the given pipeline, so the next refresh rebuilds the month.
+
+    Args:
+        pipe (Any): The pipeline of the day rebuilt in the month.
+        prefix (str): The prefix of the metrics keys.
+        month_start (date): The first day of the month.
+        expire (Optional[int]): The TTL of the key in seconds.
+    """
+    _reopen_metrics_row(pipe, prefix, month_start, "monthly", expire)
+
+
+def reopen_metrics_days_from(
+    pipe: Any, prefix: str, everyone_record_ids: List[str], starting_date: date, expire: Optional[int] = None
+) -> None:
+    """Reopen every day's everyone row of the user metrics table from the given date on, as a write reopens a day,
+    in the given pipeline, so the next calculation rebuilds them.
+
+    Args:
+        pipe (Any): The pipeline to reopen in.
+        prefix (str): The prefix of the metrics keys.
+        everyone_record_ids (List[str]): The ids of the everyone rows.
+        starting_date (date): The first day to reopen.
+        expire (Optional[int]): The TTL of the keys in seconds.
+    """
+    for day, aggregation_period in map(metrics_record_key, everyone_record_ids):
+        if aggregation_period == "daily" and day >= starting_date:
+            reopen_metrics_day(pipe, prefix, day, expire)
+
+
+def _build_component_metrics_run_data(run_data: Dict[str, Any]) -> Dict[str, Any]:
+    """The run_data of a stored run, or of a run nested inside it, with only what component metrics count."""
+    metrics = run_data.get("metrics") or {}
+    trimmed_metrics = {
+        key: metrics[key]
+        for key in list(METRICS_TOKEN_FIELDS) + ["cost", "additional_metrics", "duration", "time_to_first_token"]
+        if metrics.get(key) is not None
+    }
+    # Of the details, only the id, provider and cost of each model the call used
+    details = metrics.get("details")
+    trimmed_metrics["details"] = (
+        {
+            model_type: [
+                {
+                    "id": model_metrics.get("id"),
+                    "provider": model_metrics.get("provider"),
+                    "cost": model_metrics.get("cost"),
+                }
+                for model_metrics in model_type_metrics
+                if isinstance(model_metrics, dict)
+            ]
+            if isinstance(model_type_metrics, list)
+            else []
+            for model_type, model_type_metrics in details.items()
+        }
+        if isinstance(details, dict)
+        else bool(details)
+    )
+    trimmed: Dict[str, Any] = {
+        "run_id": run_data.get("run_id"),
+        "agent_id": run_data.get("agent_id"),
+        "team_id": run_data.get("team_id"),
+        "metrics": trimmed_metrics,
+        "model": run_data.get("model"),
+        "model_provider": run_data.get("model_provider"),
+        "forked_from_session_id": run_data.get("forked_from_session_id"),
+        # Only each request's duration, skipping messages carried over from an earlier run: those from history,
+        # and those a forked run copied from the run it was forked from
+        "messages": [
+            {"role": "assistant", "metrics": {"duration": message["metrics"]["duration"]}}
+            for message in (run_data.get("messages") or [])[run_data.get("forked_from_message_index") or 0 :]
+            if isinstance(message, dict)
+            and message.get("role") == "assistant"
+            and not message.get("from_history")
+            and (message.get("metrics") or {}).get("duration") is not None
+        ],
+    }
+    for key in _METRICS_NESTED_RUN_KEYS:
+        nested = run_data.get(key)
+        # A workflow agent's run is stored as the run itself, the other nested runs in lists
+        if isinstance(nested, dict):
+            trimmed[key] = _build_component_metrics_run_data(nested)
+        elif isinstance(nested, list) and nested:
+            trimmed[key] = [
+                _build_component_metrics_run_data(nested_run) for nested_run in nested if isinstance(nested_run, dict)
+            ]
+    return trimmed
+
+
+def build_component_metrics_run(run: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a run with only what component metrics count from a record of the runs table.
+
+    Args:
+        run (Dict[str, Any]): The run, as stored.
+
+    Returns:
+        Dict[str, Any]: The run, with the run_data calculate_date_component_metrics reads: no message content, and of
+            the metrics only the token counts, the cost, the timings and the models of the details.
+    """
+    return {
+        "run_id": run.get("run_id"),
+        "run_type": run.get("run_type"),
+        "agent_id": run.get("agent_id"),
+        "team_id": run.get("team_id"),
+        "workflow_id": run.get("workflow_id"),
+        "user_id": run.get("user_id"),
+        "parent_run_id": get_metrics_parent_run_id(run),
+        "status": run.get("status"),
+        "run_data": _build_component_metrics_run_data(run.get("run_data") or {}),
+        "created_at": run.get("created_at"),
     }
 
-    for session in sessions:
-        session_date = (
-            datetime.fromtimestamp(session.get("created_at", start_timestamp), tz=timezone.utc).date().isoformat()
-        )
-        if session_date in all_sessions_data:
-            all_sessions_data[session_date][session["session_type"]].append(session)
 
-    return all_sessions_data
+def build_component_metrics_legacy_runs(session: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Build the runs kept in the legacy runs field of a session, as runs table records with only what component
+    metrics count, each reduced before the next one is read."""
+    return [build_component_metrics_run(legacy_run) for legacy_run in get_metrics_legacy_runs([session])]
 
 
-def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
-    """Return the list of dates to calculate metrics for.
+def build_component_metrics_session(session: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a session with only what component metrics count from a record of the sessions table.
 
     Args:
-        starting_date (date): The starting date.
+        session (Dict[str, Any]): The session, as stored.
 
     Returns:
-        list[date]: The list of dates to calculate metrics for.
+        Dict[str, Any]: The session with its type, its owner, its agent, team or workflow, and its metadata.
     """
-    today = datetime.now(timezone.utc).date()
-    days_diff = (today - starting_date).days + 1
-    if days_diff <= 0:
-        return []
-    return [starting_date + timedelta(days=x) for x in range(days_diff)]
+    return {
+        "session_id": session.get("session_id"),
+        "session_type": session.get("session_type"),
+        "user_id": session.get("user_id"),
+        "agent_id": session.get("agent_id"),
+        "team_id": session.get("team_id"),
+        "workflow_id": session.get("workflow_id"),
+        "metadata": session.get("metadata"),
+        "created_at": session.get("created_at"),
+    }

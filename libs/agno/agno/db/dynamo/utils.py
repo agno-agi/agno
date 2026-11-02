@@ -1,14 +1,15 @@
 import json
 import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.db.utils import get_sort_value
+from agno.db.utils import METRICS_REFRESH_ID, build_user_metrics_row, get_sort_value
 from agno.session import Session
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.string import generate_id
 
 
 def batch_write_with_retry(
@@ -51,6 +52,43 @@ def batch_write_with_retry(
                 f"after {max_retries} retries: {remaining_counts}. "
                 "Data loss will occur if we don't propagate this."
             )
+
+
+def batch_get_with_retry(
+    client,
+    request_items: Dict[str, Any],
+    max_retries: int = 5,
+    initial_backoff_seconds: float = 0.1,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Wrap ``client.batch_get_item`` with exponential-backoff retries for ``UnprocessedKeys``, as
+    ``batch_write_with_retry`` does for ``UnprocessedItems``. Returns the items read, by table.
+    """
+    responses: Dict[str, List[Dict[str, Any]]] = {}
+    remaining = request_items
+    backoff = initial_backoff_seconds
+    for attempt in range(max_retries + 1):
+        response = client.batch_get_item(RequestItems=remaining)
+        for table_name, items in response.get("Responses", {}).items():
+            responses.setdefault(table_name, []).extend(items)
+        unprocessed = response.get("UnprocessedKeys") or {}
+        if not unprocessed:
+            break
+        # Some keys were not read — retry with just those.
+        remaining_counts = {t: len(v["Keys"]) for t, v in unprocessed.items()}
+        if attempt < max_retries:
+            log_warning(
+                f"Dynamo batch_get_item returned UnprocessedKeys "
+                f"{remaining_counts}; retry {attempt + 1}/{max_retries} "
+                f"after {backoff:.2f}s"
+            )
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 5.0)
+            remaining = unprocessed
+        else:
+            raise RuntimeError(
+                f"DynamoDB batch_get_item still had UnprocessedKeys after {max_retries} retries: {remaining_counts}"
+            )
+    return responses
 
 
 # -- Serialization utils --
@@ -200,6 +238,11 @@ def create_table_if_not_exists(dynamodb_client, table_name: str, schema: Dict[st
 
             log_debug(f"Table {table_name} created successfully")
 
+            return True
+
+        except dynamodb_client.exceptions.ResourceInUseException:
+            # Another process created it first: it is ready once the waiter finds it
+            dynamodb_client.get_waiter("table_exists").wait(TableName=table_name)
             return True
 
         except Exception as e:
@@ -352,235 +395,6 @@ def deserialize_session_result(
 # -- Metrics utils --
 
 
-def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
-    """Calculate metrics for the given single date, bucketed per ``user_id``.
-
-    Sessions without a ``user_id`` aggregate under the sentinel empty-string bucket.
-
-    Args:
-        date_to_process (date): The date to calculate metrics for.
-        sessions_data (dict): The sessions data to calculate metrics for.
-
-    Returns:
-        List[dict]: One metrics record per user, with a deterministic id so re-runs update the same row.
-    """
-
-    def _empty_metric_record() -> Dict[str, Any]:
-        return {
-            "users_count": 0,
-            "agent_sessions_count": 0,
-            "team_sessions_count": 0,
-            "workflow_sessions_count": 0,
-            "agent_runs_count": 0,
-            "team_runs_count": 0,
-            "workflow_runs_count": 0,
-            "token_metrics": {
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "total_tokens": 0,
-                "audio_total_tokens": 0,
-                "audio_input_tokens": 0,
-                "audio_output_tokens": 0,
-                "cache_read_tokens": 0,
-                "cache_write_tokens": 0,
-                "reasoning_tokens": 0,
-            },
-            "model_counts": {},
-        }
-
-    session_types = [
-        ("agent", "agent_sessions_count", "agent_runs_count"),
-        ("team", "team_sessions_count", "team_runs_count"),
-        ("workflow", "workflow_sessions_count", "workflow_runs_count"),
-    ]
-
-    per_user: Dict[str, Dict[str, Any]] = {}
-
-    for session_type, sessions_count_key, runs_count_key in session_types:
-        sessions = sessions_data.get(session_type, []) or []
-
-        for session in sessions:
-            bucket_key = session.get("user_id") or ""
-            bucket = per_user.setdefault(bucket_key, _empty_metric_record())
-            bucket[sessions_count_key] += 1
-
-            runs = session.get("runs", []) or []
-            bucket[runs_count_key] += len(runs)
-            for run in runs:
-                if model_id := run.get("model"):
-                    model_provider = run.get("model_provider", "")
-                    key = f"{model_id}:{model_provider}"
-                    bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
-
-            session_metrics = (session.get("session_data") or {}).get("session_metrics", {}) or {}
-            for field in bucket["token_metrics"]:
-                bucket["token_metrics"][field] += session_metrics.get(field, 0)
-
-    current_time = int(time.time())
-    completed = date_to_process < datetime.now(timezone.utc).date()
-
-    records: List[dict] = []
-    for user_id, bucket in per_user.items():
-        model_metrics = []
-        for model, count in bucket["model_counts"].items():
-            model_id, model_provider = model.rsplit(":", 1)
-            model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
-
-        users_count = 0 if user_id == "" else 1
-        metric_id = f"{date_to_process.isoformat()}_{user_id}_daily"
-
-        records.append(
-            {
-                "id": metric_id,
-                "date": date_to_process,
-                "completed": completed,
-                "token_metrics": bucket["token_metrics"],
-                "model_metrics": model_metrics,
-                "created_at": current_time,
-                "updated_at": current_time,
-                "aggregation_period": "daily",
-                "user_id": user_id,
-                "users_count": users_count,
-                "agent_sessions_count": bucket["agent_sessions_count"],
-                "team_sessions_count": bucket["team_sessions_count"],
-                "workflow_sessions_count": bucket["workflow_sessions_count"],
-                "agent_runs_count": bucket["agent_runs_count"],
-                "team_runs_count": bucket["team_runs_count"],
-                "workflow_runs_count": bucket["workflow_runs_count"],
-            }
-        )
-
-    return records
-
-
-def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
-    """Return the list of dates to calculate metrics for.
-    Args:
-        starting_date (date): The starting date to calculate metrics for.
-    Returns:
-        list[date]: The list of dates to calculate metrics for.
-    """
-    today = datetime.now(timezone.utc).date()
-    days_diff = (today - starting_date).days + 1
-    if days_diff <= 0:
-        return []
-    return [starting_date + timedelta(days=x) for x in range(days_diff)]
-
-
-def fetch_all_sessions_data(
-    sessions: List[Dict[str, Any]], dates_to_process: list[date], start_timestamp: int
-) -> Optional[dict]:
-    """Return all session data for the given dates, for all session types.
-    Args:
-        sessions: List of session data dictionaries
-        dates_to_process (list[date]): The dates to fetch session data for.
-        start_timestamp: The start timestamp for the range
-    Returns:
-        dict: A dictionary with dates as keys and session data as values, for all session types.
-    Example:
-    {
-        "2000-01-01": {
-            "agent": [<session1>, <session2>, ...],
-            "team": [...],
-            "workflow": [...],
-        }
-    }
-    """
-    if not dates_to_process:
-        return None
-    all_sessions_data: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
-        date_to_process.isoformat(): {"agent": [], "team": [], "workflow": []} for date_to_process in dates_to_process
-    }
-    for session in sessions:
-        session_date = (
-            datetime.fromtimestamp(session.get("created_at", start_timestamp), tz=timezone.utc).date().isoformat()
-        )
-        if session_date in all_sessions_data:
-            all_sessions_data[session_date][session["session_type"]].append(session)
-    return all_sessions_data
-
-
-def fetch_all_sessions_data_by_type(
-    dynamodb_client,
-    table_name: str,
-    session_type: str,
-    user_id: Optional[str] = None,
-    component_id: Optional[str] = None,
-    session_name: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    """Fetch all sessions data from DynamoDB table using GSI for session_type."""
-    items = []
-
-    try:
-        # Build filter expression for additional filters
-        filter_expression = None
-        expression_attribute_names = {}
-        expression_attribute_values = {":session_type": {"S": session_type}}
-
-        if user_id is not None:
-            filter_expression = "#user_id = :user_id"
-            expression_attribute_names["#user_id"] = "user_id"
-            expression_attribute_values[":user_id"] = {"S": user_id}
-
-        if component_id:
-            component_filter = "#component_id = :component_id"
-            expression_attribute_names["#component_id"] = "component_id"
-            expression_attribute_values[":component_id"] = {"S": component_id}
-
-            if filter_expression:
-                filter_expression += f" AND {component_filter}"
-            else:
-                filter_expression = component_filter
-
-        # Use GSI query for session_type (more efficient than scan)
-        query_kwargs = {
-            "TableName": table_name,
-            "IndexName": "session_type-created_at-index",
-            "KeyConditionExpression": "session_type = :session_type",
-            "ExpressionAttributeValues": expression_attribute_values,
-        }
-
-        if filter_expression:
-            query_kwargs["FilterExpression"] = filter_expression
-
-        if expression_attribute_names:
-            query_kwargs["ExpressionAttributeNames"] = expression_attribute_names
-
-        response = dynamodb_client.query(**query_kwargs)
-        items.extend(response.get("Items", []))
-
-        # Handle pagination
-        while "LastEvaluatedKey" in response:
-            query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-            response = dynamodb_client.query(**query_kwargs)
-            items.extend(response.get("Items", []))
-
-    except Exception as e:
-        log_error(f"Failed to fetch sessions: {str(e)}")
-
-    return items
-
-
-def bulk_upsert_metrics(dynamodb_client, table_name: str, metrics_data: List[Dict[str, Any]]) -> None:
-    """Bulk upsert metrics data to DynamoDB."""
-    try:
-        # DynamoDB batch write has a limit of 25 items
-        batch_size = 25
-
-        for i in range(0, len(metrics_data), batch_size):
-            batch = metrics_data[i : i + batch_size]
-
-            request_items: Dict[str, List[Dict[str, Any]]] = {table_name: []}
-
-            for metric in batch:
-                request_items[table_name].append({"PutRequest": {"Item": metric}})
-
-            dynamodb_client.batch_write_item(RequestItems=request_items)
-
-    except Exception as e:
-        log_error(f"Failed to bulk upsert metrics: {str(e)}")
-
-
 def deserialize_metrics_date(value: Any) -> Any:
     """Return a metrics record's stored day as a ``date``, the shape every other adapter returns.
 
@@ -597,7 +411,196 @@ def deserialize_metrics_date(value: Any) -> Any:
     return value
 
 
+# -- Component metrics utils --
+
+
+def component_metrics_record_id(row: Dict[str, Any]) -> str:
+    """Return the id a component metrics row is stored under beside its date, from its user, component, parent and
+    root."""
+    return generate_id(
+        json.dumps(
+            [
+                row["user_id"],
+                row["component_type"],
+                row["component_id"],
+                row["parent_component_id"],
+                row["root_component_id"],
+            ]
+        )
+    )
+
+
+def serialize_component_metrics_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Serialize a component metrics row to a DynamoDB item.
+
+    Args:
+        row: The component metrics row, as calculate_date_component_metrics builds it.
+
+    Returns:
+        A DynamoDB-ready dict. The day is written as an ISO string.
+    """
+    data = dict(row)
+    data["id"] = component_metrics_record_id(row)
+    data["date"] = row["date"].isoformat()
+    return serialize_to_dynamo_item(data)
+
+
+def user_metrics_period_user_id(aggregation_period: str, user_id: str) -> str:
+    """Return the hash key of the user metrics rows of a period and user: the period alone for the everyone rows."""
+    return f"{aggregation_period}#{user_id}" if user_id else aggregation_period
+
+
+def user_metrics_key(aggregation_period: str, row_date: date, user_id: str) -> Dict[str, Any]:
+    """Return the key of a user metrics row: its period and user, and its day."""
+    return {
+        "period_user_id": {"S": user_metrics_period_user_id(aggregation_period, user_id)},
+        "date": {"S": row_date.isoformat()},
+    }
+
+
+def serialize_user_metrics_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Serialize a user metrics row to a DynamoDB item, with its key and its day as an ISO string."""
+    item = serialize_to_dynamo_item({**row, "date": row["date"].isoformat()})
+    item.update(user_metrics_key(row["aggregation_period"], row["date"], row["user_id"]))
+    return item
+
+
+def deserialize_metrics_row(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Deserialize a DynamoDB item to a component metrics or user metrics row.
+
+    Args:
+        item: The DynamoDB item.
+
+    Returns:
+        The row, with the day as a date.
+    """
+    row = deserialize_from_dynamodb_item(item)
+    row["date"] = deserialize_metrics_date(row.get("date"))
+    return row
+
+
+def deserialize_metrics_refresh_row(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Deserialize a DynamoDB item of the metrics refreshes table to its row, the columns it keeps no attribute for
+    None."""
+    record = deserialize_from_dynamodb_item(item)
+    columns = ["id", "locked_by", "locked_at", "started_at", "finished_at", "status", "error", "fingerprint"]
+    return {column: record.get(column) for column in columns}
+
+
+def heartbeat_metrics_refresh_update(table_name: str, worker_id: str) -> Dict[str, Any]:
+    """Build the update that refreshes locked_at for this worker's metrics refresh, on the condition that it holds it."""
+    return {
+        "TableName": table_name,
+        "Key": {"id": {"S": METRICS_REFRESH_ID}},
+        "UpdateExpression": "SET #locked_at = :now",
+        "ConditionExpression": "#locked_by = :worker_id",
+        "ExpressionAttributeNames": {"#locked_by": "locked_by", "#locked_at": "locked_at"},
+        "ExpressionAttributeValues": {":worker_id": {"S": worker_id}, ":now": {"N": str(int(time.time()))}},
+    }
+
+
+def _reopen_metrics_row(dynamodb_client, table_name: str, row_date: date, aggregation_period: str) -> None:
+    """Reopen a day's or a month's everyone row of the user metrics table, putting an empty open row when it has
+    none."""
+    # Moved in the write, so two writers reopening the same row never give it the same version
+    reopen_kwargs: Dict[str, Any] = {
+        "TableName": table_name,
+        "Key": user_metrics_key(aggregation_period, row_date, ""),
+        "UpdateExpression": "SET #completed = :false ADD #version :one",
+        "ExpressionAttributeNames": {"#completed": "completed", "#version": "version"},
+        "ExpressionAttributeValues": {":false": {"BOOL": False}, ":one": {"N": "1"}},
+    }
+    try:
+        dynamodb_client.update_item(**reopen_kwargs, ConditionExpression="attribute_exists(period_user_id)")
+    except dynamodb_client.exceptions.ConditionalCheckFailedException:
+        try:
+            dynamodb_client.put_item(
+                TableName=table_name,
+                Item=serialize_user_metrics_row(
+                    {**build_user_metrics_row([], aggregation_period, row_date, completed=False), "version": 1}
+                ),
+                ConditionExpression="attribute_not_exists(period_user_id)",
+            )
+        except dynamodb_client.exceptions.ConditionalCheckFailedException:
+            dynamodb_client.update_item(**reopen_kwargs)
+
+
+def reopen_metrics_day(dynamodb_client, table_name: str, day: date) -> None:
+    """Reopen a day's everyone row of the user metrics table, so the next refresh rebuilds the day.
+
+    Args:
+        dynamodb_client: DynamoDB client
+        table_name: The user metrics table.
+        day: The day, from metrics_day_to_reopen.
+    """
+    _reopen_metrics_row(dynamodb_client, table_name, day, "daily")
+
+
+def reopen_metrics_month(dynamodb_client, table_name: str, month_start: date) -> None:
+    """Reopen a month's everyone row of the user metrics table, so the next refresh rebuilds the month.
+
+    Args:
+        dynamodb_client: DynamoDB client
+        table_name: The user metrics table.
+        month_start: The first day of the month.
+    """
+    _reopen_metrics_row(dynamodb_client, table_name, month_start, "monthly")
+
+
+def reopen_metrics_days_from(dynamodb_client, table_name: str, starting_date: date) -> None:
+    """Reopen every day's everyone row of the user metrics table from the given date on, as a write reopens a day,
+    so the next calculation rebuilds them.
+
+    Args:
+        dynamodb_client: DynamoDB client
+        table_name: The user metrics table.
+        starting_date: The first day to reopen.
+    """
+    items = query_all_items(
+        dynamodb_client,
+        {
+            "TableName": table_name,
+            "KeyConditionExpression": "#period_user_id = :period AND #date >= :start_date",
+            "ExpressionAttributeNames": {"#period_user_id": "period_user_id", "#date": "date"},
+            "ExpressionAttributeValues": {":period": {"S": "daily"}, ":start_date": {"S": starting_date.isoformat()}},
+            "ProjectionExpression": "#period_user_id, #date",
+            "ConsistentRead": True,
+        },
+    )
+    for item in items:
+        dynamodb_client.update_item(
+            TableName=table_name,
+            Key=item,
+            UpdateExpression="SET #completed = :false ADD #version :one",
+            ExpressionAttributeNames={"#completed": "completed", "#version": "version"},
+            ExpressionAttributeValues={":false": {"BOOL": False}, ":one": {"N": "1"}},
+        )
+
+
 # -- Query utils --
+
+
+def query_all_items(dynamodb_client, query_kwargs: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Run a DynamoDB query through every page of its results.
+
+    Args:
+        dynamodb_client: DynamoDB client
+        query_kwargs: The query arguments
+
+    Returns:
+        List of DynamoDB items
+    """
+    items = []
+    response = dynamodb_client.query(**query_kwargs)
+    items.extend(response.get("Items", []))
+
+    # Handle pagination
+    while "LastEvaluatedKey" in response:
+        query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        response = dynamodb_client.query(**query_kwargs)
+        items.extend(response.get("Items", []))
+
+    return items
 
 
 def build_query_filter_expression(filters: Dict[str, Any]) -> tuple[Optional[str], Dict[str, str], Dict[str, Any]]:

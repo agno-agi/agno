@@ -2,21 +2,24 @@
 
 import hashlib
 import json
-import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import date
 from typing import Any, Dict, List, Optional
 
 from agno.db.firestore.schemas import get_collection_indexes
-from agno.db.utils import get_sort_value
+from agno.db.utils import build_user_metrics_row, get_sort_value, metric_record_day
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
-    from google.cloud.firestore import Client  # type: ignore[import-untyped]
+    from google.api_core.exceptions import AlreadyExists, NotFound  # type: ignore[import-untyped]
+    from google.cloud.firestore import Client, FieldFilter, Increment  # type: ignore[import-untyped]
     from google.cloud.firestore_admin_v1 import FirestoreAdminClient, Index  # type: ignore[import-untyped]
 except ImportError:
     raise ImportError(
         "`google-cloud-firestore` not installed. Please install it using `pip install google-cloud-firestore`"
     )
+
+# Firestore takes 30 values at most in one `in` filter
+METRICS_IN_LIST_LIMIT = 30
 
 
 # -- DB util methods --
@@ -190,182 +193,109 @@ def apply_pagination_to_records(
 # -- Metrics util methods --
 
 
-def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
-    """Calculate metrics for the given single date, bucketed per ``user_id``.
-
-    Args:
-        date_to_process (date): The date to calculate metrics for.
-        sessions_data (dict): The sessions data to calculate metrics for.
-
-    Returns:
-        The list of per-user metrics records. Sessions without a ``user_id`` bucket under "".
-    """
-
-    def _empty_metric_record() -> Dict[str, Any]:
-        return {
-            "users_count": 0,
-            "agent_sessions_count": 0,
-            "team_sessions_count": 0,
-            "workflow_sessions_count": 0,
-            "agent_runs_count": 0,
-            "team_runs_count": 0,
-            "workflow_runs_count": 0,
-            "token_metrics": {
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "total_tokens": 0,
-                "audio_total_tokens": 0,
-                "audio_input_tokens": 0,
-                "audio_output_tokens": 0,
-                "cache_read_tokens": 0,
-                "cache_write_tokens": 0,
-                "reasoning_tokens": 0,
-            },
-            "model_counts": {},
-        }
-
-    session_types = [
-        ("agent", "agent_sessions_count", "agent_runs_count"),
-        ("team", "team_sessions_count", "team_runs_count"),
-        ("workflow", "workflow_sessions_count", "workflow_runs_count"),
-    ]
-
-    per_user: Dict[str, Dict[str, Any]] = {}
-
-    for session_type, sessions_count_key, runs_count_key in session_types:
-        sessions = sessions_data.get(session_type, []) or []
-
-        for session in sessions:
-            bucket_key = session.get("user_id") or ""
-            bucket = per_user.setdefault(bucket_key, _empty_metric_record())
-            bucket[sessions_count_key] += 1
-
-            runs = session.get("runs", []) or []
-            if isinstance(runs, str):
-                runs = json.loads(runs)
-            bucket[runs_count_key] += len(runs)
-            for run in runs:
-                if model_id := run.get("model"):
-                    model_provider = run.get("model_provider", "")
-                    key = f"{model_id}:{model_provider}"
-                    bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
-
-            session_data = session.get("session_data", {}) or {}
-            if isinstance(session_data, str):
-                session_data = json.loads(session_data)
-            session_metrics = session_data.get("session_metrics", {}) or {}
-            for field in bucket["token_metrics"]:
-                bucket["token_metrics"][field] += session_metrics.get(field, 0)
-
-    current_time = int(time.time())
-    completed = date_to_process < datetime.now(timezone.utc).date()
-
-    records: List[dict] = []
-    for user_id, bucket in per_user.items():
-        model_metrics = []
-        for model, count in bucket["model_counts"].items():
-            model_id, model_provider = model.rsplit(":", 1)
-            model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
-
-        users_count = 0 if user_id == "" else 1
-        # Firestore document ids reject ``/``, ``.``, ``..`` and ``__..__``, so hash the owner
-        # segment: an IdP subject like ``google-oauth2/abc`` fails the write, which the upsert swallows.
-        user_segment = "shared" if user_id == "" else hashlib.sha256(user_id.encode("utf-8")).hexdigest()
-        metric_id = f"{date_to_process.isoformat()}_{user_segment}_daily"
-
-        records.append(
-            {
-                "id": metric_id,
-                "date": date_to_process,
-                "completed": completed,
-                "token_metrics": bucket["token_metrics"],
-                "model_metrics": model_metrics,
-                "created_at": current_time,
-                "updated_at": current_time,
-                "aggregation_period": "daily",
-                "user_id": user_id,
-                "users_count": users_count,
-                "agent_sessions_count": bucket["agent_sessions_count"],
-                "team_sessions_count": bucket["team_sessions_count"],
-                "workflow_sessions_count": bucket["workflow_sessions_count"],
-                "agent_runs_count": bucket["agent_runs_count"],
-                "team_runs_count": bucket["team_runs_count"],
-                "workflow_runs_count": bucket["workflow_runs_count"],
-            }
-        )
-
-    return records
+def component_metrics_record_id(record: Dict[str, Any]) -> str:
+    """The id of the document a row of the component metrics collection is stored under, one per day, owner,
+    component, parent and root."""
+    # Firestore document ids reject ``/``, ``.``, ``..`` and ``__..__``, so hash the owner, component, parent and root
+    key = json.dumps(
+        [
+            record["user_id"],
+            record["component_type"],
+            record["component_id"],
+            record["parent_component_id"],
+            record["root_component_id"],
+        ]
+    )
+    key_segment = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return f"{record['date'].isoformat()}_{key_segment}_{record['aggregation_period']}"
 
 
-def fetch_all_sessions_data(
-    sessions: List[Dict[str, Any]], dates_to_process: list[date], start_timestamp: int
-) -> Optional[dict]:
-    """Return all session data for the given dates, for all session types."""
-    if not dates_to_process:
-        return None
-
-    all_sessions_data: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
-        date_to_process.isoformat(): {"agent": [], "team": [], "workflow": []} for date_to_process in dates_to_process
-    }
-
-    for session in sessions:
-        session_date = (
-            datetime.fromtimestamp(session.get("created_at", start_timestamp), tz=timezone.utc).date().isoformat()
-        )
-        if session_date in all_sessions_data:
-            all_sessions_data[session_date][session["session_type"]].append(session)
-
-    return all_sessions_data
+def user_metrics_record_id(aggregation_period: str, row_date: date, user_id: str) -> str:
+    """The id of the document a row of the user metrics collection is stored under, one per period, day and user."""
+    user_segment = hashlib.sha256(user_id.encode("utf-8")).hexdigest()
+    return f"{row_date.isoformat()}_{user_segment}_{aggregation_period}"
 
 
-def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
-    """Return the list of dates to calculate metrics for."""
-    today = datetime.now(timezone.utc).date()
-    days_diff = (today - starting_date).days + 1
-    if days_diff <= 0:
-        return []
-    return [starting_date + timedelta(days=x) for x in range(days_diff)]
+def serialize_metrics_row(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a metrics row with its day as an ISO string, the way Firestore stores it."""
+    return {**record, "date": record["date"].isoformat()}
 
 
-def bulk_upsert_metrics(collection_ref, metrics_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Bulk upsert metrics into the database.
+def deserialize_metrics_row(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a stored metrics row with its day, stored as an ISO string, as a date."""
+    return {**record, "date": metric_record_day(record)}
 
-    Args:
-        collection_ref: The Firestore collection reference to upsert the metrics into.
-        metrics_records (List[Dict[str, Any]]): The list of metrics records to upsert.
 
-    Returns:
-        The list of upserted metrics records.
-    """
-    if not metrics_records:
-        return []
+def deserialize_metrics_refresh_row(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the stored document of the metrics refreshes collection as its row, the columns it keeps no field for
+    None."""
+    columns = ["id", "locked_by", "locked_at", "started_at", "finished_at", "status", "error", "fingerprint"]
+    return {column: record.get(column) for column in columns}
 
-    results = []
-    batch = collection_ref._client.batch()
 
-    batch_count = 0
-
-    for record in metrics_records:
-        record["date"] = record["date"].isoformat() if isinstance(record["date"], date) else record["date"]
+def _reopen_metrics_row(user_metrics_collection_ref, row_date: date, aggregation_period: str) -> None:
+    """Reopen a day's or a month's everyone row of the user metrics collection, creating an empty open row when it
+    has none."""
+    doc_ref = user_metrics_collection_ref.document(user_metrics_record_id(aggregation_period, row_date, ""))
+    try:
+        # Moved in the write, so two writers reopening the same row never give it the same version
+        doc_ref.update({"completed": False, "version": Increment(1)})
+    except NotFound:
         try:
-            # ``record["id"]`` is deterministic per (date, user_id), so re-runs update the same doc.
-            doc_id = record["id"]
-            doc_ref = collection_ref.document(doc_id)
-            batch.set(doc_ref, record, merge=True)
-            results.append(record)
-            batch_count += 1
+            doc_ref.create(
+                serialize_metrics_row(
+                    {**build_user_metrics_row([], aggregation_period, row_date, completed=False), "version": 1}
+                )
+            )
+        except AlreadyExists:
+            doc_ref.update({"completed": False, "version": Increment(1)})
 
-        except Exception as e:
-            log_error(f"Error preparing metrics record for batch: {str(e)}")
-            continue
 
+def reopen_metrics_day(user_metrics_collection_ref, day: date) -> None:
+    """Reopen a day's everyone row of the user metrics collection, so the next refresh rebuilds the day.
+
+    Args:
+        user_metrics_collection_ref: The user metrics collection.
+        day (date): The day, from metrics_day_to_reopen.
+    """
+    _reopen_metrics_row(user_metrics_collection_ref, day, "daily")
+
+
+def reopen_metrics_month(user_metrics_collection_ref, month_start: date) -> None:
+    """Reopen a month's everyone row of the user metrics collection, so the next refresh rebuilds the month.
+
+    Args:
+        user_metrics_collection_ref: The user metrics collection.
+        month_start (date): The first day of the month.
+    """
+    _reopen_metrics_row(user_metrics_collection_ref, month_start, "monthly")
+
+
+def reopen_metrics_days_from(client: Client, user_metrics_collection_ref, starting_date: date) -> None:
+    """Reopen every day's everyone row of the user metrics collection from the given date on, as a write reopens a
+    day, so the next calculation rebuilds them.
+
+    Args:
+        client (Client): The Firestore client.
+        user_metrics_collection_ref: The user metrics collection.
+        starting_date (date): The first day to reopen.
+    """
+    docs = (
+        user_metrics_collection_ref.where(filter=FieldFilter("aggregation_period", "==", "daily"))
+        .where(filter=FieldFilter("user_id", "==", ""))
+        .where(filter=FieldFilter("date", ">=", starting_date.isoformat()))
+        .select(["date"])
+        .stream()
+    )
+    batch = client.batch()
+    in_batch = 0
+    for doc in docs:
+        batch.update(doc.reference, {"completed": False, "version": Increment(1)})
+        in_batch += 1
         # Firestore batch limit is 500 operations
-        if batch_count % 500 == 0:
+        if in_batch >= 500:
             batch.commit()
-            batch = collection_ref._client.batch()
-
-    # Commit remaining operations
-    if batch_count % 500 != 0:
+            batch = client.batch()
+            in_batch = 0
+    if in_batch > 0:
         batch.commit()
-
-    return results

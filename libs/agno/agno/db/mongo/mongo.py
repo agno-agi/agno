@@ -2,8 +2,12 @@ import re
 import time
 from datetime import date, datetime, timedelta, timezone
 from importlib import metadata
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
+from itertools import islice
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union
 from uuid import uuid4
+
+from packaging import version as packaging_version
 
 try:
     from pymongo.errors import DuplicateKeyError
@@ -15,35 +19,78 @@ if TYPE_CHECKING:
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.mongo.utils import (
+    METRICS_IN_LIST_LIMIT,
     apply_pagination,
     apply_sorting,
-    bulk_upsert_metrics,
-    calculate_date_metrics,
+    build_component_metrics_legacy_runs_projection,
+    build_component_metrics_runs_projection,
+    build_metrics_by_owner_projection,
+    build_metrics_days_pipeline,
+    build_metrics_fingerprint_pipeline,
+    build_metrics_rows_filter,
+    build_metrics_rows_projection,
+    bulk_upsert_component_metrics,
+    bulk_upsert_user_metrics_rows,
     create_collection_indexes,
-    fetch_all_sessions_data,
-    get_dates_to_calculate_metrics_for,
+    deserialize_metrics_row,
+    reopen_metrics_day,
+    reopen_metrics_days_from,
+    reopen_metrics_month,
+    upsert_user_metrics_row,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
     HISTORY_SKIP_STATUSES,
+    METRICS_BATCH_SIZE,
+    METRICS_LOCK_SECONDS,
+    METRICS_REFRESH_ID,
+    METRICS_STOPPED_ERROR,
+    METRICS_TOKEN_DETAILS_FIELDS,
+    METRICS_TOKEN_FIELDS,
+    USER_METRICS_COUNT_COLUMNS,
+    add_metrics_month_totals,
+    build_metrics_by_owner_from_rows,
+    build_metrics_from_user_metrics,
     build_single_run_row,
+    build_user_metrics_month_rows,
+    build_user_metrics_rows,
+    calculate_date_component_metrics,
+    component_metrics_rows_to_write,
+    database_error_message,
     deserialize_run,
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
     drop_legacy_metrics,
     filter_context_runs,
+    get_metrics_legacy_runs,
+    get_metrics_reopen_session_ids,
+    get_metrics_runs,
+    get_months_to_calculate_metrics_for,
+    list_metrics_totals_models,
+    merge_metrics_totals,
     merge_runs_table_with_legacy_blob,
-    metrics_starting_date_from_days,
+    metrics_calculation_enabled,
+    metrics_day_completed,
+    metrics_day_to_reopen,
+    metrics_days_since_last_calculation,
+    metrics_full_months,
+    metrics_month_end,
+    metrics_nested_run_ids,
+    metrics_refresh_status,
+    metrics_versions,
+    resolve_metrics_fields,
+    total_metrics_rows,
+    user_metrics_rows_to_write,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
@@ -68,6 +115,9 @@ class MongoDb(BaseDb):
         runs_collection: Optional[str] = None,
         memory_collection: Optional[str] = None,
         metrics_collection: Optional[str] = None,
+        component_metrics_collection: Optional[str] = None,
+        user_metrics_collection: Optional[str] = None,
+        metrics_refreshes_collection: Optional[str] = None,
         eval_collection: Optional[str] = None,
         knowledge_collection: Optional[str] = None,
         traces_collection: Optional[str] = None,
@@ -88,6 +138,10 @@ class MongoDb(BaseDb):
             runs_collection (Optional[str]): Name of the collection to store runs (one document per run).
             memory_collection (Optional[str]): Name of the collection to store memories.
             metrics_collection (Optional[str]): Name of the collection to store metrics.
+            component_metrics_collection (Optional[str]): Name of the collection to store the metrics of each agent,
+                team and workflow.
+            user_metrics_collection (Optional[str]): Name of the collection to store the metrics of each user.
+            metrics_refreshes_collection (Optional[str]): Name of the collection to store the metrics refreshes.
             eval_collection (Optional[str]): Name of the collection to store evaluation runs.
             knowledge_collection (Optional[str]): Name of the collection to store knowledge documents.
             traces_collection (Optional[str]): Name of the collection to store traces.
@@ -112,6 +166,9 @@ class MongoDb(BaseDb):
             runs_table=runs_collection,
             memory_table=memory_collection,
             metrics_table=metrics_collection,
+            component_metrics_table=component_metrics_collection,
+            user_metrics_table=user_metrics_collection,
+            metrics_refreshes_table=metrics_refreshes_collection,
             eval_table=eval_collection,
             knowledge_table=knowledge_collection,
             traces_table=traces_collection,
@@ -120,6 +177,10 @@ class MongoDb(BaseDb):
             schedule_runs_table=schedule_runs_collection,
             learnings_table=learnings_collection,
         )
+        if metrics_collection is not None:
+            log_warning(
+                "metrics_collection is deprecated; use component_metrics_collection and user_metrics_collection."
+            )
 
         _client: Optional[MongoClient] = db_client
         if _client is None and db_url is not None:
@@ -137,6 +198,12 @@ class MongoDb(BaseDb):
         self.db_name: str = db_name if db_name is not None else "agno"
 
         self._database: Optional[Database] = None
+
+        # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute.
+        # stop_metrics_refresh_on_read sets it to infinity, so reads never calculate
+        self._metrics_refreshed_at: float = 0.0
+        # The days whose metrics a write could not reopen, retried by the next write
+        self._metrics_days_not_reopened: Set[date] = set()
 
     def close(self) -> None:
         """Close the MongoDB client connection.
@@ -172,6 +239,9 @@ class MongoDb(BaseDb):
             ("runs", self.runs_table_name),
             ("memories", self.memory_table_name),
             ("metrics", self.metrics_table_name),
+            ("component_metrics", self.component_metrics_table_name),
+            ("user_metrics", self.user_metrics_table_name),
+            ("metrics_refreshes", self.metrics_refreshes_table_name),
             ("evals", self.eval_table_name),
             ("knowledge", self.knowledge_table_name),
             ("schedules", self.schedules_table_name),
@@ -237,6 +307,33 @@ class MongoDb(BaseDb):
                     create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.metrics_collection
+
+        if table_type == "component_metrics":
+            if getattr(self, "component_metrics_collection", None) is None:
+                self.component_metrics_collection = self._get_or_create_collection(
+                    collection_name=self.component_metrics_table_name,
+                    collection_type="component_metrics",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.component_metrics_collection
+
+        if table_type == "user_metrics":
+            if getattr(self, "user_metrics_collection", None) is None:
+                self.user_metrics_collection = self._get_or_create_collection(
+                    collection_name=self.user_metrics_table_name,
+                    collection_type="user_metrics",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.user_metrics_collection
+
+        if table_type == "metrics_refreshes":
+            if getattr(self, "metrics_refreshes_collection", None) is None:
+                self.metrics_refreshes_collection = self._get_or_create_collection(
+                    collection_name=self.metrics_refreshes_table_name,
+                    collection_type="metrics_refreshes",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.metrics_refreshes_collection
 
         if table_type == "evals":
             if not hasattr(self, "eval_collection"):
@@ -506,11 +603,15 @@ class MongoDb(BaseDb):
 
             # Preserve the original run_index if the document already exists,
             # so reorders don't happen on status-only updates.
-            existing = runs_collection.find_one({"run_id": row["run_id"]}, {"run_index": 1})
+            existing = runs_collection.find_one({"run_id": row["run_id"]}, {"run_index": 1, "created_at": 1})
             if existing is not None and "run_index" in existing:
                 row["run_index"] = existing["run_index"]
+            # The stored created_at, which a resumed run keeps
+            if existing is not None and existing.get("created_at") is not None:
+                row["created_at"] = existing["created_at"]
 
             runs_collection.replace_one({"run_id": row["run_id"]}, row, upsert=True)
+            self._reopen_metrics_days([row["created_at"]])
         except Exception as e:
             log_error(f"Exception upserting run into runs collection: {str(e)}")
             raise e
@@ -989,7 +1090,10 @@ class MongoDb(BaseDb):
 
             session_dict = session.to_dict(include_runs=False)
 
-            existing = collection.find_one({"session_id": session_dict.get("session_id")}, {"user_id": 1, "runs": 1})
+            existing = collection.find_one(
+                {"session_id": session_dict.get("session_id")},
+                {"user_id": 1, "agent_id": 1, "team_id": 1, "workflow_id": 1, "runs": 1},
+            )
             if existing:
                 existing_uid = existing.get("user_id")
                 if existing_uid is not None and existing_uid != session_dict.get("user_id"):
@@ -1051,6 +1155,9 @@ class MongoDb(BaseDb):
             if existing and existing.get("runs") is not None:
                 record["runs"] = existing["runs"]
 
+            reopen_session_ids = get_metrics_reopen_session_ids(
+                [{**existing, "session_id": session.session_id}] if existing else [], [record]
+            )
             try:
                 result = collection.find_one_and_replace(
                     filter=upsert_filter,
@@ -1062,6 +1169,8 @@ class MongoDb(BaseDb):
                 return None
             if not result:
                 return None
+            if result["session_id"] in reopen_session_ids:
+                self._reopen_metrics_days([result.get("created_at")])
 
             # Attach the in-memory runs to the returned dict so callers see the full picture
             result["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
@@ -1118,12 +1227,16 @@ class MongoDb(BaseDb):
             # forward; only cleanup_legacy_runs_field() reclaims them. Dropping them here
             # would lose history for sessions not yet migrated to the runs collection.
             legacy_runs_by_id: Dict[str, Any] = {}
+            stored_sessions: Dict[str, Dict[str, Any]] = {}
             if sessions_by_id:
                 for doc in collection.find(
-                    {"session_id": {"$in": list(sessions_by_id.keys())}}, {"session_id": 1, "runs": 1}
+                    {"session_id": {"$in": list(sessions_by_id.keys())}},
+                    {"session_id": 1, "user_id": 1, "agent_id": 1, "team_id": 1, "workflow_id": 1, "runs": 1},
                 ):
+                    stored_sessions[doc["session_id"]] = doc
                     if doc.get("runs") is not None:
                         legacy_runs_by_id[doc["session_id"]] = doc["runs"]
+            records: List[Dict[str, Any]] = []
 
             for session in sessions:
                 if session is None:
@@ -1180,13 +1293,18 @@ class MongoDb(BaseDb):
                 if legacy_runs is not None:
                     record["runs"] = legacy_runs
 
+                records.append(record)
                 operations.append(
                     ReplaceOne(filter={"session_id": record["session_id"]}, replacement=record, upsert=True)
                 )
 
             if operations:
+                reopen_session_ids = get_metrics_reopen_session_ids(list(stored_sessions.values()), records)
                 # Execute bulk write
                 collection.bulk_write(operations)
+                self._reopen_metrics_days(
+                    [record["created_at"] for record in records if record["session_id"] in reopen_session_ids]
+                )
 
                 # Fetch the results
                 session_ids = [session.session_id for session in sessions if session and session.session_id]
@@ -1673,156 +1791,836 @@ class MongoDb(BaseDb):
             raise e
 
     # -- Metrics methods --
+    def _reopen_metrics_days(self, created_ats: Sequence[Optional[int]]) -> None:
+        """Reopen the metrics of each day a write changed, right after the write, so the next calculation rebuilds it.
 
-    def _get_all_sessions_for_metrics_calculation(
-        self, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
-        """Get all sessions of all types for metrics calculation."""
+        A failed reopen never fails the write itself, and the days it could not reopen are retried by the next write.
+
+        Args:
+            created_ats (Sequence[Optional[int]]): The stored created_at of each run or session the write changed.
+        """
+        days = sorted(
+            {day for created_at in created_ats if (day := metrics_day_to_reopen(created_at)) is not None}
+            | self._metrics_days_not_reopened
+        )
+        if not days:
+            return
         try:
-            collection = self._get_collection(table_type="sessions")
-            if collection is None:
-                return []
-            runs_collection = self._get_collection(table_type="runs", create_collection_if_not_found=True)
-
-            query = {}
-            if start_timestamp is not None:
-                query["created_at"] = {"$gte": start_timestamp}
-            if end_timestamp is not None:
-                if "created_at" in query:
-                    query["created_at"]["$lte"] = end_timestamp
-                else:
-                    query["created_at"] = {"$lte": end_timestamp}
-
-            projection = {
-                "session_id": 1,
-                "user_id": 1,
-                "session_data": 1,
-                "runs": 1,  # the legacy field — for un-migrated sessions
-                "created_at": 1,
-                "session_type": 1,
-            }
-
-            sessions = list(collection.find(query, projection))
-
-            # Attach lightweight run info (model + provider) from the runs collection.
-            # calculate_date_metrics only needs len(runs) and run["model"] / run["model_provider"].
-            if runs_collection is not None and sessions:
-                session_ids = [s["session_id"] for s in sessions]
-                runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
-                for doc in runs_collection.find(
-                    {"session_id": {"$in": session_ids}},
-                    {"session_id": 1, "run_data.model": 1, "run_data.model_provider": 1},
-                ):
-                    run_data = doc.get("run_data") or {}
-                    runs_by_session.setdefault(doc["session_id"], []).append(
-                        {"model": run_data.get("model"), "model_provider": run_data.get("model_provider")}
-                    )
-
-                for s in sessions:
-                    rb = runs_by_session.get(s["session_id"], [])
-                    if rb or not s.get("runs"):
-                        s["runs"] = rb
-
-            return sessions
-
-        except Exception as e:
-            log_error(f"Exception reading from sessions collection: {str(e)}")
-            return []
-
-    def _get_metrics_calculation_starting_date(self, collection: Collection) -> Optional[date]:
-        """Get the first date for which metrics calculation is needed."""
-        try:
-            # resume at the earliest incomplete day after the latest completed one, otherwise the day after
-            # that one (:func:`metrics_starting_date_from_days`): the dates are ISO strings, so both queries order
-            # lexicographically and the collection is never loaded whole
-            completed_record = collection.find_one({"completed": True}, sort=[("date", -1)])
-            latest_completed = completed_record["date"] if completed_record else None
-
-            incomplete_filter: Dict[str, Any] = {"completed": {"$ne": True}}
-            if latest_completed is not None:
-                incomplete_filter["date"] = {"$gt": latest_completed}
-            earliest_incomplete = collection.find_one(incomplete_filter, sort=[("date", 1)])
-
-            starting_date = metrics_starting_date_from_days(
-                datetime.strptime(latest_completed, "%Y-%m-%d").date() if latest_completed is not None else None,
-                datetime.strptime(earliest_incomplete["date"], "%Y-%m-%d").date()
-                if earliest_incomplete is not None
-                else None,
+            # Looked up only when a day reopens. Never created here: none exists when no day was calculated yet
+            if getattr(self, "user_metrics_collection", None) is None and not self.table_exists(
+                self.user_metrics_table_name
+            ):
+                self._metrics_days_not_reopened.clear()
+                return
+            user_metrics_collection = self._get_collection(
+                table_type="user_metrics", create_collection_if_not_found=True
             )
-            if starting_date is not None:
-                return starting_date
-
-            # No metrics records. Return the date of the first recorded session.
-            first_session_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
-            first_session_date = first_session_result[0][0]["created_at"] if first_session_result[0] else None  # type: ignore
-
-            if first_session_date is None:
-                return None
-
-            return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
-
+            if user_metrics_collection is None:
+                raise ValueError("User metrics collection was not provided on initialization")
+            for day in days:
+                reopen_metrics_day(user_metrics_collection, day)
+            self._metrics_days_not_reopened.difference_update(days)
         except Exception as e:
-            log_error(f"Exception getting metrics calculation starting date: {str(e)}")
+            self._metrics_days_not_reopened.update(days)
+            log_warning(
+                f"Could not reopen the metrics of {', '.join(str(day) for day in days)}: {database_error_message(e)}"
+            )
+
+    def _get_metrics_refresh_row(self, refreshes_collection: Collection) -> Tuple[Optional[Dict[str, Any]], int]:
+        """Get the document of the metrics refreshes collection, and the locked_at at or before which its lock is
+        stale, by the process clock."""
+        stale_lock_threshold = int(time.time()) - METRICS_LOCK_SECONDS
+        return refreshes_collection.find_one({"id": METRICS_REFRESH_ID}, {"_id": False}), stale_lock_threshold
+
+    def _claim_metrics_refresh(self, refreshes_collection: Collection, worker_id: str) -> Optional[Dict[str, Any]]:
+        """Claim the document of the metrics refreshes collection, so one process calculates metrics at a time.
+
+        Args:
+            refreshes_collection (Collection): The metrics refreshes collection.
+            worker_id (str): The id of this calculation, which heartbeats and releases the claim.
+
+        Returns:
+            Optional[Dict[str, Any]]: The claimed document, with when the last calculation finished and its
+                fingerprint. None when another process holds it.
+        """
+        now = int(time.time())
+        try:
+            # One update, so two processes never both find the document free. A held one fails the filter, so the
+            # upsert inserts a second document with its id and is refused with a duplicate key error
+            return refreshes_collection.find_one_and_update(
+                {
+                    "id": METRICS_REFRESH_ID,
+                    # A stale lock is taken over: the process that held it stopped
+                    "$or": [{"locked_by": None}, {"locked_at": {"$lte": now - METRICS_LOCK_SECONDS}}],
+                },
+                {
+                    "$set": {
+                        "locked_by": worker_id,
+                        "locked_at": now,
+                        "started_at": now,
+                        "status": "running",
+                        "error": None,
+                    },
+                    "$setOnInsert": {"finished_at": None, "fingerprint": None},
+                },
+                projection={"_id": False},
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+        except DuplicateKeyError:
             return None
 
-    def calculate_metrics(self) -> Optional[list[dict]]:
-        """Calculate metrics for all dates without complete metrics."""
-        try:
-            collection = self._get_collection(table_type="metrics", create_collection_if_not_found=True)
-            if collection is None:
-                return None
+    def _heartbeat_metrics_refresh(self, refreshes_collection: Collection, worker_id: str) -> bool:
+        """Refresh locked_at for this worker's metrics refresh. False when another process took it over."""
+        result = refreshes_collection.update_one(
+            {"id": METRICS_REFRESH_ID, "locked_by": worker_id}, {"$set": {"locked_at": int(time.time())}}
+        )
+        # Matched, not modified: a heartbeat in the second of the claim leaves locked_at as it is
+        return result.matched_count > 0
 
-            starting_date = self._get_metrics_calculation_starting_date(collection)
-            if starting_date is None:
-                log_info("No session data found. Won't calculate metrics.")
-                return None
-
-            dates_to_process = get_dates_to_calculate_metrics_for(starting_date)
-            if not dates_to_process:
-                log_info("Metrics already calculated for all relevant dates.")
-                return None
-
-            start_timestamp = int(
-                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+    def _release_metrics_refresh(
+        self,
+        refreshes_collection: Collection,
+        worker_id: str,
+        error: Optional[str] = None,
+        fingerprint: Optional[List[Any]] = None,
+        stopped: bool = False,
+    ) -> None:
+        """Release the document of the metrics refreshes collection: completed, with the fingerprint, without an
+        error, failed with one, and as the last completed refresh left it when the calculation stopped."""
+        values: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+        if stopped:
+            # The days it did not reach stay open for the next calculation; a first one that stopped has none to show
+            finished = {"$ne": [{"$ifNull": ["$finished_at", None]}, None]}
+            values.update(
+                status={"$cond": [finished, "completed", "failed"]},
+                error={"$cond": [finished, None, METRICS_STOPPED_ERROR]},
             )
-            end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
-                .replace(tzinfo=timezone.utc)
-                .timestamp()
-            )
+        elif error is None:
+            values.update(status="completed", error=None, finished_at=int(time.time()), fingerprint=fingerprint)
+        else:
+            values.update(status="failed", error=error)
+        refreshes_collection.update_one({"id": METRICS_REFRESH_ID, "locked_by": worker_id}, [{"$set": values}])
 
-            sessions = self._get_all_sessions_for_metrics_calculation(
-                start_timestamp=start_timestamp, end_timestamp=end_timestamp
-            )
-            all_sessions_data = fetch_all_sessions_data(
-                sessions=sessions, dates_to_process=dates_to_process, start_timestamp=start_timestamp
-            )
-            if not all_sessions_data:
-                log_info("No new session data found. Won't calculate metrics.")
+    def _get_metrics_fingerprint(
+        self, sessions_collection: Collection, runs_collection: Optional[Collection], yesterday: date
+    ) -> Optional[List[Any]]:
+        """Get the count and update times of the sessions and runs of yesterday and today. None while one of them was
+        updated in the current second, which a second update in that same second would leave unchanged."""
+        start_timestamp = int(datetime.combine(yesterday, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp())
+        current_time = int(time.time())
+        fingerprint: List[Any] = [yesterday.isoformat()]
+        for source_collection in [sessions_collection, runs_collection]:
+            if source_collection is None:
+                continue
+            result = list(source_collection.aggregate(build_metrics_fingerprint_pipeline(start_timestamp)))
+            count = result[0]["count"] if result else 0
+            total_updated_at = result[0]["total_updated_at"] if result else None
+            latest_updated_at = result[0]["latest_updated_at"] if result else None
+            if latest_updated_at is not None and latest_updated_at >= current_time:
                 return None
+            fingerprint.extend([count, int(total_updated_at or 0)])
+        return fingerprint
 
-            results = []
-            metrics_records = []
+    def _get_metrics_dates_to_calculate(
+        self,
+        user_metrics_collection: Collection,
+        sessions_collection: Collection,
+        runs_collection: Optional[Collection],
+        refresh_row: Dict[str, Any],
+        rebuild_from: Optional[date] = None,
+    ) -> Tuple[List[date], Optional[List[Any]]]:
+        """Get the days whose metrics a calculation rebuilds, and the fingerprint of yesterday and today.
 
-            for date_to_process in dates_to_process:
-                date_key = date_to_process.isoformat()
-                sessions_for_date = all_sessions_data.get(date_key, {})
+        Args:
+            user_metrics_collection (Collection): The user metrics collection.
+            sessions_collection (Collection): The sessions collection.
+            runs_collection (Optional[Collection]): The runs collection.
+            refresh_row (Dict[str, Any]): The document of the metrics refreshes collection, from
+                _claim_metrics_refresh.
+            rebuild_from (Optional[date]): The first day of a rebuild.
 
-                # Skip dates with no sessions
-                if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
+        Returns:
+            Tuple[List[date], Optional[List[Any]]]: The days, oldest first, and the fingerprint to keep on the document
+                of the metrics refreshes collection.
+        """
+        today = datetime.now(timezone.utc).date()
+        yesterday = today - timedelta(days=1)
+        dates_to_process: Set[date] = set()
+        fingerprint = self._get_metrics_fingerprint(sessions_collection, runs_collection, yesterday)
+        first_calculation = refresh_row["finished_at"] is None
+        # Yesterday and today, when their sessions or runs changed since the last calculation
+        if first_calculation or fingerprint is None or fingerprint != refresh_row["fingerprint"]:
+            dates_to_process.update([yesterday, today])
+
+        # Every earlier day still open: not yet completed, or reopened by a write since
+        dates_to_process.update(
+            deserialize_metrics_row(document)["date"]
+            for document in user_metrics_collection.find(
+                {
+                    "aggregation_period": "daily",
+                    "user_id": "",
+                    "completed": False,
+                    "date": {"$lt": yesterday.isoformat()},
+                },
+                {"_id": False, "date": 1},
+            )
+        )
+        # Every earlier day from the day before the last calculation finished, whose writes reopened nothing while it
+        # was yesterday or today
+        if not first_calculation:
+            dates_to_process.update(metrics_days_since_last_calculation(refresh_row["finished_at"], yesterday))
+
+        # Until a first calculation has finished, every day with a session or a run not yet completed; with
+        # rebuild_from, every day with one from that date on. Only days with data, so one session dated long ago never
+        # builds every empty day since
+        if first_calculation or rebuild_from is not None:
+            completed_days: Set[date] = set()
+            if first_calculation:
+                completed_days = {
+                    deserialize_metrics_row(document)["date"]
+                    for document in user_metrics_collection.find(
+                        {"aggregation_period": "daily", "user_id": "", "completed": True}, {"_id": False, "date": 1}
+                    )
+                }
+            for source_collection in [sessions_collection, runs_collection]:
+                if source_collection is None:
                     continue
+                for result in source_collection.aggregate(build_metrics_days_pipeline()):
+                    data_date = date(1970, 1, 1) + timedelta(days=int(result["_id"]))
+                    # A rebuild takes every day with data from its first day, completed or not
+                    rebuilt = rebuild_from is not None and data_date >= rebuild_from
+                    if data_date <= today and (rebuilt or (first_calculation and data_date not in completed_days)):
+                        dates_to_process.add(data_date)
 
-                # One record per distinct user_id, plus an empty-string bucket for unowned sessions
-                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
+        return sorted(dates_to_process), fingerprint
 
-            if metrics_records:
-                results = bulk_upsert_metrics(collection, metrics_records)
+    def _get_open_metrics_months(self, user_metrics_collection: Collection) -> List[date]:
+        """Get the first day of every month before the current one whose month row is still open: not completed yet,
+        or reopened by a day a calculation rebuilt before it stopped."""
+        current_month = datetime.now(timezone.utc).date().replace(day=1)
+        return [
+            deserialize_metrics_row(document)["date"]
+            for document in user_metrics_collection.find(
+                {
+                    "aggregation_period": "monthly",
+                    "user_id": "",
+                    "completed": False,
+                    "date": {"$lt": current_month.isoformat()},
+                },
+                {"_id": False, "date": 1},
+            )
+        ]
 
-            return results
+    def _get_metrics_legacy_runs(
+        self,
+        sessions_collection: Collection,
+        runs_collection: Optional[Collection],
+        start_timestamp: int,
+        end_timestamp: int,
+    ) -> Tuple[Dict[date, List[Dict[str, Any]]], Dict[str, Dict[str, Any]]]:
+        """Get the runs not yet migrated out of the sessions' legacy runs field, created in the given time range.
+
+        Sessions are read a batch at a time, and the legacy runs of each batch created in the range are checked
+        against the runs collection before the next batch is read.
+
+        Args:
+            sessions_collection (Collection): The sessions collection.
+            runs_collection (Optional[Collection]): The runs collection. A run it also holds is read from there.
+            start_timestamp (int): The start of the range, included.
+            end_timestamp (int): The end of the range, not included.
+
+        Returns:
+            Tuple[Dict[date, List[Dict[str, Any]]], Dict[str, Dict[str, Any]]]: The legacy runs by the UTC day they
+                were created on, and by their id.
+        """
+        cursor = sessions_collection.find(
+            {
+                # A session holds runs created after it started and before it was last written
+                "created_at": {"$lt": end_timestamp},
+                "runs": {"$ne": None},
+                "$or": [
+                    {"updated_at": {"$gte": start_timestamp}},
+                    {"updated_at": None, "created_at": {"$gte": start_timestamp}},
+                ],
+            },
+            build_component_metrics_legacy_runs_projection(),
+        ).batch_size(METRICS_BATCH_SIZE)
+        legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
+        legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
+        while True:
+            sessions = list(islice(cursor, METRICS_BATCH_SIZE))
+            if not sessions:
+                break
+            legacy_runs = [
+                legacy_run
+                for legacy_run in get_metrics_runs(get_metrics_legacy_runs(sessions))
+                if start_timestamp <= (legacy_run["created_at"] or 0) < end_timestamp
+            ]
+            # The runs collection wins on a run in both, as merge_runs_table_with_legacy_blob does
+            migrated_run_ids: Set[str] = set()
+            if runs_collection is not None:
+                legacy_run_ids = [legacy_run["run_id"] for legacy_run in legacy_runs]
+                for start in range(0, len(legacy_run_ids), METRICS_IN_LIST_LIMIT):
+                    migrated_run_ids.update(
+                        document["run_id"]
+                        for document in runs_collection.find(
+                            {"run_id": {"$in": legacy_run_ids[start : start + METRICS_IN_LIST_LIMIT]}},
+                            {"run_id": 1, "_id": False},
+                        )
+                    )
+            for legacy_run in legacy_runs:
+                if legacy_run["run_id"] in migrated_run_ids:
+                    continue
+                legacy_run_day = datetime.fromtimestamp(legacy_run["created_at"], tz=timezone.utc).date()
+                legacy_runs_by_day.setdefault(legacy_run_day, []).append(legacy_run)
+                legacy_runs_by_id[legacy_run["run_id"]] = legacy_run
+        return legacy_runs_by_day, legacy_runs_by_id
+
+    def _get_metrics_parent_runs(self, runs_collection: Collection, parent_run_ids: List[str]) -> List[Dict[str, Any]]:
+        """Get the stored runs that started the given runs, and the runs that started those, up to the whole run."""
+        parent_runs: List[Dict[str, Any]] = []
+        seen_run_ids: Set[str] = set()
+        while parent_run_ids:
+            seen_run_ids.update(parent_run_ids)
+            for start in range(0, len(parent_run_ids), METRICS_IN_LIST_LIMIT):
+                parent_runs.extend(
+                    get_metrics_runs(
+                        list(
+                            runs_collection.find(
+                                {"run_id": {"$in": parent_run_ids[start : start + METRICS_IN_LIST_LIMIT]}},
+                                {
+                                    "_id": False,
+                                    "run_id": 1,
+                                    "run_type": 1,
+                                    "agent_id": 1,
+                                    "team_id": 1,
+                                    "workflow_id": 1,
+                                    "parent_run_id": 1,
+                                    "run_data.called_from_run_id": 1,
+                                },
+                            )
+                        )
+                    )
+                )
+            parent_run_ids = sorted(
+                {run["parent_run_id"] for run in parent_runs if run.get("parent_run_id")} - seen_run_ids
+            )
+        return parent_runs
+
+    def _write_user_metrics_rows(
+        self,
+        user_metrics_collection: Collection,
+        user_metrics_rows: List[Dict[str, Any]],
+        rows_changed: bool,
+        read_version: Optional[int],
+    ) -> None:
+        """Write a period's rows of the user metrics collection, from build_user_metrics_rows: the user rows, then
+        the everyone row, which is completed only while it still has the version read before the period's rows."""
+        period, period_date = user_metrics_rows[0]["aggregation_period"], user_metrics_rows[0]["date"].isoformat()
+        stored_rows = [
+            deserialize_metrics_row(document)
+            for document in user_metrics_collection.find(
+                {"aggregation_period": period, "date": period_date}, {"_id": False}
+            )
+        ]
+        everyone_row, changed_rows, stale_user_ids = user_metrics_rows_to_write(
+            user_metrics_rows, stored_rows, rows_changed
+        )
+        for start in range(0, len(stale_user_ids), METRICS_IN_LIST_LIMIT):
+            user_metrics_collection.delete_many(
+                {
+                    "aggregation_period": period,
+                    "date": period_date,
+                    "user_id": {"$in": stale_user_ids[start : start + METRICS_IN_LIST_LIMIT]},
+                }
+            )
+        bulk_upsert_user_metrics_rows(user_metrics_collection, changed_rows)
+        if everyone_row is not None:
+            upsert_user_metrics_row(user_metrics_collection, everyone_row, read_version)
+
+    def _calculate_date_metrics(
+        self,
+        collection: Collection,
+        user_metrics_collection: Collection,
+        sessions_collection: Collection,
+        runs_collection: Optional[Collection],
+        date_to_process: date,
+        legacy_runs: List[Dict[str, Any]],
+        legacy_runs_by_id: Dict[str, Dict[str, Any]],
+        refreshes_collection: Collection,
+        worker_id: str,
+        should_stop: Optional[Callable[[], bool]] = None,
+    ) -> bool:
+        """Rebuild one day's component and user metrics rows. False when the refresh was taken over or stopped."""
+        start_timestamp = int(
+            datetime.combine(date_to_process, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+        )
+        end_timestamp = int(
+            datetime.combine(date_to_process + timedelta(days=1), datetime.min.time())
+            .replace(tzinfo=timezone.utc)
+            .timestamp()
+        )
+        date_key = date_to_process.isoformat()
+        # Read before the day's runs, so a run written while they are read moves it
+        stored_user_metrics_row = user_metrics_collection.find_one(
+            {"aggregation_period": "daily", "date": date_key, "user_id": ""}, {"_id": False, "version": 1}
+        )
+        read_version = stored_user_metrics_row["version"] if stored_user_metrics_row is not None else None
+
+        sessions = list(
+            sessions_collection.find(
+                {"created_at": {"$gte": start_timestamp, "$lt": end_timestamp}},
+                {
+                    "_id": False,
+                    "session_id": 1,
+                    "session_type": 1,
+                    "user_id": 1,
+                    "agent_id": 1,
+                    "team_id": 1,
+                    "workflow_id": 1,
+                    "metadata": 1,
+                },
+            )
+        )
+
+        runs: List[Dict[str, Any]] = []
+        stored_run_ids: Set[str] = set()
+        if runs_collection is not None:
+            # Read a batch at a time, so a day of many runs is never read in one request
+            runs_cursor = runs_collection.find(
+                {
+                    "created_at": {"$gte": start_timestamp, "$lt": end_timestamp},
+                    # A run copied into a forked session repeats a run counted in the session it was made in
+                    "run_data.forked_from_session_id": None,
+                },
+                build_component_metrics_runs_projection(),
+            ).batch_size(METRICS_BATCH_SIZE)
+            while True:
+                batch = list(islice(runs_cursor, METRICS_BATCH_SIZE))
+                if not batch:
+                    break
+                # Checked between batches too, so a stop never waits for the whole of a large day
+                if should_stop is not None and should_stop():
+                    return False
+                runs.extend(get_metrics_runs(batch))
+        # A legacy run migrated to the runs collection since the legacy runs were read is among the day's runs, and
+        # is counted from there
+        day_run_ids = {run["run_id"] for run in runs}
+        runs.extend(run for run in legacy_runs if run["run_id"] not in day_run_ids)
+        nested_run_ids = metrics_nested_run_ids(runs)
+
+        # A run started by a run of another day, such as a member run after midnight, names that run's
+        # agent, team or workflow as its parent, read from the legacy runs of the rebuild or the runs collection
+        day_run_ids = {run["run_id"] for run in runs if run.get("run_id")}
+        parent_run_ids = sorted({run["parent_run_id"] for run in runs if run.get("parent_run_id")} - day_run_ids)
+        parent_runs = [legacy_runs_by_id[run_id] for run_id in parent_run_ids if run_id in legacy_runs_by_id]
+        parent_run_ids = [run_id for run_id in parent_run_ids if run_id not in legacy_runs_by_id]
+
+        if runs_collection is not None:
+            # A nested run also stored as a run of its own is counted from that document, whatever day it is on
+            run_ids = sorted(nested_run_ids)
+            for start in range(0, len(run_ids), METRICS_IN_LIST_LIMIT):
+                stored_run_ids.update(
+                    document["run_id"]
+                    for document in runs_collection.find(
+                        {"run_id": {"$in": run_ids[start : start + METRICS_IN_LIST_LIMIT]}},
+                        # Only run_id, so the run_id index answers the query without reading the documents
+                        {"run_id": 1, "_id": False},
+                    )
+                )
+
+            parent_runs.extend(self._get_metrics_parent_runs(runs_collection, parent_run_ids))
+        # A nested run also stored as a legacy run of its own is counted from that run, whatever day it is on
+        stored_run_ids.update(run_id for run_id in nested_run_ids if run_id in legacy_runs_by_id)
+
+        records = calculate_date_component_metrics(date_to_process, sessions, runs, stored_run_ids, parent_runs)
+        stored_rows = [
+            deserialize_metrics_row(document)
+            for document in collection.find({"aggregation_period": "daily", "date": date_key})
+        ]
+
+        # Checked before the day's rows are written, so a process whose lock went stale never overwrites the rows of
+        # the process that took the refresh over
+        if not self._heartbeat_metrics_refresh(refreshes_collection, worker_id):
+            return False
+        changed_rows, stale_keys = component_metrics_rows_to_write(records, stored_rows)
+        rows_changed = bool(changed_rows or stale_keys)
+        expected_version = read_version
+        # Rows written in more than one request move the everyone row's version first, so a request that fails later
+        # never leaves rows changed under the version read before them
+        if rows_changed and read_version is not None:
+            user_metrics_collection.update_one(
+                {"aggregation_period": "daily", "date": date_key, "user_id": ""}, {"$inc": {"version": 1}}
+            )
+            expected_version = read_version + 1
+        stored_ids = {
+            (
+                row["user_id"],
+                row["component_type"],
+                row["component_id"],
+                row["parent_component_id"],
+                row["root_component_id"],
+            ): row["_id"]
+            for row in stored_rows
+        }
+        stale_ids = [stored_ids[stale_key] for stale_key in stale_keys]
+        for start in range(0, len(stale_ids), METRICS_IN_LIST_LIMIT):
+            collection.delete_many({"_id": {"$in": stale_ids[start : start + METRICS_IN_LIST_LIMIT]}})
+        bulk_upsert_component_metrics(collection, changed_rows)
+
+        # Written last, so its version never moves without the rows it tells of
+        self._write_user_metrics_rows(
+            user_metrics_collection,
+            build_user_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
+            rows_changed=rows_changed,
+            read_version=expected_version,
+        )
+        if rows_changed:
+            # Reopened with the day, so a calculation that stops before its months leaves the month for the next
+            reopen_metrics_month(user_metrics_collection, date_to_process.replace(day=1))
+        return True
+
+    def _calculate_month_metrics(
+        self,
+        collection: Collection,
+        user_metrics_collection: Collection,
+        month_start: date,
+        refreshes_collection: Collection,
+        worker_id: str,
+    ) -> bool:
+        """Rebuild the month rows of the user metrics collection from the component metrics rows of the month's
+        days. False when another process took the refresh over, and nothing was written."""
+        stored_user_metrics_row = user_metrics_collection.find_one(
+            {"aggregation_period": "monthly", "date": month_start.isoformat(), "user_id": ""},
+            {"_id": False, "version": 1},
+        )
+        read_version = stored_user_metrics_row["version"] if stored_user_metrics_row is not None else None
+        # Server-side cursor, so a month of many rows is added up a batch at a time instead of held whole
+        cursor = collection.find(
+            {
+                "aggregation_period": "daily",
+                "date": {"$gte": month_start.isoformat(), "$lte": metrics_month_end(month_start).isoformat()},
+            },
+            {"_id": False},
+        ).batch_size(METRICS_BATCH_SIZE)
+        per_owner: Dict[Tuple[str, str, str, str, str], Dict[str, Any]] = {}
+        while True:
+            batch = list(islice(cursor, METRICS_BATCH_SIZE))
+            if not batch:
+                break
+            add_metrics_month_totals(per_owner, [deserialize_metrics_row(document) for document in batch])
+
+        # Checked before the month's rows are written, so a process whose lock went stale never overwrites the rows of
+        # the process that took the refresh over
+        if not self._heartbeat_metrics_refresh(refreshes_collection, worker_id):
+            return False
+        # Added up per owner and component over the month, so a user of several days is one user of the month
+        self._write_user_metrics_rows(
+            user_metrics_collection,
+            build_user_metrics_month_rows(month_start, per_owner),
+            rows_changed=False,
+            read_version=read_version,
+        )
+        return True
+
+    def calculate_metrics(self, rebuild_from: Optional[date] = None) -> Optional[list[dict]]:
+        """Calculate metrics for every day that changed since the last calculation.
+
+        One process calculates at a time, whichever process or replica it runs in: the others return at once,
+        having read nothing.
+
+        Args:
+            rebuild_from (Optional[date]): Also rebuild every day from this date to today, as after a release that
+                changed how metrics are counted.
+
+        Returns:
+            Optional[list[dict]]: The metrics of the days calculated, or of today when nothing changed, as get_metrics
+                returns them. None when another process is calculating them.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
+        """
+        try:
+            calculated_dates = self.calculate_metrics_dates(rebuild_from=rebuild_from)
+            if calculated_dates is None:
+                return None
+            if not calculated_dates:
+                # Nothing changed: today's metrics come back, as they did when every refresh calculated today
+                calculated_dates = [datetime.now(timezone.utc).date()]
+            metrics, _ = self._get_metrics_rows(calculated_dates[0], calculated_dates[-1], None)
+            return [metric for metric in metrics if metric["date"] in calculated_dates]
 
         except Exception as e:
             log_error(f"Error calculating metrics: {str(e)}")
             raise e
+
+    def calculate_metrics_dates(
+        self, should_stop: Optional[Callable[[], bool]] = None, rebuild_from: Optional[date] = None
+    ) -> Optional[List[date]]:
+        """Calculate metrics for every day that changed since the last calculation, as calculate_metrics does,
+        without reading back the metrics of those days.
+
+        Args:
+            should_stop (Optional[Callable[[], bool]]): Checked before each day and month, and between a day's
+                batches. Once it returns True, the calculation releases the refresh and stops; the next one continues
+                from the first day still open.
+            rebuild_from (Optional[date]): Also rebuild every day from this date to today.
+
+        Returns:
+            Optional[List[date]]: The days calculated, oldest first. None when another process is calculating them.
+        """
+        collection = self._get_collection(table_type="component_metrics", create_collection_if_not_found=True)
+        user_metrics_collection = self._get_collection(table_type="user_metrics", create_collection_if_not_found=True)
+        refreshes_collection = self._get_collection(table_type="metrics_refreshes", create_collection_if_not_found=True)
+        sessions_collection = self._get_collection(table_type="sessions")
+        if (
+            collection is None
+            or user_metrics_collection is None
+            or refreshes_collection is None
+            or sessions_collection is None
+        ):
+            log_info("No session data found. Won't calculate metrics.")
+            return []
+        runs_collection = self._get_collection(table_type="runs")
+
+        if rebuild_from is not None:
+            # Reopened as a write reopens a day, before the claim, so a calculation another process is running
+            # leaves them to the next one
+            reopen_metrics_days_from(user_metrics_collection, rebuild_from)
+
+        worker_id = str(uuid4())
+        # Claimed before anything is read, so a process that finds another calculating reads nothing
+        refresh_row = self._claim_metrics_refresh(refreshes_collection, worker_id)
+        if refresh_row is None:
+            return None
+
+        try:
+            dates_to_process, fingerprint = self._get_metrics_dates_to_calculate(
+                user_metrics_collection, sessions_collection, runs_collection, refresh_row, rebuild_from
+            )
+            if rebuild_from is not None:
+                # Yesterday and today are picked by their fingerprint, not by being open
+                today = datetime.now(timezone.utc).date()
+                dates_to_process = sorted(
+                    set(dates_to_process) | {day for day in [today - timedelta(days=1), today] if day >= rebuild_from}
+                )
+
+            legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
+            legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
+            # Read once for every day until the v3.0.0 migration is stamped: no index finds one day's legacy runs
+            if dates_to_process and packaging_version.parse(
+                self.get_latest_schema_version(self.session_table_name) or "2.0.0"
+            ) < packaging_version.parse("3.0.0"):
+                start_timestamp = int(
+                    datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+                )
+                end_timestamp = int(
+                    datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                    .replace(tzinfo=timezone.utc)
+                    .timestamp()
+                )
+                legacy_runs_by_day, legacy_runs_by_id = self._get_metrics_legacy_runs(
+                    sessions_collection, runs_collection, start_timestamp, end_timestamp
+                )
+                if not self._heartbeat_metrics_refresh(refreshes_collection, worker_id):
+                    return None
+                # A legacy run is dated on its own day, which may hold no session or run of the collections
+                today = datetime.now(timezone.utc).date()
+                dates_to_process = sorted(
+                    set(dates_to_process)
+                    | {
+                        day
+                        for day in legacy_runs_by_day
+                        if day <= today
+                        and (refresh_row["finished_at"] is None or (rebuild_from is not None and day >= rebuild_from))
+                    }
+                )
+
+            calculated_dates: List[date] = []
+            for date_to_process in dates_to_process:
+                if should_stop is not None and should_stop():
+                    self._release_metrics_refresh(refreshes_collection, worker_id, stopped=True)
+                    return None
+                if not self._calculate_date_metrics(
+                    collection,
+                    user_metrics_collection,
+                    sessions_collection,
+                    runs_collection,
+                    date_to_process,
+                    legacy_runs_by_day.get(date_to_process, []),
+                    legacy_runs_by_id,
+                    refreshes_collection,
+                    worker_id,
+                    should_stop,
+                ):
+                    if should_stop is not None and should_stop():
+                        self._release_metrics_refresh(refreshes_collection, worker_id, stopped=True)
+                    return None
+                calculated_dates.append(date_to_process)
+
+            month_starts = sorted(
+                set(get_months_to_calculate_metrics_for(calculated_dates))
+                | set(self._get_open_metrics_months(user_metrics_collection))
+            )
+            for month_start in month_starts:
+                if should_stop is not None and should_stop():
+                    self._release_metrics_refresh(refreshes_collection, worker_id, stopped=True)
+                    return None
+                if not self._calculate_month_metrics(
+                    collection, user_metrics_collection, month_start, refreshes_collection, worker_id
+                ):
+                    return None
+
+        except Exception as e:
+            self._release_metrics_refresh(refreshes_collection, worker_id, error=database_error_message(e))
+            raise
+
+        self._release_metrics_refresh(refreshes_collection, worker_id, fingerprint=fingerprint)
+
+        if not calculated_dates:
+            log_info("Metrics already calculated for all relevant dates.")
+            return []
+
+        log_debug("Updated metrics calculations")
+        return calculated_dates
+
+    def stop_metrics_refresh_on_read(self) -> None:
+        """Stop calculating metrics before a read, for a database whose metrics are calculated in the background."""
+        self._metrics_refreshed_at = float("inf")
+
+    def _get_metrics_by_owner(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of each user and day from the component metrics, in the shape of the metrics table."""
+        collection = self._get_collection(table_type="component_metrics")
+        if collection is None:
+            return [], None
+
+        query: Dict[str, Any] = {"aggregation_period": "daily"}
+        date_filter: Dict[str, Any] = {}
+        if starting_date:
+            date_filter["$gte"] = starting_date.isoformat()
+        if ending_date:
+            date_filter["$lte"] = ending_date.isoformat()
+        if date_filter:
+            query["date"] = date_filter
+        if user_id is not None:
+            query["user_id"] = user_id
+        rows = [
+            deserialize_metrics_row(document)
+            for document in collection.find(query, build_metrics_by_owner_projection())
+        ]
+        if not rows:
+            return [], None
+
+        # Get the latest updated_at, scoped to the same user filter
+        latest_record = collection.find_one(
+            {"user_id": user_id} if user_id is not None else {}, {"updated_at": 1}, sort=[("updated_at", -1)]
+        )
+        latest_updated_at = latest_record.get("updated_at") if latest_record else None
+
+        return build_metrics_by_owner_from_rows(rows), latest_updated_at
+
+    def _get_user_metrics_rows(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the day rows of the user metrics collection in the shape of the metrics table: the everyone rows for
+        ``""``, one user's rows for a name, and every user's rows for ``None``."""
+        user_metrics_collection = self._get_collection(table_type="user_metrics")
+        if user_metrics_collection is None:
+            return [], None
+
+        query: Dict[str, Any] = {"aggregation_period": "daily"}
+        date_filter: Dict[str, Any] = {}
+        if starting_date:
+            date_filter["$gte"] = starting_date.isoformat()
+        if ending_date:
+            date_filter["$lte"] = ending_date.isoformat()
+        if date_filter:
+            query["date"] = date_filter
+        query["user_id"] = {"$ne": ""} if user_id is None else user_id
+        # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
+        query["$or"] = [{column: {"$gt": 0}} for column in USER_METRICS_COUNT_COLUMNS if column != "users_count"]
+        # Only what build_metrics_from_user_metrics reads, so the maps of timings are never decoded
+        projection = {
+            "_id": False,
+            **{
+                column: 1
+                for column in [
+                    "date",
+                    "user_id",
+                    *USER_METRICS_COUNT_COLUMNS,
+                    *[
+                        field
+                        for field in METRICS_TOKEN_FIELDS
+                        if field not in [*METRICS_TOKEN_DETAILS_FIELDS, "audio_total_tokens"]
+                    ],
+                    "token_details",
+                    "model_metrics",
+                    "created_at",
+                    "updated_at",
+                ]
+            },
+        }
+        rows = [
+            deserialize_metrics_row(document)
+            for document in user_metrics_collection.find(query, projection).sort([("date", 1), ("user_id", 1)])
+        ]
+        if not rows:
+            return [], None
+
+        # Get the latest updated_at, scoped to the same user filter
+        latest_record = user_metrics_collection.find_one(
+            {"aggregation_period": "daily", "user_id": query["user_id"]}, {"updated_at": 1}, sort=[("updated_at", -1)]
+        )
+        latest_updated_at = latest_record.get("updated_at") if latest_record else None
+        return build_metrics_from_user_metrics(rows), latest_updated_at
+
+    def _get_metrics_rows(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of each user and day, as get_metrics returns them once the first calculate_metrics has
+        finished: a user's from that user's rows, the runs with no user from their component metrics rows."""
+        if user_id == "":
+            return self._get_metrics_by_owner(starting_date, ending_date, user_id)
+        metrics, latest_updated_at = self._get_user_metrics_rows(starting_date, ending_date, user_id)
+        if user_id is not None:
+            return metrics, latest_updated_at
+
+        unowned_metrics, unowned_updated_at = self._get_metrics_by_owner(starting_date, ending_date, "")
+        latest_updated_at = max(
+            (updated_at for updated_at in [latest_updated_at, unowned_updated_at] if updated_at is not None),
+            default=None,
+        )
+        return sorted(metrics + unowned_metrics, key=lambda x: (x["date"], x["user_id"] or "")), latest_updated_at
+
+    def _metrics_calculated(self, refreshes_collection: Optional[Collection]) -> bool:
+        """Whether the first calculate_metrics has finished, so reads take the metrics collections over
+        agno_metrics."""
+        refresh_row = (
+            self._get_metrics_refresh_row(refreshes_collection)[0] if refreshes_collection is not None else None
+        )
+        return refresh_row is not None and refresh_row["finished_at"] is not None
+
+    def _refresh_metrics_before_read(self) -> None:
+        """Calculate metrics before a read, at most once per minute per process, once a first calculate_metrics has
+        finished and unless metrics calculation is turned off. Another process calculating them holds the metrics
+        refresh, so the read goes on at once."""
+        if time.time() - self._metrics_refreshed_at < 60:
+            return
+        # Stamp first so failed runs are throttled too instead of retried on every read
+        self._metrics_refreshed_at = time.time()
+        try:
+            # A first build reads every run, so a read never waits for one: until it has finished, reads serve the
+            # deprecated metrics collection
+            if not metrics_calculation_enabled() or not self._metrics_calculated(
+                self._get_collection(table_type="metrics_refreshes")
+            ):
+                return
+            self.calculate_metrics_dates()
+        except Exception as e:
+            log_warning(f"Could not refresh metrics before reading them: {str(e)}")
 
     def get_metrics(
         self,
@@ -1832,15 +2630,28 @@ class MongoDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
+        Metrics are read from the user metrics and component metrics once the first calculate_metrics has finished,
+        and from the deprecated metrics collection until then. They are refreshed first, at most once per minute per
+        process, unless stop_metrics_refresh_on_read was called.
+
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
             user_id (Optional[str]): Return only this user's bucket. ``None`` returns every bucket.
+
+        Returns:
+            Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
         """
         try:
-            collection = self._get_collection(table_type="metrics")
-            if collection is None:
-                return [], None
+            self._refresh_metrics_before_read()
+            if self._metrics_calculated(self._get_collection(table_type="metrics_refreshes")):
+                return self._get_metrics_rows(starting_date, ending_date, user_id)
+
+            # Read without _get_collection, which would create the deprecated collection and its indexes
+            collection = self.database[self.metrics_table_name]
 
             query: Dict[str, Any] = {}
             if starting_date:
@@ -1876,6 +2687,221 @@ class MongoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting metrics: {str(e)}")
+            raise e
+
+    def get_metrics_by_date(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of every user, one row per day, matching the given date range.
+
+        Read from the everyone rows of the user metrics once the first calculate_metrics has finished, and from the
+        deprecated metrics collection until then. They are refreshed first, as get_metrics does.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+
+        Returns:
+            Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            self._refresh_metrics_before_read()
+            if self._metrics_calculated(self._get_collection(table_type="metrics_refreshes")):
+                return self._get_user_metrics_rows(starting_date, ending_date, "")
+            return super().get_metrics_by_date(starting_date, ending_date)
+
+        except Exception as e:
+            log_error(f"Error getting metrics: {str(e)}")
+            raise e
+
+    def get_metrics_refresh_status(self) -> Optional[Dict[str, Any]]:
+        """Get the status of the most recent calculate_metrics, from the metrics refreshes collection.
+
+        Returns:
+            Optional[Dict[str, Any]]: The status ('running', 'completed' or 'failed'), when it started and finished,
+                and its error. None before the first calculation.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            refreshes_collection = self._get_collection(table_type="metrics_refreshes")
+            if refreshes_collection is None:
+                return None
+            return metrics_refresh_status(*self._get_metrics_refresh_row(refreshes_collection))
+
+        except Exception as e:
+            log_error(f"Error getting metrics refresh status: {str(e)}")
+            raise e
+
+    def _get_component_metrics_totals_by_date(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str],
+        fields: List[str],
+        use_month_rows: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Total the component metrics of the given date range, every day from one period.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
+                no user.
+            fields (List[str]): The columns to total.
+            use_month_rows (bool): Total a calendar month inside the date range from its month user metrics row, as one
+                date.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
+        """
+        user_metrics_collection = self._get_collection(table_type="user_metrics")
+        # Every owner is read from the everyone rows and a user from the user's rows; the runs with no user have no
+        # user metrics row of their own, so they are read from their component rows
+        collection = self._get_collection(table_type="component_metrics") if user_id == "" else user_metrics_collection
+        if user_metrics_collection is None or collection is None:
+            return [], None
+
+        # The component metrics collection keeps day rows only, so the runs with no user are read day by day
+        full_months = metrics_full_months(starting_date, ending_date) if use_month_rows and user_id != "" else []
+        month_starts: List[date] = []
+        if full_months:
+            # Only a completed month's row stands for its days; an open one, reopened by a day rebuilt since or
+            # not yet built, is read from its days
+            month_starts = [
+                deserialize_metrics_row(document)["date"]
+                for document in user_metrics_collection.find(
+                    {
+                        "aggregation_period": "monthly",
+                        "user_id": "",
+                        "completed": True,
+                        # The full months follow each other, so a range finds them however long the window is
+                        "date": {"$gte": full_months[0].isoformat(), "$lte": full_months[-1].isoformat()},
+                    },
+                    {"_id": False, "date": 1},
+                )
+            ]
+        rows_filter = build_metrics_rows_filter(starting_date, ending_date, user_id or "", month_starts)
+        if rows_filter is None:
+            return [], None
+        # One find, so each row is read as one version of it. Without a replica set there is no snapshot across
+        # documents: a day being rebuilt can be read half rebuilt
+        rows = [
+            deserialize_metrics_row(document)
+            for document in collection.find(rows_filter, build_metrics_rows_projection(fields))
+        ]
+        return total_metrics_rows(rows, starting_date, ending_date, fields, month_starts)
+
+    def get_component_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Get the component metrics totals of each day in the given date range.
+
+        For every owner, each day is read from its everyone row; for one owner, from its rows. A read never calculates
+        them: calculate_metrics does.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
+                no user.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each day, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_metrics_fields(fields)
+            metrics, latest_updated_at = self._get_component_metrics_totals_by_date(
+                starting_date, ending_date, user_id, fields
+            )
+            return [list_metrics_totals_models(day_totals) for day_totals in metrics], latest_updated_at
+
+        except Exception as e:
+            log_error(f"Error getting component metrics: {str(e)}")
+            raise e
+
+    def get_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """Get the component metrics totals of the whole given date range.
+
+        A calendar month inside the date range that has month rows is read from them, and every other day as
+        get_component_metrics reads it.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
+                no user.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[Dict[str, Any], Optional[int]]: The totals of the date range, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_metrics_fields(fields)
+            totals, latest_updated_at = self._get_component_metrics_totals_by_date(
+                starting_date, ending_date, user_id, fields, use_month_rows=True
+            )
+            return list_metrics_totals_models(merge_metrics_totals(totals, fields)), latest_updated_at
+
+        except Exception as e:
+            log_error(f"Error getting metrics totals: {str(e)}")
+            raise e
+
+    def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
+        """Get the version of every everyone row of a day or a month of the user metrics in the given date range.
+
+        Metrics are refreshed first, as get_metrics refreshes them.
+
+        Args:
+            starting_date (date): The first day of the date range.
+            ending_date (date): The last day of the date range.
+
+        Returns:
+            Optional[Dict[str, int]]: The version of each everyone row, keyed by its aggregation period and date. The
+                same again only while no calculation wrote a row of the date range. ``None`` until the first
+                calculate_metrics has finished, or without a user metrics collection: a read would find no rows to
+                total.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            self._refresh_metrics_before_read()
+            collection = self._get_collection(table_type="user_metrics")
+            if collection is None or not self._metrics_calculated(self._get_collection(table_type="metrics_refreshes")):
+                return None
+
+            documents = collection.find(
+                {"user_id": "", "date": {"$gte": starting_date.isoformat(), "$lte": ending_date.isoformat()}},
+                {"_id": False, "aggregation_period": 1, "date": 1, "version": 1},
+            )
+            return metrics_versions([SimpleNamespace(**deserialize_metrics_row(document)) for document in documents])
+
+        except Exception as e:
+            log_error(f"Error getting metrics versions: {str(e)}")
             raise e
 
     # -- Knowledge methods --

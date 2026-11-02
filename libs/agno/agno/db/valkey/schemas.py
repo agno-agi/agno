@@ -52,6 +52,95 @@ METRICS_SCHEMA = {
     "completed": {"type": "boolean", "default": False},
 }
 
+COMPONENT_METRICS_SCHEMA = {
+    "aggregation_period": {"type": "string", "primary_key": True},
+    "date": {"type": "date", "primary_key": True},
+    # Owner of this row. Empty string for runs with no user
+    "user_id": {"type": "string", "primary_key": True, "default": ""},
+    "component_type": {"type": "string", "primary_key": True},
+    "component_id": {"type": "string", "primary_key": True},
+    "parent_component_id": {"type": "string", "primary_key": True, "default": ""},
+    "root_component_id": {"type": "string", "primary_key": True, "default": ""},
+    "sessions_count": {"type": "integer", "default": 0},
+    "runs_count": {"type": "integer", "default": 0},
+    "input_tokens": {"type": "integer", "default": 0},
+    "output_tokens": {"type": "integer", "default": 0},
+    "total_tokens": {"type": "integer", "default": 0},
+    "reasoning_tokens": {"type": "integer", "default": 0},
+    "status_metrics": {"type": "json", "default": {}},
+    "model_metrics": {"type": "json", "default": {}},
+    "duration_runs_count": {"type": "integer", "default": 0},
+    "total_duration_ms": {"type": "integer", "default": 0},
+    "max_duration_ms": {"type": "integer"},
+    "duration_buckets": {"type": "json", "default": {}},
+    "time_to_first_token_runs_count": {"type": "integer", "default": 0},
+    "total_time_to_first_token_ms": {"type": "integer", "default": 0},
+    "max_time_to_first_token_ms": {"type": "integer"},
+    "time_to_first_token_buckets": {"type": "json", "default": {}},
+    "model_calls_count": {"type": "integer", "default": 0},
+    "total_model_call_ms": {"type": "integer", "default": 0},
+    "max_model_call_ms": {"type": "integer"},
+    "model_call_buckets": {"type": "json", "default": {}},
+    "additional_metrics": {"type": "json", "default": {}},
+    "token_details": {"type": "json", "default": {}},
+    "created_at": {"type": "integer"},
+    "updated_at": {"type": "integer"},
+}
+
+USER_METRICS_SCHEMA = {
+    "aggregation_period": {"type": "string", "primary_key": True},
+    "date": {"type": "date", "primary_key": True},
+    # Owner of this row. Empty string for the everyone row, which counts every run, runs with no user included
+    "user_id": {"type": "string", "primary_key": True, "default": ""},
+    "agent_runs_count": {"type": "integer", "default": 0},
+    "team_runs_count": {"type": "integer", "default": 0},
+    "workflow_runs_count": {"type": "integer", "default": 0},
+    "root_runs_count": {"type": "integer", "default": 0},
+    "agent_sessions_count": {"type": "integer", "default": 0},
+    "team_sessions_count": {"type": "integer", "default": 0},
+    "workflow_sessions_count": {"type": "integer", "default": 0},
+    "users_count": {"type": "integer", "default": 0},
+    "input_tokens": {"type": "integer", "default": 0},
+    "output_tokens": {"type": "integer", "default": 0},
+    "total_tokens": {"type": "integer", "default": 0},
+    "reasoning_tokens": {"type": "integer", "default": 0},
+    "status_metrics": {"type": "json", "default": {}},
+    "model_metrics": {"type": "json", "default": {}},
+    "duration_runs_count": {"type": "integer", "default": 0},
+    "total_duration_ms": {"type": "integer", "default": 0},
+    "max_duration_ms": {"type": "integer"},
+    "duration_buckets": {"type": "json", "default": {}},
+    "time_to_first_token_runs_count": {"type": "integer", "default": 0},
+    "total_time_to_first_token_ms": {"type": "integer", "default": 0},
+    "max_time_to_first_token_ms": {"type": "integer"},
+    "time_to_first_token_buckets": {"type": "json", "default": {}},
+    "model_calls_count": {"type": "integer", "default": 0},
+    "total_model_call_ms": {"type": "integer", "default": 0},
+    "max_model_call_ms": {"type": "integer"},
+    "model_call_buckets": {"type": "json", "default": {}},
+    "additional_metrics": {"type": "json", "default": {}},
+    "token_details": {"type": "json", "default": {}},
+    # The agno version that built the row
+    "metrics_version": {"type": "string"},
+    "created_at": {"type": "integer"},
+    "updated_at": {"type": "integer"},
+    "completed": {"type": "boolean", "default": False},
+    "version": {"type": "integer", "default": 1},
+}
+
+METRICS_REFRESHES_SCHEMA = {
+    # One row, which one refresh of the metrics tables at a time holds
+    "id": {"type": "string", "primary_key": True},
+    "locked_by": {"type": "string"},
+    "locked_at": {"type": "integer"},  # heartbeat-refreshed
+    "started_at": {"type": "integer"},
+    "finished_at": {"type": "integer"},  # of the last refresh that completed
+    # running | completed | failed
+    "status": {"type": "string"},
+    "error": {"type": "string"},
+    "fingerprint": {"type": "json"},
+}
+
 EVAL_SCHEMA = {
     "run_id": {"type": "string", "primary_key": True},
     "eval_type": {"type": "string"},
@@ -150,6 +239,9 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "sessions": SESSION_SCHEMA,
         "memories": USER_MEMORY_SCHEMA,
         "metrics": METRICS_SCHEMA,
+        "component_metrics": COMPONENT_METRICS_SCHEMA,
+        "user_metrics": USER_METRICS_SCHEMA,
+        "metrics_refreshes": METRICS_REFRESHES_SCHEMA,
         "evals": EVAL_SCHEMA,
         "knowledge": KNOWLEDGE_SCHEMA,
         "learnings": LEARNING_SCHEMA,

@@ -59,6 +59,8 @@ SESSION_COLLECTION_SCHEMA = [
         ],
         "collection_group": False,
     },
+    # The metrics fingerprint: the count and the sum of updated_at of the sessions created since a time
+    {"key": [("created_at", "ASCENDING"), ("updated_at", "ASCENDING")], "collection_group": False},
 ]
 
 RUNS_COLLECTION_SCHEMA = [
@@ -106,6 +108,8 @@ RUNS_COLLECTION_SCHEMA = [
         "key": [("user_id", "ASCENDING"), ("status", "ASCENDING"), ("created_at", "DESCENDING")],
         "collection_group": False,
     },
+    # The metrics fingerprint: the count and the sum of updated_at of the runs created since a time
+    {"key": [("created_at", "ASCENDING"), ("updated_at", "ASCENDING")], "collection_group": False},
 ]
 
 USER_MEMORY_COLLECTION_SCHEMA = [
@@ -169,6 +173,55 @@ METRICS_COLLECTION_SCHEMA = [
     },
 ]
 
+COMPONENT_METRICS_COLLECTION_SCHEMA = [
+    {"key": "aggregation_period"},
+    {"key": "date"},
+    {"key": "user_id"},
+    {"key": "component_type"},
+    {"key": "component_id"},
+    {"key": "parent_component_id"},
+    {"key": "root_component_id"},
+    {"key": "created_at"},
+    {"key": "updated_at"},
+    # The rows of a date range, and one user's rows of a date range
+    {"key": [("aggregation_period", "ASCENDING"), ("date", "ASCENDING")], "collection_group": False},
+    {
+        "key": [("user_id", "ASCENDING"), ("aggregation_period", "ASCENDING"), ("date", "ASCENDING")],
+        "collection_group": False,
+    },
+]
+
+USER_METRICS_COLLECTION_SCHEMA = [
+    {"key": "aggregation_period"},
+    {"key": "date"},
+    {"key": "user_id"},
+    {"key": "completed"},
+    {"key": "created_at"},
+    {"key": "updated_at"},
+    # The rows of a date range, one user's rows of a date range, of a period or of every period, and the days still
+    # open
+    {"key": [("aggregation_period", "ASCENDING"), ("date", "ASCENDING")], "collection_group": False},
+    {
+        "key": [("user_id", "ASCENDING"), ("aggregation_period", "ASCENDING"), ("date", "ASCENDING")],
+        "collection_group": False,
+    },
+    {"key": [("user_id", "ASCENDING"), ("date", "ASCENDING")], "collection_group": False},
+    {
+        "key": [
+            ("aggregation_period", "ASCENDING"),
+            ("user_id", "ASCENDING"),
+            ("completed", "ASCENDING"),
+            ("date", "ASCENDING"),
+        ],
+        "collection_group": False,
+    },
+]
+
+# One document, which one refresh of the metrics collections at a time holds
+METRICS_REFRESHES_COLLECTION_SCHEMA = [
+    {"key": "id", "unique": True},
+]
+
 TRACE_COLLECTION_SCHEMA = [
     {"key": "trace_id", "unique": True},
     {"key": "name"},
@@ -215,6 +268,9 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
         "runs": RUNS_COLLECTION_SCHEMA,
         "memories": USER_MEMORY_COLLECTION_SCHEMA,
         "metrics": METRICS_COLLECTION_SCHEMA,
+        "component_metrics": COMPONENT_METRICS_COLLECTION_SCHEMA,
+        "user_metrics": USER_METRICS_COLLECTION_SCHEMA,
+        "metrics_refreshes": METRICS_REFRESHES_COLLECTION_SCHEMA,
         "evals": EVAL_COLLECTION_SCHEMA,
         "knowledge": KNOWLEDGE_COLLECTION_SCHEMA,
         "traces": TRACE_COLLECTION_SCHEMA,

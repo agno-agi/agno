@@ -896,7 +896,7 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def calculate_metrics(self) -> Optional[Any]:
+    def calculate_metrics(self, rebuild_from: Optional[date] = None) -> Optional[Any]:
         raise NotImplementedError
 
     def calculate_metrics_dates(
@@ -3308,7 +3308,7 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def calculate_metrics(self) -> Optional[Any]:
+    async def calculate_metrics(self, rebuild_from: Optional[date] = None) -> Optional[Any]:
         raise NotImplementedError
 
     async def calculate_metrics_dates(

@@ -254,6 +254,58 @@ METRICS_TABLE_SCHEMA = {
     "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
 }
 
+COMPONENT_METRICS_TABLE_SCHEMA = {
+    "TableName": "agno_component_metrics",
+    "KeySchema": [
+        {"AttributeName": "date", "KeyType": "HASH"},
+        {"AttributeName": "id", "KeyType": "RANGE"},
+    ],
+    "AttributeDefinitions": [
+        {"AttributeName": "date", "AttributeType": "S"},
+        {"AttributeName": "id", "AttributeType": "S"},
+    ],
+    "BillingMode": "PROVISIONED",
+    "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+}
+
+USER_METRICS_TABLE_SCHEMA = {
+    "TableName": "agno_user_metrics",
+    # The everyone rows of a period are keyed by the period, a user's by the period and the user, so a date range
+    # of either is one query
+    "KeySchema": [
+        {"AttributeName": "period_user_id", "KeyType": "HASH"},
+        {"AttributeName": "date", "KeyType": "RANGE"},
+    ],
+    "AttributeDefinitions": [
+        {"AttributeName": "period_user_id", "AttributeType": "S"},
+        {"AttributeName": "date", "AttributeType": "S"},
+        {"AttributeName": "aggregation_period", "AttributeType": "S"},
+    ],
+    "GlobalSecondaryIndexes": [
+        # Every user's rows of a period and date range
+        {
+            "IndexName": "aggregation_period-date-index",
+            "KeySchema": [
+                {"AttributeName": "aggregation_period", "KeyType": "HASH"},
+                {"AttributeName": "date", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
+    ],
+    "BillingMode": "PROVISIONED",
+    "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+}
+
+METRICS_REFRESHES_TABLE_SCHEMA = {
+    "TableName": "agno_metrics_refreshes",
+    # One item, which one refresh of the metrics tables at a time holds
+    "KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+    "AttributeDefinitions": [{"AttributeName": "id", "AttributeType": "S"}],
+    "BillingMode": "PROVISIONED",
+    "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+}
+
 TRACE_TABLE_SCHEMA = {
     "TableName": "agno_traces",
     "KeySchema": [{"AttributeName": "trace_id", "KeyType": "HASH"}],
@@ -473,6 +525,9 @@ def get_table_schema_definition(table_type: str) -> Dict[str, Any]:
         "evals": EVAL_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
+        "component_metrics": COMPONENT_METRICS_TABLE_SCHEMA,
+        "user_metrics": USER_METRICS_TABLE_SCHEMA,
+        "metrics_refreshes": METRICS_REFRESHES_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
         "spans": SPAN_TABLE_SCHEMA,
     }
