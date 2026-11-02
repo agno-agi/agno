@@ -10,8 +10,10 @@ from agno.db.sqlite import SqliteDb
 from agno.models.base import Model
 from agno.models.message import MessageMetrics
 from agno.models.response import ModelResponse
-from agno.run.agent import RunCompletedEvent, RunPausedEvent
+from agno.metrics import RunMetrics
+from agno.run.agent import RunCompletedEvent, RunOutput, RunPausedEvent
 from agno.run.base import RunStatus
+from agno.session import AgentSession
 from agno.tools import tool
 
 
@@ -87,8 +89,8 @@ def _tool_call(name: str, arguments: str) -> ModelResponse:
 
 @pytest.mark.parametrize("cache_session", [True, False])
 async def test_retried_async_continue_keeps_the_run_once_in_the_session_metrics(tmp_path, cache_session):
-    """A continue that fails after a model call and is retried takes the run's earlier tokens out of the session
-    metrics once, as the session read holds them, so they match the run, whether the session is cached or read again.
+    """A continue that fails after a model call and is retried counts the run once in the session metrics, so they
+    match the run, whether the session is cached or read again.
     """
     agent = Agent(
         model=ScriptedModel(
@@ -114,6 +116,29 @@ async def test_retried_async_continue_keeps_the_run_once_in_the_session_metrics(
 
     session_metrics = agent.get_session("s").session_data["session_metrics"]
     assert session_metrics["total_tokens"] == run_output.metrics.total_tokens == 30
+
+
+def test_run_stored_with_empty_metrics_keeps_the_session_metrics_counted(tmp_path):
+    """A run stored before its first model call, such as a background run that never answered, has empty metrics; a
+    later run in the same session still saves, and the session metrics count its tokens."""
+    db = SqliteDb(db_file=str(tmp_path / "agent.db"))
+    agent = Agent(
+        id="agent",
+        model=ScriptedModel([ModelResponse(role="assistant", content="done", response_usage=USAGE)]),
+        db=db,
+        telemetry=False,
+    )
+    db.upsert_session(AgentSession(session_id="s", agent_id="agent", session_data={}))
+    db.upsert_run(
+        RunOutput(run_id="orphan", agent_id="agent", session_id="s", status=RunStatus.running, metrics=RunMetrics()),
+        session_id="s",
+        run_index=0,
+    )
+
+    run_output = agent.run("hello", session_id="s")
+
+    assert run_output.status == RunStatus.completed
+    assert agent.get_session("s").session_data["session_metrics"]["total_tokens"] == 10
 
 
 def test_checkpointed_run_is_counted_once_in_the_session_metrics(tmp_path):

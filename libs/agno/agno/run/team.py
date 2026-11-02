@@ -1042,8 +1042,7 @@ class TeamRunOutput:
             input_obj = TeamRunInput.from_dict(input_data)
 
         metrics = data.pop("metrics", None)
-        if metrics:
-            metrics = RunMetrics.from_dict(metrics)
+        metrics = RunMetrics.from_dict(metrics) if metrics else None
 
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None
