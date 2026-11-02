@@ -58,7 +58,7 @@ def require_project(
     if row._mapping["product_id"] != product_id:
         raise ValueError("Task and Project must belong to the same Product")
     if not allow_proposed and row._mapping["status"] == "proposed":
-        raise ValueError("Cannot create Tasks in a proposed Project; approve the Project first")
+        raise ValueError("Project approval is required before Tasks enter non-Backlog stages")
     if (
         task_status is not None
         and task_status not in {"done", "cancelled"}

@@ -17,9 +17,9 @@ routines:write for Routines, and permission to run the chosen executor. Never cr
 Routines during automated execution; Routines propose work.
 Read the company and Product playbooks before planning. List existing Projects
 and Tasks before proposing work so you do not duplicate an existing proposal.
-Every new Task must belong to an approved Project. Reuse a suitable approved Project.
-When none fits, use propose_company_project, report that it needs human approval,
-and do not propose Tasks for that Project until a later request after approval.
+Every new Task must belong to a Project. Reuse a suitable Project; when none fits,
+propose one and create evidence-backed Backlog Tasks for human review. Report that
+the Project needs human approval before its Tasks can be accepted or run.
 Use the records and source links supplied by the caller as evidence; distinguish
 observed results from proposals. Propose Projects and Backlog Tasks with clear
 outcomes and briefs. Humans choose executors and accept work.
@@ -32,7 +32,7 @@ List Product Sources before reading them. Use read_product_source and intake_pro
 only for Sources marked readable. Git URL Sources marked checkout_supported are for sandbox
 checkout and publication, not reading; use the Product's local repository Source for code review.
 When running a Routine, propose Tasks through intake_product_source with observed
-Source links and hashes, a stable proposal_key and an approved same-Product project_id.
+Source links and hashes, a stable proposal_key and a same-Product project_id.
 Do not use propose_company_task during a Routine. A quiet review needs no new work.
 Read status.md before updating it and pass its version. On conflict, read again
 and incorporate the intervening edit. Keep updates small and edit existing pages

@@ -173,7 +173,7 @@ async def test_empty_optionals_do_not_weaken_required_validation(tmp_path, use_a
     [(SqliteDb, False), (SqliteDb, True), (AsyncSqliteDb, True)],
     ids=["sync", "async_facade", "native_async"],
 )
-async def test_propose_task_requires_project_approval(tmp_path, db_class, use_async):
+async def test_propose_task_allows_backlog_before_project_approval(tmp_path, db_class, use_async):
     db = db_class(db_file=str(tmp_path / "approval.db"))
     manager = AsyncCompanyManager(db) if isinstance(db, AsyncSqliteDb) else CompanyManager(db)
     tools = CompanyTools(db)
@@ -187,17 +187,13 @@ async def test_propose_task_requires_project_approval(tmp_path, db_class, use_as
         product = await call(manager.create, name="SDK")
         project = await call(manager.create_project, product_id=product["id"], name="Release")
         project = await call(manager.get_project, project["id"])
-        for _ in range(2):
-            with pytest.raises(
-                ValueError, match="Cannot create Tasks in a proposed Project; approve the Project first"
-            ):
-                await call(propose, product["id"], "Document release", project_id=project["id"])
-            assert (await call(manager.list_tasks, product_id=product["id"]))[1] == 0
-            assert await call(manager.get_project, project["id"]) == project
-        await call(manager.transition_project, project_id=project["id"], target="active", reason="Human approved")
         task = json.loads(await call(propose, product["id"], "Document release", project_id=project["id"]))
         assert task["status"] == "backlog" and task["project_id"] == project["id"]
-        assert (await call(manager.list_tasks, product_id=product["id"]))[1] == 1
+        current = await call(manager.get_project, project["id"])
+        assert current["status"] == "proposed" and current["counts"]["tasks"]["backlog"] == 1
+        assert current["transitions"] == project["transitions"]
+        await call(manager.transition_project, project_id=project["id"], target="active", reason="Human approved")
+        assert (await call(manager.get_task, task["id"]))["status"] == "backlog"
     finally:
         await call(db.close)
 

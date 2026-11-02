@@ -636,7 +636,7 @@ async def test_routine_service_cannot_create_a_plain_task(heartbeat):
 
 
 @pytest.mark.asyncio
-async def test_intake_requires_project_approval_and_deduplicates_retry(heartbeat, tmp_path):
+async def test_intake_proposes_before_project_approval_and_deduplicates_retry(heartbeat, tmp_path):
     _, _, call = heartbeat
     path = tmp_path / "release.md"
     path.write_text("Document the released API")
@@ -652,24 +652,29 @@ async def test_intake_requires_project_approval_and_deduplicates_retry(heartbeat
         evidence_links=[observed["link"]],
         evidence_hashes={observed["link"]: observed["content_hash"]},
     )
-    for run_id in ("pending-first", "pending-retry"):
-        with pytest.raises(ValueError, match="Cannot create Tasks in a proposed Project; approve the Project first"):
-            await call("intake", source_id=source["id"], run_id=run_id, proposal=proposal, project_id=project["id"])
-        assert (await call("list_tasks", product_id=product["id"]))[1] == 0
-        assert await call("get_project", project["id"]) == project
-
-    await call("transition_project", project_id=project["id"], target="active", reason="Human approved")
     task = await call(
-        "intake", source_id=source["id"], run_id="approved-run", proposal=proposal, project_id=project["id"]
+        "intake", source_id=source["id"], run_id="pending-first", proposal=proposal, project_id=project["id"]
     )
     assert task["status"] == "backlog" and task["project_id"] == project["id"]
-    assert task["evidence"][0]["run_id"] == "approved-run"
+    assert task["evidence"][0]["run_id"] == "pending-first"
     assert task["evidence"][0]["content_hash"] == observed["content_hash"]
-    for run_id in ("approved-retry", "approved-repeat"):
-        assert (
-            await call("intake", source_id=source["id"], run_id=run_id, proposal=proposal, project_id=project["id"])
-            == task
+    current = await call("get_project", project["id"])
+    assert current["status"] == "proposed" and current["counts"]["tasks"]["backlog"] == 1
+    assert current["transitions"] == project["transitions"]
+    assert (
+        await call(
+            "intake", source_id=source["id"], run_id="pending-retry", proposal=proposal, project_id=project["id"]
         )
+        == task
+    )
+    await call("transition_project", project_id=project["id"], target="active", reason="Human approved")
+    assert (
+        await call(
+            "intake", source_id=source["id"], run_id="approved-retry", proposal=proposal, project_id=project["id"]
+        )
+        == task
+    )
+    assert await call("get_task", task["id"]) == task
     assert (await call("list_tasks", product_id=product["id"]))[1] == 1
 
 

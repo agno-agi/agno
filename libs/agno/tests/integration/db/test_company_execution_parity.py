@@ -157,6 +157,36 @@ async def test_in_progress_requires_run_start(system):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("queued", [False, True])
+async def test_legacy_ready_task_waits_for_project_approval_before_run(system, queued):
+    from agno.company.execution import _call
+    from agno.db.schemas.tasks import task_run_id
+
+    client, db, worker, _, _ = system
+    task = await accepted(client)
+    if queued:
+        started = await client.post(f"/company/tasks/{task['id']}/runs")
+        assert started.status_code == 202, started.text
+    project = await _call(db, "_get_table", table_type="projects")
+    statement = project.update().where(project.c.id == task["project_id"]).values(status="proposed", transitions=[])
+    if isinstance(db, AsyncBaseDb):
+        async with db.db_engine.begin() as connection:
+            await connection.execute(statement)
+    else:
+        with db.db_engine.begin() as connection:
+            connection.execute(statement)
+
+    before = await _call(db, "get_task", task["id"])
+    if queued:
+        assert (await execute(worker))["status"] == "failed"
+    else:
+        response = await client.post(f"/company/tasks/{task['id']}/runs")
+        assert response.status_code == 409, response.text
+        assert await worker.store.get_job(task_run_id(task["id"], 1)) is None
+    assert (await _call(db, "get_task", task["id"]))["status"] == before["status"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind,id", [("agent", "writer"), ("team", "editors"), ("workflow", "draft")])
 async def test_execution_duplicate_context_history_and_attention(system, kind, id):
     client, db, worker, os, _ = system
@@ -2278,6 +2308,7 @@ async def test_automatic_task_timestamp_refuses_later_edit(system, monkeypatch, 
     project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Other"})).json()
     initial = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Initial"})).json()
     approval = {"target": "active", "reason": "Approved"}
+    await client.post(f"/company/projects/{project['id']}/transitions", json=approval)
     await client.post(f"/company/projects/{initial['id']}/transitions", json=approval)
     task = (
         await client.post(
@@ -2572,6 +2603,10 @@ async def test_later_scope_move_cannot_accept_or_queue(system, tmp_path, monkeyp
     outside = (
         await client.post("/company/projects", json={"product_id": task["product_id"], "name": "Outside"})
     ).json()
+    approved = await client.post(
+        f"/company/projects/{outside['id']}/transitions", json={"target": "active", "reason": "Approved"}
+    )
+    assert approved.status_code == 200, approved.text
     now = int(time.time())
     monkeypatch.setattr(time, "time", lambda: now)
     task = await _call(db, "update_task", task["id"], brief="Observed scope")

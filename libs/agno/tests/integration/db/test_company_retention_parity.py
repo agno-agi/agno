@@ -644,7 +644,7 @@ async def test_completed_project_preserves_intake_dedupe(archive):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("entry_point", ["storage", "manager", "http"])
-@pytest.mark.parametrize("status", ["backlog", "ready", "cancelled"])
+@pytest.mark.parametrize("status", ["ready", "cancelled"])
 async def test_project_approval_required_for_new_tasks(archive, monkeypatch, entry_point, status):
     db, manager, call = archive
     writer = Agent(id="writer")
@@ -672,12 +672,10 @@ async def test_project_approval_required_for_new_tasks(archive, monkeypatch, ent
             if entry_point == "http":
                 response = await create_task()
                 assert response.status_code == 422, response.text
-                assert response.json()["detail"] == (
-                    "Cannot create Tasks in a proposed Project; approve the Project first"
-                )
+                assert response.json()["detail"] == "Project approval is required before Tasks enter non-Backlog stages"
             else:
                 with pytest.raises(
-                    ValueError, match="^Cannot create Tasks in a proposed Project; approve the Project first$"
+                    ValueError, match="^Project approval is required before Tasks enter non-Backlog stages$"
                 ):
                     await create_task()
             assert await call(db, "get_tasks", include_deleted=True) == ([], 0)
@@ -697,11 +695,32 @@ async def test_project_approval_required_for_new_tasks(archive, monkeypatch, ent
 
 
 @pytest.mark.asyncio
-async def test_legacy_proposal_retry_precedes_project_approval_guard(archive):
+@pytest.mark.parametrize("entry_point", ["storage", "manager", "http"])
+async def test_proposed_project_accepts_backlog_tasks(archive, entry_point):
     db, manager, call = archive
     product = await call(manager, "create", name="SDK")
     project = await call(manager, "create_project", product_id=product["id"], name="Release")
-    await call(manager, "transition_project", project_id=project["id"], target="active", reason="Approved")
+    fields = dict(product_id=product["id"], project_id=project["id"], title="Draft plan", status="backlog")
+    if entry_point == "storage":
+        created = await call(db, "create_task", dict(fields, id="draft", created_at=int(time.time()), transitions=[]))
+    elif entry_point == "manager":
+        created = await call(manager, "create_task", **fields)
+    else:
+        app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
+        async with AsyncClient(transport=ASGITransport(app), base_url="http://test") as client:
+            response = await client.post("/company/tasks", json=fields)
+            assert response.status_code == 201, response.text
+            created = response.json()
+    assert created["status"] == "backlog"
+    assert (await call(db, "get_task", created["id"]))["result"] is None
+    assert (await call(db, "get_project", project["id"]))["status"] == "proposed"
+
+
+@pytest.mark.asyncio
+async def test_proposed_project_dedupes_and_preserves_parent_guards(archive):
+    db, manager, call = archive
+    product = await call(manager, "create", name="SDK")
+    project = await call(manager, "create_project", product_id=product["id"], name="Release")
     fields = dict(
         id="proposal",
         product_id=product["id"],
@@ -713,20 +732,11 @@ async def test_legacy_proposal_retry_precedes_project_approval_guard(archive):
         transitions=[],
     )
     original = await call(db, "create_task", fields)
-    # Reconstruct a proposal persisted before Project approval became required.
-    table = await call(db, "_get_table", table_type="projects")
-    statement = table.update().where(table.c.id == project["id"]).values(status="proposed", transitions=[])
-    if isinstance(db, AsyncBaseDb):
-        async with db.db_engine.begin() as connection:
-            await connection.execute(statement)
-    else:
-        with db.db_engine.begin() as connection:
-            connection.execute(statement)
     for _ in range(2):
         assert await call(db, "create_task", {**fields, "id": "retry", "title": "Changed"}) == original
-    with pytest.raises(ValueError, match="approve the Project first"):
-        await call(db, "create_task", {**fields, "id": "new", "dedupe_key": "different"})
-    assert (await call(db, "get_tasks", include_deleted=True)) == ([original], 1)
+    second = await call(db, "create_task", {**fields, "id": "new", "dedupe_key": "different"})
+    assert second["id"] == "new"
+    assert (await call(db, "get_tasks", include_deleted=True))[1] == 2
     # Archived parents still refuse even an otherwise-idempotent retry.
     await call(manager, "delete_project", project["id"])
     with pytest.raises(ValueError, match="Project is missing or archived"):
@@ -735,6 +745,26 @@ async def test_legacy_proposal_retry_precedes_project_approval_guard(archive):
     await call(manager, "delete", product["id"])
     with pytest.raises(ValueError, match="Product is missing or archived"):
         await call(db, "create_task", fields)
+
+
+@pytest.mark.asyncio
+async def test_proposed_project_refuses_task_acceptance_before_write(archive):
+    db, manager, call = archive
+    product = await call(manager, "create", name="SDK")
+    approved = await call(manager, "create_project", product_id=product["id"], name="Approved")
+    await call(manager, "transition_project", project_id=approved["id"], target="active", reason="Approved")
+    task = await call(manager, "create_task", product_id=product["id"], project_id=approved["id"], title="Draft")
+    project = await call(manager, "create_project", product_id=product["id"], name="Release")
+    await call(manager, "update_task", task["id"], project_id=project["id"])
+    before = await call(db, "get_task", task["id"])
+    with pytest.raises(ValueError, match="Project approval is required"):
+        await call(db, "transition_task", task["id"], "ready", "Start", executor_type="agent", executor_id="writer")
+    assert await call(db, "get_task", task["id"]) == before
+    await call(manager, "transition_project", project_id=project["id"], target="active", reason="Approved")
+    accepted = await call(
+        db, "transition_task", task["id"], "ready", "Start", executor_type="agent", executor_id="writer"
+    )
+    assert accepted["status"] == "ready"
 
 
 @pytest.mark.asyncio

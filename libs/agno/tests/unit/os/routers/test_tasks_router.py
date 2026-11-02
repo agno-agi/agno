@@ -340,7 +340,7 @@ def test_project_approval_keeps_ready_validation_and_permissions(client):
             assert response.status_code == expected, response.text
             if expected == 422:
                 assert response.json()["detail"] == (
-                    "Cannot create Tasks in a proposed Project; approve the Project first"
+                    "Project approval is required before Tasks enter non-Backlog stages"
                 )
             assert client.get("/company/tasks").json()["meta"]["total_count"] == 0
         approved = client.post(
@@ -350,3 +350,28 @@ def test_project_approval_keeps_ready_validation_and_permissions(client):
         created = protected.post("/company/tasks", json=body, headers=headers)
         assert created.status_code == 201, created.text
         assert created.json()["status"] == "ready"
+
+
+def test_proposed_project_allows_backlog_preview_but_not_acceptance(client):
+    product = client.post("/company/products", json={"name": "SDK"}).json()
+    project = client.post("/company/projects", json={"product_id": product["id"], "name": "Review"}).json()
+    body = {"product_id": product["id"], "project_id": project["id"], "title": "Draft"}
+    created = client.post("/company/tasks", json=body)
+    assert created.status_code == 201, created.text
+    task = created.json()
+    assert task["status"] == "backlog" and task["accepted_at"] is None
+    path = "/company/tasks/" + task["id"]
+    before = client.get(path).json()
+    refused = transition(client, path, "ready")
+    assert refused.status_code == 409, refused.text
+    assert client.get(path).json() == before
+    assert client.get("/company/projects/" + project["id"]).json()["status"] == "proposed"
+    approved = client.post(
+        "/company/projects/" + project["id"] + "/transitions",
+        json={"target": "active", "reason": "Approved"},
+    )
+    assert approved.status_code == 200, approved.text
+    assert client.get(path).json() == before
+    accepted = transition(client, path, "ready")
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["status"] == "ready"
