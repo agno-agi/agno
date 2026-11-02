@@ -63,7 +63,6 @@ from agno.run.approval import (
 # Strong references to background tasks so they aren't garbage-collected mid-execution.
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
 from agno.run.background import _background_tasks
-from agno.run.base import METRICS_FINAL_STATUSES
 from agno.run.cancel import (
     acancel_run as acancel_run_global,
 )
@@ -3681,11 +3680,16 @@ def _remove_run_from_session_metrics_on_start(
 
     stored_run = cast(RunOutput, session.get_run(run_response.run_id or "") or run_response)
     remove_run_from_session_metrics(agent, session=session, run_response=stored_run)
+    session_metrics = (session.session_data or {}).get("session_metrics")
     try:
         yield from stream
     except GeneratorExit:
-        # Closed before the run wrote itself back: put its earlier writes back
-        if run_response.status not in METRICS_FINAL_STATUSES:
+        # Closed before the run wrote itself back, or after a checkpoint took it back out: put back the run it holds now
+        if (
+            run_response.status == RunStatus.running
+            or (session.session_data or {}).get("session_metrics") is session_metrics
+        ):
+            stored_run = cast(RunOutput, session.get_run(run_response.run_id or "") or run_response)
             update_session_metrics(agent, session=session, run_response=stored_run)
         raise
 
@@ -3737,13 +3741,13 @@ def _continue_run(
 
     agent.model = cast(Model, agent.model)
 
-    # 1. Handle the updated tools
-    handle_tool_call_updates(agent, run_response=run_response, run_messages=run_messages, tools=tools)
-
     try:
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
             try:
+                # 1. Handle the updated tools
+                handle_tool_call_updates(agent, run_response=run_response, run_messages=run_messages, tools=tools)
+
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 

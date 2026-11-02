@@ -999,6 +999,10 @@ class BaseExternalAgent:
         """
         from agno.run.concurrency import get_worker_ownership
 
+        # The row this write replaces, such as a failed run run again, may be in the session totals already
+        stored_run = self._find_run_in_session(session, run_output.run_id or "")
+        if stored_run is not None:
+            self._remove_run_from_session_metrics(session, stored_run)
         session.upsert_run(run=run_output)
         self._update_session_metrics(session, run_output)
         worker_owned = get_worker_ownership(run_output.run_id or "") is not None
@@ -1424,13 +1428,12 @@ class BaseExternalAgent:
     async def _apersist_run_fallback(
         self, session_id: str, run_response: RunOutput, user_id: Optional[str] = None
     ) -> None:
-        """Re-read the session and persist one run; completed, failed or cancelled rows win."""
+        """Re-read the session and persist one run; completed or cancelled rows win."""
         if self.sandbox is not None:
             _sandbox_harness().refuse_fallback()
         session = await self.aread_or_create_session(session_id, user_id)
         existing = session.get_run(run_response.run_id or "")
-        # A finished row is already in the session metrics, so writing it again would count it twice
-        if existing is not None and existing.status in METRICS_FINAL_STATUSES:
+        if existing is not None and existing.status in (RunStatus.completed, RunStatus.cancelled):
             return
         await self._apersist_run_in_session(session, run_response, strict=True)
 
@@ -1851,6 +1854,20 @@ class BaseExternalAgent:
         stored = session.session_data.get("session_metrics")
         session_metrics = SessionMetrics.from_dict(stored) if isinstance(stored, dict) else SessionMetrics()
         session_metrics.accumulate_from_run(run_output.metrics)
+        session.session_data["session_metrics"] = session_metrics.to_dict()
+
+    @staticmethod
+    def _remove_run_from_session_metrics(session: AgentSession, run_output: RunOutput) -> None:
+        """Take a finished run's metrics back out of the session totals, so its next write adds the run once."""
+        if run_output.metrics is None or run_output.status not in METRICS_FINAL_STATUSES:
+            return
+        if session.session_data is None:
+            return
+        stored = session.session_data.get("session_metrics")
+        if not isinstance(stored, dict):
+            return
+        session_metrics = SessionMetrics.from_dict(stored)
+        session_metrics.subtract_run(run_output.metrics)
         session.session_data["session_metrics"] = session_metrics.to_dict()
 
     def _finish_run_output(

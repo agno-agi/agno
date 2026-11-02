@@ -10,7 +10,8 @@ from agno.db.sqlite import SqliteDb
 from agno.models.base import Model
 from agno.models.message import MessageMetrics
 from agno.models.response import ModelResponse
-from agno.run.agent import RunCompletedEvent
+from agno.run.agent import RunCompletedEvent, RunPausedEvent
+from agno.run.base import RunStatus
 from agno.tools import tool
 
 
@@ -238,3 +239,72 @@ def test_continue_stream_closed_after_it_completes_counts_the_run_once(tmp_path)
     stream.close()
 
     assert _stored_totals(agent, "s") == (20, 20)
+
+
+def test_continue_stream_closed_after_it_pauses_again_counts_the_run_once(tmp_path):
+    """A continue stream closed after the run paused again and wrote itself back leaves the session metrics as the
+    run wrote them, so a later continue by run id counts it once."""
+    agent = Agent(
+        model=ScriptedModel(
+            [
+                _tool_call("delete_file", '{"path": "a"}'),
+                ModelResponse(
+                    role="assistant",
+                    tool_calls=[
+                        {
+                            "id": "call-b",
+                            "type": "function",
+                            "function": {"name": "delete_file", "arguments": '{"path": "b"}'},
+                        }
+                    ],
+                    response_usage=USAGE,
+                ),
+                ModelResponse(role="assistant", content="done", response_usage=USAGE),
+            ]
+        ),
+        tools=[delete_file],
+        db=SqliteDb(db_file=str(tmp_path / "agent.db")),
+        cache_session=True,
+        telemetry=False,
+    )
+
+    paused = agent.run("delete a and b", session_id="s")
+    for requirement in paused.active_requirements:
+        requirement.confirm()
+    stream = agent.continue_run(run_response=paused, session_id="s", stream=True, stream_events=True)
+    for event in stream:
+        if isinstance(event, RunPausedEvent):
+            break
+    stream.close()
+    for requirement in event.requirements:
+        if not requirement.is_resolved():
+            requirement.confirm()
+    agent.continue_run(run_id=paused.run_id, requirements=event.requirements, session_id="s")
+
+    assert _stored_totals(agent, "s") == (30, 30)
+
+
+def test_continue_interrupted_in_a_confirmed_tool_keeps_the_run_counted(tmp_path):
+    """A KeyboardInterrupt in a confirmed tool cancels the continued run, which writes itself back to the session
+    metrics."""
+
+    @tool(requires_confirmation=True)
+    def interrupt(path: str) -> str:
+        """Delete a file."""
+        raise KeyboardInterrupt()
+
+    agent = Agent(
+        model=ScriptedModel([_tool_call("interrupt", '{"path": "a"}')]),
+        tools=[interrupt],
+        db=SqliteDb(db_file=str(tmp_path / "agent.db")),
+        cache_session=True,
+        telemetry=False,
+    )
+
+    paused = agent.run("delete a", session_id="s")
+    for requirement in paused.active_requirements:
+        requirement.confirm()
+    run_output = agent.continue_run(run_response=paused, session_id="s")
+
+    assert run_output.status == RunStatus.cancelled
+    assert _stored_totals(agent, "s") == (10, 10)

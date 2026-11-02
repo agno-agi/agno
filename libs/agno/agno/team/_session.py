@@ -298,6 +298,36 @@ def _storage_view_of_spared_run(
     return view
 
 
+def _remote_member_run_metrics(
+    member_response: Union[TeamRunOutput, "RunOutput"],
+) -> Union[TeamRunOutput, "RunOutput"]:
+    """The part of a remote member's run the team's run keeps when it stores no member responses: its ids, status,
+    model and metrics. The run itself is stored by the AgentOS that ran it, which may use another database."""
+    if isinstance(member_response, TeamRunOutput):
+        return TeamRunOutput(
+            run_id=member_response.run_id,
+            parent_run_id=member_response.parent_run_id,
+            session_id=member_response.session_id,
+            team_id=member_response.team_id,
+            status=member_response.status,
+            created_at=member_response.created_at,
+            model=member_response.model,
+            model_provider=member_response.model_provider,
+            metrics=member_response.metrics,
+        )
+    return RunOutput(
+        run_id=member_response.run_id,
+        parent_run_id=member_response.parent_run_id,
+        session_id=member_response.session_id,
+        agent_id=member_response.agent_id,
+        status=member_response.status,
+        created_at=member_response.created_at,
+        model=member_response.model,
+        model_provider=member_response.model_provider,
+        metrics=member_response.metrics,
+    )
+
+
 def _scrub_member_responses_keeping_paused(
     team: "Team",
     run: Union[TeamRunOutput, "RunOutput"],
@@ -307,17 +337,21 @@ def _scrub_member_responses_keeping_paused(
     state for continue_run after a session reload, and the save after it
     completes scrubs it. Completed responses inside a spared paused sub-team
     run are removed too, and a spared run still passes through its own member's
-    storage flags.
+    storage flags. A remote member's run keeps its metrics.
 
     Copy-on-write: every level this rebuilds is shallow-copied, so the live run
     tree the caller holds keeps its member responses and its full messages."""
     from copy import copy
 
     from agno.team.team import Team
+    from agno.utils.team import is_remote_member_run
 
     spared = []
     for member_response in getattr(run, "member_responses", None) or []:
         if not getattr(member_response, "is_paused", False):
+            # The team's database may hold no other record of a remote member's run to count its tokens from
+            if is_remote_member_run(member_response, run.session_id):
+                spared.append(_remote_member_run_metrics(member_response))
             continue
         # Resolve the owner at THIS level before recursing: the response tree
         # mirrors the team tree, and carrying the owning sub-team down keeps a

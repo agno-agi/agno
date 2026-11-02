@@ -291,6 +291,7 @@ def get_tools(
             session_id=session.session_id if session else None,
             agent_id=agent.id,
             run_context=run_context,
+            run_metrics=run_response.metrics,
         )
         agent_tools.extend(learning_tools)
 
@@ -442,6 +443,7 @@ async def aget_tools(
             session_id=session.session_id if session else None,
             agent_id=agent.id,
             run_context=run_context,
+            run_metrics=run_response.metrics,
         )
         agent_tools.extend(learning_tools)
 

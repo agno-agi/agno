@@ -6,6 +6,7 @@ import pytest
 from agno.learn.config import (
     EntityMemoryConfig,
     LearnedKnowledgeConfig,
+    LearningMode,
     SessionContextConfig,
     UserMemoryConfig,
     UserProfileConfig,
@@ -315,6 +316,19 @@ def test_extract_and_save_counts_every_model_call(conversation_messages: list[Me
     run_metrics = RunMetrics()
 
     store.extract_and_save(messages=conversation_messages, user_id="user-1", run_metrics=run_metrics)
+
+    assert provider_calls == [1, 2, 3]
+    assert run_metrics.total_tokens == 30
+
+
+def test_update_user_memory_tool_counts_its_model_calls() -> None:
+    """The agentic update_user_memory tool counts its learning model's calls in the run's metrics."""
+    store, _, provider_calls = _build_looping_memory_store(max_updates_per_run=10, tool_call_requests=2)
+    store.config.mode = LearningMode.AGENTIC
+    run_metrics = RunMetrics()
+
+    [update_user_memory] = store.get_tools(user_id="user-1", run_metrics=run_metrics)
+    update_user_memory(task="User prefers concise answers")
 
     assert provider_calls == [1, 2, 3]
     assert run_metrics.total_tokens == 30
